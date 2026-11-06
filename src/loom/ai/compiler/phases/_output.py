@@ -36,7 +36,8 @@ from loom.ai.abc import OutputCheck
 from loom.ai.compiler._plan import CompiledOutput
 from loom.ai.declarative import JsonSchemaOutput, OutputSpec, TypeRefOutput
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
-from loom.core.model import LoomType, UnsupportedBoundaryType, loom_type, msgspec_type
+from loom.core.errors import UnsupportedBoundaryType
+from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.symbols import import_symbol
 
 _CompileResult = tuple[CompiledOutput | None, list[AgentCompilationIssue]]

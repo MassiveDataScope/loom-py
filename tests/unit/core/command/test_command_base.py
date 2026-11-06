@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from loom.core.command import Command, Computed, Internal, Patch
-from loom.core.model import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError
 
 
 class CreateUser(Command, frozen=True):

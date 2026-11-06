@@ -8,6 +8,7 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.errors import UnsupportedQuery
 from loom.core.repository.abc import (
     Cursor,
     CursorCodec,
@@ -15,7 +16,6 @@ from loom.core.repository.abc import (
     CursorKeySource,
     PaginationMode,
     QuerySpec,
-    UnsupportedQuery,
 )
 
 _QUERY = QuerySpec(pagination=PaginationMode.CURSOR)

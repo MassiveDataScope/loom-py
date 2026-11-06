@@ -36,10 +36,10 @@ require_bytewax()
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.connections import ClickHouseConnection  # noqa: E402
+from loom.core.errors import BoundaryValidationError  # noqa: E402
 from loom.core.errors.codes import ErrorCode  # noqa: E402
 from loom.core.model import (  # noqa: E402
     BaseModel,
-    BoundaryValidationError,
     ColumnField,
     LoomStruct,
     Text,

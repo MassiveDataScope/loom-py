@@ -7,12 +7,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from loom.core.engine.post_commit import (
-    PostCommitChannel,
-    PostCommitError,
-    bind_channel,
-    reset_channel,
-)
+from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.errors import PostCommitError
 from loom.core.job.context import (
     add_pending_dispatch,
     clear_pending_dispatches,

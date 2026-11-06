@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from loom.core.errors.errors import SystemError
+from loom.core.errors import SystemError
 from loom.core.model.redaction import mask_dsn
 
 _ADDRESS = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")

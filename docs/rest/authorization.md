@@ -374,9 +374,9 @@ lives:
   mode on Postgres); a kernel built by hand registers an `ElevationSink` through one of its
   `modules`. Elevating from a task other than the execution's own (a `gather` child)
   while the scope's store is enlisted raises
-  {class}`~loom.core.uow.ScopeOwnershipError` and elevates nothing;
+  {class}`~loom.core.errors.ScopeOwnershipError` and elevates nothing;
 - an elevation is never inherited: invoking another use case after `elevate` in the same
-  execution raises {class}`~loom.core.uow.NestedElevation`; elevate inside the
+  execution raises {class}`~loom.core.errors.NestedElevation`; elevate inside the
   nested use case instead, or dispatch a job, which runs after the execution ends;
 - a nested execution that elevates clears on exit what it added; when that clearing
   fails, the session is invalidated and the nested execution raises the failure (the

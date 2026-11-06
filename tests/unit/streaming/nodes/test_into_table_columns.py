@@ -17,16 +17,9 @@ from sqlalchemy.dialects import postgresql
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.backend.sqlalchemy import compile_model
+from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import (
-    BaseModel,
-    BoundaryValidationError,
-    ColumnField,
-    LoomStruct,
-    Numeric,
-    String,
-    Text,
-)
+from loom.core.model import BaseModel, ColumnField, LoomStruct, Numeric, String, Text
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.streaming.nodes._table import Backend, IntoTable, SqlAlchemySinkConfig

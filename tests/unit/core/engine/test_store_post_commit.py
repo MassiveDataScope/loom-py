@@ -24,6 +24,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import store_channel
+from loom.core.errors import StoresNotCommitted
 from loom.core.job.context import (
     add_pending_dispatch,
     add_pending_publish,
@@ -37,7 +38,7 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
-from loom.core.uow.scope import StoresNotCommitted, current_scope, unscoped
+from loom.core.uow.scope import current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
 from tests.unit.core.cache._doubles import CountingCacheBackend

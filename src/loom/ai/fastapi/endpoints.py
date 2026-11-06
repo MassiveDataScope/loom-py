@@ -56,8 +56,9 @@ from loom.ai.fastapi.response import AgentJSONResponse, error_response, result_p
 from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
 from loom.ai.runtime import AgentRuntime
 from loom.core.config.errors import ConfigError
+from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
-from loom.core.model import BoundaryValidationError, LoomFrozenStruct
+from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan

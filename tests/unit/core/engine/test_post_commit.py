@@ -8,12 +8,11 @@ import pytest
 
 from loom.core.engine.post_commit import (
     PostCommitChannel,
-    PostCommitError,
     active_channel,
     bind_channel,
     reset_channel,
 )
-from loom.core.errors import LoomError
+from loom.core.errors import LoomError, PostCommitError
 
 
 @pytest.mark.parametrize(("committed", "retryable"), [(True, False), (False, True)])

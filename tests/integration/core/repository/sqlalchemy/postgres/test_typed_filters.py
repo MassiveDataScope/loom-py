@@ -16,14 +16,8 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
-from loom.core.model import (
-    BaseModel,
-    BoundaryValidationError,
-    ColumnField,
-    ColumnType,
-    Postgres,
-    String,
-)
+from loom.core.errors import BoundaryValidationError
+from loom.core.model import BaseModel, ColumnField, ColumnType, Postgres, String
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec

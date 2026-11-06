@@ -15,15 +15,8 @@ from sqlalchemy import and_, bindparam, func, select, text
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import (
-    JSON,
-    BaseModel,
-    BoundaryValidationError,
-    ColumnField,
-    ColumnType,
-    LoomStruct,
-    String,
-)
+from loom.core.errors import BoundaryValidationError
+from loom.core.model import JSON, BaseModel, ColumnField, ColumnType, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.core.persistence.stores import DEFAULT_STORE

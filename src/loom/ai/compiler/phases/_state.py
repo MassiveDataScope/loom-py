@@ -38,7 +38,8 @@ import msgspec
 from loom.ai.abc import StateShape
 from loom.ai.compiler.phases._output import _resolve_symbol, _schema_to_annotation
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
-from loom.core.model import UnsupportedBoundaryType, loom_type, msgspec_type
+from loom.core.errors import UnsupportedBoundaryType
+from loom.core.model import loom_type, msgspec_type
 
 _CompileResult = tuple[StateShape | None, list[AgentCompilationIssue]]
 

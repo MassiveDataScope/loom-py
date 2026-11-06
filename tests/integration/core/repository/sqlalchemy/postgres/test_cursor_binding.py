@@ -20,17 +20,11 @@ from loom.core.cache import (
     GenerationalDependencyResolver,
 )
 from loom.core.command import Command
+from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, DateTime
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import Repository
-from loom.core.repository.abc import (
-    CursorCodec,
-    CursorResult,
-    PaginationMode,
-    QuerySpec,
-    SortSpec,
-    UnsupportedQuery,
-)
+from loom.core.repository.abc import CursorCodec, CursorResult, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 

@@ -15,7 +15,8 @@ from loom.core import _async
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitChannel, PostCommitError, active_channel
+from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.persistence.stores import DEFAULT_STORE

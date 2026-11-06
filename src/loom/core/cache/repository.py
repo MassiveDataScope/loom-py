@@ -30,8 +30,9 @@ from loom.core.cache.result_codec import (
     to_payload,
 )
 from loom.core.engine.post_commit import store_channel
+from loom.core.errors import BoundaryValidationError
 from loom.core.logger import get_logger
-from loom.core.model import BoundaryValidationError, LoomType, is_pydantic_model, loom_type_of
+from loom.core.model import LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
 from loom.core.model.introspection import (

@@ -79,8 +79,9 @@ from loom.ai.runtime._mcp import (
     mcp_session_for,
 )
 from loom.core.di import LoomContainer
+from loom.core.errors import BoundaryValidationError
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.model import BoundaryValidationError, LoomType
+from loom.core.model import LoomType
 from loom.core.sql.config import SqlConfig
 from loom.core.use_case.invoker import ApplicationInvoker
 

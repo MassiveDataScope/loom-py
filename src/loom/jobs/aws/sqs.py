@@ -20,7 +20,7 @@ from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.errors import LoomError
+from loom.core.errors import SQSDispatchError
 from loom.core.identity import current_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
@@ -69,12 +69,6 @@ class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
 
 class SQSQueueConfigError(ConfigError):
     """A job's queue has no URL in ``sqs.queues``, or its FIFO queue no ``__group_by__``."""
-
-
-class SQSDispatchError(LoomError):
-    """A message SQS cannot carry, or a send that failed; ``code`` names which."""
-
-    retryable = False
 
 
 def check_queues(
@@ -414,7 +408,6 @@ def _placement(
 
 __all__ = [
     "SQSConfig",
-    "SQSDispatchError",
     "SQSJobService",
     "SQSQueueConfigError",
     "build_backend",

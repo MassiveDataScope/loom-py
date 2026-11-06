@@ -29,7 +29,8 @@ from typing import Any
 import msgspec
 from starlette.responses import Response
 
-from loom.core.model import UnsupportedBoundaryType, loom_type_of
+from loom.core.errors import UnsupportedBoundaryType
+from loom.core.model import loom_type_of
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import LOCATION_HEADER
 

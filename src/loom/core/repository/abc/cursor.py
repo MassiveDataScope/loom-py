@@ -20,7 +20,7 @@ The ``unsigned`` mode emits ``base64url(payload)`` alone, for tests and
 debugging. Strict decoding applies in every mode: a malformed token, a naive
 datetime, a key of an unknown type, a token of another backend or for another
 sort or primary key, or holding a value of another type than its column, is
-refused with :class:`~loom.core.repository.abc.errors.UnsupportedQuery`,
+refused with :class:`~loom.core.errors.UnsupportedQuery`,
 whose message never echoes the token. See ADR 0004.
 """
 
@@ -47,8 +47,8 @@ from loom.core.checks import silenced_checks
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.environment import Environment, configured_variable, resolve_environment
+from loom.core.errors import UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
-from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import FilterSpec, QuerySpec
 
 if TYPE_CHECKING:

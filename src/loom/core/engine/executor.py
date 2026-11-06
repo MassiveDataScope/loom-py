@@ -17,13 +17,20 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep
 from loom.core.engine.post_commit import (
     PostCommitChannel,
-    PostCommitError,
     active_channel,
     bind_channel,
     drain_after_failure,
     reset_channel,
 )
-from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
+from loom.core.errors import (
+    NestedElevation,
+    NestedIdentityMismatch,
+    NotFound,
+    PostCommitError,
+    RuleViolation,
+    RuleViolations,
+    Unauthenticated,
+)
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.tracing import get_trace_id
@@ -31,8 +38,6 @@ from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCom
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
-    NestedElevation,
-    NestedIdentityMismatch,
     current_scope,
     invocation,
     invocation_error,
@@ -131,7 +136,7 @@ class RuntimeExecutor:
     ends it through that coordinator: commit on success, rollback on any exception, cancellation
     included.  A nested execution in the task that owns the scope pushes its
     frame and never commits; one from another task, or into a closed scope,
-    raises :class:`~loom.core.uow.scope.ScopeOwnershipError`.  Post-commit
+    raises :class:`~loom.core.errors.ScopeOwnershipError`.  Post-commit
     actions (job dispatches, cache invalidations) are held by the store that
     owns them and, once the scope has closed, run on the
     :class:`~loom.core.engine.post_commit.PostCommitChannel` of the execution
@@ -368,7 +373,7 @@ class RuntimeExecutor:
         Post-commit actions queued during the execution run after the scope
         has closed, those of each store as its outcome allows; when they
         fail the result is a
-        :class:`~loom.core.engine.post_commit.PostCommitError` and the
+        :class:`~loom.core.errors.PostCommitError` and the
         transaction stays committed.
 
         Args:
@@ -401,19 +406,19 @@ class RuntimeExecutor:
             NotFound: If a Load step finds no entity in the repository.
             Unauthenticated: If the plan declares ``Caller()`` and no identity
                 was supplied.
-            loom.core.engine.post_commit.PostCommitError: If a post-commit
+            loom.core.errors.PostCommitError: If a post-commit
                 action failed after the unit of work committed.
-            loom.core.uow.scope.ScopeOwnershipError: If a scope is published
+            loom.core.errors.ScopeOwnershipError: If a scope is published
                 in this context but this task does not own it, or it is
                 already closed.
-            loom.core.uow.scope.StoresNotCommitted: If two or more stores
+            loom.core.errors.StoresNotCommitted: If two or more stores
                 of the invocation did not end the same way.
-            loom.core.uow.scope.NestedIdentityMismatch: If this execution
+            loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other
                 than the one the scope was opened with.
-            loom.core.uow.scope.NestedElevation: If the execution running
+            loom.core.errors.NestedElevation: If the execution running
                 in this context has elevated a scope.
-            loom.core.uow.scope.UndeclaredStoreWrite: If this execution
+            loom.core.errors.UndeclaredStoreWrite: If this execution
                 writes and a read-only execution encloses it.
         """
         plan = self._plan_for(type(compilable))

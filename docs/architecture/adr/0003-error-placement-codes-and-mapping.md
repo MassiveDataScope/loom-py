@@ -17,7 +17,7 @@ branch where marked.
 ### Run-time errors
 
 **Hierarchy.** Seven classes subclass `LoomError` directly instead of
-`DomainError` (`src/loom/core/errors/errors.py:31`) or `SystemError` (`:39`):
+`DomainError` or `SystemError` (`src/loom/core/errors/base.py`):
 
 | Class | Location |
 |---|---|
@@ -31,9 +31,9 @@ branch where marked.
 The 2.21.0 branch also raises a bare `LoomError(..., code=UNSUPPORTED_QUERY)` in
 `_DeclaredQuery.decode`, because `UnsupportedQuery` requires a backend and a
 model. `SystemError.__init__` hard-codes `SYSTEM_ERROR`
-(`core/errors/errors.py:50-51`).
+(`core/errors/base.py`).
 
-**Codes.** `LoomError.code` is a plain `str` (`errors.py:25`). Four raw codes
+**Codes.** `LoomError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
 sit outside `ErrorCode` (`core/errors/codes.py:20-38`):
 
 - `boundary_type_unsupported` (`_loom_type.py:116`);
@@ -77,7 +77,7 @@ leak internal text (#353). The leaking sources are `JobFailedError`'s
 and constraint and column names (`integrity.py:59-71`, `:103-122`; #354).
 
 Celery retries `DomainError`s (`celery/runner.py:220-227`; #355), against
-`core/errors/errors.py:42-44`.
+`core/errors/base.py`.
 
 AI has its own table (`ai/fastapi/endpoints.py:74-98`). `TransportError`,
 however, takes literal statuses and raw codes at each raise site
@@ -163,12 +163,16 @@ The seven classes rebase without changing any status:
 
 **R3. Where `LoomError` classes live.**
 
-- A generic or multi-transport class lives in `loom/core/errors/errors.py`.
-- A class used by one pillar only lives in an errors module that pillar
-  already has.
-- No new files.
-- Each moved class stays importable from its old path as the same object
-  until 3.0.
+- A class raised or caught by more than one pillar lives in
+  `loom/core/errors/<area>.py` (base, domain, auth, model, jobs, stores;
+  `codes.py` holds the codes) and is re-exported from `loom.core.errors`.
+- A class used by one pillar only lives in that pillar's errors module.
+- Compile, config and startup errors do not move.
+- New area modules are allowed under `loom/core/errors/`.
+- Moved classes are importable only from `loom.core.errors` (no re-exports
+  at old paths).
+
+Amendment (2026-11): R3 was amended to split `loom/core/errors/` by area.
 
 | Class | From | To | Why |
 |---|---|---|---|
@@ -181,9 +185,8 @@ The seven classes rebase without changing any status:
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the existing ETL run-time errors module |
 
-The `core/sql/abc/errors.py` and `core/repository/abc/errors.py` modules stay,
-for SQL subsystem errors and for any further repository errors. Compile and
-startup errors do not move.
+The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
+Compile and startup errors do not move.
 
 **R4. One mapper per transport.**
 
@@ -239,7 +242,7 @@ direct names, with no inheritance index.
 |---|---|---|
 | R1 | `code=` keywords of `super().__init__` calls inside classes in `src/loom` | the value is not `ErrorCode.<MEMBER>` and not a parameter named `code` whose default is `ErrorCode.<MEMBER>` |
 | R2 | class bases and calls | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
-| R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not `loom/core/errors/errors.py` or an existing module named `errors.py`/`_errors.py` |
+| R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not under `loom/core/errors/` and is not a module named `errors.py`/`_errors.py` |
 | R4-REST | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
 | R5 | `src/loom/core` | an import of `http`, `fastapi` or `starlette` |
 

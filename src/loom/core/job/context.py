@@ -11,7 +11,7 @@ Inside an execution the executor owns the drain: :func:`flush_pending_dispatches
 refuses to run then, and :func:`clear_pending_dispatches` discards the
 execution's dispatches rather than the fallback channel's. A read-only
 execution writes nothing, through a job neither: queueing a dispatch from one
-raises :class:`~loom.core.uow.scope.UndeclaredStoreWrite`.
+raises :class:`~loom.core.errors.UndeclaredStoreWrite`.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ async def flush_pending_dispatches() -> None:
         RuntimeError: If called inside an execution.  The executor owns the
             drain of its post-commit channel and runs it once the unit of
             work has closed.
-        loom.core.engine.post_commit.PostCommitError: If any dispatch raised;
+        loom.core.errors.PostCommitError: If any dispatch raised;
             the remaining dispatches still run.
     """
     if active_channel() is not None:

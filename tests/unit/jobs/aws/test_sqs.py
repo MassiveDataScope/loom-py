@@ -19,11 +19,11 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import (
     PostCommitChannel,
-    PostCommitError,
     active_channel,
     bind_channel,
     reset_channel,
 )
+from loom.core.errors import PostCommitError, SQSDispatchError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import decode_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
@@ -35,12 +35,7 @@ from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
-from loom.jobs.aws.sqs import (
-    MAX_MESSAGE_BYTES,
-    SQSDispatchError,
-    SQSJobService,
-    SQSQueueConfigError,
-)
+from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService, SQSQueueConfigError
 from tests.helpers.extras import patched_aws_clients, without_boto3
 from tests.helpers.jobs import (
     BROKER,

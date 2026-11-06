@@ -4,8 +4,8 @@ from uuid import UUID
 
 import pytest
 
+from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import UnsupportedQuery
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 
 from .conftest import FakeClient, Product, ProductCreate, ProductUpdate

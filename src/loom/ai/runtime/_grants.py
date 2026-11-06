@@ -49,8 +49,9 @@ from loom.ai._roles import bound_query_roles
 from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
 from loom.core.identity import Identity
-from loom.core.model import BoundaryValidationError, UnsupportedBoundaryType, loom_type_of
+from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.abc import SqlQueryResult

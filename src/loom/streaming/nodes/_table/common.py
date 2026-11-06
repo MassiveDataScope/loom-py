@@ -96,8 +96,8 @@ import msgspec
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.connections import ClickHouseConnection
+from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
 from loom.core.model.redaction import Dsn, RedactedMap

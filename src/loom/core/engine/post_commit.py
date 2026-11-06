@@ -20,8 +20,7 @@ from contextvars import ContextVar, Token
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core._async import held_task
-from loom.core.errors import LoomError
-from loom.core.errors.codes import ErrorCode
+from loom.core.errors import PostCommitError
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -42,28 +41,6 @@ _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
 )
 _logger = get_logger(__name__)
-
-
-class PostCommitError(LoomError):
-    """Raised when one or more post-commit actions failed after a commit.
-
-    Every action runs even when an earlier one fails; the error carries all
-    failures in priority, publish, then plain order.
-
-    Args:
-        committed: Whether the transaction had committed when the actions ran.
-        failures: Exceptions in priority, publish, then plain order.
-    """
-
-    def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
-        self.committed = committed
-        # A retry once the transaction committed would apply it twice.
-        self.retryable = not committed
-        self.failures = failures
-        super().__init__(
-            f"{len(failures)} post-commit action(s) failed (committed={committed})",
-            code=ErrorCode.POST_COMMIT_FAILURE,
-        )
 
 
 class PostCommitChannel:
