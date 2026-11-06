@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -31,12 +31,17 @@ from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter, LambdaUnservedConfigError
-from loom.serverless.aws.lambda_.sqs import DuplicateJobName, SQSBatchFailedError, SQSHandler
+from loom.serverless.aws.lambda_ import (
+    DuplicateJobName,
+    LambdaAdapter,
+    LambdaUnservedConfigError,
+    SQSBatchFailedError,
+    SQSHandler,
+)
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
-from tests.unit.serverless.aws.lambda_._records import RecordFactory
+from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
 
 
 class _OtherJobService:
@@ -69,15 +74,14 @@ def test_batch_outcomes(
 
 @pytest.fixture
 def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> Iterator[SQSHandler]:
-    worker = {"sqs": True, "report_batch_item_failures": False}
     source = composition_source(
-        ConfigContext.from_dict({"lambda": {"functions": {"worker": worker}}}),
-        app=AppConfig(name="lambda-sqs", entry="worker"),
+        ConfigContext.from_dict(with_worker({}, report_batch_item_failures=False)),
+        app=AppConfig(name="lambda-sqs", entry=WORKER),
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    adapter = LambdaSQSAdapter(jobs=[probe[0]])
-    yield adapter.bind(compose_application(source, adapter))
+    adapter = LambdaAdapter(jobs=[probe[0]])
+    yield cast(SQSHandler, adapter.bind(compose_application(source, adapter)))
     adapter.close()
 
 
@@ -85,14 +89,13 @@ def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> I
 def test_the_recipe_refuses_a_misdeclared_lambda_section(
     tmp_path: Path, probe: tuple[type[Job[None]], Any], entry: str | None
 ) -> None:
-    worker = {"sqs": True, "batch_size": 11}
     source = composition_source(
-        ConfigContext.from_dict({"lambda": {"functions": {"worker": worker}}}),
+        ConfigContext.from_dict(with_worker({}, batch_size=11)),
         app=AppConfig(name="lambda-sqs", entry=entry),
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    adapter = LambdaSQSAdapter(jobs=[probe[0]])
+    adapter = LambdaAdapter(jobs=[probe[0]])
     with pytest.raises(ConfigError, match="needs batching_window_s"):
         adapter.recipe(source)
 
@@ -154,7 +157,7 @@ def test_each_message_sees_its_own_identity_and_trace(
 def test_fifty_warm_invocations_open_once_on_one_loop(
     handler: SQSHandler,
     record: RecordFactory,
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
     seen: list[tuple[str, str | None, str | None]],
     loops: list[asyncio.AbstractEventLoop],
 ) -> None:
@@ -172,7 +175,7 @@ def test_recipe_does_not_load_http_or_celery_libraries() -> None:
     code = """
 import sys
 from pathlib import Path
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
+from loom.serverless.aws.lambda_ import LambdaAdapter
 from loom.composition import AppConfig, CompositionSource
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
@@ -183,15 +186,17 @@ class Probe(Job[None]):
     def execute(self) -> None:
         pass
 source = CompositionSource(
-    config=ConfigContext.from_dict({"app": {"name": "lambda-sqs"}}),
+    config=ConfigContext.from_dict(
+        {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
+    ),
     environment=Environment.TEST,
     code_path=Path.cwd(),
     config_root=Path.cwd(),
-    app=AppConfig(name="lambda-sqs"),
+    app=AppConfig(name="lambda-sqs", entry="worker"),
     observability=ObservabilityRuntime.noop(),
     observability_config=ObservabilityConfig(),
 )
-LambdaSQSAdapter(jobs=[Probe]).recipe(source)
+LambdaAdapter(jobs=[Probe]).recipe(source)
 print([name for name in ("fastapi", "starlette", "pydantic", "celery") if name in sys.modules])
 """
     result = subprocess.run(
@@ -208,7 +213,7 @@ def test_keyboard_interrupt_propagates(handler: SQSHandler, record: RecordFactor
 
 
 def test_bind_requires_recipe() -> None:
-    adapter = LambdaSQSAdapter()
+    adapter = LambdaAdapter()
     with pytest.raises(CompositionStateError, match="call recipe first"):
         adapter.bind(None)  # type: ignore[arg-type]
 
@@ -218,7 +223,7 @@ def test_recipe_uses_lambda_profile_and_skips_rest(source: CompositionSource) ->
         def execute(self) -> None:
             return None
 
-    adapter = LambdaSQSAdapter(jobs=[LocalJob])
+    adapter = LambdaAdapter(jobs=[LocalJob])
     recipe = adapter.recipe(source)
     assert recipe.profile is LAMBDA_PROFILE
     assert recipe.agents is False
@@ -238,7 +243,7 @@ def _add_broken_resource(application: Application) -> None:
 
 
 def test_bind_propagates_open_failure(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
 ) -> None:
     adapter, application, _ = built
     _add_broken_resource(application)
@@ -347,7 +352,7 @@ def test_cancelled_error_propagates(handler: SQSHandler, record: RecordFactory) 
 
 @pytest.mark.parametrize("action", ["recipe", "bind", "bind_after_close"])
 def test_adapter_already_composed(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
     source: CompositionSource,
     action: str,
 ) -> None:
@@ -370,7 +375,7 @@ def test_adapter_already_composed(
 
 
 def test_close_closes_opened_resources(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
 ) -> None:
     adapter, application, lifecycle = built
     adapter.bind(application)
@@ -386,13 +391,13 @@ def test_duplicate_qualname_is_configuration_error(source: CompositionSource) ->
 
         return Duplicate
 
-    adapter = LambdaSQSAdapter(jobs=[make_job(), make_job()])
+    adapter = LambdaAdapter(jobs=[make_job(), make_job()])
     with pytest.raises(DuplicateJobName):
         adapter.recipe(source)
 
 
 def test_failed_open_closes_its_loop(
-    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
+    built: tuple[LambdaAdapter, Application, list[str]], event_loops: RecordedLoops
 ) -> None:
     adapter, application, _ = built
     _add_broken_resource(application)
@@ -402,7 +407,7 @@ def test_failed_open_closes_its_loop(
 
 
 def test_failed_open_unsets_its_loop(
-    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
+    built: tuple[LambdaAdapter, Application, list[str]], event_loops: RecordedLoops
 ) -> None:
     adapter, application, _ = built
     _add_broken_resource(application)
@@ -413,7 +418,7 @@ def test_failed_open_unsets_its_loop(
 
 @pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
 def test_closing_the_handler_closes_its_loop(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
     event_loops: RecordedLoops,
     closes: int,
 ) -> None:
@@ -427,7 +432,7 @@ def test_closing_the_handler_closes_its_loop(
 
 
 def test_closing_the_handler_closes_the_application(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
 ) -> None:
     adapter, application, lifecycle = built
     handler = adapter.bind(application)
@@ -438,7 +443,7 @@ def test_closing_the_handler_closes_the_application(
 
 
 def test_job_span_is_emitted(
-    built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
+    built: tuple[LambdaAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
     class Observer:
         def __init__(self) -> None:
@@ -519,12 +524,12 @@ def test_a_record_runs_under_the_applications_job_timeout(
             return 5000
 
     configured = composition_source(
-        ConfigContext.from_dict({"app": {"name": "lambda-sqs"}, "jobs": jobs}),
+        ConfigContext.from_dict(with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs})),
         app=source.app,
         code_path=source.code_path,
         config_root=source.config_root,
     )
-    adapter = LambdaSQSAdapter(jobs=[SlowJob])
+    adapter = LambdaAdapter(jobs=[SlowJob])
     handler = adapter.bind(compose_application(configured, adapter))
     try:
         result = handler(
@@ -538,7 +543,7 @@ def test_a_record_runs_under_the_applications_job_timeout(
 
 
 def test_malformed_record_emits_error_span(
-    built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
+    built: tuple[LambdaAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
     class Observer:
         def __init__(self) -> None:
@@ -564,7 +569,7 @@ def test_malformed_record_emits_error_span(
 
 
 def test_bind_reports_inline_dispatch(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     adapter, application, _ = built
@@ -576,7 +581,7 @@ def test_bind_reports_inline_dispatch(
 
 
 def test_bind_warns_for_non_inline_service(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    built: tuple[LambdaAdapter, Application, list[str]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     adapter, application, _ = built
@@ -603,7 +608,7 @@ def test_recipe_warns_for_ignored_discovered_components(
     manifest.CALLBACKS = [type("DiscoveredCallback", (), {})]  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
     configured = _manifest_source(source, manifest.__name__)
-    LambdaSQSAdapter(jobs=[probe[0]]).recipe(configured)
+    LambdaAdapter(jobs=[probe[0]]).recipe(configured)
     assert any("ignores AutoCRUD" in message for message in caplog.messages)
     assert any("ignores discovered job callbacks" in message for message in caplog.messages)
 
@@ -626,7 +631,7 @@ def _manifest_source(source: CompositionSource, module: str, **sections: Any) ->
     discovery = {"mode": "manifest", "manifest": {"module": module}}
     return composition_source(
         ConfigContext.from_dict(
-            {"app": {"name": "lambda-sqs", "discovery": discovery}, **sections}
+            with_worker({"app": {"name": "lambda-sqs", "discovery": discovery}, **sections})
         ),
         app=source.app,
         code_path=source.code_path,
@@ -649,7 +654,7 @@ def test_what_lambda_does_not_serve_is_refused_before_discovery(
         source, "tests.unit.serverless.aws.lambda_._no_such_manifest", **sections
     )
 
-    adapter = LambdaSQSAdapter()
+    adapter = LambdaAdapter()
 
     with pytest.raises(LambdaUnservedConfigError) as raised:
         adapter.recipe(undiscoverable)
@@ -667,7 +672,7 @@ def test_manifest_agents_are_refused(
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
     configured = _manifest_source(source, manifest.__name__)
 
-    adapter = LambdaSQSAdapter()
+    adapter = LambdaAdapter()
 
     with pytest.raises(LambdaUnservedConfigError) as raised:
         adapter.recipe(configured)

@@ -4,12 +4,8 @@ from typing import TYPE_CHECKING, Any
 from loom.testing.agents import ContractScenario, FakeAgentEngine, agent_engine_contract_suite
 from loom.testing.golden import GoldenHarness, serialize_plan
 from loom.testing.in_memory import InMemoryRepository
-from loom.testing.jobs import (
-    DispatchedJob,
-    RecordingJobService,
-    sqs_raw_record,
-    sqs_record,
-)
+from loom.testing.jobs import DispatchedJob, RecordingJobService
+from loom.testing.lambda_events import lambda_event
 from loom.testing.runner import (
     AgentHandleDouble,
     McpHandleDouble,
@@ -43,9 +39,8 @@ __all__ = [
     "UseCaseTest",
     "agent_engine_contract_suite",
     "build_repository_harness",
+    "lambda_event",
     "serialize_plan",
-    "sqs_raw_record",
-    "sqs_record",
 ]
 
 _REPOSITORY_HARNESS_EXPORTS = frozenset(

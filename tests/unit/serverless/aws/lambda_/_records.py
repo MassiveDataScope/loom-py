@@ -1,4 +1,4 @@
-"""SQS record builders shared by Lambda adapter tests."""
+"""SQS record builders and the jobs function shared by Lambda adapter tests."""
 
 from __future__ import annotations
 
@@ -6,9 +6,16 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from loom.testing import sqs_raw_record
+from loom.testing import lambda_event
 
 RecordFactory = Callable[..., dict[str, Any]]
+WORKER = "worker"
+
+
+def with_worker(document: dict[str, Any], **trigger: Any) -> dict[str, Any]:
+    """*document* declaring the jobs function :data:`WORKER`, its trigger extended by *trigger*."""
+    worker = {"trigger": {"source": "jobs", **trigger}}
+    return document | {"lambda": {"functions": {WORKER: worker}}}
 
 
 def make_record(
@@ -24,4 +31,8 @@ def make_record(
     if body is None:
         envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
         body = json.dumps(envelope | {"payload": {}, "trace_id": trace_id})
-    return sqs_raw_record(body, message_id=message_id, group_id="group" if fifo else None)
+    event = lambda_event(
+        "jobs", body=body, message_id=message_id, group_id="group" if fifo else None
+    )
+    record: dict[str, Any] = event["Records"][0]
+    return record

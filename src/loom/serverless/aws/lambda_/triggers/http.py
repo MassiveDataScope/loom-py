@@ -1,8 +1,8 @@
-"""Serve a loom application from AWS Lambda behind API Gateway.
+"""Serve a loom application from AWS Lambda behind API Gateway: an ``http`` trigger.
 
 Install the ``lambda`` extra. The entry point changes one line::
 
-    handler = create_app("config.yaml", adapter=LambdaHTTPAdapter())
+    handler = create_app("config.yaml", adapter=LambdaAdapter())
 
 The recipe is the FastAPI adapter's, so the configuration, the authentication,
 discovery and the CRUD gating have one source of truth. The transport is a bare
@@ -52,71 +52,49 @@ from loom.rest.fastapi.sql import mounted_sql_endpoints
 from loom.serverless.aws.lambda_._refusals import (
     LambdaUnservedConfigError,
     refuse_manifest_agents,
-    refuse_unserved_config,
 )
-from loom.serverless.aws.lambda_.functions import entry_function, http_function
+from loom.serverless.aws.lambda_.functions import http_function
 
-_COMPONENT = "LambdaHTTPAdapter"
 _PATH_LOCATION = "path"
 
 
-class LambdaHTTPAdapter:
-    """Serve a composed application to API Gateway HTTP API (payload 2.0) from AWS Lambda.
+class HttpServing:
+    """Compose as :class:`~loom.rest.fastapi.FastAPIAdapter` does, with the Lambda pool profile.
 
-    Swapping ``FastAPIAdapter()`` for ``LambdaHTTPAdapter()`` in
-    ``create_app`` is the whole change: the same configuration and code serve
-    the same routes, authentication and error bodies. Health, metrics, SQL
-    endpoints, agents and OpenAPI are not served; a configuration declaring
-    metrics, an SQL endpoint or agents is refused. Left at their default, the
-    authentication exclusions are therefore none: a route at ``/health`` or
-    ``/docs`` requires a token. An explicit ``exclude_paths`` is honoured as
-    written.
-
-    Unlike other adapters, :meth:`bind` opens the application: Lambda calls
-    ``create_app`` at Init, and the returned :class:`LambdaHTTPHandler` keeps
-    it open across warm invocations.
-
-    One instance composes one application.
+    Health, metrics, SQL endpoints, agents and OpenAPI are not served; a
+    configuration declaring metrics, an SQL endpoint or agents is refused.
+    Left at their default, the authentication exclusions are therefore none:
+    a route at ``/health`` or ``/docs`` requires a token. An explicit
+    ``exclude_paths`` is honoured as written.
 
     Args:
+        component: The adapter, named in refusals.
+        function: The ``http`` function of ``lambda.functions`` served: its
+            interfaces only, with its ``auth`` when it declares one; every
+            interface when ``None``.
         authenticator: Custom authentication mechanism; requires
             ``custom: true`` in the authentication in effect.
-        function: The function of ``lambda.functions`` to serve: its
-            interfaces only, with its ``auth`` when it declares one. The one
-            ``app.entry`` names when omitted, so ``LOOM__APP__ENTRY`` still
-            selects the function of an adapter built in code.
     """
 
     def __init__(
-        self, *, authenticator: Authenticator | None = None, function: str | None = None
+        self, component: str, function: str | None, authenticator: Authenticator | None
     ) -> None:
-        self._authenticator = authenticator
+        self._component = component
         self._function = function
+        self._authenticator = authenticator
         self._declared: RestDeclaration | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
-        """Compose as :class:`~loom.rest.fastapi.FastAPIAdapter` does, with the Lambda pool profile.
+        """The FastAPI recipe, with the Lambda pool profile and no agents.
 
         Raises:
-            LambdaUnservedConfigError: When the configuration enables
-                metrics, declares agents or mounts an SQL endpoint; but for
-                the manifest's agents, before discovery.
-            CompositionStateError: When this instance already composed an
-                application.
+            LambdaUnservedConfigError: When the configuration mounts an SQL
+                endpoint, or the manifest declares agents.
             ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
                 raises it.
         """
-        if self._declared is not None:
-            raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
-            )
-        refuse_unserved_config(source, _COMPONENT)
-        _refuse_sql_endpoints(source.config)
-        served = (
-            entry_function(source.config, source.app.entry)
-            if self._function is None
-            else http_function(source.config, self._function)
-        )
+        _refuse_sql_endpoints(source.config, self._component)
+        served = http_function(source.config, self._function)
         recipe, declared = compose_rest(
             source,
             authenticator=self._authenticator,
@@ -124,7 +102,7 @@ class LambdaHTTPAdapter:
             auth_section=served.auth_section,
             select_interfaces=served.select,
         )
-        refuse_manifest_agents(recipe.discovered.agent_specs, _COMPONENT)
+        refuse_manifest_agents(recipe.discovered.agent_specs, self._component)
         self._declared = declared
         return dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
 
@@ -132,24 +110,24 @@ class LambdaHTTPAdapter:
         """Mount the routes, error handlers and middleware, then open *application*.
 
         Raises:
-            CompositionStateError: When :meth:`recipe` has not run on this instance.
+            CompositionStateError: When :meth:`recipe` has not run.
             ConfigError: When an authentication exclusion reaches a templated route.
             Exception: The failure to open the application, as itself.
         """
         if self._declared is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=_COMPONENT)
+                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=self._component)
             )
         return LambdaHTTPHandler(_starlette_app(application, self._declared), application)
 
 
-def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
+def _refuse_sql_endpoints(ctx: ConfigContext, component: str) -> None:
     sql = ctx.section_optional(ConfigKey.SQL, SqlConfig)
     mounted = mounted_sql_endpoints(sql) if sql is not None else ()
     if mounted:
         raise LambdaUnservedConfigError(
             f"sql.connections.{mounted[0]}.sql_endpoint",
-            "LambdaHTTPAdapter does not mount SQL endpoints. Disable the endpoint "
+            f"{component} does not mount SQL endpoints. Disable the endpoint "
             "(sql_endpoint.enabled: false) or serve it with FastAPIAdapter.",
         )
 

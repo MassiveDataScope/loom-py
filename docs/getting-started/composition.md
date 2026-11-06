@@ -17,12 +17,15 @@ app = create_app("config/api.yaml", adapter=FastAPIAdapter())
 ```
 
 When `app.entry` is set, `create_app("config/api.yaml")` selects the adapter
-from the loaded configuration. Accepted built-in entries are `fastapi`,
-`lambda_http`, and `lambda_sqs`. An explicit `adapter=` takes precedence.
-Without either `app.entry` or `adapter=`, startup raises `ConfigError`.
+from the loaded configuration. The built-in entries are `fastapi` and
+`lambda`; any other entry names a function of `lambda.functions`, served by
+`LambdaAdapter`. An explicit `adapter=` takes precedence. Without either
+`app.entry` or `adapter=`, startup raises `ConfigError`.
 
-Several Lambda functions can share one YAML file. Name each function under
-`lambda.functions`, then set `app.entry` to the function to serve:
+`entry: lambda`, or `LambdaAdapter()` without a declared function, serves
+every interface over HTTP. Several Lambda functions can share one YAML file:
+name each one under `lambda.functions`, declare what invokes it under its
+`trigger`, then set `app.entry` to the function to serve:
 
 ```yaml
 app:
@@ -31,26 +34,101 @@ app:
 lambda:
   functions:
     public_api:
-      http: [CatalogInterface, SearchInterface]
+      trigger:
+        source: http
+        interfaces: [CatalogInterface, SearchInterface]
     admin_api:
-      http: [AdminInterface]
-      auth:
-        jwt:
-          secret_path: /secrets/admin.key
-          algorithms: [HS256]
-          audience: admin
+      trigger:
+        source: http
+        interfaces: [AdminInterface]
+        auth:
+          jwt:
+            secret_path: /secrets/admin.key
+            algorithms: [HS256]
+            audience: admin
     worker:
-      sqs: true
+      trigger:
+        source: jobs
+        queue: jobs
+        batch_size: 10
 ```
+
+A `trigger` takes the keys of its `source` only:
+
+| `source` | Invoked by | Keys |
+|---|---|---|
+| `http` | API Gateway | `interfaces`, `auth` |
+| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
+| `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or `via: sqs` | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); via sqs the keys of `jobs` |
 
 An HTTP function serves only the interfaces it lists, a Python `RestInterface`
 by its class name and a YAML one by its `app.rest.interfaces` key; other routes
-return 404. Function `auth` uses the `app.rest.auth` schema and replaces that
+return 404. Its `auth` uses the `app.rest.auth` schema and replaces that
 section for the function; an authenticator passed in code needs `custom: true`
 there, as it does in `app.rest.auth`. In staging and production,
 `LOOM__APP__ENTRY=admin_api` can select a function without changing the YAML.
 An interface can belong to only one function. Startup refuses unknown or
 ambiguous names and warns about discovered interfaces assigned to none.
+
+## Event triggers
+
+An `eventbridge`, `s3`, `sns` or `schedule` function runs the job it declares
+for each event:
+
+```yaml
+lambda:
+  functions:
+    invoices_in:
+      trigger:
+        source: eventbridge
+        job: ImportInvoice
+        identity: {subject: svc:invoices, roles: [invoice_importer], attributes: {tenant: acme}}
+    invoices_buffered:
+      trigger:
+        source: eventbridge
+        via: sqs
+        queue: invoice_events
+        job: ImportInvoice
+```
+
+| `source` | The job's `Input()` | Span id |
+|---|---|---|
+| `eventbridge` | The event's `detail` | The event's `id` |
+| `schedule` | The schedule's input, as configured in EventBridge Scheduler | None |
+| `sns` | The notification's `Message`, a JSON object | Its `MessageId` |
+| `s3` | One `S3Object` (`loom.serverless.aws.lambda_`) per object: `bucket`, `key` (URL-decoded), `size`, `etag`, `version_id`, `sequencer`, `event_name`, `event_time` | None |
+
+The declared `source` picks how the event is read; loom never guesses it from
+the event. Startup and `loom check --deploy` refuse a job that is not
+discovered, that declares no `Input()` command or that requires another
+parameter, a `job` or `identity` given by a placeholder, and a
+`config.overridable` entry reaching `lambda.functions.*.trigger`.
+
+The job runs as the declared `identity`, with
+`mechanism: lambda:<function>:<source>`, and never as anything the event
+says. Without `identity` it runs anonymous, so a `Caller()` or a row-level
+policy refuses it. The identity grants roles only: it implies no elevation
+and no `BYPASSRLS`.
+
+Invoked directly, the function fails the invocation whenever a job fails,
+retryable or not, a `Command` validation error included. Lambda retries the
+event `maximum_retry_attempts` times within `maximum_event_age_s`, then sends
+it to the function's on-failure destination, which the deployment must
+configure; an event is never dropped silently. An S3 or SNS event holding
+several records runs one job per record, in order, and stops at the first
+failure, so a retry runs the earlier records again: jobs must be idempotent.
+The S3 `s3:TestEvent` runs no job. An SNS message that is not a
+`Notification`, a subscription confirmation included, is refused; loom never
+fetches its `SubscribeURL`. The failure log names the function, job and
+error, never the payload.
+
+`via: sqs` reads each message body as the source delivers it to a queue and
+keeps the batch behaviour of a `jobs` function: partial batch failures,
+retries and the queue's dead-letter queue. An SNS subscription to that queue
+must not use raw message delivery.
+
+The rule or pattern, bucket and prefix, topic or schedule expression that
+send the events are not loom configuration: the deployment creates them.
 
 The design and its sources are recorded in ADR 0007
 (`docs/architecture/adr/0007-composition-root.md`).

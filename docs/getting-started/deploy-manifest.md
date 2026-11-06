@@ -24,11 +24,16 @@ lambda:
   handler: entry.handler
   functions:
     public_api:
-      http: [OrdersInterface]
+      trigger: {source: http, interfaces: [OrdersInterface]}
     worker:
-      sqs: true
-      queue: jobs
-      batch_size: 5
+      trigger: {source: jobs, queue: jobs, batch_size: 5}
+    invoices_in:
+      trigger:
+        source: eventbridge
+        job: ImportInvoice
+        identity: {subject: svc:invoices, roles: [invoice_importer]}
+    alerts:
+      trigger: {source: sns, via: sqs, queue: jobs, job: ImportInvoice}
 sqs:
   queues:
     jobs: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
@@ -37,26 +42,58 @@ sqs:
 - `lambda.handler` is the Lambda handler that every function runs (the module
   that calls `create_app`, in `module.attribute` form). Every function runs
   the same handler and picks its own function through `LOOM__APP__ENTRY`.
-- `lambda.functions.<name>.queue` names the queue an sqs function consumes.
-  It must be a key of `sqs.queues`.
+- `lambda.functions.<name>.trigger.queue` names the queue a `jobs` function,
+  or an event trigger `via: sqs`, consumes. It must be a key of `sqs.queues`.
 
 The manifest refuses a configuration that does not declare these keys, a
-handler or queue URL given by a placeholder, and a function whose key is not a
-Python identifier.
+handler or queue URL given by a placeholder, a function whose key is not a
+Python identifier, and an event trigger whose job startup would refuse.
 
-## Schema (`manifest_version: 1`)
+## Schema (`manifest_version: 2`)
 
 ```json
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "environment": "production",
   "handler": "entry.handler",
   "code_path": "src",
   "queues": {"jobs": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"},
   "functions": {
+    "alerts": {
+      "event": {
+        "source": "sns",
+        "via": "sqs",
+        "queue": "jobs",
+        "batch_size": null,
+        "batching_window_s": null,
+        "max_concurrency": null,
+        "report_batch_item_failures": true,
+        "job": "ImportInvoice",
+        "identity": null,
+        "raw_message_delivery": false
+      },
+      "secrets": ["/shop/jwt"],
+      "ssm_parameters": ["/shop/db-url"]
+    },
+    "invoices_in": {
+      "event": {
+        "source": "eventbridge",
+        "via": null,
+        "job": "ImportInvoice",
+        "identity": {"subject": "svc:invoices", "roles": ["invoice_importer"], "attributes": {}},
+        "on_failure": {
+          "destination_required": true,
+          "maximum_retry_attempts": 2,
+          "maximum_event_age_s": 21600
+        }
+      },
+      "secrets": ["/shop/jwt"],
+      "ssm_parameters": ["/shop/db-url"]
+    },
     "public_api": {
       "event": {
-        "type": "http",
+        "source": "http",
+        "via": null,
         "routes": [{"method": "GET", "path": "/orders/{order_id}"}],
         "auth": {"jwt": {"secret_path": "${secrets:/shop/jwt.path}"}}
       },
@@ -65,7 +102,8 @@ Python identifier.
     },
     "worker": {
       "event": {
-        "type": "sqs",
+        "source": "jobs",
+        "via": null,
         "queue": "jobs",
         "batch_size": 5,
         "batching_window_s": null,
@@ -85,10 +123,12 @@ Python identifier.
 | `handler` | `lambda.handler`. |
 | `code_path` | `app.code_path` (`src` by default), relative to the configuration. |
 | `queues` | `sqs.queues` as written: the queues the application may send jobs to. |
+| `event.source`, `event.via` | The trigger's `source`, and `sqs` for an event trigger `via: sqs`, else `null`. |
 | `event.routes` (http) | Each route of the function's interfaces, prefix included, as startup composes them: Python interfaces from `app.discovery`, YAML ones from `app.rest.interfaces`, `app.rest.disable_routes` applied and the CRUD routes the store's backend cannot serve dropped. A `disable_routes` entry that matches no route is refused, as at startup. |
-| `event.auth` (http) | The function's `auth`, or else `app.rest.auth`, as written. |
-| `event` (sqs) | `queue` and the event source mapping settings of the function. `report_batch_item_failures` is `true` unless the function sets it to `false`. The discovery mode must be one a worker scans. |
-| `secrets`, `ssm_parameters` | The secret and parameter names the function resolves: those of every `${secrets:...}` and `${ssm:...}` placeholder of the configuration, except the other functions' sections. A dotted JSON tail is dropped, so `/shop/jwt.path` lists the secret `/shop/jwt`. `%VAR%` tokens stay as written. An sqs function lists those of `app.rest.auth` too: a worker resolves the whole `app` section. |
+| `event.auth` (http) | The trigger's `auth`, or else `app.rest.auth`, as written. |
+| `event` (jobs, via sqs) | `queue` and the event source mapping settings of the trigger. `report_batch_item_failures` is `true` unless the trigger sets it to `false`. The discovery mode must be one a worker scans. An event trigger adds its `job` and `identity`; an sns one `raw_message_delivery: false`, which its subscription must keep. |
+| `event` (direct) | The `job`, the `identity` it runs as (`null`: anonymous) and `on_failure`: the asynchronous invocation's `maximum_retry_attempts` and `maximum_event_age_s`, defaults applied, and `destination_required: true`, since a failed event goes to the on-failure destination the deployment configures. |
+| `secrets`, `ssm_parameters` | The secret and parameter names the function resolves: those of every `${secrets:...}` and `${ssm:...}` placeholder of the configuration, except the other functions' sections. A dotted JSON tail is dropped, so `/shop/jwt.path` lists the secret `/shop/jwt`. `%VAR%` tokens stay as written. A function running jobs lists those of `app.rest.auth` too: it resolves the whole `app` section. |
 
 The deployment sets `LOOM_ENV` to `environment` and `LOOM__APP__ENTRY` to
 the function's key.
@@ -102,8 +142,10 @@ a `*` or `?` wildcard.
 The keys and lists come out sorted, so the same configuration always produces
 the same bytes and CI can diff the output.
 
-A change that a consumer must handle increases `manifest_version`. A new
-field does not.
+A change that a consumer must handle increases `manifest_version`: a field
+removed or renamed, or a value that changes meaning. A new field does not.
+Version 2 replaced the event's `type` (`http`, `sqs`) with `source` and
+`via`, and added the event triggers.
 
 ## How a deployment tool uses it
 
@@ -112,8 +154,12 @@ construct that takes one manifest entry:
 
 - the code package (from `code_path`) and the handler;
 - the environment variables `LOOM_ENV` and `LOOM__APP__ENTRY`;
-- an API Gateway route for each http route, or an SQS event source mapping
-  with the declared settings and `ReportBatchItemFailures`;
+- an API Gateway route for each http route; an SQS event source mapping with
+  the declared settings and `ReportBatchItemFailures` for a `jobs` or
+  `via: sqs` function; for a direct trigger, the asynchronous invocation's
+  retries, maximum event age and on-failure destination;
+- the rule, bucket notification, topic subscription or schedule that sends a
+  trigger's events, which loom does not declare;
 - an IAM role that reads only the listed secrets and parameters and sends to
   the listed queues.
 

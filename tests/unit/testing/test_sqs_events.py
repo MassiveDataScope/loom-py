@@ -1,10 +1,10 @@
-"""``sqs_record`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
+"""``lambda_event("jobs", ...)`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -13,9 +13,8 @@ from loom.core.config import ConfigContext
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from loom.serverless.aws.lambda_.sqs import SQSHandler
-from loom.testing import sqs_raw_record, sqs_record
+from loom.serverless.aws.lambda_ import LambdaAdapter, SQSHandler
+from loom.testing import lambda_event
 from tests.helpers.composition import composition_source
 from tests.helpers.jobs import SQSClient, sqs_service
 
@@ -44,13 +43,15 @@ def seen() -> Iterator[list[tuple[str, str]]]:
 @pytest.fixture
 def handler(tmp_path: Path) -> Iterator[SQSHandler]:
     source = composition_source(
-        ConfigContext.from_dict({"app": {"name": "sqs-events"}}),
-        app=AppConfig(name="sqs-events", job_service="inline"),
+        ConfigContext.from_dict(
+            {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
+        ),
+        app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    adapter = LambdaSQSAdapter(jobs=[MarkJob])
-    yield adapter.bind(compose_application(source, adapter))
+    adapter = LambdaAdapter(jobs=[MarkJob])
+    yield cast(SQSHandler, adapter.bind(compose_application(source, adapter)))
     adapter.close()
 
 
@@ -59,7 +60,11 @@ def _failed(result: dict[str, Any]) -> list[str]:
 
 
 def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
-    return sqs_record(MarkJob, params={"marker": marker}, message_id=message_id, **options)
+    event = lambda_event(
+        "jobs", job=MarkJob, params={"marker": marker}, message_id=message_id, **options
+    )
+    record: dict[str, Any] = event["Records"][0]
+    return record
 
 
 def test_a_batch_that_succeeds_retries_nothing(
@@ -98,7 +103,7 @@ def test_the_identity_reaches_the_job(handler: SQSHandler, seen: list[tuple[str,
 def test_a_raw_body_loom_cannot_read_is_retried(
     handler: SQSHandler, seen: list[tuple[str, str]]
 ) -> None:
-    result = handler({"Records": [sqs_raw_record("{", message_id="poison")]}, None)
+    result = handler(lambda_event("jobs", body="{", message_id="poison"), None)
 
     assert (_failed(result), seen) == (["poison"], [])
 
@@ -114,5 +119,6 @@ async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
         reset_identity(token)
         clear_pending_dispatches()
 
-    record = sqs_record(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
+    event = lambda_event("jobs", {"n": 1}, job=MarkJob, params={"marker": "a"}, identity=_ALICE)
+    record = event["Records"][0]
     assert [request["MessageBody"] for request in client.requests] == [record["body"]]

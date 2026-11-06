@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -18,12 +19,16 @@ from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
 from loom.core.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.uow.scope import StoresNotCommitted, invocation_error
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from loom.serverless.aws.lambda_.sqs import SQSHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter, SQSHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import event_loops
 from tests.unit.serverless.aws.lambda_._probe import Probe
-from tests.unit.serverless.aws.lambda_._records import RecordFactory, make_record
+from tests.unit.serverless.aws.lambda_._records import (
+    WORKER,
+    RecordFactory,
+    make_record,
+    with_worker,
+)
 
 __all__ = ["event_loops"]
 
@@ -68,8 +73,8 @@ def loops(probe: tuple[type[Job[None]], Probe]) -> list[asyncio.AbstractEventLoo
 @pytest.fixture
 def source(tmp_path: Path) -> CompositionSource:
     return composition_source(
-        ConfigContext.from_dict({"app": {"name": "lambda-sqs"}}),
-        app=AppConfig(name="lambda-sqs"),
+        ConfigContext.from_dict(with_worker({"app": {"name": "lambda-sqs"}})),
+        app=AppConfig(name="lambda-sqs", entry=WORKER),
         code_path=tmp_path,
         config_root=tmp_path,
     )
@@ -78,8 +83,8 @@ def source(tmp_path: Path) -> CompositionSource:
 @pytest.fixture
 def built(
     source: CompositionSource, probe: tuple[type[Job[None]], Probe]
-) -> tuple[LambdaSQSAdapter, Application, list[str]]:
-    adapter = LambdaSQSAdapter(jobs=[probe[0]])
+) -> tuple[LambdaAdapter, Application, list[str]]:
+    adapter = LambdaAdapter(jobs=[probe[0]])
     application = compose_application(source, adapter)
     lifecycle: list[str] = []
 
@@ -97,9 +102,9 @@ def built(
 
 
 @pytest.fixture
-def handler(built: tuple[LambdaSQSAdapter, Application, list[str]]) -> Iterator[SQSHandler]:
+def handler(built: tuple[LambdaAdapter, Application, list[str]]) -> Iterator[SQSHandler]:
     adapter, application, _ = built
-    yield adapter.bind(application)
+    yield cast(SQSHandler, adapter.bind(application))
     adapter.close()
 
 

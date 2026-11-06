@@ -62,6 +62,10 @@ def _rest_ids(app: dict[str, Any]) -> list[str]:
     return [r.id for r in report.results if r.id.startswith("loom.rest.")]
 
 
+def _http(*interfaces: str, **options: Any) -> dict[str, Any]:
+    return {"trigger": {"source": "http", "interfaces": list(interfaces), **options}}
+
+
 class TestRestChecks:
     def test_an_api_without_authentication_fails_e001(self) -> None:
         assert _rest_ids({"name": "demo", "rest": _NO_DOCS}) == [AUTHENTICATION_CHECK]
@@ -114,16 +118,16 @@ class TestRestChecks:
     def test_a_function_auth_replacing_the_api_one_with_none_fails_e001(
         self, auth: dict[str, Any]
     ) -> None:
-        functions = {"public": {"http": ["Orders"]}, "admin": {"http": ["Admin"], "auth": auth}}
+        functions = {"public": _http("Orders"), "admin": _http("Admin", auth=auth)}
         document = {"app": {"rest": _CUSTOM_AUTH}, "lambda": {"functions": functions}}
 
         report = run_deploy_checks(ConfigContext.from_dict(document))
 
         (result,) = [r for r in report.results if r.id == AUTHENTICATION_CHECK]
-        assert result.message.endswith("is set in lambda.functions.admin.auth.")
+        assert result.message.endswith("is set in lambda.functions.admin.trigger.auth.")
 
     def test_a_function_auth_naming_a_mechanism_passes_e001(self) -> None:
-        functions = {"admin": {"http": ["Admin"], "auth": {"jwt": {"secret_path": "/k"}}}}
+        functions = {"admin": _http("Admin", auth={"jwt": {"secret_path": "/k"}})}
         document = {"app": {"rest": _CUSTOM_AUTH}, "lambda": {"functions": functions}}
 
         report = run_deploy_checks(ConfigContext.from_dict(document))

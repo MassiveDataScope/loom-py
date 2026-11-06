@@ -247,8 +247,10 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   authentication settings, the deploy checks, the documentation and metrics
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
-  that can match a key inside `checks`, `config` or `persistence.cursors`
-  (`persistence.*.signing` included) stops startup naming the entry; the entries
+  that can match a key inside `checks`, `config`, `persistence.cursors`,
+  `aws`, `sqs.queues` or a Lambda function's `trigger`
+  (`persistence.*.signing` and `lambda.functions.*.trigger.job` included)
+  stops startup naming the entry; the entries
   are checked at every load, in every environment. Any other key you list
   is a reviewed choice, much like setting it from `${oc.env:...}` in the
   files; the deploy checks still judge the merged value.
@@ -404,7 +406,7 @@ check fails startup, a `W` check logs a warning.
 
 | Id | What it finds |
 |---|---|
-| `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the `auth` of a function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
+| `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
 | `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |

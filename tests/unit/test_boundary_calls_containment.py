@@ -39,7 +39,7 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/remote_auth.py", "msgspec.convert"): 1,
     ("ai/runtime/_grants.py", "msgspec.json.encode"): 1,
     # Path parameters validated as FastAPI validates them, so the 422 is identical.
-    ("serverless/aws/lambda_/http.py", "pydantic.TypeAdapter"): 1,
+    ("serverless/aws/lambda_/triggers/http.py", "pydantic.TypeAdapter"): 1,
     ("core/cache/calls.py", "msgspec.json.encode"): 1,
     ("core/cache/calls.py", "msgspec.to_builtins"): 1,
     ("core/cache/keys.py", "msgspec.json.encode"): 1,

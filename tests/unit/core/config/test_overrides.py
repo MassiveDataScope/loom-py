@@ -380,6 +380,12 @@ def test_config_overridable_must_be_a_literal_list_of_dotted_keys_in_any_environ
         "aws.*",
         "sqs.queues.default",
         "sqs.*.default",
+        "lambda.functions.*.trigger",
+        "lambda.functions.worker.trigger.job",
+        "Lambda.Functions.worker.Trigger.identity.subject",
+        "lambda.functions.worker.trigger.identity.roles",
+        "lambda.functions.*.*.via",
+        "lambda.*.*.trigger.queue",
     ],
 )
 def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(

@@ -453,18 +453,20 @@ sqs:
 
 #### Lambda consumers
 
-A `lambda.functions` entry with `sqs: true` may declare its event source
-mapping:
+A `lambda.functions` entry whose trigger is `source: jobs`, or an event
+trigger `via: sqs`, may declare its event source mapping:
 
 ```yaml
 lambda:
   functions:
     worker:
-      sqs: true
-      batch_size: 100
-      batching_window_s: 5
-      max_concurrency: 50
-      report_batch_item_failures: true
+      trigger:
+        source: jobs
+        queue: jobs
+        batch_size: 100
+        batching_window_s: 5
+        max_concurrency: 50
+        report_batch_item_failures: true
 ```
 
 - `batch_size` (1–10000; 10 at most on a FIFO queue; over 10 needs

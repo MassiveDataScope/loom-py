@@ -1,11 +1,8 @@
-"""Test SQS-driven Lambda functions and observe the jobs an application dispatches.
+"""Observe the jobs an application dispatches.
 
-* :func:`sqs_record` builds a record of the event the Lambda SQS handler
-  receives, its body the ``JobEnvelope`` ``SQSJobService`` sends;
-  :func:`sqs_raw_record` carries any other body.
-* :class:`RecordingJobService` records each dispatch once the execution that
-  made it commits; ``app.job_service: loom.testing:RecordingJobService``
-  selects it.
+:class:`RecordingJobService` records each dispatch once the execution that
+made it commits; ``app.job_service: loom.testing:RecordingJobService``
+selects it.
 """
 
 from __future__ import annotations
@@ -21,11 +18,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from loom.core.identity import Identity, current_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
-from loom.core.job.envelope import encode_job_message
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
-from loom.jobs.aws import FIFO_SUFFIX
 
 if TYPE_CHECKING:
     from loom.composition import JobBackendContext
@@ -35,60 +30,6 @@ ResultT = TypeVar("ResultT")
 
 _REGION = "us-east-1"
 _QUEUE_ARN = f"arn:aws:sqs:{_REGION}:000000000000:loom-jobs"
-
-
-def sqs_record(
-    job_type: type[Job[Any]],
-    payload: dict[str, Any] | None = None,
-    *,
-    params: dict[str, Any] | None = None,
-    identity: Identity | None = None,
-    message_id: str | None = None,
-    group_id: str | None = None,
-    queue_arn: str | None = None,
-) -> dict[str, Any]:
-    """One SQS record carrying *job_type*, as ``SQSJobService`` would have sent it.
-
-    Args:
-        job_type: The job the message runs.
-        payload: The job's payload.
-        params: The job's params.
-        identity: The caller the job runs as; anonymous when omitted.
-        message_id: The record's id; a fresh one when omitted.
-        group_id: The FIFO ``MessageGroupId``; the default queue is then a FIFO one.
-        queue_arn: The source queue; a ``.fifo`` one makes the batch FIFO.
-    """
-    body = encode_job_message(job_type, payload=payload, params=params, identity=identity)
-    return sqs_raw_record(
-        body.decode(), message_id=message_id, group_id=group_id, queue_arn=queue_arn
-    )
-
-
-def sqs_raw_record(
-    body: str,
-    *,
-    message_id: str | None = None,
-    group_id: str | None = None,
-    queue_arn: str | None = None,
-) -> dict[str, Any]:
-    """One SQS record with *body* as written, for a message loom did not produce.
-
-    Args: as :func:`sqs_record`.
-    """
-    attributes = {"ApproximateReceiveCount": "1", "SentTimestamp": "0"}
-    if group_id is not None:
-        attributes["MessageGroupId"] = group_id
-    default_arn = _QUEUE_ARN + (FIFO_SUFFIX if group_id is not None else "")
-    return {
-        "messageId": message_id or str(uuid.uuid4()),
-        "receiptHandle": "test-receipt",
-        "body": body,
-        "attributes": attributes,
-        "messageAttributes": {},
-        "eventSource": "aws:sqs",
-        "eventSourceARN": queue_arn or default_arn,
-        "awsRegion": _REGION,
-    }
 
 
 @dataclass(frozen=True)

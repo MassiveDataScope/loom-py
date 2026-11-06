@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from loom.composition import Application, build_application
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHTTPHandler
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
@@ -68,9 +68,9 @@ def opened_on(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.AbstractEventLoop
 
 
 @pytest.fixture
-def unreachable(contract_project: ProjectFactory) -> tuple[LambdaHTTPAdapter, Application]:
+def unreachable(contract_project: ProjectFactory) -> tuple[LambdaAdapter, Application]:
     """A composed application whose database is unreachable when it opens."""
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
     application = build_application(contract_project(), adapter=adapter, environment="test")
 
     async def refuse() -> None:
@@ -118,7 +118,7 @@ def test_closing_the_handler_closes_the_application(
 
 
 def test_warm_invocations_run_the_startup_checks_once(contract_project: ProjectFactory) -> None:
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
     application = build_application(contract_project(), adapter=adapter, environment="test")
     checks = CountedChecks()
     checks.wrap(application)
@@ -207,7 +207,7 @@ def test_closing_the_handler_unsets_its_loop(
 
 
 def test_a_failure_to_open_fails_the_init(
-    unreachable: tuple[LambdaHTTPAdapter, Application],
+    unreachable: tuple[LambdaAdapter, Application],
 ) -> None:
     adapter, application = unreachable
 
@@ -216,7 +216,7 @@ def test_a_failure_to_open_fails_the_init(
 
 
 def test_a_failure_to_open_closes_its_loop(
-    event_loops: RecordedLoops, unreachable: tuple[LambdaHTTPAdapter, Application]
+    event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
 ) -> None:
     adapter, application = unreachable
 
@@ -226,7 +226,7 @@ def test_a_failure_to_open_closes_its_loop(
 
 
 def test_a_failure_to_open_unsets_its_loop(
-    event_loops: RecordedLoops, unreachable: tuple[LambdaHTTPAdapter, Application]
+    event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
 ) -> None:
     adapter, application = unreachable
 

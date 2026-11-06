@@ -88,7 +88,9 @@ to serve, plus any `create_app` option:
 lambda:
   functions:
     orders:
-      http: [OrderInterface]
+      trigger:
+        source: http
+        interfaces: [OrderInterface]
 ```
 
 ```python
@@ -105,30 +107,49 @@ def test_get_order(token: str) -> None:
 It also takes the handler `create_app` returned, which the test then closes
 itself.
 
-### SQS functions
+### Events of every trigger
 
-`sqs_record(Job, payload, params=, identity=, message_id=, group_id=, queue_arn=)`
-builds a record whose body is the `JobEnvelope` `SQSJobService` sends;
-`group_id` makes the queue a FIFO one. `sqs_raw_record(body)` carries any other
-body. The handler returns the records SQS should retry:
+`lambda_event(source, payload, via=None, **meta)` builds the event AWS
+delivers to a function, so a test calls the real handler with it:
+
+| `source` | Event | `payload` | `meta` |
+|---|---|---|---|
+| `http` | API Gateway HTTP API (`event_format="v1"`: REST API) | JSON body | `method`, `path`, `query`, `headers`, `body`, `event_format` |
+| `jobs` | One SQS record of the `JobEnvelope` `SQSJobService` sends | The job's payload | `job`, `params`, `identity`, `trace_id` |
+| `eventbridge` | An EventBridge event | `detail` | `event_id`, `detail_type`, `event_source` |
+| `s3` | An S3 notification | None | `objects` (keys, or `key`/`size`/`etag`/`version_id`/`sequencer` mappings), `bucket`, `event_name`, `test_event` |
+| `sns` | The event of a Lambda subscription | `Message` | `notification_id`, `topic_arn`, `subject`, `type` |
+| `schedule` | The schedule's input | The input | None |
+
+`via="sqs"` wraps the event as one SQS record of the queue in between. An
+event carried by SQS (`jobs` or `via="sqs"`) also takes `message_id`,
+`group_id` (a FIFO queue), `queue_arn` and `body`, a message body written by
+hand instead of the one built. A `jobs` or `via="sqs"` handler returns the
+records SQS should retry:
 
 ```python
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from loom.testing import sqs_raw_record, sqs_record
+from loom.testing import lambda_event
 
 def test_a_poison_message_is_retried() -> None:
-    handler = create_app("config.yaml", adapter=LambdaSQSAdapter(), environment="test")
+    handler = create_app("config.yaml", environment="test")  # app.entry: worker
     try:
         records = [
-            sqs_record(SendEmailJob, {"to": "ada@example.com"}, message_id="1"),
-            sqs_raw_record("{", message_id="2"),
+            *lambda_event("jobs", {"to": "ada@example.com"}, job=SendEmailJob)["Records"],
+            *lambda_event("jobs", body="{", message_id="2")["Records"],
         ]
         result = handler({"Records": records}, None)
     finally:
         handler.close()
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
+```
+
+A direct trigger returns nothing and raises when a job fails:
+
+```python
+def test_an_invoice_event_imports_it(handler) -> None:
+    handler(lambda_event("eventbridge", {"number": "F-7"}), None)
 ```
 
 ### Dispatched jobs

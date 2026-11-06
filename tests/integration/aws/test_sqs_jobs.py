@@ -18,8 +18,8 @@ from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.use_case.use_case import UseCase
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from loom.testing import sqs_raw_record
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.testing import lambda_event
 from tests.helpers.jobs import JobsAdapter
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 
@@ -129,6 +129,7 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
         {
             "app": {"name": "loom-it-sqs", "job_service": "sqs"},
             "sqs": {"queues": {"emails": queues.standard.url, "orders": queues.fifo.url}},
+            "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
         }
     )
 
@@ -202,14 +203,16 @@ def test_the_lambda_sqs_adapter_runs_the_received_message(
     _dispatch(producer, job_type)
     queue = queues.of(job_type)
     (message,) = _receive(sqs, queue)
-    record = sqs_raw_record(message["Body"], message_id=message["MessageId"], queue_arn=queue.arn)
-    adapter = LambdaSQSAdapter(jobs=[WelcomeJob, OrderJob])
+    event = lambda_event(
+        "jobs", body=message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
+    )
+    adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
     consumer = build_application(
         str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)
     )
     handler = adapter.bind(consumer)
     try:
-        result = handler({"Records": [record]}, None)
+        result = handler(event, None)
     finally:
         adapter.close()
 

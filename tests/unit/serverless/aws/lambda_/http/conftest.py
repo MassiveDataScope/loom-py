@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHTTPHandler
 from tests.helpers.composition import application_openings
 from tests.unit.serverless.aws.lambda_.http._clients import (
     Client,
@@ -56,7 +56,7 @@ def fastapi_served(contract_config: str) -> Iterator[Client]:
 
 @pytest.fixture(scope="module")
 def lambda_served(contract_config: str) -> Iterator[Client]:
-    handler = _served_as("lambda_http", contract_config)
+    handler = _served_as("lambda", contract_config)
     assert isinstance(handler, LambdaHTTPHandler)
     yield lambda_client(handler)
     handler.close()
@@ -75,7 +75,7 @@ def open_lambda(contract_project: Callable[..., str]) -> Iterator[Callable[..., 
 
     def open_project(**options: Any) -> LambdaProject:
         config = contract_project(**options)
-        handler = create_app(config, adapter=LambdaHTTPAdapter(), environment="test")
+        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
         opened.append(handler)
         return LambdaProject(config, handler)
 

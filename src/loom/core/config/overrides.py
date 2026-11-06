@@ -91,13 +91,15 @@ _PROTECTED: Final = (
     ("persistence", "cursors"),
     ("aws",),
     ("sqs", "queues"),
+    ("lambda", "functions", "*", "trigger"),
 )
-"""Keys no ``config.overridable`` entry may open, with everything below them.
+"""Keys no ``config.overridable`` entry may open, with everything below them; ``*`` is any level.
 
 ``config`` and ``checks`` are read as written, so the files cannot route them to
 the environment any other way. ``persistence.cursors`` decides whether, and with
-which key, cursor tokens are signed, and ``aws`` and ``sqs.queues`` where AWS
-calls and jobs go, which no per-deploy variable may change."""
+which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
+and jobs go, and a Lambda function's ``trigger`` what invokes it, which job runs
+and as whom: no per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",
@@ -329,13 +331,17 @@ def _refuse_protected(entry: str) -> None:
     levels = entry.casefold().split(".")
     opens_protected = any(
         len(levels) >= len(protected)
-        and all(level in ("*", part) for level, part in zip(levels, protected, strict=False))
+        and all(
+            part == "*" or level in ("*", part)
+            for level, part in zip(levels, protected, strict=False)
+        )
         for protected in _PROTECTED
     )
     if levels[0] == "*" or opens_protected:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks, config, persistence.cursors, aws or sqs.queues"
+            "first level, checks, config, persistence.cursors, aws, sqs.queues or "
+            "lambda.functions.*.trigger"
         )
 
 

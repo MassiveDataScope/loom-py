@@ -24,7 +24,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaUnservedConfigError
+from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, lambda_client
 
 pytestmark = [
@@ -73,7 +73,7 @@ def recipe(contract_project: ProjectFactory) -> Recipe:
         resolvers=(),
         caller=_TEST,
     )
-    return LambdaHTTPAdapter().recipe(source)
+    return LambdaAdapter().recipe(source)
 
 
 @pytest.mark.parametrize(
@@ -98,7 +98,7 @@ def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
 ) -> None:
     config = contract_project(**options)
 
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
 
     with pytest.raises(LambdaUnservedConfigError) as raised:
         build_application(config, adapter=adapter, environment=_TEST)
@@ -111,7 +111,7 @@ def test_a_configuration_refusal_comes_before_discovery(
 ) -> None:
     config = contract_project(app=_UNDISCOVERABLE_APP, **options)
 
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
 
     with pytest.raises(LambdaUnservedConfigError) as raised:
         build_application(config, adapter=adapter, environment=_TEST)
@@ -124,12 +124,12 @@ def test_an_sql_connection_without_an_endpoint_composes_with_its_sql(
     connection = dict(_SQL_CONNECTION, sql_endpoint={"enabled": False})
     config = contract_project(sql={"connections": {"analytics": connection}})
 
-    application = build_application(config, adapter=LambdaHTTPAdapter(), environment=_TEST)
+    application = build_application(config, adapter=LambdaAdapter(), environment=_TEST)
 
     assert application.sql.config is not None
 
 
-@pytest.mark.parametrize("adapter", [FastAPIAdapter, LambdaHTTPAdapter])
+@pytest.mark.parametrize("adapter", [FastAPIAdapter, LambdaAdapter])
 def test_an_exclusion_reaching_a_templated_route_aborts_startup(
     contract_project: ProjectFactory, adapter: Callable[[], Adapter[object]]
 ) -> None:
@@ -160,15 +160,15 @@ def test_fastapi_refuses_a_route_at_its_health_path(contract_project: ProjectFac
 
 def test_bind_before_recipe_is_refused() -> None:
     application: Any = object()
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
 
-    with pytest.raises(CompositionStateError, match="LambdaHTTPAdapter.bind") as raised:
+    with pytest.raises(CompositionStateError, match="LambdaAdapter.bind") as raised:
         adapter.bind(application)
     assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
 
 
 def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: ProjectFactory) -> None:
-    adapter = LambdaHTTPAdapter()
+    adapter = LambdaAdapter()
     build_application(contract_project(), adapter=adapter, environment=_TEST)
     second = contract_project()
 
@@ -183,7 +183,8 @@ def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: Projec
         "loom.composition",
         "loom.core.persistence",
         "loom.serverless.aws.lambda_",
-        "loom.serverless.aws.lambda_.sqs",
+        "loom.serverless.aws.lambda_.handler",
+        "loom.serverless.aws.lambda_.triggers.sqs",
     ],
 )
 def test_importing_the_transport_neutral_parts_loads_no_http_framework(module: str) -> None:
