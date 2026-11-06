@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from loom.core.errors.base import LoomError
+from loom.core.errors.base import DomainError, SystemError
 from loom.core.errors.codes import ErrorCode
 
 
-class BoundaryValidationError(LoomError, ValueError):
+class BoundaryValidationError(DomainError, ValueError):
     """A boundary value failed validation.
 
     Raised by every :class:`LoomType` implementation with the library error as
@@ -41,7 +41,7 @@ class BoundaryValidationError(LoomError, ValueError):
         self.violations = violations
 
 
-class UnsupportedBoundaryType(LoomError):
+class UnsupportedBoundaryType(SystemError):
     """A symbol cannot be compiled into a :class:`LoomType`.
 
     Args:

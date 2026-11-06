@@ -56,10 +56,10 @@ def _boundary() -> _error_boundary.ErrorBoundary:
     return _error_boundary.ErrorBoundary(observer=ObservabilityRuntime.noop(), flow="orders")
 
 
-def test_classify_task_maps_boundary_validation_error_to_task() -> None:
-    """A ``BoundaryValidationError`` is a ``LoomError``, not a ``DomainError``: same bucket
-    a msgspec conversion failure fell into before ``core/command`` grew its own error."""
-    assert _error_boundary._classify_task(BoundaryValidationError("bad body")) is ErrorKind.TASK
+def test_classify_task_maps_boundary_validation_error_to_business() -> None:
+    """A ``BoundaryValidationError`` is a ``DomainError``: bad input is the message's fault,
+    logged as a managed boundary error, and repeating the step cannot fix it."""
+    assert _error_boundary._classify_task(BoundaryValidationError("bad body")) is ErrorKind.BUSINESS
 
 
 def test_execute_in_boundary_returns_message_on_success() -> None:

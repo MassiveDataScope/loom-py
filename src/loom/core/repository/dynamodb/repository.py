@@ -257,10 +257,10 @@ class RepositoryDynamoDB(
     def _unsupported_field(self, operation: str, field: str) -> UnsupportedQuery:
         """Build the error for a lookup on a field the partition key does not cover."""
         return UnsupportedQuery(
-            self.backend_name,
-            self._model.__qualname__,
             f"{operation}('{field}') needs a scan or a secondary index; only the "
             f"primary key '{self._id_attr}' can be queried.",
+            backend=self.backend_name,
+            model=self._model.__qualname__,
         )
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:

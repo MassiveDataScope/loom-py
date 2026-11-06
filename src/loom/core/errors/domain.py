@@ -117,17 +117,23 @@ class UnsupportedQuery(DomainError):
     run-time argument instead, such as a lookup on a field the backend can
     only reach through a scan.
 
+    The message names the model and the reason, never the backend: a client
+    reads it, and which store serves a model is the server's business.
+    ``backend`` and ``model`` stay on the error for the server log.
+
     Args:
-        backend: Name of the persistence backend.
-        model: Qualified name of the model being queried.
-        reason: What the backend cannot do with the given arguments.
+        reason: What cannot be done with the given arguments.
+        backend: Name of the persistence backend, when known where it is raised.
+        model: Qualified name of the model being queried, when known.
     """
 
-    def __init__(self, backend: str, model: str, reason: str) -> None:
+    def __init__(
+        self, reason: str, *, backend: str | None = None, model: str | None = None
+    ) -> None:
         self.backend = backend
         self.model = model
         self.reason = reason
+        on_model = "" if model is None else f" on {model}"
         super().__init__(
-            f"{backend} cannot serve this query on {model}: {reason}",
-            code=ErrorCode.UNSUPPORTED_QUERY,
+            f"The query cannot be served{on_model}: {reason}", code=ErrorCode.UNSUPPORTED_QUERY
         )

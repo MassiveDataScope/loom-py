@@ -3,6 +3,8 @@
 R1: every ``code=`` an error class passes to ``super().__init__`` is a member
 of a catalogue (``ErrorCode``, or an adapter's own ``*ErrorCode``) or the
 ``code`` parameter it received; a literal string is not a code.
+R2: only ``DomainError`` and ``SystemError`` name ``LoomError`` as a base;
+every other error picks a family.
 R3: a class that extends ``LoomError``, directly or through any subclass,
 lives either under ``loom/core/errors/`` (shared across pillars) or in a
 module named ``errors.py`` / ``_errors.py`` (the owning pillar's errors
@@ -21,6 +23,7 @@ _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 _ERRORS_PACKAGE = _SRC / "core" / "errors"
 _ERRORS_MODULES = frozenset({"errors.py", "_errors.py"})
 _ROOT = "LoomError"
+_FAMILIES = frozenset({"DomainError", "SystemError"})
 _WEB = frozenset({"http", "fastapi", "starlette"})
 
 
@@ -140,9 +143,24 @@ def test_the_lint_sees_the_whole_hierarchy() -> None:
     assert "UnsupportedFormatError" in names
 
 
+def _outside_a_family() -> list[str]:
+    """``path:line class`` for every class that names ``LoomError`` itself as a base."""
+    return [
+        f"{path.relative_to(_SRC)}:{node.lineno} {node.name}"
+        for definitions in _error_classes().values()
+        for path, node in definitions
+        if node.name not in _FAMILIES and _ROOT in {_base_name(base) for base in node.bases}
+    ]
+
+
 def test_every_error_code_is_a_catalogue_member() -> None:
     """R1: a code is declared once, in a catalogue; no class spells one as a string."""
     assert _literal_codes() == []
+
+
+def test_every_error_belongs_to_a_family() -> None:
+    """R2: a transport tells a 4xx from a 5xx, and what to retry, by the family alone."""
+    assert _outside_a_family() == []
 
 
 def test_core_error_subclasses_live_in_an_errors_module() -> None:

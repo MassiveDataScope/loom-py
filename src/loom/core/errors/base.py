@@ -43,8 +43,12 @@ class DomainError(LoomError):
     """Base class for all business-logic errors.
 
     Raised inside UseCase execution. Transport adapters catch and convert
-    these to their own error representations.
+    these to their own error representations (a ``4xx``). Running the work
+    again cannot fix the input or the rule it broke, so no transport retries
+    one: a job raising it is consumed, not requeued.
     """
+
+    retryable: bool = False
 
 
 class SystemError(LoomError):
@@ -59,5 +63,5 @@ class SystemError(LoomError):
         code: The subclass's own code; ``system_error`` by default.
     """
 
-    def __init__(self, message: str, *, code: ErrorCode = ErrorCode.SYSTEM_ERROR) -> None:
+    def __init__(self, message: str, *, code: StrEnum = ErrorCode.SYSTEM_ERROR) -> None:
         super().__init__(message, code=code)

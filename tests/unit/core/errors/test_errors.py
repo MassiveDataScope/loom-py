@@ -52,6 +52,11 @@ class TestLoomError:
     def test_is_retryable_by_default(self) -> None:
         assert LoomError("msg", code=_AppCode.BROKEN).retryable is True
 
+    def test_a_domain_error_is_never_retryable(self) -> None:
+        """Repeating the work cannot fix the input or the rule it broke."""
+        assert DomainError("msg", code=_AppCode.BROKEN).retryable is False
+        assert SystemError("msg").retryable is True
+
 
 # ---------------------------------------------------------------------------
 # Hierarchy — one parametrized test replaces eight individual issubclass checks

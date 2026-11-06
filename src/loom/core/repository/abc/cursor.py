@@ -322,7 +322,9 @@ class CursorCodec:
             keys = [_wrap(key) for key in cursor.keys]
         except (TypeError, ValueError):
             raise UnsupportedQuery(
-                cursor.backend, label, "a cursor cannot carry the sort value of the page's last row"
+                "a cursor cannot carry the sort value of the page's last row",
+                backend=cursor.backend,
+                model=label,
             ) from None
         token = _Token(b=cursor.backend, k=keys, id=tie)
         payload = msgspec.json.encode(token)
@@ -372,12 +374,12 @@ class CursorCodec:
         binding, label = _model_names(model)
         payload = self._verified_payload(token, binding, query, scope)
         if payload is None:
-            raise UnsupportedQuery(backend, label, _INVALID)
+            raise UnsupportedQuery(_INVALID, backend=backend, model=label)
         try:
             record = msgspec.json.decode(payload, type=_Token)
         except msgspec.DecodeError:
             # The decoder's message may quote the payload: never chain it.
-            raise UnsupportedQuery(backend, label, _INVALID) from None
+            raise UnsupportedQuery(_INVALID, backend=backend, model=label) from None
         sort_types = tuple(columns.get(spec.field) for spec in query.sort)
         id_types = tuple(columns.get(name) for name in primary_key)
         return _position(record, backend, label, sort_types=sort_types, id_types=id_types)
@@ -517,10 +519,12 @@ def _position(
     value matches.
     """
     if record.b != backend:
-        raise UnsupportedQuery(backend, model, "cursor token was issued by another backend")
+        raise UnsupportedQuery(
+            "cursor token was issued by another backend", backend=backend, model=model
+        )
     keys = _typed_as(tuple(_unwrap(key) for key in record.k), sort_types)
     if keys is None:
-        raise UnsupportedQuery(backend, model, "cursor token does not match the sort")
+        raise UnsupportedQuery("cursor token does not match the sort", backend=backend, model=model)
     composite = len(id_types) > 1
     carried = record.id
     ties = (
@@ -528,7 +532,9 @@ def _position(
     )
     typed_ties = _typed_as(ties, id_types) if isinstance(carried, list) == composite else None
     if typed_ties is None:
-        raise UnsupportedQuery(backend, model, "cursor token does not match the primary key")
+        raise UnsupportedQuery(
+            "cursor token does not match the primary key", backend=backend, model=model
+        )
     return Cursor(
         backend=record.b, keys=keys, tie_breaker=typed_ties if composite else typed_ties[0]
     )
@@ -584,10 +590,10 @@ def require_cursor_sort(
     for name in (*(spec.field for spec in query.sort), *primary_key):
         if not cursor_carries(columns.get(name)):
             raise UnsupportedQuery(
-                backend,
-                _model_names(model)[1],
                 f"cursor pagination cannot order by {name!r}: it must be a non-null column "
                 "of a type a cursor carries",
+                backend=backend,
+                model=_model_names(model)[1],
             )
 
 

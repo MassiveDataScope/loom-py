@@ -351,7 +351,9 @@ class _LookupByName(UseCase[Any, str]):
     read_only = True
 
     async def execute(self) -> str:
-        raise UnsupportedQuery("dynamodb", "CapabilityRecord", "only the key 'id' can be queried")
+        raise UnsupportedQuery(
+            "only the key 'id' can be queried", backend="dynamodb", model="CapabilityRecord"
+        )
 
 
 class _LookupInterface(RestInterface[str]):
@@ -382,7 +384,8 @@ def test_unsupported_query_answers_400_with_its_code() -> None:
     assert response.status_code == 400
     body = response.json()["detail"]
     assert body["code"] == "unsupported_query"
-    assert "dynamodb" in body["message"]
+    # Which store serves a model is not the client's business.
+    assert "dynamodb" not in body["message"]
     assert "CapabilityRecord" in body["message"]
 
 

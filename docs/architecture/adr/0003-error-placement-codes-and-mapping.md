@@ -156,7 +156,11 @@ Status: Proposed.
 - Nothing raises a bare `LoomError` or `DomainError`.
 - Compile and startup errors are not `LoomError`s.
 
-The seven classes rebase without changing any status:
+The seven classes rebase without changing any status (done 2026-11, with
+`DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
+a business error; `SQSDispatchError` and `SQSBatchFailedError` are
+`SystemError`s; `UnsupportedQuery(reason, *, backend=None, model=None)` names
+the model and the reason, never the backend):
 
 - `BoundaryValidationError` → `DomainError`, keeping `ValueError`;
 - `UnsupportedFormatError` → `DomainError`, keeping today's 400;
@@ -188,7 +192,7 @@ the catalogue and `__init__` re-exports every class.
 
 | Class | From | To | Why |
 |---|---|---|---|
-| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. Its signature is unchanged; making `backend` and `model` optional is part of the R2 rebases, still open |
+| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
 | `BoundaryValidationError` | `core/model/_loom_type.py` | `core/errors` | Mapped by REST and AI |
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
@@ -256,7 +260,7 @@ R2 and R4-REST wait for the R2 rebases.
 | Check | Walks | Fails when |
 |---|---|---|
 | R1 | `code=` keywords of `__init__` calls inside error classes in `src/loom` | the value is not `<Catalogue>ErrorCode.<MEMBER>` and not the `code` parameter the class received |
-| R2 (pending) | class bases and calls | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
+| R2 | class bases | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
 | R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not under `loom/core/errors/` and is not a module named `errors.py`/`_errors.py` |
 | R4-REST (pending) | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
 | R5 | `src/loom/core` | an import of `http`, `fastapi` or `starlette` |

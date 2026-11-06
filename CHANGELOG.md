@@ -241,6 +241,17 @@
   `AuthenticationUnavailable` is a `SystemError`, so the generic retry and
   circuit-breaker handlers see the outage it reports.
 
+- **errors:** every error belongs to a family. `BoundaryValidationError` and
+  `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
+  `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
+  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
+  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
+  `DomainError` is never retryable: Celery and the SQS consumers consume a
+  job that raises one instead of requeuing it, and the streaming boundary
+  files a `BoundaryValidationError` as a business error. `UnsupportedQuery`
+  takes `(reason, *, backend=None, model=None)` and its message names the
+  model and the reason, never the backend.
+
 ## ⚠ Behaviour changes
 
 ### jobs

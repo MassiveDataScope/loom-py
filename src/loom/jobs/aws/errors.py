@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum, unique
 
-from loom.core.errors import LoomError
+from loom.core.errors import SystemError
 
 
 @unique
@@ -24,7 +24,7 @@ class SQSErrorCode(StrEnum):
     GROUP_MISSING = "sqs_group_missing"
 
 
-class SQSDispatchError(LoomError):
+class SQSDispatchError(SystemError):
     """A message SQS cannot carry, or a send that failed; ``code`` names which."""
 
     retryable = False

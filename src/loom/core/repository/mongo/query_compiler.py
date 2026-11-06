@@ -254,4 +254,4 @@ class MongoQueryCompiler:
             )
 
     def _unsupported(self, reason: str) -> UnsupportedQuery:
-        return UnsupportedQuery(self.backend, self._model_name, reason)
+        return UnsupportedQuery(reason, backend=self.backend, model=self._model_name)

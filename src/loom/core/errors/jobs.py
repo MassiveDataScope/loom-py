@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.errors.base import LoomError, SystemError
+from loom.core.errors.base import SystemError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -27,7 +27,7 @@ class UnknownJob(SystemError):
         super().__init__(f"Unknown job {name!r}", code=ErrorCode.UNKNOWN_JOB)
 
 
-class JobTimeoutError(LoomError):
+class JobTimeoutError(SystemError):
     """Raised when waiting for a job result exceeds the requested timeout.
 
     Args:
@@ -48,7 +48,7 @@ class JobTimeoutError(LoomError):
         self.timeout = timeout
 
 
-class JobFailedError(LoomError):
+class JobFailedError(SystemError):
     """Raised when a job fails during execution.
 
     Wraps the underlying cause so callers can inspect it without catching
@@ -72,7 +72,7 @@ class JobFailedError(LoomError):
         self.cause = cause
 
 
-class MixedJobBackendsError(LoomError):
+class MixedJobBackendsError(SystemError):
     """``dispatch_parallel`` with callbacks spans jobs of more than one backend."""
 
     retryable = False

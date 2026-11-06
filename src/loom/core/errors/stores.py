@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from loom.core.errors.base import LoomError, SystemError
+from loom.core.errors.base import SystemError
 from loom.core.errors.codes import ErrorCode
 
 if TYPE_CHECKING:
@@ -232,7 +232,7 @@ class UncomposedStore(SystemError):
         )
 
 
-class PostCommitError(LoomError):
+class PostCommitError(SystemError):
     """Raised when one or more post-commit actions failed after a commit.
 
     Every action runs even when an earlier one fails; the error carries all
