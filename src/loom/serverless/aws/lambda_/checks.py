@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.worker import discovered_jobs, worker_discovery
 from loom.core.use_case.markers import _InputMarker
-from loom.serverless.aws.lambda_.functions import EventTrigger, declared_lambda
+from loom.serverless.aws.lambda_.functions import EventTrigger, JobsTrigger, declared_lambda
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job
@@ -65,21 +65,19 @@ def check_triggers(ctx: ConfigContext) -> None:
         ConfigError: When ``lambda.functions`` is misdeclared, the jobs
             cannot be discovered, or :func:`trigger_job` refuses one.
     """
-    events = _event_triggers(ctx)
-    if not events:
-        return
-    jobs = _discovered_jobs(ctx)
-    for name, trigger in events.items():
-        trigger_job(name, trigger, jobs)
-
-
-def _event_triggers(ctx: ConfigContext) -> dict[str, EventTrigger]:
     functions = declared_lambda(ctx).functions
-    return {
+    events = {
         name: function.trigger
         for name, function in functions.items()
         if isinstance(function.trigger, EventTrigger)
     }
+    consumes_jobs = any(isinstance(f.trigger, JobsTrigger) for f in functions.values())
+    if not events and not consumes_jobs:
+        return
+    # A jobs function runs what discovery finds: a misdeclared app.discovery fails here too.
+    jobs = _discovered_jobs(ctx)
+    for name, trigger in events.items():
+        trigger_job(name, trigger, jobs)
 
 
 def _discovered_jobs(ctx: ConfigContext) -> dict[str, type[Job[Any]]]:

@@ -4,6 +4,15 @@
 
 ### lambda
 
+- **lambda:** the deploy manifest reuses the loader: `served_routes(source,
+  select_interfaces=None)` reads and validates `app.rest.interfaces` and
+  `app.rest.disable_routes` itself, the placeholders are read by OmegaConf's
+  grammar (`loom.core.config.resolver.referenced`; an escaped `\${secrets:...}`
+  is no longer listed, `${secrets:a,b}` names `a`), the resolvers' `.reference()`
+  methods are gone and `FunctionManifest.event` is a `dict` with the same keys
+  the removed `Route`, `HttpEvent`, `QueueEvent`, `OnFailure` and `DirectEvent`
+  structs encoded. The JSON does not change.
+
 - **lambda:** one adapter, `LambdaAdapter`, serves every Lambda function: it
   binds the handler of the trigger the deployed function declares. Nothing
   of the previous surface remains:

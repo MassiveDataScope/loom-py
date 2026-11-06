@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -30,6 +30,7 @@ from loom.core.config import (
     ConfigContext,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.loader import convert_section
 from loom.core.discovery._utils import (
     collect_use_cases_from_interfaces,
     infer_model_from_use_case,
@@ -467,11 +468,29 @@ def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
             mapping where one is required.
         ConfigError: If decoding fails for any other reason.
     """
-    raw_interfaces = ctx.section_or_default("app.rest.interfaces", dict[str, Any], {})
-    validate_interfaces_config(raw_interfaces)
-    raw_disable_routes = ctx.section_or_default("app.rest.disable_routes", tuple[Any, ...], ())
-    validate_disable_routes_config(raw_disable_routes)
+    # Validated raw before the struct decodes them, so an error names the interface.
+    _route_config(ctx)
     return ctx.section_or_default(_REST_SECTION, _RestConfig, _RestConfig())
+
+
+def _route_config(
+    ctx: ConfigContext,
+) -> tuple[dict[str, RestInterfaceConfig], tuple[DisableRouteConfig, ...]]:
+    """Validate route declarations and decode them without resolving REST auth."""
+    raw_interfaces = convert_section(
+        ctx.raw("app.rest.interfaces", {}), "app.rest.interfaces", dict[str, Any]
+    )
+    validate_interfaces_config(raw_interfaces)
+    raw_disable_routes = convert_section(
+        ctx.raw("app.rest.disable_routes", ()), "app.rest.disable_routes", tuple[Any, ...]
+    )
+    validate_disable_routes_config(raw_disable_routes)
+    return (
+        convert_section(raw_interfaces, "app.rest.interfaces", dict[str, RestInterfaceConfig]),
+        convert_section(
+            raw_disable_routes, "app.rest.disable_routes", tuple[DisableRouteConfig, ...]
+        ),
+    )
 
 
 def _build_introspection(name: str, rest_cfg: _RestConfig, ai: AiWiring) -> AppIntrospection:
@@ -545,11 +564,9 @@ def _interfaces_by_name(
 
 def served_routes(
     source: CompositionSource,
-    interfaces: Mapping[str, RestInterfaceConfig],
-    disabled: Sequence[DisableRouteConfig],
     select_interfaces: InterfaceSelector | None = None,
 ) -> tuple[DiscoveryResult, RouteSources]:
-    """Discover, add the YAML *interfaces*, narrow to *select_interfaces*, prune the CRUD ones.
+    """Validate REST config, discover routes, and narrow to *select_interfaces*.
 
     Reads no authentication, so it resolves no secret.
 
@@ -564,6 +581,7 @@ def served_routes(
     # Built ahead of discovery's pruning so their use cases join CRUD
     # gating, model registration and compilation exactly like a
     # Python-discovered interface's, in Python-then-config order.
+    interfaces, disabled = _route_config(source.config)
     config_interfaces = build_interfaces_from_config(interfaces)
     discovered = _discover_components(source)
     python_interfaces = discovered.interfaces
@@ -645,9 +663,7 @@ def compose_rest(
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
     _check_sql_section(ctx, auth)
-    discovered, routes = served_routes(
-        source, rest_cfg.interfaces, rest_cfg.disable_routes, select_interfaces
-    )
+    discovered, routes = served_routes(source, select_interfaces)
     declared = RestDeclaration(
         name=source.app.name, rest=rest_cfg, auth=auth, metrics_cfg=metrics_cfg, routes=routes
     )

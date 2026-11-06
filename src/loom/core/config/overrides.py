@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.config.context import ConfigContext
@@ -221,7 +221,7 @@ def _parsed(name: str, key: str, value: str) -> Any:
         # Any parse failure, a YAML tag that fails to construct included; from
         # None, since the chained exception's message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
-    if any(INTERPOLATION in text for text in _strings(written)):
+    if any(INTERPOLATION in text for _, text in config_strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
     leaf: Any = written
     for level in key.split("."):
@@ -235,8 +235,8 @@ def _require_no_import(name: str, key: str, layer: Any, environment: Environment
     from omegaconf import OmegaConf
 
     # The parsed value: a YAML escape such as "\x3a" hides the colon from the raw text.
-    parsed = _strings(OmegaConf.to_container(layer, resolve=False))
-    if key.casefold() == "app.job_service" and any(":" in text for text in parsed):
+    parsed = config_strings(OmegaConf.to_container(layer, resolve=False))
+    if key.casefold() == "app.job_service" and any(":" in text for _, text in parsed):
         raise ConfigError(
             f"{name} sets {key!r} to a module:Class reference, which is refused in "
             f"{str(environment)!r}: set it in the reviewed configuration files"
@@ -262,14 +262,18 @@ def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
         raise ConfigError(f"{name} does not merge into {key!r}") from None
 
 
-def _strings(node: Any) -> list[str]:
+def config_strings(
+    node: object, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], str]]:
+    """Every string of a configuration *node* as written, with its path of keys and indexes."""
     if isinstance(node, str):
-        return [node]
-    if isinstance(node, dict):
-        return [text for value in node.values() for text in _strings(value)]
-    if isinstance(node, list):
-        return [text for value in node for text in _strings(value)]
-    return []
+        yield path, node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from config_strings(value, (*path, str(key)))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from config_strings(value, (*path, str(index)))
 
 
 def _refuse_collisions(keys: Mapping[str, str]) -> None:
