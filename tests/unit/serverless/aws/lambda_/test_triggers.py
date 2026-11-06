@@ -238,9 +238,10 @@ class TestDirectTrigger:
         self, serve: Serve, payload: dict[str, Any], error: type[Exception]
     ) -> None:
         handler = serve(_events())
+        event = LambdaEvent.eventbridge(payload)
 
         with pytest.raises(error):
-            handler(LambdaEvent.eventbridge(payload), None)
+            handler(event, None)
 
     def test_a_malformed_event_fails_the_invocation_in_a_failed_span(self, serve: Serve) -> None:
         observer = _Observer()
@@ -266,9 +267,10 @@ class TestDirectTrigger:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         handler = serve(_events())
+        event = LambdaEvent.eventbridge(payload)
 
-        with pytest.raises(Exception):  # noqa: B017 - any failure; the logs are what is checked
-            handler(LambdaEvent.eventbridge(payload), None)
+        with pytest.raises(ValueError):  # the validation error is a ValueError too
+            handler(event, None)
 
         captured = capsys.readouterr()
         assert any("Lambda event job failed" in message for message in caplog.messages)
@@ -413,10 +415,15 @@ class _Authenticator:
 
 
 def test_startup_refuses_a_trigger_job_it_cannot_run(serve: Serve) -> None:
+    document = _events("Missing")
+
     with pytest.raises(ConfigError, match="'Missing', which is no discovered Job"):
-        serve(_events("Missing"))
+        serve(document)
 
 
 def test_startup_refuses_an_authenticator_for_an_event_trigger(serve: Serve) -> None:
+    document = _events()
+    authenticator = _Authenticator()
+
     with pytest.raises(ConfigError, match="applies to an http function only"):
-        serve(_events(), authenticator=_Authenticator())
+        serve(document, authenticator=authenticator)

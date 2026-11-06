@@ -105,6 +105,8 @@ class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
 
 
 _REST_SECTION = "app.rest"
+_INTERFACES_KEY = "app.rest.interfaces"
+_DISABLE_ROUTES_KEY = "app.rest.disable_routes"
 
 
 class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
@@ -456,19 +458,15 @@ def _route_config(
     ctx: ConfigContext,
 ) -> tuple[dict[str, RestInterfaceConfig], tuple[DisableRouteConfig, ...]]:
     """Validate route declarations and decode them without resolving REST auth."""
-    raw_interfaces = convert_section(
-        ctx.raw("app.rest.interfaces", {}), "app.rest.interfaces", dict[str, Any]
-    )
+    raw_interfaces = convert_section(ctx.raw(_INTERFACES_KEY, {}), _INTERFACES_KEY, dict[str, Any])
     validate_interfaces_config(raw_interfaces)
     raw_disable_routes = convert_section(
-        ctx.raw("app.rest.disable_routes", ()), "app.rest.disable_routes", tuple[Any, ...]
+        ctx.raw(_DISABLE_ROUTES_KEY, ()), _DISABLE_ROUTES_KEY, tuple[Any, ...]
     )
     validate_disable_routes_config(raw_disable_routes)
     return (
-        convert_section(raw_interfaces, "app.rest.interfaces", dict[str, RestInterfaceConfig]),
-        convert_section(
-            raw_disable_routes, "app.rest.disable_routes", tuple[DisableRouteConfig, ...]
-        ),
+        convert_section(raw_interfaces, _INTERFACES_KEY, dict[str, RestInterfaceConfig]),
+        convert_section(raw_disable_routes, _DISABLE_ROUTES_KEY, tuple[DisableRouteConfig, ...]),
     )
 
 

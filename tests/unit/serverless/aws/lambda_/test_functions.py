@@ -71,8 +71,10 @@ def test_a_queue_block_without_a_name_is_refused() -> None:
     ],
 )
 def test_an_out_of_range_setting_is_refused(knob: str, value: object) -> None:
+    document = _jobs(**{"batching_window_s": 1, knob: value})
+
     with pytest.raises(ConfigError, match=knob):
-        _declared(_jobs(**{"batching_window_s": 1, knob: value}))
+        _declared(document)
 
 
 @pytest.mark.parametrize(
@@ -234,5 +236,8 @@ def test_a_trigger_job_with_an_input_and_no_required_parameter_is_accepted() -> 
 def test_a_trigger_job_an_event_cannot_run_is_refused(
     job: str, jobs: list[type[Job[Any]]], message: str
 ) -> None:
+    trigger = EventTrigger(job=job)
+    discovered = {cls.__name__: cls for cls in jobs}
+
     with pytest.raises(ConfigError, match=message):
-        trigger_job("worker", EventTrigger(job=job), {cls.__name__: cls for cls in jobs})
+        trigger_job("worker", trigger, discovered)
