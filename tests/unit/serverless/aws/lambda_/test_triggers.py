@@ -282,6 +282,23 @@ class TestDirectTrigger:
 
         assert [found.key for found, _ in ran] == ["ok/1.csv", "fail/2.csv"]
 
+    @pytest.mark.parametrize("missing", ["eventName", "eventTime"])
+    def test_an_s3_record_without_its_event_name_or_time_fails_in_a_failed_span(
+        self, serve: Serve, ran: list[tuple[Any, Identity]], missing: str
+    ) -> None:
+        observer = _Observer()
+        handler = serve({"source": "s3", "job": "ImportObject"}, observer=observer)
+        event = lambda_event("s3", objects=["in/a.csv"])
+        del event["Records"][0][missing]
+
+        with pytest.raises(MalformedJobMessage, match="event name or time"):
+            handler(event, None)
+        assert ran == []
+        assert [(e.scope, e.kind) for e in observer.events] == [
+            (Scope.JOB, EventKind.START),
+            (Scope.JOB, EventKind.ERROR),
+        ]
+
     def test_an_s3_object_binds_the_typed_command(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:

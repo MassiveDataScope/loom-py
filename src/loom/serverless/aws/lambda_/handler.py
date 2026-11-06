@@ -8,8 +8,8 @@ failed message is reported, so it is retried, then dead-lettered.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+import functools
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
@@ -20,25 +20,24 @@ from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import get_logger
-from loom.serverless.aws.lambda_._refusals import COMPONENT, refuse_unserved_config
-from loom.serverless.aws.lambda_.functions import (
-    EventTrigger,
-    HttpTrigger,
-    JobsTrigger,
-    Trigger,
-    served_trigger,
-    source_of,
-    trigger_job,
-)
-from loom.serverless.aws.lambda_.triggers import Decoder, eventbridge, parsed, s3, schedule, sns
-from loom.serverless.aws.lambda_.triggers.sqs import (
+from loom.serverless.aws.lambda_._jobs import (
     Read,
-    SQSBatch,
     fail_in_span,
     jobs_recipe,
     open_host,
     run_envelope,
 )
+from loom.serverless.aws.lambda_._refusals import COMPONENT, refuse_unserved_config
+from loom.serverless.aws.lambda_.checks import trigger_job
+from loom.serverless.aws.lambda_.functions import (
+    EventTrigger,
+    HttpTrigger,
+    JobsTrigger,
+    served_trigger,
+    source_of,
+)
+from loom.serverless.aws.lambda_.triggers import Decoder, eventbridge, parsed, s3, schedule, sns
+from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 
 if TYPE_CHECKING:
     from loom.composition import Application, CompositionSource
@@ -69,10 +68,7 @@ class LambdaHandler(Protocol):
         ...
 
 
-class _Serving(Protocol):
-    def recipe(self, source: CompositionSource) -> Recipe: ...
-
-    def bind(self, application: Application) -> LambdaHandler: ...
+_Bind = Callable[["Application"], LambdaHandler]
 
 
 class LambdaAdapter:
@@ -113,7 +109,7 @@ class LambdaAdapter:
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)
         self._metrics = metrics
-        self._serving: _Serving | None = None
+        self._bind: _Bind | None = None
         self._handler: LambdaHandler | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
@@ -128,15 +124,17 @@ class LambdaAdapter:
                 does not apply to the trigger, or its job or REST composition
                 is refused.
         """
-        if self._serving is not None:
+        if self._bind is not None:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         refuse_unserved_config(source)
         name, trigger = served_trigger(source.config, self._function, source.app.entry)
-        serving = self._served(name, trigger)
-        recipe = serving.recipe(source)
-        self._serving = serving
+        if trigger is None or isinstance(trigger, HttpTrigger):
+            recipe, self._bind = self._compose_http(source, name)
+        else:
+            assert name is not None  # only a declared function has a trigger
+            recipe, self._bind = self._compose_jobs(source, name, trigger)
         return recipe
 
     def bind(self, application: Application) -> LambdaHandler:
@@ -148,7 +146,7 @@ class LambdaAdapter:
             ConfigError: When an authentication exclusion reaches a templated route.
             Exception: The failure to open the application, as itself.
         """
-        if self._serving is None:
+        if self._bind is None:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=COMPONENT)
             )
@@ -156,7 +154,7 @@ class LambdaAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
-        self._handler = self._serving.bind(application)
+        self._handler = self._bind(application)
         return self._handler
 
     def close(self) -> None:
@@ -164,68 +162,75 @@ class LambdaAdapter:
         if self._handler is not None:
             self._handler.close()
 
-    def _served(self, name: str | None, trigger: Trigger | None) -> _Serving:
-        if trigger is None or isinstance(trigger, HttpTrigger):
-            if self._jobs or self._use_cases or self._metrics is not None:
-                raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
-            # The http stack (FastAPI, Starlette, Mangum) needs the lambda extra.
-            from loom.serverless.aws.lambda_.triggers.http import HttpServing
+    def _compose_http(self, source: CompositionSource, name: str | None) -> tuple[Recipe, _Bind]:
+        if self._jobs or self._use_cases or self._metrics is not None:
+            raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
+        # The http stack (FastAPI, Starlette, Mangum) needs the lambda extra.
+        from loom.serverless.aws.lambda_.triggers.http import compose_http
 
-            return HttpServing(name, self._authenticator)
+        return compose_http(source, name, self._authenticator)
+
+    def _compose_jobs(
+        self, source: CompositionSource, name: str, trigger: JobsTrigger | EventTrigger
+    ) -> tuple[Recipe, _Bind]:
         if self._authenticator is not None:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
-        assert name is not None  # only a declared function has a trigger
-        return _JobsServing(name, trigger, self._jobs, self._use_cases, self._metrics)
-
-
-@dataclass
-class _JobsServing:
-    """A ``jobs`` function, or an event trigger: its jobs composed, then its handler."""
-
-    name: str
-    trigger: JobsTrigger | EventTrigger
-    jobs: tuple[type[Job[Any]], ...]
-    use_cases: tuple[type[Compilable], ...]
-    metrics: MetricsAdapter | None
-    declared: Mapping[str, type[Job[Any]]] | None = None
-    job_type: type[Job[Any]] | None = None
-
-    def recipe(self, source: CompositionSource) -> Recipe:
-        recipe, self.declared = jobs_recipe(source, self.jobs, self.use_cases, self.metrics)
-        if isinstance(self.trigger, EventTrigger):
-            self.job_type = trigger_job(self.name, self.trigger, tuple(self.declared.values()))
-        return recipe
-
-    def bind(self, application: Application) -> LambdaHandler:
-        trigger, declared, host = self.trigger, self.declared or {}, open_host(application)
-        failures = trigger.reports_batch_item_failures
+        recipe, declared = jobs_recipe(source, self._jobs, self._use_cases, self._metrics)
         if not isinstance(trigger, EventTrigger):
-            return SQSBatch(application, declared, host, report_failures=failures)
-        source = source_of(trigger)
-        identity = _identity(self.name, source, trigger)
-        decode = (_VIA_SQS if trigger.queued else _DIRECT)[source]
-
-        def envelopes(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
-            return tuple(
-                (
-                    JobEnvelope(job=trigger.job, payload=item.payload, identity=identity),
-                    item.event_id,
-                )
-                for item in decode(document)
-            )
-
+            failures = trigger.reports_batch_item_failures
+            return recipe, functools.partial(_bind_jobs, declared, failures)
+        job_type = trigger_job(name, trigger, declared)
         if trigger.queued:
-            return SQSBatch(
-                application,
-                declared,
-                host,
-                report_failures=failures,
-                read=lambda body: envelopes(parsed(body, "the SQS message body")),
-                label=trigger.job,
-                retry_final=True,
-            )
-        assert self.job_type is not None  # set by recipe for an event trigger
-        return _DirectEvents(application, host, self.job_type, envelopes, trigger.job, self.name)
+            return recipe, functools.partial(_bind_queued_events, name, trigger, declared)
+        return recipe, functools.partial(_bind_direct_events, name, trigger, job_type)
+
+
+def _bind_jobs(
+    declared: Mapping[str, type[Job[Any]]], report_failures: bool, application: Application
+) -> LambdaHandler:
+    """The SQS batch handler of a ``jobs`` function: a final failure is consumed."""
+    return SQSBatch(application, declared, open_host(application), report_failures=report_failures)
+
+
+def _bind_queued_events(
+    name: str,
+    trigger: EventTrigger,
+    declared: Mapping[str, type[Job[Any]]],
+    application: Application,
+) -> LambdaHandler:
+    """The SQS batch handler of an event trigger via sqs: every failure is reported, then DLQ'd."""
+    reader = _event_reader(name, trigger, _VIA_SQS)
+    source = QueueSource(
+        read=lambda body: reader(parsed(body, "the SQS message body")),
+        label=trigger.job,
+        retry_final=True,
+    )
+    failures = trigger.reports_batch_item_failures
+    host = open_host(application)
+    return SQSBatch(application, declared, host, report_failures=failures, source=source)
+
+
+def _bind_direct_events(
+    name: str, trigger: EventTrigger, job_type: type[Job[Any]], application: Application
+) -> LambdaHandler:
+    """The handler of a direct trigger: any failure fails the event, retried, then sent on."""
+    read = _event_reader(name, trigger, _DIRECT)
+    host = open_host(application)
+    return _DirectEvents(application, host, job_type, read, trigger.job, name)
+
+
+def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder]) -> Read:
+    """Reads an event of *trigger*'s source into the envelopes of its job and identity."""
+    source = source_of(trigger)
+    decode, identity = decoders[source], _identity(name, source, trigger)
+
+    def read(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
+        return tuple(
+            (JobEnvelope(job=trigger.job, payload=item.payload, identity=identity), item.event_id)
+            for item in decode(document)
+        )
+
+    return read
 
 
 def _identity(name: str, source: str, trigger: EventTrigger) -> dict[str, Any] | None:

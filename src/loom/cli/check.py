@@ -32,7 +32,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
-from loom.serverless.aws.lambda_.functions import check_triggers
+from loom.serverless.aws.lambda_.checks import check_triggers
 
 
 def check(

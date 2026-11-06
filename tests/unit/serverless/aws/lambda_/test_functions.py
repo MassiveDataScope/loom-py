@@ -10,12 +10,8 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.use_case import Input
 from loom.serverless.aws.lambda_ import S3Object
-from loom.serverless.aws.lambda_.functions import (
-    EventTrigger,
-    LambdaFunction,
-    declared_lambda,
-    trigger_job,
-)
+from loom.serverless.aws.lambda_.checks import trigger_job
+from loom.serverless.aws.lambda_.functions import EventTrigger, LambdaFunction, declared_lambda
 
 pytestmark = pytest.mark.timeout(5)
 
@@ -98,10 +94,10 @@ def test_an_event_trigger_declares_its_job_and_identity(source: str) -> None:
     assert trigger.identity.attributes == {"tenant": "acme"}
 
 
-def test_the_form_before_trigger_is_refused_naming_trigger() -> None:
+def test_the_form_before_trigger_is_refused() -> None:
     config = ConfigContext.from_dict({"lambda": {"functions": {"worker": {"sqs": True}}}})
 
-    with pytest.raises(ConfigError, match=r"worker\.sqs: .* under 'trigger'"):
+    with pytest.raises(ConfigError, match=r"unknown field `sqs` - at `\$\.functions\[\.\.\.\]`"):
         declared_lambda(config)
 
 
@@ -189,7 +185,8 @@ class _Required(Job[None]):
 
 
 def test_a_trigger_job_with_an_input_and_no_required_parameter_is_accepted() -> None:
-    assert trigger_job("worker", EventTrigger(job="_Import"), [_NoInput, _Import]) is _Import
+    jobs = {"_NoInput": _NoInput, "_Import": _Import}
+    assert trigger_job("worker", EventTrigger(job="_Import"), jobs) is _Import
 
 
 @pytest.mark.parametrize(
@@ -205,4 +202,4 @@ def test_a_trigger_job_an_event_cannot_run_is_refused(
     job: str, jobs: list[type[Job[Any]]], message: str
 ) -> None:
     with pytest.raises(ConfigError, match=message):
-        trigger_job("worker", EventTrigger(job=job), jobs)
+        trigger_job("worker", EventTrigger(job=job), {cls.__name__: cls for cls in jobs})

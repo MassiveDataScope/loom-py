@@ -49,7 +49,7 @@ def decode(event: Any) -> tuple[Decoded, ...]:
 
     Raises:
         MalformedJobMessage: When the event holds no list of records, or a
-            record no bucket name or object key.
+            record no bucket name, object key, event name or time.
     """
     event = an_object(event, "the S3 notification")
     if event.get("Event") == _TEST_EVENT:
@@ -61,19 +61,26 @@ def decode(event: Any) -> tuple[Decoded, ...]:
 
 def _object(record: dict[str, Any]) -> Decoded:
     s3 = an_object(record.get("s3"), "an S3 record's s3")
-    bucket = an_object(s3.get("bucket"), "an S3 record's bucket").get("name")
     found = an_object(s3.get("object"), "an S3 record's object")
-    key = found.get("key")
-    if not isinstance(bucket, str) or not isinstance(key, str):
-        raise MalformedJobMessage("an S3 record names no bucket or object key")
     payload = {
-        "bucket": bucket,
-        "key": unquote_plus(key),
+        "bucket": _named(an_object(s3.get("bucket"), "an S3 record's bucket").get("name")),
+        "key": unquote_plus(_named(found.get("key"))),
         "size": found.get("size"),
         "etag": found.get("eTag"),
         "version_id": found.get("versionId"),
         "sequencer": found.get("sequencer"),
-        "event_name": record.get("eventName"),
-        "event_time": record.get("eventTime"),
+        "event_name": _named(record.get("eventName")),
+        "event_time": _named(record.get("eventTime")),
     }
     return Decoded(payload=payload)
+
+
+def _named(value: Any) -> str:
+    """*value*, which an S3 record must hold as a string.
+
+    Raises:
+        MalformedJobMessage: When it is not one.
+    """
+    if not isinstance(value, str):
+        raise MalformedJobMessage("an S3 record names no bucket, object key, event name or time")
+    return value

@@ -281,23 +281,7 @@ def _refuse_collisions(keys: Mapping[str, str]) -> None:
 
 
 def _leaf_key(written: Any, name: str) -> str:
-    levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
-    if not all(_LEVEL.fullmatch(level) for level in levels):
-        raise ConfigError(
-            f"{name} has an empty or malformed level; a level is letters, digits and "
-            "underscores, separated by '__'"
-        )
-    node: Any = written
-    keys: list[str] = []
-    for level in levels:
-        if isinstance(node, str) and INTERPOLATION in node:
-            raise ConfigError(
-                f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
-                "override the whole key in the files instead"
-            )
-        key = _declared(node, level)
-        keys.append(key)
-        node = node.get(key) if isinstance(node, dict) else None
+    keys, node = _walk_override_path(written, name, _parse_override_levels(name))
     section = keys[0]
     if section not in _KNOWN_SECTIONS and not (isinstance(written, dict) and section in written):
         raise ConfigError(
@@ -311,6 +295,33 @@ def _leaf_key(written: Any, name: str) -> str:
             "sets one leaf value"
         )
     return key
+
+
+def _parse_override_levels(name: str) -> list[str]:
+    """The levels of the variable *name*, each letters, digits and underscores."""
+    levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
+    if not all(_LEVEL.fullmatch(level) for level in levels):
+        raise ConfigError(
+            f"{name} has an empty or malformed level; a level is letters, digits and "
+            "underscores, separated by '__'"
+        )
+    return levels
+
+
+def _walk_override_path(written: Any, name: str, levels: list[str]) -> tuple[list[str], Any]:
+    """The keys *levels* name in *written*, cased as declared, and the node they reach."""
+    node: Any = written
+    keys: list[str] = []
+    for level in levels:
+        if isinstance(node, str) and INTERPOLATION in node:
+            raise ConfigError(
+                f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
+                "override the whole key in the files instead"
+            )
+        key = _declared(node, level)
+        keys.append(key)
+        node = node.get(key) if isinstance(node, dict) else None
+    return keys, node
 
 
 def _declared_allowlist(written: Any) -> tuple[str, ...]:

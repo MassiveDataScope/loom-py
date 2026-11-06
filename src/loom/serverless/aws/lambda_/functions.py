@@ -10,30 +10,18 @@ declares for each event, invoked directly or ``via: sqs``.
 
 from __future__ import annotations
 
-import dataclasses
-import functools
-import inspect
-import warnings
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from collections.abc import Iterator, Mapping
+from typing import Annotated, Any, Literal
 
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
-from loom.core.discovery.worker import discovered_jobs
-from loom.core.use_case.markers import _InputMarker
-
-if TYPE_CHECKING:
-    from loom.core.job.job import Job
-    from loom.rest.fastapi.adapter import InterfaceSelector
-    from loom.rest.model import RestInterface
 
 _SECTION = "lambda.functions"
 _BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
 _RETRIES = ("maximum_retry_attempts", "maximum_event_age_s")
-_MOVED = ("http", "sqs", "auth", "queue", *_BATCHING)
 DEFAULT_MAXIMUM_RETRY_ATTEMPTS = 2
 """Retries of a direct trigger's failed event when undeclared, Lambda's own default."""
 DEFAULT_MAXIMUM_EVENT_AGE_S = 21600
@@ -57,10 +45,10 @@ class HttpTrigger(
     auth: dict[str, Any] | None = None
 
 
-class _QueueMapping(
+class _QueueKeys(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True, tag_field="source"
 ):
-    """The event source mapping of a function consuming a queue, for the deployment.
+    """The keys of the event source mapping, for a trigger whose messages arrive through a queue.
 
     ``queue`` is a key of ``sqs.queues`` and ``batch_size`` at most 10 on a FIFO
     queue. loom applies only ``report_batch_item_failures``, which ``false``
@@ -78,13 +66,8 @@ class _QueueMapping(
         """Whether a failed message is reported alone; true by default."""
         return self.report_batch_item_failures is not False
 
-    @property
-    def queued(self) -> bool:
-        """Whether the function consumes a queue."""
-        return True
 
-
-class JobsTrigger(_QueueMapping, frozen=True, kw_only=True, tag="jobs"):
+class JobsTrigger(_QueueKeys, frozen=True, kw_only=True, tag="jobs"):
     """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
 
 
@@ -96,12 +79,12 @@ class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_
     attributes: dict[str, str] = msgspec.field(default_factory=dict)
 
 
-class EventTrigger(_QueueMapping, frozen=True, kw_only=True):
+class EventTrigger(_QueueKeys, frozen=True, kw_only=True):
     """Run ``job`` for each event of the source, as ``identity`` or anonymous.
 
     Invoked directly, the deployment configures ``maximum_retry_attempts``
     and ``maximum_event_age_s`` of the asynchronous invocation; ``via: sqs``,
-    the event source mapping of the queue in between instead.
+    the queue keys of the event source mapping in between instead.
     """
 
     job: str
@@ -114,6 +97,16 @@ class EventTrigger(_QueueMapping, frozen=True, kw_only=True):
     def queued(self) -> bool:
         """Whether the events arrive through a queue, ``via: sqs``."""
         return self.via == "sqs"
+
+    def written_values(self) -> Iterator[str]:
+        """The job and every identity value, to refuse a placeholder among them."""
+        yield self.job
+        if self.identity is not None:
+            yield self.identity.subject
+            yield from self.identity.roles
+            for name, value in self.identity.attributes.items():
+                yield name
+                yield value
 
 
 class EventBridgeTrigger(EventTrigger, frozen=True, kw_only=True, tag="eventbridge"):
@@ -148,16 +141,8 @@ class LambdaConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fie
     functions: dict[str, LambdaFunction] = msgspec.field(default_factory=dict)
 
 
-@dataclasses.dataclass(frozen=True)
-class HttpFunction:
-    """What an HTTP function changes in the REST composition; nothing by default."""
-
-    auth_section: str | None = None
-    select: InterfaceSelector | None = None
-
-
 def source_of(trigger: msgspec.Struct) -> str:
-    """The ``source`` *trigger* declares."""
+    """The ``source`` *trigger* declares: its tag in the union."""
     return str(type(trigger).__struct_config__.tag)
 
 
@@ -165,23 +150,17 @@ def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
     """Decode ``lambda`` as written and refuse a function or an interface declared twice over.
 
     Raises:
-        ConfigError: When a function declares its trigger outside ``trigger``
-            or a key of another source, a trigger a queue or batching setting
-            it does not consume, a retry setting via sqs or a placeholder in
-            its ``job`` or ``identity``, a ``batch_size`` over 10 without a
+        ConfigError: When a function declares a key outside ``trigger`` or
+            one of another source, a direct trigger a queue key, a
+            trigger via sqs a retry key, a placeholder in its ``job`` or
+            ``identity``, a ``batch_size`` over 10 without a
             ``batching_window_s``, or an interface or a queue another
             function serves.
     """
     config = _unresolved(ctx)
     owners: dict[str, str] = {}
     for name, function in config.functions.items():
-        trigger = function.trigger
-        if isinstance(trigger, HttpTrigger):
-            served = [repr(interface) for interface in trigger.interfaces]
-        else:
-            _check_trigger(f"{_SECTION}.{name}.trigger", trigger)
-            served = [f"queue {trigger.queue!r}"] if trigger.queue is not None else []
-        for item in served:
+        for item in _served(f"{_SECTION}.{name}.trigger", function.trigger):
             owner = owners.setdefault(item, name)
             if owner != name:
                 raise ConfigError(
@@ -190,19 +169,32 @@ def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
     return config
 
 
-def _check_trigger(where: str, trigger: JobsTrigger | EventTrigger) -> None:
-    mapped = next((key for key in ("queue", *_BATCHING) if getattr(trigger, key) is not None), None)
-    if mapped is not None and not trigger.queued:
-        raise ConfigError(f"{where}.{mapped} applies to a trigger via sqs only")
+def _served(where: str, trigger: Trigger) -> list[str]:
+    """What *trigger* serves, which no other function may: its interfaces or its queue."""
+    if isinstance(trigger, HttpTrigger):
+        return [repr(interface) for interface in trigger.interfaces]
+    if isinstance(trigger, EventTrigger):
+        _check_event_trigger(where, trigger)
+    _check_batching(where, trigger)
+    return [] if trigger.queue is None else [f"queue {trigger.queue!r}"]
+
+
+def _check_batching(where: str, trigger: _QueueKeys) -> None:
     # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
     if (trigger.batch_size or 0) > 10 and not trigger.batching_window_s:
         raise ConfigError(f"{where}.batch_size over 10 needs batching_window_s >= 1")
-    if not isinstance(trigger, EventTrigger):
-        return
-    retry = next((key for key in _RETRIES if getattr(trigger, key) is not None), None)
-    if retry is not None and trigger.queued:
-        raise ConfigError(f"{where}.{retry} applies to a direct trigger only")
-    if INTERPOLATION in repr((trigger.job, trigger.identity)):
+
+
+def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
+    refused: tuple[str, ...]
+    if trigger.queued:
+        refused, applies = _RETRIES, "a direct trigger"
+    else:
+        refused, applies = ("queue", *_BATCHING), "a trigger via sqs"
+    for key in refused:
+        if getattr(trigger, key) is not None:
+            raise ConfigError(f"{where}.{key} applies to {applies} only")
+    if any(INTERPOLATION in value for value in trigger.written_values()):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
 
 
@@ -210,22 +202,10 @@ def _unresolved(ctx: ConfigContext) -> LambdaConfig:
     """``lambda`` as written: another function's ``auth`` may name secrets this one cannot read.
 
     Only the function served resolves its own ``auth``, through its section path.
-
-    Raises:
-        ConfigError: When a function declares a key of the trigger outside it.
     """
     raw = ctx.raw(ConfigKey.LAMBDA)
     if raw is None:
         return LambdaConfig()
-    functions = raw.get("functions") if isinstance(raw, Mapping) else None
-    for name, function in (functions if isinstance(functions, Mapping) else {}).items():
-        moved = [key for key in _MOVED if isinstance(function, Mapping) and key in function]
-        if moved:
-            raise ConfigError(
-                f"{_SECTION}.{name}.{moved[0]}: a function declares what invokes it under "
-                "'trigger', such as trigger: {source: http, interfaces: [...]} or "
-                "trigger: {source: jobs, queue: ...}"
-            )
     return convert_section(raw, ConfigKey.LAMBDA, LambdaConfig)
 
 
@@ -247,29 +227,6 @@ def served_trigger(
     return name, named_function(functions, name).trigger
 
 
-def http_function(
-    ctx: ConfigContext, name: str | None, functions: Mapping[str, LambdaFunction] | None = None
-) -> HttpFunction:
-    """The authentication and interfaces of the HTTP function *name*, of *functions* if decoded.
-
-    Every interface, with ``app.rest.auth``, when *name* is ``None``.
-
-    Raises:
-        ConfigError: When no HTTP function is called *name*, or
-            ``lambda.functions`` is misdeclared.
-    """
-    if name is None:
-        return HttpFunction()
-    functions = declared_lambda(ctx).functions if functions is None else functions
-    trigger = named_function(functions, name).trigger
-    if not isinstance(trigger, HttpTrigger):
-        raise ConfigError(f"{_SECTION}.{name} is a {source_of(trigger)} function, not an http one")
-    return HttpFunction(
-        auth_section=None if trigger.auth is None else f"{_SECTION}.{name}.trigger.auth",
-        select=functools.partial(_served_by, functions, name),
-    )
-
-
 def named_function(functions: Mapping[str, LambdaFunction], name: str) -> LambdaFunction:
     """The function *name* of *functions*.
 
@@ -281,91 +238,3 @@ def named_function(functions: Mapping[str, LambdaFunction], name: str) -> Lambda
         declared = ", ".join(functions) or "none"
         raise ConfigError(f"{_SECTION} declares no function {name!r} (declared: {declared})")
     return function
-
-
-def trigger_job(name: str, trigger: EventTrigger, jobs: Sequence[type[Job[Any]]]) -> type[Job[Any]]:
-    """The job of *jobs* the event trigger of function *name* runs.
-
-    Raises:
-        ConfigError: When no job of *jobs* is called so, or its ``execute``
-            declares no ``Input()`` command or requires another parameter,
-            which an event cannot give.
-    """
-    where = f"{_SECTION}.{name}.trigger.job"
-    job_type = next((job for job in jobs if job.__qualname__ == trigger.job), None)
-    if job_type is None:
-        raise ConfigError(f"{where} names {trigger.job!r}, which is no discovered Job")
-    parameters = [
-        parameter
-        for parameter in inspect.signature(job_type.execute).parameters.values()
-        if parameter.name != "self"
-        and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
-    ]
-    if not any(isinstance(parameter.default, _InputMarker) for parameter in parameters):
-        raise ConfigError(f"{where}: {trigger.job}.execute declares no Input() command")
-    required = [parameter.name for parameter in parameters if parameter.default is parameter.empty]
-    if required:
-        raise ConfigError(
-            f"{where}: {trigger.job}.execute requires {', '.join(required)}, "
-            "which an event cannot give"
-        )
-    return job_type
-
-
-def check_triggers(ctx: ConfigContext) -> None:
-    """Refuse, as startup would, a misdeclared ``lambda`` section or an event trigger's job.
-
-    The jobs are discovered from ``app.discovery`` as written: nothing resolves.
-
-    Raises:
-        ConfigError: When ``lambda.functions`` is misdeclared, the jobs
-            cannot be discovered, or :func:`trigger_job` refuses one.
-    """
-    events = {
-        name: function.trigger
-        for name, function in declared_lambda(ctx).functions.items()
-        if isinstance(function.trigger, EventTrigger)
-    }
-    if not events:
-        return
-    try:
-        jobs = discovered_jobs(ctx.raw("app.discovery", {}))
-    except (ImportError, RuntimeError, ValueError) as exc:
-        raise ConfigError(f"the jobs of the event triggers cannot be discovered: {exc}") from exc
-    for name, trigger in events.items():
-        trigger_job(name, trigger, jobs)
-
-
-def _served_by(
-    functions: Mapping[str, LambdaFunction],
-    name: str,
-    named: Mapping[str, tuple[type[RestInterface[Any]], ...]],
-) -> tuple[type[RestInterface[Any]], ...]:
-    listed = {
-        owner: function.trigger.interfaces
-        for owner, function in functions.items()
-        if isinstance(function.trigger, HttpTrigger)
-    }
-    for owner, interfaces in listed.items():
-        for interface in interfaces:
-            where = f"{_SECTION}.{owner}.trigger.interfaces"
-            _check_reference(where, interface, named.get(interface, ()))
-    unserved = sorted(set(named) - {interface for found in listed.values() for interface in found})
-    if unserved:
-        warnings.warn(
-            f"No function of {_SECTION} serves {', '.join(unserved)}", UserWarning, stacklevel=2
-        )
-    return tuple(named[interface][0] for interface in listed[name])
-
-
-def _check_reference(
-    where: str, interface: str, found: tuple[type[RestInterface[Any]], ...]
-) -> None:
-    if not found:
-        raise ConfigError(
-            f"{where} names {interface!r}: no discovered RestInterface "
-            "and no app.rest.interfaces key is called so"
-        )
-    if len(found) > 1:
-        origins = ", ".join(sorted(f"{cls.__module__}.{cls.__qualname__}" for cls in found))
-        raise ConfigError(f"{where} names {interface!r}, which is ambiguous: {origins}")

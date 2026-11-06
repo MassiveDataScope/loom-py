@@ -33,10 +33,10 @@ from loom.serverless.aws.lambda_.functions import (
     SnsTrigger,
     TriggerIdentity,
     declared_lambda,
-    http_function,
     named_function,
     source_of,
 )
+from loom.serverless.aws.lambda_.interfaces import http_function
 
 if TYPE_CHECKING:
     from loom.core.environment import Environment

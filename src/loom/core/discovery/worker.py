@@ -335,14 +335,13 @@ def worker_discovery(written: object) -> DiscoveryConfig:
     return discovery
 
 
-def discovered_jobs(written: object) -> tuple[type[Job[Any]], ...]:
-    """The jobs the ``app.discovery`` section *written* discovers, as a worker reads it.
+def discovered_jobs(discovery: DiscoveryConfig) -> tuple[type[Job[Any]], ...]:
+    """The jobs a worker discovers with *discovery*, from :func:`worker_discovery`.
 
     Raises:
-        ConfigError: As :func:`worker_discovery`.
         ImportError: When a module it names cannot be imported.
     """
-    return _discover_compilables_from_config(worker_discovery(written)).jobs
+    return _discover_compilables_from_config(discovery).jobs
 
 
 def _discover_compilables_from_config(

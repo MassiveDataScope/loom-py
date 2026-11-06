@@ -12,7 +12,7 @@ import base64
 import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
 from urllib.parse import parse_qsl, quote_plus
 
 from loom.core.job.envelope import encode_job_message
@@ -28,6 +28,7 @@ EventFormat = Literal["v1", "v2"]
 _REGION: Final = "us-east-1"
 _ARN: Final = f"{_REGION}:000000000000"
 _TIME: Final = "2026-01-01T00:00:00Z"
+_RECORD_KEYS: Final = ("message_id", "group_id", "queue_arn")
 
 
 def lambda_event(
@@ -55,17 +56,29 @@ def lambda_event(
     Raises:
         TypeError: When *meta* holds a key *source* does not take.
     """
-    if source == "http" and via is None:
-        return _http(payload, **meta)
-    if source != "jobs" and via is None:
-        return _SOURCES[source](payload, **meta)
-    if source == "http" or (source == "jobs" and via is not None):
-        raise TypeError(f"a {source} event is not delivered via sqs")
-    record = {key: meta.pop(key) for key in ("message_id", "group_id", "queue_arn") if key in meta}
+    builders = _BUILDERS[source]
+    if via is None and builders.direct is not None:
+        return builders.direct(payload, **meta)
+    if builders.body is None:
+        raise TypeError(f"{source} events are not delivered via sqs")
+    if via is not None and builders.direct is None:
+        raise TypeError(f"{source} events are always via sqs; drop via=")
+    return _via_sqs(builders.body, payload, meta)
+
+
+def _via_sqs(build: Callable[..., str], payload: Any, meta: dict[str, Any]) -> dict[str, Any]:
+    """One SQS record whose body *build* writes, or ``body=`` as written.
+
+    Raises:
+        TypeError: When ``body=`` comes with a payload or any other meta.
+    """
+    record = {key: meta.pop(key) for key in _RECORD_KEYS if key in meta}
     body = meta.pop("body", None)
     if body is None:
-        build = _jobs_body if source == "jobs" else _SQS_BODIES[source]
         body = build(payload, **meta)
+    elif meta or payload is not None:
+        unused = sorted([*meta, *(["payload"] if payload is not None else [])])
+        raise TypeError(f"body= is sent as written; drop {', '.join(unused)}")
     return {"Records": [_sqs_record(body, **record)]}
 
 
@@ -178,18 +191,6 @@ def _schedule(payload: dict[str, Any] | None) -> dict[str, Any]:
     return payload or {}
 
 
-_SOURCES: Final[Mapping[str, Callable[..., dict[str, Any]]]] = {
-    "eventbridge": _eventbridge,
-    "s3": _s3,
-    "sns": _sns,
-    "schedule": _schedule,
-}
-_SQS_BODIES: Final[Mapping[str, Callable[..., str]]] = {
-    source: lambda payload, _build=build, **meta: json.dumps(_build(payload, **meta))
-    for source, build in {**_SOURCES, "sns": _sns_message}.items()
-}
-
-
 def _http(
     payload: dict[str, Any] | None,
     *,
@@ -241,3 +242,29 @@ def _http_request_event(
         "multiValueQueryStringParameters": multi or None,
         "requestContext": {"identity": {"sourceIp": "127.0.0.1"}, "requestId": "test"},
     }
+
+
+def _json_body(build: Callable[..., dict[str, Any]]) -> Callable[..., str]:
+    """The SQS message body of the event *build* writes: its JSON."""
+
+    def body(payload: dict[str, Any] | None, **meta: Any) -> str:
+        return json.dumps(build(payload, **meta))
+
+    return body
+
+
+class _Builders(NamedTuple):
+    """How a source's event is written: delivered directly, and as an SQS message body."""
+
+    direct: Callable[..., dict[str, Any]] | None
+    body: Callable[..., str] | None
+
+
+_BUILDERS: Final[Mapping[str, _Builders]] = {
+    "http": _Builders(direct=_http, body=None),
+    "jobs": _Builders(direct=None, body=_jobs_body),
+    "eventbridge": _Builders(direct=_eventbridge, body=_json_body(_eventbridge)),
+    "s3": _Builders(direct=_s3, body=_json_body(_s3)),
+    "sns": _Builders(direct=_sns, body=_json_body(_sns_message)),
+    "schedule": _Builders(direct=_schedule, body=_json_body(_schedule)),
+}

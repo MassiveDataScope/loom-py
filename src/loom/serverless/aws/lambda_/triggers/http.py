@@ -14,7 +14,8 @@ construction, without FastAPI's routing or its OpenAPI.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+import functools
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from fastapi.exceptions import RequestValidationError
@@ -47,13 +48,15 @@ from loom.serverless.aws.lambda_._refusals import (
     LambdaUnservedConfigError,
     refuse_manifest_agents,
 )
-from loom.serverless.aws.lambda_.functions import http_function
+from loom.serverless.aws.lambda_.interfaces import http_function
 
 _PATH_LOCATION = "path"
 
 
-class HttpServing:
-    """Compose as :class:`~loom.rest.fastapi.FastAPIAdapter` does, with the Lambda pool profile.
+def compose_http(
+    source: CompositionSource, function: str | None, authenticator: Authenticator | None
+) -> tuple[Recipe, Callable[[Application], LambdaHTTPHandler]]:
+    """The FastAPI recipe with the Lambda pool profile, and how to bind its application.
 
     Health, metrics, SQL endpoints, agents and OpenAPI are not served; a
     configuration declaring metrics, an SQL endpoint or agents is refused.
@@ -62,51 +65,41 @@ class HttpServing:
     ``exclude_paths`` is honoured as written.
 
     Args:
+        source: What the entry point composes from.
         function: The ``http`` function of ``lambda.functions`` served: its
             interfaces only, with its ``auth`` when it declares one; every
             interface when ``None``.
         authenticator: Custom authentication mechanism; requires
             ``custom: true`` in the authentication in effect.
+
+    Raises:
+        LambdaUnservedConfigError: When the configuration mounts an SQL
+            endpoint, or the manifest declares agents.
+        ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
+            raises it.
     """
+    _refuse_sql_endpoints(source.config)
+    served = http_function(source.config, function)
+    recipe, declared = compose_rest(
+        source,
+        authenticator=authenticator,
+        serves_documentation=False,
+        auth_section=served.auth_section,
+        select_interfaces=served.select,
+    )
+    refuse_manifest_agents(recipe.discovered.agent_specs)
+    recipe = dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
+    return recipe, functools.partial(_bind, declared)
 
-    def __init__(self, function: str | None, authenticator: Authenticator | None) -> None:
-        self._function = function
-        self._authenticator = authenticator
-        self._declared: RestDeclaration | None = None
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        """The FastAPI recipe, with the Lambda pool profile and no agents.
+def _bind(declared: RestDeclaration, application: Application) -> LambdaHTTPHandler:
+    """Mount the routes, error handlers and middleware of *declared*, then open *application*.
 
-        Raises:
-            LambdaUnservedConfigError: When the configuration mounts an SQL
-                endpoint, or the manifest declares agents.
-            ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
-                raises it.
-        """
-        _refuse_sql_endpoints(source.config)
-        served = http_function(source.config, self._function)
-        recipe, declared = compose_rest(
-            source,
-            authenticator=self._authenticator,
-            serves_documentation=False,
-            auth_section=served.auth_section,
-            select_interfaces=served.select,
-        )
-        refuse_manifest_agents(recipe.discovered.agent_specs)
-        self._declared = declared
-        return dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
-
-    def bind(self, application: Application) -> LambdaHTTPHandler:
-        """Mount the routes, error handlers and middleware, then open *application*.
-
-        :class:`LambdaAdapter` binds only after :meth:`recipe` succeeded.
-
-        Raises:
-            ConfigError: When an authentication exclusion reaches a templated route.
-            Exception: The failure to open the application, as itself.
-        """
-        assert self._declared is not None  # set by recipe
-        return LambdaHTTPHandler(_starlette_app(application, self._declared), application)
+    Raises:
+        ConfigError: When an authentication exclusion reaches a templated route.
+        Exception: The failure to open the application, as itself.
+    """
+    return LambdaHTTPHandler(_starlette_app(application, declared), application)
 
 
 def _refuse_sql_endpoints(ctx: ConfigContext) -> None:

@@ -29,9 +29,7 @@
   | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
   `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
-  `LambdaUnservedConfigError`, `S3Object` and `SQSBatchFailedError` only. A
-  function written the previous way stops startup and `loom check --deploy`
-  with a `ConfigError` naming `trigger`.
+  `LambdaUnservedConfigError`, `S3Object` and `SQSBatchFailedError` only.
 
 ### config
 
