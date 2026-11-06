@@ -380,6 +380,15 @@ def test_config_overridable_must_be_a_literal_list_of_dotted_keys_in_any_environ
         "aws.*",
         "sqs.queues.default",
         "sqs.*.default",
+        "lambda.functions.*.trigger",
+        "lambda.functions.worker.trigger.job",
+        "Lambda.Functions.worker.Trigger.identity.subject",
+        "lambda.functions.worker.trigger.identity.roles",
+        "lambda.functions.*.*.via",
+        "lambda.*.*.trigger.queue",
+        "lambda.handler",
+        "app.discovery.modules.include",
+        "app.*",
     ],
 )
 def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
@@ -393,7 +402,7 @@ def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
 
 
 @pytest.mark.parametrize(
-    "entry", ["app.code_path", "app.*", "app.rest.auth.custom", "stores.default.backend"]
+    "entry", ["app.code_path", "app.rest.auth.custom", "stores.default.backend"]
 )
 def test_config_overridable_accepts_other_keys_since_a_deploy_check_judges_the_merged_value(
     tmp_path: Path, entry: str

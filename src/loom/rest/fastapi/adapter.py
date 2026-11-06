@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -30,6 +30,7 @@ from loom.core.config import (
     ConfigContext,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.loader import convert_section
 from loom.core.discovery._utils import (
     collect_use_cases_from_interfaces,
     infer_model_from_use_case,
@@ -104,6 +105,8 @@ class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
 
 
 _REST_SECTION = "app.rest"
+_INTERFACES_KEY = "app.rest.interfaces"
+_DISABLE_ROUTES_KEY = "app.rest.disable_routes"
 
 
 class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
@@ -119,11 +122,14 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     # Endpoints declared without Python (loom.rest.config); converted into
     # the same RestInterface objects a Python subclass produces and handed to
     # the same compiler — see _fold_config_interfaces and create_fastapi_app.
-    interfaces: dict[str, RestInterfaceConfig] = msgspec.field(default_factory=dict)
+    # Kept as written: _route_config validates the raw entries first, so a
+    # typo is reported by interface name, which msgspec cannot recover once a
+    # typed decode has failed; served_routes is their one decoder.
+    interfaces: dict[str, Any] = msgspec.field(default_factory=dict)
     # Subtractive per-environment overlay: every entry must match a route
     # declared in Python, or startup aborts (see
     # RestInterfaceCompiler.compile_sources).
-    disable_routes: tuple[DisableRouteConfig, ...] = ()
+    disable_routes: tuple[Any, ...] = ()
 
 
 def _fold_config_interfaces(
@@ -437,41 +443,31 @@ def _mount_metrics(
 
 
 def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
-    """Decode ``app.rest``, naming the interface behind an unknown key.
+    """Decode ``app.rest``; its defaults when the section is absent.
 
-    Validates ``app.rest.interfaces`` and ``app.rest.disable_routes`` against
-    their raw, not-yet-decoded mapping first, since a ``dict``-keyed value
-    (an interface name) is not information ``msgspec`` can recover once
-    conversion to :class:`~loom.rest.config.RestInterfaceConfig` has already
-    failed. Every other key of ``app.rest`` decodes exactly as
-    :func:`~loom.core.config.loader.section` already does — this only adds a
-    check ahead of it for this one section.
-
-    Both sections decode with untyped (``Any``) entries on purpose: typing an
-    entry as ``dict[str, Any]`` would make ``msgspec`` reject a malformed one
-    (a string where a mapping belongs) before the validators below ever see
-    it, with a generic ``Expected 'object', got 'str'`` — reachable, but
-    silent about which interface or disable-routes entry is at fault. Leaving
-    the entry ``Any`` defers that check to :func:`validate_interfaces_config`
-    and :func:`validate_disable_routes_config`, whose diagnostic names it.
-
-    Args:
-        ctx: Config context built from the supplied YAML files.
-
-    Returns:
-        The decoded :class:`_RestConfig`; its defaults when ``app.rest`` is absent.
+    ``interfaces`` and ``disable_routes`` come out untouched: :func:`served_routes`
+    validates and decodes them, naming the entry at fault.
 
     Raises:
-        RestInterfaceConfigError: If an interface, route, or disable-routes
-            entry uses a key its config struct does not declare, or is not a
-            mapping where one is required.
-        ConfigError: If decoding fails for any other reason.
+        ConfigError: If the section does not decode.
     """
-    raw_interfaces = ctx.section_or_default("app.rest.interfaces", dict[str, Any], {})
-    validate_interfaces_config(raw_interfaces)
-    raw_disable_routes = ctx.section_or_default("app.rest.disable_routes", tuple[Any, ...], ())
-    validate_disable_routes_config(raw_disable_routes)
     return ctx.section_or_default(_REST_SECTION, _RestConfig, _RestConfig())
+
+
+def _route_config(
+    ctx: ConfigContext,
+) -> tuple[dict[str, RestInterfaceConfig], tuple[DisableRouteConfig, ...]]:
+    """Validate route declarations and decode them without resolving REST auth."""
+    raw_interfaces = convert_section(ctx.raw(_INTERFACES_KEY, {}), _INTERFACES_KEY, dict[str, Any])
+    validate_interfaces_config(raw_interfaces)
+    raw_disable_routes = convert_section(
+        ctx.raw(_DISABLE_ROUTES_KEY, ()), _DISABLE_ROUTES_KEY, tuple[Any, ...]
+    )
+    validate_disable_routes_config(raw_disable_routes)
+    return (
+        convert_section(raw_interfaces, _INTERFACES_KEY, dict[str, RestInterfaceConfig]),
+        convert_section(raw_disable_routes, _DISABLE_ROUTES_KEY, tuple[DisableRouteConfig, ...]),
+    )
 
 
 def _build_introspection(name: str, rest_cfg: _RestConfig, ai: AiWiring) -> AppIntrospection:
@@ -545,11 +541,9 @@ def _interfaces_by_name(
 
 def served_routes(
     source: CompositionSource,
-    interfaces: Mapping[str, RestInterfaceConfig],
-    disabled: Sequence[DisableRouteConfig],
     select_interfaces: InterfaceSelector | None = None,
 ) -> tuple[DiscoveryResult, RouteSources]:
-    """Discover, add the YAML *interfaces*, narrow to *select_interfaces*, prune the CRUD ones.
+    """Validate REST config, discover routes, and narrow to *select_interfaces*.
 
     Reads no authentication, so it resolves no secret.
 
@@ -564,6 +558,7 @@ def served_routes(
     # Built ahead of discovery's pruning so their use cases join CRUD
     # gating, model registration and compilation exactly like a
     # Python-discovered interface's, in Python-then-config order.
+    interfaces, disabled = _route_config(source.config)
     config_interfaces = build_interfaces_from_config(interfaces)
     discovered = _discover_components(source)
     python_interfaces = discovered.interfaces
@@ -645,9 +640,7 @@ def compose_rest(
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
     _check_sql_section(ctx, auth)
-    discovered, routes = served_routes(
-        source, rest_cfg.interfaces, rest_cfg.disable_routes, select_interfaces
-    )
+    discovered, routes = served_routes(source, select_interfaces)
     declared = RestDeclaration(
         name=source.app.name, rest=rest_cfg, auth=auth, metrics_cfg=metrics_cfg, routes=routes
     )

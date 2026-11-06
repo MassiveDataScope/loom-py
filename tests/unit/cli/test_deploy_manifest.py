@@ -25,7 +25,10 @@ pytestmark = [
 runner = CliRunner()
 
 _API_SOURCE = """\
+from loom.core.command import Command
+from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
+from loom.core.use_case import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
 
@@ -57,9 +60,19 @@ class OrdersInterface(RestInterface[Order]):
 class AdminInterface(RestInterface[Order]):
     prefix = "/admin"
     routes = (RestRoute(use_case=ListOrders, method="POST", path="/purge"),)
+
+
+class InvoiceArrived(Command, frozen=True):
+    number: str
+
+
+class ImportInvoice(Job[None]):
+    async def execute(self, invoice: InvoiceArrived = Input()) -> None:
+        return None
 """
 
 _QUEUE_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"
+_ALERTS_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts"
 _SENTINEL = "resolved-secret-value"
 
 Project = Callable[..., Path]
@@ -98,17 +111,31 @@ def _config(package: str) -> dict[str, Any]:
             "default": {"backend": "sqlalchemy", "url": "${ ssm : '/shop/db-url' }"},
             "reports": {"backend": "none"},
         },
-        "sqs": {"queues": {"jobs": _QUEUE_URL}},
+        "sqs": {"queues": {"jobs": _QUEUE_URL, "alerts": _ALERTS_URL}},
         "checks": {"silenced": ["loom.cursors.E001"]},
         "lambda": {
             "handler": "entry.handler",
             "functions": {
-                "public": {"http": ["OrdersInterface", "health"]},
-                "admin": {"http": ["AdminInterface"], "auth": admin_auth},
-                "worker": {"sqs": True, "queue": "jobs", "batch_size": 5},
+                "public": _trigger("http", interfaces=["OrdersInterface", "health"]),
+                "admin": _trigger("http", interfaces=["AdminInterface"], auth=admin_auth),
+                "worker": _trigger("jobs", queue={"name": "jobs", "batch_size": 5}),
+                "invoices_in": _trigger(
+                    "eventbridge",
+                    job="ImportInvoice",
+                    identity={"subject": "svc:invoices", "roles": ["invoice_importer"]},
+                    maximum_retry_attempts=1,
+                ),
+                "alerts": _trigger("sns", queue={"name": "alerts"}, job="ImportInvoice"),
             },
         },
     }
+
+
+def _trigger(source: str, **declared: Any) -> dict[str, Any]:
+    return {"trigger": {"source": source, **declared}}
+
+
+_JOB_SECRETS = {"secrets": ["/shop/jwt"], "ssm_parameters": ["/shop/db-url"]}
 
 
 def _expected() -> dict[str, Any]:
@@ -121,24 +148,56 @@ def _expected() -> dict[str, Any]:
         }
     }
     return {
-        "manifest_version": 1,
+        "manifest_version": 2,
         "environment": "production",
         "handler": "entry.handler",
         "code_path": "src",
-        "queues": {"jobs": _QUEUE_URL},
+        "queues": {"alerts": _ALERTS_URL, "jobs": _QUEUE_URL},
         "functions": {
             "admin": {
+                "source": "http",
+                "via": None,
                 "event": {
-                    "type": "http",
                     "routes": [{"method": "POST", "path": "/admin/purge"}],
                     "auth": admin_auth,
                 },
                 "secrets": ["/shop/admin-key", "/shop/jwt"],
                 "ssm_parameters": ["/shop/admin-audience", "/shop/db-url"],
             },
-            "public": {
+            "alerts": {
+                "source": "sns",
+                "via": "sqs",
                 "event": {
-                    "type": "http",
+                    "queue": "alerts",
+                    "batch_size": None,
+                    "batching_window_s": None,
+                    "max_concurrency": None,
+                    "report_batch_item_failures": True,
+                    "dead_letter_required": True,
+                    "job": "ImportInvoice",
+                    "identity": None,
+                    "raw_message_delivery": False,
+                },
+                **_JOB_SECRETS,
+            },
+            "invoices_in": {
+                "source": "eventbridge",
+                "via": None,
+                "event": {
+                    "job": "ImportInvoice",
+                    "identity": {
+                        "subject": "svc:invoices",
+                        "roles": ["invoice_importer"],
+                        "attributes": {},
+                    },
+                    "on_failure": {"maximum_retry_attempts": 1, "maximum_event_age_s": 21600},
+                },
+                **_JOB_SECRETS,
+            },
+            "public": {
+                "source": "http",
+                "via": None,
+                "event": {
                     "routes": [
                         {"method": "GET", "path": "/orders"},
                         {"method": "GET", "path": "/orders/{order_id}"},
@@ -151,13 +210,15 @@ def _expected() -> dict[str, Any]:
             },
             # The worker lists app.rest.auth's secret: it resolves the whole app section.
             "worker": {
+                "source": "jobs",
+                "via": None,
                 "event": {
-                    "type": "sqs",
                     "queue": "jobs",
                     "batch_size": 5,
                     "batching_window_s": None,
                     "max_concurrency": None,
                     "report_batch_item_failures": True,
+                    "dead_letter_required": True,
                 },
                 "secrets": ["/shop/jwt"],
                 "ssm_parameters": ["/shop/db-url"],
@@ -289,15 +350,33 @@ _WORKER_ONLY = ("--function", "worker")
         (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
         (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
         (_set("lambda.functions", {}), (), "declares no function to deploy"),
-        (_set("lambda.functions.worker.queue", _DELETE), (), "worker.queue must name the queue"),
-        (_set("lambda.functions.worker.queue", "unknown"), (), "worker.queue must name the queue"),
         (
-            _set("lambda.functions.bad-name", {"sqs": True, "queue": "jobs"}),
+            _set("lambda.functions.worker.trigger.queue", _DELETE),
+            (),
+            "worker.trigger.queue.name must name the queue",
+        ),
+        (
+            _set("lambda.functions.worker.trigger.queue.name", "unknown"),
+            (),
+            "worker.trigger.queue.name must name the queue",
+        ),
+        (
+            _set("lambda.functions.alerts.trigger.queue.name", "unknown"),
+            (),
+            "alerts.trigger.queue.name must name the queue",
+        ),
+        (
+            _set("lambda.functions.invoices_in.trigger.job", "MissingJob"),
+            (),
+            "'MissingJob', which is no discovered Job",
+        ),
+        (
+            _set("lambda.functions.bad-name", _trigger("schedule", job="ImportInvoice")),
             (),
             "lambda.functions.bad-name must be named by a Python identifier",
         ),
         (
-            _set("lambda.functions.función", {"sqs": True, "queue": "jobs"}),
+            _set("lambda.functions.función", _trigger("schedule", job="ImportInvoice")),
             (),
             "lambda.functions.función must be named by a Python identifier",
         ),
@@ -329,6 +408,8 @@ _WORKER_ONLY = ("--function", "worker")
         "no-function",
         "no-queue",
         "unknown-queue",
+        "unknown-queue-on-event-trigger",
+        "undiscovered-job",
         "function-name",
         "non-ascii-function-name",
         "nested",
@@ -382,7 +463,7 @@ def test_the_findings_go_to_stderr_and_the_manifest_alone_to_stdout(project: Pro
     result = _manifest(project(_set("app.rest.docs_url", "/docs")))
 
     assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout)["manifest_version"] == 1
+    assert json.loads(result.stdout)["manifest_version"] == 2
     assert "environment: production" in result.stderr
     assert "silenced: loom.cursors.E001" in result.stderr
     assert "WARNING loom.rest.W001" in result.stderr

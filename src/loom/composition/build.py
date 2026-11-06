@@ -100,8 +100,8 @@ def create_app(
     Args:
         *config_paths: YAML files merged left to right; exclusive with *config_dir*.
         adapter: The transport, and how it wants the application composed;
-            ``app.entry`` picks it when omitted: ``fastapi``, ``lambda_http``,
-            ``lambda_sqs`` or a function of ``lambda.functions``.
+            ``app.entry`` picks it when omitted: ``fastapi``, ``lambda`` or a
+            function of ``lambda.functions``.
         config_dir: Directory with ``base.yaml`` and the per-environment overlays.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Overrides ``app.code_path``, relative to the first config file.
@@ -140,22 +140,15 @@ def _fastapi() -> Adapter[object]:
     return FastAPIAdapter()
 
 
-def _lambda_http() -> Adapter[object]:
-    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
+def _lambda(function: str | None = None) -> Adapter[object]:
+    from loom.serverless.aws.lambda_.handler import LambdaAdapter
 
-    return LambdaHTTPAdapter()
-
-
-def _lambda_sqs() -> Adapter[object]:
-    from loom.serverless.aws.lambda_.sqs import LambdaSQSAdapter
-
-    return LambdaSQSAdapter()
+    return LambdaAdapter(function=function)
 
 
 _BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
     "fastapi": _fastapi,
-    "lambda_http": _lambda_http,
-    "lambda_sqs": _lambda_sqs,
+    "lambda": _lambda,
 }
 
 
@@ -164,15 +157,7 @@ def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
     if entry is None:
         raise ConfigError("create_app needs adapter= or app.entry")
     builtin = _BUILTIN_ENTRIES.get(entry)
-    if builtin is not None:
-        return builtin()
-    from loom.serverless.aws.lambda_.functions import declared_function
-
-    if declared_function(source.config, entry).sqs:
-        return _lambda_sqs()
-    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
-
-    return LambdaHTTPAdapter(function=entry)
+    return builtin() if builtin is not None else _lambda(entry)
 
 
 def build_application(

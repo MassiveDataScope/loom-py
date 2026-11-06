@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Final
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.config.loader import load_config
+from loom.core.config.loader import config_strings, load_config
 from loom.core.config.retired import reject_retired_sections
 from loom.core.environment import (
     OVERRIDE_PREFIX,
@@ -91,13 +91,18 @@ _PROTECTED: Final = (
     ("persistence", "cursors"),
     ("aws",),
     ("sqs", "queues"),
+    ("lambda", "functions", "*", "trigger"),
+    ("lambda", "handler"),
+    ("app", "discovery"),
 )
-"""Keys no ``config.overridable`` entry may open, with everything below them.
+"""Keys no ``config.overridable`` entry may open, with everything below them; ``*`` is any level.
 
 ``config`` and ``checks`` are read as written, so the files cannot route them to
 the environment any other way. ``persistence.cursors`` decides whether, and with
-which key, cursor tokens are signed, and ``aws`` and ``sqs.queues`` where AWS
-calls and jobs go, which no per-deploy variable may change."""
+which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
+and jobs go, a Lambda function's ``trigger`` what invokes it, which job runs
+and as whom, ``lambda.handler`` the code every function runs and
+``app.discovery`` the code it loads: no per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",
@@ -216,7 +221,7 @@ def _parsed(name: str, key: str, value: str) -> Any:
         # Any parse failure, a YAML tag that fails to construct included; from
         # None, since the chained exception's message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
-    if any(INTERPOLATION in text for text in _strings(written)):
+    if any(INTERPOLATION in text for _, text in config_strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
     leaf: Any = written
     for level in key.split("."):
@@ -230,8 +235,8 @@ def _require_no_import(name: str, key: str, layer: Any, environment: Environment
     from omegaconf import OmegaConf
 
     # The parsed value: a YAML escape such as "\x3a" hides the colon from the raw text.
-    parsed = _strings(OmegaConf.to_container(layer, resolve=False))
-    if key.casefold() == "app.job_service" and any(":" in text for text in parsed):
+    parsed = config_strings(OmegaConf.to_container(layer, resolve=False))
+    if key.casefold() == "app.job_service" and any(":" in text for _, text in parsed):
         raise ConfigError(
             f"{name} sets {key!r} to a module:Class reference, which is refused in "
             f"{str(environment)!r}: set it in the reviewed configuration files"
@@ -257,16 +262,6 @@ def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
         raise ConfigError(f"{name} does not merge into {key!r}") from None
 
 
-def _strings(node: Any) -> list[str]:
-    if isinstance(node, str):
-        return [node]
-    if isinstance(node, dict):
-        return [text for value in node.values() for text in _strings(value)]
-    if isinstance(node, list):
-        return [text for value in node for text in _strings(value)]
-    return []
-
-
 def _refuse_collisions(keys: Mapping[str, str]) -> None:
     ordered = sorted(keys.items(), key=lambda item: item[1].casefold())
     for (first, key), (second, other) in zip(ordered, ordered[1:], strict=False):
@@ -276,23 +271,7 @@ def _refuse_collisions(keys: Mapping[str, str]) -> None:
 
 
 def _leaf_key(written: Any, name: str) -> str:
-    levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
-    if not all(_LEVEL.fullmatch(level) for level in levels):
-        raise ConfigError(
-            f"{name} has an empty or malformed level; a level is letters, digits and "
-            "underscores, separated by '__'"
-        )
-    node: Any = written
-    keys: list[str] = []
-    for level in levels:
-        if isinstance(node, str) and INTERPOLATION in node:
-            raise ConfigError(
-                f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
-                "override the whole key in the files instead"
-            )
-        key = _declared(node, level)
-        keys.append(key)
-        node = node.get(key) if isinstance(node, dict) else None
+    keys, node = _walk_override_path(written, name, _parse_override_levels(name))
     section = keys[0]
     if section not in _KNOWN_SECTIONS and not (isinstance(written, dict) and section in written):
         raise ConfigError(
@@ -306,6 +285,33 @@ def _leaf_key(written: Any, name: str) -> str:
             "sets one leaf value"
         )
     return key
+
+
+def _parse_override_levels(name: str) -> list[str]:
+    """The levels of the variable *name*, each letters, digits and underscores."""
+    levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
+    if not all(_LEVEL.fullmatch(level) for level in levels):
+        raise ConfigError(
+            f"{name} has an empty or malformed level; a level is letters, digits and "
+            "underscores, separated by '__'"
+        )
+    return levels
+
+
+def _walk_override_path(written: Any, name: str, levels: list[str]) -> tuple[list[str], Any]:
+    """The keys *levels* name in *written*, cased as declared, and the node they reach."""
+    node: Any = written
+    keys: list[str] = []
+    for level in levels:
+        if isinstance(node, str) and INTERPOLATION in node:
+            raise ConfigError(
+                f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
+                "override the whole key in the files instead"
+            )
+        key = _declared(node, level)
+        keys.append(key)
+        node = node.get(key) if isinstance(node, dict) else None
+    return keys, node
 
 
 def _declared_allowlist(written: Any) -> tuple[str, ...]:
@@ -329,13 +335,17 @@ def _refuse_protected(entry: str) -> None:
     levels = entry.casefold().split(".")
     opens_protected = any(
         len(levels) >= len(protected)
-        and all(level in ("*", part) for level, part in zip(levels, protected, strict=False))
+        and all(
+            part == "*" or level in ("*", part)
+            for level, part in zip(levels, protected, strict=False)
+        )
         for protected in _PROTECTED
     )
     if levels[0] == "*" or opens_protected:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks, config, persistence.cursors, aws or sqs.queues"
+            "first level, checks, config, persistence.cursors, aws, sqs.queues, "
+            "lambda.functions.*.trigger, lambda.handler or app.discovery"
         )
 
 

@@ -89,7 +89,16 @@ def test_un_sink_pasa_mypy_strict_dentro_de_un_process(
     module.write_text(snippet, encoding="utf-8")
 
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "mypy", "--strict", str(module)],
+        # Its own cache: the shared .mypy_cache may be mid-write by another run.
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--strict",
+            "--cache-dir",
+            str(tmp_path / ".mypy_cache"),
+            str(module),
+        ],
         capture_output=True,
         text=True,
         check=False,

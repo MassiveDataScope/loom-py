@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.config._resolver_utils import _split_resolver_key, aws_client, resolve_cached
+from loom.core.config._resolver_utils import aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
 
@@ -98,10 +98,6 @@ class SecretsManagerResolver:
             The string ``"secrets"``.
         """
         return "secrets"
-
-    def reference(self, key: str) -> str:
-        """The secret *key* fetches: its JSON tail dropped, ``%VAR%`` tokens unexpanded."""
-        return _split_resolver_key(key)[0]
 
     def resolve(self, key: str, _root_: Any = None) -> object:
         """Resolve an AWS Secrets Manager path to its stored value.

@@ -28,8 +28,8 @@ app:
   entry: fastapi
 ```
 
-To run it on Lambda, set `entry: lambda_http`, or keep the YAML and set
-`LOOM__APP__ENTRY=lambda_http` (and `LOOM_ENV`) on the function: the override
+To run it on Lambda, set `entry: lambda`, or keep the YAML and set
+`LOOM__APP__ENTRY=lambda` (and `LOOM_ENV`) on the function: the override
 is allowed in every environment. The code does not change. Uvicorn serves
 `entry:app` and Lambda runs `entry.app` as its handler.
 
@@ -38,9 +38,9 @@ and the call:
 
 ```python
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter
+from loom.serverless.aws.lambda_ import LambdaAdapter
 
-app = create_app("config/app.yaml", adapter=LambdaHTTPAdapter())
+app = create_app("config/app.yaml", adapter=LambdaAdapter())
 ```
 
 An explicit `adapter=` wins over `app.entry`. Keep the call at module level:
@@ -62,9 +62,10 @@ and requires identical replies. Some features have no Lambda equivalent:
 Placeholders such as `${secrets:...}` and `${ssm:...}` resolve once, during
 Init, and the values stay in the container's memory.
 
-Several functions can share one configuration: see
-[Composition and lifecycle](composition.md) for `lambda.functions` and
-`LOOM__APP__ENTRY=<function>`.
+Several functions can share one configuration, each with its own `trigger`:
+an HTTP API, a worker for loom jobs, or a function run by EventBridge, S3,
+SNS or a schedule. See [Composition and lifecycle](composition.md) for
+`lambda.functions` and `LOOM__APP__ENTRY=<function>`.
 
 ## 3. Test it without AWS
 

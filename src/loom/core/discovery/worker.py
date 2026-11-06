@@ -335,6 +335,15 @@ def worker_discovery(written: object) -> DiscoveryConfig:
     return discovery
 
 
+def discovered_jobs(discovery: DiscoveryConfig) -> tuple[type[Job[Any]], ...]:
+    """The jobs a worker discovers with *discovery*, from :func:`worker_discovery`.
+
+    Raises:
+        ImportError: When a module it names cannot be imported.
+    """
+    return _discover_compilables_from_config(discovery).jobs
+
+
 def _discover_compilables_from_config(
     discovery_cfg: DiscoveryConfig,
     autocrud_use_cases: AutoCRUDUseCases | None = None,

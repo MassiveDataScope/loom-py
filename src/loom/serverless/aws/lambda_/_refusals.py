@@ -10,6 +10,8 @@ from loom.core.config.errors import ConfigError
 if TYPE_CHECKING:
     from loom.composition import CompositionSource
 
+COMPONENT = "LambdaAdapter"
+"""The adapter refusals and composition errors name."""
 MANIFEST_AGENTS_KEY = "manifest.AGENTS"
 """The :attr:`LambdaUnservedConfigError.key` of the agents a manifest module declares."""
 
@@ -29,14 +31,13 @@ class LambdaUnservedConfigError(ConfigError):
         self.key = key
 
 
-def refuse_unserved_config(source: CompositionSource, adapter: str) -> None:
+def refuse_unserved_config(source: CompositionSource) -> None:
     """Refuse, from the configuration alone, what no Lambda function serves.
 
     Runs before discovery: a metrics scrape and an agent runtime.
 
     Args:
         source: What the entry point composes from.
-        adapter: The refusing adapter, named in the message.
 
     Raises:
         LambdaUnservedConfigError: When metrics are enabled or an ``ai``
@@ -50,12 +51,12 @@ def refuse_unserved_config(source: CompositionSource, adapter: str) -> None:
     if source.config.has(ConfigKey.AI):
         raise LambdaUnservedConfigError(
             ConfigKey.AI,
-            f"{adapter} does not host agents. Serve them with FastAPIAdapter, "
+            f"{COMPONENT} does not host agents. Serve them with FastAPIAdapter, "
             "or drop the section from this entry point's configuration.",
         )
 
 
-def refuse_manifest_agents(agent_specs: tuple[str, ...], adapter: str) -> None:
+def refuse_manifest_agents(agent_specs: tuple[str, ...]) -> None:
     """Refuse the agents a manifest module declares, once discovery has read them.
 
     Raises:
@@ -64,6 +65,6 @@ def refuse_manifest_agents(agent_specs: tuple[str, ...], adapter: str) -> None:
     if agent_specs:
         raise LambdaUnservedConfigError(
             MANIFEST_AGENTS_KEY,
-            f"the manifest declares agents, which {adapter} does not host. "
+            f"the manifest declares agents, which {COMPONENT} does not host. "
             "Serve them with FastAPIAdapter.",
         )

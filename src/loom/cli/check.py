@@ -32,6 +32,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
+from loom.serverless.aws.lambda_.checks import check_triggers
 
 
 def check(
@@ -79,7 +80,8 @@ def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
     """Load *config* for *env*, put its code path on the import path and run the deploy checks.
 
     Raises:
-        ConfigError: When the configuration does not load.
+        ConfigError: When the configuration does not load, or ``lambda`` is
+            one startup would refuse.
     """
     _load_check_packages()
     environment = resolve_environment(env)
@@ -89,6 +91,7 @@ def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
     )
     config_root = Path(paths[0]).resolve().parent
     code_path = _add_code_path(context, config_root)
+    check_triggers(context)
     report = run_deploy_checks(context, skip=skip)
     return CheckedConfig(context, environment, report, skip, config_root, code_path)
 

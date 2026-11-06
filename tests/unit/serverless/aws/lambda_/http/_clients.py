@@ -9,7 +9,7 @@ from typing import Any, NamedTuple, Protocol
 
 from fastapi.testclient import TestClient
 
-from loom.serverless.aws.lambda_ import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 
 TRACE_ID = "contract-trace-0001"

@@ -17,17 +17,21 @@ from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
 
 pytestmark = pytest.mark.filterwarnings("ignore:No function of lambda.functions serves")
 
 _TEST = "test"
-_PUBLIC_AND_ADMIN = {
-    "public_api": {"http": ["ItemInterface"]},
-    "admin_api": {"http": ["OpsInterface"]},
-}
+
+
+def _http(*interfaces: str, **options: Any) -> dict[str, Any]:
+    return {"trigger": {"source": "http", "interfaces": list(interfaces), **options}}
+
+
+_PUBLIC_AND_ADMIN = {"public_api": _http("ItemInterface"), "admin_api": _http("OpsInterface")}
 
 Edit = Callable[[dict[str, Any], Path], None]
 
@@ -87,7 +91,7 @@ def test_an_http_function_serves_only_its_interfaces(
 def test_a_yaml_interface_is_named_by_its_key(
     project: Callable[..., str], serve: Callable[..., Any]
 ) -> None:
-    path = project("public_api", {"public_api": {"http": ["catalog"]}}, _yaml_catalog)
+    path = project("public_api", {"public_api": _http("catalog")}, _yaml_catalog)
 
     call = lambda_client(serve(path))
 
@@ -116,10 +120,10 @@ def test_a_function_authenticating_no_caller_stops_startup_in_production(
     def silence_cursor_check(config: dict[str, Any], _root: Path) -> None:
         config["checks"] = {"silenced": ["loom.cursors.E001"]}
 
-    functions = {"public_api": {"http": ["ItemInterface"], "auth": {}}}
+    functions = {"public_api": _http("ItemInterface", auth={})}
     path = project("public_api", functions, silence_cursor_check)
 
-    with pytest.raises(DeployCheckError, match="lambda.functions.public_api.auth"):
+    with pytest.raises(DeployCheckError, match="lambda.functions.public_api.trigger.auth"):
         serve(path, environment="production")
 
 
@@ -155,12 +159,10 @@ def test_a_function_auth_replaces_the_application_auth(
     headers: dict[str, str],
     status: int,
 ) -> None:
-    function: dict[str, Any] = {"http": ["ItemInterface"]}
-    if auth is not None:
-        function["auth"] = auth
+    function = _http("ItemInterface") if auth is None else _http("ItemInterface", auth=auth)
     path = project("public_api", {"public_api": function})
     authenticator = _HeaderAuthenticator() if in_code else None
-    adapter = LambdaHTTPAdapter(function="public_api", authenticator=authenticator)
+    adapter = LambdaAdapter(function="public_api", authenticator=authenticator)
 
     reply = lambda_client(serve(path, adapter=adapter))("GET", "/items/12", headers=headers)
 
@@ -171,12 +173,12 @@ def test_the_entry_selects_the_function_of_an_adapter_built_in_code(
     project: Callable[..., str], serve: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     functions = {
-        "public_api": {"http": ["ItemInterface"], "auth": {"custom": True}},
-        "admin_api": {"http": ["OpsInterface"]},
+        "public_api": _http("ItemInterface", auth={"custom": True}),
+        "admin_api": _http("OpsInterface"),
     }
     path = project("admin_api", functions)
     monkeypatch.setenv("LOOM__APP__ENTRY", "public_api")
-    adapter = LambdaHTTPAdapter(authenticator=_HeaderAuthenticator())
+    adapter = LambdaAdapter(authenticator=_HeaderAuthenticator())
 
     call = lambda_client(serve(path, adapter=adapter))
 
@@ -218,9 +220,7 @@ def test_an_explicit_adapter_wins_over_the_entry(
     assert isinstance(serve(path, adapter=FastAPIAdapter()), FastAPI)
 
 
-@pytest.mark.parametrize(
-    ("entry", "built"), [("fastapi", FastAPI), ("lambda_http", LambdaHTTPHandler)]
-)
+@pytest.mark.parametrize(("entry", "built"), [("fastapi", FastAPI), ("lambda", LambdaHTTPHandler)])
 def test_a_built_in_http_entry_selects_its_adapter(
     project: Callable[..., str], serve: Callable[..., Any], entry: str, built: type
 ) -> None:
@@ -236,11 +236,11 @@ def _manifest_discovery(config: dict[str, Any], root: Path) -> None:
     config["app"]["discovery"] = {"mode": "manifest", "manifest": {"module": "lambda_manifest"}}
 
 
-@pytest.mark.parametrize("entry", ["worker", "lambda_sqs"])
 def test_an_sqs_entry_serves_the_jobs(
-    project: Callable[..., str], serve: Callable[..., Any], entry: str
+    project: Callable[..., str], serve: Callable[..., Any]
 ) -> None:
-    handler = serve(project(entry, {"worker": {"sqs": True}}, _manifest_discovery))
+    worker = {"trigger": {"source": "jobs"}}
+    handler = serve(project("worker", {"worker": worker}, _manifest_discovery))
 
     assert handler({"Records": []}, None) == {"batchItemFailures": []}
 
@@ -248,7 +248,7 @@ def test_an_sqs_entry_serves_the_jobs(
 def test_an_interface_no_function_serves_is_warned_about(
     project: Callable[..., str], serve: Callable[..., Any]
 ) -> None:
-    path = project("public_api", {"public_api": {"http": ["ItemInterface"]}})
+    path = project("public_api", {"public_api": _http("ItemInterface")})
 
     with pytest.warns(UserWarning, match="serves OpsInterface"):
         serve(path)
@@ -265,7 +265,7 @@ def _second_item_interface(config: dict[str, Any], root: Path) -> None:
     config["app"]["discovery"]["interfaces"]["modules"].append("other_contract")
 
 
-_ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
+_ITEM_ONLY = {"public_api": _http("ItemInterface")}
 
 
 @pytest.mark.parametrize(
@@ -273,7 +273,7 @@ _ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
     [
         pytest.param(
             "public_api",
-            {"public_api": {"http": ["MissingInterface"]}},
+            {"public_api": _http("MissingInterface")},
             (),
             None,
             "'MissingInterface': no discovered RestInterface",
@@ -289,7 +289,7 @@ _ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
         ),
         pytest.param(
             "public_api",
-            {"public_api": {"http": ["ItemInterface"]}, "other": {"http": ["ItemInterface"]}},
+            {"public_api": _http("ItemInterface"), "other": _http("ItemInterface")},
             (),
             None,
             r"'ItemInterface' is served by both lambda\.functions\.(other|public_api) and",
@@ -297,20 +297,27 @@ _ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
         ),
         pytest.param(
             "public_api",
-            {"public_api": {"http": ["ItemInterface"], "sqs": True}},
+            {"public_api": _http("ItemInterface", queue="orders")},
             (),
             None,
-            "exactly one of",
-            id="http-and-sqs",
+            "unknown field `queue`",
+            id="http-with-a-queue",
         ),
-        pytest.param("public_api", {"public_api": {}}, (), None, "exactly one of", id="neither"),
+        pytest.param(
+            "public_api",
+            {"public_api": {}},
+            (),
+            None,
+            "missing required field `trigger`",
+            id="neither",
+        ),
         pytest.param(
             "worker",
-            {"worker": {"sqs": True, "auth": {}}},
+            {"worker": {"trigger": {"source": "jobs", "auth": {}}}},
             (),
             None,
-            "applies to an http function only",
-            id="auth-on-sqs",
+            "unknown field `auth`",
+            id="auth-on-jobs",
         ),
         pytest.param(
             "missing",
@@ -321,15 +328,7 @@ _ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
             id="undeclared-entry",
         ),
         pytest.param(
-            "lambda_http",
-            {"worker": {"sqs": True}},
-            (),
-            "worker",
-            "is an sqs function, not an http one",
-            id="http-adapter-on-sqs-function",
-        ),
-        pytest.param(
-            "lambda_http",
+            "lambda",
             _ITEM_ONLY,
             (),
             "typo",
@@ -348,7 +347,7 @@ def test_a_misdeclared_function_fails_at_startup(
     message: str,
 ) -> None:
     path = project(entry, functions, *edits)
-    options = {} if function is None else {"adapter": LambdaHTTPAdapter(function=function)}
+    options = {} if function is None else {"adapter": LambdaAdapter(function=function)}
 
     with pytest.raises(ConfigError, match=message):
         serve(path, **options)
@@ -380,7 +379,7 @@ class _Secrets:
 def _auth_through_secret(function: str) -> Edit:
     def edit(config: dict[str, Any], root: Path) -> None:
         jwt_auth = dict(config["app"]["rest"]["auth"]["jwt"], secret_path=f"${{secret:{function}}}")
-        config["lambda"]["functions"][function]["auth"] = {"jwt": jwt_auth}
+        config["lambda"]["functions"][function]["trigger"]["auth"] = {"jwt": jwt_auth}
 
     return edit
 

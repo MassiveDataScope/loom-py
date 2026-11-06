@@ -453,20 +453,25 @@ sqs:
 
 #### Lambda consumers
 
-A `lambda.functions` entry with `sqs: true` may declare its event source
-mapping:
+A `lambda.functions` entry whose trigger is `source: jobs`, or an event
+trigger with a `queue:` block, declares its event source mapping in that
+block, under the queue's `name`:
 
 ```yaml
 lambda:
   functions:
     worker:
-      sqs: true
-      batch_size: 100
-      batching_window_s: 5
-      max_concurrency: 50
-      report_batch_item_failures: true
+      trigger:
+        source: jobs
+        queue:
+          name: jobs
+          batch_size: 100
+          batching_window_s: 5
+          max_concurrency: 50
+          report_batch_item_failures: true
 ```
 
+- `name` is a key of `sqs.queues`.
 - `batch_size` (1–10000; 10 at most on a FIFO queue; over 10 needs
   `batching_window_s` of at least 1), `batching_window_s` (0–300) and
   `max_concurrency` (2–1000) are the
@@ -477,7 +482,7 @@ lambda:
 - `report_batch_item_failures` (default `true`) must match the mapping's
   `ReportBatchItemFailures`: `false` makes the handler raise
   `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
-- An http function refuses these keys.
+- An http function, and a direct event trigger, refuse the `queue:` block.
 
 ### Who can run a job
 

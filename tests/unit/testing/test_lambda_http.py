@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from loom.testing.lambda_http import EventFormat
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer, write_contract_project
@@ -20,8 +21,10 @@ pytestmark = pytest.mark.timeout(60)
 def config(tmp_path_factory: pytest.TempPathFactory) -> str:
     functions: dict[str, Any] = {
         "functions": {
-            "items": {"http": ["ItemInterface"]},
-            "ops": {"http": ["OpsInterface", "PublicInterface"]},
+            "items": {"trigger": {"source": "http", "interfaces": ["ItemInterface"]}},
+            "ops": {
+                "trigger": {"source": "http", "interfaces": ["OpsInterface", "PublicInterface"]}
+            },
         }
     }
     return write_contract_project(tmp_path_factory.mktemp("lambda-client"), **{"lambda": functions})
@@ -29,7 +32,7 @@ def config(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 @pytest.fixture(scope="module")
 def handler(config: str) -> Iterator[LambdaHTTPHandler]:
-    served = create_app(config, adapter=LambdaHTTPAdapter(), environment="test")
+    served = create_app(config, adapter=LambdaAdapter(), environment="test")
     yield served
     served.close()
 

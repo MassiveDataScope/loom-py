@@ -35,6 +35,9 @@ import logging
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+from loom.core.config._interpolations import referenced
+from loom.core.config._resolver_utils import _split_resolver_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,4 +163,20 @@ def with_default_resolvers(explicit: Sequence[ConfigResolver] = ()) -> tuple[Con
     return merge_resolvers(explicit, default_resolvers())
 
 
-__all__ = ["ConfigResolver", "default_resolvers", "merge_resolvers", "with_default_resolvers"]
+def fetched_name(key: str) -> str:
+    """The secret or parameter a resolver *key* fetches: no JSON tail, ``%VAR%`` unexpanded.
+
+    ``/app/db.host`` fetches ``/app/db`` and navigates ``host``; the manifest
+    names ``/app/db``.
+    """
+    return _split_resolver_key(key)[0]
+
+
+__all__ = [
+    "ConfigResolver",
+    "default_resolvers",
+    "fetched_name",
+    "merge_resolvers",
+    "referenced",
+    "with_default_resolvers",
+]

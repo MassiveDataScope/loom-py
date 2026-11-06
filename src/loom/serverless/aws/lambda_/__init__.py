@@ -1,8 +1,8 @@
-"""AWS Lambda transport adapters: API Gateway HTTP events and SQS batches.
+"""AWS Lambda: one adapter serving the trigger each deployed function declares.
 
-The names load on first access, so importing the SQS adapter never loads the
-HTTP stack (FastAPI, Starlette, Mangum). The HTTP adapter needs the ``lambda``
-extra; the SQS adapter needs none::
+The names load on first access, so a function running jobs or events never
+loads the HTTP stack (FastAPI, Starlette, Mangum). An ``http`` function needs
+the ``lambda`` extra; the others need none::
 
     pip install "loom-kernel[lambda]"
 """
@@ -14,21 +14,24 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from loom.serverless.aws.lambda_._refusals import LambdaUnservedConfigError
-    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter, LambdaHTTPHandler
-    from loom.serverless.aws.lambda_.sqs import LambdaSQSAdapter
+    from loom.serverless.aws.lambda_.errors import SQSBatchFailedError
+    from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
+    from loom.serverless.aws.lambda_.triggers.s3 import S3Object
 
 _EXPORTS = {
-    "LambdaHTTPAdapter": "loom.serverless.aws.lambda_.http",
-    "LambdaHTTPHandler": "loom.serverless.aws.lambda_.http",
-    "LambdaSQSAdapter": "loom.serverless.aws.lambda_.sqs",
+    "LambdaAdapter": "loom.serverless.aws.lambda_.handler",
+    "LambdaHandler": "loom.serverless.aws.lambda_.handler",
     "LambdaUnservedConfigError": "loom.serverless.aws.lambda_._refusals",
+    "S3Object": "loom.serverless.aws.lambda_.triggers.s3",
+    "SQSBatchFailedError": "loom.serverless.aws.lambda_.errors",
 }
 
 __all__ = [
-    "LambdaHTTPAdapter",
-    "LambdaHTTPHandler",
-    "LambdaSQSAdapter",
+    "LambdaAdapter",
+    "LambdaHandler",
     "LambdaUnservedConfigError",
+    "S3Object",
+    "SQSBatchFailedError",
 ]
 
 

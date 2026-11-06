@@ -4,8 +4,8 @@
 the mechanism: ``app.rest.auth.jwt`` for the built-in one, or
 ``app.rest.auth.custom: true`` for an ``authenticator`` the composition root
 passes in code (``create_app`` refuses either without the other). The
-``auth`` of a function of ``lambda.functions`` replaces ``app.rest.auth`` for
-that function, so it must name a mechanism too.
+``auth`` of an http function of ``lambda.functions``, under its ``trigger``,
+replaces ``app.rest.auth`` for that function, so it must name a mechanism too.
 
 ``loom.rest.W001``: the API publishes its documentation or OpenAPI schema,
 which maps every route, parameter and field. The three URLs are on by
@@ -57,13 +57,15 @@ def _authentication_configured(config: ConfigContext) -> Finding | None:
 
 
 def _auth_keys(config: ConfigContext) -> list[str]:
-    """``app.rest.auth`` and the ``auth`` of each function of ``lambda.functions`` declaring one."""
+    """``app.rest.auth`` and the trigger ``auth`` of each function of ``lambda.functions``."""
     functions = config.raw(f"{ConfigKey.LAMBDA}.functions", {})
     declared = functions.items() if isinstance(functions, dict) else ()
     overrides = [
-        f"{ConfigKey.LAMBDA}.functions.{name}.auth"
+        f"{ConfigKey.LAMBDA}.functions.{name}.trigger.auth"
         for name, function in declared
-        if isinstance(function, dict) and function.get("auth") is not None
+        if isinstance(function, dict)
+        and isinstance(function.get("trigger"), dict)
+        and function["trigger"].get("auth") is not None
     ]
     return [_AUTH_KEY, *overrides]
 
