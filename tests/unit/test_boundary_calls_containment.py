@@ -53,6 +53,7 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("rest/fastapi/sql.py", "msgspec.json.Decoder"): 1,
     ("rest/fastapi/sql.py", "msgspec.json.Encoder"): 1,
     ("rest/rest_adapter.py", "msgspec.to_builtins"): 1,
+    ("serverless/aws/lambda_/manifest.py", "msgspec.to_builtins"): 2,
 }
 
 
