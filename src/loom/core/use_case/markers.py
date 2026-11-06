@@ -43,6 +43,11 @@ class _InputMarker:
     __slots__ = ()
 
 
+def marks_input(default: object) -> bool:
+    """Whether a parameter *default* is the ``Input()`` marker of the command payload."""
+    return isinstance(default, _InputMarker)
+
+
 class _CallerMarker:
     """Marks a parameter as the verified identity running the execution.
 

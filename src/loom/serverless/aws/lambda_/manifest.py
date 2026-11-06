@@ -16,11 +16,10 @@ import msgspec
 
 from loom.composition.source import AppConfig, CompositionSource
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
-from loom.core.config._resolver_utils import _split_resolver_key
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.config.overrides import config_strings
-from loom.core.config.resolver import referenced
+from loom.core.config.resolver import fetched_name, referenced
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.serverless.aws.lambda_.functions import (
@@ -239,8 +238,7 @@ def _references(document: dict[str, Any], name: str) -> tuple[tuple[str, ...], t
         except ConfigError as exc:
             raise ConfigError(f"{'.'.join(path)} {exc}") from exc
         for resolver, keys in references.items():
-            # The name a key fetches: its JSON tail dropped, ``%VAR%`` tokens unexpanded.
-            found[resolver].update(_split_resolver_key(key)[0] for key in keys)
+            found[resolver].update(fetched_name(key) for key in keys)
     for reference in sorted(found["secrets"] | found["ssm"]):
         if "*" in reference or "?" in reference:
             raise ConfigError(f"the secret or parameter {reference!r} holds a wildcard, '*' or '?'")

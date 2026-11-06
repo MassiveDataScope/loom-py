@@ -14,7 +14,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from loom.core.errors import LoomError, MalformedJobMessage, UnknownJob
+from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import failure_log_fields, is_retryable
 from loom.core.logger import get_logger
@@ -26,6 +26,7 @@ from loom.serverless.aws.lambda_._jobs import (
     remaining_ms,
     run_envelope,
 )
+from loom.serverless.aws.lambda_.errors import SQSBatchFailedError
 
 if TYPE_CHECKING:
     from loom.composition import Application, LoopHost
@@ -34,10 +35,6 @@ if TYPE_CHECKING:
 _log = get_logger(__name__)
 MALFORMED_JOB = "<malformed>"
 """Job label of a record whose body could not be decoded."""
-
-
-class SQSBatchFailedError(LoomError):
-    """A record of the batch failed and the function does not report batch item failures."""
 
 
 def _envelope(body: str) -> tuple[tuple[JobEnvelope, str | None]]:

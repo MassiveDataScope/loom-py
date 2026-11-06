@@ -14,16 +14,16 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from loom.serverless.aws.lambda_._refusals import LambdaUnservedConfigError
+    from loom.serverless.aws.lambda_.errors import SQSBatchFailedError
     from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
     from loom.serverless.aws.lambda_.triggers.s3 import S3Object
-    from loom.serverless.aws.lambda_.triggers.sqs import SQSBatchFailedError
 
 _EXPORTS = {
     "LambdaAdapter": "loom.serverless.aws.lambda_.handler",
     "LambdaHandler": "loom.serverless.aws.lambda_.handler",
     "LambdaUnservedConfigError": "loom.serverless.aws.lambda_._refusals",
     "S3Object": "loom.serverless.aws.lambda_.triggers.s3",
-    "SQSBatchFailedError": "loom.serverless.aws.lambda_.triggers.sqs",
+    "SQSBatchFailedError": "loom.serverless.aws.lambda_.errors",
 }
 
 __all__ = [

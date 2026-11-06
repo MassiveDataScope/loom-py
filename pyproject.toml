@@ -16,7 +16,7 @@ classifiers = [
 dependencies = [
     "msgspec>=0.18,<1.0",
     "structlog>=24.4,<27.0",
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
     "prometheus-client>=0.20",
     "aiocache>=0.12,<1.0",
     "typing_extensions>=4.12",
@@ -62,17 +62,17 @@ jwt = [
     "pyjwt[crypto]>=2.8,<3",
 ]
 config = [
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
     "fsspec>=2024.2.0",
 ]
 config-ssm = [
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
     "fsspec>=2024.2.0",
     "boto3>=1.35",
 ]
 cache = [
     "aiocache>=0.12,<1.0",
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
 ]
 etl-polars = [
     "polars>=1.24,<2.0",
@@ -107,7 +107,7 @@ prefect = [
     "prefect>=3.0,<4.0",
     "fsspec>=2024.2.0",
     "pyyaml>=6.0",
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
     "boto3>=1.35",
     "docker>=7.0",
 ]
@@ -256,7 +256,7 @@ dev = [
     "fastapi>=0.115,<1.0",
     "greenlet>=3.0.0",
     "mypy>=1.11.0,<2.0",
-    "omegaconf>=2.3,<3.0",
+    "omegaconf>=2.3,<2.4",
     "pydantic>=2.0,<3.0",
     "pre-commit>=3.8.0",
     "pyright>=1.1.390,<2.0",

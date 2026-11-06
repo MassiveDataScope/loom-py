@@ -120,11 +120,12 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     # Endpoints declared without Python (loom.rest.config); converted into
     # the same RestInterface objects a Python subclass produces and handed to
     # the same compiler — see _fold_config_interfaces and create_fastapi_app.
-    interfaces: dict[str, RestInterfaceConfig] = msgspec.field(default_factory=dict)
+    # Decoded and validated by served_routes alone, so a typo is named once.
+    interfaces: dict[str, Any] = msgspec.field(default_factory=dict)
     # Subtractive per-environment overlay: every entry must match a route
     # declared in Python, or startup aborts (see
     # RestInterfaceCompiler.compile_sources).
-    disable_routes: tuple[DisableRouteConfig, ...] = ()
+    disable_routes: tuple[Any, ...] = ()
 
 
 def _fold_config_interfaces(
@@ -468,8 +469,6 @@ def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
             mapping where one is required.
         ConfigError: If decoding fails for any other reason.
     """
-    # Validated raw before the struct decodes them, so an error names the interface.
-    _route_config(ctx)
     return ctx.section_or_default(_REST_SECTION, _RestConfig, _RestConfig())
 
 

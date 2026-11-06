@@ -32,61 +32,13 @@ for AWS SSM Parameter Store.  Install ``loom-kernel[config-ssm]`` to use it::
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Iterator, Sequence
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
-from loom.core.config.errors import ConfigError
+from loom.core.config._interpolations import referenced
+from loom.core.config._resolver_utils import _split_resolver_key
 
 logger = logging.getLogger(__name__)
-
-
-def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
-    """The first argument of every ``${name:...}`` of *text* whose *name* is one of *names*.
-
-    OmegaConf's own grammar reads *text*, so the surrounding literal text, an
-    escaped ``\\${``, quotes and argument separators mean what they mean to
-    the loader; nothing is resolved.
-
-    Returns:
-        The arguments by resolver name, as the resolver would receive them,
-        in order of appearance; a name nothing references is absent.
-
-    Raises:
-        ConfigError: When a selected resolver's arguments nest another
-            interpolation, whose value the caller cannot know as written.
-    """
-    if "${" not in text:
-        return {}
-    # Local imports keep omegaconf out of the import of ``loom.core.config``.
-    from omegaconf.grammar.gen.OmegaConfGrammarParser import OmegaConfGrammarParser as Grammar
-    from omegaconf.grammar_parser import parse
-    from omegaconf.grammar_visitor import GrammarVisitor
-
-    literal = GrammarVisitor(lambda _key, _memo: None, lambda **_kwargs: None, None)
-    found: dict[str, list[str]] = {}
-    for node in _parse_nodes(parse(text, parser_rule="configValue")):
-        if not isinstance(node, Grammar.InterpolationResolverContext):
-            continue
-        call: Any = node  # the generated parser carries no useful types
-        name = call.resolverName().getText()
-        if name not in names:
-            continue
-        sequence = call.sequence()
-        if any(isinstance(n, Grammar.InterpolationContext) for n in _parse_nodes(sequence)):
-            raise ConfigError(f"nests a placeholder in a {name} key")
-        arguments = [] if sequence is None else sequence.element()
-        first = str(literal.visitElement(arguments[0])) if arguments else ""
-        found.setdefault(name, []).append(first)
-    return found
-
-
-def _parse_nodes(tree: Any) -> Iterator[Any]:
-    """*tree* and every node under it, parents first; nothing for ``None``."""
-    if tree is None:
-        return
-    yield tree
-    for index in range(tree.getChildCount()):
-        yield from _parse_nodes(tree.getChild(index))
 
 
 @runtime_checkable
@@ -211,4 +163,20 @@ def with_default_resolvers(explicit: Sequence[ConfigResolver] = ()) -> tuple[Con
     return merge_resolvers(explicit, default_resolvers())
 
 
-__all__ = ["ConfigResolver", "default_resolvers", "merge_resolvers", "with_default_resolvers"]
+def fetched_name(key: str) -> str:
+    """The secret or parameter a resolver *key* fetches: no JSON tail, ``%VAR%`` unexpanded.
+
+    ``/app/db.host`` fetches ``/app/db`` and navigates ``host``; the manifest
+    names ``/app/db``.
+    """
+    return _split_resolver_key(key)[0]
+
+
+__all__ = [
+    "ConfigResolver",
+    "default_resolvers",
+    "fetched_name",
+    "merge_resolvers",
+    "referenced",
+    "with_default_resolvers",
+]

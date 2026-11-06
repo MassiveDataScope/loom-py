@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.worker import discovered_jobs, worker_discovery
-from loom.core.use_case.markers import _InputMarker
+from loom.core.use_case.markers import marks_input
 from loom.serverless.aws.lambda_.functions import EventTrigger, JobsTrigger, declared_lambda
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ def _execute_parameters(job_type: type[Job[Any]]) -> tuple[bool, list[str]]:
             parameter.VAR_KEYWORD,
         ):
             continue
-        if isinstance(parameter.default, _InputMarker):
+        if marks_input(parameter.default):
             has_input = True
         elif parameter.default is parameter.empty:
             required.append(parameter.name)
