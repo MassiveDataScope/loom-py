@@ -227,8 +227,18 @@
   | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
   | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
   | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
-  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`, `loom.rest.errors`) |
+  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
   | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
+
+- **errors:** a `LoomError` code is a catalogue member, never a literal
+  string: `LoomError(message, code=)` is typed `StrEnum`, `ErrorCode` gains
+  `JOB_TIMEOUT`, `JOB_FAILED`, `JOB_BACKENDS_MIXED` and
+  `BOUNDARY_TYPE_UNSUPPORTED` (same string values, mapped to 500 explicitly),
+  and the SQS adapters' `sqs_*` codes are the members of
+  `loom.jobs.aws.errors.SQSErrorCode`, which `SQSDispatchError(message, code=)`
+  now requires. An application catalogue is its own `StrEnum`.
+  `AuthenticationUnavailable` is a `SystemError`, so the generic retry and
+  circuit-breaker handlers see the outage it reports.
 
 ## ⚠ Behaviour changes
 

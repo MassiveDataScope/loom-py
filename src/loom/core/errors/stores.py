@@ -1,11 +1,11 @@
-"""Unit-of-work and invocation-scope store errors."""
+"""Unit-of-work, invocation-scope and post-commit errors of the stores."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from loom.core.errors.base import SystemError
+from loom.core.errors.base import LoomError, SystemError
 from loom.core.errors.codes import ErrorCode
 
 if TYPE_CHECKING:
@@ -229,4 +229,26 @@ class UncomposedStore(SystemError):
             f"store {key!r} has no unit of work in this application; "
             f"the stores with one are {sorted(composed)}",
             code=ErrorCode.UNCOMPOSED_STORE,
+        )
+
+
+class PostCommitError(LoomError):
+    """Raised when one or more post-commit actions failed after a commit.
+
+    Every action runs even when an earlier one fails; the error carries all
+    failures in priority, publish, then plain order.
+
+    Args:
+        committed: Whether the transaction had committed when the actions ran.
+        failures: Exceptions in priority, publish, then plain order.
+    """
+
+    def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
+        self.committed = committed
+        # A retry once the transaction committed would apply it twice.
+        self.retryable = not committed
+        self.failures = failures
+        super().__init__(
+            f"{len(failures)} post-commit action(s) failed (committed={committed})",
+            code=ErrorCode.POST_COMMIT_FAILURE,
         )

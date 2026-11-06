@@ -1,4 +1,4 @@
-"""Job, post-commit and SQS dispatch errors."""
+"""The errors of a job: its message, its registry, its run and its result."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class JobTimeoutError(LoomError):
         msg = f"Job {job_id!r} timed out"
         if timeout is not None:
             msg += f" after {timeout}s"
-        super().__init__(msg, code="job_timeout")
+        super().__init__(msg, code=ErrorCode.JOB_TIMEOUT)
         self.job_id = job_id
         self.timeout = timeout
 
@@ -67,7 +67,7 @@ class JobFailedError(LoomError):
         msg = f"Job {job_id!r} failed"
         if cause is not None:
             msg += f": {cause}"
-        super().__init__(msg, code="job_failed")
+        super().__init__(msg, code=ErrorCode.JOB_FAILED)
         self.job_id = job_id
         self.cause = cause
 
@@ -81,27 +81,5 @@ class MixedJobBackendsError(LoomError):
         super().__init__(
             "dispatch_parallel callbacks need every job on one job backend; "
             "these jobs route to several",
-            code="job_backends_mixed",
-        )
-
-
-class PostCommitError(LoomError):
-    """Raised when one or more post-commit actions failed after a commit.
-
-    Every action runs even when an earlier one fails; the error carries all
-    failures in priority, publish, then plain order.
-
-    Args:
-        committed: Whether the transaction had committed when the actions ran.
-        failures: Exceptions in priority, publish, then plain order.
-    """
-
-    def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
-        self.committed = committed
-        # A retry once the transaction committed would apply it twice.
-        self.retryable = not committed
-        self.failures = failures
-        super().__init__(
-            f"{len(failures)} post-commit action(s) failed (committed={committed})",
-            code=ErrorCode.POST_COMMIT_FAILURE,
+            code=ErrorCode.JOB_BACKENDS_MIXED,
         )

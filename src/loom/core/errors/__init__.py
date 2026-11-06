@@ -1,3 +1,5 @@
+"""The errors loom raises at run time, by area; every class is importable from here."""
+
 from loom.core.errors.auth import Forbidden, InsufficientAuthentication, Unauthenticated
 from loom.core.errors.base import DomainError, LoomError, SystemError
 from loom.core.errors.domain import (
@@ -14,7 +16,6 @@ from loom.core.errors.jobs import (
     JobTimeoutError,
     MalformedJobMessage,
     MixedJobBackendsError,
-    PostCommitError,
     UnknownJob,
 )
 from loom.core.errors.model import BoundaryValidationError, UnsupportedBoundaryType
@@ -22,6 +23,7 @@ from loom.core.errors.stores import (
     ForeignSessionError,
     NestedElevation,
     NestedIdentityMismatch,
+    PostCommitError,
     ScopeOwnershipError,
     StoresNotCommitted,
     UncomposedStore,

@@ -1,5 +1,8 @@
-"""Placement lint for ``LoomError`` subclasses (ADR 0003, rules R3 and R5).
+"""Placement lint for ``LoomError`` subclasses (ADR 0003, rules R1, R3 and R5).
 
+R1: every ``code=`` an error class passes to ``super().__init__`` is a member
+of a catalogue (``ErrorCode``, or an adapter's own ``*ErrorCode``) or the
+``code`` parameter it received; a literal string is not a code.
 R3: a class that extends ``LoomError``, directly or through any subclass,
 lives either under ``loom/core/errors/`` (shared across pillars) or in a
 module named ``errors.py`` / ``_errors.py`` (the owning pillar's errors
@@ -37,6 +40,18 @@ def _classes(path: Path) -> Iterator[ast.ClassDef]:
             yield node
 
 
+def _children(by_name: dict[str, list[tuple[Path, ast.ClassDef]]]) -> dict[str, set[str]]:
+    """Every class name to the names of the classes that name it as a base."""
+    children: dict[str, set[str]] = {}
+    for name, definitions in by_name.items():
+        for _, node in definitions:
+            for base in node.bases:
+                parent = _base_name(base)
+                if parent is not None:
+                    children.setdefault(parent, set()).add(name)
+    return children
+
+
 def _error_classes() -> dict[str, list[tuple[Path, ast.ClassDef]]]:
     """Every class of ``src/loom`` that descends from ``LoomError``, by name.
 
@@ -49,17 +64,14 @@ def _error_classes() -> dict[str, list[tuple[Path, ast.ClassDef]]]:
     for path in sorted(_SRC.rglob("*.py")):
         for node in _classes(path):
             by_name.setdefault(node.name, []).append((path, node))
-    errors = {_ROOT}
-    grown = True
-    while grown:
-        grown = False
-        for name, definitions in by_name.items():
-            if name in errors:
-                continue
-            bases = {_base_name(base) for _, node in definitions for base in node.bases}
-            if bases & errors:
-                errors.add(name)
-                grown = True
+    children = _children(by_name)
+    errors: set[str] = set()
+    pending = [_ROOT]
+    while pending:
+        name = pending.pop()
+        if name not in errors:
+            errors.add(name)
+            pending.extend(children.get(name, ()))
     return {name: by_name[name] for name in errors if name in by_name}
 
 
@@ -92,11 +104,45 @@ def _web_imports_in_core() -> list[str]:
     return found
 
 
+def _is_catalogue_member(value: ast.expr) -> bool:
+    """``<Something>ErrorCode.MEMBER``, or the ``code`` parameter passed through."""
+    if isinstance(value, ast.Name):
+        return value.id == "code"
+    return (
+        isinstance(value, ast.Attribute)
+        and isinstance(value.value, ast.Name)
+        and value.value.id.endswith("ErrorCode")
+    )
+
+
+def _literal_codes() -> list[str]:
+    """``path:line`` for every ``code=`` of an error class that is no catalogue member."""
+    found: list[str] = []
+    for definitions in _error_classes().values():
+        for path, node in definitions:
+            for call in ast.walk(node):
+                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
+                    continue
+                if call.func.attr != "__init__":
+                    continue
+                found.extend(
+                    f"{path.relative_to(_SRC)}:{keyword.lineno}"
+                    for keyword in call.keywords
+                    if keyword.arg == "code" and not _is_catalogue_member(keyword.value)
+                )
+    return found
+
+
 def test_the_lint_sees_the_whole_hierarchy() -> None:
     """A subclass of a pillar error is an error class too; the catalogue is in."""
     names = _error_classes()
     assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
     assert "UnsupportedFormatError" in names
+
+
+def test_every_error_code_is_a_catalogue_member() -> None:
+    """R1: a code is declared once, in a catalogue; no class spells one as a string."""
+    assert _literal_codes() == []
 
 
 def test_core_error_subclasses_live_in_an_errors_module() -> None:
