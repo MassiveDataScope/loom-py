@@ -12,7 +12,7 @@ from urllib.parse import unquote_plus
 from loom.core.command import Command
 from loom.core.errors import MalformedJobMessage
 from loom.core.logger import get_logger
-from loom.serverless.aws.lambda_.triggers import Decoded, a_list, an_object, upstream_trace_id
+from loom.serverless.aws.lambda_.triggers import Decoded, a_list, an_object
 
 _log = get_logger(__name__)
 _TEST_EVENT = "s3:TestEvent"
@@ -23,7 +23,9 @@ class S3Object(Command, frozen=True, kw_only=True):
 
     Attributes:
         bucket: The bucket's name.
-        key: The object's key, decoded: S3 sends it URL-encoded.
+        key: The object's key, decoded: S3 sends it URL-encoded. Whoever can
+            write to the bucket chooses it: validate it before using it as a
+            path or an identifier.
         size: Its size in bytes; ``None`` for a deletion.
         etag: Its ETag; ``None`` for a deletion.
         version_id: Its version, on a versioned bucket.
@@ -74,4 +76,4 @@ def _object(record: dict[str, Any]) -> Decoded:
         "event_name": record.get("eventName"),
         "event_time": record.get("eventTime"),
     }
-    return Decoded(payload=payload, trace_id=upstream_trace_id(record))
+    return Decoded(payload=payload)

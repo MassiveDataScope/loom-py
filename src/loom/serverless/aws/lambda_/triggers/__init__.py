@@ -20,11 +20,10 @@ _JSON = loom_type_of(Any)
 
 @dataclass(frozen=True)
 class Decoded:
-    """The payload of one job an event runs, the event's id and the trace it continues."""
+    """The payload of one job an event runs, and the event's id."""
 
     payload: dict[str, Any]
     event_id: str | None = None
-    trace_id: str | None = None
 
 
 Decoder = Callable[[Any], tuple[Decoded, ...]]
@@ -32,22 +31,14 @@ Decoder = Callable[[Any], tuple[Decoded, ...]]
 
 
 def an_object(value: Any, what: str) -> dict[str, Any]:
-    """*value*, which must be a JSON object.
-
-    Raises:
-        MalformedJobMessage: When it is not one.
-    """
+    """*value*; raises ``MalformedJobMessage`` naming *what* unless a JSON object."""
     if not isinstance(value, dict):
         raise MalformedJobMessage(f"{what} is not a JSON object")
     return value
 
 
 def a_list(value: Any, what: str) -> list[Any]:
-    """*value*, which must be a JSON array.
-
-    Raises:
-        MalformedJobMessage: When it is not one.
-    """
+    """*value*; raises ``MalformedJobMessage`` naming *what* unless a JSON array."""
     if not isinstance(value, list):
         raise MalformedJobMessage(f"{what} is not a JSON array")
     return value
@@ -71,13 +62,3 @@ def parsed(text: Any, what: str) -> Any:
 def an_id(value: Any) -> str | None:
     """*value* when it is a non-empty string, the id of an upstream event."""
     return value if isinstance(value, str) and value else None
-
-
-def upstream_trace_id(document: Any) -> str | None:
-    """The loom trace the upstream *document* continues; ``None`` starts a new one.
-
-    The one place a source's trace would be read. No AWS source carries a
-    loom trace id, so every event job starts its own trace.
-    """
-    _ = document
-    return None

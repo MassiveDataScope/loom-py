@@ -25,14 +25,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.composition import (
-    Application,
-    CompositionErrorCode,
-    CompositionSource,
-    CompositionStateError,
-    LoopHost,
-    Recipe,
-)
+from loom.composition import Application, CompositionSource, LoopHost, Recipe
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
@@ -50,6 +43,7 @@ from loom.rest.fastapi.router_runtime import (
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
 from loom.serverless.aws.lambda_._refusals import (
+    COMPONENT,
     LambdaUnservedConfigError,
     refuse_manifest_agents,
 )
@@ -68,7 +62,6 @@ class HttpServing:
     ``exclude_paths`` is honoured as written.
 
     Args:
-        component: The adapter, named in refusals.
         function: The ``http`` function of ``lambda.functions`` served: its
             interfaces only, with its ``auth`` when it declares one; every
             interface when ``None``.
@@ -76,10 +69,7 @@ class HttpServing:
             ``custom: true`` in the authentication in effect.
     """
 
-    def __init__(
-        self, component: str, function: str | None, authenticator: Authenticator | None
-    ) -> None:
-        self._component = component
+    def __init__(self, function: str | None, authenticator: Authenticator | None) -> None:
         self._function = function
         self._authenticator = authenticator
         self._declared: RestDeclaration | None = None
@@ -93,7 +83,7 @@ class HttpServing:
             ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
                 raises it.
         """
-        _refuse_sql_endpoints(source.config, self._component)
+        _refuse_sql_endpoints(source.config)
         served = http_function(source.config, self._function)
         recipe, declared = compose_rest(
             source,
@@ -102,32 +92,30 @@ class HttpServing:
             auth_section=served.auth_section,
             select_interfaces=served.select,
         )
-        refuse_manifest_agents(recipe.discovered.agent_specs, self._component)
+        refuse_manifest_agents(recipe.discovered.agent_specs)
         self._declared = declared
         return dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
 
     def bind(self, application: Application) -> LambdaHTTPHandler:
         """Mount the routes, error handlers and middleware, then open *application*.
 
+        :class:`LambdaAdapter` binds only after :meth:`recipe` succeeded.
+
         Raises:
-            CompositionStateError: When :meth:`recipe` has not run.
             ConfigError: When an authentication exclusion reaches a templated route.
             Exception: The failure to open the application, as itself.
         """
-        if self._declared is None:
-            raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=self._component)
-            )
+        assert self._declared is not None  # set by recipe
         return LambdaHTTPHandler(_starlette_app(application, self._declared), application)
 
 
-def _refuse_sql_endpoints(ctx: ConfigContext, component: str) -> None:
+def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
     sql = ctx.section_optional(ConfigKey.SQL, SqlConfig)
     mounted = mounted_sql_endpoints(sql) if sql is not None else ()
     if mounted:
         raise LambdaUnservedConfigError(
             f"sql.connections.{mounted[0]}.sql_endpoint",
-            f"{component} does not mount SQL endpoints. Disable the endpoint "
+            f"{COMPONENT} does not mount SQL endpoints. Disable the endpoint "
             "(sql_endpoint.enabled: false) or serve it with FastAPIAdapter.",
         )
 

@@ -13,7 +13,6 @@ from loom.serverless.aws.lambda_ import S3Object
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     LambdaFunction,
-    check_triggers,
     declared_lambda,
     trigger_job,
 )
@@ -99,29 +98,21 @@ def test_an_event_trigger_declares_its_job_and_identity(source: str) -> None:
     assert trigger.identity.attributes == {"tenant": "acme"}
 
 
-@pytest.mark.parametrize(
-    ("written", "message"),
-    [
-        pytest.param({"sqs": True}, r"worker\.sqs: .* under 'trigger'", id="sqs-true"),
-        pytest.param({"http": ["Orders"]}, r"worker\.http: .* under 'trigger'", id="http-list"),
-        pytest.param(
-            {"trigger": {"source": "jobs"}, "queue": "jobs"},
-            r"worker\.queue: .* under 'trigger'",
-            id="queue-beside-trigger",
-        ),
-        pytest.param(
-            {"trigger": {"source": "http", "interfaces": ["Orders"]}, "auth": {}},
-            r"worker\.auth: .* under 'trigger'",
-            id="auth-beside-trigger",
-        ),
-    ],
-)
-def test_the_form_before_trigger_is_refused_naming_trigger(
-    written: dict[str, Any], message: str
-) -> None:
-    config = ConfigContext.from_dict({"lambda": {"functions": {"worker": written}}})
+def test_the_form_before_trigger_is_refused_naming_trigger() -> None:
+    config = ConfigContext.from_dict({"lambda": {"functions": {"worker": {"sqs": True}}}})
 
-    with pytest.raises(ConfigError, match=message):
+    with pytest.raises(ConfigError, match=r"worker\.sqs: .* under 'trigger'"):
+        declared_lambda(config)
+
+
+def test_two_functions_consuming_one_queue_are_refused() -> None:
+    functions = {
+        "worker": {"trigger": _jobs(queue="jobs")},
+        "alerts": {"trigger": {"source": "sns", "via": "sqs", "queue": "jobs", "job": "J"}},
+    }
+    config = ConfigContext.from_dict({"lambda": {"functions": functions}})
+
+    with pytest.raises(ConfigError, match=r"queue 'jobs' is served by both .*worker and .*alerts"):
         declared_lambda(config)
 
 
@@ -215,10 +206,3 @@ def test_a_trigger_job_an_event_cannot_run_is_refused(
 ) -> None:
     with pytest.raises(ConfigError, match=message):
         trigger_job("worker", EventTrigger(job=job), jobs)
-
-
-def test_check_refuses_the_form_before_trigger() -> None:
-    config = ConfigContext.from_dict({"lambda": {"functions": {"worker": {"sqs": True}}}})
-
-    with pytest.raises(ConfigError, match="under 'trigger'"):
-        check_triggers(config)

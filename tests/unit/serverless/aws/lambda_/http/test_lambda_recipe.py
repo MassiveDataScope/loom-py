@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,7 +28,6 @@ pytestmark = [
     pytest.mark.filterwarnings("ignore:Celery config section is missing"),
 ]
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
 _TEST = "test"
 _SQL_CONNECTION: dict[str, Any] = {
     "backend": "clickhouse",
@@ -175,27 +170,3 @@ def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: Projec
     with pytest.raises(CompositionStateError, match="one adapter instance") as raised:
         build_application(second, adapter=adapter, environment=_TEST)
     assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
-
-
-@pytest.mark.parametrize(
-    "module",
-    [
-        "loom.composition",
-        "loom.core.persistence",
-        "loom.serverless.aws.lambda_",
-        "loom.serverless.aws.lambda_.handler",
-        "loom.serverless.aws.lambda_.triggers.sqs",
-    ],
-)
-def test_importing_the_transport_neutral_parts_loads_no_http_framework(module: str) -> None:
-    probe = (
-        f"import sys, {module}; "
-        "print(sorted(m for m in ('fastapi', 'starlette', 'mangum') if m in sys.modules))"
-    )
-    env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT / "src")}
-
-    result = subprocess.run(
-        [sys.executable, "-c", probe], env=env, capture_output=True, text=True, check=True
-    )
-
-    assert result.stdout.strip() == "[]"

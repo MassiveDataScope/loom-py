@@ -2,7 +2,8 @@
 
 A ``jobs`` function reads each message body as the ``JobEnvelope``
 ``SQSJobService`` sent; an event trigger ``via: sqs`` reads it into the jobs
-it declares. Either way the batch reports the messages to retry.
+it declares. Either way the batch reports the messages to retry; via sqs a
+final failure too, so the queue dead-letters it instead of consuming it.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import REST_CHECKS
@@ -39,29 +40,16 @@ MALFORMED_JOB = "<malformed>"
 TIMEOUT_SAFETY_MARGIN_MS = 1000
 """Stop starting records when fewer than one second remains in the invocation."""
 
-ReadBody = Callable[[str], Sequence[tuple[JobEnvelope, str | None]]]
-"""Reads a message body into the jobs it runs, in order, each with its span id or ``None``."""
+Read = Callable[[Any], Sequence[tuple[JobEnvelope, str | None]]]
+"""Reads a message body or an event into the jobs it runs, in order, each with its span id."""
 
 
 class SQSBatchFailedError(LoomError):
     """A record of the batch failed and the function does not report batch item failures."""
 
 
-class SQSHandler(Protocol):
-    """The Lambda function handler of an SQS event source, owning its open application."""
-
-    def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
-        """Run one SQS batch and report the records to retry."""
-        ...
-
-    def close(self) -> None:
-        """Close the application and its loop; a second call does nothing."""
-        ...
-
-
 def jobs_recipe(
     source: CompositionSource,
-    component: str,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
     metrics: MetricsAdapter | None,
@@ -75,7 +63,7 @@ def jobs_recipe(
         LambdaUnservedConfigError: When the manifest declares agents.
     """
     resolved = resolve_worker_components(source.config, jobs, use_cases)
-    refuse_manifest_agents(resolved.agent_specs, component)
+    refuse_manifest_agents(resolved.agent_specs)
     if resolved.models:
         _log.warning(
             "Lambda ignores AutoCRUD use cases for discovered models",
@@ -118,17 +106,17 @@ def open_host(application: Application) -> LoopHost:
     return host
 
 
+def _remaining_ms(context: Any) -> int | None:
+    remaining = getattr(context, "get_remaining_time_in_millis", None)
+    return cast(Callable[[], int], remaining)() if callable(remaining) else None
+
+
 def run_timeout(job_timeout: int | None, context: Any) -> float | None:
     """The time a job may take: its own timeout, or what remains of the invocation."""
     limits: list[float] = []
-    remaining = getattr(context, "get_remaining_time_in_millis", None)
-    if callable(remaining):
-        limits.append(
-            max(
-                0.0,
-                (cast(Callable[[], int], remaining)() - TIMEOUT_SAFETY_MARGIN_MS) / 1000,
-            )
-        )
+    remaining = _remaining_ms(context)
+    if remaining is not None:
+        limits.append(max(0.0, (remaining - TIMEOUT_SAFETY_MARGIN_MS) / 1000))
     if job_timeout is not None:
         limits.append(float(job_timeout))
     return min(limits) if limits else None
@@ -170,6 +158,8 @@ class SQSBatch:
 
     *read* turns a body into its jobs, a ``JobEnvelope`` by default; *label*
     names their job in a failure's span and log, the envelope's by default.
+    *retry_final* reports a failure that is not retryable as well, so the
+    queue dead-letters the message instead of consuming it.
     """
 
     def __init__(
@@ -179,8 +169,9 @@ class SQSBatch:
         host: LoopHost,
         *,
         report_failures: bool,
-        read: ReadBody = _envelope,
+        read: Read = _envelope,
         label: str | None = None,
+        retry_final: bool = False,
     ) -> None:
         self._application = application
         self._jobs = jobs
@@ -188,6 +179,7 @@ class SQSBatch:
         self._report_failures = report_failures
         self._read = read
         self._label = label
+        self._retry_final = retry_final
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
         records: list[Any] = event["Records"]
@@ -219,7 +211,7 @@ class SQSBatch:
             self._host.run(self._run(record, context))
         except Exception as exc:
             _log_failure(record, exc, self._label)
-            return is_retryable(exc)
+            return self._retry_final or is_retryable(exc)
         return False
 
     def close(self) -> None:
@@ -270,8 +262,8 @@ def _is_fifo(record: Any) -> bool:
 
 
 def _out_of_time(context: Any) -> bool:
-    remaining = getattr(context, "get_remaining_time_in_millis", None)
-    return callable(remaining) and cast(Callable[[], int], remaining)() < TIMEOUT_SAFETY_MARGIN_MS
+    remaining = _remaining_ms(context)
+    return remaining is not None and remaining < TIMEOUT_SAFETY_MARGIN_MS
 
 
 def _job_label(record: Any) -> str:

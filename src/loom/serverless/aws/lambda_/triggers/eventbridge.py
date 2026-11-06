@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.serverless.aws.lambda_.triggers import Decoded, an_id, an_object, upstream_trace_id
+from loom.serverless.aws.lambda_.triggers import Decoded, an_id, an_object
 
 
 def decode(event: Any) -> tuple[Decoded, ...]:
@@ -18,6 +18,5 @@ def decode(event: Any) -> tuple[Decoded, ...]:
         Decoded(
             payload=an_object(event.get("detail"), "the EventBridge event's detail"),
             event_id=an_id(event.get("id")),
-            trace_id=upstream_trace_id(event),
         ),
     )

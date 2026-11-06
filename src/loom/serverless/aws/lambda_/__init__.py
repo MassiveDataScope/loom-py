@@ -13,42 +13,25 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from loom.core.discovery.worker import DuplicateJobName
     from loom.serverless.aws.lambda_._refusals import LambdaUnservedConfigError
     from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
-    from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
     from loom.serverless.aws.lambda_.triggers.s3 import S3Object
-    from loom.serverless.aws.lambda_.triggers.sqs import (
-        MALFORMED_JOB,
-        TIMEOUT_SAFETY_MARGIN_MS,
-        SQSBatchFailedError,
-        SQSHandler,
-    )
+    from loom.serverless.aws.lambda_.triggers.sqs import SQSBatchFailedError
 
 _EXPORTS = {
-    "DuplicateJobName": "loom.core.discovery.worker",
     "LambdaAdapter": "loom.serverless.aws.lambda_.handler",
     "LambdaHandler": "loom.serverless.aws.lambda_.handler",
-    "LambdaHTTPHandler": "loom.serverless.aws.lambda_.triggers.http",
     "LambdaUnservedConfigError": "loom.serverless.aws.lambda_._refusals",
-    "MALFORMED_JOB": "loom.serverless.aws.lambda_.triggers.sqs",
     "S3Object": "loom.serverless.aws.lambda_.triggers.s3",
     "SQSBatchFailedError": "loom.serverless.aws.lambda_.triggers.sqs",
-    "SQSHandler": "loom.serverless.aws.lambda_.triggers.sqs",
-    "TIMEOUT_SAFETY_MARGIN_MS": "loom.serverless.aws.lambda_.triggers.sqs",
 }
 
 __all__ = [
-    "MALFORMED_JOB",
-    "TIMEOUT_SAFETY_MARGIN_MS",
-    "DuplicateJobName",
     "LambdaAdapter",
-    "LambdaHTTPHandler",
     "LambdaHandler",
     "LambdaUnservedConfigError",
     "S3Object",
     "SQSBatchFailedError",
-    "SQSHandler",
 ]
 
 

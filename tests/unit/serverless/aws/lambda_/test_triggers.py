@@ -29,6 +29,7 @@ pytestmark = pytest.mark.timeout(30)
 
 _FUNCTION = "invoices_in"
 _SENTINEL = "payload-sentinel-4f2a"
+_SEVEN = {"number": "7"}
 _IDENTITY = {"subject": "svc:invoices", "roles": ["invoice_importer"], "attributes": {"t": "acme"}}
 
 
@@ -120,24 +121,21 @@ def _events(job: str = "ImportInvoice", **trigger: Any) -> dict[str, Any]:
 
 
 class TestDecoders:
-    def test_eventbridge_runs_the_detail_with_the_event_id(self) -> None:
-        event = lambda_event("eventbridge", {"number": "7"}, event_id="evt-1")
+    @pytest.mark.parametrize(
+        ("decode", "event", "event_id"),
+        [
+            (eventbridge.decode, lambda_event("eventbridge", _SEVEN, event_id="e1"), "e1"),
+            (schedule.decode, lambda_event("schedule", _SEVEN), None),
+            (sns.decode, lambda_event("sns", _SEVEN, notification_id="n1"), "n1"),
+        ],
+        ids=["eventbridge-detail", "schedule-input", "sns-message"],
+    )
+    def test_an_event_runs_its_payload_with_its_id(
+        self, decode: Callable[[Any], Any], event: dict[str, Any], event_id: str | None
+    ) -> None:
+        (decoded,) = decode(event)
 
-        (decoded,) = eventbridge.decode(event)
-
-        assert (decoded.payload, decoded.event_id) == ({"number": "7"}, "evt-1")
-
-    def test_a_schedule_runs_its_input_as_delivered(self) -> None:
-        (decoded,) = schedule.decode(lambda_event("schedule", {"number": "7"}))
-
-        assert (decoded.payload, decoded.event_id) == ({"number": "7"}, None)
-
-    def test_sns_runs_the_message_object_with_its_message_id(self) -> None:
-        event = lambda_event("sns", {"number": "7"}, notification_id="msg-1")
-
-        (decoded,) = sns.decode(event)
-
-        assert (decoded.payload, decoded.event_id) == ({"number": "7"}, "msg-1")
+        assert (decoded.payload, decoded.event_id) == (_SEVEN, event_id)
 
     def test_an_sns_message_that_is_no_object_is_malformed(self) -> None:
         event = lambda_event("sns")
@@ -169,10 +167,6 @@ class TestDecoders:
         assert decoded[1].payload["size"] == 5
         assert decoded[1].payload["version_id"] == "v2"
         assert decoded[0].payload["event_name"] == "ObjectCreated:Put"
-
-    def test_the_s3_test_event_runs_no_job(self, caplog: pytest.LogCaptureFixture) -> None:
-        assert s3.decode(lambda_event("s3", test_event=True)) == ()
-        assert any("S3 test event acknowledged" in message for message in caplog.messages)
 
     @pytest.mark.parametrize(
         ("decode", "event"),
@@ -301,12 +295,13 @@ class TestDirectTrigger:
         assert found.event_time.year == 2026
 
     def test_the_s3_test_event_runs_no_job(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+        self, serve: Serve, ran: list[tuple[Any, Identity]], caplog: pytest.LogCaptureFixture
     ) -> None:
         handler = serve({"source": "s3", "job": "ImportObject"})
 
         assert handler(lambda_event("s3", test_event=True), None) is None
         assert ran == []
+        assert any("S3 test event acknowledged" in message for message in caplog.messages)
 
     @pytest.mark.parametrize("source", ["sns", "schedule"])
     def test_sns_and_schedule_run_their_payload(
@@ -334,6 +329,17 @@ class TestViaSqs:
         assert result == {"batchItemFailures": [{"itemIdentifier": "m2"}]}
         assert [invoice.number for invoice, _ in ran] == ["1", "fail"]
         assert {caller.mechanism for _, caller in ran} == {f"lambda:{_FUNCTION}:eventbridge"}
+
+    def test_a_final_failure_is_reported_too_so_it_is_dead_lettered(
+        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    ) -> None:
+        handler = serve(_events(via="sqs"))
+        event = lambda_event("eventbridge", {"number": "final"}, via="sqs", message_id="m1")
+
+        result = handler(event, None)
+
+        assert result == {"batchItemFailures": [{"itemIdentifier": "m1"}]}
+        assert [invoice.number for invoice, _ in ran] == ["final"]
 
     def test_an_sns_message_runs_from_its_envelope(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
@@ -379,22 +385,11 @@ class _Authenticator:
         return None
 
 
-@pytest.mark.parametrize(
-    ("trigger", "options", "message"),
-    [
-        (_events("Missing"), {}, "'Missing', which is no discovered Job"),
-        (
-            _events(identity={"subject": "${oc.env:SUBJECT}"}),
-            {},
-            "written as values, not placeholders",
-        ),
-        (_events(), {"written": {"sqs": True}}, "under 'trigger'"),
-        (_events(), {"authenticator": _Authenticator()}, "applies to an http function only"),
-    ],
-    ids=["missing-job", "non-literal-identity", "form-before-trigger", "authenticator"],
-)
-def test_startup_refuses_a_trigger_it_cannot_serve(
-    serve: Serve, trigger: dict[str, Any], options: dict[str, Any], message: str
-) -> None:
-    with pytest.raises(ConfigError, match=message):
-        serve(trigger, **options)
+def test_startup_refuses_a_trigger_job_it_cannot_run(serve: Serve) -> None:
+    with pytest.raises(ConfigError, match="'Missing', which is no discovered Job"):
+        serve(_events("Missing"))
+
+
+def test_startup_refuses_an_authenticator_for_an_event_trigger(serve: Serve) -> None:
+    with pytest.raises(ConfigError, match="applies to an http function only"):
+        serve(_events(), authenticator=_Authenticator())

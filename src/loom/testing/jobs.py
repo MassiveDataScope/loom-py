@@ -28,9 +28,6 @@ if TYPE_CHECKING:
 
 ResultT = TypeVar("ResultT")
 
-_REGION = "us-east-1"
-_QUEUE_ARN = f"arn:aws:sqs:{_REGION}:000000000000:loom-jobs"
-
 
 @dataclass(frozen=True)
 class DispatchedJob:

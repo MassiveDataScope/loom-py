@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -23,6 +23,7 @@ from loom.composition import (
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.discovery.worker import DuplicateJobName
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
@@ -32,11 +33,10 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import (
-    DuplicateJobName,
     LambdaAdapter,
+    LambdaHandler,
     LambdaUnservedConfigError,
     SQSBatchFailedError,
-    SQSHandler,
 )
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import RecordedLoops
@@ -58,7 +58,7 @@ class _OtherJobService:
     ],
 )
 def test_batch_outcomes(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     markers: list[str],
     fifo: bool,
@@ -73,7 +73,9 @@ def test_batch_outcomes(
 
 
 @pytest.fixture
-def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> Iterator[SQSHandler]:
+def whole_batch_handler(
+    tmp_path: Path, probe: tuple[type[Job[None]], Any]
+) -> Iterator[LambdaHandler]:
     source = composition_source(
         ConfigContext.from_dict(with_worker({}, report_batch_item_failures=False)),
         app=AppConfig(name="lambda-sqs", entry=WORKER),
@@ -81,7 +83,7 @@ def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> I
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[probe[0]])
-    yield cast(SQSHandler, adapter.bind(compose_application(source, adapter)))
+    yield adapter.bind(compose_application(source, adapter))
     adapter.close()
 
 
@@ -102,7 +104,7 @@ def test_the_recipe_refuses_a_misdeclared_lambda_section(
 
 @pytest.mark.parametrize("fifo", [False, True])
 def test_without_batch_item_failures_a_failed_record_fails_the_whole_batch(
-    whole_batch_handler: SQSHandler, record: RecordFactory, fifo: bool
+    whole_batch_handler: LambdaHandler, record: RecordFactory, fifo: bool
 ) -> None:
     records = [record("1", "a", fifo=fifo), record("2", "fail", fifo=fifo)]
     with pytest.raises(SQSBatchFailedError, match="1 of 2 SQS records failed"):
@@ -110,13 +112,13 @@ def test_without_batch_item_failures_a_failed_record_fails_the_whole_batch(
 
 
 def test_without_batch_item_failures_a_batch_that_ran_returns_no_report(
-    whole_batch_handler: SQSHandler, record: RecordFactory
+    whole_batch_handler: LambdaHandler, record: RecordFactory
 ) -> None:
     assert whole_batch_handler({"Records": [record("1", "a")]}, None) == {}
 
 
 def test_malformed_body_fails_only_that_standard_record(
-    handler: SQSHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
+    handler: LambdaHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
 ) -> None:
     bad = record("1", "a")
     bad["body"] = "{"
@@ -126,7 +128,7 @@ def test_malformed_body_fails_only_that_standard_record(
 
 
 def test_message_group_attribute_does_not_enable_fifo_rule(
-    handler: SQSHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
+    handler: LambdaHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
 ) -> None:
     first = record("1", "fail")
     first["attributes"] = {"MessageGroupId": "g"}
@@ -136,7 +138,7 @@ def test_message_group_attribute_does_not_enable_fifo_rule(
 
 
 def test_each_message_sees_its_own_identity_and_trace(
-    handler: SQSHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
+    handler: LambdaHandler, record: RecordFactory, seen: list[tuple[str, str | None, str | None]]
 ) -> None:
     records = [
         record("1", "a", identity={"subject": "alice"}, trace_id="trace-a"),
@@ -155,7 +157,7 @@ def test_each_message_sees_its_own_identity_and_trace(
 
 
 def test_fifty_warm_invocations_open_once_on_one_loop(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     built: tuple[LambdaAdapter, Application, list[str]],
     seen: list[tuple[str, str | None, str | None]],
@@ -197,7 +199,8 @@ source = CompositionSource(
     observability_config=ObservabilityConfig(),
 )
 LambdaAdapter(jobs=[Probe]).recipe(source)
-print([name for name in ("fastapi", "starlette", "pydantic", "celery") if name in sys.modules])
+loaded = ("fastapi", "starlette", "mangum", "pydantic", "celery")
+print([name for name in loaded if name in sys.modules])
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
@@ -205,7 +208,7 @@ print([name for name in ("fastapi", "starlette", "pydantic", "celery") if name i
     assert result.stdout.strip() == "[]"
 
 
-def test_keyboard_interrupt_propagates(handler: SQSHandler, record: RecordFactory) -> None:
+def test_keyboard_interrupt_propagates(handler: LambdaHandler, record: RecordFactory) -> None:
     event = {"Records": [record("1", "interrupt")]}
 
     with pytest.raises(KeyboardInterrupt):
@@ -257,7 +260,7 @@ def test_bind_propagates_open_failure(
     [("committed", []), ("scope", []), ("uncertain", []), ("fail", ["2", "3"])],
 )
 def test_retry_policy_in_batch(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
     fifo: bool,
@@ -280,7 +283,7 @@ def test_retry_policy_in_batch(
 @pytest.mark.parametrize("fifo", [False, True])
 @pytest.mark.parametrize("poison", ["body", "job"])
 def test_poison_message_retries_and_logs_typed_error(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
     caplog: pytest.LogCaptureFixture,
@@ -304,7 +307,7 @@ def test_poison_message_retries_and_logs_typed_error(
 
 
 def test_timeout_marks_remaining_records_failed(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
 ) -> None:
@@ -321,7 +324,9 @@ def test_timeout_marks_remaining_records_failed(
     assert [item[0] for item in seen] == ["a"]
 
 
-def test_failed_job_resets_identity_and_trace(handler: SQSHandler, record: RecordFactory) -> None:
+def test_failed_job_resets_identity_and_trace(
+    handler: LambdaHandler, record: RecordFactory
+) -> None:
     records = [record("1", "fail", identity={"subject": "alice"}, trace_id="child")]
     handler({"Records": records}, None)
     assert current_identity() is ANONYMOUS
@@ -329,7 +334,7 @@ def test_failed_job_resets_identity_and_trace(handler: SQSHandler, record: Recor
 
 
 def test_outer_trace_survives_batch(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
 ) -> None:
@@ -343,7 +348,7 @@ def test_outer_trace_survives_batch(
         reset_trace_id(token)
 
 
-def test_cancelled_error_propagates(handler: SQSHandler, record: RecordFactory) -> None:
+def test_cancelled_error_propagates(handler: LambdaHandler, record: RecordFactory) -> None:
     event = {"Records": [record("1", "cancel")]}
 
     with pytest.raises(asyncio.CancelledError):
@@ -479,7 +484,7 @@ def test_job_span_is_emitted(
     ],
 )
 def test_record_edge_cases(
-    handler: SQSHandler, record: RecordFactory, kind: str, expected: list[dict[str, str]]
+    handler: LambdaHandler, record: RecordFactory, kind: str, expected: list[dict[str, str]]
 ) -> None:
     item: object = record("1", "a")
     if kind == "unknown":
@@ -614,7 +619,7 @@ def test_recipe_warns_for_ignored_discovered_components(
 
 
 def test_committed_failure_logs_final_outcome(
-    handler: SQSHandler,
+    handler: LambdaHandler,
     record: RecordFactory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:

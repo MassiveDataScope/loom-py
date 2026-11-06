@@ -16,7 +16,6 @@ from loom.serverless.aws.lambda_.triggers import (
     an_id,
     an_object,
     parsed,
-    upstream_trace_id,
 )
 
 _NOTIFICATION = "Notification"
@@ -52,6 +51,5 @@ def decode_message(message: Any) -> tuple[Decoded, ...]:
         Decoded(
             payload=an_object(body, "the SNS Message"),
             event_id=an_id(message.get("MessageId")),
-            trace_id=upstream_trace_id(message),
         ),
     )

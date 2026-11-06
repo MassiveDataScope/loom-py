@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from loom.testing.lambda_http import EventFormat
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer, write_contract_project

@@ -11,7 +11,8 @@ from typing import Any
 import pytest
 
 from loom.composition import Application, build_application
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by

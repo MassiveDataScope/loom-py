@@ -17,7 +17,8 @@ from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHTTPHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
 

@@ -64,8 +64,6 @@ class Route(msgspec.Struct, frozen=True, kw_only=True):
 class HttpEvent(msgspec.Struct, frozen=True, kw_only=True):
     """The routes of the function's interfaces and the authentication it verifies, as written."""
 
-    source: str
-    via: None
     routes: tuple[Route, ...]
     auth: dict[str, Any] | None
 
@@ -73,26 +71,25 @@ class HttpEvent(msgspec.Struct, frozen=True, kw_only=True):
 class QueueEvent(msgspec.Struct, frozen=True, kw_only=True):
     """The key of ``sqs.queues`` the function consumes and its event source mapping.
 
-    An event trigger via sqs adds its ``job`` and ``identity``; an sns one,
+    The queue needs a dead-letter queue, where failed messages end. An event
+    trigger via sqs adds its ``job`` and ``identity``; an sns one,
     ``raw_message_delivery: false``, which its subscription must keep.
     """
 
-    source: str
-    via: str | None
     queue: str
     batch_size: int | None
     batching_window_s: int | None
     max_concurrency: int | None
     report_batch_item_failures: bool
+    dead_letter_required: bool
     job: str | msgspec.UnsetType = msgspec.UNSET
     identity: TriggerIdentity | None | msgspec.UnsetType = msgspec.UNSET
     raw_message_delivery: bool | msgspec.UnsetType = msgspec.UNSET
 
 
 class OnFailure(msgspec.Struct, frozen=True, kw_only=True):
-    """The asynchronous invocation of a direct trigger: a destination receives what still fails."""
+    """The asynchronous invocation of a direct trigger; it requires an on-failure destination."""
 
-    destination_required: bool
     maximum_retry_attempts: int
     maximum_event_age_s: int
 
@@ -100,8 +97,6 @@ class OnFailure(msgspec.Struct, frozen=True, kw_only=True):
 class DirectEvent(msgspec.Struct, frozen=True, kw_only=True):
     """The job a direct trigger runs for each event, the identity it runs as, its retries."""
 
-    source: str
-    via: None
     job: str
     identity: TriggerIdentity | None
     on_failure: OnFailure
@@ -110,6 +105,8 @@ class DirectEvent(msgspec.Struct, frozen=True, kw_only=True):
 class FunctionManifest(msgspec.Struct, frozen=True, kw_only=True):
     """What triggers one function and the secret and parameter names it resolves."""
 
+    source: str
+    via: str | None
     event: HttpEvent | QueueEvent | DirectEvent
     secrets: tuple[str, ...]
     ssm_parameters: tuple[str, ...]
@@ -200,12 +197,18 @@ def _function(
     event: HttpEvent | QueueEvent | DirectEvent
     if isinstance(trigger, HttpTrigger):
         event = _http_event(source, functions, name)
-    elif isinstance(trigger, EventTrigger) and trigger.via is None:
+    elif isinstance(trigger, EventTrigger) and not trigger.queued:
         event = _direct_event(trigger)
     else:
         event = _queue_event(source.config, name, trigger, queues)
     secrets, parameters = _references(document, name)
-    return FunctionManifest(event=event, secrets=secrets, ssm_parameters=parameters)
+    return FunctionManifest(
+        source=source_of(trigger),
+        via=trigger.via if isinstance(trigger, EventTrigger) else None,
+        event=event,
+        secrets=secrets,
+        ssm_parameters=parameters,
+    )
 
 
 def _queue_event(
@@ -219,13 +222,12 @@ def _queue_event(
             f"sqs.queues (declared: {declared})"
         )
     return QueueEvent(
-        source=source_of(trigger),
-        via=trigger.via if isinstance(trigger, EventTrigger) else None,
         queue=trigger.queue,
         batch_size=trigger.batch_size,
         batching_window_s=trigger.batching_window_s,
         max_concurrency=trigger.max_concurrency,
         report_batch_item_failures=trigger.reports_batch_item_failures,
+        dead_letter_required=True,
         job=trigger.job if isinstance(trigger, EventTrigger) else msgspec.UNSET,
         identity=trigger.identity if isinstance(trigger, EventTrigger) else msgspec.UNSET,
         raw_message_delivery=False if isinstance(trigger, SnsTrigger) else msgspec.UNSET,
@@ -236,12 +238,9 @@ def _direct_event(trigger: EventTrigger) -> DirectEvent:
     retries = trigger.maximum_retry_attempts
     age = trigger.maximum_event_age_s
     return DirectEvent(
-        source=source_of(trigger),
-        via=None,
         job=trigger.job,
         identity=trigger.identity,
         on_failure=OnFailure(
-            destination_required=True,
             maximum_retry_attempts=DEFAULT_MAXIMUM_RETRY_ATTEMPTS if retries is None else retries,
             maximum_event_age_s=DEFAULT_MAXIMUM_EVENT_AGE_S if age is None else age,
         ),
@@ -273,8 +272,6 @@ def _http_event(
         raise ConfigError(f"lambda.functions.{name} cannot be composed: {exc}") from exc
     routes = sorted(published, key=lambda route: (route[1], route[0]))
     return HttpEvent(
-        source="http",
-        via=None,
         routes=tuple(Route(method=method, path=path) for method, path in routes),
         auth=ctx.raw(served.auth_section or "app.rest.auth"),
     )

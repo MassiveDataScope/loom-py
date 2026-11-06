@@ -72,6 +72,7 @@ class ImportInvoice(Job[None]):
 """
 
 _QUEUE_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"
+_ALERTS_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts"
 _SENTINEL = "resolved-secret-value"
 
 Project = Callable[..., Path]
@@ -110,7 +111,7 @@ def _config(package: str) -> dict[str, Any]:
             "default": {"backend": "sqlalchemy", "url": "${ ssm : '/shop/db-url' }"},
             "reports": {"backend": "none"},
         },
-        "sqs": {"queues": {"jobs": _QUEUE_URL}},
+        "sqs": {"queues": {"jobs": _QUEUE_URL, "alerts": _ALERTS_URL}},
         "checks": {"silenced": ["loom.cursors.E001"]},
         "lambda": {
             "handler": "entry.handler",
@@ -124,7 +125,7 @@ def _config(package: str) -> dict[str, Any]:
                     identity={"subject": "svc:invoices", "roles": ["invoice_importer"]},
                     maximum_retry_attempts=1,
                 ),
-                "alerts": _trigger("sns", via="sqs", queue="jobs", job="ImportInvoice"),
+                "alerts": _trigger("sns", via="sqs", queue="alerts", job="ImportInvoice"),
             },
         },
     }
@@ -151,12 +152,12 @@ def _expected() -> dict[str, Any]:
         "environment": "production",
         "handler": "entry.handler",
         "code_path": "src",
-        "queues": {"jobs": _QUEUE_URL},
+        "queues": {"alerts": _ALERTS_URL, "jobs": _QUEUE_URL},
         "functions": {
             "admin": {
+                "source": "http",
+                "via": None,
                 "event": {
-                    "source": "http",
-                    "via": None,
                     "routes": [{"method": "POST", "path": "/admin/purge"}],
                     "auth": admin_auth,
                 },
@@ -164,14 +165,15 @@ def _expected() -> dict[str, Any]:
                 "ssm_parameters": ["/shop/admin-audience", "/shop/db-url"],
             },
             "alerts": {
+                "source": "sns",
+                "via": "sqs",
                 "event": {
-                    "source": "sns",
-                    "via": "sqs",
-                    "queue": "jobs",
+                    "queue": "alerts",
                     "batch_size": None,
                     "batching_window_s": None,
                     "max_concurrency": None,
                     "report_batch_item_failures": True,
+                    "dead_letter_required": True,
                     "job": "ImportInvoice",
                     "identity": None,
                     "raw_message_delivery": False,
@@ -179,27 +181,23 @@ def _expected() -> dict[str, Any]:
                 **_JOB_SECRETS,
             },
             "invoices_in": {
+                "source": "eventbridge",
+                "via": None,
                 "event": {
-                    "source": "eventbridge",
-                    "via": None,
                     "job": "ImportInvoice",
                     "identity": {
                         "subject": "svc:invoices",
                         "roles": ["invoice_importer"],
                         "attributes": {},
                     },
-                    "on_failure": {
-                        "destination_required": True,
-                        "maximum_retry_attempts": 1,
-                        "maximum_event_age_s": 21600,
-                    },
+                    "on_failure": {"maximum_retry_attempts": 1, "maximum_event_age_s": 21600},
                 },
                 **_JOB_SECRETS,
             },
             "public": {
+                "source": "http",
+                "via": None,
                 "event": {
-                    "source": "http",
-                    "via": None,
                     "routes": [
                         {"method": "GET", "path": "/orders"},
                         {"method": "GET", "path": "/orders/{order_id}"},
@@ -212,14 +210,15 @@ def _expected() -> dict[str, Any]:
             },
             # The worker lists app.rest.auth's secret: it resolves the whole app section.
             "worker": {
+                "source": "jobs",
+                "via": None,
                 "event": {
-                    "source": "jobs",
-                    "via": None,
                     "queue": "jobs",
                     "batch_size": 5,
                     "batching_window_s": None,
                     "max_concurrency": None,
                     "report_batch_item_failures": True,
+                    "dead_letter_required": True,
                 },
                 "secrets": ["/shop/jwt"],
                 "ssm_parameters": ["/shop/db-url"],
@@ -372,12 +371,12 @@ _WORKER_ONLY = ("--function", "worker")
             "'MissingJob', which is no discovered Job",
         ),
         (
-            _set("lambda.functions.bad-name", _trigger("jobs", queue="jobs")),
+            _set("lambda.functions.bad-name", _trigger("schedule", job="ImportInvoice")),
             (),
             "lambda.functions.bad-name must be named by a Python identifier",
         ),
         (
-            _set("lambda.functions.función", _trigger("jobs", queue="jobs")),
+            _set("lambda.functions.función", _trigger("schedule", job="ImportInvoice")),
             (),
             "lambda.functions.función must be named by a Python identifier",
         ),

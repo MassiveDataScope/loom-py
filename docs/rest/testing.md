@@ -114,11 +114,11 @@ delivers to a function, so a test calls the real handler with it:
 
 | `source` | Event | `payload` | `meta` |
 |---|---|---|---|
-| `http` | API Gateway HTTP API (`event_format="v1"`: REST API) | JSON body | `method`, `path`, `query`, `headers`, `body`, `event_format` |
-| `jobs` | One SQS record of the `JobEnvelope` `SQSJobService` sends | The job's payload | `job`, `params`, `identity`, `trace_id` |
-| `eventbridge` | An EventBridge event | `detail` | `event_id`, `detail_type`, `event_source` |
-| `s3` | An S3 notification | None | `objects` (keys, or `key`/`size`/`etag`/`version_id`/`sequencer` mappings), `bucket`, `event_name`, `test_event` |
-| `sns` | The event of a Lambda subscription | `Message` | `notification_id`, `topic_arn`, `subject`, `type` |
+| `http` | API Gateway HTTP API | JSON body | `method`, `path`, `query`, `headers`, `body` |
+| `jobs` | One SQS record of the `JobEnvelope` `SQSJobService` sends | The job's payload | `job`, `params`, `identity` |
+| `eventbridge` | An EventBridge event | `detail` | `event_id` |
+| `s3` | An S3 notification | None | `objects` (keys, or `key`/`size`/`version_id` mappings), `bucket`, `test_event` |
+| `sns` | The event of a Lambda subscription | `Message` | `notification_id`, `type` |
 | `schedule` | The schedule's input | The input | None |
 
 `via="sqs"` wraps the event as one SQS record of the queue in between. An

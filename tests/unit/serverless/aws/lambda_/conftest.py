@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -19,7 +18,7 @@ from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
 from loom.core.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.uow.scope import StoresNotCommitted, invocation_error
-from loom.serverless.aws.lambda_ import LambdaAdapter, SQSHandler
+from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import event_loops
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -102,9 +101,9 @@ def built(
 
 
 @pytest.fixture
-def handler(built: tuple[LambdaAdapter, Application, list[str]]) -> Iterator[SQSHandler]:
+def handler(built: tuple[LambdaAdapter, Application, list[str]]) -> Iterator[LambdaHandler]:
     adapter, application, _ = built
-    yield cast(SQSHandler, adapter.bind(application))
+    yield adapter.bind(application)
     adapter.close()
 
 

@@ -19,13 +19,25 @@
   | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs}` |
   | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger` |
   | `loom.serverless.aws.lambda_.http` | `loom.serverless.aws.lambda_.triggers.http` |
-  | `loom.serverless.aws.lambda_.sqs` (`SQSHandler`, `SQSBatchFailedError`, `MALFORMED_JOB`, `TIMEOUT_SAFETY_MARGIN_MS`, `DuplicateJobName`) | `loom.serverless.aws.lambda_` |
+  | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.SQSBatchFailedError` |
+  | `loom.serverless.aws.lambda_.sqs.SQSHandler` | `loom.serverless.aws.lambda_.LambdaHandler` |
+  | `loom.serverless.aws.lambda_.LambdaHTTPHandler` | `LambdaHandler`; the class is internal |
+  | `loom.serverless.aws.lambda_.sqs.DuplicateJobName` | `loom.core.discovery.worker.DuplicateJobName` |
+  | `loom.serverless.aws.lambda_.sqs.MALFORMED_JOB`, `TIMEOUT_SAFETY_MARGIN_MS` | Internal |
   | `loom.testing.sqs_record(Job, payload, ...)` | `loom.testing.lambda_event("jobs", payload, job=Job, ...)` |
   | `loom.testing.sqs_raw_record(body, ...)` | `loom.testing.lambda_event("jobs", body=body, ...)["Records"][0]` |
-  | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`, event `source` and `via` |
+  | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
-  A function written the previous way stops startup and `loom check --deploy`
+  `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
+  `LambdaUnservedConfigError`, `S3Object` and `SQSBatchFailedError` only. A
+  function written the previous way stops startup and `loom check --deploy`
   with a `ConfigError` naming `trigger`.
+
+### config
+
+- **config:** a `config.overridable` entry reaching `lambda.handler`,
+  `app.discovery` or `lambda.functions.*.trigger` stops every load, as one
+  reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
 
 ## ✨ Features
 
@@ -38,59 +50,47 @@
   injecting `JobService`.
 - **jobs:** `app.job_service: sqs` (extra `loom[sqs]`) sends each job to the
   SQS queue `sqs.queues` maps its queue to, after the commit, as the
-  `JobEnvelope` the Lambda SQS adapter runs. `sqs:` inherits `aws:`.
+  `JobEnvelope` a Lambda `jobs` function runs. `sqs:` inherits `aws:`.
   FIFO queues take the SHA-256 of the new `Job.__group_by__` payload field as
   `MessageGroupId`. Callbacks, priorities, delays SQS cannot honour and bodies
   over 256 KiB raise `SQSDispatchError`; unmapped queues stop startup.
 - **jobs:** an execution's SQS jobs leave after the commit in
   `SendMessageBatch` calls per queue, in dispatch order (`sqs.batch`,
   `sqs.batch_size`, `sqs.max_concurrent_sends`); a standard queue resends the
-  entries SQS refuses once, a FIFO queue stops at its first failure. `lambda.functions.<name>` with `sqs: true` declares `batch_size`,
-  `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
-  `false` makes the SQS handler fail the whole batch.
+  entries SQS refuses once, a FIFO queue stops at its first failure. A
+  Lambda `jobs` trigger declares `batch_size`, `batching_window_s`,
+  `max_concurrency` and `report_batch_item_failures`; `false` makes the SQS
+  handler fail the whole batch.
 
 ### lambda
 
-- **lambda:** event triggers: a function with `trigger: {source: <eventbridge,
-  s3, sns or schedule>, job: <Job>, identity: {...}}` runs the job for each
-  event, invoked directly or `via: sqs`. The job runs as the configured
-  identity only (`mechanism: lambda:<function>:<source>`), anonymous without
-  one. A direct trigger fails the invocation whenever a job fails, so Lambda
-  retries the event and then sends it to the on-failure destination; an S3
-  or SNS event runs one job per record and stops at the first failure. S3
-  objects arrive as the `S3Object` command, keys URL-decoded; `s3:TestEvent`
-  runs no job; an SNS message that is not a `Notification` is refused and its
-  `SubscribeURL` never fetched. Via SQS the batch behaviour of a `jobs`
-  function is kept. Startup and `loom check --deploy` refuse an undiscovered
-  job, one without an `Input()` command or with another required parameter,
-  a placeholder in `job` or `identity`, and a `config.overridable` entry
-  reaching `lambda.functions.*.trigger`. The deploy manifest (version 2)
-  describes each trigger, with `on_failure` for a direct one.
+- **lambda:** event triggers: `trigger: {source: eventbridge | s3 | sns |
+  schedule, job, identity}` runs the job for each event, directly or
+  `via: sqs`, as the configured identity only. A failed job fails the event,
+  which Lambda retries, then sends to its on-failure destination; via SQS it
+  is reported, then dead-lettered. See "Event triggers" in the composition guide.
 - **lambda:** `loom deploy manifest <config> [--function x]` prints a
-  versioned JSON manifest (`manifest_version: 1`) of each function of
+  versioned JSON manifest (`manifest_version: 2`) of each function of
   `lambda.functions` for a deployment tool: the handler, code path and
-  queues once, then per function its http routes and `auth` or its sqs queue
-  and event source mapping, and the secret and SSM parameter names it
-  resolves (never values; no resolver runs). It runs the deploy
-  checks of `loom check --deploy` first, prints their findings to stderr and
-  no manifest when one fails. New keys: `lambda.handler` and
-  `lambda.functions.<name>.queue` (a key of `sqs.queues`), both required by
-  the manifest only.
-- **rest:** `loom.rest.E001` also fails a `lambda.functions.<name>.auth`
+  queues once, then per function its trigger's `source` and `via`, what its
+  event needs deployed (http routes and `auth`, the queue and its event
+  source mapping, or a direct trigger's job, identity and `on_failure`), and
+  the secret and SSM parameter names it resolves (never values; no resolver
+  runs). It runs the deploy checks of `loom check --deploy` first, prints
+  their findings to stderr and no manifest when one fails. `lambda.handler`
+  and a trigger's `queue` (a key of `sqs.queues`) are required by the
+  manifest only.
+- **rest:** `loom.rest.E001` also fails a `lambda.functions.<name>.trigger.auth`
   that names no mechanism (`{}`, `jwt: null`, `custom: false`): it replaces
   `app.rest.auth` for that function.
 
 ### testing
 
-- **testing:** `lambda_event(source, payload, via=None, **meta)` builds the
-  event AWS delivers for every source: API Gateway request, `jobs` SQS
-  record, EventBridge event, S3 notification, SNS Lambda subscription,
-  schedule input, and any of them via SQS.
 - **testing:** Lambda functions are tested in process, without AWS:
   `LambdaTestClient`, an `httpx.Client` like FastAPI's `TestClient`, sends API
-  Gateway HTTP API or REST events to the real handler; `sqs_record` and
-  `sqs_raw_record` drive the SQS handler with the `JobEnvelope`
-  `SQSJobService` sends; `RecordingJobService`
+  Gateway HTTP API or REST events to the real handler;
+  `lambda_event(source, payload, via=None, **meta)` builds the event AWS
+  delivers for every trigger source, via SQS too; `RecordingJobService`
   (`app.job_service: loom.testing:RecordingJobService`) records each dispatch
   after the commit. The `testing` extra now includes `httpx`.
 

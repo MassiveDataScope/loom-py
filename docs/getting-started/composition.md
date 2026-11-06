@@ -96,19 +96,23 @@ lambda:
 | `eventbridge` | The event's `detail` | The event's `id` |
 | `schedule` | The schedule's input, as configured in EventBridge Scheduler | None |
 | `sns` | The notification's `Message`, a JSON object | Its `MessageId` |
-| `s3` | One `S3Object` (`loom.serverless.aws.lambda_`) per object: `bucket`, `key` (URL-decoded), `size`, `etag`, `version_id`, `sequencer`, `event_name`, `event_time` | None |
+| `s3` | One `S3Object` (`loom.serverless.aws.lambda_`) per object: `bucket`, `key` (URL-decoded; untrusted, validate it before using it as a path or an identifier), `size`, `etag`, `version_id`, `sequencer`, `event_name`, `event_time` | None |
 
 The declared `source` picks how the event is read; loom never guesses it from
 the event. Startup and `loom check --deploy` refuse a job that is not
 discovered, that declares no `Input()` command or that requires another
-parameter, a `job` or `identity` given by a placeholder, and a
-`config.overridable` entry reaching `lambda.functions.*.trigger`.
+parameter, a `job` or `identity` given by a placeholder, two functions
+consuming the same queue, and a `config.overridable` entry reaching
+`lambda.functions.*.trigger`, `lambda.handler` or `app.discovery`.
 
 The job runs as the declared `identity`, with
 `mechanism: lambda:<function>:<source>`, and never as anything the event
 says. Without `identity` it runs anonymous, so a `Caller()` or a row-level
 policy refuses it. The identity grants roles only: it implies no elevation
-and no `BYPASSRLS`.
+and no `BYPASSRLS`. Whoever may invoke the function, or write to its queue,
+runs the declared job as the declared identity: restrict
+`lambda:InvokeFunction` and the queue policy, and pin such a function in code
+with `LambdaAdapter(function=...)`.
 
 Invoked directly, the function fails the invocation whenever a job fails,
 retryable or not, a `Command` validation error included. Lambda retries the
@@ -123,8 +127,9 @@ fetches its `SubscribeURL`. The failure log names the function, job and
 error, never the payload.
 
 `via: sqs` reads each message body as the source delivers it to a queue and
-keeps the batch behaviour of a `jobs` function: partial batch failures,
-retries and the queue's dead-letter queue. An SNS subscription to that queue
+reports each failed message, a failure that is not retryable included, so
+the queue retries it and then sends it to its dead-letter queue. A `jobs`
+function consumes a message whose job fails for good, as before. An SNS subscription to that queue
 must not use raw message delivery.
 
 The rule or pattern, bucket and prefix, topic or schedule expression that

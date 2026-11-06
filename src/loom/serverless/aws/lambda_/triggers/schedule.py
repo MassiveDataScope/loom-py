@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.serverless.aws.lambda_.triggers import Decoded, an_object, upstream_trace_id
+from loom.serverless.aws.lambda_.triggers import Decoded, an_object
 
 
 def decode(event: Any) -> tuple[Decoded, ...]:
@@ -13,5 +13,4 @@ def decode(event: Any) -> tuple[Decoded, ...]:
     Raises:
         MalformedJobMessage: When the input is not an object.
     """
-    payload = an_object(event, "the schedule's input")
-    return (Decoded(payload=payload, trace_id=upstream_trace_id(payload)),)
+    return (Decoded(payload=an_object(event, "the schedule's input")),)

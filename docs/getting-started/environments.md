@@ -248,7 +248,8 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
   that can match a key inside `checks`, `config`, `persistence.cursors`,
-  `aws`, `sqs.queues` or a Lambda function's `trigger`
+  `aws`, `sqs.queues`, `app.discovery`, `lambda.handler` or a Lambda
+  function's `trigger`
   (`persistence.*.signing` and `lambda.functions.*.trigger.job` included)
   stops startup naming the entry; the entries
   are checked at every load, in every environment. Any other key you list

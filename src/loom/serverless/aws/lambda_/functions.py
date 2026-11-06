@@ -22,7 +22,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
-from loom.core.discovery.worker import _discover_compilables_from_config, worker_discovery
+from loom.core.discovery.worker import discovered_jobs
 from loom.core.use_case.markers import _InputMarker
 
 if TYPE_CHECKING:
@@ -78,6 +78,11 @@ class _QueueMapping(
         """Whether a failed message is reported alone; true by default."""
         return self.report_batch_item_failures is not False
 
+    @property
+    def queued(self) -> bool:
+        """Whether the function consumes a queue."""
+        return True
+
 
 class JobsTrigger(_QueueMapping, frozen=True, kw_only=True, tag="jobs"):
     """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
@@ -104,6 +109,11 @@ class EventTrigger(_QueueMapping, frozen=True, kw_only=True):
     via: Literal["sqs"] | None = None
     maximum_retry_attempts: Annotated[int, msgspec.Meta(ge=0, le=2)] | None = None
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
+
+    @property
+    def queued(self) -> bool:
+        """Whether the events arrive through a queue, ``via: sqs``."""
+        return self.via == "sqs"
 
 
 class EventBridgeTrigger(EventTrigger, frozen=True, kw_only=True, tag="eventbridge"):
@@ -159,28 +169,30 @@ def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
             or a key of another source, a trigger a queue or batching setting
             it does not consume, a retry setting via sqs or a placeholder in
             its ``job`` or ``identity``, a ``batch_size`` over 10 without a
-            ``batching_window_s``, or an interface another function serves.
+            ``batching_window_s``, or an interface or a queue another
+            function serves.
     """
     config = _unresolved(ctx)
     owners: dict[str, str] = {}
     for name, function in config.functions.items():
         trigger = function.trigger
-        if not isinstance(trigger, HttpTrigger):
+        if isinstance(trigger, HttpTrigger):
+            served = [repr(interface) for interface in trigger.interfaces]
+        else:
             _check_trigger(f"{_SECTION}.{name}.trigger", trigger)
-            continue
-        for interface in trigger.interfaces:
-            owner = owners.setdefault(interface, name)
+            served = [f"queue {trigger.queue!r}"] if trigger.queue is not None else []
+        for item in served:
+            owner = owners.setdefault(item, name)
             if owner != name:
                 raise ConfigError(
-                    f"{interface!r} is served by both {_SECTION}.{owner} and {_SECTION}.{name}"
+                    f"{item} is served by both {_SECTION}.{owner} and {_SECTION}.{name}"
                 )
     return config
 
 
 def _check_trigger(where: str, trigger: JobsTrigger | EventTrigger) -> None:
-    queued = not isinstance(trigger, EventTrigger) or trigger.via == "sqs"
     mapped = next((key for key in ("queue", *_BATCHING) if getattr(trigger, key) is not None), None)
-    if mapped is not None and not queued:
+    if mapped is not None and not trigger.queued:
         raise ConfigError(f"{where}.{mapped} applies to a trigger via sqs only")
     # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
     if (trigger.batch_size or 0) > 10 and not trigger.batching_window_s:
@@ -188,13 +200,9 @@ def _check_trigger(where: str, trigger: JobsTrigger | EventTrigger) -> None:
     if not isinstance(trigger, EventTrigger):
         return
     retry = next((key for key in _RETRIES if getattr(trigger, key) is not None), None)
-    if retry is not None and queued:
+    if retry is not None and trigger.queued:
         raise ConfigError(f"{where}.{retry} applies to a direct trigger only")
-    identity = trigger.identity
-    written = [trigger.job]
-    if identity is not None:
-        written += [identity.subject, *identity.roles, *identity.attributes.values()]
-    if any(INTERPOLATION in value for value in written):
+    if INTERPOLATION in repr((trigger.job, trigger.identity)):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
 
 
@@ -321,8 +329,7 @@ def check_triggers(ctx: ConfigContext) -> None:
     if not events:
         return
     try:
-        discovery = worker_discovery(ctx.raw("app.discovery", {}))
-        jobs = _discover_compilables_from_config(discovery).jobs
+        jobs = discovered_jobs(ctx.raw("app.discovery", {}))
     except (ImportError, RuntimeError, ValueError) as exc:
         raise ConfigError(f"the jobs of the event triggers cannot be discovered: {exc}") from exc
     for name, trigger in events.items():
