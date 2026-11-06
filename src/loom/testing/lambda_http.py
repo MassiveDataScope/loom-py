@@ -23,7 +23,7 @@ import httpx
 
 from loom.composition import Application, build_application
 from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
-from loom.testing.lambda_events import EventFormat, _http_request_event
+from loom.testing.serverless import EventFormat, LambdaEvent
 
 HttpHandler = Callable[[dict[str, Any], Any], dict[str, Any]]
 
@@ -100,11 +100,11 @@ def _event(request: httpx.Request, event_format: EventFormat) -> dict[str, Any]:
     headers: dict[str, str] = {}
     for name, value in request.headers.multi_items():
         headers[name] = f"{headers[name]},{value}" if name in headers else value
-    return _http_request_event(
+    return LambdaEvent.http(
         request.method,
         request.url.path,
-        request.url.query.decode(),
-        headers,
-        request.read(),
-        event_format,
+        query=request.url.query.decode(),
+        headers=headers,
+        body=request.read(),
+        event_format=event_format,
     )

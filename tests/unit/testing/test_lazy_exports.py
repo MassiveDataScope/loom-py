@@ -28,7 +28,7 @@ from loom.testing import (  # noqa: F401
     InMemoryRepository,
     RecordingJobService,
     UseCaseTest,
-    lambda_event,
+    LambdaEvent,
 )
 """
 

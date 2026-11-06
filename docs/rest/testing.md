@@ -109,34 +109,38 @@ itself.
 
 ### Events of every trigger
 
-`lambda_event(source, payload, via=None, **meta)` builds the event AWS
-delivers to a function, so a test calls the real handler with it:
+`LambdaEvent` builds the event AWS delivers to a function, one typed
+constructor per trigger source, so a test calls the real handler with it:
 
-| `source` | Event | `payload` | `meta` |
-|---|---|---|---|
-| `http` | API Gateway HTTP API | JSON body | `method`, `path`, `query`, `headers`, `body` |
-| `jobs` | One SQS record of the `JobEnvelope` `SQSJobService` sends | The job's payload | `job`, `params`, `identity` |
-| `eventbridge` | An EventBridge event | `detail` | `event_id` |
-| `s3` | An S3 notification | None | `objects` (keys, or `key`/`size`/`version_id` mappings), `bucket`, `test_event` |
-| `sns` | The event of a Lambda subscription | `Message` | `notification_id`, `type` |
-| `schedule` | The schedule's input | The input | None |
+| Constructor | Event |
+|---|---|
+| `LambdaEvent.http(method, path, query=, headers=, json_body=, body=)` | An API Gateway HTTP API request (`event_format="v1"` for REST) |
+| `LambdaEvent.jobs(Job, payload, params=, identity=)` | One SQS record of the `JobEnvelope` `SQSJobService` sends |
+| `LambdaEvent.sqs_record(body)` | One SQS record whose body is written by hand |
+| `LambdaEvent.eventbridge(detail, event_id=)` | An EventBridge event |
+| `LambdaEvent.s3(objects, bucket=)` | An S3 notification, one record per key or `key`/`size`/`version_id` mapping |
+| `LambdaEvent.s3_test_event(bucket=)` | The `s3:TestEvent` S3 sends when a notification is configured |
+| `LambdaEvent.sns(message, notification_id=, type=)` | The event of a Lambda subscription |
+| `LambdaEvent.schedule(payload)` | The schedule's input, passed as is |
 
-`via="sqs"` wraps the event as one SQS record of the queue in between. An
-event carried by SQS (`jobs` or `via="sqs"`) also takes `message_id`,
-`group_id` (a FIFO queue), `queue_arn` and `body`, a message body written by
-hand instead of the one built. A `jobs` or `via="sqs"` handler returns the
-records SQS should retry:
+`.via_sqs(message_id=, group_id=, queue_arn=)` turns an EventBridge, S3, SNS
+or schedule event into the one SQS record the queue in between delivers:
+`group_id` makes the queue FIFO, and an SNS message is queued as the SNS
+envelope the subscription stores. An HTTP request is never queued and a
+`jobs` event already is a record. Every SQS record also takes `message_id`,
+`group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
+should retry:
 
 ```python
 from loom.composition import create_app
-from loom.testing import lambda_event
+from loom.testing import LambdaEvent
 
 def test_a_poison_message_is_retried() -> None:
     handler = create_app("config.yaml", environment="test")  # app.entry: worker
     try:
         records = [
-            *lambda_event("jobs", {"to": "ada@example.com"}, job=SendEmailJob)["Records"],
-            *lambda_event("jobs", body="{", message_id="2")["Records"],
+            *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
+            *LambdaEvent.sqs_record("{", message_id="2")["Records"],
         ]
         result = handler({"Records": records}, None)
     finally:
@@ -149,7 +153,7 @@ A direct trigger returns nothing and raises when a job fails:
 
 ```python
 def test_an_invoice_event_imports_it(handler) -> None:
-    handler(lambda_event("eventbridge", {"number": "F-7"}), None)
+    handler(LambdaEvent.eventbridge({"number": "F-7"}), None)
 ```
 
 ### Dispatched jobs

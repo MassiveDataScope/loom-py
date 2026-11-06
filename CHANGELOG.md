@@ -34,8 +34,8 @@
   | `loom.serverless.aws.lambda_.LambdaHTTPHandler` | `LambdaHandler`; the class is internal |
   | `loom.serverless.aws.lambda_.sqs.DuplicateJobName` | `loom.core.discovery.worker.DuplicateJobName` |
   | `loom.serverless.aws.lambda_.sqs.MALFORMED_JOB`, `TIMEOUT_SAFETY_MARGIN_MS` | Internal |
-  | `loom.testing.sqs_record(Job, payload, ...)` | `loom.testing.lambda_event("jobs", payload, job=Job, ...)` |
-  | `loom.testing.sqs_raw_record(body, ...)` | `loom.testing.lambda_event("jobs", body=body, ...)["Records"][0]` |
+  | `loom.testing.sqs_record(Job, payload, ...)` | `loom.testing.LambdaEvent.jobs(Job, payload, ...)` |
+  | `loom.testing.sqs_raw_record(body, ...)` | `loom.testing.LambdaEvent.sqs_record(body, ...)["Records"][0]` |
   | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
   `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
@@ -97,8 +97,9 @@
 - **testing:** Lambda functions are tested in process, without AWS:
   `LambdaTestClient`, an `httpx.Client` like FastAPI's `TestClient`, sends API
   Gateway HTTP API or REST events to the real handler;
-  `lambda_event(source, payload, via=None, **meta)` builds the event AWS
-  delivers for every trigger source, via SQS too; `RecordingJobService`
+  `LambdaEvent` builds the event AWS delivers, one typed constructor per
+  trigger source (`LambdaEvent.s3([...])`, `.sns({...})`, `.jobs(Job, ...)`)
+  and `.via_sqs()` for the queue in between; `RecordingJobService`
   (`app.job_service: loom.testing:RecordingJobService`) records each dispatch
   after the commit. The `testing` extra now includes `httpx`.
 

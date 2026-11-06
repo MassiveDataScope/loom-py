@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from loom.testing import lambda_event
+from loom.testing import LambdaEvent
 
 RecordFactory = Callable[..., dict[str, Any]]
 WORKER = "worker"
@@ -31,8 +31,6 @@ def make_record(
     if body is None:
         envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
         body = json.dumps(envelope | {"payload": {}, "trace_id": trace_id})
-    event = lambda_event(
-        "jobs", body=body, message_id=message_id, group_id="group" if fifo else None
-    )
+    event = LambdaEvent.sqs_record(body, message_id=message_id, group_id="group" if fifo else None)
     record: dict[str, Any] = event["Records"][0]
     return record

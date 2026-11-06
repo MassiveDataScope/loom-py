@@ -1,4 +1,4 @@
-"""``lambda_event("jobs", ...)`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
+"""``LambdaEvent.jobs(...)`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from loom.core.identity import Identity, current_identity, reset_identity, set_i
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from loom.testing import lambda_event
+from loom.testing import LambdaEvent
 from tests.helpers.composition import composition_source
 from tests.helpers.jobs import SQSClient, sqs_service
 
@@ -60,9 +60,7 @@ def _failed(result: dict[str, Any]) -> list[str]:
 
 
 def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
-    event = lambda_event(
-        "jobs", job=MarkJob, params={"marker": marker}, message_id=message_id, **options
-    )
+    event = LambdaEvent.jobs(MarkJob, params={"marker": marker}, message_id=message_id, **options)
     record: dict[str, Any] = event["Records"][0]
     return record
 
@@ -103,7 +101,7 @@ def test_the_identity_reaches_the_job(handler: LambdaHandler, seen: list[tuple[s
 def test_a_raw_body_loom_cannot_read_is_retried(
     handler: LambdaHandler, seen: list[tuple[str, str]]
 ) -> None:
-    result = handler(lambda_event("jobs", body="{", message_id="poison"), None)
+    result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
 
     assert (_failed(result), seen) == (["poison"], [])
 
@@ -119,6 +117,6 @@ async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
         reset_identity(token)
         clear_pending_dispatches()
 
-    event = lambda_event("jobs", {"n": 1}, job=MarkJob, params={"marker": "a"}, identity=_ALICE)
+    event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
     record = event["Records"][0]
     assert [request["MessageBody"] for request in client.requests] == [record["body"]]

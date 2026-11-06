@@ -22,7 +22,7 @@ from loom.core.use_case import Input
 from loom.rest.auth import RequestCredentials
 from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
-from loom.testing import lambda_event
+from loom.testing import LambdaEvent
 from tests.helpers.composition import composition_source
 
 pytestmark = pytest.mark.timeout(30)
@@ -124,9 +124,9 @@ class TestDecoders:
     @pytest.mark.parametrize(
         ("decode", "event", "event_id"),
         [
-            (eventbridge.decode, lambda_event("eventbridge", _SEVEN, event_id="e1"), "e1"),
-            (schedule.decode, lambda_event("schedule", _SEVEN), None),
-            (sns.decode, lambda_event("sns", _SEVEN, notification_id="n1"), "n1"),
+            (eventbridge.decode, LambdaEvent.eventbridge(_SEVEN, event_id="e1"), "e1"),
+            (schedule.decode, LambdaEvent.schedule(_SEVEN), None),
+            (sns.decode, LambdaEvent.sns(_SEVEN, notification_id="n1"), "n1"),
         ],
         ids=["eventbridge-detail", "schedule-input", "sns-message"],
     )
@@ -138,7 +138,7 @@ class TestDecoders:
         assert (decoded.payload, decoded.event_id) == (_SEVEN, event_id)
 
     def test_an_sns_message_that_is_no_object_is_malformed(self) -> None:
-        event = lambda_event("sns")
+        event = LambdaEvent.sns()
         event["Records"][0]["Sns"]["Message"] = '["a list"]'
 
         with pytest.raises(MalformedJobMessage, match="SNS Message is not a JSON object"):
@@ -149,7 +149,7 @@ class TestDecoders:
     ) -> None:
         connected: list[object] = []
         monkeypatch.setattr(socket.socket, "connect", lambda _, address: connected.append(address))
-        event = lambda_event("sns", type="SubscriptionConfirmation")
+        event = LambdaEvent.sns(type="SubscriptionConfirmation")
         event["Records"][0]["Sns"]["SubscribeURL"] = "http://169.254.169.254/latest/meta-data"
 
         with pytest.raises(MalformedJobMessage, match="not a Notification"):
@@ -158,7 +158,7 @@ class TestDecoders:
 
     def test_s3_runs_one_job_per_object_its_key_decoded(self) -> None:
         objects = ["reports/a b+c.csv", {"key": "ünï/x.csv", "size": 5, "version_id": "v2"}]
-        event = lambda_event("s3", objects=objects, bucket="inbox")
+        event = LambdaEvent.s3(objects, bucket="inbox")
 
         decoded = s3.decode(event)
 
@@ -190,7 +190,7 @@ class TestDirectTrigger:
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         handler = serve(_events(identity=_IDENTITY))
-        event = lambda_event("eventbridge", {"number": "7"})
+        event = LambdaEvent.eventbridge({"number": "7"})
         event["identity"] = {"subject": "mallory", "roles": ["admin"]}
 
         assert handler(event, None) is None
@@ -207,7 +207,7 @@ class TestDirectTrigger:
     def test_without_an_identity_the_job_runs_anonymous(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
-        serve(_events())(lambda_event("eventbridge", {"number": "7"}), None)
+        serve(_events())(LambdaEvent.eventbridge({"number": "7"}), None)
 
         ((_, caller),) = ran
         assert not caller.is_authenticated
@@ -216,7 +216,7 @@ class TestDirectTrigger:
         observer = _Observer()
         handler = serve(_events(), observer=observer)
 
-        handler(lambda_event("eventbridge", {"number": "7"}, event_id="evt-9"), None)
+        handler(LambdaEvent.eventbridge({"number": "7"}, event_id="evt-9"), None)
 
         starts = [e for e in observer.events if (e.scope, e.kind) == (Scope.JOB, EventKind.START)]
         assert [(e.name, e.id) for e in starts] == [("ImportInvoice", "evt-9")]
@@ -237,7 +237,7 @@ class TestDirectTrigger:
         handler = serve(_events())
 
         with pytest.raises(error):
-            handler(lambda_event("eventbridge", payload), None)
+            handler(LambdaEvent.eventbridge(payload), None)
 
     def test_a_malformed_event_fails_the_invocation_in_a_failed_span(self, serve: Serve) -> None:
         observer = _Observer()
@@ -265,7 +265,7 @@ class TestDirectTrigger:
         handler = serve(_events())
 
         with pytest.raises(Exception):  # noqa: B017 - any failure; the logs are what is checked
-            handler(lambda_event("eventbridge", payload), None)
+            handler(LambdaEvent.eventbridge(payload), None)
 
         captured = capsys.readouterr()
         assert any("Lambda event job failed" in message for message in caplog.messages)
@@ -275,7 +275,7 @@ class TestDirectTrigger:
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         handler = serve({"source": "s3", "job": "ImportObject"})
-        event = lambda_event("s3", objects=["ok/1.csv", "fail/2.csv", "ok/3.csv"])
+        event = LambdaEvent.s3(["ok/1.csv", "fail/2.csv", "ok/3.csv"])
 
         with pytest.raises(ValueError, match="job failed"):
             handler(event, None)
@@ -288,7 +288,7 @@ class TestDirectTrigger:
     ) -> None:
         observer = _Observer()
         handler = serve({"source": "s3", "job": "ImportObject"}, observer=observer)
-        event = lambda_event("s3", objects=["in/a.csv"])
+        event = LambdaEvent.s3(["in/a.csv"])
         del event["Records"][0][missing]
 
         with pytest.raises(MalformedJobMessage, match=f"names no {missing}"):
@@ -304,7 +304,7 @@ class TestDirectTrigger:
     ) -> None:
         handler = serve({"source": "s3", "job": "ImportObject"})
 
-        handler(lambda_event("s3", objects=[{"key": "in/a+b.csv", "size": 3}]), None)
+        handler(LambdaEvent.s3([{"key": "in/a+b.csv", "size": 3}]), None)
 
         ((found, _),) = ran
         assert isinstance(found, S3Object)
@@ -316,17 +316,24 @@ class TestDirectTrigger:
     ) -> None:
         handler = serve({"source": "s3", "job": "ImportObject"})
 
-        assert handler(lambda_event("s3", test_event=True), None) is None
+        assert handler(LambdaEvent.s3_test_event(), None) is None
         assert ran == []
         assert any("S3 test event acknowledged" in message for message in caplog.messages)
 
-    @pytest.mark.parametrize("source", ["sns", "schedule"])
+    @pytest.mark.parametrize(
+        ("source", "event"),
+        [
+            ("sns", LambdaEvent.sns({"number": "7"})),
+            ("schedule", LambdaEvent.schedule({"number": "7"})),
+        ],
+        ids=["sns", "schedule"],
+    )
     def test_sns_and_schedule_run_their_payload(
-        self, serve: Serve, ran: list[tuple[Any, Identity]], source: str
+        self, serve: Serve, ran: list[tuple[Any, Identity]], source: str, event: LambdaEvent
     ) -> None:
         handler = serve({"source": source, "job": "ImportInvoice"})
 
-        handler(lambda_event(source, {"number": "7"}), None)  # type: ignore[arg-type]
+        handler(event, None)
 
         assert [invoice for invoice, _ in ran] == [Invoice(number="7")]
 
@@ -337,8 +344,8 @@ class TestViaSqs:
     ) -> None:
         handler = serve(_events(via="sqs", identity=_IDENTITY))
         records = [
-            *lambda_event("eventbridge", {"number": "1"}, via="sqs", message_id="m1")["Records"],
-            *lambda_event("eventbridge", {"number": "fail"}, via="sqs", message_id="m2")["Records"],
+            *LambdaEvent.eventbridge({"number": "1"}).via_sqs(message_id="m1")["Records"],
+            *LambdaEvent.eventbridge({"number": "fail"}).via_sqs(message_id="m2")["Records"],
         ]
 
         result = handler({"Records": records}, None)
@@ -351,7 +358,7 @@ class TestViaSqs:
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         handler = serve(_events(via="sqs"))
-        event = lambda_event("eventbridge", {"number": "final"}, via="sqs", message_id="m1")
+        event = LambdaEvent.eventbridge({"number": "final"}).via_sqs(message_id="m1")
 
         result = handler(event, None)
 
@@ -363,7 +370,7 @@ class TestViaSqs:
     ) -> None:
         handler = serve({"source": "sns", "via": "sqs", "job": "ImportInvoice"})
 
-        result = handler(lambda_event("sns", {"number": "7"}, via="sqs"), None)
+        result = handler(LambdaEvent.sns({"number": "7"}).via_sqs(), None)
 
         assert (result, [invoice for invoice, _ in ran]) == (
             {"batchItemFailures": []},
@@ -375,7 +382,7 @@ class TestViaSqs:
     ) -> None:
         handler = serve({"source": "sns", "via": "sqs", "job": "ImportInvoice"})
 
-        event = lambda_event("sns", via="sqs", body='{"number": "7"}', message_id="r")
+        event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r")
 
         result = handler(event, None)
 
@@ -387,8 +394,8 @@ def test_the_same_job_binds_the_same_command_from_a_queue_and_an_event(
 ) -> None:
     payload = {"number": "7", "note": "parity"}
 
-    serve({"source": "jobs"}, name="worker")(lambda_event("jobs", payload, job=ImportInvoice), None)
-    serve(_events())(lambda_event("eventbridge", payload), None)
+    serve({"source": "jobs"}, name="worker")(LambdaEvent.jobs(ImportInvoice, payload), None)
+    serve(_events())(LambdaEvent.eventbridge(payload), None)
 
     (from_queue, _), (from_event, _) = ran
     assert from_queue == from_event == Invoice(number="7", note="parity")
