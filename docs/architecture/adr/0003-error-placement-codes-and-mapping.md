@@ -158,7 +158,7 @@ The seven classes rebase without changing any status:
   `SystemError`;
 - `AuthenticationUnavailable` → `SystemError(code=SERVICE_UNAVAILABLE)`.
 
-`FilterPathError` and `UnsafeFilterError` subclass `UnsupportedQuery` and keep
+`FilterPathError` and `UnsafeFilterError` subclass `DomainError` and keep
 `ValueError` as a second base.
 
 **R3. Where `LoomError` classes live.**
@@ -181,9 +181,10 @@ Amendment (2026-11): R3 was amended to split `loom/core/errors/` by area.
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
-| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/errors.py` | REST only |
+| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `core/errors` | The SQS batch outcome the jobs pillar and the Lambda adapter share; `sqs.py` keeps importing it |
+| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/errors.py` | REST only. `rest/auth/abc.py` and `loom.rest.auth` keep re-exporting it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
-| `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the existing ETL run-time errors module |
+| `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
 The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
 Compile and startup errors do not move.
@@ -264,7 +265,7 @@ and `master` already fails it.
 | # | Step | Issue | Tests landing |
 |---|---|---|---|
 | 1 | `@unique`, `code: ErrorCode`, four new members, `SystemError(code=)`, the seven rebases, the R3 moves with re-exports, the docstring fix | #357 | T1 R1, R2, R3, R5; T2 "every code has a status" |
-| 2 | `FilterPathError`/`UnsafeFilterError(UnsupportedQuery)`; mistyped filter values → `query_validation`; the router and the 2.21.0 bare raise use `UnsupportedQuery`/`BoundaryValidationError`; `bad_request` disappears; path/query validation → 400 | #352 | T2 "one body shape" (query cases) |
+| 2 | `FilterPathError`/`UnsafeFilterError(DomainError)`; mistyped filter values → `query_validation`; the router and the 2.21.0 bare raise use `UnsupportedQuery`/`BoundaryValidationError`; `bad_request` disappears; path/query validation → 400 | #352 | T2 "one body shape" (query cases) |
 | 3 | One REST mapper: `(status, headers, detail)`, middlewares and SQL endpoint use it, `BodyTooLarge` as a `DomainError`, fixed status → code table, fixed 5xx text, a malformed body → `boundary_validation` | #351, #353 | T1 R4-REST; T2 "5xx leaks nothing", "one body shape" |
 | 4 | Integrity messages without constraint, column or key values | #354 | T2 "5xx leaks nothing" covers the SQLSTATE case |
 | 5 | Celery retries by family | #355 | T2 Celery |

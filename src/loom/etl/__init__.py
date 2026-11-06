@@ -45,7 +45,6 @@ the public API and may change without notice.
 """
 
 from loom.core.observability.config import OtelConfig
-from loom.etl.backends._format_registry import UnsupportedFormatError
 from loom.etl.checkpoint import (
     CheckpointScope,
     CheckpointStore,
@@ -122,6 +121,7 @@ from loom.etl.pipeline import (
     params,
 )
 from loom.etl.runner import ETLRunner
+from loom.etl.runner.errors import UnsupportedFormatError
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,

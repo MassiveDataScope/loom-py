@@ -15,6 +15,7 @@ from loom.core.errors.jobs import (
     MalformedJobMessage,
     MixedJobBackendsError,
     PostCommitError,
+    SQSBatchFailedError,
     SQSDispatchError,
     UnknownJob,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "RateLimited",
     "RuleViolation",
     "RuleViolations",
+    "SQSBatchFailedError",
     "SQSDispatchError",
     "ScopeOwnershipError",
     "StoresNotCommitted",
