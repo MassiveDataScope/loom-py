@@ -168,8 +168,8 @@ def test_invalid_stage_error_is_exported_only_by_loom_etl_and_the_compiler() -> 
     import loom.etl.runner
 
     assert loom.etl.runner.__all__ == ["ETLRunner"]
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("loom.etl.runner.errors")
+    # The retired shim re-exported InvalidStageError from here; now the module holds ETL errors.
+    assert not hasattr(importlib.import_module("loom.etl.runner.errors"), "InvalidStageError")
     assert loom.etl.InvalidStageError is loom.etl.compiler.InvalidStageError
 
 
