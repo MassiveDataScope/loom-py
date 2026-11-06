@@ -225,7 +225,10 @@
   | `loom.core.engine.post_commit.PostCommitError` (also `loom.core.engine.*`) | `loom.core.errors` |
   | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
   | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
-  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.core.errors` |
+  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
+  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
+  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`, `loom.rest.errors`) |
+  | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
 
 ## ⚠ Behaviour changes
 

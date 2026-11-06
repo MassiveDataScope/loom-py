@@ -15,8 +15,6 @@ from loom.core.errors.jobs import (
     MalformedJobMessage,
     MixedJobBackendsError,
     PostCommitError,
-    SQSBatchFailedError,
-    SQSDispatchError,
     UnknownJob,
 )
 from loom.core.errors.model import BoundaryValidationError, UnsupportedBoundaryType
@@ -51,8 +49,6 @@ __all__ = [
     "RateLimited",
     "RuleViolation",
     "RuleViolations",
-    "SQSBatchFailedError",
-    "SQSDispatchError",
     "ScopeOwnershipError",
     "StoresNotCommitted",
     "SystemError",

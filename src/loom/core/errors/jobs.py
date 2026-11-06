@@ -105,13 +105,3 @@ class PostCommitError(LoomError):
             f"{len(failures)} post-commit action(s) failed (committed={committed})",
             code=ErrorCode.POST_COMMIT_FAILURE,
         )
-
-
-class SQSDispatchError(LoomError):
-    """A message SQS cannot carry, or a send that failed; ``code`` names which."""
-
-    retryable = False
-
-
-class SQSBatchFailedError(LoomError):
-    """A record of the batch failed and the function does not report batch item failures."""

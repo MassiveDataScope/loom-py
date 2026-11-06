@@ -20,7 +20,6 @@ from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.errors import SQSDispatchError
 from loom.core.identity import current_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
@@ -32,6 +31,7 @@ from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
 from loom.core.tracing import get_trace_id
 from loom.jobs.aws import FIFO_SUFFIX
+from loom.jobs.aws.errors import SQSDispatchError
 
 if TYPE_CHECKING:
     from loom.composition import JobBackendContext

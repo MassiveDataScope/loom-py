@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from loom.core.identity import Identity
-from loom.rest.errors import AuthenticationUnavailable
+from loom.rest.auth.errors import AuthenticationUnavailable
 
 __all__ = ["AuthenticationUnavailable", "Authenticator", "RequestCredentials"]
 

@@ -12,10 +12,9 @@ import pytest
 from loom.composition import AppConfig, compose_application
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.errors import LoomError, MalformedJobMessage
+from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
-from loom.core.model import BoundaryValidationError
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Input

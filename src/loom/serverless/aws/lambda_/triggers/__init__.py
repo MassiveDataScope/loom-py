@@ -12,8 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from loom.core.errors import MalformedJobMessage
-from loom.core.model import BoundaryValidationError, loom_type_of
+from loom.core.errors import BoundaryValidationError, MalformedJobMessage
+from loom.core.model import loom_type_of
 
 _JSON = loom_type_of(Any)
 
