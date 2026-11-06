@@ -78,7 +78,7 @@ reported across them::
 from __future__ import annotations
 
 import inspect
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 
@@ -633,3 +633,17 @@ def convert_section(data: Any, key: str, target_type: type[T]) -> T:
         raise ConfigError(
             f"Config section {key!r} failed validation as {target_type.__name__!r}: {exc}"
         ) from exc
+
+
+def config_strings(
+    node: object, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], str]]:
+    """Every string of a configuration *node* as written, with its path of keys and indexes."""
+    if isinstance(node, str):
+        yield path, node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from config_strings(value, (*path, str(key)))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from config_strings(value, (*path, str(index)))

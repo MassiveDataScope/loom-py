@@ -57,13 +57,13 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.config.loader import load_config
+from loom.core.config.loader import config_strings, load_config
 from loom.core.config.retired import reject_retired_sections
 from loom.core.environment import (
     OVERRIDE_PREFIX,
@@ -260,20 +260,6 @@ def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
         # From None: chained, the merge error would print with the traceback,
         # and its message may quote the value.
         raise ConfigError(f"{name} does not merge into {key!r}") from None
-
-
-def config_strings(
-    node: object, path: tuple[str, ...] = ()
-) -> Iterator[tuple[tuple[str, ...], str]]:
-    """Every string of a configuration *node* as written, with its path of keys and indexes."""
-    if isinstance(node, str):
-        yield path, node
-    elif isinstance(node, dict):
-        for key, value in node.items():
-            yield from config_strings(value, (*path, str(key)))
-    elif isinstance(node, list):
-        for index, value in enumerate(node):
-            yield from config_strings(value, (*path, str(index)))
 
 
 def _refuse_collisions(keys: Mapping[str, str]) -> None:

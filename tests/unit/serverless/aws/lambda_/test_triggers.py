@@ -291,7 +291,7 @@ class TestDirectTrigger:
         event = lambda_event("s3", objects=["in/a.csv"])
         del event["Records"][0][missing]
 
-        with pytest.raises(MalformedJobMessage, match="event name or time"):
+        with pytest.raises(MalformedJobMessage, match=f"names no {missing}"):
             handler(event, None)
         assert ran == []
         assert [(e.scope, e.kind) for e in observer.events] == [

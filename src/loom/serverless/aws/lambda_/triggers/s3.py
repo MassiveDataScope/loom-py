@@ -5,6 +5,7 @@ The ``s3:TestEvent`` S3 sends when a notification is configured runs no job.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 from urllib.parse import unquote_plus
@@ -63,24 +64,25 @@ def _object(record: dict[str, Any]) -> Decoded:
     s3 = an_object(record.get("s3"), "an S3 record's s3")
     found = an_object(s3.get("object"), "an S3 record's object")
     payload = {
-        "bucket": _named(an_object(s3.get("bucket"), "an S3 record's bucket").get("name")),
-        "key": unquote_plus(_named(found.get("key"))),
+        "bucket": _named(an_object(s3.get("bucket"), "an S3 record's bucket"), "name"),
+        "key": unquote_plus(_named(found, "key")),
         "size": found.get("size"),
         "etag": found.get("eTag"),
         "version_id": found.get("versionId"),
         "sequencer": found.get("sequencer"),
-        "event_name": _named(record.get("eventName")),
-        "event_time": _named(record.get("eventTime")),
+        "event_name": _named(record, "eventName"),
+        "event_time": _named(record, "eventTime"),
     }
     return Decoded(payload=payload)
 
 
-def _named(value: Any) -> str:
-    """*value*, which an S3 record must hold as a string.
+def _named(holder: Mapping[str, Any], field: str) -> str:
+    """The string *field* of an S3 record's *holder*.
 
     Raises:
-        MalformedJobMessage: When it is not one.
+        MalformedJobMessage: When it is missing or not a string.
     """
+    value = holder.get(field)
     if not isinstance(value, str):
-        raise MalformedJobMessage("an S3 record names no bucket, object key, event name or time")
+        raise MalformedJobMessage(f"an S3 record names no {field}")
     return value

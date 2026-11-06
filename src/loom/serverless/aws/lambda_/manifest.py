@@ -17,8 +17,7 @@ import msgspec
 from loom.composition.source import AppConfig, CompositionSource
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
-from loom.core.config.loader import convert_section
-from loom.core.config.overrides import config_strings
+from loom.core.config.loader import config_strings, convert_section
 from loom.core.config.resolver import fetched_name, referenced
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime

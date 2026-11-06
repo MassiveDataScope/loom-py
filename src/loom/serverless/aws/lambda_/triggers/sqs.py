@@ -51,11 +51,14 @@ class QueueSource:
             by default.
         retry_final: Reports a failure that is not retryable as well, so the
             queue dead-letters the message instead of consuming it.
+        job: The one job every body runs, when the function declares it;
+            otherwise each envelope names its own.
     """
 
     read: Read = _envelope
     label: str | None = None
     retry_final: bool = False
+    job: type[Job[Any]] | None = None
 
 
 _JOB_ENVELOPES = QueueSource()
@@ -132,7 +135,7 @@ class SQSBatch:
             self._fail_in_span(exc, label, record)
 
     def _job_type(self, envelope: JobEnvelope, record: Any) -> type[Job[Any]]:
-        job_type = self._jobs.get(envelope.job_name)
+        job_type = self._source.job or self._jobs.get(envelope.job_name)
         if job_type is None:
             self._fail_in_span(
                 UnknownJob(envelope.job_name),

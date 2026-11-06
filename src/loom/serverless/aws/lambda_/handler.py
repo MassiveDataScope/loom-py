@@ -181,7 +181,7 @@ class LambdaAdapter:
             return recipe, functools.partial(_bind_jobs, declared, failures)
         job_type = trigger_job(name, trigger, declared)
         if trigger.queued:
-            return recipe, functools.partial(_bind_queued_events, name, trigger, declared)
+            return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
         return recipe, functools.partial(_bind_direct_events, name, trigger, job_type)
 
 
@@ -195,7 +195,7 @@ def _bind_jobs(
 def _bind_queued_events(
     name: str,
     trigger: EventTrigger,
-    declared: Mapping[str, type[Job[Any]]],
+    job_type: type[Job[Any]],
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of an event trigger via sqs: every failure is reported, then DLQ'd."""
@@ -204,10 +204,11 @@ def _bind_queued_events(
         read=lambda body: reader(parsed(body, "the SQS message body")),
         label=trigger.job,
         retry_final=True,
+        job=job_type,
     )
     failures = trigger.reports_batch_item_failures
     host = open_host(application)
-    return SQSBatch(application, declared, host, report_failures=failures, source=source)
+    return SQSBatch(application, {}, host, report_failures=failures, source=source)
 
 
 def _bind_direct_events(

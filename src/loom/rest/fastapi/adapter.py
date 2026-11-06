@@ -120,7 +120,9 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     # Endpoints declared without Python (loom.rest.config); converted into
     # the same RestInterface objects a Python subclass produces and handed to
     # the same compiler — see _fold_config_interfaces and create_fastapi_app.
-    # Decoded and validated by served_routes alone, so a typo is named once.
+    # Kept as written: _route_config validates the raw entries first, so a
+    # typo is reported by interface name, which msgspec cannot recover once a
+    # typed decode has failed; served_routes is their one decoder.
     interfaces: dict[str, Any] = msgspec.field(default_factory=dict)
     # Subtractive per-environment overlay: every entry must match a route
     # declared in Python, or startup aborts (see
@@ -439,35 +441,13 @@ def _mount_metrics(
 
 
 def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
-    """Decode ``app.rest``, naming the interface behind an unknown key.
+    """Decode ``app.rest``; its defaults when the section is absent.
 
-    Validates ``app.rest.interfaces`` and ``app.rest.disable_routes`` against
-    their raw, not-yet-decoded mapping first, since a ``dict``-keyed value
-    (an interface name) is not information ``msgspec`` can recover once
-    conversion to :class:`~loom.rest.config.RestInterfaceConfig` has already
-    failed. Every other key of ``app.rest`` decodes exactly as
-    :func:`~loom.core.config.loader.section` already does — this only adds a
-    check ahead of it for this one section.
-
-    Both sections decode with untyped (``Any``) entries on purpose: typing an
-    entry as ``dict[str, Any]`` would make ``msgspec`` reject a malformed one
-    (a string where a mapping belongs) before the validators below ever see
-    it, with a generic ``Expected 'object', got 'str'`` — reachable, but
-    silent about which interface or disable-routes entry is at fault. Leaving
-    the entry ``Any`` defers that check to :func:`validate_interfaces_config`
-    and :func:`validate_disable_routes_config`, whose diagnostic names it.
-
-    Args:
-        ctx: Config context built from the supplied YAML files.
-
-    Returns:
-        The decoded :class:`_RestConfig`; its defaults when ``app.rest`` is absent.
+    ``interfaces`` and ``disable_routes`` come out untouched: :func:`served_routes`
+    validates and decodes them, naming the entry at fault.
 
     Raises:
-        RestInterfaceConfigError: If an interface, route, or disable-routes
-            entry uses a key its config struct does not declare, or is not a
-            mapping where one is required.
-        ConfigError: If decoding fails for any other reason.
+        ConfigError: If the section does not decode.
     """
     return ctx.section_or_default(_REST_SECTION, _RestConfig, _RestConfig())
 
