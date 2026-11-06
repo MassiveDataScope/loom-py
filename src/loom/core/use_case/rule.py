@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, Self, TypeVar
 
 from loom.core.command.base import Command
-from loom.core.errors.errors import RuleViolation
+from loom.core.errors import RuleViolation
 from loom.core.use_case._predicates import (
     is_present as _is_present,
 )

@@ -20,12 +20,13 @@ from pymongo import AsyncMongoClient
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import UnitOfWorkInsideScope
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import UnitOfWorkInsideScope, invocation
+from loom.core.uow.scope import invocation
 from loom.core.use_case.use_case import UseCase
 
 from ..conftest import RecordingSessionManager, make_session

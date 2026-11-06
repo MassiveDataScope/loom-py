@@ -48,7 +48,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
 from loom.ai.compiler import CompiledOutput
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.core.model import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError
 
 
 class MissingOutputPayload(Exception):

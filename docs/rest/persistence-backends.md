@@ -242,7 +242,7 @@ with `UnsupportedQuery(backend, model, reason)`, mapped by the REST layer to
 `400` with code `unsupported_query`:
 
 ```python
-from loom.core.repository.abc.errors import UnsupportedQuery
+from loom.core.errors import UnsupportedQuery
 
 raise UnsupportedQuery("dynamodb", "orders.Order", "get_by on 'customer_id' needs an index")
 ```

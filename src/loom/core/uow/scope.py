@@ -36,8 +36,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import ForeignSessionError, SystemError
+from loom.core.errors import (
+    ForeignSessionError,
+    ScopeOwnershipError,
+    StoresNotCommitted,
+    UndeclaredStoreWrite,
+    UnitOfWorkInsideScope,
+)
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.coordinator import (
@@ -55,162 +60,6 @@ if TYPE_CHECKING:
     # Only typed here: ``loom.core.engine`` and ``loom.core.repository`` import this module.
     from loom.core.engine.post_commit import PostCommitChannel
     from loom.core.repository.mutation import MutationEvent
-
-
-class ScopeOwnershipError(SystemError):
-    """A participant was touched from outside the task that owns the invocation scope.
-
-    Raised from another task (a ``gather`` child, or a task that outlives its
-    use case), from a thread, or once the scope has closed.
-
-    Args:
-        message: Which of those happened.
-    """
-
-    retryable = False
-    """A programming error: a retry meets it again."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK)
-
-
-class UnitOfWorkInsideScope(SystemError):
-    """``async with uow:`` was entered inside an invocation scope.
-
-    The unit of work would open a second transaction that commits on its
-    own, outside the invocation. Build it with :meth:`entering`.
-
-    Args:
-        message: Names the unit of work.
-    """
-
-    retryable = False
-    """A programming error: a retry meets it again."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.UOW_INSIDE_SCOPE)
-
-    @classmethod
-    def entering(cls, unit_of_work: object) -> UnitOfWorkInsideScope:
-        """The error for entering ``unit_of_work`` inside a scope.
-
-        Args:
-            unit_of_work: The unit of work being entered.
-        """
-        return cls(
-            f"`async with {type(unit_of_work).__qualname__}` inside an invocation scope would "
-            "commit on its own; the executor already runs the use case in its store's "
-            "unit of work"
-        )
-
-
-class UndeclaredStoreWrite(SystemError):
-    """A write targeted a store the running execution did not declare.
-
-    An execution writes to its primary store, the ``__store__`` of its main
-    model, and to the stores of its ``Joined[...]`` repositories; it reads
-    from any store. The write is refused before the driver is called.
-
-    Args:
-        message: Names the store written to and the stores declared.
-    """
-
-    retryable = False
-    """A programming error: a retry meets it again."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.UNDECLARED_STORE_WRITE)
-
-
-class NestedIdentityMismatch(SystemError):
-    """A nested execution joined its parent's unit of work as another identity.
-
-    The shared transaction filters rows as one identity, so it cannot serve
-    the child's as well; when it has not begun yet, the child's identity would
-    be the one it begins with, for the parent too. Build it with :meth:`joining`.
-
-    Args:
-        message: Names the nested use case.
-    """
-
-    retryable = False
-    """A programming error: a retry meets it again."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.NESTED_IDENTITY_MISMATCH)
-
-    @classmethod
-    def joining(cls, use_case: str) -> NestedIdentityMismatch:
-        """The error for ``use_case`` joining the open invocation as another identity."""
-        return cls(
-            f"{use_case} would join the open unit of work as another identity; "
-            "invoke it with the same identity, or dispatch a job that runs as the other one"
-        )
-
-
-class NestedElevation(SystemError):
-    """A nested execution was started after its parent elevated a scope.
-
-    The elevation flag is set on the shared transaction, and an elevation is
-    never inherited. Build it with :meth:`opening`.
-
-    Args:
-        message: Names the nested use case and the elevated scopes.
-    """
-
-    retryable = False
-    """A programming error: a retry meets it again."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.NESTED_ELEVATION)
-
-    @classmethod
-    def opening(cls, use_case: str, scopes: frozenset[str]) -> NestedElevation:
-        """The error for starting ``use_case`` inside an execution holding ``scopes`` elevated."""
-        return cls(
-            f"{use_case} cannot run inside an execution that elevated "
-            f"{', '.join(sorted(scopes))}; elevate inside {use_case} instead, or dispatch a job"
-        )
-
-
-class StoresNotCommitted(SystemError):
-    """The stores of one invocation did not all end the same way.
-
-    Some store committed, or wrote without a transaction, while another did
-    not commit, or a store's commit result is unknown. loom never claims to
-    have undone what committed: the outcome names every store for
-    reconciliation. ``__cause__`` is the business error or the first failure.
-    Build it with :meth:`of`.
-
-    Args:
-        message: Names every store and how it ended.
-        outcome: The outcome of every store, in commit order.
-
-    Attributes:
-        outcome: The outcome of every store; ``None`` once the error crossed
-            a process boundary: the causes it holds may carry driver details
-            and may not pickle, so only the message travels.
-    """
-
-    retryable = False
-    """A store may have committed: a retry would apply its write twice."""
-
-    def __init__(self, message: str, outcome: InvocationOutcome | None = None) -> None:
-        self.outcome = outcome
-        super().__init__(message, code=ErrorCode.STORES_NOT_COMMITTED)
-
-    @classmethod
-    def of(cls, outcome: InvocationOutcome) -> StoresNotCommitted:
-        """The error for ``outcome``, whose message names every store and how it ended.
-
-        Args:
-            outcome: The outcome of every store, in commit order.
-        """
-        stores = ", ".join(f"{store.key}={type(store).__name__}" for store in outcome.stores)
-        return cls(f"the stores of this invocation did not all commit: {stores}", outcome)
-
-    def __reduce__(self) -> tuple[type[StoresNotCommitted], tuple[str]]:
-        return type(self), (self.message,)
 
 
 @dataclass(frozen=True, slots=True)

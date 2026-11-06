@@ -19,12 +19,8 @@ from loom.core.cache import (
 )
 from loom.core.cache.keys import entity_key
 from loom.core.cache.repository import _DELEGATED_METHODS
-from loom.core.engine.post_commit import (
-    PostCommitChannel,
-    PostCommitError,
-    bind_channel,
-    reset_channel,
-)
+from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.errors import PostCommitError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.repository import FilterParams, PageParams, PageResult, Repository
 from loom.core.repository.abc.query import (

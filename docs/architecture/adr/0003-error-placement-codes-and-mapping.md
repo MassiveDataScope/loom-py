@@ -17,7 +17,7 @@ branch where marked.
 ### Run-time errors
 
 **Hierarchy.** Seven classes subclass `LoomError` directly instead of
-`DomainError` (`src/loom/core/errors/errors.py:31`) or `SystemError` (`:39`):
+`DomainError` or `SystemError` (`src/loom/core/errors/base.py`):
 
 | Class | Location |
 |---|---|
@@ -31,9 +31,9 @@ branch where marked.
 The 2.21.0 branch also raises a bare `LoomError(..., code=UNSUPPORTED_QUERY)` in
 `_DeclaredQuery.decode`, because `UnsupportedQuery` requires a backend and a
 model. `SystemError.__init__` hard-codes `SYSTEM_ERROR`
-(`core/errors/errors.py:50-51`).
+(`core/errors/base.py`).
 
-**Codes.** `LoomError.code` is a plain `str` (`errors.py:25`). Four raw codes
+**Codes.** `LoomError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
 sit outside `ErrorCode` (`core/errors/codes.py:20-38`):
 
 - `boundary_type_unsupported` (`_loom_type.py:116`);
@@ -77,7 +77,7 @@ leak internal text (#353). The leaking sources are `JobFailedError`'s
 and constraint and column names (`integrity.py:59-71`, `:103-122`; #354).
 
 Celery retries `DomainError`s (`celery/runner.py:220-227`; #355), against
-`core/errors/errors.py:42-44`.
+`core/errors/base.py`.
 
 AI has its own table (`ai/fastapi/endpoints.py:74-98`). `TransportError`,
 however, takes literal statuses and raw codes at each raise site
@@ -132,8 +132,14 @@ Status: Proposed.
 
 - `ErrorCode` is decorated with `@enum.unique` and is the only catalogue of
   client-facing codes.
-- `LoomError.code` is typed `ErrorCode`.
-- The four raw codes become members with their current string values.
+- `LoomError.code` is typed as a catalogue member (`StrEnum`): `ErrorCode`
+  for the errors core raises and maps, or an adapter's own catalogue for the
+  failures only it reports (`loom.jobs.aws.errors.SQSErrorCode` holds the
+  eleven `sqs_*` codes, so core carries no AWS vocabulary). A literal string
+  is not a code; T1's R1 check enforces it.
+- The four raw codes become members with their current string values
+  (`job_timeout`, `job_failed`, `job_backends_mixed`,
+  `boundary_type_unsupported`), mapped to 500 explicitly.
 - `SystemError` takes `code: ErrorCode = ErrorCode.SYSTEM_ERROR` as a keyword.
 - No code is derived from text. `_code_for` is replaced by a fixed status → code
   table in the REST mapper that uses the 3.11 spellings.
@@ -150,7 +156,11 @@ Status: Proposed.
 - Nothing raises a bare `LoomError` or `DomainError`.
 - Compile and startup errors are not `LoomError`s.
 
-The seven classes rebase without changing any status:
+The seven classes rebase without changing any status (done 2026-11, with
+`DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
+a business error; `SQSDispatchError` and `SQSBatchFailedError` are
+`SystemError`s; `UnsupportedQuery(reason, *, backend=None, model=None)` names
+the model and the reason, never the backend):
 
 - `BoundaryValidationError` → `DomainError`, keeping `ValueError`;
 - `UnsupportedFormatError` → `DomainError`, keeping today's 400;
@@ -158,32 +168,43 @@ The seven classes rebase without changing any status:
   `SystemError`;
 - `AuthenticationUnavailable` → `SystemError(code=SERVICE_UNAVAILABLE)`.
 
-`FilterPathError` and `UnsafeFilterError` subclass `UnsupportedQuery` and keep
+`FilterPathError` and `UnsafeFilterError` subclass `DomainError` and keep
 `ValueError` as a second base.
 
 **R3. Where `LoomError` classes live.**
 
-- A generic or multi-transport class lives in `loom/core/errors/errors.py`.
-- A class used by one pillar only lives in an errors module that pillar
-  already has.
-- No new files.
-- Each moved class stays importable from its old path as the same object
-  until 3.0.
+- A class raised or caught by more than one pillar lives in
+  `loom/core/errors/<area>.py` (base, domain, auth, model, jobs, stores;
+  `codes.py` holds the codes) and is re-exported from `loom.core.errors`.
+- A class used by one pillar only lives in that pillar's errors module.
+- Compile, config and startup errors do not move.
+- New area modules are allowed under `loom/core/errors/`.
+- A class moved into `loom.core.errors` is importable only from there (no
+  re-export at its old path). A class moved within its pillar keeps a
+  re-export at the old path until the next major.
+
+Amendment (2026-11): `loom/core/errors/` is a package split by area, one
+module per reason to change: `base` (the two families), `domain` (4xx),
+`auth`, `model` (boundary values), `jobs` (a job's message, registry, run
+and result) and `stores` (unit of work, invocation scope and post-commit
+actions; `PostCommitError` lives there, not with the jobs). `codes.py` holds
+the catalogue and `__init__` re-exports every class.
 
 | Class | From | To | Why |
 |---|---|---|---|
-| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository; `backend` and `model` become optional and its message stops naming the backend |
+| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
 | `BoundaryValidationError` | `core/model/_loom_type.py` | `core/errors` | Mapped by REST and AI |
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
-| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/errors.py` | REST only |
+| `SQSDispatchError` | `jobs/aws/sqs.py` | `jobs/aws/errors.py` | Raised by the SQS job service only; core keeps no AWS vocabulary |
+| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `serverless/aws/lambda_/errors.py` | Raised by the Lambda adapter only |
+| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/auth/errors.py` | Raised by authenticators, which stay free of FastAPI; `rest/auth/abc.py` and `loom.rest.auth` re-export it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
-| `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the existing ETL run-time errors module |
+| `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
-The `core/sql/abc/errors.py` and `core/repository/abc/errors.py` modules stay,
-for SQL subsystem errors and for any further repository errors. Compile and
-startup errors do not move.
+The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
+Compile and startup errors do not move.
 
 **R4. One mapper per transport.**
 
@@ -230,17 +251,18 @@ what happened; the transport decides the status. The status numbers in the
 
 Each test lands with the fix it guards and has no allowlist.
 
-**T1: `tests/unit/test_error_placement_containment.py`.** It sits next to
-`test_domain_containment.py` and works the same way: it reads `src/loom` with
-`ast` and imports nothing, so it needs no optional extras. Every check uses
-direct names, with no inheritance index.
+**T1: `tests/unit/core/errors/test_error_placement.py`.** It reads
+`src/loom` with `ast` and imports nothing, so it needs no optional extras.
+Bases are matched by name and closed transitively (a subclass of a pillar
+error counts), never resolved through imports. It implements R1, R3 and R5;
+R2 and R4-REST wait for the R2 rebases.
 
 | Check | Walks | Fails when |
 |---|---|---|
-| R1 | `code=` keywords of `super().__init__` calls inside classes in `src/loom` | the value is not `ErrorCode.<MEMBER>` and not a parameter named `code` whose default is `ErrorCode.<MEMBER>` |
-| R2 | class bases and calls | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
-| R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not `loom/core/errors/errors.py` or an existing module named `errors.py`/`_errors.py` |
-| R4-REST | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
+| R1 | `code=` keywords of `__init__` calls inside error classes in `src/loom` | the value is not `<Catalogue>ErrorCode.<MEMBER>` and not the `code` parameter the class received |
+| R2 | class bases | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
+| R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not under `loom/core/errors/` and is not a module named `errors.py`/`_errors.py` |
+| R4-REST (pending) | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
 | R5 | `src/loom/core` | an import of `http`, `fastapi` or `starlette` |
 
 R1 is checked by this test because mypy runs only in pre-commit, not in CI,
@@ -261,7 +283,7 @@ and `master` already fails it.
 | # | Step | Issue | Tests landing |
 |---|---|---|---|
 | 1 | `@unique`, `code: ErrorCode`, four new members, `SystemError(code=)`, the seven rebases, the R3 moves with re-exports, the docstring fix | #357 | T1 R1, R2, R3, R5; T2 "every code has a status" |
-| 2 | `FilterPathError`/`UnsafeFilterError(UnsupportedQuery)`; mistyped filter values → `query_validation`; the router and the 2.21.0 bare raise use `UnsupportedQuery`/`BoundaryValidationError`; `bad_request` disappears; path/query validation → 400 | #352 | T2 "one body shape" (query cases) |
+| 2 | `FilterPathError`/`UnsafeFilterError(DomainError)`; mistyped filter values → `query_validation`; the router and the 2.21.0 bare raise use `UnsupportedQuery`/`BoundaryValidationError`; `bad_request` disappears; path/query validation → 400 | #352 | T2 "one body shape" (query cases) |
 | 3 | One REST mapper: `(status, headers, detail)`, middlewares and SQL endpoint use it, `BodyTooLarge` as a `DomainError`, fixed status → code table, fixed 5xx text, a malformed body → `boundary_validation` | #351, #353 | T1 R4-REST; T2 "5xx leaks nothing", "one body shape" |
 | 4 | Integrity messages without constraint, column or key values | #354 | T2 "5xx leaks nothing" covers the SQLSTATE case |
 | 5 | Celery retries by family | #355 | T2 Celery |

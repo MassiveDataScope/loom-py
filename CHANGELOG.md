@@ -206,6 +206,52 @@
   raise `NotImplementedError`. Cache scenarios and frames, not runners: tests
   that mutate state need a function-scoped runner on their own `tmp_path`.
 
+## 💥 Breaking
+
+### errors
+
+- **errors:** `loom.core.errors` is a package split by area (`base`, `domain`,
+  `auth`, `model`, `jobs`, `stores`, `codes`) and re-exports every error, so
+  `from loom.core.errors import X` is unchanged. The errors below are
+  importable only from `loom.core.errors`; their old paths, and the package
+  re-exports that pointed at them, are gone:
+
+  | Old path | New path |
+  |---|---|
+  | every class of the removed `errors` submodule of `loom.core.errors` | `loom.core.errors` |
+  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommitted` (also `loom.core.uow.*`) | `loom.core.errors` |
+  | `loom.core.uow.coordinator.UncomposedStore` | `loom.core.errors` |
+  | `loom.core.job.handle.JobTimeoutError`, `JobFailedError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.job.router.MixedJobBackendsError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.engine.post_commit.PostCommitError` (also `loom.core.engine.*`) | `loom.core.errors` |
+  | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
+  | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
+  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
+  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
+  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
+  | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
+
+- **errors:** a `LoomError` code is a catalogue member, never a literal
+  string: `LoomError(message, code=)` is typed `StrEnum`, `ErrorCode` gains
+  `JOB_TIMEOUT`, `JOB_FAILED`, `JOB_BACKENDS_MIXED` and
+  `BOUNDARY_TYPE_UNSUPPORTED` (same string values, mapped to 500 explicitly),
+  and the SQS adapters' `sqs_*` codes are the members of
+  `loom.jobs.aws.errors.SQSErrorCode`, which `SQSDispatchError(message, code=)`
+  now requires. An application catalogue is its own `StrEnum`.
+  `AuthenticationUnavailable` is a `SystemError`, so the generic retry and
+  circuit-breaker handlers see the outage it reports.
+
+- **errors:** every error belongs to a family. `BoundaryValidationError` and
+  `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
+  `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
+  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
+  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
+  `DomainError` is never retryable: Celery and the SQS consumers consume a
+  job that raises one instead of requeuing it, and the streaming boundary
+  files a `BoundaryValidationError` as a business error. `UnsupportedQuery`
+  takes `(reason, *, backend=None, model=None)` and its message names the
+  model and the reason, never the backend.
+
 ## ⚠ Behaviour changes
 
 ### jobs

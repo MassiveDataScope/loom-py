@@ -10,8 +10,8 @@ import pytest
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
 from loom.core.engine.plan import ParamBinding, QueryBinding
+from loom.core.errors import UnsupportedBoundaryType
 from loom.core.job.job import Job
-from loom.core.model import UnsupportedBoundaryType
 from loom.core.use_case.markers import Query
 from loom.core.use_case.use_case import UseCase
 

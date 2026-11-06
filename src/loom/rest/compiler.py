@@ -47,13 +47,8 @@ import msgspec
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import (
-    UnsupportedBoundaryType,
-    get_column_fields,
-    is_pydantic_model,
-    loom_type,
-    msgspec_type,
-)
+from loom.core.errors import UnsupportedBoundaryType
+from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository.abc.cursor import cursor_carries

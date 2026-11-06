@@ -2,44 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import TypeVar
 
-from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import LoomError
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._write_options import WriteOptions
+from loom.etl.runner.errors import UnsupportedFormatError
 
 _HandlerT = TypeVar("_HandlerT")
 _OptionsT = TypeVar("_OptionsT")
 """Options type of one format."""
-
-
-class UnsupportedFormatError(LoomError, ValueError):
-    """Raised when no handler of the backend implements a declared file format.
-
-    Args:
-        fmt:       Format the pipeline declared.
-        supported: Formats the backend registered for this operation.
-
-    Attributes:
-        format:    Format the pipeline declared.
-        supported: Formats the backend registered, sorted by value.
-
-    Example::
-
-        raise UnsupportedFormatError(Format.XLSX, (Format.CSV, Format.PARQUET))
-    """
-
-    def __init__(self, fmt: Format, supported: Iterable[Format]) -> None:
-        ordered = tuple(sorted(supported, key=lambda item: item.value))
-        names = ", ".join(item.value for item in ordered) or "none"
-        super().__init__(
-            f"Unsupported format: {fmt.value}. Supported here: {names}.",
-            code=ErrorCode.UNSUPPORTED_FORMAT,
-        )
-        self.format = fmt
-        self.supported = ordered
 
 
 def resolve_format_handler(

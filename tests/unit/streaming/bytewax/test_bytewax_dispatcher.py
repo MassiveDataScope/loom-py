@@ -16,7 +16,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.errors.errors import RuleViolation  # noqa: E402
+from loom.core.errors import RuleViolation  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402

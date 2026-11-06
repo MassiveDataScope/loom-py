@@ -1,7 +1,5 @@
 from loom.core.model._loom_type import (
-    BoundaryValidationError,
     LoomType,
-    UnsupportedBoundaryType,
     is_pydantic_model,
     loom_type,
     loom_type_of,
@@ -76,7 +74,6 @@ __all__ = [
     "is_row_scoped",
     "range_partitions",
     "scope_columns",
-    "BoundaryValidationError",
     "LoomFrozenStruct",
     "LoomStruct",
     "TimestampedModel",
@@ -110,7 +107,6 @@ __all__ = [
     "String",
     "Text",
     "Time",
-    "UnsupportedBoundaryType",
     "Uuid",
     "get_column_fields",
     "get_id_attribute",

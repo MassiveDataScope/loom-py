@@ -20,13 +20,14 @@ Example::
 from __future__ import annotations
 
 from collections.abc import Iterable, Set
-from enum import StrEnum
+from enum import StrEnum, unique
 from string import Formatter
 from typing import Generic, NamedTuple, Self, TypeVar
 
 import msgspec
 
 
+@unique
 class ErrorCode(StrEnum):
     """Canonical error discriminators used by :class:`~loom.core.errors.LoomError` subclasses.
 
@@ -59,6 +60,10 @@ class ErrorCode(StrEnum):
     NESTED_ELEVATION = "nested_elevation"
     MALFORMED_JOB_MESSAGE = "malformed_job_message"
     UNKNOWN_JOB = "unknown_job"
+    JOB_TIMEOUT = "job_timeout"
+    JOB_FAILED = "job_failed"
+    JOB_BACKENDS_MIXED = "job_backends_mixed"
+    BOUNDARY_TYPE_UNSUPPORTED = "boundary_type_unsupported"
 
 
 class Template(NamedTuple):

@@ -4,6 +4,7 @@ import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
+from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository import PageParams
 from loom.core.repository.abc import (
@@ -13,7 +14,6 @@ from loom.core.repository.abc import (
     PaginationMode,
     QuerySpec,
     SortSpec,
-    UnsupportedQuery,
 )
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler

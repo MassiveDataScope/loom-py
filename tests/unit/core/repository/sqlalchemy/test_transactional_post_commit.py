@@ -9,11 +9,11 @@ import pytest
 
 from loom.core.engine.post_commit import (
     PostCommitChannel,
-    PostCommitError,
     active_channel,
     bind_channel,
     reset_channel,
 )
+from loom.core.errors import PostCommitError
 from loom.core.repository.mutation import MutationEvent
 from loom.core.uow.scope import current_scope
 

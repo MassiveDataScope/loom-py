@@ -6,8 +6,7 @@ import pytest
 
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitError
-from loom.core.uow.scope import UndeclaredStoreWrite
+from loom.core.errors import PostCommitError, UndeclaredStoreWrite
 
 from .._lifecycle_doubles import (
     Broker,

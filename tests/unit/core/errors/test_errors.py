@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import pickle
+from enum import StrEnum
 from types import ModuleType
 from typing import Any
 
@@ -12,6 +13,7 @@ from loom.core.errors import (
     Conflict,
     DomainError,
     Forbidden,
+    ForeignSessionError,
     InsufficientAuthentication,
     LoomError,
     NotFound,
@@ -22,7 +24,6 @@ from loom.core.errors import (
     Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import ForeignSessionError
 from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------
@@ -30,20 +31,31 @@ from loom.core.use_case import rule as rule_module
 # ---------------------------------------------------------------------------
 
 
+class _AppCode(StrEnum):
+    """An application's own catalogue: what a code outside ``ErrorCode`` looks like."""
+
+    BROKEN = "broken"
+
+
 class TestLoomError:
     def test_stores_message_and_code(self) -> None:
-        err = LoomError("something broke", code="broken")
+        err = LoomError("something broke", code=_AppCode.BROKEN)
         assert err.message == "something broke"
         assert err.code == "broken"
 
     def test_is_exception(self) -> None:
-        assert isinstance(LoomError("msg", code="x"), Exception)
+        assert isinstance(LoomError("msg", code=_AppCode.BROKEN), Exception)
 
     def test_str_is_message(self) -> None:
-        assert str(LoomError("readable message", code="x")) == "readable message"
+        assert str(LoomError("readable message", code=_AppCode.BROKEN)) == "readable message"
 
     def test_is_retryable_by_default(self) -> None:
-        assert LoomError("msg", code="x").retryable is True
+        assert LoomError("msg", code=_AppCode.BROKEN).retryable is True
+
+    def test_a_domain_error_is_never_retryable(self) -> None:
+        """Repeating the work cannot fix the input or the rule it broke."""
+        assert DomainError("msg", code=_AppCode.BROKEN).retryable is False
+        assert SystemError("msg").retryable is True
 
 
 # ---------------------------------------------------------------------------

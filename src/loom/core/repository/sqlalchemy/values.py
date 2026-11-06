@@ -32,15 +32,15 @@ from typing import Any
 import msgspec
 from sqlalchemy import JSON, Time
 
+from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
 
 _OFFSET_REFUSED = "time must not carry a UTC offset"
 _OFFSET_REQUIRED = "time must carry a UTC offset"
 
 
-def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: str) -> None:
+def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: ErrorCode) -> None:
     """Raise when a time's offset, present or missing, does not fit the column it is bound to.
 
     A JSON column takes any ``time``. A ``Time(timezone=True)`` column keeps the

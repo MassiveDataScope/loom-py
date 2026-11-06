@@ -233,7 +233,7 @@ def _make_job_task(
     decoded from the envelope is forwarded, so a job declaring ``Caller()``
     fails closed rather than running as an unknown caller.
 
-    A :class:`~loom.core.engine.post_commit.PostCommitError` whose
+    A :class:`~loom.core.errors.PostCommitError` whose
     transaction committed is terminal: the task is not retried, since the
     write already stands.  One raised without a commit is retried like any
     other failure.

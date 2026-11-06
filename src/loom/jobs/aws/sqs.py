@@ -20,7 +20,6 @@ from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.errors import LoomError
 from loom.core.identity import current_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
@@ -32,6 +31,7 @@ from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
 from loom.core.tracing import get_trace_id
 from loom.jobs.aws import FIFO_SUFFIX
+from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode
 
 if TYPE_CHECKING:
     from loom.composition import JobBackendContext
@@ -69,12 +69,6 @@ class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
 
 class SQSQueueConfigError(ConfigError):
     """A job's queue has no URL in ``sqs.queues``, or its FIFO queue no ``__group_by__``."""
-
-
-class SQSDispatchError(LoomError):
-    """A message SQS cannot carry, or a send that failed; ``code`` names which."""
-
-    retryable = False
 
 
 def check_queues(
@@ -133,7 +127,7 @@ class _PendingSQSSend:
             self.log_failure(code)
             raise SQSDispatchError(
                 f"sending {self.task_name} to queue {self.queue!r} failed: {code}",
-                code="sqs_send_failed",
+                code=SQSErrorCode.SEND_FAILED,
             ) from None
 
     def log_fields(self) -> tuple[dict[str, object]]:
@@ -195,7 +189,7 @@ class _PendingSQSBatch:
         codes = ", ".join(sorted({code for _, code in failed}))
         raise SQSDispatchError(
             f"{len(failed)} of {len(self.sends)} SQS sends failed: {codes}",
-            code="sqs_batch_partial_failure",
+            code=SQSErrorCode.BATCH_PARTIAL_FAILURE,
         )
 
     def log_fields(self) -> list[dict[str, object]]:
@@ -314,15 +308,15 @@ class SQSJobService:
     ) -> JobHandle[ResultT]:
         """Validate and encode now, so a refusal comes before the commit; send after it."""
         if on_success is not None or on_failure is not None:
-            raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
+            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
         options = self._settings.of(job_type)
         if priority is not None and priority != options.priority:
-            raise SQSDispatchError("SQS queues have no priority", code="sqs_priority")
+            raise SQSDispatchError("SQS queues have no priority", code=SQSErrorCode.PRIORITY)
         eff_queue = queue or options.queue
         url = self._config.queues.get(eff_queue)
         if url is None:
             raise SQSDispatchError(
-                f"sqs.queues maps no URL for queue {eff_queue!r}", code="sqs_queue_unknown"
+                f"sqs.queues maps no URL for queue {eff_queue!r}", code=SQSErrorCode.QUEUE_UNKNOWN
             )
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
@@ -337,13 +331,13 @@ class SQSJobService:
         if any(refused in body for refused in _REFUSED_CHARACTERS):
             raise SQSDispatchError(
                 f"{job_type.__qualname__} message holds a character SQS refuses",
-                code="sqs_invalid_character",
+                code=SQSErrorCode.INVALID_CHARACTER,
             )
         if len(body) > MAX_MESSAGE_BYTES:
             raise SQSDispatchError(
                 f"{job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
                 f"at most {MAX_MESSAGE_BYTES}",
-                code="sqs_message_too_large",
+                code=SQSErrorCode.MESSAGE_TOO_LARGE,
             )
         delay = _delay(options.countdown if countdown is None else countdown, eta)
         request = {"QueueUrl": url, "MessageBody": body.decode()}
@@ -372,7 +366,7 @@ class SQSJobService:
         on_any_failure: type[JobCallback] | None = None,
     ) -> JobGroup:
         if on_all_success is not None or on_any_failure is not None:
-            raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
+            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
         return JobGroup(
             handles=tuple(self.dispatch(job_type, payload=body) for job_type, body in jobs)
         )
@@ -386,7 +380,7 @@ def _delay(countdown: int, eta: datetime | None) -> int:
     if seconds > MAX_DELAY_SECONDS:
         raise SQSDispatchError(
             f"SQS delays a message at most {MAX_DELAY_SECONDS} s, not {seconds}",
-            code="sqs_delay_too_long",
+            code=SQSErrorCode.DELAY_TOO_LONG,
         )
     return max(seconds, 0)
 
@@ -398,14 +392,16 @@ def _placement(
     if not url.endswith(FIFO_SUFFIX):
         return {"DelaySeconds": delay} if delay else {}
     if delay:
-        raise SQSDispatchError("a FIFO queue takes no per-message delay", code="sqs_fifo_delay")
+        raise SQSDispatchError(
+            "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
+        )
     group_by = job_type.__group_by__
     group = None if group_by is None else payload.get(group_by)
     if group is None:
         raise SQSDispatchError(
             f"{job_type.__qualname__} payload has no {group_by!r} value for its "
             "FIFO MessageGroupId",
-            code="sqs_group_missing",
+            code=SQSErrorCode.GROUP_MISSING,
         )
     # A hash meets SQS's 128-character ASCII limit and keeps the value out of SQS metadata.
     group_id = hashlib.sha256(str(group).encode()).hexdigest()

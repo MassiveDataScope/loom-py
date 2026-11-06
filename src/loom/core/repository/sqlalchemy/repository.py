@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.errors.errors import ForeignSessionError
+from loom.core.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.abc import (
     BulkCreatable,

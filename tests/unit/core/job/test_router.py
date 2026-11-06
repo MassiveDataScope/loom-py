@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from loom.core.errors import MixedJobBackendsError
 from loom.core.job.callback import NullJobCallback
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
-from loom.core.job.router import JobRouter, MixedJobBackendsError
+from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService
 from tests.helpers.jobs import EmailJob
 

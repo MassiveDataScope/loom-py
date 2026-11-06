@@ -90,8 +90,7 @@ class SQSBatch:
         if failures:
             raise SQSBatchFailedError(
                 f"{len(failures)} of {len(records)} SQS records failed; "
-                "report_batch_item_failures is off, so the whole batch is retried",
-                code="sqs_batch_failed",
+                "report_batch_item_failures is off, so the whole batch is retried"
             )
         return {}
 

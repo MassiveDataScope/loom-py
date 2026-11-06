@@ -8,12 +8,13 @@ from typing import Any, cast
 import pytest
 from pymongo import AsyncMongoClient
 
+from loom.core.errors import ScopeOwnershipError
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork, MongoUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, ScopeOwnershipError, invocation
+from loom.core.uow.scope import Frame, invocation
 
 from ._fake import FakeMongoClient
 from .conftest import Article

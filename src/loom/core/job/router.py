@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.errors.errors import LoomError
+from loom.core.errors import MixedJobBackendsError
 from loom.core.job.config import JobSettings
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -16,19 +16,6 @@ if TYPE_CHECKING:
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
-
-
-class MixedJobBackendsError(LoomError):
-    """``dispatch_parallel`` with callbacks spans jobs of more than one backend."""
-
-    retryable = False
-
-    def __init__(self) -> None:
-        super().__init__(
-            "dispatch_parallel callbacks need every job on one job backend; "
-            "these jobs route to several",
-            code="job_backends_mixed",
-        )
 
 
 class JobRouter:
