@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from loom.core.errors import LoomError
+from loom.jobs.aws.errors import SQSErrorCode
 
 
 class SQSBatchFailedError(LoomError):
     """A record of the batch failed and the function does not report batch item failures."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=SQSErrorCode.BATCH_FAILED)
 
 
 __all__ = ["SQSBatchFailedError"]

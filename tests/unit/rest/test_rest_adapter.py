@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -369,10 +370,13 @@ class TestHttpErrorMapper:
         }
 
     def test_unknown_code_defaults_to_500(self) -> None:
+        class _AppCode(StrEnum):
+            UNKNOWN_CUSTOM = "unknown_custom"
+
         class _CustomError(LoomError):
             pass
 
-        err = _CustomError("oops", code="unknown_custom")
+        err = _CustomError("oops", code=_AppCode.UNKNOWN_CUSTOM)
         exc = self._mapper().to_http(err)
         assert exc.status_code == 500
 

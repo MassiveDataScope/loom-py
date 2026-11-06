@@ -40,7 +40,7 @@ _OFFSET_REFUSED = "time must not carry a UTC offset"
 _OFFSET_REQUIRED = "time must carry a UTC offset"
 
 
-def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: str) -> None:
+def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: ErrorCode) -> None:
     """Raise when a time's offset, present or missing, does not fit the column it is bound to.
 
     A JSON column takes any ``time``. A ``Time(timezone=True)`` column keeps the

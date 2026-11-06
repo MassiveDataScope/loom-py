@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from loom.core.errors.codes import ErrorCode
 
 
@@ -10,11 +12,15 @@ class LoomError(Exception):
 
     Carries a machine-readable ``code`` used by transport adapters to
     produce appropriate responses (HTTP status, dead-letter routing, etc.)
-    without coupling the domain to any transport layer.
+    without coupling the domain to any transport layer. A code is a member
+    of a catalogue: :class:`~loom.core.errors.codes.ErrorCode` for the
+    errors core raises and maps, or an adapter's own ``StrEnum`` (such as
+    ``SQSErrorCode``) for failures only that adapter reports; a literal
+    string is not a code.
 
     Args:
         message: Human-readable description of the error.
-        code: Machine-readable discriminator (e.g. ``"not_found"``).
+        code: The catalogue member that discriminates the error.
 
     Attributes:
         retryable: Whether running the work again could still succeed; a
@@ -27,9 +33,9 @@ class LoomError(Exception):
 
     retryable: bool = True
 
-    def __init__(self, message: str, *, code: str) -> None:
+    def __init__(self, message: str, *, code: StrEnum) -> None:
         self.message = message
-        self.code = code
+        self.code: StrEnum = code
         super().__init__(message)
 
 

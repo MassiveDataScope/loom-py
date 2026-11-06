@@ -35,7 +35,7 @@ class BoundaryValidationError(LoomError, ValueError):
         message: str,
         violations: tuple[tuple[str, str], ...] = (),
         *,
-        code: str = ErrorCode.BOUNDARY_VALIDATION,
+        code: ErrorCode = ErrorCode.BOUNDARY_VALIDATION,
     ) -> None:
         super().__init__(message, code=code)
         self.violations = violations
@@ -49,4 +49,4 @@ class UnsupportedBoundaryType(LoomError):
     """
 
     def __init__(self, reason: str) -> None:
-        super().__init__(reason, code="boundary_type_unsupported")
+        super().__init__(reason, code=ErrorCode.BOUNDARY_TYPE_UNSUPPORTED)

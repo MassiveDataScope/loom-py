@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from loom.core.errors import LoomError
+from loom.core.errors import SystemError
 from loom.core.errors.codes import ErrorCode
 
 
-class AuthenticationUnavailable(LoomError):
+class AuthenticationUnavailable(SystemError):
     """Raised by an authenticator that cannot decide on the credentials right now.
 
     An outage of something the mechanism depends on — an identity provider's
     key set, a session store, a revocation list — is neither a refusal nor a
-    bug.  :class:`~loom.rest.auth.middleware.AuthenticationMiddleware` answers
-    it with ``503 service_unavailable``: a ``401`` would make clients discard
+    bug: a :class:`~loom.core.errors.SystemError` a retry may clear.
+    :class:`~loom.rest.auth.middleware.AuthenticationMiddleware` answers it
+    with ``503 service_unavailable``: a ``401`` would make clients discard
     credentials that are still valid, and a ``500`` would report a bug where
     there is an outage.
     Any other exception an authenticator raises keeps propagating unchanged.

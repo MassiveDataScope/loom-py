@@ -18,14 +18,20 @@ class Unauthenticated(DomainError):
 
     Args:
         message: Description of the missing authentication.
+        code: The subclass's own code; ``unauthenticated`` by default.
 
     Example::
 
         raise Unauthenticated("This endpoint requires an authenticated caller.")
     """
 
-    def __init__(self, message: str = "Authentication required") -> None:
-        super().__init__(message, code=ErrorCode.UNAUTHENTICATED)
+    def __init__(
+        self,
+        message: str = "Authentication required",
+        *,
+        code: ErrorCode = ErrorCode.UNAUTHENTICATED,
+    ) -> None:
+        super().__init__(message, code=code)
 
 
 class InsufficientAuthentication(Unauthenticated):
@@ -82,8 +88,7 @@ class InsufficientAuthentication(Unauthenticated):
                 "InsufficientAuthentication.acr_values must be visible ASCII without "
                 "whitespace, double quotes or backslashes"
             )
-        super().__init__(message)
-        self.code = ErrorCode.INSUFFICIENT_AUTHENTICATION
+        super().__init__(message, code=ErrorCode.INSUFFICIENT_AUTHENTICATION)
         self.max_age = max_age
         self.acr_values: tuple[str, ...] = values
 
