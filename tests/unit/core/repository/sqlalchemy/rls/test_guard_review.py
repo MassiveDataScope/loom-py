@@ -175,6 +175,8 @@ def test_the_document_names_every_config_column() -> None:
         "writers_role",
         "version_table",
         "data_version_table",
+        "auditor_role",
+        "retention_months",
         "users",
         "revoke_public",
     }

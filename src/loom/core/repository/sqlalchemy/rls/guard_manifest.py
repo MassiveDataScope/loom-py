@@ -94,9 +94,23 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
             "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         },
     ),
+    GuardRevision(
+        3,
+        "0003.sql",
+        "48e55d5cc7f52b10010e312eb59221c0f6609c92b6fab84457ebd2678d67a0fa",
+        {
+            "functions": "ec27c1fe46b90ce9dd26336438c684c7d2835dfc79d33645ef88df6236ef5e92",
+            "relations": "d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
+            "columns": "7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
+            "constraints": "7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
+            "triggers": "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68",
+            "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+    ),
 )
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1
 PARTITION_GUARD_REVISION: Final = 2
+AUDIT_GUARD_REVISION: Final = 3
 OWNER_FUNCTIONS: Final = frozenset(
     {
         "protect_scoped_table",
@@ -122,9 +136,22 @@ OWNER_FUNCTIONS: Final = frozenset(
         "authorize",
         "create_range_partition",
         "detach_partition",
+        "audit_log_rel",
+        "audit_trigger_source",
+        "prepare_audit_log",
+        "protect_audit_log",
+        "protect_audited_table",
+        "unprotect_audited_table",
+        "create_audit_partition",
+        "protect_audit_partition",
+        "drop_expired_audit_partition",
+        "refuse_audit_log_change",
+        "require_audit_log",
     }
 )
-OWNER_TABLES: Final = frozenset({"config", "scoped_table", "scoped_policy"})
+OWNER_TABLES: Final = frozenset(
+    {"config", "scoped_table", "scoped_policy", "audited_table", "audit_partition"}
+)
 PINNED_SETTINGS: Final[Mapping[str, tuple[str, ...]]] = {
     "set_password_verifier": ("log_statement=none",)
 }
