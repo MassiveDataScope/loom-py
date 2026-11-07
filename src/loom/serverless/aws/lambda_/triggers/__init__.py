@@ -22,8 +22,9 @@ _JSON = loom_type_of(Any)
 class Decoded:
     """The payload of one job an event runs, the event's id and who caused it.
 
-    ``requester`` is the caller AWS itself recorded for the event, never a
-    field its publisher wrote; ``None`` when the source records no caller.
+    ``requester`` is the caller AWS recorded for the event; ``None`` when the
+    source records no caller. It is trusted only on direct delivery: a queued
+    event is a message body anyone allowed to send to the queue can write.
     """
 
     payload: dict[str, Any]

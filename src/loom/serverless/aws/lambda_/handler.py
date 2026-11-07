@@ -36,7 +36,15 @@ from loom.serverless.aws.lambda_.functions import (
     served_trigger,
     source_of,
 )
-from loom.serverless.aws.lambda_.triggers import Decoder, eventbridge, parsed, s3, schedule, sns
+from loom.serverless.aws.lambda_.triggers import (
+    Decoded,
+    Decoder,
+    eventbridge,
+    parsed,
+    s3,
+    schedule,
+    sns,
+)
 from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 
 if TYPE_CHECKING:
@@ -199,7 +207,7 @@ def _bind_queued_events(
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
-    reader = _event_reader(name, trigger, _VIA_SQS)
+    reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
         label=trigger.job,
@@ -215,27 +223,33 @@ def _bind_direct_events(
     name: str, trigger: EventTrigger, job_type: type[Job[Any]], application: Application
 ) -> LambdaHandler:
     """The handler of a direct trigger: any failure fails the event, retried, then sent on."""
-    read = _event_reader(name, trigger, _DIRECT)
+    read = _event_reader(name, trigger, _DIRECT, trusts_requester=True)
     host = open_host(application)
     return _DirectEvents(application, host, job_type, read, trigger.job, name)
 
 
-def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder]) -> Read:
-    """Reads an event of *trigger*'s source into the envelopes of its job and identity."""
+def _event_reader(
+    name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder], *, trusts_requester: bool
+) -> Read:
+    """Reads an event of *trigger*'s source into the envelopes of its job and identity.
+
+    *trusts_requester* is true only when AWS delivers the event to the function
+    itself. A queued event is an SQS message body: whoever may send to the queue
+    writes it, the caller fields included, so it never names a requester.
+    """
     source = source_of(trigger)
     decode = decoders[source]
     system = _identity(name, source, trigger, None)
 
+    def identity_of(item: Decoded) -> dict[str, Any] | None:
+        if not trusts_requester or item.requester is None:
+            return system
+        return _identity(name, source, trigger, item.requester)
+
     def read(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
         return tuple(
             (
-                JobEnvelope(
-                    job=trigger.job,
-                    payload=item.payload,
-                    identity=system
-                    if item.requester is None
-                    else _identity(name, source, trigger, item.requester),
-                ),
+                JobEnvelope(job=trigger.job, payload=item.payload, identity=identity_of(item)),
                 item.event_id,
             )
             for item in decode(document)
