@@ -1,4 +1,4 @@
-"""The audit log's partitions: created by deploy, dropped one at a time past retention (FR-006, FR-017)."""
+"""Audit log partitions: created on deploy, dropped one at a time past retention (FR-006, FR-017)."""
 
 from __future__ import annotations
 
