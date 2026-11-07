@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn
 
@@ -12,6 +11,13 @@ import yaml
 
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
+from loom.core.environment import (
+    DB_PASSWORD_PREFIX,
+    MIGRATOR_URL_VARIABLE,
+    SUPERUSER_URL_VARIABLE,
+    VERIFY_URL_VARIABLE,
+    loom_variable,
+)
 from loom.core.locator import load_application
 from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
@@ -22,10 +28,6 @@ if TYPE_CHECKING:
 _STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
-SUPERUSER_URL_ENV = "LOOM_SUPERUSER_URL"
-VERIFY_URL_ENV = "LOOM_VERIFY_URL"
-MIGRATOR_URL_ENV = "LOOM_MIGRATOR_URL"
-PASSWORD_ENV_PREFIX = "LOOM_DB_PASSWORD_"
 
 schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema.")
 audit_app = typer.Typer(no_args_is_help=True, help="Operate the store's audit log.")
@@ -135,8 +137,8 @@ def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
         logins = [settings.roles.migrator] + [
             name for name, user in settings.database_users.items() if user.login
         ]
-        passwords = {name: _env(PASSWORD_ENV_PREFIX + name.upper()) for name in logins}
-        asyncio.run(_rls().apply_bootstrap(_env(SUPERUSER_URL_ENV), settings, passwords))
+        passwords = {name: _env(DB_PASSWORD_PREFIX + name.upper()) for name in logins}
+        asyncio.run(_rls().apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
     except ConfigError as exc:
         _fail(exc)
     typer.echo(f"guard of {config} is installed and configured")
@@ -152,7 +154,7 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     """
     try:
         application = load_application(str(config))
-        url = os.environ.get(VERIFY_URL_ENV) or _env(SUPERUSER_URL_ENV)
+        url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
         report = asyncio.run(_rls().verify(url, application))
     except ConfigError as exc:
         _fail(exc)
@@ -169,7 +171,7 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
 def drop_expired() -> None:
     """Drop the oldest audit partition past the retention, as the migrator; one per run."""
     try:
-        dropped = asyncio.run(_audit().drop_expired_audit_partition(_env(MIGRATOR_URL_ENV)))
+        dropped = asyncio.run(_audit().drop_expired_audit_partition(_env(MIGRATOR_URL_VARIABLE)))
     except ConfigError as exc:
         _fail(exc)
     typer.echo(f"dropped {dropped}" if dropped else "no audit partition is past the retention")
@@ -199,7 +201,7 @@ def _bootstrap_config(config: Path) -> BootstrapConfig:
 
 
 def _env(name: str) -> str:
-    value = os.environ.get(name)
+    value = loom_variable(name)
     if not value:
         raise ConfigError(f"set {name}")
     return value

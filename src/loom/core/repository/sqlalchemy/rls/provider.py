@@ -33,7 +33,7 @@ from loom.core.tracing.context import get_trace_id
 if TYPE_CHECKING:
     from loom.core.locator import Application
 
-LOOM_PREFIX = "loom."
+SETTING_NAMESPACE = "loom."
 SCOPE_PREFIX = "loom.scope."
 ACTOR_SUBJECT: Final = "loom.actor.subject"
 ACTOR_MECHANISM: Final = "loom.actor.mechanism"
@@ -174,7 +174,8 @@ def _product_settings(product: SessionSettings | None) -> Mapping[str, str]:
     values = product() if product is not None else None
     if not values:
         return {}
-    intruding = sorted(key for key in values if key.lower().startswith(LOOM_PREFIX))
+    intruding = sorted(key for key in values if key.lower().startswith(SETTING_NAMESPACE))
     if intruding:
-        raise ValueError(f"product settings may not use the {LOOM_PREFIX} namespace: {intruding}")
+        namespace = SETTING_NAMESPACE
+        raise ValueError(f"product settings may not use the {namespace} namespace: {intruding}")
     return values
