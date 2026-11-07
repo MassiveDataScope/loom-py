@@ -215,7 +215,13 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
             **options,
         )
         created_roles.update(
-            {f"{schema}_owner", f"{schema}_readers", f"{schema}_writers", *passwords}
+            {
+                f"{schema}_owner",
+                f"{schema}_readers",
+                f"{schema}_writers",
+                f"{schema}_auditor",
+                *passwords,
+            }
         )
         await apply_bootstrap(module_database_uri, config, passwords)
         base = ScopedDatabase(

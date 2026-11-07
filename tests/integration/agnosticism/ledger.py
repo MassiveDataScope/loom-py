@@ -1,44 +1,48 @@
-"""Synthetic product 3: a bigint boundary that is itself a FK to a global table.
+"""Synthetic product 3: audited rows, scoped and unscoped, plus one table that is not audited.
 
-Exercises C9 (scoped -> global FK with RESTRICT), composite UNIQUE and index
-declarations (C5), and a serial id inside a composite PK.
+``Account`` is scoped by tenant, audited, excludes ``internal_note`` and has a
+credential column (``api_token``) the audit log never writes. ``Memo`` is
+audited without scopes. ``Draft`` is neither, and must cost nothing.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 
-from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped, ScopedField
-from loom.core.model.types import BigInteger, DateTime, Integer, Numeric, Text
+from loom.core.model import READ_WRITE, Audited, BaseModel, ColumnField, RowScoped, ScopedField
+from loom.core.model.types import Boolean, DateTime, Integer, String, Text
 
 SCHEMA = "ledger"
-GROUPS = ("ledger_readers", "ledger_writers")
-USERS = {"ledger_rw": "write", "ledger_ops": "bypass"}
-SCOPE_BINDINGS = {"account": "identity.account"}
+SCOPE_BINDINGS = {"tenant": "identity.subject"}
 
 
-class Account(BaseModel):
+class Account(BaseModel, RowScoped, Audited):
     __tablename__ = "accounts"
-    __privileges__ = {"readers": frozenset({Privilege.SELECT})}
-    id: int = ColumnField(BigInteger, primary_key=True)
-    label: str = ColumnField(Text)
-
-
-class Entry(BaseModel, RowScoped):
-    __tablename__ = "entries"
-    __unique__ = (("account_id", "reference"),)
-    __indexes__ = (("account_id", "booked_on"),)
-    account_id: int = ScopedField(
-        BigInteger,
-        primary_key=True,
-        scope="account",
-        foreign_key="accounts.id",
-        on_delete=OnDelete.RESTRICT,
-    )
+    __audit_exclude__ = frozenset({"internal_note"})
+    tenant: str = ScopedField(String(36), primary_key=True, scope="tenant")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    reference: str = ColumnField(Text)
-    booked_on: dt.datetime = ColumnField(DateTime())
-    amount: float = ColumnField(Numeric(precision=10, scale=2))
+    name: str = ColumnField(Text)
+    email: str = ColumnField(Text)
+    balance: int = ColumnField(Integer, default=0)
+    currency: str = ColumnField(String(3), default="EUR")
+    active: bool = ColumnField(Boolean, default=True)
+    opened_at: dt.datetime | None = ColumnField(DateTime(), nullable=True)
+    internal_note: str = ColumnField(Text, default="")
+    api_token: str = ColumnField(Text, default="")
 
 
-MODELS = (Account, Entry)
+class Memo(BaseModel, Audited):
+    __tablename__ = "memos"
+    __privileges__ = {"writers": READ_WRITE}
+    id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
+    body: str = ColumnField(Text)
+
+
+class Draft(BaseModel):
+    __tablename__ = "drafts"
+    __privileges__ = {"writers": READ_WRITE}
+    id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
+    body: str = ColumnField(Text)
+
+
+MODELS = (Account, Memo, Draft)
