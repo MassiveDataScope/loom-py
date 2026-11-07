@@ -18,6 +18,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
+from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX
 
 _SECTION = "lambda.functions"
 _RETRIES = ("maximum_retry_attempts", "maximum_event_age_s")
@@ -218,6 +219,14 @@ def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
                 raise ConfigError(f"{where}.{key} applies to a direct trigger only")
     if any(INTERPOLATION in value for value in trigger.written_values()):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
+    reserved = sorted(
+        n for n in trigger.identity.attributes if n.startswith(RESERVED_ATTRIBUTE_PREFIX)
+    )
+    if reserved:
+        raise ConfigError(
+            f"{where}.identity.attributes: {', '.join(reserved)} is reserved to loom "
+            f"(the {RESERVED_ATTRIBUTE_PREFIX} prefix)"
+        )
 
 
 def _unresolved(ctx: ConfigContext) -> LambdaConfig:

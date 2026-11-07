@@ -73,7 +73,14 @@ def _object(record: dict[str, Any]) -> Decoded:
         "event_name": _named(record, "eventName"),
         "event_time": _named(record, "eventTime"),
     }
-    return Decoded(payload=payload)
+    return Decoded(payload=payload, requester=_uploader(record))
+
+
+def _uploader(record: dict[str, Any]) -> str | None:
+    """The principal S3 recorded as the record's requester; ``None`` when it names none."""
+    recorded = record.get("userIdentity")
+    principal = recorded.get("principalId") if isinstance(recorded, dict) else None
+    return principal if isinstance(principal, str) and principal else None
 
 
 def _named(holder: Mapping[str, Any], field: str) -> str:

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.config import ConfigError
 from loom.core.errors import MalformedJobMessage
-from loom.core.identity import Identity
+from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import failure_log_fields
@@ -223,25 +223,41 @@ def _bind_direct_events(
 def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder]) -> Read:
     """Reads an event of *trigger*'s source into the envelopes of its job and identity."""
     source = source_of(trigger)
-    decode, identity = decoders[source], _identity(name, source, trigger)
+    decode = decoders[source]
 
     def read(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
         return tuple(
-            (JobEnvelope(job=trigger.job, payload=item.payload, identity=identity), item.event_id)
+            (
+                JobEnvelope(
+                    job=trigger.job,
+                    payload=item.payload,
+                    identity=_identity(name, source, trigger, item.requester),
+                ),
+                item.event_id,
+            )
             for item in decode(document)
         )
 
     return read
 
 
-def _identity(name: str, source: str, trigger: EventTrigger) -> dict[str, Any] | None:
-    """The declared system identity of *trigger*, encoded for its envelopes."""
+def _identity(
+    name: str, source: str, trigger: EventTrigger, requester: str | None
+) -> dict[str, Any] | None:
+    """The declared system identity of *trigger*, encoded for its envelopes.
+
+    It acts on behalf of *requester*, the caller AWS recorded for the event,
+    when there is one: the only writer of ``loom:on_behalf_of``.
+    """
     declared = trigger.identity
+    attributes = dict(declared.attributes)
+    if requester is not None:
+        attributes[ON_BEHALF_OF_ATTRIBUTE] = requester
     return encode_identity(
         Identity(
             subject=declared.subject,
             roles=declared.roles,
-            attributes=declared.attributes,
+            attributes=attributes,
             mechanism=f"lambda:{name}:{source}",
         )
     )

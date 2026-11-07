@@ -115,6 +115,14 @@ runs the declared job as the declared identity: restrict
 `lambda:InvokeFunction` and the queue policy, and pin such a function in code
 with `LambdaAdapter(function=...)`.
 
+When AWS itself records who caused the event, the identity acts on their
+behalf: the audit log's `on_behalf_of` holds the `userIdentity.principalId` of
+an S3 record, or the `detail.userIdentity.arn` of an EventBridge event whose
+`source` starts with `aws.` (`PutEvents` refuses that prefix, so no publisher
+can forge one). A custom EventBridge event, SNS and `schedule` name nobody,
+whatever their payload says. The `loom:` attribute prefix is reserved: an
+`identity.attributes` key under it fails to load.
+
 Invoked directly, the function fails the invocation whenever a job fails,
 retryable or not, a `Command` validation error included. Lambda retries the
 event `maximum_retry_attempts` times within `maximum_event_age_s`, then sends
