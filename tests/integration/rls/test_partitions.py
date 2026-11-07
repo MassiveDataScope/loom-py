@@ -293,7 +293,8 @@ async def test_a_guard_without_partition_support_is_reported_as_pending(
     )
     assert created == MONTHS
     revisions = f"SELECT string_agg(n::text, ',' ORDER BY n) FROM loom_guard_{schema}.revision"
-    assert await scalar(database.superuser, revisions) == "1,2"
+    expected = ",".join(str(revision.number) for revision in guard_manifest.GUARD_REVISIONS)
+    assert await scalar(database.superuser, revisions) == expected
 
 
 async def test_verify_reports_a_partition_registered_unlike_its_parent(

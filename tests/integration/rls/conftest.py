@@ -106,7 +106,13 @@ def _module_database(admin_uri: str, created_roles: set[str]) -> Iterator[str]:
         yield uri
     finally:
         asyncio.run(_run(admin_uri, f'DROP DATABASE "{name}" WITH (FORCE)', autocommit=True))
-        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles))
+        # Every bootstrap also claims ``<schema>_auditor``; derive it from the owner role.
+        auditors = {
+            role.removesuffix("_owner") + "_auditor"
+            for role in created_roles
+            if role.endswith("_owner")
+        }
+        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles | auditors))
         if drops:
             asyncio.run(_run(admin_uri, *drops, autocommit=True))
 
