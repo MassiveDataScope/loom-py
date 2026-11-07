@@ -4,6 +4,11 @@
 
 ### lambda
 
+- **lambda:** `identity` is required on `eventbridge`, `s3`, `sns` and
+  `schedule` triggers: a trigger without one fails to load, so no automatic
+  change runs without an actor. An `identity.attributes` key under the
+  reserved `loom:` prefix fails to load too.
+
 - **lambda:** the deploy manifest reuses the loader: `served_routes(source,
   select_interfaces=None)` reads and validates `app.rest.interfaces` and
   `app.rest.disable_routes` itself, the placeholders are read by OmegaConf's
@@ -48,6 +53,34 @@
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
 
 ## ✨ Features
+
+### audit
+
+- **audit:** a model marked `Audited` records every insert, delete and
+  value-changing update in its store's `audit_log`: the person
+  (`subject`, `mechanism`, `on_behalf_of`), the request (`trace_id`), the
+  changed columns, the row's scopes and the connection. Written by a trigger
+  of guard revision 3 in the same transaction, append-only for everyone,
+  readable only by the `<schema>_auditor` role, partitioned by month.
+  Excluded and secret columns are recorded as redacted. Configured under
+  `stores.<name>.schema.audit` (`enabled`, `retention_months`, `reader`).
+  Run `loom schema bootstrap` from this release before marking a table:
+  revision 3 is one-way, and an application with audited tables refuses to
+  start on an older guard. See "Audit" in the Postgres RLS guide and ADR 0009.
+- **audit:** every transaction on an external Postgres store sets
+  `loom.actor.subject`, `loom.actor.mechanism`, `loom.actor.on_behalf_of`
+  and `loom.trace_id`, scoped store or not. A product `SessionSettings` may
+  not set any `loom.` key.
+- **audit:** the identity of an event trigger acts on behalf of the caller
+  AWS recorded: an S3 record's `userIdentity.principalId`, or the
+  `detail.userIdentity.arn` of an EventBridge event from an `aws.` source.
+  `loom:on_behalf_of` is reserved: JWT claims under `loom:` are dropped.
+- **cli:** `loom schema bootstrap` (as the superuser, sets the migrator's and
+  each login's password from `LOOM_DB_PASSWORD_<USER>`), `loom schema verify`
+  (exit 1 on drift, lists expired audit partitions) and
+  `loom schema audit drop-expired` (one partition past the retention per run).
+- **check:** `loom check --deploy` warns (`loom.audit.W001`) about a store
+  whose audit is disabled.
 
 ### jobs
 
