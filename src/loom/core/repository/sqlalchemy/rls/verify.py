@@ -74,7 +74,8 @@ GUARD_CONFIG: Final = (
 )
 AUDIT_RELATIONS: Final = (
     "SELECT c.relname, c.relkind::text AS relkind FROM pg_class c "
-    "WHERE c.relkind IN ('r', 'p', 'S') AND (c.oid = to_regclass(quote_ident(:schema) || '.audit_log') "
+    "WHERE c.relkind IN ('r', 'p', 'S') "
+    "AND (c.oid = to_regclass(quote_ident(:schema) || '.audit_log') "
     "OR c.oid IN (SELECT inhrelid FROM pg_inherits "
     "WHERE inhparent = to_regclass(quote_ident(:schema) || '.audit_log')) "
     "OR c.oid IN (SELECT d.objid FROM pg_depend d WHERE d.deptype IN ('a', 'i') "
