@@ -106,8 +106,9 @@ REGISTERED: Final = (
 )
 MEMBERS: Final = (
     "SELECT m.rolname AS member, r.rolname AS role, r.rolbypassrls, m.rolsuper, "
-    "CASE WHEN current_setting('server_version_num')::int >= 160000 "
-    "THEN am.inherit_option ELSE m.rolinherit END AS inherits "
+    # pg_auth_members.inherit_option exists from Postgres 16; read through
+    # to_jsonb so the query parses on 14 and 15, where rolinherit decides.
+    "COALESCE((to_jsonb(am) ->> 'inherit_option')::boolean, m.rolinherit) AS inherits "
     "FROM pg_auth_members am JOIN pg_roles m ON m.oid = am.member "
     "JOIN pg_roles r ON r.oid = am.roleid"
 )

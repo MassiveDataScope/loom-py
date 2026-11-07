@@ -79,6 +79,20 @@ REGISTERED_QUAL = (
 )
 
 
+async def _skip_below_postgres_16(uri: str) -> None:
+    """Skip a case whose GRANT ... WITH INHERIT syntax arrived in Postgres 16."""
+    engine = create_async_engine(uri)
+    try:
+        async with engine.connect() as connection:
+            version = await connection.scalar(
+                text("SELECT current_setting('server_version_num')::int")
+            )
+    finally:
+        await engine.dispose()
+    if version < 160000:
+        pytest.skip("GRANT ... WITH INHERIT needs Postgres 16")
+
+
 @pytest.mark.parametrize(
     ("label", "mutate", "revert", "check"),
     [
@@ -154,6 +168,8 @@ REGISTERED_QUAL = (
 )
 async def test_notes_negatives_surface_one_check(products, label, mutate, revert, check) -> None:
     database, application = products["notes"]
+    if any("WITH INHERIT" in statement for statement in mutate):
+        await _skip_below_postgres_16(database.superuser)
 
     await _run(database.superuser, mutate)
     try:

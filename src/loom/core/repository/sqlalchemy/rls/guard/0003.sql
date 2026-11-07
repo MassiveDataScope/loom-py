@@ -380,7 +380,10 @@ BEGIN
   IF bad IS NOT NULL THEN PERFORM violation(format('the audit log is dropped only by drop_expired_audit_partition: %s', bad)); END IF;
   DELETE FROM audited_table WHERE rel::oid IN (SELECT d.objid FROM pg_event_trigger_dropped_objects() d
                                                WHERE d.classid = 'pg_class'::regclass);
-  IF hatch_open() OR NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() d WHERE d.schema_name = app_schema()) THEN
+  -- A dropped trigger or policy carries no schema before Postgres 15, so any such drop asserts.
+  IF hatch_open() OR NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() d
+                                 WHERE d.schema_name = app_schema()
+                                    OR d.classid IN ('pg_trigger'::regclass, 'pg_policy'::regclass)) THEN
     RETURN; END IF;
   PERFORM assert_scoped_schema();
 END $$;
