@@ -20,7 +20,7 @@ from types import ModuleType
 from typing import Any
 
 from loom.core.config.errors import ConfigError
-from loom.core.identity import Identity
+from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.config import JwtAuthConfig, JwtIssuerConfig
@@ -432,4 +432,9 @@ def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str,
         for name, value in crossing.items()
         if not name.startswith(ATTRIBUTE_CLAIM_PREFIX)
     }
-    return {**plain, **namespaced}
+    # loom: attributes are loom's own (a delegation, for one); a token never sets them.
+    return {
+        name: value
+        for name, value in {**plain, **namespaced}.items()
+        if not name.startswith(RESERVED_ATTRIBUTE_PREFIX)
+    }

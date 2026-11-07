@@ -338,6 +338,13 @@ async def test_non_string_custom_claims_are_dropped() -> None:
     assert set(identity.attributes) == {"email"}
 
 
+async def test_a_token_cannot_carry_a_reserved_loom_attribute() -> None:
+    """A delegation is loom's to record: ``loom:`` claims never reach the identity."""
+    claims = {"loom:on_behalf_of": "mallory", "attr_loom:on_behalf_of": "mallory", "email": _EMAIL}
+    identity = await _authenticate(_config(), _token(**claims))
+    assert set(identity.attributes) == {"email"}
+
+
 async def test_provides_roles_reflects_the_configured_claim() -> None:
     """Startup gates rely on this flag to refuse role-based endpoints."""
     with_roles = JwtAuthenticator(_config(roles_claim=_ROLES_CLAIM)).provides_roles

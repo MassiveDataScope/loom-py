@@ -123,6 +123,10 @@ def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated() ->
         "loom.scope.editor": "",
         "loom.scope.editor.any": "",
         "loom.scope.region": "",
+        "loom.actor.subject": "",
+        "loom.actor.mechanism": "",
+        "loom.actor.on_behalf_of": "",
+        "loom.trace_id": "",
     }
 
 
@@ -141,6 +145,10 @@ def test_the_provider_emits_the_resolved_values_and_the_elevation_flags(
             "loom.scope.editor": "ana",
             "loom.scope.editor.any": "on",
             "loom.scope.region": "7",
+            "loom.actor.subject": "sub-1",
+            "loom.actor.mechanism": "",
+            "loom.actor.on_behalf_of": "",
+            "loom.trace_id": "",
         }
     finally:
         reset_identity(token)
@@ -161,13 +169,13 @@ def test_only_elevable_scopes_get_a_flag() -> None:
     assert "loom.scope.region.any" not in provider()
 
 
-def test_product_settings_are_merged_but_may_not_touch_the_scope_namespace() -> None:
+def test_product_settings_are_merged_but_may_not_touch_the_loom_namespace() -> None:
     register_scope_source("editor", lambda: "ana")
     merged = rls_session_settings(_application(), product=lambda: {"shop.locale": "es"})
     assert merged()["shop.locale"] == "es"
 
     intruding = rls_session_settings(_application(), product=lambda: {"loom.scope.holder": "x"})
-    with pytest.raises(ValueError, match=r"loom\.scope\."):
+    with pytest.raises(ValueError, match=r"loom\."):
         intruding()
 
 
@@ -180,4 +188,8 @@ def test_a_product_provider_returning_none_still_yields_every_scope_key() -> Non
         "loom.scope.editor",
         "loom.scope.editor.any",
         "loom.scope.region",
+        "loom.actor.subject",
+        "loom.actor.mechanism",
+        "loom.actor.on_behalf_of",
+        "loom.trace_id",
     }

@@ -5,6 +5,12 @@ a value or the empty string for each scope, ``on`` or the empty string for
 each elevation flag. A residue left on a pooled connection is therefore always
 overwritten, and ``install_pool_reset`` clears it anyway when the connection
 returns to the pool.
+
+It also writes who acts and under which trace, which the audit trigger reads:
+``loom.actor.subject``, ``loom.actor.mechanism``, ``loom.actor.on_behalf_of``
+and ``loom.trace_id``, each the empty string when unknown. They are claims of
+the connecting role, as the scope keys are; the audit log records the
+connection's own evidence next to them.
 """
 
 from __future__ import annotations
@@ -17,14 +23,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
+from loom.core.identity.context import current_identity
+from loom.core.identity.identity import ON_BEHALF_OF_ATTRIBUTE
 from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.repository.sqlalchemy.rls.sources import ScopeSource, bind_sources
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
+from loom.core.tracing.context import get_trace_id
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
 
+LOOM_PREFIX = "loom."
 SCOPE_PREFIX = "loom.scope."
+ACTOR_SUBJECT: Final = "loom.actor.subject"
+ACTOR_MECHANISM: Final = "loom.actor.mechanism"
+ACTOR_ON_BEHALF_OF: Final = "loom.actor.on_behalf_of"
+TRACE_ID: Final = "loom.trace_id"
 RESET_ALL: Final = "RESET ALL"
 
 
@@ -45,7 +59,7 @@ def rls_session_settings(
 
     Raises:
         ConfigError: When a scope binding is missing, malformed or unregistered.
-        ValueError: At call time, when the product emits a key under ``loom.scope.``.
+        ValueError: At call time, when the product emits a key under ``loom.``.
     """
     return scoped_session_settings(
         application.scope_sources, application.scoped, product, path=application.path
@@ -98,7 +112,19 @@ class _ScopedProvider:
             settings[scope_setting(scope)] = "" if value is None else str(value)
             if elevable:
                 settings[elevation_setting(scope)] = "on" if scope in active else ""
+        settings.update(actor_settings())
         return settings
+
+
+def actor_settings() -> dict[str, str]:
+    """The keys naming who acts in this transaction and under which trace."""
+    identity = current_identity()
+    return {
+        ACTOR_SUBJECT: identity.subject,
+        ACTOR_MECHANISM: identity.mechanism,
+        ACTOR_ON_BEHALF_OF: identity.attribute(ON_BEHALF_OF_ATTRIBUTE) or "",
+        TRACE_ID: get_trace_id() or "",
+    }
 
 
 class DeferredScopedSettings:
@@ -148,7 +174,7 @@ def _product_settings(product: SessionSettings | None) -> Mapping[str, str]:
     values = product() if product is not None else None
     if not values:
         return {}
-    intruding = sorted(key for key in values if key.lower().startswith(SCOPE_PREFIX))
+    intruding = sorted(key for key in values if key.lower().startswith(LOOM_PREFIX))
     if intruding:
-        raise ValueError(f"product settings may not use the {SCOPE_PREFIX} namespace: {intruding}")
+        raise ValueError(f"product settings may not use the {LOOM_PREFIX} namespace: {intruding}")
     return values
