@@ -213,8 +213,10 @@ class TestDirectTrigger:
         assert caller.mechanism == f"lambda:{_FUNCTION}:eventbridge"
 
     def test_without_an_identity_the_trigger_is_refused(self, serve: Serve) -> None:
+        trigger = _events()
+
         with pytest.raises(ConfigError, match="missing required field `identity`"):
-            serve(_events(), written={"trigger": _events()})
+            serve(trigger, written={"trigger": trigger})
 
     def test_the_job_runs_as_the_declared_system_identity(
         self, serve: Serve, ran: list[tuple[Any, Identity]]

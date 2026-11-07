@@ -47,6 +47,9 @@ AUDIT_READABLE: Final = (
 )
 CATALOG_CHECKS: Final = (FUNCTIONS, "relations", "columns", "constraints", "triggers", "objects")
 SCHEMA_KIND: Final = "schema"
+_SCHEMA_PARAM: Final = SCHEMA_KIND
+_AUDIT_LOG: Final = "audit_log"
+_MISSING: Final = "missing"
 OWNER_TRIGGER: Final = "loom_deny_owner_dml"
 
 _CATALOG_SQL: Final = (
@@ -173,7 +176,7 @@ async def guard_problems(
     rows = await connection.execute(_CATALOG, _catalog_parameters(guard, CATALOG_CHECKS))
     lines = _lines(rows)
     if not lines[FUNCTIONS]:
-        return [Problem("guard.functions", guard, "installed", "missing")]
+        return [Problem("guard.functions", guard, "installed", _MISSING)]
     problems = catalog_problems(lines, guard)
     access = list(await connection.execute(_ACCESS, _guard_parameters(guard)))
     problems += owner_problems(access, installer)
@@ -217,22 +220,24 @@ async def audit_problems(
         return [
             Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", str(number))
         ]
-    shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, {"schema": schema})]
+    shape = [
+        str(row.line) for row in await connection.execute(_AUDIT_SHAPE, {_SCHEMA_PARAM: schema})
+    ]
     if not shape and not audited:
         return []
     problems = audit_shape_problems(shape)
-    if shape and (await connection.execute(_AUDIT_READABLE, {"schema": schema})).scalar():
-        problems.append(Problem("audit.read", "audit_log", "only the auditor reads", "readable"))
+    if shape and (await connection.execute(_AUDIT_READABLE, {_SCHEMA_PARAM: schema})).scalar():
+        problems.append(Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable"))
     return problems
 
 
 def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
     """Compare the audit log's columns with the pinned shape; empty when they match."""
     if not lines:
-        return [Problem("audit.shape", "audit_log", "the pinned columns", "missing")]
+        return [Problem("audit.shape", _AUDIT_LOG, "the pinned columns", _MISSING)]
     if tuple(lines) == AUDIT_LOG_COLUMNS:
         return []
-    return [Problem("audit.shape", "audit_log", "; ".join(AUDIT_LOG_COLUMNS), "; ".join(lines))]
+    return [Problem("audit.shape", _AUDIT_LOG, "; ".join(AUDIT_LOG_COLUMNS), "; ".join(lines))]
 
 
 async def table_problems(
@@ -244,7 +249,7 @@ async def table_problems(
     """Compare every scoped model table with its canonical protection in the catalogue."""
     parameters = {
         **_guard_parameters(guard),
-        "schema": schema,
+        _SCHEMA_PARAM: schema,
         "trigger": OWNER_TRIGGER,
         "names": [table.name for table in scoped.values()],
     }
@@ -253,7 +258,7 @@ async def table_problems(
     for table in scoped.values():
         row = found.get(table.name)
         if row is None:
-            problems.append(Problem("table.missing", table.name, "present", "missing"))
+            problems.append(Problem("table.missing", table.name, "present", _MISSING))
         else:
             problems += _protection_problems(row, table)
     return problems

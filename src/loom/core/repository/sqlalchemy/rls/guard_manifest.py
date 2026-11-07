@@ -67,45 +67,57 @@ def _verified(filename: str, sha256: str) -> str:
     return text
 
 
+_GUARD_TRIGGERS: Final = "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68"
+"""No revision changes the guard's own triggers."""
+_NO_OBJECTS: Final = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+"""The digest of no catalogue lines: the guard owns no other kind of object."""
+
+
+def _catalog(*, functions: str, relations: str, columns: str, constraints: str) -> dict[str, str]:
+    """A revision's catalogue digests, by category."""
+    return {
+        "functions": functions,
+        "relations": relations,
+        "columns": columns,
+        "constraints": constraints,
+        "triggers": _GUARD_TRIGGERS,
+        "objects": _NO_OBJECTS,
+    }
+
+
 GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
     GuardRevision(
         1,
         "0001.sql",
         "1c411a519c0d9a5bd5ec2b04d83cc822673eadf28ec2d5f6b44255b228f1583a",
-        {
-            "functions": "207b276a1fb5cb6881da6e30a542c8e1f176228787e18dcdec8d74c353f2d711",
-            "relations": "13ac502176825abf96ee3cef7fe718e50adbb1dedb80ad86790b554c572273fb",
-            "columns": "17e334109a9b8d44e4dd02b96ecbb888bcb456da2f91e97c3d855f8ce1c642b1",
-            "constraints": "dd6f74082263bed44a74c4afc2697726ed1336a61e020b05711033202dc7fe2d",
-            "triggers": "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68",
-            "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        },
+        _catalog(
+            functions="207b276a1fb5cb6881da6e30a542c8e1f176228787e18dcdec8d74c353f2d711",
+            relations="13ac502176825abf96ee3cef7fe718e50adbb1dedb80ad86790b554c572273fb",
+            columns="17e334109a9b8d44e4dd02b96ecbb888bcb456da2f91e97c3d855f8ce1c642b1",
+            constraints="dd6f74082263bed44a74c4afc2697726ed1336a61e020b05711033202dc7fe2d",
+        ),
     ),
     GuardRevision(
         2,
         "0002.sql",
         "a1bc218a4b30bfec7119b1b9560afe04f53e132d303709de68384b710d7196a9",
-        {
-            "functions": "137f1619c20a465add893360e2102e2b7012bcadd5e4eb1e53343b7081f2dbb2",
-            "relations": "13ac502176825abf96ee3cef7fe718e50adbb1dedb80ad86790b554c572273fb",
-            "columns": "17e334109a9b8d44e4dd02b96ecbb888bcb456da2f91e97c3d855f8ce1c642b1",
-            "constraints": "dd6f74082263bed44a74c4afc2697726ed1336a61e020b05711033202dc7fe2d",
-            "triggers": "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68",
-            "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        },
+        _catalog(
+            functions="137f1619c20a465add893360e2102e2b7012bcadd5e4eb1e53343b7081f2dbb2",
+            relations="13ac502176825abf96ee3cef7fe718e50adbb1dedb80ad86790b554c572273fb",
+            columns="17e334109a9b8d44e4dd02b96ecbb888bcb456da2f91e97c3d855f8ce1c642b1",
+            constraints="dd6f74082263bed44a74c4afc2697726ed1336a61e020b05711033202dc7fe2d",
+        ),
     ),
     GuardRevision(
         3,
         "0003.sql",
         "2acf4a811dbf43241e7719676ab52cd22bc0810b5eee6785f73f42bb4bd5af3c",
-        {
-            "functions": "3c9b43cc8dd3a27cf83037a90b7bfc32c5c2bfd2c14e4547e8b0ef78ebe88b0b",
-            "relations": "d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
-            "columns": "7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
-            "constraints": "7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
-            "triggers": "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68",
-            "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        },
+        _catalog(
+            functions="3c9b43cc8dd3a27cf83037a90b7bfc32c5c2bfd2c14e4547e8b0ef78ebe88b0b",
+            relations="d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
+            columns="7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
+            constraints="7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
+        ),
     ),
 )
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1

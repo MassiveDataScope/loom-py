@@ -198,15 +198,16 @@ async def test_audit_failure_rolls_back_business_write(
     )
     partition = await scalar(database.superuser, current)
     engine = create_async_engine(database.superuser, poolclass=NullPool)
+    detach = text(f"ALTER TABLE ledger_fail.audit_log DETACH PARTITION ledger_fail.{partition}")
+    write = text(_one("ledger_fail.accounts"))
     try:
-        with pytest.raises(DBAPIError, match="no partition of relation"):
-            async with engine.begin() as connection:
-                await connection.execute(text(f"SELECT {guard}.enter_hatch()"))
-                detach = (
-                    f"ALTER TABLE ledger_fail.audit_log DETACH PARTITION ledger_fail.{partition}"
-                )
-                await connection.execute(text(detach))
-                await connection.execute(text(_one("ledger_fail.accounts")))
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            await connection.execute(text(f"SELECT {guard}.enter_hatch()"))
+            await connection.execute(detach)
+            with pytest.raises(DBAPIError, match="no partition of relation"):
+                await connection.execute(write)
+            await transaction.rollback()
     finally:
         await engine.dispose()
 

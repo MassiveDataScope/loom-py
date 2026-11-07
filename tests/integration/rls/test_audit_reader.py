@@ -110,16 +110,17 @@ async def test_only_the_auditor_and_the_owner_read_the_log(
     read = "SELECT count(*) FROM {rel}"
     refused: list[str] = []
     for rel in (f"{SCHEMA}.audit_log", partition):
+        statement = read.format(rel=rel)
         for who, url in {
             "write": database.write,
             "read": database.read,
             "bypass": database.bypass,
         }.items():
             with pytest.raises(DBAPIError, match="permission denied"):
-                await _run(url, read.format(rel=rel))
+                await _run(url, statement)
             refused.append(who)
-        await _run(database.superuser, read.format(rel=rel), role=f"{SCHEMA}_auditor")
-        await _run(database.migrator, read.format(rel=rel))
+        await _run(database.superuser, statement, role=f"{SCHEMA}_auditor")
+        await _run(database.migrator, statement)
 
     assert len(refused) == 6
 

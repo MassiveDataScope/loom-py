@@ -253,10 +253,14 @@ def test_a_declared_auditor_and_retention_reach_the_document() -> None:
 
 
 def test_a_retention_below_one_month_is_refused() -> None:
+    config = _config(audit_retention_months=0)
+
     with pytest.raises(ValueError, match="retention_months"):
-        _config(audit_retention_months=0).validated()
+        config.validated()
 
 
 def test_the_auditor_must_not_share_a_name_with_another_role() -> None:
+    config = _config(auditor="r_owner")
+
     with pytest.raises(ValueError, match="distinct names"):
-        _config(auditor="r_owner").validated()
+        config.validated()
