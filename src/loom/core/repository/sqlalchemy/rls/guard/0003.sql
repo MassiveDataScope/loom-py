@@ -25,36 +25,35 @@ DECLARE
   v_old jsonb;
   v_new jsonb;
   v_row jsonb;
-  v_root oid := coalesce(pg_partition_root(TG_RELID), TG_RELID);
+  v_root oid := TG_RELID;
   v_excluded text[];
-  v_changed jsonb := '{}';
+  v_changed jsonb;
   v_key jsonb;
   v_scopes jsonb;
   v_elevated text[];
-  v_schema name;
-  v_table name;
-  v_col text;
+  v_schema name := TG_TABLE_SCHEMA;
+  v_table name := TG_TABLE_NAME;
 BEGIN
   IF TG_OP <> 'INSERT' THEN v_old := to_jsonb(OLD); END IF;
   IF TG_OP <> 'DELETE' THEN v_new := to_jsonb(NEW); END IF;
   IF TG_OP = 'UPDATE' AND v_old = v_new THEN RETURN NULL; END IF;
   v_row := coalesce(v_new, v_old);
+  IF TG_LEVEL = 'ROW' AND (SELECT c.relispartition FROM pg_class c WHERE c.oid = TG_RELID) THEN
+    v_root := pg_partition_root(TG_RELID);
+    SELECT n.nspname, c.relname INTO v_schema, v_table FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = v_root;
+  END IF;
   SELECT a.excluded INTO v_excluded FROM %1$I.audited_table a WHERE a.rel = v_root;
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'LG002', MESSAGE = 'loom_guard: ' || TG_RELID::regclass::text || ' is not a registered audited table';
   END IF;
-  FOR v_col IN SELECT jsonb_object_keys(v_row) LOOP
-    CONTINUE WHEN TG_OP = 'UPDATE' AND (v_old -> v_col) IS NOT DISTINCT FROM (v_new -> v_col);
-    IF v_col = ANY (v_excluded) THEN
-      v_changed := v_changed || jsonb_build_object(v_col, jsonb_build_object('redacted', true));
-    ELSIF TG_OP = 'INSERT' THEN
-      v_changed := v_changed || jsonb_build_object(v_col, jsonb_build_object('new', v_new -> v_col));
-    ELSIF TG_OP = 'DELETE' THEN
-      v_changed := v_changed || jsonb_build_object(v_col, jsonb_build_object('old', v_old -> v_col));
-    ELSE
-      v_changed := v_changed || jsonb_build_object(v_col, jsonb_build_object('old', v_old -> v_col, 'new', v_new -> v_col));
-    END IF;
-  END LOOP;
+  SELECT coalesce(jsonb_object_agg(k, CASE
+           WHEN k = ANY (v_excluded) THEN jsonb_build_object('redacted', true)
+           WHEN TG_OP = 'INSERT' THEN jsonb_build_object('new', v_new -> k)
+           WHEN TG_OP = 'DELETE' THEN jsonb_build_object('old', v_old -> k)
+           ELSE jsonb_build_object('old', v_old -> k, 'new', v_new -> k) END), '{}')
+    INTO v_changed
+    FROM jsonb_object_keys(v_row) k
+    WHERE TG_OP <> 'UPDATE' OR (v_old -> k) IS DISTINCT FROM (v_new -> k);
   SELECT coalesce(jsonb_object_agg(a.attname, v_row -> a.attname::text), '{}') INTO v_key
     FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
     WHERE i.indrelid = TG_RELID AND i.indisprimary;
@@ -63,7 +62,6 @@ BEGIN
     INTO v_scopes, v_elevated
     FROM (SELECT x ->> 'scope' AS scope_name, x ->> 'col' AS col_name
           FROM %1$I.scoped_table t, jsonb_array_elements(t.scopes) x WHERE t.rel = TG_RELID) s;
-  SELECT n.nspname, c.relname INTO v_schema, v_table FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = v_root;
   INSERT INTO audit_log (at, txid, schema_name, table_name, row_key, op, changed, subject, mechanism, on_behalf_of,
                          elevated, scopes, trace_id, db_user, app_name, client_addr, backend_pid, origin)
   VALUES (now(), pg_current_xact_id(), v_schema, v_table, v_key, left(TG_OP, 1), v_changed,
