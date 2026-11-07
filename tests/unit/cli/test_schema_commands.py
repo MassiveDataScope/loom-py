@@ -19,7 +19,10 @@ runner = CliRunner()
 
 
 def _application(users: dict[str, DatabaseUser]) -> Any:
-    return SimpleNamespace(bootstrap=SimpleNamespace(database_users=users))
+    bootstrap = SimpleNamespace(
+        roles=SimpleNamespace(migrator="app_migrator"), database_users=users
+    )
+    return SimpleNamespace(bootstrap=bootstrap)
 
 
 @pytest.fixture
@@ -29,7 +32,7 @@ def config(tmp_path: Path) -> Path:
     return path
 
 
-def test_bootstrap_reads_the_superuser_url_and_each_login_password(
+def test_bootstrap_reads_the_superuser_url_and_the_migrator_and_login_passwords(
     config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, dict[str, str]]] = []
@@ -45,11 +48,14 @@ def test_bootstrap_reads_the_superuser_url_and_each_login_password(
     monkeypatch.setattr(rls, "apply_bootstrap", apply)
     monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
     monkeypatch.setenv("LOOM_DB_PASSWORD_APP_RW", "s3cret")
+    monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
 
     result = runner.invoke(app, ["schema", "bootstrap", "--config", str(config)])
 
     assert result.exit_code == 0, result.output
-    assert calls == [("postgresql+asyncpg://su@db/app", {"app_rw": "s3cret"})]
+    assert calls == [
+        ("postgresql+asyncpg://su@db/app", {"app_migrator": "m1grator", "app_rw": "s3cret"})
+    ]
 
 
 def test_bootstrap_names_the_missing_password_variable(
@@ -58,6 +64,7 @@ def test_bootstrap_names_the_missing_password_variable(
     users = {"app_rw": DatabaseUser(login=True, access="write")}
     monkeypatch.setattr(schema_cli, "load_application", lambda path: _application(users))
     monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
+    monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
     monkeypatch.delenv("LOOM_DB_PASSWORD_APP_RW", raising=False)
 
     result = runner.invoke(app, ["schema", "bootstrap", "--config", str(config)])
@@ -70,6 +77,7 @@ def test_bootstrap_without_the_superuser_url_fails(
     config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+    monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
     monkeypatch.delenv("LOOM_SUPERUSER_URL", raising=False)
 
     result = runner.invoke(app, ["schema", "bootstrap", "--config", str(config)])

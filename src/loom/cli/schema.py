@@ -127,16 +127,15 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
 def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     """Install or upgrade the guard and configure roles, as the superuser; idempotent.
 
-    The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of each
-    database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
+    The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
+    migrator and of each database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
     """
     try:
         settings = _bootstrap_config(config)
-        passwords = {
-            name: _env(PASSWORD_ENV_PREFIX + name.upper())
-            for name, user in settings.database_users.items()
-            if user.login
-        }
+        logins = [settings.roles.migrator] + [
+            name for name, user in settings.database_users.items() if user.login
+        ]
+        passwords = {name: _env(PASSWORD_ENV_PREFIX + name.upper()) for name in logins}
         asyncio.run(_rls().apply_bootstrap(_env(SUPERUSER_URL_ENV), settings, passwords))
     except ConfigError as exc:
         _fail(exc)
