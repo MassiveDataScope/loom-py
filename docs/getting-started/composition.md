@@ -87,6 +87,7 @@ lambda:
         source: eventbridge
         queue: {name: invoice_events}
         job: ImportInvoice
+        identity: {subject: svc:invoices, roles: [invoice_importer]}
 ```
 
 | `source` | The job's `Input()` | Span id |
@@ -105,8 +106,10 @@ consuming the same queue, and a `config.overridable` entry reaching
 
 The job runs as the declared `identity`, with
 `mechanism: lambda:<function>:<source>`, and never as anything the event
-says. Without `identity` it runs anonymous, so a `Caller()` or a row-level
-policy refuses it. The identity grants roles only: it implies no elevation
+says. `identity` is required on `eventbridge`, `s3`, `sns` and `schedule`
+triggers: a trigger without one fails to load, so no automatic change runs
+without an actor, and the audit log records this identity as the actor of
+every change the job makes. The identity grants roles only: it implies no elevation
 and no `BYPASSRLS`. Whoever may invoke the function, or write to its queue,
 runs the declared job as the declared identity: restrict
 `lambda:InvokeFunction` and the queue policy, and pin such a function in code

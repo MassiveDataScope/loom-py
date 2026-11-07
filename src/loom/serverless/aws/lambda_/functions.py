@@ -93,7 +93,10 @@ class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_
 class EventTrigger(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True, tag_field="source"
 ):
-    """Run ``job`` for each event of the source, as ``identity`` or anonymous.
+    """Run ``job`` for each event of the source, as the system ``identity`` declared here.
+
+    The identity is required: no automatic change runs without an actor, and
+    the audit log records it as the actor of every change the job makes.
 
     Invoked directly, the deployment configures ``maximum_retry_attempts``
     and ``maximum_event_age_s`` of the asynchronous invocation; with a
@@ -101,7 +104,7 @@ class EventTrigger(
     """
 
     job: str
-    identity: TriggerIdentity | None = None
+    identity: TriggerIdentity
     queue: QueueMapping | None = None
     maximum_retry_attempts: Annotated[int, msgspec.Meta(ge=0, le=2)] | None = None
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
@@ -124,12 +127,11 @@ class EventTrigger(
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""
         yield self.job
-        if self.identity is not None:
-            yield self.identity.subject
-            yield from self.identity.roles
-            for name, value in self.identity.attributes.items():
-                yield name
-                yield value
+        yield self.identity.subject
+        yield from self.identity.roles
+        for name, value in self.identity.attributes.items():
+            yield name
+            yield value
 
 
 class EventBridgeTrigger(EventTrigger, frozen=True, kw_only=True, tag="eventbridge"):

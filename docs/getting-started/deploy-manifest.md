@@ -33,7 +33,7 @@ lambda:
         job: ImportInvoice
         identity: {subject: svc:invoices, roles: [invoice_importer]}
     alerts:
-      trigger: {source: sns, queue: {name: alerts}, job: ImportInvoice}
+      trigger: {source: sns, queue: {name: alerts}, job: ImportInvoice, identity: {subject: svc:alerts}}
 sqs:
   queues:
     jobs: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
@@ -75,7 +75,7 @@ Python identifier, and an event trigger whose job startup would refuse.
         "report_batch_item_failures": true,
         "dead_letter_required": true,
         "job": "ImportInvoice",
-        "identity": null,
+        "identity": {"subject": "svc:alerts", "roles": [], "attributes": {}},
         "raw_message_delivery": false
       },
       "secrets": ["/shop/jwt"],

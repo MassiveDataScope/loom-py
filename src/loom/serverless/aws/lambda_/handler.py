@@ -235,10 +235,8 @@ def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decod
 
 
 def _identity(name: str, source: str, trigger: EventTrigger) -> dict[str, Any] | None:
-    """The declared identity of *trigger*, encoded for its envelopes; ``None`` runs anonymous."""
+    """The declared system identity of *trigger*, encoded for its envelopes."""
     declared = trigger.identity
-    if declared is None:
-        return None
     return encode_identity(
         Identity(
             subject=declared.subject,
