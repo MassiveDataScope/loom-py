@@ -7,12 +7,18 @@ CREATE OR REPLACE FUNCTION owner_functions() RETURNS name[] LANGUAGE sql IMMUTAB
                'registered_tables', 'guard_schema', 'app_schema', 'owner_role', 'group_role', 'users_of',
                'tagged', 'reject', 'refuse', 'is_member', 'commands', 'authorize',
                'create_range_partition', 'detach_partition',
-               'audit_log_rel', 'audit_trigger_source', 'prepare_audit_log', 'protect_audit_log',
+               'audit_log_of', 'audit_log_rel', 'audit_trigger_source', 'prepare_audit_log', 'protect_audit_log',
                'protect_audited_table', 'unprotect_audited_table', 'create_audit_partition',
                'protect_audit_partition', 'drop_expired_audit_partition', 'refuse_audit_log_change',
                'require_audit_log']::name[] $$;
+CREATE FUNCTION audit_log_of(app name) RETURNS regclass LANGUAGE sql STABLE AS $$
+  SELECT to_regclass(format('%I.audit_log', app)) $$;
 CREATE FUNCTION audit_log_rel() RETURNS regclass LANGUAGE sql STABLE AS $$
-  SELECT to_regclass(format('%I.audit_log', app_schema())) $$;
+  SELECT audit_log_of(app_schema()) $$;
+CREATE FUNCTION grant_schema_usage(app name, grantee name) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', app, grantee);
+END $$;
 CREATE FUNCTION audit_trigger_source() RETURNS text LANGUAGE sql STABLE AS $$
   SELECT format($src$
 DECLARE
@@ -95,7 +101,7 @@ BEGIN
   IF c.auditor_role IS NOT NULL THEN EXECUTE format('GRANT SELECT ON %s TO %I', tbl, c.auditor_role); END IF;
 END $$;
 CREATE FUNCTION restrict_audit_log(c config) RETURNS void LANGUAGE plpgsql AS $$
-DECLARE log regclass := to_regclass(format('%I.audit_log', c.app_schema)); part regclass;
+DECLARE log regclass := audit_log_of(c.app_schema); part regclass;
 BEGIN
   IF log IS NULL THEN RETURN; END IF;
   PERFORM apply_audit_acl(c, log);
@@ -393,6 +399,24 @@ CREATE OR REPLACE FUNCTION unexpected_memberships(c config) RETURNS text LANGUAG
     AND NOT m.rolsuper AND m.rolname <> c.installer
     AND NOT (r.rolname = c.auditor_role AND NOT am.admin_option AND m.rolname NOT IN (SELECT s.name FROM role_specs(c) s))
     AND (am.admin_option OR (r.rolname, m.rolname) NOT IN (SELECT e.role_name, e.member FROM expected_members(c) e)) $$;
+CREATE OR REPLACE FUNCTION grant_bypass(c config, role_name name) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE log regclass := audit_log_of(c.app_schema); rel regclass;
+BEGIN
+  PERFORM grant_schema_usage(c.app_schema, role_name);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', c.owner_role, c.app_schema, role_name);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE ON SEQUENCES TO %I', c.owner_role, c.app_schema, role_name);
+  FOR rel IN SELECT k.oid::regclass FROM pg_class k
+             WHERE k.relnamespace = c.app_schema::regnamespace AND k.relkind IN ('r', 'p', 'v', 'm', 'f')
+               AND coalesce(pg_partition_root(k.oid), k.oid) IS DISTINCT FROM log::oid ORDER BY k.oid LOOP
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO %I', rel, role_name);
+  END LOOP;
+  FOR rel IN SELECT k.oid::regclass FROM pg_class k
+             WHERE k.relnamespace = c.app_schema::regnamespace AND k.relkind = 'S'
+               AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = k.oid AND d.deptype IN ('a', 'i')
+                               AND coalesce(pg_partition_root(d.refobjid), d.refobjid) = log::oid) ORDER BY k.oid LOOP
+    EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', rel, role_name);
+  END LOOP;
+END $$;
 CREATE OR REPLACE FUNCTION secure_guard(c config) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE guard name := guard_schema(); fn regprocedure; t record;
 BEGIN
@@ -454,7 +478,7 @@ BEGIN
   EXECUTE format('REVOKE CREATE ON SCHEMA %I FROM PUBLIC', wanted.app_schema);
   EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I, %I', wanted.app_schema, wanted.readers_role, wanted.writers_role);
   IF wanted.auditor_role IS NOT NULL THEN
-    EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', wanted.app_schema, wanted.auditor_role); END IF;
+    PERFORM grant_schema_usage(wanted.app_schema, wanted.auditor_role); END IF;
   FOR spec IN SELECT u.name FROM users_of(wanted.users) u WHERE u.bypass LOOP
     PERFORM grant_bypass(wanted, spec.name);
   END LOOP;

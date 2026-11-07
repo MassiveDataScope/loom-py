@@ -97,9 +97,9 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
     GuardRevision(
         3,
         "0003.sql",
-        "48e55d5cc7f52b10010e312eb59221c0f6609c92b6fab84457ebd2678d67a0fa",
+        "9a6f98efe22f4e44e7c1e1e6475bcedecae939e4e63e8f2c6a95c8d74c4684a7",
         {
-            "functions": "ec27c1fe46b90ce9dd26336438c684c7d2835dfc79d33645ef88df6236ef5e92",
+            "functions": "ac351288634ac586e5fa54486f1e848c732376ce031fd9ec2765e79a73150ca7",
             "relations": "d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
             "columns": "7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
             "constraints": "7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
@@ -136,6 +136,7 @@ OWNER_FUNCTIONS: Final = frozenset(
         "authorize",
         "create_range_partition",
         "detach_partition",
+        "audit_log_of",
         "audit_log_rel",
         "audit_trigger_source",
         "prepare_audit_log",

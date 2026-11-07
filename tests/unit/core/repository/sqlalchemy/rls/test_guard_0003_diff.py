@@ -47,9 +47,10 @@ _REPLACED = {
 
 EXPECTED_DIFFS = {
     "assert_scoped_schema": "7048347eb71d1da1790f26cd59ad18a08b48e9e9ce7b507121896b2e08faf89a",
-    "configure": "fb298227d52606a9a24cf4986c9a428cd86fae7d0bb2a405f163a019e1a4fb99",
+    "grant_bypass": "df474254039d75c5619066e0eca545c0db5a5daa0a48b2d67f1bfd70ea27ac72",
+    "configure": "157024470e40f048e8b9610b08a20a0f6d29a7fde880d3d27ff254f309335cbc",
     "on_sql_drop": "a0d9459c68e0a3442a9501ac9a3b2d132c3877cb36418d026c315337f0488db2",
-    "owner_functions": "7284778b362daa5810adb2eb41dadc9909e8b67ec2dd1b20c7f4af7039d6e2b1",
+    "owner_functions": "e2510df74dae525ce39e4112e73929283c84ab58c129877a73d992f60516bcbe",
     "role_specs": "85189491b4bd0ea6abd723cd2383be7110c38174008e06016f75ff5828bf056b",
     "secure_guard": "e5db369a8f600c4f6e18f81080c4759aa84c8de36969c55fac722401f8efd1ba",
     "unexpected_memberships": "66b1a5a985544260ef87a9a1bf4653f9288ea05316b7217b6a31215881d4af44",
