@@ -159,6 +159,15 @@ _SCOPED_TABLES_SQL: Final = (
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_READABLE: Final = text(AUDIT_READABLE)
+AUDIT_TRIGGER: Final = "loom_audit_record"
+# The catalogue, not the guard: the application role reads pg_trigger.
+AUDIT_TRIGGERS: Final = (
+    "SELECT c.relname FROM pg_catalog.pg_trigger g"
+    " JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE n.nspname = :schema AND g.tgname = 'loom_audit_record' AND g.tgenabled = 'A'"
+)
+_AUDIT_TRIGGERS: Final = text(AUDIT_TRIGGERS)
 _CATALOG: Final = text(_CATALOG_SQL)
 _ACCESS: Final = text(_ACCESS_SQL)
 _LANDING: Final = text(_LANDING_SQL)
@@ -212,11 +221,14 @@ async def startup_problems(
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     *,
     audited: bool = False,
+    recording: Sequence[str] = (),
 ) -> list[Problem]:
     """Everything the application user can check at startup: guard, scoped tables, audit log.
 
     The audit log is checked whenever it exists, marked tables or not (FR-018),
     and an application with audited tables needs revision 3 and the log.
+    *recording* names the tables that must carry their audit trigger, so a
+    model marked but never migrated does not write unrecorded rows.
     """
     landing = (await connection.execute(_LANDING)).one_or_none()
     if landing is None:
@@ -224,6 +236,8 @@ async def startup_problems(
     problems = await guard_problems(connection, guard, str(landing.owner))
     problems += await table_problems(connection, guard, str(landing.schema), scoped)
     problems += await audit_problems(connection, guard, str(landing.schema), audited=audited)
+    if not problems:
+        problems += await _trigger_problems(connection, str(landing.schema), recording)
     return problems
 
 
@@ -247,6 +261,21 @@ async def _read_problems(
     if shape and (await connection.execute(_AUDIT_READABLE, parameters)).scalar():
         return [Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable")]
     return []
+
+
+async def _trigger_problems(
+    connection: AsyncConnection, schema: str, recording: Sequence[str]
+) -> list[Problem]:
+    """A problem per table in *recording* without its enabled audit trigger."""
+    if not recording:
+        return []
+    rows = await connection.execute(_AUDIT_TRIGGERS, {_SCHEMA_PARAM: schema})
+    present = {str(row.relname) for row in rows}
+    return [
+        Problem("audit.trigger", name, f"{AUDIT_TRIGGER} enabled", _MISSING)
+        for name in recording
+        if name not in present
+    ]
 
 
 async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem | None:

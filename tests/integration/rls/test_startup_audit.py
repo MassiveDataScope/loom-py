@@ -17,12 +17,18 @@ from tests.integration.rls.test_audit_verify import _drift
 pytestmark = pytest.mark.integration
 
 
-async def _problems(database: ScopedDatabase, *, audited: bool) -> set[str]:
+async def _problems(
+    database: ScopedDatabase, *, audited: bool, recording: tuple[str, ...] = ()
+) -> set[str]:
     engine = create_async_engine(database.write, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             problems = await startup_problems(
-                connection, f"loom_guard_{database.schema}", {}, audited=audited
+                connection,
+                f"loom_guard_{database.schema}",
+                {},
+                audited=audited,
+                recording=recording,
             )
     finally:
         await engine.dispose()
@@ -38,6 +44,21 @@ async def test_an_audited_schema_starts_clean(
     )
 
     assert await _problems(database, audited=True) == set()
+
+
+async def test_a_marked_table_without_its_trigger_stops_startup(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("books_unmigrated")
+    await create_schema(
+        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
+    )
+
+    protected = await _problems(database, audited=True, recording=("accounts", "memos"))
+    unmigrated = await _problems(database, audited=True, recording=("memos", "drafts"))
+
+    assert protected == set()
+    assert unmigrated == {"audit.trigger"}
 
 
 async def test_a_changed_log_column_stops_startup_even_without_marked_tables(

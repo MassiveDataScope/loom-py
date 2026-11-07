@@ -151,3 +151,28 @@ async def test_the_owner_cannot_disable_detach_or_drop_the_audit(
 
     with pytest.raises(DBAPIError, match="loom_guard"):
         await _run(database.migrator, sql)
+
+
+@pytest.mark.parametrize(
+    ("statement", "reason"),
+    [
+        ("ALTER TABLE {schema}.memos DROP CONSTRAINT memos_pkey", "without a primary key"),
+        (
+            "ALTER TABLE {schema}.accounts DROP CONSTRAINT accounts_pkey,"
+            " ADD PRIMARY KEY (tenant, internal_note)",
+            "keyed by an excluded column",
+        ),
+        (
+            "ALTER FUNCTION {schema}.write_audit_row()"
+            " SET search_path = pg_catalog, public, pg_temp",
+            "differs from the released one",
+        ),
+    ],
+)
+async def test_the_owner_cannot_rekey_an_audited_table_or_repoint_the_writer(
+    scoped_database: BootstrapFactory, tmp_path: Path, statement: str, reason: str
+) -> None:
+    database, _ = await _database(scoped_database, tmp_path)
+
+    with pytest.raises(DBAPIError, match=reason):
+        await _run(database.migrator, statement.format(schema=SCHEMA))

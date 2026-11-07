@@ -111,9 +111,9 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
     GuardRevision(
         3,
         "0003.sql",
-        "61409cf9f65e52ac51046fbc2b00df7c186f6d78c1859d0a193284bfb81bd66c",
+        "f3752bc2ab24274b92e754e0f4c48e1b9da9ff6b692dc70b58e542edc5246e85",
         _catalog(
-            functions="cdbe4a3b16f79fbc1211484debd2bb378d2eef6fd56425a66ba2eeb281d94cb8",
+            functions="870e4c3c89c8d14e33778cde9310fbc80dd8fea67b2ec068ccf82c13a35b06c8",
             relations="d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
             columns="7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
             constraints="7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",

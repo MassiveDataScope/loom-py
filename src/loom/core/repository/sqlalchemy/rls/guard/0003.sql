@@ -264,12 +264,19 @@ BEGIN
   IF writer IS NULL OR NOT EXISTS (
        SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
        WHERE p.oid = writer AND p.prosecdef AND r.rolname = cfg.owner_role AND p.prosrc = audit_trigger_source()
-         AND array_length(p.proconfig, 1) = 1 AND p.proconfig[1] LIKE 'search\_path=pg\_catalog, %') THEN
+         AND p.proconfig = ARRAY[format('search_path=pg_catalog, %I, pg_temp', cfg.app_schema)]) THEN
     PERFORM violation(format('the audit writer %s.write_audit_row differs from the released one', cfg.app_schema)); END IF;
   SELECT string_agg(a.rel::text, ', ') INTO bad FROM audited_table a WHERE NOT EXISTS (
     SELECT 1 FROM pg_trigger g WHERE g.tgrelid = a.rel AND g.tgname = record_trigger AND g.tgenabled = 'A' AND g.tgfoid = writer
       AND (g.tgtype & 1) <> 0 AND (g.tgtype & 2) = 0 AND (g.tgtype & 28) = 28 AND g.tgqual IS NULL AND g.tgattr = ''::int2vector);
   IF bad IS NOT NULL THEN PERFORM violation(format('audit trigger missing, disabled, wrong function or wrong events: %s', bad)); END IF;
+  SELECT string_agg(a.rel::text, ', ') INTO bad FROM audited_table a WHERE NOT EXISTS (
+    SELECT 1 FROM pg_index i WHERE i.indrelid = a.rel AND i.indisprimary);
+  IF bad IS NOT NULL THEN PERFORM violation(format('audited tables without a primary key: %s', bad)); END IF;
+  SELECT string_agg(a.rel::text, ', ') INTO bad FROM audited_table a WHERE EXISTS (
+    SELECT 1 FROM pg_index i JOIN pg_attribute t ON t.attrelid = i.indrelid AND t.attnum = ANY (i.indkey)
+    WHERE i.indrelid = a.rel AND i.indisprimary AND t.attname::text = ANY (a.excluded));
+  IF bad IS NOT NULL THEN PERFORM violation(format('audited tables keyed by an excluded column: %s', bad)); END IF;
   SELECT string_agg(t.relid::text, ', ') INTO bad FROM audited_table a, pg_partition_tree(a.rel) t
     WHERE t.relid <> a.rel::oid AND NOT EXISTS (
       SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.relid AND g.tgname = record_trigger AND g.tgenabled IN ('A', 'O') AND g.tgfoid = writer);

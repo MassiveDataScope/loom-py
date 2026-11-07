@@ -420,9 +420,10 @@ async def _check_external(
     scoped: Mapping[tuple[str | None, str], ScopedTable],
 ) -> None:
     await _require_tables(connection, store)
-    audited = bool(audited_tables(store.session_manager.metadata))
-    if connection.dialect.name == POSTGRES_DIALECT and (scoped or audited):
-        await _check_guard(connection, scoped, store, audited=audited)
+    marked = audited_tables(store.session_manager.metadata)
+    recording = sorted(t.name for t in marked.values()) if store.schema.audit.enabled else []
+    if connection.dialect.name == POSTGRES_DIALECT and (scoped or marked):
+        await _check_guard(connection, scoped, store, audited=bool(marked), recording=recording)
 
 
 async def _require_tables(connection: AsyncConnection, store: _Store) -> None:
@@ -442,6 +443,7 @@ async def _check_guard(
     store: _Store,
     *,
     audited: bool = False,
+    recording: Sequence[str] = (),
 ) -> None:
     """Check, as the application user, the guard, every scoped table and the audit log.
 
@@ -451,7 +453,9 @@ async def _check_guard(
     configuration row is not readable here; ``verify`` checks it.
     """
     guard = require_schema_key(store.schema.guard, store.path, "guard")
-    problems = await startup_problems(connection, guard, scoped, audited=audited)
+    problems = await startup_problems(
+        connection, guard, scoped, audited=audited, recording=recording
+    )
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)
         raise ConfigError(
