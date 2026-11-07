@@ -12,6 +12,7 @@ the guard; names travel as bound parameters and Postgres quotes them.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -98,27 +99,41 @@ def reconcile_audited(
         return AuditReconciliation()
     if wanted:
         connection.execute(_PREPARE_AUDIT_LOG)
-    registered = {
-        str(name): str(rel)
-        for owner, name, rel in connection.execute(_REGISTERED_AUDITED)
-        if owner == schema
-    }
-    protected: list[str] = []
+    registered = _registered(connection, schema)
+    protected = _protect(connection, schema, wanted, registered)
+    unprotected = _unprotect(connection, {name for _, name in wanted}, registered)
+    partitions: tuple[str, ...] = ()
+    if connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
+        partitions = ensure_audit_partitions(connection, today or dt.date.today())
+    return AuditReconciliation(protected, unprotected, partitions)
+
+
+def _registered(connection: Connection, schema: str) -> dict[str, str]:
+    """The guard's audited tables of *schema*: unqualified name to qualified relation."""
+    rows = connection.execute(_REGISTERED_AUDITED)
+    return {str(name): str(rel) for owner, name, rel in rows if owner == schema}
+
+
+def _protect(
+    connection: Connection, schema: str, wanted: AuditedTables, registered: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Protect every *wanted* table, refreshing its exclusions; return the newly audited."""
     for (_, name), table in sorted(wanted.items(), key=lambda item: item[0][1]):
         connection.execute(
             _PROTECT_AUDITED,
             {"schema": schema, "table": sql_identifier(name), "excluded": sorted(table.excluded)},
         )
-        if name not in registered:
-            protected.append(name)
-    names = {name for _, name in wanted}
-    unprotected = sorted(name for name in registered if name not in names)
+    return tuple(sorted(name for _, name in wanted if name not in registered))
+
+
+def _unprotect(
+    connection: Connection, names: set[str], registered: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Stop auditing every registered table not in *names*; the log keeps its history."""
+    unprotected = tuple(sorted(name for name in registered if name not in names))
     for name in unprotected:
         connection.execute(_UNPROTECT_AUDITED, {"rel": registered[name]})
-    partitions: tuple[str, ...] = ()
-    if connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
-        partitions = ensure_audit_partitions(connection, today or dt.date.today())
-    return AuditReconciliation(tuple(protected), tuple(unprotected), partitions)
+    return unprotected
 
 
 def ensure_audit_partitions(

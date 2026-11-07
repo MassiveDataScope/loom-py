@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import operator
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
@@ -327,30 +328,31 @@ def _bypass_privileges(
     bootstrap: BootstrapConfig,
     audit_relations: frozenset[str] = frozenset(),
 ) -> list[Finding]:
-    bypass = bootstrap.bypass_users
-    version_table = bootstrap.names.version_table
-    all_row_privileges = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
     for relname, grants in acl.items():
         if relname in audit_relations:
             continue
-        for user in bypass:
+        check, wanted, enough = _bypass_expectation(relname, sequences, bootstrap)
+        for user in bootstrap.bypass_users:
             actual = grants.get(user, set())
-            if relname == version_table and actual != BYPASS_VERSION_PRIVILEGES:
-                findings.append(
-                    _diff(relname, "bypass.version_table", user, BYPASS_VERSION_PRIVILEGES, actual)
-                )
-            elif relname in sequences and not USAGE.issubset(actual):
-                findings.append(_diff(relname, "bypass.sequence_usage", user, USAGE, actual))
-            elif (
-                relname != version_table
-                and relname not in sequences
-                and not all_row_privileges <= actual
-            ):
-                findings.append(
-                    _diff(relname, "bypass.privileges", user, all_row_privileges, actual)
-                )
+            if not enough(wanted, actual):
+                findings.append(_diff(relname, check, user, wanted, actual))
     return findings
+
+
+def _bypass_expectation(
+    relname: str, sequences: frozenset[str], bootstrap: BootstrapConfig
+) -> tuple[str, set[str], Callable[[set[str], set[str]], bool]]:
+    """The check a bypass user's grants on *relname* answer, what it wants, and how to compare.
+
+    The version table wants exactly its privileges; a sequence and any other
+    relation want at least theirs.
+    """
+    if relname == bootstrap.names.version_table:
+        return "bypass.version_table", set(BYPASS_VERSION_PRIVILEGES), operator.eq
+    if relname in sequences:
+        return "bypass.sequence_usage", set(USAGE), operator.le
+    return "bypass.privileges", {p.value for p in READ_WRITE}, operator.le
 
 
 def _global_privileges(
