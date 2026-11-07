@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.repository.sqlalchemy.rls import create_schema
-from tests.integration.agnosticism import ledger
+from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
 
 pytestmark = pytest.mark.integration
@@ -42,7 +42,7 @@ def anyio_backend() -> str:
 async def _database(factory: BootstrapFactory, tmp_path: Path) -> tuple[ScopedDatabase, str]:
     database = await factory(SCHEMA)
     await create_schema(
-        database.migrator, application_for(ledger, database, tmp_path, schema=SCHEMA)
+        database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
     )
     engine = create_async_engine(database.superuser, poolclass=NullPool)
     try:

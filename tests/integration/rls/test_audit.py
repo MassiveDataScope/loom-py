@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.repository.sqlalchemy.rls import create_schema
-from tests.integration.agnosticism import ledger
+from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import (
     BootstrapFactory,
     ScopedDatabase,
@@ -43,7 +43,7 @@ LOG = (
 async def _ledger(factory: BootstrapFactory, tmp_path: Path, schema: str) -> ScopedDatabase:
     database = await factory(schema)
     await create_schema(
-        database.migrator, application_for(ledger, database, tmp_path, schema=schema)
+        database.migrator, application_for(bookkeeping, database, tmp_path, schema=schema)
     )
     return database
 
@@ -244,7 +244,7 @@ async def test_unmarking_and_disabling_stop_the_audit_and_keep_the_history(
 ) -> None:
     schema = "ledger_off"
     database = await scoped_database(schema)
-    application = application_for(ledger, database, tmp_path, schema=schema)
+    application = application_for(bookkeeping, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
     await _as_person(database.write, f"INSERT INTO {schema}.memos (body) VALUES ('kept')")
     guard = f"loom_guard_{schema}"

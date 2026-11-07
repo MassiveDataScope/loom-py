@@ -7,15 +7,22 @@ undeclared role is a member of a group, that every scoped model table is
 registered and protected canonically, and that the guard installed in the
 database is one this release of loom shipped: same catalogue, owners, grants
 and settings, and the configuration the declaration describes.
+
+The audit log, when it exists, must be readable by the auditor role alone,
+its audited tables and exclusions must be the model's, this month's and the
+next month's partitions must exist, and only declared operators may be
+members of the auditor role. Partitions past the retention are listed in
+:attr:`Report.expired_audit_partitions`; they are not drift.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from collections import defaultdict
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import text
@@ -61,8 +68,27 @@ FOREIGN_KEYS: Final = (
 )
 GUARD_CONFIG: Final = (
     "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, version_table, "
-    "data_version_table, installer, users::text AS users FROM config"
+    "data_version_table, installer, users::text AS users, "
+    "to_jsonb(config) -> 'auditor_role' AS auditor_role, "
+    "to_jsonb(config) -> 'retention_months' AS retention_months FROM config"
 )
+AUDIT_RELATIONS: Final = (
+    "SELECT c.relname, c.relkind::text AS relkind FROM pg_class c "
+    "WHERE c.oid = to_regclass(quote_ident(:schema) || '.audit_log') "
+    "OR c.oid IN (SELECT inhrelid FROM pg_inherits "
+    "WHERE inhparent = to_regclass(quote_ident(:schema) || '.audit_log')) "
+    "OR c.oid IN (SELECT d.objid FROM pg_depend d WHERE d.deptype IN ('a', 'i') "
+    "AND d.refobjid = to_regclass(quote_ident(:schema) || '.audit_log'))"
+)
+AUDIT_REGISTRY: Final = (
+    "SELECT c.relname, a.excluded FROM audited_table a JOIN pg_class c ON c.oid = a.rel "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :schema"
+)
+AUDIT_PARTITIONS: Final = (
+    "SELECT c.relname, p.lower_bound, p.upper_bound FROM audit_partition p "
+    "JOIN pg_class c ON c.oid = p.rel ORDER BY p.lower_bound"
+)
+AUDIT_SUPPORTED: Final = "SELECT to_regclass('audited_table') IS NOT NULL"
 REGISTERED: Final = (
     "SELECT c.relname, p.relname AS parent, "
     "t.scopes = pt.scopes AND t.privileges = pt.privileges AS as_parent "
@@ -83,6 +109,10 @@ _FOREIGN_KEYS: Final = text(FOREIGN_KEYS)
 _GUARD_CONFIG: Final = text(GUARD_CONFIG)
 _REGISTERED: Final = text(REGISTERED)
 _MEMBERS: Final = text(MEMBERS)
+_AUDIT_RELATIONS: Final = text(AUDIT_RELATIONS)
+_AUDIT_REGISTRY: Final = text(AUDIT_REGISTRY)
+_AUDIT_PARTITIONS: Final = text(AUDIT_PARTITIONS)
+_AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
 
@@ -99,10 +129,15 @@ class Finding:
 
 @dataclass(frozen=True, slots=True)
 class Report:
-    """The outcome of ``verify``; ``ok`` when nothing differs."""
+    """The outcome of ``verify``; ``ok`` when nothing differs.
+
+    ``expired_audit_partitions`` names the audit log's partitions past the
+    configured retention, which ``loom schema audit drop-expired`` may drop.
+    """
 
     ok: bool
     findings: tuple[Finding, ...]
+    expired_audit_partitions: tuple[str, ...] = ()
 
 
 async def verify(url: str, application: Application) -> Report:
@@ -116,6 +151,8 @@ async def verify(url: str, application: Application) -> Report:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
+            audit = await _audit_state(connection, bootstrap.schema)
+            findings += _audit_findings(audit, application, bootstrap)
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
             findings += await _assertion(connection)
@@ -123,7 +160,8 @@ async def verify(url: str, application: Application) -> Report:
             acl, sequences = await _acl(connection, bootstrap.schema)
             findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
-            findings += _bypass_privileges(acl, sequences, bootstrap)
+            findings += _audit_privileges(acl, audit, bootstrap)
+            findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
             findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
                 connection, acl, application.scoped, bootstrap
@@ -131,7 +169,7 @@ async def verify(url: str, application: Application) -> Report:
             findings += await _memberships(connection, bootstrap)
     finally:
         await engine.dispose()
-    return Report(ok=not findings, findings=tuple(findings))
+    return Report(ok=not findings, findings=tuple(findings), expired_audit_partitions=audit.expired)
 
 
 def _finding(problem: Problem, table: str | None = None) -> Finding:
@@ -167,9 +205,14 @@ def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
         _users(bootstrap.document()["users"]),
     )
     actual = None if row is None else (*row[:7], _users(json.loads(row.users)))
+    findings: list[Finding] = []
     if actual != expected:
-        return [Finding(None, "guard.config", str(expected), str(actual))]
-    return []
+        findings.append(Finding(None, "guard.config", str(expected), str(actual)))
+    audit = (bootstrap.auditor_role, bootstrap.audit_retention_months)
+    held = None if row is None else (row.auditor_role, row.retention_months)
+    if row is not None and held != audit:
+        findings.append(Finding(None, "guard.audit_config", str(audit), str(held)))
+    return findings
 
 
 def _users(users: Any) -> list[tuple[str, bool, str]]:
@@ -265,13 +308,18 @@ async def _sequence_usage(
 
 
 def _bypass_privileges(
-    acl: Acl, sequences: frozenset[str], bootstrap: BootstrapConfig
+    acl: Acl,
+    sequences: frozenset[str],
+    bootstrap: BootstrapConfig,
+    audit_relations: frozenset[str] = frozenset(),
 ) -> list[Finding]:
     bypass = bootstrap.bypass_users
     version_table = bootstrap.names.version_table
     all_row_privileges = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
     for relname, grants in acl.items():
+        if relname in audit_relations:
+            continue
         for user in bypass:
             actual = grants.get(user, set())
             if relname == version_table and actual != BYPASS_VERSION_PRIVILEGES:
@@ -364,6 +412,11 @@ async def _memberships(connection: AsyncConnection, bootstrap: BootstrapConfig) 
         held = memberships[role] & bypass_roles
         if held:
             findings.append(_diff(None, "bypass.membership", role, set(), held))
+    auditor = bootstrap.auditor_role
+    forbidden = {owner, migrator, *bootstrap.database_users}
+    auditors = {member for member, roles in memberships.items() if auditor in roles}
+    if auditors & forbidden:
+        findings.append(_diff(None, "auditor.membership", auditor, set(), auditors & forbidden))
     return findings
 
 
@@ -402,3 +455,108 @@ def _diff(
     table: str | None, check: str, subject: str, wanted: AbstractSet[str], actual: AbstractSet[str]
 ) -> Finding:
     return Finding(table, check, f"{subject}: {sorted(wanted)}", f"{subject}: {sorted(actual)}")
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditState:
+    """The audit log as the database holds it; empty on a guard without one."""
+
+    supported: bool = False
+    relations: frozenset[str] = frozenset()
+    sequences: frozenset[str] = frozenset()
+    registry: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...] = ()
+    retention: int | None = None
+    expired: tuple[str, ...] = ()
+
+
+async def _audit_state(connection: AsyncConnection, schema: str) -> _AuditState:
+    if not (await connection.execute(_AUDIT_SUPPORTED)).scalar():
+        return _AuditState()
+    rows = list(await connection.execute(_AUDIT_RELATIONS, _in_schema(schema)))
+    relations = frozenset(str(row.relname) for row in rows)
+    sequences = frozenset(str(row.relname) for row in rows if row.relkind == "S")
+    registry = {
+        str(row.relname): frozenset(row.excluded or ())
+        for row in await connection.execute(_AUDIT_REGISTRY, _in_schema(schema))
+    }
+    partitions = tuple(
+        (str(row.relname), row.lower_bound, row.upper_bound)
+        for row in await connection.execute(_AUDIT_PARTITIONS)
+    )
+    config = (await connection.execute(_GUARD_CONFIG)).one_or_none()
+    retention = (
+        None if config is None or config.retention_months is None else int(config.retention_months)
+    )
+    return _AuditState(
+        True, relations, sequences, registry, partitions, retention, _expired(partitions, retention)
+    )
+
+
+def _expired(
+    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...], retention: int | None
+) -> tuple[str, ...]:
+    """The partitions whose upper bound is older than the retention, oldest first."""
+    if retention is None:
+        return ()
+    month = dt.datetime.now(dt.UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    months = month.year * 12 + month.month - 1 - retention
+    cutoff = month.replace(year=months // 12, month=months % 12 + 1)
+    return tuple(name for name, _, upper in partitions if upper <= cutoff)
+
+
+def _audit_findings(
+    audit: _AuditState, application: Application, bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """The audited tables and exclusions are the model's, and the log can take this month's rows."""
+    enabled = application.database.schema.audit.enabled
+    declared = (
+        {table.name: table.excluded for table in application.audited.values()} if enabled else {}
+    )
+    if not audit.supported:
+        if declared:
+            return [Finding(None, "audit.guard_revision", "revision 3 or later", "older")]
+        return []
+    findings: list[Finding] = []
+    if set(audit.registry) != set(declared):
+        findings.append(
+            _diff(None, "audit.registry", "audited tables", set(declared), set(audit.registry))
+        )
+    for name in sorted(set(audit.registry) & set(declared)):
+        if audit.registry[name] != declared[name]:
+            findings.append(
+                _diff(name, "audit.excluded", name, declared[name], audit.registry[name])
+            )
+    if audit.relations or declared:
+        findings += _missing_partitions(audit.partitions)
+    return findings
+
+
+def _missing_partitions(
+    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...],
+) -> list[Finding]:
+    now = dt.datetime.now(dt.UTC)
+    month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    following = (month + dt.timedelta(days=32)).replace(day=1)
+    findings: list[Finding] = []
+    for moment, label in ((now, "this month"), (following, "next month")):
+        if not any(lower <= moment < upper for _, lower, upper in partitions):
+            findings.append(
+                Finding("audit_log", "audit.partition", f"a partition for {label}", "none")
+            )
+    return findings
+
+
+def _audit_privileges(acl: Acl, audit: _AuditState, bootstrap: BootstrapConfig) -> list[Finding]:
+    """The log and its partitions grant SELECT to the auditor alone; its sequence grants nothing."""
+    findings: list[Finding] = []
+    for relname in sorted(audit.relations):
+        held = {
+            f"{grantee}:{p}"
+            for grantee, privileges in acl.get(relname, {}).items()
+            for p in privileges
+        }
+        wanted = set() if relname in audit.sequences else {f"{bootstrap.auditor_role}:SELECT"}
+        if held != wanted:
+            findings.append(_diff(relname, "audit.privileges", relname, wanted, held))
+    return findings
