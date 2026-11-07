@@ -63,6 +63,20 @@ class SchemaVersionTables(msgspec.Struct, kw_only=True, frozen=True, forbid_unkn
     data: str
 
 
+class AuditSchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``stores.<name>.schema.audit``: the store's audit log.
+
+    ``enabled: false`` removes the audit trigger from every marked table at the
+    next deploy and keeps the history. ``retention_months`` is how long a
+    monthly partition is kept; without it nothing is ever dropped. ``reader``
+    names the role that reads the log, ``<schema>_auditor`` when absent.
+    """
+
+    enabled: bool = True
+    retention_months: PositiveInt | None = None
+    reader: str | None = None
+
+
 class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
     """``stores.<name>.schema``: the one definition every reader of the section shares.
 
@@ -86,6 +100,7 @@ class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fie
     groups: SchemaGroups | None = None
     version_tables: SchemaVersionTables | None = None
     naming_convention: dict[str, str] | None = None
+    audit: AuditSchemaConfig = msgspec.field(default_factory=AuditSchemaConfig)
 
 
 class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_fields=True):

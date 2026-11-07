@@ -228,6 +228,8 @@ def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
             version_table=version_tables.structure,
             data_version_table=version_tables.data,
         ),
+        auditor=schema.audit.reader,
+        audit_retention_months=schema.audit.retention_months,
     )
     try:
         return config.validated()
