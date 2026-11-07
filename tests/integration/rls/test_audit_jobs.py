@@ -98,7 +98,8 @@ async def test_a_job_records_the_person_who_enqueued_it_and_an_event_its_system_
     trigger = S3Trigger(job="AddMemoJob", identity=TriggerIdentity(subject="svc:importer"))
 
     _run(config, encode_identity(Identity(subject="ana", mechanism="jwt")))
-    _run(config, _identity("importer", "s3", trigger))
+    _run(config, _identity("importer", "s3", trigger, None))
+    _run(config, _identity("importer", "s3", trigger, "arn:aws:iam::1:user/ana"))
 
     engine = create_async_engine(database.superuser, poolclass=NullPool)
     try:
@@ -115,4 +116,5 @@ async def test_a_job_records_the_person_who_enqueued_it_and_an_event_its_system_
     assert recorded == [
         ("ana", "jwt", ""),
         ("svc:importer", "lambda:importer:s3", ""),
+        ("svc:importer", "lambda:importer:s3", "arn:aws:iam::1:user/ana"),
     ]
