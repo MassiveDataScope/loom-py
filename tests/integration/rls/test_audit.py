@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import asyncpg
+import msgspec
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.repository.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import ledger
-from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for, scalar
+from tests.integration.rls.conftest import (
+    BootstrapFactory,
+    ScopedDatabase,
+    application_for,
+    execute,
+    scalar,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -174,3 +184,102 @@ async def test_an_unscoped_audited_table_records_without_scopes(
         {},
         {"new": "hello"},
     )
+
+
+async def test_audit_failure_rolls_back_business_write(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await _ledger(scoped_database, tmp_path, "ledger_fail")
+    guard = "loom_guard_ledger_fail"
+    current = (
+        "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+        "WHERE i.inhparent = 'ledger_fail.audit_log'::regclass "
+        "AND c.relname = 'audit_log_p' || to_char(now(), 'YYYYMM')"
+    )
+    partition = await scalar(database.superuser, current)
+    engine = create_async_engine(database.superuser, poolclass=NullPool)
+    try:
+        with pytest.raises(DBAPIError, match="no partition of relation"):
+            async with engine.begin() as connection:
+                await connection.execute(text(f"SELECT {guard}.enter_hatch()"))
+                detach = (
+                    f"ALTER TABLE ledger_fail.audit_log DETACH PARTITION ledger_fail.{partition}"
+                )
+                await connection.execute(text(detach))
+                await connection.execute(text(_one("ledger_fail.accounts")))
+    finally:
+        await engine.dispose()
+
+    assert await scalar(database.superuser, "SELECT count(*) FROM ledger_fail.accounts") == 0
+    assert await scalar(database.superuser, "SELECT count(*) FROM ledger_fail.audit_log") == 0
+
+
+async def test_write_outside_loom_is_recorded_without_actor(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await _ledger(scoped_database, tmp_path, "ledger_direct")
+
+    await execute(database.bypass, "INSERT INTO ledger_direct.memos (body) VALUES ('by hand')")
+
+    (row,) = await _log(database)
+    assert (row["subject"], row["mechanism"], row["trace_id"]) == ("", "", "")
+    assert row["db_user"] == "ledger_direct_ops"
+
+
+async def test_a_forged_actor_is_recorded_next_to_the_true_connection(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await _ledger(scoped_database, tmp_path, "ledger_spoof")
+
+    await _as_person(
+        database.bypass, "INSERT INTO ledger_spoof.memos (body) VALUES ('forged')", subject="ceo"
+    )
+
+    (row,) = await _log(database)
+    assert (row["subject"], row["db_user"]) == ("ceo", "ledger_spoof_ops")
+
+
+async def test_unmarking_and_disabling_stop_the_audit_and_keep_the_history(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    schema = "ledger_off"
+    database = await scoped_database(schema)
+    application = application_for(ledger, database, tmp_path, schema=schema)
+    await create_schema(database.migrator, application)
+    await _as_person(database.write, f"INSERT INTO {schema}.memos (body) VALUES ('kept')")
+    guard = f"loom_guard_{schema}"
+    audited = f"SELECT array_agg(rel::text ORDER BY rel::text) FROM {guard}.audited_table"
+
+    without_memo = {key: table for key, table in application.audited.items() if key[1] != "memos"}
+    await create_schema(database.migrator, replace(application, audited=without_memo))
+    assert await scalar(database.superuser, audited) == [f"{schema}.accounts"]
+    await _as_person(database.write, f"INSERT INTO {schema}.memos (body) VALUES ('not audited')")
+
+    schema_config = msgspec.structs.replace(
+        application.database.schema,
+        audit=msgspec.structs.replace(application.database.schema.audit, enabled=False),
+    )
+    disabled = replace(
+        application, database=msgspec.structs.replace(application.database, schema=schema_config)
+    )
+    await create_schema(database.migrator, disabled)
+    assert await scalar(database.superuser, audited) is None
+    triggers = (
+        "SELECT count(*) FROM pg_trigger WHERE tgname = 'loom_audit_record' "
+        f"AND tgrelid::regclass::text LIKE '{schema}.%'"
+    )
+    assert await scalar(database.superuser, triggers) == 0
+
+    await create_schema(database.migrator, application)
+    assert await scalar(database.superuser, audited) == [f"{schema}.accounts", f"{schema}.memos"]
+    assert [row["changed"]["body"]["new"] for row in await _log(database)] == ["kept"]
+
+
+async def test_the_application_and_bypass_users_cannot_become_auditors(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await _ledger(scoped_database, tmp_path, "ledger_member")
+    await execute(database.superuser, "GRANT ledger_member_auditor TO ledger_member_rw")
+
+    with pytest.raises(asyncpg.InsufficientPrivilegeError, match="unexpected role memberships"):
+        await scoped_database("ledger_member")
