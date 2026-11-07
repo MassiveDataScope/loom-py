@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import Final
 
 from sqlalchemy import Connection, text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from loom.core.model.audited import AuditedTables
 from loom.core.model.partition import range_partitions
@@ -38,6 +40,16 @@ CREATE_AUDIT_PARTITION: Final = (
     "SELECT create_audit_partition(CAST(:partition AS text), CAST(:lower AS text), "
     "CAST(:upper AS text))"
 )
+OLDEST_EXPIRED_AUDIT_PARTITION: Final = (
+    "SELECT c.relname FROM audit_partition p JOIN pg_class c ON c.oid = p.rel "
+    "CROSS JOIN config cfg WHERE cfg.retention_months IS NOT NULL "
+    "AND p.upper_bound "
+    "<= date_trunc('month', now()) - make_interval(months => cfg.retention_months) "
+    "ORDER BY p.upper_bound LIMIT 1"
+)
+DROP_EXPIRED_AUDIT_PARTITION: Final = (
+    "SELECT drop_expired_audit_partition(CAST(:partition AS text))"
+)
 _PREPARE_AUDIT_LOG: Final = text(PREPARE_AUDIT_LOG)
 _PROTECT_AUDITED: Final = text(PROTECT_AUDITED)
 _UNPROTECT_AUDITED: Final = text(UNPROTECT_AUDITED)
@@ -45,6 +57,8 @@ _REGISTERED_AUDITED: Final = text(REGISTERED_AUDITED)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_LOG_EXISTS: Final = text(AUDIT_LOG_EXISTS)
 _CREATE_AUDIT_PARTITION: Final = text(CREATE_AUDIT_PARTITION)
+_OLDEST_EXPIRED_AUDIT_PARTITION: Final = text(OLDEST_EXPIRED_AUDIT_PARTITION)
+_DROP_EXPIRED_AUDIT_PARTITION: Final = text(DROP_EXPIRED_AUDIT_PARTITION)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,3 +142,23 @@ def ensure_audit_partitions(
         if connection.execute(_CREATE_AUDIT_PARTITION, parameters).scalar():
             created.append(partition.name)
     return tuple(created)
+
+
+async def drop_expired_audit_partition(migrator_url: str) -> str | None:
+    """Drop the oldest audit partition past the configured retention; return its name.
+
+    One partition per call, so a wrong retention costs at most one month
+    before someone notices (FR-017). ``None`` when nothing is expired or no
+    retention is configured. The guard re-checks the retention and refuses a
+    partition within it, whatever this query found.
+    """
+    engine = create_async_engine(migrator_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            oldest = (await connection.execute(_OLDEST_EXPIRED_AUDIT_PARTITION)).scalar()
+            if oldest is None:
+                return None
+            await connection.execute(_DROP_EXPIRED_AUDIT_PARTITION, {"partition": oldest})
+            return str(oldest)
+    finally:
+        await engine.dispose()
