@@ -35,9 +35,10 @@ from loom.core.backend.scoped_ddl import (
     validate_timeout,
 )
 from loom.core.config import ConfigError
+from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
-from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
+from loom.core.repository.sqlalchemy.rls.audit import present_audited, reconcile_audited
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
@@ -137,7 +138,9 @@ def run_migrations(
             version_table_schema=schema,
             include_object=include_object_for(names),
             process_revision_directives=scope_protection_hook(application),
-            on_version_apply=_assert_after_revision(names.guard),
+            on_version_apply=_close_revision(
+                names.guard, schema, application.active_audited, read_only=read_only
+            ),
             loom_guard=names.guard,
         )
         context.run_migrations()
@@ -152,10 +155,22 @@ def _reconcile_audit(
     connection: Connection, application: Application, schema: str, guard: str
 ) -> None:
     connection.commit()
-    connection.execute(_GUARD_FIRST, _guard(guard))
-    reconcile_audited(connection, schema=schema, declared=application.active_audited)
+    _reconcile_present(connection, schema, guard, application.active_audited)
     connection.execute(_ASSERT_SCHEMA)
     connection.commit()
+
+
+def _reconcile_present(
+    connection: Connection, schema: str, guard: str, audited: AuditedTables
+) -> None:
+    """Reconcile the declared audited tables that exist now, in the caller's transaction.
+
+    A declared table no revision has created yet (an autogenerate run on an
+    empty schema, or an earlier revision) waits for the revision that does.
+    """
+    connection.execute(_GUARD_FIRST, _guard(guard))
+    present = present_audited(connection, schema, audited)
+    reconcile_audited(connection, schema=schema, guard=guard, declared=present)
 
 
 def run_data_migrations(
@@ -352,7 +367,17 @@ def _guard(guard: str) -> dict[str, str]:
     return {"guard": guard}
 
 
-def _assert_after_revision(guard: str) -> VersionApply:
+def _close_revision(
+    guard: str, schema: str, audited: AuditedTables, *, read_only: bool
+) -> VersionApply:
+    """Audit the tables a revision created, then assert, before the revision commits.
+
+    Each structural revision commits on its own: a table it creates gets its
+    audit trigger in the same transaction, so no committed state has an
+    audited table without one. The run's last reconciliation still handles
+    markers added or removed with no revision.
+    """
+
     def on_version_apply(
         ctx: MigrationContext,
         step: MigrationInfo,
@@ -360,8 +385,12 @@ def _assert_after_revision(guard: str) -> VersionApply:
         run_args: Mapping[str, Any],
     ) -> None:
         del step, heads, run_args
-        if ctx.connection is not None:
-            assert_revision(ctx.connection, guard)
+        connection = ctx.connection
+        if connection is None:
+            return
+        if audited and not read_only:
+            _reconcile_present(connection, schema, guard, audited)
+        assert_revision(connection, guard)
 
     return on_version_apply
 

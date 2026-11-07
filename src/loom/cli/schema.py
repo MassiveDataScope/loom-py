@@ -24,6 +24,10 @@ from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:
     from loom.core.repository.sqlalchemy.rls import BootstrapConfig
+    from loom.core.repository.sqlalchemy.rls.verify import Report
+
+# The commands below import SQLAlchemy inside their bodies: the CLI loads
+# without it, and only these commands require it.
 
 _STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
@@ -132,13 +136,15 @@ def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
     migrator and of each database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
     """
+    from loom.core.repository.sqlalchemy.rls import apply_bootstrap
+
     try:
         settings = _bootstrap_config(config)
         logins = [settings.roles.migrator] + [
             name for name, user in settings.database_users.items() if user.login
         ]
         passwords = {name: _env(DB_PASSWORD_PREFIX + name.upper()) for name in logins}
-        asyncio.run(_rls().apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
+        asyncio.run(apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
     except ConfigError as exc:
         _fail(exc)
     typer.echo(f"guard of {config} is installed and configured")
@@ -152,10 +158,12 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     guard's configuration row needs a privileged reader. Audit partitions past
     the retention are listed, not counted as drift.
     """
+    from loom.core.repository.sqlalchemy.rls import verify
+
     try:
         application = load_application(str(config))
         url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
-        report = asyncio.run(_rls().verify(url, application))
+        report = asyncio.run(verify(url, application))
     except ConfigError as exc:
         _fail(exc)
     _print_report(report)
@@ -163,7 +171,7 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
         raise typer.Exit(1)
 
 
-def _print_report(report: Any) -> None:
+def _print_report(report: Report) -> None:
     """One line per finding, then one per audit partition past the retention."""
     for finding in report.findings:
         subject = f"{finding.table} " if finding.table else ""
@@ -176,26 +184,25 @@ def _print_report(report: Any) -> None:
 def drop_expired() -> None:
     """Drop the oldest audit partition past the retention, as the migrator; one per run."""
     try:
-        dropped = asyncio.run(_audit().drop_expired_audit_partition(_env(MIGRATOR_URL_VARIABLE)))
+        dropped = asyncio.run(_drop_expired(_env(MIGRATOR_URL_VARIABLE)))
     except ConfigError as exc:
         _fail(exc)
     typer.echo(f"dropped {dropped}" if dropped else "no audit partition is past the retention")
 
 
-def _rls() -> Any:
-    """``loom.core.repository.sqlalchemy.rls``, imported only by the commands that need it.
+async def _drop_expired(migrator_url: str) -> str | None:
+    """Open one transaction as the migrator and drop the oldest expired partition in it."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
 
-    The CLI loads without SQLAlchemy; only these commands require it.
-    """
-    from loom.core.repository.sqlalchemy import rls
+    from loom.core.repository.sqlalchemy.rls.audit import drop_expired_audit_partition
 
-    return rls
-
-
-def _audit() -> Any:
-    from loom.core.repository.sqlalchemy.rls import audit
-
-    return audit
+    engine = create_async_engine(migrator_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            return await drop_expired_audit_partition(connection)
+    finally:
+        await engine.dispose()
 
 
 def _bootstrap_config(config: Path) -> BootstrapConfig:

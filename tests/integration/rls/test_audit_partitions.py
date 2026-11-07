@@ -31,6 +31,16 @@ OLD = (
 )
 
 
+async def _drop_expired(migrator_url: str) -> str | None:
+    """Drop the oldest expired partition in one migrator transaction, as the CLI does."""
+    engine = create_async_engine(migrator_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            return await drop_expired_audit_partition(connection)
+    finally:
+        await engine.dispose()
+
+
 async def _partitions(database: ScopedDatabase) -> list[str]:
     names = await scalar(
         database.superuser,
@@ -60,7 +70,7 @@ async def test_without_retention_nothing_is_ever_dropped(
 ) -> None:
     database = await _with_old_partitions(scoped_database, tmp_path, "books_keep")
 
-    assert await drop_expired_audit_partition(database.migrator) is None
+    assert await _drop_expired(database.migrator) is None
     with pytest.raises(DBAPIError, match="no audit retention is configured"):
         await execute(database.migrator, "SELECT drop_expired_audit_partition('audit_log_p202401')")
     assert "audit_log_p202401" in await _partitions(database)
@@ -79,16 +89,16 @@ async def test_with_retention_one_call_drops_only_the_oldest_expired_partition(
     listed = (await verify(database.superuser, application)).expired_audit_partitions
     with pytest.raises(DBAPIError, match="within the 12-month retention"):
         await execute(database.migrator, f"SELECT drop_expired_audit_partition('{current}')")
-    first = await drop_expired_audit_partition(database.migrator)
+    first = await _drop_expired(database.migrator)
     after_first = await _partitions(database)
-    second = await drop_expired_audit_partition(database.migrator)
+    second = await _drop_expired(database.migrator)
 
     assert listed == ("audit_log_p202401", "audit_log_p202402")
     assert first == "audit_log_p202401"
     assert "audit_log_p202402" in after_first
     assert second == "audit_log_p202402"
     assert current in await _partitions(database)
-    assert await drop_expired_audit_partition(database.migrator) is None
+    assert await _drop_expired(database.migrator) is None
 
 
 async def test_detach_partition_refuses_the_audit_log(

@@ -53,12 +53,14 @@ def audited_table(
     """Compile *model*'s audit declaration.
 
     Raises:
-        ValueError: When an excluded column does not exist, or an excluded or
-            secret column is part of the primary key; the message names the
-            table and the column.
+        ValueError: When the table has no primary key, an excluded column does
+            not exist, or an excluded or secret column is part of the primary
+            key; the message names the table and the column.
     """
     names = tuple(columns)
     keys = tuple(key_columns)
+    if not keys:
+        raise ValueError(f"audited table {name} has no primary key; the log keys each row by it")
     declared = frozenset(getattr(model, "__audit_exclude__", frozenset()))
     unknown = sorted(declared - set(names))
     if unknown:

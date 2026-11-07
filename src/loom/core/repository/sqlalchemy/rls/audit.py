@@ -12,19 +12,18 @@ the guard; names travel as bound parameters and Postgres quotes them.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Final
 
 from sqlalchemy import Connection, text
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.model.audited import AuditedTables
 from loom.core.model.partition import range_partitions
+from loom.core.repository.sqlalchemy.rls.integrity import AUDIT_SUPPORTED
 from loom.core.schema_names import schema_identifier, sql_identifier
 
 AUDIT_LOG: Final = "audit_log"
+_PARTITION_MONTHS: Final = 2  # this month and the next
 PREPARE_AUDIT_LOG: Final = "SELECT prepare_audit_log()"
 PROTECT_AUDITED: Final = (
     "SELECT protect_audited_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
@@ -32,15 +31,32 @@ PROTECT_AUDITED: Final = (
 )
 UNPROTECT_AUDITED: Final = "SELECT unprotect_audited_table(CAST(:rel AS regclass))"
 REGISTERED_AUDITED: Final = (
-    "SELECT n.nspname, c.relname, a.rel::text FROM audited_table a "
-    "JOIN pg_class c ON c.oid = a.rel JOIN pg_namespace n ON n.oid = c.relnamespace"
+    "SELECT c.relname, a.rel::text FROM audited_table a "
+    "JOIN pg_class c ON c.oid = a.rel JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = :schema"
 )
-AUDIT_SUPPORTED: Final = "SELECT to_regprocedure('unprotect_audited_table(regclass)') IS NOT NULL"
+DATABASE_TODAY: Final = "SELECT current_date"
+PRESENT_TABLES: Final = (
+    "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = :schema AND c.relkind IN ('r', 'p') "
+    "AND c.relname = ANY(CAST(:names AS text[]))"
+)
 AUDIT_LOG_EXISTS: Final = "SELECT to_regclass(quote_ident(:schema) || '.audit_log') IS NOT NULL"
 CREATE_AUDIT_PARTITION: Final = (
     "SELECT create_audit_partition(CAST(:partition AS text), CAST(:lower AS text), "
     "CAST(:upper AS text))"
 )
+# The one definition of an expired partition, on the database's clock: its upper
+# bound is at or before this month's start minus the retention. ``verify`` lists
+# them; ``drop-expired`` takes the oldest; the guard re-checks the same rule.
+EXPIRED_AUDIT_PARTITIONS: Final = (
+    "SELECT c.relname FROM audit_partition p JOIN pg_class c ON c.oid = p.rel "
+    "CROSS JOIN config cfg WHERE cfg.retention_months IS NOT NULL "
+    "AND p.upper_bound "
+    "<= date_trunc('month', now()) - make_interval(months => cfg.retention_months) "
+    "ORDER BY p.upper_bound"
+)
+# EXPIRED_AUDIT_PARTITIONS with LIMIT 1, spelled out: SQL reaching the database is a literal.
 OLDEST_EXPIRED_AUDIT_PARTITION: Final = (
     "SELECT c.relname FROM audit_partition p JOIN pg_class c ON c.oid = p.rel "
     "CROSS JOIN config cfg WHERE cfg.retention_months IS NOT NULL "
@@ -56,28 +72,22 @@ _PROTECT_AUDITED: Final = text(PROTECT_AUDITED)
 _UNPROTECT_AUDITED: Final = text(UNPROTECT_AUDITED)
 _REGISTERED_AUDITED: Final = text(REGISTERED_AUDITED)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
+_DATABASE_TODAY: Final = text(DATABASE_TODAY)
+_PRESENT_TABLES: Final = text(PRESENT_TABLES)
 _AUDIT_LOG_EXISTS: Final = text(AUDIT_LOG_EXISTS)
 _CREATE_AUDIT_PARTITION: Final = text(CREATE_AUDIT_PARTITION)
 _OLDEST_EXPIRED_AUDIT_PARTITION: Final = text(OLDEST_EXPIRED_AUDIT_PARTITION)
 _DROP_EXPIRED_AUDIT_PARTITION: Final = text(DROP_EXPIRED_AUDIT_PARTITION)
 
 
-@dataclass(frozen=True, slots=True)
-class AuditReconciliation:
-    """What one reconciliation changed, table names unqualified."""
-
-    protected: tuple[str, ...] = ()
-    unprotected: tuple[str, ...] = ()
-    partitions: tuple[str, ...] = ()
-
-
 def reconcile_audited(
     connection: Connection,
     *,
     schema: str,
+    guard: str,
     declared: AuditedTables,
     today: dt.date | None = None,
-) -> AuditReconciliation:
+) -> None:
     """Bring the guard's audited tables and the log's partitions in line with *declared*.
 
     The caller's connection acts as the schema's owner with the guard first on
@@ -88,94 +98,75 @@ def reconcile_audited(
     Args:
         connection: The migrator's connection, inside the deploy transaction.
         schema: The application schema.
+        guard: The guard schema, to tell whether it has the audit log's revision.
         declared: The tables that record rows (``Application.active_audited``);
             empty stops auditing every registered table.
-        today: The day partitions are created around; today when absent.
+        today: The day partitions are created around; the database's
+            ``current_date`` when absent, the clock the log's rows are dated by.
     """
     schema = schema_identifier(schema)
-    if not declared and not connection.execute(_AUDIT_SUPPORTED).scalar():
-        return AuditReconciliation()
+    if not declared and not connection.execute(_AUDIT_SUPPORTED, {"guard": guard}).scalar():
+        return
     if declared:
         connection.execute(_PREPARE_AUDIT_LOG)
     registered = _registered(connection, schema)
-    protected = _protect(connection, schema, declared, registered)
-    unprotected = _unprotect(connection, {name for _, name in declared}, registered)
-    return AuditReconciliation(protected, unprotected, _partitions(connection, schema, today))
-
-
-def _partitions(connection: Connection, schema: str, today: dt.date | None) -> tuple[str, ...]:
-    """This month's and the next month's partitions, created when the log exists."""
-    if not connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
-        return ()
-    return ensure_audit_partitions(connection, today or dt.date.today())
-
-
-def _registered(connection: Connection, schema: str) -> dict[str, str]:
-    """The guard's audited tables of *schema*: unqualified name to qualified relation."""
-    rows = connection.execute(_REGISTERED_AUDITED)
-    return {str(name): str(rel) for owner, name, rel in rows if owner == schema}
-
-
-def _protect(
-    connection: Connection, schema: str, wanted: AuditedTables, registered: Mapping[str, str]
-) -> tuple[str, ...]:
-    """Protect every *wanted* table, refreshing its exclusions; return the newly audited."""
-    for (_, name), table in sorted(wanted.items(), key=lambda item: item[0][1]):
+    for (_, name), table in sorted(declared.items(), key=lambda item: item[0][1]):
         connection.execute(
             _PROTECT_AUDITED,
             {"schema": schema, "table": sql_identifier(name), "excluded": sorted(table.excluded)},
         )
-    return tuple(sorted(name for _, name in wanted if name not in registered))
-
-
-def _unprotect(
-    connection: Connection, names: set[str], registered: Mapping[str, str]
-) -> tuple[str, ...]:
-    """Stop auditing every registered table not in *names*; the log keeps its history."""
-    unprotected = tuple(sorted(name for name in registered if name not in names))
-    for name in unprotected:
+    for name in sorted(set(registered) - {name for _, name in declared}):
         connection.execute(_UNPROTECT_AUDITED, {"rel": registered[name]})
-    return unprotected
+    if connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
+        _ensure_partitions(connection, today or connection.execute(_DATABASE_TODAY).scalar_one())
 
 
-def ensure_audit_partitions(
-    connection: Connection, today: dt.date, months: int = 2
-) -> tuple[str, ...]:
-    """Create the audit log's partitions for *today*'s month and the following ones.
+def present_audited(connection: Connection, schema: str, declared: AuditedTables) -> AuditedTables:
+    """The *declared* tables that exist in *schema* now.
 
-    A partition that exists is left alone. Returns the names created, in order.
+    After one structural revision, a declared table a later revision creates
+    is not there yet; reconciling only the present ones lets every revision
+    audit the tables it created before it commits.
     """
-    start = today.replace(day=1)
-    end = start
-    for _ in range(months):
-        end = (end.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
-    created: list[str] = []
-    for partition in range_partitions(AUDIT_LOG, start, end):
-        parameters = {
-            "partition": partition.name,
-            "lower": partition.lower,
-            "upper": partition.upper,
-        }
-        if connection.execute(_CREATE_AUDIT_PARTITION, parameters).scalar():
-            created.append(partition.name)
-    return tuple(created)
+    if not declared:
+        return {}
+    names = sorted({name for _, name in declared})
+    rows = connection.execute(_PRESENT_TABLES, {"schema": schema, "names": names})
+    present = {str(row.relname) for row in rows}
+    return {key: table for key, table in declared.items() if key[1] in present}
 
 
-async def drop_expired_audit_partition(migrator_url: str) -> str | None:
+def _registered(connection: Connection, schema: str) -> dict[str, str]:
+    """The guard's audited tables of *schema*: unqualified name to qualified relation."""
+    rows = connection.execute(_REGISTERED_AUDITED, {"schema": schema})
+    return {str(name): str(rel) for name, rel in rows}
+
+
+def _ensure_partitions(connection: Connection, today: dt.date) -> None:
+    """Create the log's partitions for *today*'s month and the next; existing ones stay."""
+    months = today.month - 1 + _PARTITION_MONTHS
+    end = dt.date(today.year + months // 12, months % 12 + 1, 1)
+    for partition in range_partitions(AUDIT_LOG, today.replace(day=1), end):
+        connection.execute(
+            _CREATE_AUDIT_PARTITION,
+            {"partition": partition.name, "lower": partition.lower, "upper": partition.upper},
+        )
+
+
+async def drop_expired_audit_partition(connection: AsyncConnection) -> str | None:
     """Drop the oldest audit partition past the configured retention; return its name.
 
     One partition per call, so a wrong retention costs at most one month
     before someone notices (FR-017). ``None`` when nothing is expired or no
     retention is configured. The guard re-checks the retention and refuses a
     partition within it, whatever this query found.
+
+    Args:
+        connection: The migrator's connection with the guard first on its path,
+            inside the caller's transaction.
     """
-    engine = create_async_engine(migrator_url, poolclass=NullPool)
-    try:
-        async with engine.begin() as connection:
-            oldest = (await connection.execute(_OLDEST_EXPIRED_AUDIT_PARTITION)).scalar()
-            if oldest is None:
-                return None
-            await connection.execute(_DROP_EXPIRED_AUDIT_PARTITION, {"partition": oldest})
-            return str(oldest)
-    finally:
-        await engine.dispose()
+    oldest = (await connection.execute(_OLDEST_EXPIRED_AUDIT_PARTITION)).scalar()
+    if oldest is None:
+        return None
+    await connection.execute(_DROP_EXPIRED_AUDIT_PARTITION, {"partition": oldest})
+    return str(oldest)

@@ -103,7 +103,9 @@ async def _create_protected(
         info.pop(GUARD_PATH, None)
     await connection.execute(_GUARD_FIRST, path)
     await connection.run_sync(
-        lambda sync: reconcile_audited(sync, schema=schema, declared=application.active_audited)
+        lambda sync: reconcile_audited(
+            sync, schema=schema, guard=guard, declared=application.active_audited
+        )
     )
     await connection.execute(_ASSERT_SCHEMA)
 

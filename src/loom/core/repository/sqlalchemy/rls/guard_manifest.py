@@ -153,6 +153,21 @@ AUDIT_LOG_COLUMNS: Final = (
     "backend_pid integer",
     "origin text not null",
 )
+# Its constraints and indexes, schema-qualified names stripped, sorted. A
+# changed primary key, CHECK or index breaks a CDC consumer as much as a column.
+AUDIT_LOG_CONSTRAINTS: Final = (
+    "constraint CHECK ((op = ANY (ARRAY['I'::bpchar, 'U'::bpchar, 'D'::bpchar])))",
+    "constraint CHECK ((origin = ANY (ARRAY['trigger'::text, 'cdc'::text])))",
+    "constraint PRIMARY KEY (at, id)",
+)
+AUDIT_LOG_INDEXES: Final = (
+    "index CREATE INDEX audit_log_row_idx ON ONLY audit_log "
+    "USING btree (schema_name, table_name, row_key)",
+    "index CREATE INDEX audit_log_scopes_idx ON ONLY audit_log USING gin (scopes)",
+    "index CREATE INDEX audit_log_trace_idx ON ONLY audit_log USING btree (trace_id)",
+    "index CREATE UNIQUE INDEX audit_log_pkey ON ONLY audit_log USING btree (at, id)",
+)
+AUDIT_LOG_SHAPE: Final = AUDIT_LOG_COLUMNS + AUDIT_LOG_CONSTRAINTS + AUDIT_LOG_INDEXES
 OWNER_FUNCTIONS: Final = frozenset(
     {
         "protect_scoped_table",

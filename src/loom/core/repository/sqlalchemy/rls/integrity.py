@@ -25,7 +25,7 @@ from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     AUDIT_GUARD_REVISION,
-    AUDIT_LOG_COLUMNS,
+    AUDIT_LOG_SHAPE,
     GUARD_REVISIONS,
     MIN_COMPATIBLE_GUARD_REVISION,
     OWNER_FUNCTIONS,
@@ -37,10 +37,25 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
 
 FUNCTIONS: Final = "functions"
 AUDIT_SHAPE: Final = (
-    "SELECT a.attname || ' ' || format_type(a.atttypid, a.atttypmod) "
-    "|| CASE WHEN a.attnotnull THEN ' not null' ELSE '' END AS line FROM pg_attribute a "
-    "WHERE a.attrelid = to_regclass(quote_ident(:schema) || '.audit_log') "
-    "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
+    "WITH log AS (SELECT to_regclass(quote_ident(:schema) || '.audit_log') AS rel) "
+    "SELECT line FROM ("
+    "SELECT 1 AS kind, a.attnum AS position, a.attname || ' ' "
+    "|| format_type(a.atttypid, a.atttypmod) "
+    "|| CASE WHEN a.attnotnull THEN ' not null' ELSE '' END AS line "
+    "FROM pg_attribute a, log WHERE a.attrelid = log.rel AND a.attnum > 0 AND NOT a.attisdropped "
+    "UNION ALL SELECT 2, 0, 'constraint ' || pg_get_constraintdef(c.oid) "
+    "FROM pg_constraint c, log WHERE c.conrelid = log.rel "
+    "UNION ALL SELECT 3, 0, 'index ' || replace(pg_get_indexdef(i.indexrelid), "
+    "quote_ident(:schema) || '.', '') FROM pg_index i, log WHERE i.indrelid = log.rel"
+    ") shape ORDER BY kind, position, line"
+)
+# Whether the guard has the audit log's revision: its registry of audited tables.
+# Read from the catalogue, not through to_regclass: the application role has
+# no USAGE on the guard schema, and startup asks this as that role.
+AUDIT_SUPPORTED: Final = (
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE n.nspname = :guard AND c.relname = 'audited_table')"
 )
 AUDIT_READABLE: Final = (
     "SELECT has_table_privilege(to_regclass(quote_ident(:schema) || '.audit_log'), 'SELECT')"
@@ -141,6 +156,7 @@ _SCOPED_TABLES_SQL: Final = (
     "WHERE n.nspname = :schema AND c.relname = ANY (CAST(:names AS text[]))"
 )
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
+_AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_READABLE: Final = text(AUDIT_READABLE)
 _CATALOG: Final = text(_CATALOG_SQL)
 _ACCESS: Final = text(_ACCESS_SQL)
@@ -234,20 +250,25 @@ async def _read_problems(
 
 async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem | None:
     """A problem when the installed guard predates the audit log's revision."""
-    rows = await connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
-    number = revision_of(catalog_digest(str(row.line) for row in rows))
-    if number is not None and number >= AUDIT_GUARD_REVISION:
+    if (await connection.execute(_AUDIT_SUPPORTED, _guard_parameters(guard))).scalar():
         return None
-    return Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", str(number))
+    return Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", "older")
 
 
 def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
-    """Compare the audit log's columns with the pinned shape; empty when they match."""
+    """Compare the audit log's columns, constraints and indexes with the pinned shape.
+
+    Empty when they match; the problem lists only the lines that differ.
+    """
     if not lines:
-        return [Problem("audit.shape", _AUDIT_LOG, "the pinned columns", _MISSING)]
-    if tuple(lines) == AUDIT_LOG_COLUMNS:
+        return [Problem("audit.shape", _AUDIT_LOG, "the pinned shape", _MISSING)]
+    if tuple(lines) == AUDIT_LOG_SHAPE:
         return []
-    return [Problem("audit.shape", _AUDIT_LOG, "; ".join(AUDIT_LOG_COLUMNS), "; ".join(lines))]
+    missing = "; ".join(line for line in AUDIT_LOG_SHAPE if line not in lines)
+    extra = "; ".join(line for line in lines if line not in AUDIT_LOG_SHAPE)
+    if not missing and not extra:
+        return [Problem("audit.shape", _AUDIT_LOG, "the pinned order", "reordered")]
+    return [Problem("audit.shape", _AUDIT_LOG, missing or "nothing else", extra or "none")]
 
 
 async def table_problems(

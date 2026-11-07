@@ -224,6 +224,7 @@ def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decod
     """Reads an event of *trigger*'s source into the envelopes of its job and identity."""
     source = source_of(trigger)
     decode = decoders[source]
+    system = _identity(name, source, trigger, None)
 
     def read(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
         return tuple(
@@ -231,7 +232,9 @@ def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decod
                 JobEnvelope(
                     job=trigger.job,
                     payload=item.payload,
-                    identity=_identity(name, source, trigger, item.requester),
+                    identity=system
+                    if item.requester is None
+                    else _identity(name, source, trigger, item.requester),
                 ),
                 item.event_id,
             )

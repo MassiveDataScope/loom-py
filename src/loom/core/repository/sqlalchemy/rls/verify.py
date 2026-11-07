@@ -17,13 +17,11 @@ members of the auditor role. Partitions past the retention are listed in
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import operator
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import text
@@ -35,20 +33,24 @@ from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
+from loom.core.repository.sqlalchemy.rls.audit_verify import (
+    audit_findings,
+    audit_privilege_findings,
+    audit_shape_findings,
+    audit_state,
+)
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding
+from loom.core.repository.sqlalchemy.rls.findings import diff as _diff
 from loom.core.repository.sqlalchemy.rls.integrity import (
-    AUDIT_SHAPE,
     Problem,
-    audit_shape_problems,
     guard_problems,
     table_problems,
 )
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
-    from loom.core.model.audited import AuditedTables
 
-Acl = dict[str, dict[str, set[str]]]
 WRITES: Final = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
 USAGE: Final = frozenset({"USAGE"})
 
@@ -80,24 +82,6 @@ GUARD_CONFIG: Final = (
     "to_jsonb(config) -> 'auditor_role' AS auditor_role, "
     "to_jsonb(config) -> 'retention_months' AS retention_months FROM config"
 )
-AUDIT_RELATIONS: Final = (
-    "SELECT c.relname, c.relkind::text AS relkind FROM pg_class c "
-    "WHERE c.relkind IN ('r', 'p', 'S') "
-    "AND (c.oid = to_regclass(quote_ident(:schema) || '.audit_log') "
-    "OR c.oid IN (SELECT inhrelid FROM pg_inherits "
-    "WHERE inhparent = to_regclass(quote_ident(:schema) || '.audit_log')) "
-    "OR c.oid IN (SELECT d.objid FROM pg_depend d WHERE d.deptype IN ('a', 'i') "
-    "AND d.refobjid = to_regclass(quote_ident(:schema) || '.audit_log')))"
-)
-AUDIT_REGISTRY: Final = (
-    "SELECT c.relname, a.excluded FROM audited_table a JOIN pg_class c ON c.oid = a.rel "
-    "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :schema"
-)
-AUDIT_PARTITIONS: Final = (
-    "SELECT c.relname, p.lower_bound, p.upper_bound FROM audit_partition p "
-    "JOIN pg_class c ON c.oid = p.rel ORDER BY p.lower_bound"
-)
-AUDIT_SUPPORTED: Final = "SELECT to_regclass('audited_table') IS NOT NULL"
 REGISTERED: Final = (
     "SELECT c.relname, p.relname AS parent, "
     "t.scopes = pt.scopes AND t.privileges = pt.privileges AS as_parent "
@@ -119,23 +103,8 @@ _FOREIGN_KEYS: Final = text(FOREIGN_KEYS)
 _GUARD_CONFIG: Final = text(GUARD_CONFIG)
 _REGISTERED: Final = text(REGISTERED)
 _MEMBERS: Final = text(MEMBERS)
-_AUDIT_RELATIONS: Final = text(AUDIT_RELATIONS)
-_AUDIT_REGISTRY: Final = text(AUDIT_REGISTRY)
-_AUDIT_PARTITIONS: Final = text(AUDIT_PARTITIONS)
-_AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
-_AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
-
-
-@dataclass(frozen=True, slots=True)
-class Finding:
-    """One difference between the declaration and the database."""
-
-    table: str | None
-    check: str
-    expected: str
-    actual: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,10 +131,10 @@ async def verify(url: str, application: Application) -> Report:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
-            audit = await _audit_state(connection, bootstrap.schema)
-            findings += _audit_findings(audit, application.active_audited)
+            audit = await audit_state(connection, bootstrap.schema, bootstrap.names.guard)
+            findings += audit_findings(audit, application.active_audited)
             if audit.relations or application.audited:
-                findings += await _audit_shape(connection, bootstrap.schema)
+                findings += await audit_shape_findings(connection, bootstrap.schema)
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
             findings += await _assertion(connection)
@@ -173,7 +142,7 @@ async def verify(url: str, application: Application) -> Report:
             acl, sequences = await _acl(connection, bootstrap.schema)
             findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
-            findings += _audit_privileges(acl, audit, bootstrap)
+            findings += audit_privilege_findings(acl, audit, bootstrap)
             findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
             findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
@@ -491,149 +460,3 @@ def _undeclared_members(rows: list[Any], bootstrap: BootstrapConfig) -> list[Fin
 
 def _in_schema(schema: str) -> dict[str, str]:
     return {"schema": schema}
-
-
-def _diff(
-    table: str | None, check: str, subject: str, wanted: AbstractSet[str], actual: AbstractSet[str]
-) -> Finding:
-    return Finding(table, check, f"{subject}: {sorted(wanted)}", f"{subject}: {sorted(actual)}")
-
-
-@dataclass(frozen=True, slots=True)
-class _AuditState:
-    """The audit log as the database holds it; empty on a guard without one."""
-
-    supported: bool = False
-    relations: frozenset[str] = frozenset()
-    sequences: frozenset[str] = frozenset()
-    registry: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...] = ()
-    retention: int | None = None
-    expired: tuple[str, ...] = ()
-
-
-async def _audit_state(connection: AsyncConnection, schema: str) -> _AuditState:
-    if not (await connection.execute(_AUDIT_SUPPORTED)).scalar():
-        return _AuditState()
-    relations, sequences = await _audit_relations(connection, schema)
-    registry = await _audit_registry(connection, schema)
-    partitions = tuple(
-        (str(row.relname), row.lower_bound, row.upper_bound)
-        for row in await connection.execute(_AUDIT_PARTITIONS)
-    )
-    retention = await _retention(connection)
-    return _AuditState(
-        True, relations, sequences, registry, partitions, retention, _expired(partitions, retention)
-    )
-
-
-async def _audit_relations(
-    connection: AsyncConnection, schema: str
-) -> tuple[frozenset[str], frozenset[str]]:
-    """The audit log's relations in *schema*, and which of them are sequences."""
-    rows = list(await connection.execute(_AUDIT_RELATIONS, _in_schema(schema)))
-    relations = frozenset(str(row.relname) for row in rows)
-    return relations, frozenset(str(row.relname) for row in rows if row.relkind == "S")
-
-
-async def _audit_registry(connection: AsyncConnection, schema: str) -> dict[str, frozenset[str]]:
-    """The guard's audited tables of *schema* and the columns each leaves out of the log."""
-    rows = await connection.execute(_AUDIT_REGISTRY, _in_schema(schema))
-    return {str(row.relname): frozenset(row.excluded or ()) for row in rows}
-
-
-async def _retention(connection: AsyncConnection) -> int | None:
-    """The retention in months the guard holds; ``None`` keeps every partition."""
-    config = (await connection.execute(_GUARD_CONFIG)).one_or_none()
-    months = None if config is None else config.retention_months
-    return None if months is None else int(months)
-
-
-def _expired(
-    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...], retention: int | None
-) -> tuple[str, ...]:
-    """The partitions whose upper bound is older than the retention, oldest first."""
-    if retention is None:
-        return ()
-    month = dt.datetime.now(dt.UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    months = month.year * 12 + month.month - 1 - retention
-    cutoff = month.replace(year=months // 12, month=months % 12 + 1)
-    return tuple(name for name, _, upper in partitions if upper <= cutoff)
-
-
-def _audit_findings(audit: _AuditState, active: AuditedTables) -> list[Finding]:
-    """The audited tables and exclusions are the model's, and the log can take this month's rows."""
-    declared = {table.name: table.excluded for table in active.values()}
-    if not audit.supported:
-        return _older_guard(declared)
-    findings = _registry_findings(audit.registry, declared)
-    if audit.relations or declared:
-        findings += _missing_partitions(audit.partitions)
-    return findings
-
-
-def _older_guard(declared: Mapping[str, frozenset[str]]) -> list[Finding]:
-    """On a guard without the audit log, a finding only when tables must be audited."""
-    if not declared:
-        return []
-    return [Finding(None, "audit.guard_revision", "revision 3 or later", "older")]
-
-
-def _registry_findings(
-    registry: Mapping[str, frozenset[str]], declared: Mapping[str, frozenset[str]]
-) -> list[Finding]:
-    """The guard audits exactly the declared tables, each leaving out the declared columns."""
-    findings: list[Finding] = []
-    if set(registry) != set(declared):
-        findings.append(
-            _diff(None, "audit.registry", "audited tables", set(declared), set(registry))
-        )
-    findings += [
-        _diff(name, "audit.excluded", name, declared[name], registry[name])
-        for name in sorted(set(registry) & set(declared))
-        if registry[name] != declared[name]
-    ]
-    return findings
-
-
-async def _audit_shape(connection: AsyncConnection, schema: str) -> list[Finding]:
-    """The audit log's columns are the pinned ones."""
-    shape = await connection.execute(_AUDIT_SHAPE, _in_schema(schema))
-    lines = [str(row.line) for row in shape]
-    return [_finding(problem, "audit_log") for problem in audit_shape_problems(lines)]
-
-
-def _missing_partitions(
-    partitions: tuple[tuple[str, dt.datetime, dt.datetime], ...],
-) -> list[Finding]:
-    now = dt.datetime.now(dt.UTC)
-    month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    following = (month + dt.timedelta(days=32)).replace(day=1)
-    findings: list[Finding] = []
-    for moment, label in ((now, "this month"), (following, "next month")):
-        if not any(lower <= moment < upper for _, lower, upper in partitions):
-            findings.append(
-                Finding("audit_log", "audit.partition", f"a partition for {label}", "none")
-            )
-    return findings
-
-
-def _audit_privileges(acl: Acl, audit: _AuditState, bootstrap: BootstrapConfig) -> list[Finding]:
-    """The log and its partitions grant SELECT to the auditor alone; its sequence grants nothing."""
-    reader = {f"{bootstrap.auditor_role}:SELECT"}
-    findings: list[Finding] = []
-    for relname in sorted(audit.relations):
-        wanted = set() if relname in audit.sequences else reader
-        held = _grants(acl, relname)
-        if held != wanted:
-            findings.append(_diff(relname, "audit.privileges", relname, wanted, held))
-    return findings
-
-
-def _grants(acl: Acl, relname: str) -> set[str]:
-    """Every privilege *relname* grants, as ``grantee:PRIVILEGE``."""
-    return {
-        f"{grantee}:{privilege}"
-        for grantee, privileges in acl.get(relname, {}).items()
-        for privilege in privileges
-    }

@@ -13,7 +13,6 @@ from loom.cli import schema as schema_cli
 from loom.cli.app import app
 from loom.core.repository.sqlalchemy import rls
 from loom.core.repository.sqlalchemy.rls import DatabaseUser, Finding, Report
-from loom.core.repository.sqlalchemy.rls import audit as rls_audit
 
 runner = CliRunner()
 
@@ -137,7 +136,7 @@ def test_drop_expired_drops_at_most_one_partition(
         urls.append(url)
         return dropped
 
-    monkeypatch.setattr(rls_audit, "drop_expired_audit_partition", drop)
+    monkeypatch.setattr(schema_cli, "_drop_expired", drop)
     monkeypatch.setenv("LOOM_MIGRATOR_URL", "postgresql+asyncpg://migrator@db/app")
 
     result = runner.invoke(app, ["schema", "audit", "drop-expired"])
