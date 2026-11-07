@@ -283,3 +283,45 @@ async def test_the_application_and_bypass_users_cannot_become_auditors(
 
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="unexpected role memberships"):
         await scoped_database("ledger_member")
+
+
+CDC_COPY = (
+    "INSERT INTO {schema}.audit_log (at, txid, schema_name, table_name, row_key, op, changed, "
+    "subject, mechanism, on_behalf_of, elevated, scopes, trace_id, db_user, origin) "
+    "SELECT at, txid, schema_name, table_name, row_key, op, changed, subject, mechanism, "
+    "on_behalf_of, elevated, scopes, trace_id, db_user, 'cdc' FROM {schema}.audit_log"
+)
+CANONICAL = (
+    "SELECT at, op, subject, mechanism, on_behalf_of, trace_id, changed, "
+    "origin, app_name, backend_pid FROM {schema}.audit_log "
+    "WHERE schema_name = :schema AND table_name = 'accounts' AND row_key = CAST(:key AS jsonb) "
+    "ORDER BY at, origin DESC"
+)
+CONTENT = ("at", "op", "subject", "mechanism", "on_behalf_of", "trace_id", "changed")
+
+
+async def test_cdc_origin_rows_read_the_same(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await _ledger(scoped_database, tmp_path, "ledger_cdc")
+    schema = database.schema
+    await _as_person(database.write, _one(f"{schema}.accounts"))
+    await execute(database.migrator, CDC_COPY.format(schema=schema))
+
+    engine = create_async_engine(database.superuser, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"SET LOCAL ROLE {schema}_auditor"))
+            result = await connection.execute(
+                text(CANONICAL.format(schema=schema)),
+                {"schema": schema, "key": '{"tenant": "acme", "id": 1}'},
+            )
+            trigger, cdc = (dict(row._mapping) for row in result)
+    finally:
+        await engine.dispose()
+
+    assert (trigger["origin"], cdc["origin"]) == ("trigger", "cdc")
+    assert {key: trigger[key] for key in CONTENT} == {key: cdc[key] for key in CONTENT}
+    assert trigger["subject"] == "ana"
+    assert trigger["backend_pid"] is not None
+    assert (cdc["app_name"], cdc["backend_pid"]) == ("", None)
