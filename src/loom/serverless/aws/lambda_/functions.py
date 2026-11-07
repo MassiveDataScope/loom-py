@@ -213,12 +213,28 @@ def _check_batching(where: str, queue: QueueMapping | None) -> None:
 
 
 def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
-    if trigger.queued:
-        for key in _RETRIES:
-            if getattr(trigger, key) is not None:
-                raise ConfigError(f"{where}.{key} applies to a direct trigger only")
+    _refuse_retries_when_queued(where, trigger)
+    _refuse_placeholders(where, trigger)
+    _refuse_reserved_attributes(where, trigger)
+
+
+def _refuse_retries_when_queued(where: str, trigger: EventTrigger) -> None:
+    """Lambda's retry settings belong to a direct trigger; SQS retries a queued one."""
+    if not trigger.queued:
+        return
+    for key in _RETRIES:
+        if getattr(trigger, key) is not None:
+            raise ConfigError(f"{where}.{key} applies to a direct trigger only")
+
+
+def _refuse_placeholders(where: str, trigger: EventTrigger) -> None:
+    """The job and the identity are fixed values, never resolved from the environment."""
     if any(INTERPOLATION in value for value in trigger.written_values()):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
+
+
+def _refuse_reserved_attributes(where: str, trigger: EventTrigger) -> None:
+    """Only loom writes an attribute under its reserved prefix, such as the delegated actor."""
     reserved = sorted(
         n for n in trigger.identity.attributes if n.startswith(RESERVED_ATTRIBUTE_PREFIX)
     )

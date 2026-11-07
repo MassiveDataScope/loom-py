@@ -123,6 +123,13 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1
 PARTITION_GUARD_REVISION: Final = 2
 AUDIT_GUARD_REVISION: Final = 3
+
+
+def required_guard_revision(audited: bool) -> int | None:
+    """The lowest guard revision a store needs: the audit log's when it audits, else any."""
+    return AUDIT_GUARD_REVISION if audited else None
+
+
 # The columns of ``<schema>.audit_log`` as ``name type[ not null]``, in order. The
 # shape a CDC consumer must also produce; startup and ``verify`` compare with it.
 AUDIT_LOG_COLUMNS: Final = (

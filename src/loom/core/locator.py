@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, get_args
@@ -92,6 +92,11 @@ class Application:
         return bool(self.scoped or self.audited)
 
     @property
+    def active_audited(self) -> AuditedTables:
+        """The audited tables that record rows: the marked ones while ``schema.audit.enabled``."""
+        return self.audited if self.database.schema.audit.enabled else {}
+
+    @property
     def path(self) -> str:
         """Dotted path of the store section the declarations were read from, which messages name."""
         return f"{ConfigKey.STORES}.{self.store}"
@@ -126,15 +131,7 @@ def load_application(
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
     """
-    from sqlalchemy import MetaData
-
-    from loom.core.backend.scoped_ddl import SCHEMA_KEY
-    from loom.core.backend.sqlalchemy import (
-        audited_tables,
-        compile_all,
-        configured_naming_convention,
-        scoped_tables,
-    )
+    from loom.core.backend.sqlalchemy import audited_tables, scoped_tables
 
     path = _resolve_path(config_path)
     environment = resolve_environment()
@@ -151,12 +148,7 @@ def load_application(
     if skipped:
         _log.info("StoresNotLoaded", store=store, skipped=skipped)
     schema = database.schema
-    metadata = MetaData(
-        naming_convention=configured_naming_convention(schema.naming_convention, path=spec.path)
-    )
-    if schema.name is not None:
-        metadata.info[SCHEMA_KEY] = _schema_name(schema.name, spec.path)
-    compile_all(*models, metadata=metadata)
+    metadata = _compiled_metadata(models, schema, spec.path)
     scoped = scoped_tables(metadata)
     audited = audited_tables(metadata)
     bootstrap = _bootstrap(schema, spec.path) if scoped or audited else None
@@ -171,6 +163,22 @@ def load_application(
         store=store,
         audited=audited,
     )
+
+
+def _compiled_metadata(models: Sequence[type], schema: SchemaConfig, path: str) -> MetaData:
+    """A metadata holding *models* compiled under the store's naming convention and schema."""
+    from sqlalchemy import MetaData
+
+    from loom.core.backend.scoped_ddl import SCHEMA_KEY
+    from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention
+
+    metadata = MetaData(
+        naming_convention=configured_naming_convention(schema.naming_convention, path=path)
+    )
+    if schema.name is not None:
+        metadata.info[SCHEMA_KEY] = _schema_name(schema.name, path)
+    compile_all(*models, metadata=metadata)
+    return metadata
 
 
 def add_code_path(code_path: str | os.PathLike[str], config_dir: Path) -> Path:

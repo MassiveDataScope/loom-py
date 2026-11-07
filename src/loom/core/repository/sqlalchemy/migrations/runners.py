@@ -39,7 +39,7 @@ from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_GUARD_REVISION
+from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
 from loom.core.schema_names import SchemaNames
 
@@ -116,7 +116,7 @@ def run_migrations(
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
     require_landing(connection, owner, schema)
-    minimum = AUDIT_GUARD_REVISION if application.audited else None
+    minimum = required_guard_revision(bool(application.audited))
     require_guard_revision_sync(connection, names.guard, minimum=minimum)
     if read_only:
         connection.commit()
@@ -153,12 +153,7 @@ def _reconcile_audit(
 ) -> None:
     connection.commit()
     connection.execute(_GUARD_FIRST, _guard(guard))
-    reconcile_audited(
-        connection,
-        schema=schema,
-        declared=application.audited,
-        enabled=application.database.schema.audit.enabled,
-    )
+    reconcile_audited(connection, schema=schema, declared=application.active_audited)
     connection.execute(_ASSERT_SCHEMA)
     connection.commit()
 

@@ -158,13 +158,18 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
         report = asyncio.run(_rls().verify(url, application))
     except ConfigError as exc:
         _fail(exc)
+    _print_report(report)
+    if not report.ok:
+        raise typer.Exit(1)
+
+
+def _print_report(report: Any) -> None:
+    """One line per finding, then one per audit partition past the retention."""
     for finding in report.findings:
         subject = f"{finding.table} " if finding.table else ""
         typer.echo(f"{subject}{finding.check}: expected {finding.expected}, found {finding.actual}")
     for partition in report.expired_audit_partitions:
         typer.echo(f"expired audit partition: {partition}")
-    if not report.ok:
-        raise typer.Exit(1)
 
 
 @audit_app.command("drop-expired")

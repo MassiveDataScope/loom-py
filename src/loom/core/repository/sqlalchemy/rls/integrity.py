@@ -214,21 +214,31 @@ async def audit_problems(
     connection: AsyncConnection, guard: str, schema: str, *, audited: bool
 ) -> list[Problem]:
     """The audit log's revision, shape and read access, as any role sees them."""
-    rows = await connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
-    number = revision_of(catalog_digest(str(row.line) for row in rows))
-    if audited and (number is None or number < AUDIT_GUARD_REVISION):
-        return [
-            Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", str(number))
-        ]
-    shape = [
-        str(row.line) for row in await connection.execute(_AUDIT_SHAPE, {_SCHEMA_PARAM: schema})
-    ]
+    if audited and (older := await _older_than_audit(connection, guard)):
+        return [older]
+    parameters = {_SCHEMA_PARAM: schema}
+    shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, parameters)]
     if not shape and not audited:
         return []
-    problems = audit_shape_problems(shape)
-    if shape and (await connection.execute(_AUDIT_READABLE, {_SCHEMA_PARAM: schema})).scalar():
-        problems.append(Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable"))
-    return problems
+    return audit_shape_problems(shape) + await _read_problems(connection, shape, parameters)
+
+
+async def _read_problems(
+    connection: AsyncConnection, shape: Sequence[str], parameters: dict[str, str]
+) -> list[Problem]:
+    """A problem when the connecting role can read an existing audit log."""
+    if shape and (await connection.execute(_AUDIT_READABLE, parameters)).scalar():
+        return [Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable")]
+    return []
+
+
+async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem | None:
+    """A problem when the installed guard predates the audit log's revision."""
+    rows = await connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
+    number = revision_of(catalog_digest(str(row.line) for row in rows))
+    if number is not None and number >= AUDIT_GUARD_REVISION:
+        return None
+    return Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", str(number))
 
 
 def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:

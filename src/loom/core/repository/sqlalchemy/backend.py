@@ -419,6 +419,14 @@ async def _check_external(
     store: _Store,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
 ) -> None:
+    await _require_tables(connection, store)
+    audited = bool(audited_tables(store.session_manager.metadata))
+    if connection.dialect.name == POSTGRES_DIALECT and (scoped or audited):
+        await _check_guard(connection, scoped, store, audited=audited)
+
+
+async def _require_tables(connection: AsyncConnection, store: _Store) -> None:
+    """Refuse an external store whose database lacks a table the models declare."""
     names = [table.name for table in store.session_manager.metadata.sorted_tables]
     present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
     missing = sorted(name for name in names if name not in present)
@@ -426,9 +434,6 @@ async def _check_external(
         raise ConfigError(
             f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
-    audited = bool(audited_tables(store.session_manager.metadata))
-    if connection.dialect.name == POSTGRES_DIALECT and (scoped or audited):
-        await _check_guard(connection, scoped, store, audited=audited)
 
 
 async def _check_guard(

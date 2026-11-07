@@ -76,7 +76,6 @@ def reconcile_audited(
     *,
     schema: str,
     declared: AuditedTables,
-    enabled: bool,
     today: dt.date | None = None,
 ) -> AuditReconciliation:
     """Bring the guard's audited tables and the log's partitions in line with *declared*.
@@ -89,23 +88,26 @@ def reconcile_audited(
     Args:
         connection: The migrator's connection, inside the deploy transaction.
         schema: The application schema.
-        declared: The audited tables compiled from the models.
-        enabled: ``schema.audit.enabled``; false stops auditing every table.
+        declared: The tables that record rows (``Application.active_audited``);
+            empty stops auditing every registered table.
         today: The day partitions are created around; today when absent.
     """
     schema = schema_identifier(schema)
-    wanted = {key: table for key, table in declared.items() if enabled}
-    if not wanted and not connection.execute(_AUDIT_SUPPORTED).scalar():
+    if not declared and not connection.execute(_AUDIT_SUPPORTED).scalar():
         return AuditReconciliation()
-    if wanted:
+    if declared:
         connection.execute(_PREPARE_AUDIT_LOG)
     registered = _registered(connection, schema)
-    protected = _protect(connection, schema, wanted, registered)
-    unprotected = _unprotect(connection, {name for _, name in wanted}, registered)
-    partitions: tuple[str, ...] = ()
-    if connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
-        partitions = ensure_audit_partitions(connection, today or dt.date.today())
-    return AuditReconciliation(protected, unprotected, partitions)
+    protected = _protect(connection, schema, declared, registered)
+    unprotected = _unprotect(connection, {name for _, name in declared}, registered)
+    return AuditReconciliation(protected, unprotected, _partitions(connection, schema, today))
+
+
+def _partitions(connection: Connection, schema: str, today: dt.date | None) -> tuple[str, ...]:
+    """This month's and the next month's partitions, created when the log exists."""
+    if not connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
+        return ()
+    return ensure_audit_partitions(connection, today or dt.date.today())
 
 
 def _registered(connection: Connection, schema: str) -> dict[str, str]:

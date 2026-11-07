@@ -23,10 +23,7 @@ _STORES: Final = str(ConfigKey.STORES)
 
 @deploy_check(AUDIT_DISABLED_CHECK)
 def _audit_disabled(config: ConfigContext) -> Finding | None:
-    stores = config.raw(_STORES, {})
-    if not isinstance(stores, dict):
-        return None
-    off = sorted(name for name, store in stores.items() if _audit_off(store))
+    off = _disabled_stores(config.raw(_STORES, {}))
     if not off:
         return None
     paths = ", ".join(f"{_STORES}.{name}.schema.audit.enabled" for name in off)
@@ -34,6 +31,13 @@ def _audit_disabled(config: ConfigContext) -> Finding | None:
         message=f"{paths} is false: tables marked Audited record nothing in that store.",
         hint="remove the key or set it to true; history is kept either way.",
     )
+
+
+def _disabled_stores(stores: object) -> list[str]:
+    """The stores whose audit switch is written as false, sorted."""
+    if not isinstance(stores, dict):
+        return []
+    return sorted(name for name, store in stores.items() if _audit_off(store))
 
 
 def _audit_off(store: object) -> bool:

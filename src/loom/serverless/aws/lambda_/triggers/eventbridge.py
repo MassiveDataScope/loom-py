@@ -29,9 +29,14 @@ def decode(event: Any) -> tuple[Decoded, ...]:
 
 def _caller(event: dict[str, Any], detail: dict[str, Any]) -> str | None:
     """The ARN AWS recorded for an AWS service event's caller; ``None`` for any other event."""
-    source = event.get("source")
-    if not isinstance(source, str) or not source.startswith(_AWS_SOURCE):
+    if not _from_aws_service(event):
         return None
     recorded = detail.get("userIdentity")
     arn = recorded.get("arn") if isinstance(recorded, dict) else None
     return arn if isinstance(arn, str) and arn else None
+
+
+def _from_aws_service(event: dict[str, Any]) -> bool:
+    """Whether AWS itself emitted *event*: only then is its recorded caller trustworthy."""
+    source = event.get("source")
+    return isinstance(source, str) and source.startswith(_AWS_SOURCE)

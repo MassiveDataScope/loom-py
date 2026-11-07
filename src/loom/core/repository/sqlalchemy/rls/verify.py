@@ -46,6 +46,7 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
+    from loom.core.model.audited import AuditedTables
 
 Acl = dict[str, dict[str, set[str]]]
 WRITES: Final = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
@@ -162,13 +163,9 @@ async def verify(url: str, application: Application) -> Report:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
             audit = await _audit_state(connection, bootstrap.schema)
-            findings += _audit_findings(audit, application, bootstrap)
+            findings += _audit_findings(audit, application.active_audited)
             if audit.relations or application.audited:
-                shape = await connection.execute(_AUDIT_SHAPE, _in_schema(bootstrap.schema))
-                findings += [
-                    _finding(problem, "audit_log")
-                    for problem in audit_shape_problems([str(row.line) for row in shape])
-                ]
+                findings += await _audit_shape(connection, bootstrap.schema)
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
             findings += await _assertion(connection)
@@ -224,11 +221,18 @@ def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
     findings: list[Finding] = []
     if actual != expected:
         findings.append(Finding(None, "guard.config", str(expected), str(actual)))
+    return findings + _audit_config_findings(row, bootstrap)
+
+
+def _audit_config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
+    """The guard's auditor role and retention are the declared ones; nothing without a row."""
+    if row is None:
+        return []
     audit = (bootstrap.auditor_role, bootstrap.audit_retention_months)
-    held = None if row is None else (row.auditor_role, row.retention_months)
-    if row is not None and held != audit:
-        findings.append(Finding(None, "guard.audit_config", str(audit), str(held)))
-    return findings
+    held = (row.auditor_role, row.retention_months)
+    if held == audit:
+        return []
+    return [Finding(None, "guard.audit_config", str(audit), str(held))]
 
 
 def _users(users: Any) -> list[tuple[str, bool, str]]:
@@ -410,31 +414,52 @@ def _parent_write_findings(parent: str, acl: Acl, groups: tuple[str, str]) -> li
 async def _memberships(connection: AsyncConnection, bootstrap: BootstrapConfig) -> list[Finding]:
     rows = list(await connection.execute(_MEMBERS))
     memberships: dict[str, set[str]] = defaultdict(set)
-    bypass_roles = {str(row.role) for row in rows if row.rolbypassrls}
     inherits: dict[tuple[str, str], bool] = {}
     for row in rows:
         member, role = str(row.member), str(row.role)
         memberships[member].add(role)
         inherits[(member, role)] = bool(row.inherits)
+    bypass_roles = {str(row.role) for row in rows if row.rolbypassrls}
     findings = _access_memberships(memberships, bootstrap)
     findings += _undeclared_members(rows, bootstrap)
+    findings += _migrator_inherits(inherits, bootstrap)
+    findings += _privileged_bypass(memberships, bypass_roles, bootstrap)
+    return findings + _auditor_members(memberships, bootstrap)
+
+
+def _migrator_inherits(
+    inherits: Mapping[tuple[str, str], bool], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """The migrator acts as the schema's owner only through SET ROLE, never by inheritance."""
     owner, migrator = bootstrap.roles.owner, bootstrap.roles.migrator
-    if inherits.get((migrator, owner), False):
-        findings.append(
-            Finding(
-                None, "migrator.inherit", f"{migrator} inherits nothing from {owner}", "inherits"
-            )
-        )
-    for role in (owner, migrator):
-        held = memberships[role] & bypass_roles
-        if held:
-            findings.append(_diff(None, "bypass.membership", role, set(), held))
+    if not inherits.get((migrator, owner), False):
+        return []
+    return [
+        Finding(None, "migrator.inherit", f"{migrator} inherits nothing from {owner}", "inherits")
+    ]
+
+
+def _privileged_bypass(
+    memberships: Mapping[str, set[str]], bypass_roles: set[str], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """Neither the schema's owner nor the migrator belongs to a role that bypasses RLS."""
+    return [
+        _diff(None, "bypass.membership", role, set(), held)
+        for role in (bootstrap.roles.owner, bootstrap.roles.migrator)
+        if (held := memberships[role] & bypass_roles)
+    ]
+
+
+def _auditor_members(
+    memberships: Mapping[str, set[str]], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """No login the application or the deploy uses can read the audit log."""
     auditor = bootstrap.auditor_role
-    forbidden = {owner, migrator, *bootstrap.database_users}
-    auditors = {member for member, roles in memberships.items() if auditor in roles}
-    if auditors & forbidden:
-        findings.append(_diff(None, "auditor.membership", auditor, set(), auditors & forbidden))
-    return findings
+    forbidden = {bootstrap.roles.owner, bootstrap.roles.migrator, *bootstrap.database_users}
+    members = {member for member, roles in memberships.items() if auditor in roles} & forbidden
+    if not members:
+        return []
+    return [_diff(None, "auditor.membership", auditor, set(), members)]
 
 
 def _access_memberships(
@@ -490,24 +515,38 @@ class _AuditState:
 async def _audit_state(connection: AsyncConnection, schema: str) -> _AuditState:
     if not (await connection.execute(_AUDIT_SUPPORTED)).scalar():
         return _AuditState()
-    rows = list(await connection.execute(_AUDIT_RELATIONS, _in_schema(schema)))
-    relations = frozenset(str(row.relname) for row in rows)
-    sequences = frozenset(str(row.relname) for row in rows if row.relkind == "S")
-    registry = {
-        str(row.relname): frozenset(row.excluded or ())
-        for row in await connection.execute(_AUDIT_REGISTRY, _in_schema(schema))
-    }
+    relations, sequences = await _audit_relations(connection, schema)
+    registry = await _audit_registry(connection, schema)
     partitions = tuple(
         (str(row.relname), row.lower_bound, row.upper_bound)
         for row in await connection.execute(_AUDIT_PARTITIONS)
     )
-    config = (await connection.execute(_GUARD_CONFIG)).one_or_none()
-    retention = (
-        None if config is None or config.retention_months is None else int(config.retention_months)
-    )
+    retention = await _retention(connection)
     return _AuditState(
         True, relations, sequences, registry, partitions, retention, _expired(partitions, retention)
     )
+
+
+async def _audit_relations(
+    connection: AsyncConnection, schema: str
+) -> tuple[frozenset[str], frozenset[str]]:
+    """The audit log's relations in *schema*, and which of them are sequences."""
+    rows = list(await connection.execute(_AUDIT_RELATIONS, _in_schema(schema)))
+    relations = frozenset(str(row.relname) for row in rows)
+    return relations, frozenset(str(row.relname) for row in rows if row.relkind == "S")
+
+
+async def _audit_registry(connection: AsyncConnection, schema: str) -> dict[str, frozenset[str]]:
+    """The guard's audited tables of *schema* and the columns each leaves out of the log."""
+    rows = await connection.execute(_AUDIT_REGISTRY, _in_schema(schema))
+    return {str(row.relname): frozenset(row.excluded or ()) for row in rows}
+
+
+async def _retention(connection: AsyncConnection) -> int | None:
+    """The retention in months the guard holds; ``None`` keeps every partition."""
+    config = (await connection.execute(_GUARD_CONFIG)).one_or_none()
+    months = None if config is None else config.retention_months
+    return None if months is None else int(months)
 
 
 def _expired(
@@ -522,31 +561,46 @@ def _expired(
     return tuple(name for name, _, upper in partitions if upper <= cutoff)
 
 
-def _audit_findings(
-    audit: _AuditState, application: Application, bootstrap: BootstrapConfig
-) -> list[Finding]:
+def _audit_findings(audit: _AuditState, active: AuditedTables) -> list[Finding]:
     """The audited tables and exclusions are the model's, and the log can take this month's rows."""
-    enabled = application.database.schema.audit.enabled
-    declared = (
-        {table.name: table.excluded for table in application.audited.values()} if enabled else {}
-    )
+    declared = {table.name: table.excluded for table in active.values()}
     if not audit.supported:
-        if declared:
-            return [Finding(None, "audit.guard_revision", "revision 3 or later", "older")]
-        return []
-    findings: list[Finding] = []
-    if set(audit.registry) != set(declared):
-        findings.append(
-            _diff(None, "audit.registry", "audited tables", set(declared), set(audit.registry))
-        )
-    for name in sorted(set(audit.registry) & set(declared)):
-        if audit.registry[name] != declared[name]:
-            findings.append(
-                _diff(name, "audit.excluded", name, declared[name], audit.registry[name])
-            )
+        return _older_guard(declared)
+    findings = _registry_findings(audit.registry, declared)
     if audit.relations or declared:
         findings += _missing_partitions(audit.partitions)
     return findings
+
+
+def _older_guard(declared: Mapping[str, frozenset[str]]) -> list[Finding]:
+    """On a guard without the audit log, a finding only when tables must be audited."""
+    if not declared:
+        return []
+    return [Finding(None, "audit.guard_revision", "revision 3 or later", "older")]
+
+
+def _registry_findings(
+    registry: Mapping[str, frozenset[str]], declared: Mapping[str, frozenset[str]]
+) -> list[Finding]:
+    """The guard audits exactly the declared tables, each leaving out the declared columns."""
+    findings: list[Finding] = []
+    if set(registry) != set(declared):
+        findings.append(
+            _diff(None, "audit.registry", "audited tables", set(declared), set(registry))
+        )
+    findings += [
+        _diff(name, "audit.excluded", name, declared[name], registry[name])
+        for name in sorted(set(registry) & set(declared))
+        if registry[name] != declared[name]
+    ]
+    return findings
+
+
+async def _audit_shape(connection: AsyncConnection, schema: str) -> list[Finding]:
+    """The audit log's columns are the pinned ones."""
+    shape = await connection.execute(_AUDIT_SHAPE, _in_schema(schema))
+    lines = [str(row.line) for row in shape]
+    return [_finding(problem, "audit_log") for problem in audit_shape_problems(lines)]
 
 
 def _missing_partitions(
@@ -566,14 +620,20 @@ def _missing_partitions(
 
 def _audit_privileges(acl: Acl, audit: _AuditState, bootstrap: BootstrapConfig) -> list[Finding]:
     """The log and its partitions grant SELECT to the auditor alone; its sequence grants nothing."""
+    reader = {f"{bootstrap.auditor_role}:SELECT"}
     findings: list[Finding] = []
     for relname in sorted(audit.relations):
-        held = {
-            f"{grantee}:{p}"
-            for grantee, privileges in acl.get(relname, {}).items()
-            for p in privileges
-        }
-        wanted = set() if relname in audit.sequences else {f"{bootstrap.auditor_role}:SELECT"}
+        wanted = set() if relname in audit.sequences else reader
+        held = _grants(acl, relname)
         if held != wanted:
             findings.append(_diff(relname, "audit.privileges", relname, wanted, held))
     return findings
+
+
+def _grants(acl: Acl, relname: str) -> set[str]:
+    """Every privilege *relname* grants, as ``grantee:PRIVILEGE``."""
+    return {
+        f"{grantee}:{privilege}"
+        for grantee, privileges in acl.get(relname, {}).items()
+        for privilege in privileges
+    }

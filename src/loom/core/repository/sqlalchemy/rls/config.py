@@ -71,6 +71,12 @@ class BootstrapConfig:
             ValueError: Naming the first identifier Postgres would fold,
                 truncate or resolve to something else, or two roles sharing a name.
         """
+        self._check_names()
+        self._check_settings()
+        return self
+
+    def _check_names(self) -> None:
+        """Every identifier is one Postgres keeps as written, and the roles are distinct."""
         schema_identifier(self.schema)
         sql_identifier(self.names.guard, max_length=MAX_GUARD_LENGTH)
         for table in (self.names.version_table, self.names.data_version_table):
@@ -87,6 +93,9 @@ class BootstrapConfig:
             sql_identifier(name)
         if len(set(roles)) != len(roles):
             raise ValueError(f"database roles must have distinct names, got {sorted(roles)}")
+
+    def _check_settings(self) -> None:
+        """The retention, the version tables and the SCRAM iterations are usable."""
         if self.audit_retention_months is not None and self.audit_retention_months < 1:
             raise ValueError(
                 f"audit retention_months must be at least 1, got {self.audit_retention_months}"
@@ -98,7 +107,6 @@ class BootstrapConfig:
                 f"scram_iterations must be at least {POSTGRES_SCRAM_ITERATIONS}, "
                 f"got {self.scram_iterations}"
             )
-        return self
 
     def document(self) -> dict[str, object]:
         """The bound JSON document the guard's ``configure`` consumes."""
