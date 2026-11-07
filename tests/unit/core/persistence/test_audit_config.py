@@ -19,7 +19,9 @@ def test_the_audit_section_decodes_every_key() -> None:
         {"audit": {"enabled": False, "retention_months": 24, "reader": "app_auditor"}}, SchemaConfig
     )
 
-    assert schema.audit == AuditSchemaConfig(enabled=False, retention_months=24, reader="app_auditor")
+    assert schema.audit == AuditSchemaConfig(
+        enabled=False, retention_months=24, reader="app_auditor"
+    )
 
 
 @pytest.mark.parametrize("months", [0, -1])

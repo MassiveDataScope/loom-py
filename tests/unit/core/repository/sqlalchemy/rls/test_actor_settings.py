@@ -10,7 +10,6 @@ from loom.core.repository.sqlalchemy.rls.provider import (
     ACTOR_MECHANISM,
     ACTOR_ON_BEHALF_OF,
     ACTOR_SUBJECT,
-
     TRACE_ID,
     scoped_session_settings,
 )
