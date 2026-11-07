@@ -276,7 +276,18 @@ def _compile_model(
     comp.compiled[struct_cls] = sa_cls
     comp.tables[table_name] = sa_cls
     comp.pending[struct_cls] = get_relations(struct_cls)
-    table = sa_cls.__table__
+    _register_protection(struct_cls, sa_cls.__table__, comp, scopes, partition)
+    return sa_cls
+
+
+def _register_protection(
+    struct_cls: type,
+    table: Any,
+    comp: _Compilation,
+    scopes: tuple[Any, ...],
+    partition: Any,
+) -> None:
+    """Record what the guard protects on *table*: its scopes and its audit trigger."""
     scoped = None
     if scopes:
         scoped = ScopedTable(
@@ -297,7 +308,6 @@ def _compile_model(
             scoped=scoped,
             privileges=declared_privileges(struct_cls),
         )
-    return sa_cls
 
 
 def _audited(struct_cls: type, table: Any) -> AuditedTable:
