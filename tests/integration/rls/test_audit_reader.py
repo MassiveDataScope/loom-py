@@ -173,6 +173,7 @@ async def test_the_owner_cannot_rekey_an_audited_table_or_repoint_the_writer(
     scoped_database: BootstrapFactory, tmp_path: Path, statement: str, reason: str
 ) -> None:
     database, _ = await _database(scoped_database, tmp_path)
+    sql = statement.format(schema=SCHEMA)
 
     with pytest.raises(DBAPIError, match=reason):
-        await _run(database.migrator, statement.format(schema=SCHEMA))
+        await _run(database.migrator, sql)
