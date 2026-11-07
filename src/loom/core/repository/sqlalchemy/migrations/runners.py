@@ -37,7 +37,9 @@ from loom.core.backend.scoped_ddl import (
 from loom.core.config import ConfigError
 from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
+from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_GUARD_REVISION
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
 from loom.core.schema_names import SchemaNames
 
@@ -102,7 +104,11 @@ def run_migrations(
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
 ) -> None:
-    """Run the structural tree as the owner, one transaction per revision."""
+    """Run the structural tree as the owner, one transaction per revision.
+
+    Afterwards the audited tables are reconciled with the guard in one more
+    transaction (``reconcile_audited``), closed by the guard's assertion.
+    """
     from alembic import context
 
     bootstrap = _require_bootstrap(application)
@@ -110,7 +116,8 @@ def run_migrations(
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
     require_landing(connection, owner, schema)
-    require_guard_revision_sync(connection, names.guard)
+    minimum = AUDIT_GUARD_REVISION if application.audited else None
+    require_guard_revision_sync(connection, names.guard, minimum=minimum)
     if read_only:
         connection.commit()
     else:
@@ -134,9 +141,26 @@ def run_migrations(
             loom_guard=names.guard,
         )
         context.run_migrations()
+        if not read_only:
+            _reconcile_audit(connection, application, schema, names.guard)
     finally:
         if not read_only:
             _unlock(connection, schema)
+
+
+def _reconcile_audit(
+    connection: Connection, application: Application, schema: str, guard: str
+) -> None:
+    connection.commit()
+    connection.execute(_GUARD_FIRST, _guard(guard))
+    reconcile_audited(
+        connection,
+        schema=schema,
+        declared=application.audited,
+        enabled=application.database.schema.audit.enabled,
+    )
+    connection.execute(_ASSERT_SCHEMA)
+    connection.commit()
 
 
 def run_data_migrations(

@@ -15,7 +15,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, get_args
 
@@ -31,6 +31,7 @@ from loom.core.environment import (
     resolve_environment,
 )
 from loom.core.logger import get_logger
+from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.persistence.database import (
     DatabaseConfig,
@@ -83,6 +84,12 @@ class Application:
     scoped: ScopedTables
     scope_sources: Mapping[str, str]
     store: StoreKey = DEFAULT_STORE
+    audited: AuditedTables = field(default_factory=dict)
+
+    @property
+    def guarded(self) -> bool:
+        """Whether the store needs the guard: it declares scoped or audited tables."""
+        return bool(self.scoped or self.audited)
 
     @property
     def path(self) -> str:
@@ -123,6 +130,7 @@ def load_application(
 
     from loom.core.backend.scoped_ddl import SCHEMA_KEY
     from loom.core.backend.sqlalchemy import (
+        audited_tables,
         compile_all,
         configured_naming_convention,
         scoped_tables,
@@ -150,7 +158,8 @@ def load_application(
         metadata.info[SCHEMA_KEY] = _schema_name(schema.name, spec.path)
     compile_all(*models, metadata=metadata)
     scoped = scoped_tables(metadata)
-    bootstrap = _bootstrap(schema, spec.path) if scoped else None
+    audited = audited_tables(metadata)
+    bootstrap = _bootstrap(schema, spec.path) if scoped or audited else None
     scope_sources = _scope_sources(schema, scoped, spec.path) if scoped else {}
     return Application(
         models=tuple(models),
@@ -160,6 +169,7 @@ def load_application(
         scoped=scoped,
         scope_sources=scope_sources,
         store=store,
+        audited=audited,
     )
 
 

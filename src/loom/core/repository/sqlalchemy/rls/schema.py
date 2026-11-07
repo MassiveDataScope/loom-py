@@ -18,7 +18,9 @@ from loom.core.backend.scoped_ddl import (
     validate_timeout,
 )
 from loom.core.config import ConfigError
+from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_GUARD_REVISION
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -48,7 +50,8 @@ async def create_schema(
     The schema's advisory lock is taken first, the guard's revision is checked
     before any guard call, and the listeners registered at compile time open
     the hatch and call the guard, guard first, for every scoped table, so each
-    table is protected in the transaction that creates it; the guard's
+    table is protected in the transaction that creates it. Audited tables are
+    then reconciled with the guard (``reconcile_audited``); the guard's
     assertion closes the transaction.
 
     Raises:
@@ -69,7 +72,7 @@ async def create_schema(
             allow_unprotected=application.database.schema.allow_unprotected_dialect,
             path=application.path,
         )
-        bootstrap = application.bootstrap if application.scoped else None
+        bootstrap = application.bootstrap if application.guarded else None
         async with manager.engine.begin() as connection:
             if bootstrap is None:
                 await connection.run_sync(application.metadata.create_all)
@@ -89,7 +92,8 @@ async def _create_protected(
     await connection.execute(_LOCK_TIMEOUT, {"lock": lock_timeout})
     await connection.execute(_SCHEMA_LOCK, {"schema": schema})
     await _require_guard(connection, schema, guard)
-    await require_guard_revision(connection, guard)
+    minimum = AUDIT_GUARD_REVISION if application.audited else None
+    await require_guard_revision(connection, guard, minimum=minimum)
     path = {"schema": schema, "guard": guard}
     info = (await connection.get_raw_connection()).info
     info[GUARD_PATH] = path
@@ -98,6 +102,12 @@ async def _create_protected(
     finally:
         info.pop(GUARD_PATH, None)
     await connection.execute(_GUARD_FIRST, path)
+    audit = application.database.schema.audit
+    await connection.run_sync(
+        lambda sync: reconcile_audited(
+            sync, schema=schema, declared=application.audited, enabled=audit.enabled
+        )
+    )
     await connection.execute(_ASSERT_SCHEMA)
 
 
