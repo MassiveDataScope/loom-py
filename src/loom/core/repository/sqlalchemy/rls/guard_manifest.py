@@ -111,6 +111,29 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1
 PARTITION_GUARD_REVISION: Final = 2
 AUDIT_GUARD_REVISION: Final = 3
+# The columns of ``<schema>.audit_log`` as ``name type[ not null]``, in order. The
+# shape a CDC consumer must also produce; startup and ``verify`` compare with it.
+AUDIT_LOG_COLUMNS: Final = (
+    "id bigint not null",
+    "at timestamp with time zone not null",
+    "txid xid8 not null",
+    "schema_name text not null",
+    "table_name text not null",
+    "row_key jsonb not null",
+    "op character(1) not null",
+    "changed jsonb not null",
+    "subject text not null",
+    "mechanism text not null",
+    "on_behalf_of text not null",
+    "elevated text[] not null",
+    "scopes jsonb not null",
+    "trace_id text not null",
+    "db_user name not null",
+    "app_name text not null",
+    "client_addr inet",
+    "backend_pid integer",
+    "origin text not null",
+)
 OWNER_FUNCTIONS: Final = frozenset(
     {
         "protect_scoped_table",

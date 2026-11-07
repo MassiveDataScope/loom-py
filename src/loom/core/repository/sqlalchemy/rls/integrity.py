@@ -24,6 +24,8 @@ from loom.core.config import ConfigError
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+    AUDIT_GUARD_REVISION,
+    AUDIT_LOG_COLUMNS,
     GUARD_REVISIONS,
     MIN_COMPATIBLE_GUARD_REVISION,
     OWNER_FUNCTIONS,
@@ -34,6 +36,15 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
 )
 
 FUNCTIONS: Final = "functions"
+AUDIT_SHAPE: Final = (
+    "SELECT a.attname || ' ' || format_type(a.atttypid, a.atttypmod) "
+    "|| CASE WHEN a.attnotnull THEN ' not null' ELSE '' END AS line FROM pg_attribute a "
+    "WHERE a.attrelid = to_regclass(quote_ident(:schema) || '.audit_log') "
+    "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
+)
+AUDIT_READABLE: Final = (
+    "SELECT has_table_privilege(to_regclass(quote_ident(:schema) || '.audit_log'), 'SELECT')"
+)
 CATALOG_CHECKS: Final = (FUNCTIONS, "relations", "columns", "constraints", "triggers", "objects")
 SCHEMA_KIND: Final = "schema"
 OWNER_TRIGGER: Final = "loom_deny_owner_dml"
@@ -126,6 +137,8 @@ _SCOPED_TABLES_SQL: Final = (
     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
     "WHERE n.nspname = :schema AND c.relname = ANY (CAST(:names AS text[]))"
 )
+_AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
+_AUDIT_READABLE: Final = text(AUDIT_READABLE)
 _CATALOG: Final = text(_CATALOG_SQL)
 _ACCESS: Final = text(_ACCESS_SQL)
 _LANDING: Final = text(_LANDING_SQL)
@@ -174,15 +187,52 @@ async def guard_problems(
 
 
 async def startup_problems(
-    connection: AsyncConnection, guard: str, scoped: Mapping[tuple[str | None, str], ScopedTable]
+    connection: AsyncConnection,
+    guard: str,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    *,
+    audited: bool = False,
 ) -> list[Problem]:
-    """Everything the application user can check at startup, guard and scoped tables."""
+    """Everything the application user can check at startup: guard, scoped tables, audit log.
+
+    The audit log is checked whenever it exists, marked tables or not (FR-018),
+    and an application with audited tables needs revision 3 and the log.
+    """
     landing = (await connection.execute(_LANDING)).one_or_none()
     if landing is None:
         return [Problem("schema.landing", "current_schema()", "an existing schema", "none")]
     problems = await guard_problems(connection, guard, str(landing.owner))
     problems += await table_problems(connection, guard, str(landing.schema), scoped)
+    problems += await audit_problems(connection, guard, str(landing.schema), audited=audited)
     return problems
+
+
+async def audit_problems(
+    connection: AsyncConnection, guard: str, schema: str, *, audited: bool
+) -> list[Problem]:
+    """The audit log's revision, shape and read access, as any role sees them."""
+    rows = await connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
+    number = revision_of(catalog_digest(str(row.line) for row in rows))
+    if audited and (number is None or number < AUDIT_GUARD_REVISION):
+        return [
+            Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", str(number))
+        ]
+    shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, {"schema": schema})]
+    if not shape and not audited:
+        return []
+    problems = audit_shape_problems(shape)
+    if shape and (await connection.execute(_AUDIT_READABLE, {"schema": schema})).scalar():
+        problems.append(Problem("audit.read", "audit_log", "only the auditor reads", "readable"))
+    return problems
+
+
+def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
+    """Compare the audit log's columns with the pinned shape; empty when they match."""
+    if not lines:
+        return [Problem("audit.shape", "audit_log", "the pinned columns", "missing")]
+    if tuple(lines) == AUDIT_LOG_COLUMNS:
+        return []
+    return [Problem("audit.shape", "audit_log", "; ".join(AUDIT_LOG_COLUMNS), "; ".join(lines))]
 
 
 async def table_problems(

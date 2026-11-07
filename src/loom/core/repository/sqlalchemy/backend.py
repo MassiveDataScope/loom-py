@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.pool import QueuePool
 
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention, scoped_tables
+from loom.core.backend.sqlalchemy import (
+    audited_tables,
+    compile_all,
+    configured_naming_convention,
+    scoped_tables,
+)
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
@@ -421,16 +426,19 @@ async def _check_external(
         raise ConfigError(
             f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
-    if connection.dialect.name == POSTGRES_DIALECT and scoped:
-        await _check_guard(connection, scoped, store)
+    audited = bool(audited_tables(store.session_manager.metadata))
+    if connection.dialect.name == POSTGRES_DIALECT and (scoped or audited):
+        await _check_guard(connection, scoped, store, audited=audited)
 
 
 async def _check_guard(
     connection: AsyncConnection,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     store: _Store,
+    *,
+    audited: bool = False,
 ) -> None:
-    """Check, as the application user, the guard and every scoped table's protection.
+    """Check, as the application user, the guard, every scoped table and the audit log.
 
     The guard's catalogue, owners, grants, function settings and event
     triggers, and each scoped table's forced row-level security, canonical
@@ -438,7 +446,7 @@ async def _check_guard(
     configuration row is not readable here; ``verify`` checks it.
     """
     guard = require_schema_key(store.schema.guard, store.path, "guard")
-    problems = await startup_problems(connection, guard, scoped)
+    problems = await startup_problems(connection, guard, scoped, audited=audited)
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)
         raise ConfigError(

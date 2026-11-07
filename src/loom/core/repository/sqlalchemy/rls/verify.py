@@ -35,7 +35,13 @@ from loom.core.model.introspection import declared_privileges, get_table_name, i
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.integrity import Problem, guard_problems, table_problems
+from loom.core.repository.sqlalchemy.rls.integrity import (
+    AUDIT_SHAPE,
+    Problem,
+    audit_shape_problems,
+    guard_problems,
+    table_problems,
+)
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
@@ -114,6 +120,7 @@ _AUDIT_RELATIONS: Final = text(AUDIT_RELATIONS)
 _AUDIT_REGISTRY: Final = text(AUDIT_REGISTRY)
 _AUDIT_PARTITIONS: Final = text(AUDIT_PARTITIONS)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
+_AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
 
@@ -154,6 +161,12 @@ async def verify(url: str, application: Application) -> Report:
             findings = await _guard_integrity(connection, bootstrap)
             audit = await _audit_state(connection, bootstrap.schema)
             findings += _audit_findings(audit, application, bootstrap)
+            if audit.relations or application.audited:
+                shape = await connection.execute(_AUDIT_SHAPE, _in_schema(bootstrap.schema))
+                findings += [
+                    _finding(problem, "audit_log")
+                    for problem in audit_shape_problems([str(row.line) for row in shape])
+                ]
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
             findings += await _assertion(connection)
