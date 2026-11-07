@@ -1,4 +1,4 @@
-"""Audit log partitions: created on deploy, dropped one at a time past retention (FR-006, FR-017)."""
+"""Audit log partitions: created on deploy, dropped one at a time past retention (FR-017)."""
 
 from __future__ import annotations
 
@@ -99,7 +99,8 @@ async def test_detach_partition_refuses_the_audit_log(
     with pytest.raises(DBAPIError, match="audit"):
         await execute(
             database.migrator,
-            "SELECT detach_partition('books_detach.audit_log'::regclass, 'audit_log_p202401', true)",
+            "SELECT detach_partition("
+            "'books_detach.audit_log'::regclass, 'audit_log_p202401', true)",
         )
 
 
@@ -119,7 +120,6 @@ async def test_a_partition_of_a_scoped_audited_parent_records_each_change_once(
         "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'loom_audit_record%' "
         f"AND tgrelid = '{journal.SCHEMA}.{partition}'::regclass",
     )
-    engine_statements = ("INSERT INTO entries (tenant, at, body) VALUES ('acme', now(), 'hello')",)
     engine = create_async_engine(database.write, poolclass=NullPool)
     try:
         async with engine.begin() as connection:
