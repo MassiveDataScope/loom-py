@@ -64,6 +64,7 @@ CATALOG_CHECKS: Final = (FUNCTIONS, "relations", "columns", "constraints", "trig
 SCHEMA_KIND: Final = "schema"
 _SCHEMA_PARAM: Final = SCHEMA_KIND
 _AUDIT_LOG: Final = "audit_log"
+_AUDIT_SHAPE_CHECK: Final = "audit.shape"
 _MISSING: Final = "missing"
 OWNER_TRIGGER: Final = "loom_deny_owner_dml"
 
@@ -261,14 +262,14 @@ def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
     Empty when they match; the problem lists only the lines that differ.
     """
     if not lines:
-        return [Problem("audit.shape", _AUDIT_LOG, "the pinned shape", _MISSING)]
+        return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned shape", _MISSING)]
     if tuple(lines) == AUDIT_LOG_SHAPE:
         return []
     missing = "; ".join(line for line in AUDIT_LOG_SHAPE if line not in lines)
     extra = "; ".join(line for line in lines if line not in AUDIT_LOG_SHAPE)
     if not missing and not extra:
-        return [Problem("audit.shape", _AUDIT_LOG, "the pinned order", "reordered")]
-    return [Problem("audit.shape", _AUDIT_LOG, missing or "nothing else", extra or "none")]
+        return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned order", "reordered")]
+    return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, missing or "nothing else", extra or "none")]
 
 
 async def table_problems(
