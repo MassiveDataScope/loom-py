@@ -200,7 +200,7 @@ only where developers need it:
 | `audience` declared (`loom.rest.E002`) | staging and production | without it a token minted for another service on the same identity provider is accepted |
 | `issuer` declared (`loom.rest.E003`) | staging and production | without it a token from any issuer holding the key is accepted |
 | `leeway_seconds` at most 300 | always | a larger leeway silently extends every token's lifetime |
-| HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; a hex or base64 secret needs twice or a third more characters for the same strength |
+| HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; the check is on length, not strength, so generate the secret randomly, and a hex or base64 secret needs twice or a third more characters for the same strength |
 | RSA key of at least 2048 bits, signing and published keys | always, verifier and issuer | RFC 7518 §3.3 |
 | A blank (whitespace-only) secret is refused | always, verifier and issuer | A.8.24 |
 | A key in a common encoding (PEM, OpenSSH, base64 or base64url DER, JWK) is never an HS secret | always, verifier and issuer | algorithm confusion: whoever holds the public half could sign |
@@ -227,7 +227,9 @@ matching config and a token minter.
 The configurator resolves the key; these settings only judge it. Any placeholder works:
 `${file:...}` reads a local file or a cloud object (`s3://`, `gs://`, `abfss://`, the
 same paths `load_config` reads), and `${secrets:...}` or `${ssm:...}` read AWS. A secret
-lands in a `Secret`, which no repr, log or dump shows.
+lands in a `Secret`, which no repr, log or dump shows. The raw configuration tree still
+holds the resolved text before it is typed, so never dump it whole (for example with
+`OmegaConf.to_yaml(cfg, resolve=True)`): dump typed sections with `dump_config`.
 
 ```yaml
 app:
@@ -247,7 +249,7 @@ app:
 
 Each `{alg, pem}` entry verifies only its own algorithm, so `algorithms` is not written
 and a rotation can change the key type under a new `kid`. The released forms still
-load: `secret_path`, and `public_keys` entries as PEM text with a shared `algorithms`
+load: `secret_path` (a local path or, as `${file:...}` reads, a cloud URI), and `public_keys` entries as PEM text with a shared `algorithms`
 list, where each key keeps only the algorithms of its own type (an RSA key never takes
 `EdDSA`). One configuration uses one form or the other, never both. Keys are
 read once at startup, so rotating one takes a restart.

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.file import FileResolver
+from loom.core.config.file import read_file
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Secret
 from loom.rest.auth.keys import (
@@ -121,7 +121,10 @@ class _SecretFile:
         # A deferred ``${file:...}``: read by the one file reader, then held to
         # the same rules as a ``secret`` given in memory.
         self.check(algorithms)
-        return _SharedSecret(Secret(FileResolver().resolve(self.path))).load(algorithms)
+        material = read_file(self.path, setting="JWT auth 'secret_path'")
+        if not material.strip():
+            raise ConfigError("JWT auth 'secret_path' is blank.")
+        return _SharedSecret(Secret(material)).load(algorithms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,8 +190,9 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             a placeholder such as ``${file:...}`` or ``${secrets:...}``. A
             :class:`~loom.core.model.redaction.Secret`, so no repr, log or dump
             shows it. Takes exactly one algorithm in ``algorithms``.
-        secret_path: Filesystem path of the shared secret, read when the
-            verifier is built: the released form of ``secret``.
+        secret_path: Local path or cloud URI of the shared secret, read as
+            ``${file:...}`` reads it when the verifier is built: the released
+            form of ``secret``.
         public_keys: Public keys for asymmetric algorithms (RS*/PS*/ES*/EdDSA),
             keyed by the ``kid`` that selects them. Each entry is a
             :class:`JwtPublicKey` naming its own algorithm, or, in the released

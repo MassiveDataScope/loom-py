@@ -782,3 +782,34 @@ async def test_an_unexpected_backend_error_refuses_the_token(
         assert await authenticator.authenticate(_credentials(token)) is None
     assert all(r.exc_info is None for r in caplog.records)
     assert "backend detail" not in caplog.text
+
+
+class TestSecretPathErrors:
+    """The released contract: a ConfigError naming ``secret_path``, never the path."""
+
+    def test_a_blank_file_is_a_config_error(self, tmp_path: Path) -> None:
+        blank = tmp_path / "blank"
+        blank.write_text("\n")
+        config = JwtAuthConfig(secret_path=str(blank), algorithms=("HS256",))
+        with pytest.raises(ConfigError, match="'secret_path' is blank"):
+            config.keyring()
+
+    def test_an_unreadable_file_names_the_setting_not_the_path(self, tmp_path: Path) -> None:
+        missing = str(tmp_path / "absent.key")
+        config = JwtAuthConfig(secret_path=missing, algorithms=("HS256",))
+        with pytest.raises(ConfigError, match="'secret_path': FileNotFoundError") as refused:
+            config.keyring()
+        assert missing not in str(refused.value)
+
+    def test_a_cloud_uri_without_its_extra_names_what_to_install(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import loom.core.config.file as file_module  # noqa: PLC0415
+
+        def missing_fsspec(_: str) -> str:
+            raise ModuleNotFoundError("No module named 'fsspec'")
+
+        monkeypatch.setattr(file_module, "read_text", missing_fsspec)
+        config = JwtAuthConfig(secret_path="s3://keys/jwt", algorithms=("HS256",))
+        with pytest.raises(ConfigError, match=r"loom-kernel\[config\]"):
+            config.keyring()
