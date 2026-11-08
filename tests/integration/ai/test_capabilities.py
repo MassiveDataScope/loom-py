@@ -849,7 +849,7 @@ class TestSkillsCapability:
         assert len(capabilities) == 1
         skills = capabilities[0]
         assert isinstance(skills, Skills)
-        assert skills.directories == (directory,)
+        assert skills.directories == (".",)
 
     def test_grants_only_the_selected_names_when_the_artefact_filters(self, tmp_path: Path) -> None:
         """The compiler already resolved the globs, so a subset reaches the harness."""
@@ -863,14 +863,37 @@ class TestSkillsCapability:
         assert isinstance(skills, Skills)
         assert skills.include == frozenset({"pricing"})
 
-    def test_fails_when_a_granted_name_does_not_exist_in_the_library(self, tmp_path: Path) -> None:
-        """The harness reads the real directory: an unknown name cannot be granted."""
-        directory = write_skill_library(tmp_path)
-        plan = make_plan(capabilities=(skills_capability(directory, "pricing", "invented"),))
-        container = LoomContainer()
+    def test_reads_the_library_through_a_read_only_workspace_of_its_own(
+        self, tmp_path: Path
+    ) -> None:
+        """No run tool reaches the library, and nothing in it can be written or run."""
+        from pydantic_ai.workspaces.readonly import ReadOnlyWorkspace
 
-        with pytest.raises(ValueError, match="invented"):
-            _capabilities.build_capabilities(plan, container)
+        directory = write_skill_library(tmp_path)
+        plan = make_plan(capabilities=(skills_capability(directory, "pricing"),))
+
+        skills = _capabilities.build_capabilities(plan, LoomContainer())[0]
+
+        assert isinstance(skills.workspace, ReadOnlyWorkspace)
+
+    async def test_a_name_missing_from_the_library_fails_the_run(
+        self, tmp_path: Path, app_container: LoomContainer
+    ) -> None:
+        """The harness reads the real directory at run start: a stale name cannot be served.
+
+        The compiler only grants names it discovered, so this guards a library
+        that changed on disk after compilation.
+        """
+        directory = write_skill_library(tmp_path)
+        engine = build_engine(
+            capabilities=(skills_capability(directory, "pricing", "invented"),),
+            model=ScriptedToolModel(calls=()),
+            container=app_container,
+            deps=CapabilityDepsFactory(),
+        )
+
+        with pytest.raises(AgentRunError, match="invented"):
+            await engine.run("hello", identity=ANALYST)
 
     def test_builds_no_toolset_when_the_capability_is_skills(
         self, tmp_path: Path, app_container: LoomContainer
@@ -1207,11 +1230,16 @@ class RetryCapturingModel(ScriptedToolModel):
         self.retry_prompts: list[str] = []
 
     def _collect(self, messages: Sequence[ModelMessage]) -> None:
-        """Record tool returns as usual, plus every retry prompt."""
+        """Record tool returns as usual, plus every retry prompt.
+
+        A retry reaches the model as a ``RetryPromptPart`` or, from pydantic-ai
+        2.66, as a tool return whose ``outcome`` is ``"retried"``.
+        """
         super()._collect(messages)
         for message in messages:
             for part in getattr(message, "parts", ()):
-                if isinstance(part, RetryPromptPart):
+                retried = getattr(part, "outcome", None) == "retried"
+                if isinstance(part, RetryPromptPart) or retried:
                     self.retry_prompts.append(str(part.content))
 
 

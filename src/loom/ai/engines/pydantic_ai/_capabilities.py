@@ -539,14 +539,16 @@ def _skills_capability(
     )
     return cast(
         "AbstractCapability[Any]",
-        sdk.Skills(capability.directory, include=list(capability.names)),
+        sdk.library_skills(capability.directory, capability.names),
     )
 
 
 class _SkillsSdk(Protocol):
     """The one name the skills island publishes."""
 
-    Skills: type[Any]
+    def library_skills(self, directory: str, names: Sequence[str]) -> object:
+        """Build the harness capability for one library, read-only."""
+        ...
 
 
 _KINDS: Final[Mapping[type[CompiledCapability], _KindBinding]] = MappingProxyType(
