@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.file import FileResolver
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Secret
 from loom.rest.auth.keys import (
@@ -27,7 +28,6 @@ from loom.rest.auth.keys import (
     derived_public_key,
     is_symmetric,
     public_key,
-    read_key_file,
     require_family,
     require_hmac_strength,
     require_signing_key,
@@ -118,11 +118,10 @@ class _SecretFile:
         _one_algorithm(algorithms, case="'secret_path'")
 
     def load(self, algorithms: tuple[str, ...]) -> Keyring:
-        self.check(algorithms)  # the keyring holds the secret as it was checked
-        setting = "JWT auth 'secret_path'"
-        material = read_key_file(self.path, setting=setting)
-        require_hmac_strength(material, algorithms[0], setting=setting)
-        return FixedKey(Key(material, algorithms))
+        # A deferred ``${file:...}``: read by the one file reader, then held to
+        # the same rules as a ``secret`` given in memory.
+        self.check(algorithms)
+        return _SharedSecret(Secret(FileResolver().resolve(self.path))).load(algorithms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,18 +419,6 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
     ttl_seconds: int = 900
     kid: str | None = None
     typ: str | None = None
-
-    def __repr__(self) -> str:
-        return (
-            f"JwtIssuerConfig(signing_key={self.signing_key!r},"
-            f" algorithm={self.algorithm!r},"
-            f" audience={self.audience!r},"
-            f" issuer={self.issuer!r},"
-            f" roles_claim={self.roles_claim!r},"
-            f" ttl_seconds={self.ttl_seconds!r},"
-            f" kid={self.kid!r},"
-            f" typ={self.typ!r})"
-        )
 
     def __post_init__(self) -> None:
         # The algorithm first: a key that does not fit an unknown one says nothing useful.

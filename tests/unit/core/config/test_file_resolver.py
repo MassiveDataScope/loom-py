@@ -44,7 +44,7 @@ def test_a_missing_file_names_the_key_and_chains_nothing(tmp_path: Path) -> None
     with pytest.raises(ConfigError, match="FileNotFoundError") as refused:
         resolver.resolve(missing)
 
-    assert missing in str(refused.value)
+    assert missing not in str(refused.value)
     assert refused.value.__cause__ is None
     assert refused.value.__context__ is None
 

@@ -20,7 +20,7 @@ from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, RESERVED_CLAIMS, JwtAuthConfig
 from loom.rest.auth.issuer import JwtIssuer as JwtIssuer  # the released import path
-from loom.rest.auth.keys import Key, load_pyjwt
+from loom.rest.auth.keys import FixedKey, Key, load_pyjwt
 
 _logger = logging.getLogger(__name__)
 
@@ -63,6 +63,12 @@ class JwtAuthenticator:
         self._roles_claim = config.roles_claim
         self._keys = config.keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
+        # One shared secret checks every token and no typ is required: the
+        # header could not change the outcome, so it is not read per request.
+        self._reads_header = bool(self._accepted_types) or not isinstance(self._keys, FixedKey)
+        # Registered claims describe the token, not the caller: never identity attributes.
+        roles = {config.roles_claim} if config.roles_claim else set()
+        self._excluded_claims = RESERVED_CLAIMS | roles
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
             "verify_aud": config.audience is not None,
@@ -104,7 +110,7 @@ class JwtAuthenticator:
             claims: dict[str, Any] = self._jwt.decode(
                 token,
                 key.material,
-                algorithms=list(key.algorithms),
+                algorithms=key.algorithms,
                 audience=self._config.audience,
                 issuer=self._config.issuer,
                 leeway=self._config.leeway_seconds,
@@ -128,6 +134,12 @@ class JwtAuthenticator:
         The header is unverified here, which is safe: it only picks among the
         configured keys, and no key is ever fetched from what the token says.
         """
+        if not self._reads_header:
+            return self._keys.pick(None)
+        return self._key_from_header(token)
+
+    def _key_from_header(self, token: str) -> Key | None:
+        """The key the unverified header selects, once its ``typ`` is accepted."""
         header = self._header(token)
         if header is None:
             return None
@@ -160,7 +172,7 @@ class JwtAuthenticator:
         return Identity(
             subject=subject,
             roles=self._roles(claims),
-            attributes=_attributes(claims, self._roles_claim),
+            attributes=_attributes(claims, self._excluded_claims),
             mechanism=MECHANISM_NAME,
         )
 
@@ -216,15 +228,13 @@ def _is_role(item: Any) -> bool:
     return isinstance(item, str) and bool(item)
 
 
-def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str, str]:
+def _attributes(claims: Mapping[str, Any], excluded: frozenset[str]) -> dict[str, str]:
     """Project the caller-describing claims onto identity attributes.
 
     Only string-valued custom claims cross: structured claims would smuggle
     unverifiable shapes into a domain value object, and the registered claims
     describe the token rather than the caller.
     """
-    # Registered claims describe the token, not the caller: never identity attributes.
-    excluded = RESERVED_CLAIMS | ({roles_claim} if roles_claim else frozenset())
     crossing = {
         name: value
         for name, value in claims.items()

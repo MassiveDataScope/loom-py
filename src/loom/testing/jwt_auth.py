@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Final
 
 from loom.core.model.redaction import Secret
@@ -27,15 +27,19 @@ _ALGORITHM = "HS256"
 
 @dataclass(frozen=True, slots=True)
 class JwtTestAuth:
-    """A compliant JWT config and the secret that signs its tokens.
+    """A compliant JWT config, whose secret signs its tokens.
 
     Attributes:
         config: Verifier settings: HS256, the test audience and issuer.
-        secret: The 32-byte key, hex-encoded, held by ``config.secret``.
     """
 
     config: JwtAuthConfig
-    secret: str = field(repr=False)
+
+    @property
+    def secret(self) -> str:
+        """The 32-byte key, hex-encoded: ``config.secret`` is the one copy."""
+        assert self.config.secret is not None  # noqa: S101 - jwt_test_auth always sets it
+        return self.config.secret.reveal()
 
     def token(self, subject: str, *, ttl_seconds: int = 300, **claims: Any) -> str:
         """Mint a token the config accepts.
@@ -83,4 +87,4 @@ def jwt_test_auth(**overrides: Any) -> JwtTestAuth:
         "issuer": TEST_ISSUER,
         **overrides,
     }
-    return JwtTestAuth(config=JwtAuthConfig(**settings), secret=secret)
+    return JwtTestAuth(config=JwtAuthConfig(**settings))

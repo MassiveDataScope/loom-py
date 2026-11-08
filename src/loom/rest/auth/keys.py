@@ -13,7 +13,6 @@ import base64
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import ModuleType
 from typing import Any, Final, Literal, Protocol, get_args
 
@@ -209,12 +208,23 @@ _SSH_PREFIXES: Final = (*_SSH_PUBLIC_PREFIXES, "sk-")
 """Every OpenSSH key line: none of them is ever a shared secret."""
 
 
-def _public_key(material: str, *, setting: str) -> Any:
-    """The parsed PEM or OpenSSH public key.
+def _attempt(load: Any, data: bytes) -> Any | None:
+    """What *load* parses from *data*, or ``None`` when it refuses it.
 
-    Parser errors are dropped, never chained or kept as context.
+    The one place a parser error is swallowed: it is never chained nor kept as
+    context, since parser messages and ``UnicodeDecodeError.object`` can carry
+    key material. Callers raise their own error, outside any handler.
     """
     from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+
+    try:
+        return load(data)
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return None
+
+
+def _public_key(material: str, *, setting: str) -> Any:
+    """The parsed PEM or OpenSSH public key."""
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
 
     text = material.strip()
@@ -223,11 +233,10 @@ def _public_key(material: str, *, setting: str) -> Any:
         if text.startswith(_SSH_PUBLIC_PREFIXES)
         else serialization.load_pem_public_key
     )
-    try:
-        return load(text.encode())
-    except (ValueError, TypeError, UnsupportedAlgorithm):
-        pass
-    raise ConfigError(f"{setting} is not a PEM or OpenSSH public key.")
+    parsed = _attempt(load, text.encode())
+    if parsed is None:
+        raise ConfigError(f"{setting} is not a PEM or OpenSSH public key.")
+    return parsed
 
 
 def _key_kind(key: Any) -> str:
@@ -253,15 +262,15 @@ def _require_rsa_bits(bits: int, *, setting: str) -> None:
 
 
 def _private_key(material: str, *, setting: str) -> Any:
-    """The parsed, unencrypted PEM private key; parser errors are never chained."""
-    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+    """The parsed, unencrypted PEM private key."""
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
 
-    try:
-        return serialization.load_pem_private_key(material.encode(), password=None)
-    except (ValueError, TypeError, UnsupportedAlgorithm):
-        pass
-    raise ConfigError(f"{setting} is not an unencrypted PEM private key.")
+    parsed = _attempt(
+        lambda pem: serialization.load_pem_private_key(pem, password=None), material.encode()
+    )
+    if parsed is None:
+        raise ConfigError(f"{setting} is not an unencrypted PEM private key.")
+    return parsed
 
 
 def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
@@ -311,7 +320,7 @@ def _is_der_key(text: str) -> bool:
     no DER parser accepts, so it is never mistaken for one.
     """
     der = _base64_bytes("".join(text.split()))
-    return der is not None and any(_parses(load, der) for load in _der_loaders())
+    return der is not None and any(_attempt(load, der) is not None for load in _der_loaders())
 
 
 def _base64_bytes(text: str) -> bytes | None:
@@ -350,32 +359,6 @@ def _load_der_private(der: bytes) -> object:
         return der
 
 
-def _parses(load: Any, der: bytes) -> bool:
-    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
-
-    try:
-        load(der)
-    except (ValueError, TypeError, UnsupportedAlgorithm):
-        return False
-    return True
-
-
-def read_key_file(path: str, *, setting: str) -> str:
-    """Read key material from disk, never chaining the cause.
-
-    An ``OSError`` message carries the path and a ``UnicodeDecodeError`` carries
-    the whole file on ``exc.object``: either would publish key material through a
-    traceback or a structured log that serializes the exception.
-    """
-    try:
-        return Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        pass
-    # Raised outside the handler: ``from None`` only hides the cause, and
-    # ``__context__`` would still hold it for any logger that walks it.
-    raise ConfigError(f"Could not read {setting}.")
-
-
 def require_signing_key(material: str, algorithm: str) -> None:
     """A key that can sign with *algorithm*: a long enough secret, or a strong private key."""
     setting = "the JWT issuer signing key"
@@ -394,29 +377,16 @@ def derived_public_key(private_pem: str) -> str:
     """The PEM public half of a private key; only it leaves this function.
 
     Raises:
-        ConfigError: When cryptography is missing or the key cannot be parsed;
-            the parser error is dropped, never chained or kept as context.
+        ConfigError: When the key cannot be parsed; the parser error is
+            dropped, never chained or kept as context.
     """
-    try:
-        from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
-        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - the jwt extra ships it
-        raise ConfigError(
-            "cryptography is required to derive the JWT public key. "
-            "Install it with: pip install loom-kernel[jwt]"
-        ) from exc
-    try:
-        private = serialization.load_pem_private_key(private_pem.encode(), password=None)
-        return (
-            private.public_key()
-            .public_bytes(
-                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-            .decode()
-        )
-    except (ValueError, TypeError, UnsupportedAlgorithm):
-        pass
-    raise ConfigError("Could not derive the JWT public key from the signing key.")
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    public = _private_key(private_pem, setting="the JWT issuer signing key").public_key()
+    pem: bytes = public.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return pem.decode()
 
 
 _PYJWT_HINT: Final = (

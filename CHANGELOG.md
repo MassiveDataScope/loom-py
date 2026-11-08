@@ -228,8 +228,10 @@
 
 - **config:** a built-in `file` resolver: `${file:/run/secrets/jwt.pem}` or
   `${file:s3://bucket/key.pem}` reads a local file or a cloud object with the
-  reader `load_config` uses. Its errors name the key and the error type, and
-  never carry the file's bytes.
+  reader `load_config` uses. Its errors name the error type only, never the
+  path (it says where secret material lives) nor the file's bytes. The JWT
+  verifier's `secret_path` reads through the same resolver, so it also takes
+  a cloud URI.
 - **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
   timeouts and retries; no credentials) sets the AWS client defaults every
   AWS product inherits: `dynamodb` stores, `storage.dynamodb`, the `secrets`

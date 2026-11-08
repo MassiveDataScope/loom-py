@@ -682,7 +682,7 @@ class TestForIssuer:
     def test_an_unparseable_key_keeps_no_parser_error(self) -> None:
         from loom.rest.auth.keys import derived_public_key  # noqa: PLC0415
 
-        with pytest.raises(ConfigError, match="derive") as excinfo:
+        with pytest.raises(ConfigError, match="not an unencrypted PEM private key") as excinfo:
             derived_public_key(_BROKEN_PEM)
         assert excinfo.value.__cause__ is None
         assert excinfo.value.__context__ is None
