@@ -181,8 +181,8 @@ jobs:
   # The gate: cheap checks plus the merged results, so a failure in either lane
   # still blocks here.
   validate:
-    needs: [tests-fast, tests-spark, integration, dependency-audit]
-    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) && contains(fromJSON('["success", "skipped"]'), needs.dependency-audit.result) }}
+    needs: [tests-fast, tests-spark, integration, integration-postgres-14, dependency-audit]
+    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) && contains(fromJSON('["success", "skipped"]'), needs.integration-postgres-14.result) && contains(fromJSON('["success", "skipped"]'), needs.dependency-audit.result) }}
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -702,6 +702,60 @@ jobs:
           pip-audit --disable-pip --require-hashes --strict \
             --ignore-vuln GHSA-3589-pxp7-3gj8 \
             -r "$RUNNER_TEMP/requirements-runtime.txt"
+
+  # ---------------------------------------------------------------------------
+  # Postgres 14 lane: the oldest version loom supports. The main integration lane
+  # runs Postgres 17 only, and verify once read a catalogue column that exists
+  # from 16 on without anything noticing. Only the Postgres suites run here, in
+  # parallel with the main lane, so it adds no wall-clock time to a PR.
+  # ---------------------------------------------------------------------------
+  integration-postgres-14:
+    if: ${{ !startsWith(github.head_ref, 'docs/release-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: |
+          pip install --only-binary :all: "uv==0.10.2"
+
+      - name: Configure uv environment path
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/uv-ci-integration-pg14" >> "$GITHUB_ENV"
+
+      - name: Start Postgres 14
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.local.yaml up -d postgres-14
+          container="$(docker compose -f docker-compose.local.yaml ps -q postgres-14)"
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$container")" = "healthy" ] && exit 0
+            sleep 2
+          done
+          echo "::error::postgres-14 never became healthy"
+          docker compose -f docker-compose.local.yaml logs postgres-14
+          exit 1
+
+      - name: Postgres suites on Postgres 14
+        shell: bash
+        env:
+          LOOM_PG_IT_URI: postgresql+asyncpg://postgres:loom@localhost:55434/postgres
+        run: |
+          set -euo pipefail
+          uv run --frozen pytest -m integration -ra \
+            tests/integration/rls tests/integration/core/repository/sqlalchemy/postgres
+
+      - name: Stop Postgres 14
+        if: ${{ always() }}
+        shell: bash
+        run: docker compose -f docker-compose.local.yaml down -v
 
   # ---------------------------------------------------------------------------
   # Integration lane: everything marked `integration` needs a real external

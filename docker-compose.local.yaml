@@ -185,6 +185,22 @@ services:
       retries: 20
       start_period: 3s
 
+  # Oldest supported Postgres: CI runs the Postgres suites against it too, because
+  # the guard and verify read catalogue columns that changed in 15 and 16.
+  postgres-14:
+    image: postgres:14-alpine
+    ports:
+      - "127.0.0.1:55434:5432"
+    networks: [loom_net]
+    environment:
+      POSTGRES_PASSWORD: loom
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
   # AWS emulator for tests/integration/aws; 4.14.0 is the last tag that runs without an auth token.
   localstack:
     image: localstack/localstack:4.14.0
