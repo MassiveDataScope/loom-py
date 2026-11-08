@@ -1,0 +1,28 @@
+name: dependabot-auto-merge
+
+# Turns on auto-merge for a Dependabot patch or minor update. GitHub then merges the pull
+# request only after every required status check on master passes, so a failing update
+# stays open. A major update is left for a person to review.
+on:
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the update
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Enable auto-merge for patch and minor updates
+        if: ${{ steps.meta.outputs.update-type != 'version-update:semver-major' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
