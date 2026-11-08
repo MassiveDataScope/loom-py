@@ -644,7 +644,7 @@ def compose_rest(
         authenticator,
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
-    _require_deployed_jwt_claims(ctx, auth.jwt_config)
+    _require_deployed_jwt_claims(ctx, source.environment, auth.jwt_config)
     _check_sql_section(ctx, auth)
     discovered, routes = served_routes(source, select_interfaces)
     declared = RestDeclaration(

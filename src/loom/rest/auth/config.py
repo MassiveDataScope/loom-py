@@ -70,8 +70,9 @@ SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
 first request: a typo like ``" HS256"`` would otherwise fail per-call."""
 
 
-# RFC 7519 registered claims: a roles claim named after one of these is silently
-# overwritten when the token is built, leaving no roles and no error.
+# RFC 7519 §4.1 registered claims. They describe the token, not the caller, so
+# they never become identity attributes, and a roles claim named after one is
+# silently overwritten when the token is built.
 RESERVED_CLAIMS: frozenset[str] = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
 
 

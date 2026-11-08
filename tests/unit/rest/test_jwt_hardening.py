@@ -17,10 +17,15 @@ import pytest
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.environment import Environment
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
 from loom.rest.auth.config import JwtIssuerConfig, SharedSecretFile
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
+from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims
+from loom.rest.fastapi.auto import create_app
 from loom.testing import jwt_test_auth
+from tests.unit.rest._fixture_app import write_project
+from tests.unit.rest.test_deploy_checks import _signed_cursors
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
@@ -216,32 +221,44 @@ class TestResolvedClaims:
                     secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), **settings
                 )
 
-    @pytest.mark.parametrize("environment", ["production", "staging"])
+    @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.STAGING])
     def test_a_claim_resolved_to_nothing_refuses_a_deployed_start(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: str
+        self, tmp_path: Path, environment: Environment
     ) -> None:
-        from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims  # noqa: PLC0415
-
-        monkeypatch.setenv("LOOM_ENV", environment)
         config = JwtAuthConfig(
             secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), issuer="idp"
         )
 
         with pytest.raises(ConfigError, match=AUDIENCE_CHECK):
-            _require_deployed_jwt_claims(ConfigContext.from_dict({}), config)
+            _require_deployed_jwt_claims(ConfigContext.from_dict({}), environment, config)
 
-    def test_development_and_silencing_let_it_start(
+    def test_development_and_silencing_let_it_start(self, tmp_path: Path) -> None:
+        config = JwtAuthConfig(secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",))
+        _require_deployed_jwt_claims(ConfigContext.from_dict({}), Environment.DEVELOPMENT, config)
+
+        silenced = ConfigContext.from_dict({"checks": {"silenced": [AUDIENCE_CHECK, ISSUER_CHECK]}})
+        _require_deployed_jwt_claims(silenced, Environment.PRODUCTION, config)
+
+    def test_the_composed_environment_wins_over_the_process_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims  # noqa: PLC0415
-
-        config = JwtAuthConfig(secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",))
+        """``LOOM_ENV=development`` must not relax an app composed for production."""
         monkeypatch.setenv("LOOM_ENV", "development")
-        _require_deployed_jwt_claims(ConfigContext.from_dict({}), config)
+        monkeypatch.delenv("NOPE_AUD", raising=False)
+        jwt = {
+            "secret_path": _secret_file(tmp_path, 32),
+            "algorithms": ["HS256"],
+            "audience": "${oc.env:NOPE_AUD,null}",
+            "issuer": "idp",
+        }
+        project = tmp_path / "app"
+        project.mkdir()
+        config = write_project(
+            project, rest={**_NO_DOCS, "auth": {"jwt": jwt}}, persistence=_signed_cursors(project)
+        )
 
-        monkeypatch.setenv("LOOM_ENV", "production")
-        silenced = ConfigContext.from_dict({"checks": {"silenced": [AUDIENCE_CHECK, ISSUER_CHECK]}})
-        _require_deployed_jwt_claims(silenced, config)
+        with pytest.raises(ConfigError, match=AUDIENCE_CHECK):
+            create_app(config, environment="production")
 
 
 class TestIssuedType:

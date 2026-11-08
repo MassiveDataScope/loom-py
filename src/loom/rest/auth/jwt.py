@@ -23,7 +23,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.abc import RequestCredentials
-from loom.rest.auth.config import JwtAuthConfig, JwtIssuerConfig
+from loom.rest.auth.config import RESERVED_CLAIMS, JwtAuthConfig, JwtIssuerConfig
 
 _logger = logging.getLogger(__name__)
 
@@ -34,9 +34,6 @@ _AUTHORIZATION_HEADER = "authorization"
 _BEARER_SCHEME = "bearer"
 _SUBJECT_CLAIM = "sub"
 
-# Registered claims (RFC 7519 §4.1) describe the token, not the caller, so they
-# never reach the identity attributes.
-_PROTOCOL_CLAIMS = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
 
 ATTRIBUTE_CLAIM_PREFIX = "attr_"
 """Namespace every issued attribute travels under.
@@ -425,7 +422,8 @@ def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str,
     unverifiable shapes into a domain value object, and the registered claims
     describe the token rather than the caller.
     """
-    excluded = _PROTOCOL_CLAIMS | ({roles_claim} if roles_claim else frozenset())
+    # Registered claims describe the token, not the caller: never identity attributes.
+    excluded = RESERVED_CLAIMS | ({roles_claim} if roles_claim else frozenset())
     crossing = {
         name: value
         for name, value in claims.items()
