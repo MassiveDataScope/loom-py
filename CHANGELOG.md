@@ -21,8 +21,9 @@
   `JwtIssuerConfig.signing_key` is the key itself as a `Secret` (a PEM private
   key, or an HS secret), resolved by any placeholder, replacing
   `private_key_path`, `private_key_ref`, `key_ref_region`, `secret_path` and
-  `allow_symmetric_signing`; `load_signing_key()` and `KEY_REF_RESOLVERS` are
-  gone. `JwtAuthConfig.verification_key()` is replaced by `keyring()`. A
+  `allow_symmetric_signing`: choosing an HS `algorithm` is now the whole
+  opt-in to symmetric issuing, with no separate flag. `load_signing_key()` and
+  `KEY_REF_RESOLVERS` are gone. `JwtAuthConfig.verification_key()` is replaced by `keyring()`. A
   private key in `public_keys` is refused.
 - An RSA key below 2048 bits, a whitespace-only HS secret and an asymmetric
   key (a PEM block, an OpenSSH key line, a JWK or a base64 DER key) used as an HS secret are

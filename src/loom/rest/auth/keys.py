@@ -311,11 +311,23 @@ def _is_der_key(text: str) -> bool:
     (Keycloak's realm ``public_key``). A random base64 secret decodes to bytes
     no DER parser accepts, so it is never mistaken for one.
     """
+    der = _base64_bytes("".join(text.split()))
+    return der is not None and any(_parses(load, der) for load in _der_loaders())
+
+
+def _base64_bytes(text: str) -> bytes | None:
+    """*text* decoded as standard or URL-safe base64, padded or not, else ``None``."""
+    padded = text + "=" * (-len(text) % 4)
     try:
-        der = base64.b64decode("".join(text.split()), validate=True)
+        return base64.b64decode(padded, validate=True)
     except (binascii.Error, ValueError):
-        return False
-    return any(_parses(load, der) for load in _der_loaders())
+        pass
+    if not _URLSAFE_BASE64.fullmatch(padded):
+        return None
+    return base64.urlsafe_b64decode(padded)
+
+
+_URLSAFE_BASE64: Final = re.compile(r"[A-Za-z0-9_-]+={0,2}")
 
 
 def _der_loaders() -> tuple[Any, ...]:
@@ -324,9 +336,19 @@ def _der_loaders() -> tuple[Any, ...]:
 
     return (
         serialization.load_der_public_key,
-        lambda der: serialization.load_der_private_key(der, password=None),
+        _load_der_private,
         x509.load_der_x509_certificate,
     )
+
+
+def _load_der_private(der: bytes) -> object:
+    """A DER private key; an encrypted one counts as a key, not as random bytes."""
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    try:
+        return serialization.load_der_private_key(der, password=None)
+    except TypeError:  # encrypted: a key all the same, only the password is missing
+        return der
 
 
 def _parses(load: Any, der: bytes) -> bool:

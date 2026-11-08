@@ -118,6 +118,7 @@ class _SecretFile:
         _one_algorithm(algorithms, case="'secret_path'")
 
     def load(self, algorithms: tuple[str, ...]) -> Keyring:
+        self.check(algorithms)  # the keyring holds the secret as it was checked
         setting = "JWT auth 'secret_path'"
         material = read_key_file(self.path, setting=setting)
         require_hmac_strength(material, algorithms[0], setting=setting)

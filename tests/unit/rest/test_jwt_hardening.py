@@ -723,3 +723,47 @@ class TestIssuingFailureLog:
         record = next(r for r in caplog.records if "issuing failed" in r.getMessage())
         assert record.exc_info is None
         assert "ValueError" in record.getMessage()
+
+
+class TestOtherDerEncodingsAreRefused:
+    def test_base64url_der_without_padding_is_refused(self) -> None:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+        der = (
+            _ed25519()
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+        )
+        material = base64.urlsafe_b64encode(der).decode().rstrip("=")
+        with pytest.raises(ConfigError, match="not a shared secret"):
+            JwtAuthConfig(secret=Secret(material), algorithms=("HS256",))
+
+    def test_an_encrypted_der_private_key_is_refused(self) -> None:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+        der = _ed25519().private_bytes(
+            serialization.Encoding.DER,
+            serialization.PrivateFormat.PKCS8,
+            serialization.BestAvailableEncryption(b"passphrase"),
+        )
+        with pytest.raises(ConfigError, match="not a shared secret"):
+            JwtAuthConfig(secret=Secret(base64.b64encode(der).decode()), algorithms=("HS256",))
+
+
+async def test_an_unexpected_backend_error_refuses_the_token(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fail closed, logging the error type only: the traceback would hold the key."""
+    authenticator = JwtAuthenticator(JwtAuthConfig(secret=Secret("k" * 32), algorithms=("HS256",)))
+    token = pyjwt.encode({"sub": "u", "exp": int(time.time()) + 60}, "k" * 32, algorithm="HS256")
+
+    def broken(*_: object, **__: object) -> dict[str, Any]:
+        raise RuntimeError("backend detail")
+
+    monkeypatch.setattr(authenticator._jwt, "decode", broken)
+    with caplog.at_level("DEBUG"):
+        assert await authenticator.authenticate(_credentials(token)) is None
+    assert all(r.exc_info is None for r in caplog.records)
+    assert "backend detail" not in caplog.text

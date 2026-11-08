@@ -528,7 +528,7 @@ app:
 | `secret` | HS secret, resolved by a placeholder (`${file:...}`, `${secrets:...}`). `secret_path` is the released form. |
 | `algorithms` | The one HS algorithm, or the algorithms shared by PEM-text public keys; `none` always rejected. |
 | `audience` | Required by any `sql_endpoint` with `auth: identity`. |
-| `issuer` | Validated only when set. |
+| `issuer` | Checked against `iss` when set; a deployed API must set it (deploy check `loom.rest.E003`). |
 
 For RS*/PS*/ES*/EdDSA the alternative is one public key per key id, each with its own
 algorithm and no `algorithms` list: `public_keys: {"2026-08": {alg: EdDSA, pem: "${ssm:/myapp/jwt/2026-08}"}}`.
