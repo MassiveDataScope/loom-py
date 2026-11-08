@@ -24,11 +24,15 @@
   `allow_symmetric_signing`; `load_signing_key()` and `KEY_REF_RESOLVERS` are
   gone. A private key in `public_keys` is refused, and the verifier reads its
   `secret_path` once at startup.
-- An RSA key below 2048 bits, a whitespace-only HS secret and a PEM key used
-  as an HS secret are refused, on both the verifier and the issuer. A public
-  key that is not a parseable PEM public key (an OpenSSH key, a malformed
-  PEM), or whose type or EC curve does not fit its algorithm, is refused when
-  the configuration is built instead of failing every request.
+- An RSA key below 2048 bits, a whitespace-only HS secret and an asymmetric
+  key (a PEM block, an OpenSSH key line or a JWK) used as an HS secret are
+  refused, on both the verifier and the issuer. A public key that does not
+  parse as PEM or OpenSSH, or whose type or EC curve fits none of its
+  algorithms, is refused when the configuration is built instead of failing
+  every request; with a shared `algorithms` list each key keeps only the
+  algorithms of its own type. The issuer's private key must fit its
+  algorithm the same way (an ES256 key is P-256, an RS256 key is RSA), so it
+  cannot mint tokens a verifier refuses.
   `JwtIssuerConfig` requires `algorithm`, `audience`, `issuer` and
   `roles_claim` instead of defaulting them to `""`. `jwt_test_auth()` takes no
   directory: its secret stays in memory.

@@ -26,10 +26,10 @@ from loom.rest.auth.keys import (
     KeySet,
     derived_public_key,
     is_symmetric,
+    public_key,
     read_key_file,
     require_family,
     require_hmac_strength,
-    require_public_key,
     require_signing_key,
     require_supported,
 )
@@ -55,6 +55,16 @@ standing grant that stateless verification cannot revoke."""
 # they never become identity attributes, and a roles claim named after one is
 # silently overwritten when the token is built.
 RESERVED_CLAIMS: frozenset[str] = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
+
+ATTRIBUTE_CLAIM_PREFIX = "attr_"
+"""Namespace every issued attribute travels under.
+
+The issuer cannot know how a verifier is configured, so an attribute emitted
+under its own name could be read as that verifier's roles claim — privilege
+escalation from a value the caller controls. Prefixing removes the possibility
+instead of trying to detect it. Reading strips the prefix, and unprefixed custom
+claims keep working, so tokens minted elsewhere are unaffected.
+"""
 
 
 def _require_not_blank(owner: str, **values: str | None) -> None:
@@ -119,21 +129,21 @@ class _PublicKeys:
 
     A :class:`JwtPublicKey` names its algorithm, so ``algorithms`` would be a
     second place saying it and is refused. A bare PEM, the released form,
-    takes every algorithm of ``algorithms``. The two never mix: one rule per
-    configuration.
+    takes the algorithms of ``algorithms`` that fit its type. The two never
+    mix: one rule per configuration. Loading validates, so the keyring holds
+    the keys as they were checked, whatever happened to the dict before.
     """
 
     keys: Mapping[str, str | JwtPublicKey]
 
     def check(self, algorithms: tuple[str, ...]) -> None:
+        self.load(algorithms)
+
+    def load(self, algorithms: tuple[str, ...]) -> KeySet:
         _require_one_form(self.keys.values(), algorithms)
         for algorithm in algorithms:
             require_family(algorithm, symmetric=False, case="'public_keys'", instead="'secret'")
-        for key_id, key in self.load(algorithms).keys.items():
-            require_public_key(key_id, key.material, key.algorithms)
-
-    def load(self, algorithms: tuple[str, ...]) -> KeySet:
-        return KeySet({kid: _as_key(entry, algorithms) for kid, entry in self.keys.items()})
+        return KeySet({kid: _as_key(kid, entry, algorithms) for kid, entry in self.keys.items()})
 
 
 def _require_one_form(entries: Iterable[str | JwtPublicKey], algorithms: tuple[str, ...]) -> None:
@@ -157,10 +167,10 @@ def _all_typed(entries: Iterable[str | JwtPublicKey]) -> bool:
     return forms == {True}
 
 
-def _as_key(entry: str | JwtPublicKey, algorithms: tuple[str, ...]) -> Key:
+def _as_key(key_id: str, entry: str | JwtPublicKey, algorithms: tuple[str, ...]) -> Key:
     if isinstance(entry, JwtPublicKey):
-        return Key(entry.pem, (entry.alg,))
-    return Key(entry, algorithms)
+        return public_key(key_id, entry.pem, (entry.alg,))
+    return public_key(key_id, entry, algorithms)
 
 
 class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

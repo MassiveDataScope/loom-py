@@ -19,7 +19,8 @@ from loom.rest.auth.config import (
     JwtIssuerConfig,
     JwtPublicKey,
 )
-from loom.rest.auth.jwt import JwtAuthenticator, JwtIssuer
+from loom.rest.auth.issuer import JwtIssuer
+from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.auth.middleware import AuthenticationMiddleware, JwtAuthMiddleware
 
 __all__ = [

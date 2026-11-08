@@ -97,7 +97,7 @@ class TestHmacKeyStrength:
     def test_a_pem_key_is_never_a_shared_secret(self) -> None:
         """Algorithm confusion: an HS secret that is a public key lets its holders sign."""
         pem = "-----BEGIN PUBLIC KEY-----\n" + "A" * 64 + "\n-----END PUBLIC KEY-----"
-        with pytest.raises(ConfigError, match="is a PEM key"):
+        with pytest.raises(ConfigError, match="is an asymmetric key"):
             JwtAuthConfig(secret=Secret(pem), algorithms=("HS256",))
 
     def test_the_refusal_never_echoes_the_key(self, tmp_path: Path) -> None:
@@ -383,12 +383,33 @@ class TestPublicKeyFit:
         )
 
     def test_a_key_of_another_type_than_its_alg_is_refused(self) -> None:
-        with pytest.raises(ConfigError, match="is a OKP key; RS256 needs RSA"):
+        with pytest.raises(ConfigError, match=r"is a OKP key; none of \['RS256'\]"):
             JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="RS256", pem=self._ed25519_public())})
 
-    def test_a_pem_text_key_must_fit_every_shared_algorithm(self) -> None:
-        with pytest.raises(ConfigError, match="ES256 needs P-256"):
-            JwtAuthConfig(public_keys={"k1": self._ed25519_public()}, algorithms=("EdDSA", "ES256"))
+    def test_a_pem_text_key_keeps_only_the_algorithms_of_its_type(self) -> None:
+        """The released form shares one list: an RSA key never takes EdDSA, nor the reverse."""
+        rsa_public = _rsa_pem(2048)[1]
+        config = JwtAuthConfig(
+            public_keys={"rsa": rsa_public, "ed": self._ed25519_public()},
+            algorithms=("RS256", "PS256", "EdDSA"),
+        )
+
+        keys = config.keyring()
+        assert keys.pick("rsa").algorithms == ("RS256", "PS256")  # type: ignore[union-attr]
+        assert keys.pick("ed").algorithms == ("EdDSA",)  # type: ignore[union-attr]
+
+    def test_a_pem_text_key_that_fits_no_algorithm_is_refused(self) -> None:
+        with pytest.raises(ConfigError, match="is a OKP key; none of"):
+            JwtAuthConfig(public_keys={"k1": self._ed25519_public()}, algorithms=("RS256",))
+
+    def test_the_keyring_holds_the_keys_as_checked(self) -> None:
+        """Validation runs when the keyring is built, so a dict changed after
+        construction cannot slip a weak key past the RSA floor."""
+        config = JwtAuthConfig(public_keys={"k1": _rsa_pem(2048)[1]}, algorithms=("RS256",))
+        config.public_keys["k1"] = _rsa_pem(1024)[1]
+
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
+            JwtAuthenticator(config)
 
     def test_a_curve_must_match_its_algorithm(self) -> None:
         from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
@@ -402,13 +423,13 @@ class TestPublicKeyFit:
             )
             .decode()
         )
-        with pytest.raises(ConfigError, match="is a P-384 key; ES256 needs P-256"):
+        with pytest.raises(ConfigError, match=r"is a P-384 key; none of \['ES256'\]"):
             JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES256", pem=p384)})
         JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES384", pem=p384)})
 
     def test_a_malformed_pem_is_refused_without_keeping_the_parser_error(self) -> None:
         broken = "-----BEGIN PUBLIC KEY-----\nnot base64\n-----END PUBLIC KEY-----"
-        with pytest.raises(ConfigError, match="is not a PEM public key") as refused:
+        with pytest.raises(ConfigError, match="is not a PEM or OpenSSH public key") as refused:
             JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="EdDSA", pem=broken)})
 
         assert refused.value.__cause__ is None
@@ -495,21 +516,32 @@ class TestPublicKeyForms:
         )
         assert config.public_keys == {"a": JwtPublicKey(alg="EdDSA", pem=public)}
 
-    def test_an_openssh_rsa_key_cannot_slip_under_the_size_floor(self) -> None:
-        """Only a parseable PEM public key passes: other formats skipped the 2048 check."""
+    @staticmethod
+    def _openssh_rsa(bits: int) -> str:
         from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
         from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
 
-        ssh = (
-            rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        return (
+            rsa.generate_private_key(public_exponent=65537, key_size=bits)
             .public_key()
             .public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
             .decode()
         )
-        with pytest.raises(ConfigError, match="is not a PEM public key"):
+
+    def test_an_openssh_rsa_key_cannot_slip_under_the_size_floor(self) -> None:
+        """An OpenSSH key is parsed like a PEM one, so the 2048-bit floor holds."""
+        ssh = self._openssh_rsa(1024)
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
             JwtAuthConfig(public_keys={"a": JwtPublicKey(alg="RS256", pem=ssh)})
-        with pytest.raises(ConfigError, match="is not a PEM public key"):
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
             JwtAuthConfig(public_keys={"a": ssh}, algorithms=("RS256",))
+
+    def test_a_released_openssh_public_key_still_loads(self) -> None:
+        """The released verifier accepted OpenSSH lines through PyJWT; they still load."""
+        keys = JwtAuthConfig(
+            public_keys={"a": self._openssh_rsa(2048)}, algorithms=("RS256",)
+        ).keyring()
+        assert keys.pick("a").algorithms == ("RS256",)  # type: ignore[union-attr]
 
     @pytest.mark.parametrize("kid", [1, ["a"], {"k": "a"}])
     async def test_a_kid_that_is_not_a_string_matches_nothing(self, kid: object) -> None:
@@ -528,3 +560,60 @@ class TestPublicKeyForms:
             await authenticator.authenticate(_credentials(f"{forged}.{payload}.{signature}"))
             is None
         )
+
+
+class TestSigningProbeKeepsNothing:
+    def test_a_key_that_does_not_parse_keeps_no_parser_error(self) -> None:
+        broken = "-----BEGIN PRIVATE KEY-----\nnot base64 at all\n-----END PRIVATE KEY-----"
+        with pytest.raises(ConfigError, match="not an unencrypted PEM private key") as refused:
+            _issuer(broken, "EdDSA")
+
+        assert refused.value.__cause__ is None
+        assert refused.value.__context__ is None
+
+
+class TestKeyMaterialIsNeverASharedSecret:
+    """Whoever holds a published key could sign HS tokens with it (RFC 8725 §2.1)."""
+
+    @pytest.mark.parametrize(
+        "material",
+        [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl x",
+            "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBP x",
+            '{"kty": "RSA", "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbX", "e": "AQAB"}',
+        ],
+    )
+    def test_an_openssh_key_or_a_jwk_is_refused(self, material: str) -> None:
+        with pytest.raises(ConfigError, match="is an asymmetric key; HS256"):
+            JwtAuthConfig(secret=Secret(material), algorithms=("HS256",))
+
+
+class TestIssuerKeyFit:
+    """The issuer applies the verifiers' type, curve and size rule to its key."""
+
+    def test_a_curve_that_does_not_match_its_algorithm_is_refused(self) -> None:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+
+        p384 = (
+            ec.generate_private_key(ec.SECP384R1())
+            .private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            .decode()
+        )
+        with pytest.raises(ConfigError, match=r"is a P-384 key; none of \['ES256'\]"):
+            _issuer(p384, "ES256")
+
+    def test_a_weak_rsa_key_is_refused(self) -> None:
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
+            _issuer(_rsa_pem(1024)[0], "RS256")
+
+    def test_the_issuer_holds_its_key_as_a_secret(self) -> None:
+        from loom.rest.auth import JwtIssuer  # noqa: PLC0415
+
+        private = _rsa_pem(2048)[0]
+        issuer = JwtIssuer(_issuer(private, "RS256"))
+        assert private not in repr(vars(issuer))

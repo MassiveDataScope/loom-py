@@ -247,8 +247,9 @@ app:
 
 Each `{alg, pem}` entry verifies only its own algorithm, so `algorithms` is not written
 and a rotation can change the key type under a new `kid`. The released forms still
-load: `secret_path`, and `public_keys` entries as PEM text with an `algorithms` list
-they all share. One configuration uses one form or the other, never both. Keys are
+load: `secret_path`, and `public_keys` entries as PEM text with a shared `algorithms`
+list, where each key keeps only the algorithms of its own type (an RSA key never takes
+`EdDSA`). One configuration uses one form or the other, never both. Keys are
 read once at startup, so rotating one takes a restart.
 
 ### The issuer signing key

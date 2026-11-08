@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Final, Literal, Protocol, get_args
 
 from loom.core.config.errors import ConfigError
@@ -116,7 +117,9 @@ class KeySet:
 
     def pick(self, key_id: str | None) -> Key | None:
         if key_id is not None:
-            return self.keys.get(key_id)
+            # A list or object ``kid`` is unhashable: refuse it here rather
+            # than rely on the JWT library to have rejected it first.
+            return self.keys.get(key_id) if isinstance(key_id, str) else None
         return next(iter(self.keys.values())) if len(self.keys) == 1 else None
 
 
@@ -144,30 +147,34 @@ class JwtPublicKey(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             raise ConfigError("A JWT public key holds a private key; publish only its public half.")
 
 
-def require_public_key(key_id: str, material: str, algorithms: tuple[str, ...]) -> None:
-    """A parseable public key that fits every one of *algorithms*, checked at startup.
+def public_key(key_id: str, material: str, algorithms: tuple[str, ...]) -> Key:
+    """The key with only those of *algorithms* it can verify with, checked at startup.
 
-    A key of the wrong type, or one that does not parse, would only fail on
-    the first request: every valid token refused. The message names the key
-    id and the key type, never the material.
+    A PEM-text entry shares one ``algorithms`` list with keys of other types,
+    so each keeps the algorithms of its own type, never another's; a
+    ``{alg, pem}`` entry brings exactly one. A key that fits none, or does not
+    parse, would only fail on the first request: every valid token refused.
+    The message names the key id and the key type, never the material.
     """
     setting = f"JWT auth 'public_keys' entry {key_id!r}"
     if not key_id.strip() or not material.strip():
         raise ConfigError("JWT auth 'public_keys' entries need a key id and material.")
     if "PRIVATE KEY" in material:
         raise ConfigError(f"{setting} holds a private key; publish only its public half.")
-    _require_fits(_public_key(material, setting=setting), algorithms, setting=setting)
+    return Key(material, _fitting(_public_key(material, setting=setting), algorithms, setting))
 
 
-def _require_fits(key: Any, algorithms: tuple[str, ...], *, setting: str) -> None:
-    """The key is of the kind every algorithm verifies with, and an RSA one is strong."""
+def _fitting(key: Any, algorithms: tuple[str, ...], setting: str) -> tuple[str, ...]:
+    """Those of *algorithms* that verify with this kind of key; an RSA one must be strong."""
     kind = _key_kind(key)
-    for algorithm in algorithms:
-        needed = _ALGORITHM_KEY_KIND[algorithm]
-        if needed != kind:
-            raise ConfigError(f"{setting} is a {kind} key; {algorithm} needs {needed}.")
+    fitting = tuple(alg for alg in algorithms if _ALGORITHM_KEY_KIND[alg] == kind)
+    if not fitting:
+        raise ConfigError(
+            f"{setting} is a {kind} key; none of {list(algorithms)} verifies with it."
+        )
     if kind == "RSA":
         _require_rsa_bits(key.key_size, setting=setting)
+    return fitting
 
 
 _ALGORITHM_KEY_KIND: Final = {
@@ -181,17 +188,29 @@ _ALGORITHM_KEY_KIND: Final = {
 
 _CURVE_KIND: Final = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
 
+_SSH_PREFIXES: Final = ("ssh-", "ecdsa-sha2-", "sk-")
+"""OpenSSH public key lines, which the released verifier accepted next to PEM."""
+
 
 def _public_key(material: str, *, setting: str) -> Any:
-    """The parsed public key; parser errors are dropped, never chained or kept as context."""
+    """The parsed PEM or OpenSSH public key.
+
+    Parser errors are dropped, never chained or kept as context.
+    """
     from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
 
+    text = material.strip()
+    load = (
+        serialization.load_ssh_public_key
+        if text.startswith(_SSH_PREFIXES)
+        else serialization.load_pem_public_key
+    )
     try:
-        return serialization.load_pem_public_key(material.encode())
+        return load(text.encode())
     except (ValueError, TypeError, UnsupportedAlgorithm):
         pass
-    raise ConfigError(f"{setting} is not a PEM public key.")
+    raise ConfigError(f"{setting} is not a PEM or OpenSSH public key.")
 
 
 def _key_kind(key: Any) -> str:
@@ -216,21 +235,16 @@ def _require_rsa_bits(bits: int, *, setting: str) -> None:
         )
 
 
-def _private_rsa_bits(material: str) -> int | None:
-    """The modulus size of an RSA private key, or ``None`` for any other key.
-
-    Material that does not parse is left to the issuer's signing probe, which
-    refuses it when the issuer is built.
-    """
+def _private_key(material: str, *, setting: str) -> Any:
+    """The parsed, unencrypted PEM private key; parser errors are never chained."""
     from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
-    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
 
     try:
-        key = serialization.load_pem_private_key(material.encode(), password=None)
+        return serialization.load_pem_private_key(material.encode(), password=None)
     except (ValueError, TypeError, UnsupportedAlgorithm):
-        return None
-    return key.key_size if isinstance(key, rsa.RSAPrivateKey) else None
+        pass
+    raise ConfigError(f"{setting} is not an unencrypted PEM private key.")
 
 
 def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
@@ -248,14 +262,24 @@ def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
     minimum = _HMAC_MINIMUM_BYTES[algorithm]
     if not secret.strip():
         raise ConfigError(f"{setting} is blank.")
-    if _PEM_MARKER in secret:
-        # A PEM key used as an HMAC secret is algorithm confusion: whoever holds
+    if _is_key_material(secret):
+        # A key used as an HMAC secret is algorithm confusion: whoever holds
         # the public half could sign. The key fits an asymmetric algorithm.
-        raise ConfigError(f"{setting} is a PEM key; {algorithm} needs a shared secret.")
+        raise ConfigError(f"{setting} is an asymmetric key; {algorithm} needs a shared secret.")
     if len(secret.rstrip("\r\n").encode("utf-8")) < minimum:
         raise ConfigError(
             f"{setting} must be at least {minimum} bytes for {algorithm} (RFC 7518 section 3.2)."
         )
+
+
+def _is_key_material(value: str) -> bool:
+    """A PEM block, an OpenSSH key line, or a JWK: never a shared secret."""
+    text = value.strip()
+    return (
+        _PEM_MARKER in text
+        or text.startswith(_SSH_PREFIXES)
+        or (text.startswith("{") and '"kty"' in text)
+    )
 
 
 def read_key_file(path: str, *, setting: str) -> str:
@@ -282,9 +306,10 @@ def require_signing_key(material: str, algorithm: str) -> None:
         return
     if _PEM_MARKER not in material or "PRIVATE KEY" not in material:
         raise ConfigError(f"{algorithm} needs a PEM private key as {setting}.")
-    bits = _private_rsa_bits(material)
-    if bits is not None:
-        _require_rsa_bits(bits, setting=setting)
+    # The verifiers' rule, applied to the public half: key type, EC curve and
+    # RSA size all fit the one algorithm, so the issuer cannot mint tokens
+    # that loom's own verifier (or any RFC 7518 one) would refuse.
+    _fitting(_private_key(material, setting=setting).public_key(), (algorithm,), setting)
 
 
 def derived_public_key(private_pem: str) -> str:
@@ -292,7 +317,7 @@ def derived_public_key(private_pem: str) -> str:
 
     Raises:
         ConfigError: When cryptography is missing or the key cannot be parsed;
-            the parser error is chained and never carries the material.
+            the parser error is dropped, never chained or kept as context.
     """
     try:
         from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
@@ -304,9 +329,39 @@ def derived_public_key(private_pem: str) -> str:
         ) from exc
     try:
         private = serialization.load_pem_private_key(private_pem.encode(), password=None)
-        public = private.public_key().public_bytes(
-            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        return (
+            private.public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode()
         )
-    except (ValueError, TypeError, UnsupportedAlgorithm) as exc:
-        raise ConfigError("Could not derive the JWT public key from the signing key.") from exc
-    return public.decode()
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        pass
+    raise ConfigError("Could not derive the JWT public key from the signing key.")
+
+
+_PYJWT_HINT: Final = (
+    "JWT authentication requires the optional dependency 'pyjwt'. "
+    "Install it with: pip install 'loom-kernel[jwt]'"
+)
+
+
+def load_pyjwt() -> ModuleType:
+    """Import and return :mod:`jwt`, failing fast with an actionable hint.
+
+    The import is local on purpose: ``pyjwt`` is an optional extra, and
+    resolving it at authenticator construction turns a missing dependency into
+    a startup error instead of a broken API at first request.
+
+    Returns:
+        The imported ``jwt`` module.
+
+    Raises:
+        ImportError: If ``pyjwt`` is not installed.
+    """
+    try:
+        import jwt
+    except ImportError as exc:
+        raise ImportError(_PYJWT_HINT) from exc
+    return jwt

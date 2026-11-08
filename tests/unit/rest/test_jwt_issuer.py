@@ -275,7 +275,7 @@ def test_the_none_algorithm_is_always_forbidden(algorithm: str) -> None:
 
 def test_a_private_key_cannot_sign_with_a_symmetric_algorithm() -> None:
     private, _ = _keypair()
-    with pytest.raises(ConfigError, match="is a PEM key; HS256 needs a shared secret"):
+    with pytest.raises(ConfigError, match="is an asymmetric key; HS256 needs a shared secret"):
         _issuer_config(private, algorithm="HS256")
 
 
@@ -607,19 +607,20 @@ def test_a_malformed_key_fails_at_construction_not_at_the_first_login() -> None:
     "this identity cannot be represented". A broken deployment then looked like a
     bad login, and only on the first one.
     """
-    config = _issuer_config(_BROKEN_PEM)
-
-    with pytest.raises(ConfigError, match="EdDSA"):
-        JwtIssuer(config)
+    with pytest.raises(ConfigError, match="not an unencrypted PEM private key"):
+        _issuer_config(_BROKEN_PEM)
 
 
 def test_the_construction_probe_reports_an_algorithm_the_key_cannot_serve() -> None:
-    """A valid key with the wrong algorithm is the likelier operator mistake."""
-    private, _ = _keypair()
-    config = _issuer_config(private, algorithm="RS256")
+    """A valid key with the wrong algorithm is the likelier operator mistake.
 
-    with pytest.raises(ConfigError, match="RS256"):
-        JwtIssuer(config)
+    The issuer applies the verifiers' fit rule, so it is refused with the
+    configuration rather than minting tokens no verifier would accept.
+    """
+    private, _ = _keypair()
+
+    with pytest.raises(ConfigError, match=r"is a OKP key; none of \['RS256'\]"):
+        _issuer_config(private, algorithm="RS256")
 
 
 # ---------------------------------------------------------------------------
@@ -677,11 +678,13 @@ class TestForIssuer:
         assert private_body not in repr(config)
         assert private_body.encode() not in msgspec.json.encode(config)
 
-    def test_unparseable_key_chains_the_reason(self) -> None:
-        issuer = _issuer_config(_BROKEN_PEM)
+    def test_an_unparseable_key_keeps_no_parser_error(self) -> None:
+        from loom.rest.auth.keys import derived_public_key  # noqa: PLC0415
+
         with pytest.raises(ConfigError, match="derive") as excinfo:
-            JwtAuthConfig.for_issuer(issuer)
-        assert excinfo.value.__cause__ is not None
+            derived_public_key(_BROKEN_PEM)
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
 
     def test_reusing_the_issuer_kid_is_refused(self) -> None:
         private, _ = _keypair()
