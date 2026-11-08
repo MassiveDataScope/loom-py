@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -141,7 +141,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
@@ -203,7 +203,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
@@ -281,7 +281,7 @@ jobs:
       - name: Quality report (strict gate)
         id: quality
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/python/quality-report@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+        uses: MassiveDataScope/loom-actions/actions/python/quality-report@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
         with:
           src-dir: src
           test-dir: tests
@@ -293,7 +293,7 @@ jobs:
 
       - name: Publish PR quality comment
         if: ${{ always() && steps.quality.outputs.report-file != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- loom-quality-report -->"
@@ -301,7 +301,7 @@ jobs:
 
       - name: Compute candidate prerelease version
         id: version
-        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
         with:
           branch: ${{ github.head_ref }}
           prerelease: "true"
@@ -338,7 +338,7 @@ jobs:
       - name: Generate changelog preview
         id: changelog
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
         with:
           mode: "pr"
           branch: ${{ github.event.pull_request.head.sha }}
@@ -349,7 +349,7 @@ jobs:
 
       - name: Publish PR changelog comment
         if: ${{ steps.changelog.outcome == 'success' && steps.changelog.outputs.output_path != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- changelog-preview -->,<!-- branch-source:${{ github.head_ref }} -->"
@@ -393,7 +393,7 @@ jobs:
 
       - name: SonarQube scan
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != '' }}
-        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         with:
           args: >
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
@@ -498,7 +498,7 @@ jobs:
       # workflow, for this run. A fork gets no OIDC identity, so it cannot publish.
       - name: Publish prerelease package to TestPyPI
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository && steps.version.outputs.deploy == 'true' }}
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1 2026-07-28 (handles Metadata-Version 2.5)
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1 2026-07-28 (handles Metadata-Version 2.5)
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
@@ -533,7 +533,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
@@ -629,7 +629,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
@@ -693,7 +693,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PRIMARY_PYTHON }}
 
@@ -727,7 +727,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
@@ -788,7 +788,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
