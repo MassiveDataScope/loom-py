@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -76,9 +76,19 @@ first request: a typo like ``" HS256"`` would otherwise fail per-call."""
 RESERVED_CLAIMS: frozenset[str] = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
 
 
+_MIN_RSA_BITS: Final = 2048
+"""Smallest RSA modulus accepted for signing or verifying: a MUST of RFC 7518 §3.3."""
+
+
 def _is_symmetric(algorithm: str) -> bool:
-    """Return ``True`` when *algorithm* uses a shared secret (HS* family)."""
-    return algorithm.upper().startswith("HS")
+    """Return ``True`` when *algorithm* uses a shared secret: the HMAC table is the one list."""
+    return algorithm.upper() in _HMAC_MINIMUM_BYTES
+
+
+def _require_family(algorithm: str, *, symmetric: bool, case: str, instead: str) -> None:
+    """Refuse an algorithm of the other key family; every key case shares this one rule."""
+    if _is_symmetric(algorithm) != symmetric:
+        raise ConfigError(f"JWT algorithm {algorithm!r} needs {instead}, not {case}.")
 
 
 def _require_supported(algorithm: str, *, setting: str) -> None:
@@ -124,13 +134,16 @@ class _SharedSecret:
         if len(algorithms) != 1:
             # RFC 8725 §3.1: a key is used with exactly one algorithm.
             raise ConfigError("JWT auth 'secret_path' signs with exactly one algorithm.")
-        if not _is_symmetric(algorithms[0]):
-            raise ConfigError(
-                f"JWT algorithm {algorithms[0]!r} requires 'public_keys', not 'secret_path'."
-            )
+        _require_family(
+            algorithms[0], symmetric=True, case="'secret_path'", instead="'public_keys'"
+        )
+
+    def fields(self) -> tuple[str | None, dict[str, str]]:
+        """The ``secret_path`` and ``public_keys`` that express this case."""
+        return self.path, {}
 
     def load(self, algorithms: tuple[str, ...]) -> _Keyring:
-        return _FixedKey(_load_secret(self.path, algorithms, setting="JWT auth 'secret_path'"))
+        return _FixedKey(_load_secret(self.path, algorithms[0], setting="JWT auth 'secret_path'"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,11 +160,14 @@ class _PublicKeySet:
     def check(self, algorithms: tuple[str, ...]) -> None:
         for key_id, material in self.keys.items():
             _require_public_key(key_id, material)
-        symmetric = [algorithm for algorithm in algorithms if _is_symmetric(algorithm)]
-        if symmetric:
-            raise ConfigError(
-                f"JWT algorithm {symmetric[0]!r} requires 'secret_path', not 'public_keys'."
+        for algorithm in algorithms:
+            _require_family(
+                algorithm, symmetric=False, case="'public_keys'", instead="'secret_path'"
             )
+
+    def fields(self) -> tuple[str | None, dict[str, str]]:
+        """The ``secret_path`` and ``public_keys`` that express this case."""
+        return None, dict(self.keys)
 
     def load(self, algorithms: tuple[str, ...]) -> _Keyring:
         # Copied: ``frozen`` stops rebinding, not mutation, and this is an allowlist.
@@ -172,17 +188,56 @@ def _require_public_key(key_id: str, material: str) -> None:
             f"JWT auth 'public_keys' entry {key_id!r} holds a private key; "
             "publish only its public half."
         )
+    _require_rsa_strength(material, public=True, setting=f"JWT auth 'public_keys' {key_id!r}")
 
 
-def _load_secret(path: str, algorithms: Iterable[str], *, setting: str) -> str:
+def _require_rsa_strength(material: str, *, public: bool, setting: str) -> None:
+    """Refuse an RSA key below 2048 bits (RFC 7518 §3.3); other key types pass.
+
+    The message names the size, never the key.
+    """
+    bits = _rsa_bits(material, public=public)
+    if bits is not None and bits < _MIN_RSA_BITS:
+        raise ConfigError(
+            f"{setting} is a {bits}-bit RSA key; at least {_MIN_RSA_BITS} bits "
+            "are required (RFC 7518 section 3.3)."
+        )
+
+
+def _rsa_bits(material: str, *, public: bool) -> int | None:
+    """The modulus size of an RSA key, or ``None`` for any other key.
+
+    Material that does not parse is left to PyJWT, which refuses it on use:
+    the strength rule judges size, not format.
+    """
+    try:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - the jwt extra ships it
+        return None
+    load = serialization.load_pem_public_key if public else _load_private_pem
+    try:
+        key: Any = load(material.encode())
+    except (ValueError, TypeError):
+        return None
+    return key.key_size if isinstance(key, (rsa.RSAPublicKey, rsa.RSAPrivateKey)) else None
+
+
+def _load_private_pem(data: bytes) -> Any:
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    return serialization.load_pem_private_key(data, password=None)
+
+
+def _load_secret(path: str, algorithm: str, *, setting: str) -> str:
     """Read a shared secret and refuse it when shorter than its algorithm's hash."""
     secret = _read_key_file(path, setting=setting)
-    _require_hmac_strength(secret, algorithms, setting=setting)
+    _require_hmac_strength(secret, algorithm, setting=setting)
     return secret
 
 
-def _require_hmac_strength(secret: str, algorithms: Iterable[str], *, setting: str) -> None:
-    """Refuse an HMAC key shorter than the hash of the strongest algorithm it signs.
+def _require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
+    """Refuse an HMAC key shorter than its algorithm's hash, or made of whitespace only.
 
     RFC 7518 §3.2 makes the hash size a MUST, so the rule holds in every
     environment. The message names the size, never the key. A trailing line
@@ -190,14 +245,14 @@ def _require_hmac_strength(secret: str, algorithms: Iterable[str], *, setting: s
     carry the full length without it.
 
     Raises:
-        ConfigError: When the key is shorter than the largest minimum among the
-            symmetric *algorithms*.
+        ConfigError: When the key is blank or shorter than *algorithm*'s hash.
     """
-    minimum = max((_HMAC_MINIMUM_BYTES.get(a.upper(), 0) for a in algorithms), default=0)
+    minimum = _HMAC_MINIMUM_BYTES[algorithm.upper()]
+    if not secret.strip():
+        raise ConfigError(f"{setting} is blank.")
     if len(secret.rstrip("\r\n").encode("utf-8")) < minimum:
         raise ConfigError(
-            f"{setting} must be at least {minimum} bytes for "
-            f"{', '.join(a for a in algorithms if _is_symmetric(a))} (RFC 7518 section 3.2)."
+            f"{setting} must be at least {minimum} bytes for {algorithm} (RFC 7518 section 3.2)."
         )
 
 
@@ -339,7 +394,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
                 chained and never carry the material.
         """
         source = issuer.signing_key.verifier_key(issuer.algorithm, issuer.kid, previous_keys or {})
-        secret_path, public_keys = _as_fields(source)
+        secret_path, public_keys = source.fields()
         return cls(
             secret_path=secret_path,
             public_keys=public_keys,
@@ -394,20 +449,35 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         return self._key_source.load(self.algorithms)
 
 
-def _as_fields(source: _SharedSecret | _PublicKeySet) -> tuple[str | None, dict[str, str]]:
-    """The ``secret_path`` and ``public_keys`` fields that express *source*."""
-    if isinstance(source, _SharedSecret):
-        return source.path, {}
-    return None, dict(source.keys)
+class _AsymmetricKey(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
+    """What both private-key cases share; each one only says where its key is read."""
+
+    def _read(self) -> str:
+        raise NotImplementedError
+
+    def check(self, algorithm: str) -> None:
+        """Refuse an algorithm this key cannot sign with."""
+        _require_family(
+            algorithm,
+            symmetric=False,
+            case=f"a {type(self).__name__}",
+            instead="a SharedSecretFile",
+        )
+
+    def load(self, algorithm: str) -> str:
+        """Read the key and refuse an RSA key below 2048 bits."""
+        material = self._read()
+        _require_rsa_strength(material, public=False, setting="the JWT issuer signing key")
+        return material
+
+    def verifier_key(
+        self, algorithm: str, kid: str | None, previous: Mapping[str, str]
+    ) -> _PublicKeySet:
+        """The derived public half under *kid*, plus the keys of a rotation window."""
+        return _published_keys(self.load(algorithm), kid, previous)
 
 
-class PrivateKeyFile(
-    LoomFrozenStruct,
-    frozen=True,
-    tag="private_key_file",
-    tag_field="type",
-    forbid_unknown_fields=True,
-):
+class PrivateKeyFile(_AsymmetricKey, frozen=True, tag="private_key_file", tag_field="type"):
     """An asymmetric signing key read from a PEM file at *path*.
 
     Attributes:
@@ -417,31 +487,12 @@ class PrivateKeyFile(
 
     path: str
 
-    def check(self, algorithm: str) -> None:
-        """Refuse an algorithm this key cannot sign with."""
-        if _is_symmetric(algorithm):
-            raise ConfigError(
-                f"JWT algorithm {algorithm!r} signs with a SharedSecretFile, not a PrivateKeyFile."
-            )
-
-    def load(self, algorithm: str) -> str:
-        """Read the key; an OS error is never chained, since it carries the path."""
+    def _read(self) -> str:
+        # An OS error is never chained, since it carries the path.
         return _read_key_file(self.path, setting="the JWT issuer signing key")
 
-    def verifier_key(
-        self, algorithm: str, kid: str | None, previous: Mapping[str, str]
-    ) -> _PublicKeySet:
-        """The derived public half under *kid*, plus the keys of a rotation window."""
-        return _published_keys(self.load(algorithm), kid, previous)
 
-
-class ManagedPrivateKey(
-    LoomFrozenStruct,
-    frozen=True,
-    tag="managed_private_key",
-    tag_field="type",
-    forbid_unknown_fields=True,
-):
+class ManagedPrivateKey(_AsymmetricKey, frozen=True, tag="managed_private_key", tag_field="type"):
     """An asymmetric signing key resolved from a managed store, never from disk.
 
     Resolved once, when the issuer loads it, so rotating the stored value takes
@@ -461,23 +512,9 @@ class ManagedPrivateKey(
     def __post_init__(self) -> None:
         _require_valid_key_ref(self.ref)
 
-    def check(self, algorithm: str) -> None:
-        """Refuse an algorithm this key cannot sign with."""
-        if _is_symmetric(algorithm):
-            raise ConfigError(
-                f"JWT algorithm {algorithm!r} signs with a SharedSecretFile, "
-                "not a ManagedPrivateKey."
-            )
-
-    def load(self, algorithm: str) -> str:
-        """Resolve the key; a resolver error is chained and never carries the material."""
+    def _read(self) -> str:
+        # A resolver error is chained and never carries the material.
         return _fetch_key_ref(self.ref, region=self.region)
-
-    def verifier_key(
-        self, algorithm: str, kid: str | None, previous: Mapping[str, str]
-    ) -> _PublicKeySet:
-        """The derived public half under *kid*, plus the keys of a rotation window."""
-        return _published_keys(self.load(algorithm), kid, previous)
 
 
 class SharedSecretFile(
@@ -500,15 +537,16 @@ class SharedSecretFile(
 
     def check(self, algorithm: str) -> None:
         """Refuse an algorithm this key cannot sign with."""
-        if not _is_symmetric(algorithm):
-            raise ConfigError(
-                f"JWT algorithm {algorithm!r} signs with a PrivateKeyFile or "
-                "ManagedPrivateKey, not a SharedSecretFile."
-            )
+        _require_family(
+            algorithm,
+            symmetric=True,
+            case="a SharedSecretFile",
+            instead="a PrivateKeyFile or ManagedPrivateKey",
+        )
 
     def load(self, algorithm: str) -> str:
         """Read the secret and refuse it when shorter than *algorithm*'s hash."""
-        return _load_secret(self.path, (algorithm,), setting="the JWT issuer secret")
+        return _load_secret(self.path, algorithm, setting="the JWT issuer secret")
 
     def verifier_key(
         self, algorithm: str, kid: str | None, previous: Mapping[str, str]
@@ -594,20 +632,21 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
     """
 
     signing_key: SigningKey
-    algorithm: str = ""
-    audience: str = ""
-    issuer: str = ""
-    roles_claim: str = ""
+    algorithm: str
+    audience: str
+    issuer: str
+    roles_claim: str
     ttl_seconds: int = 900
     kid: str | None = None
     typ: str | None = None
 
     def __post_init__(self) -> None:
+        # The algorithm first: a key that does not fit an unknown one says nothing useful.
+        _require_supported(self.algorithm, setting="JWT issuer 'algorithm'")
         self.signing_key.check(self.algorithm)
         self._validate_claims()
 
     def _validate_claims(self) -> None:
-        _require_supported(self.algorithm, setting="JWT issuer 'algorithm'")
         if not self.audience.strip() or not self.issuer.strip():
             raise ConfigError("JWT issuer requires a non-blank 'audience' and 'issuer'.")
         # Optional here is what let an attribute impersonate the verifier's roles

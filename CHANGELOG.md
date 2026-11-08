@@ -23,6 +23,9 @@
   `private_key_ref`, `key_ref_region`, `secret_path` and
   `allow_symmetric_signing`. A private key in `public_keys` is refused, and
   the verifier reads its `secret_path` once at startup.
+- An RSA key below 2048 bits and a whitespace-only HS secret are refused, on
+  both the verifier and the issuer. `JwtIssuerConfig` requires `algorithm`,
+  `audience`, `issuer` and `roles_claim` instead of defaulting them to `""`.
 
 ### lambda
 

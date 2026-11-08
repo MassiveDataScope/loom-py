@@ -314,3 +314,84 @@ class TestKeyMaterialStaysOut:
         private = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI\n-----END PRIVATE KEY-----"
         with pytest.raises(ConfigError, match="private key"):
             JwtAuthConfig(public_keys={"k1": private}, algorithms=("EdDSA",))
+
+
+def _rsa_pem(tmp_path: Path, bits: int) -> tuple[Path, str]:
+    """A private key file of *bits* and its public PEM."""
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=bits)
+    private = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    path = tmp_path / f"rsa{bits}.pem"
+    path.write_text(private, encoding="utf-8")
+    return path, public
+
+
+class TestRsaKeySize:
+    """RFC 7518 §3.3: an RSA key below 2048 bits is refused on both sides."""
+
+    def test_a_short_issuer_key_is_refused_on_load(self, tmp_path: Path) -> None:
+        from loom.rest.auth.config import PrivateKeyFile  # noqa: PLC0415
+
+        path, _ = _rsa_pem(tmp_path, 1024)
+        config = JwtIssuerConfig(
+            signing_key=PrivateKeyFile(str(path)),
+            algorithm="RS256",
+            audience="api",
+            issuer="idp",
+            roles_claim="roles",
+        )
+
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
+            config.load_signing_key()
+
+    def test_a_short_published_key_is_refused(self, tmp_path: Path) -> None:
+        _, public = _rsa_pem(tmp_path, 1024)
+
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
+            JwtAuthConfig(public_keys={"k1": public}, algorithms=("RS256",))
+
+    def test_a_2048_bit_key_is_accepted(self, tmp_path: Path) -> None:
+        _, public = _rsa_pem(tmp_path, 2048)
+
+        JwtAuthConfig(public_keys={"k1": public}, algorithms=("RS256",))
+
+
+class TestIssuerFields:
+    def test_a_blank_secret_is_refused(self, tmp_path: Path) -> None:
+        path = tmp_path / "blank"
+        path.write_text(" " * 40, encoding="utf-8")
+        config = JwtIssuerConfig(
+            signing_key=SharedSecretFile(str(path)),
+            algorithm="HS256",
+            audience="api",
+            issuer="idp",
+            roles_claim="roles",
+        )
+
+        with pytest.raises(ConfigError, match="blank"):
+            config.load_signing_key()
+
+    def test_the_mandatory_fields_have_no_empty_default(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError):
+            JwtIssuerConfig(signing_key=SharedSecretFile(_secret_file(tmp_path, 32)))  # type: ignore[call-arg]
+
+    def test_an_unknown_algorithm_is_named_before_the_key(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="algorithm"):
+            JwtIssuerConfig(
+                signing_key=SharedSecretFile(_secret_file(tmp_path, 32)),
+                algorithm="HS999",
+                audience="api",
+                issuer="idp",
+                roles_claim="roles",
+            )

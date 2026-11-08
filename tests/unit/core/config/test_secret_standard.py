@@ -113,6 +113,8 @@ def _locates_a_key(annotation: Any) -> bool:
     return bool(options) and all(
         isinstance(option, type)
         and issubclass(option, msgspec.Struct)
+        # An empty struct would pass vacuously: a case must name where its key lives.
+        and bool(msgspec.structs.fields(option))
         and all(
             _plain_name(field.name, field.type) or field.name in {"path", "ref", "region"}
             for field in msgspec.structs.fields(option)
@@ -162,3 +164,20 @@ def _problems() -> list[str]:
 
 def test_decodable_config_uses_the_redacted_types() -> None:
     assert _problems() == []
+
+
+class _InlineKey(msgspec.Struct, tag="inline"):
+    pem: str
+
+
+class _Empty(msgspec.Struct, tag="empty"):
+    pass
+
+
+def test_a_key_union_gaining_an_inline_case_is_still_flagged() -> None:
+    """The exemption covers cases that only locate a key, never one that carries it."""
+    from loom.rest.auth.config import SigningKey  # noqa: PLC0415
+
+    assert _locates_a_key(SigningKey)
+    assert not _locates_a_key(SigningKey | _InlineKey)
+    assert not _locates_a_key(_Empty)

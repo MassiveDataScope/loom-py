@@ -201,6 +201,9 @@ only where developers need it:
 | `issuer` declared (`loom.rest.E003`) | staging and production | without it a token from any issuer holding the key is accepted |
 | `leeway_seconds` at most 300 | always | a larger leeway silently extends every token's lifetime |
 | HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; a hex or base64 secret needs twice or a third more characters for the same strength |
+| RSA key of at least 2048 bits, signing and published keys | always, verifier and issuer | RFC 7518 §3.3 |
+| A blank (whitespace-only) secret is refused | always, verifier and issuer | A.8.24 |
+| The resolved audience and issuer are checked against the environment the app is composed for | staging and production, at startup | the static check sees only the written value |
 | `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
 
 The two deployment checks follow `LOOM_ENV`: they do not run in `development` or `test`,
