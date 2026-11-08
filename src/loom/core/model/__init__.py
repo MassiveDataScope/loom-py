@@ -6,6 +6,7 @@ from loom.core.model._loom_type import (
     msgspec_type,
     pydantic_type,
 )
+from loom.core.model.audited import Audited, AuditedTable
 from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
@@ -56,6 +57,8 @@ from loom.core.model.types import (
 from loom.core.model.types_postgres import Postgres
 
 __all__ = [
+    "Audited",
+    "AuditedTable",
     "BaseModel",
     "READ_WRITE",
     "Privilege",

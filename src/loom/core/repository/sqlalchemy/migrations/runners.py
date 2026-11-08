@@ -35,9 +35,12 @@ from loom.core.backend.scoped_ddl import (
     validate_timeout,
 )
 from loom.core.config import ConfigError
+from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
+from loom.core.repository.sqlalchemy.rls.audit import present_audited, reconcile_audited
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
 from loom.core.schema_names import SchemaNames
 
@@ -102,7 +105,11 @@ def run_migrations(
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
 ) -> None:
-    """Run the structural tree as the owner, one transaction per revision."""
+    """Run the structural tree as the owner, one transaction per revision.
+
+    Afterwards the audited tables are reconciled with the guard in one more
+    transaction (``reconcile_audited``), closed by the guard's assertion.
+    """
     from alembic import context
 
     bootstrap = _require_bootstrap(application)
@@ -110,7 +117,8 @@ def run_migrations(
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
     require_landing(connection, owner, schema)
-    require_guard_revision_sync(connection, names.guard)
+    minimum = required_guard_revision(bool(application.audited))
+    require_guard_revision_sync(connection, names.guard, minimum=minimum)
     if read_only:
         connection.commit()
     else:
@@ -130,13 +138,39 @@ def run_migrations(
             version_table_schema=schema,
             include_object=include_object_for(names),
             process_revision_directives=scope_protection_hook(application),
-            on_version_apply=_assert_after_revision(names.guard),
+            on_version_apply=_close_revision(
+                names.guard, schema, application.active_audited, read_only=read_only
+            ),
             loom_guard=names.guard,
         )
         context.run_migrations()
+        if not read_only:
+            _reconcile_audit(connection, application, schema, names.guard)
     finally:
         if not read_only:
             _unlock(connection, schema)
+
+
+def _reconcile_audit(
+    connection: Connection, application: Application, schema: str, guard: str
+) -> None:
+    connection.commit()
+    _reconcile_present(connection, schema, guard, application.active_audited)
+    connection.execute(_ASSERT_SCHEMA)
+    connection.commit()
+
+
+def _reconcile_present(
+    connection: Connection, schema: str, guard: str, audited: AuditedTables
+) -> None:
+    """Reconcile the declared audited tables that exist now, in the caller's transaction.
+
+    A declared table no revision has created yet (an autogenerate run on an
+    empty schema, or an earlier revision) waits for the revision that does.
+    """
+    connection.execute(_GUARD_FIRST, _guard(guard))
+    present = present_audited(connection, schema, audited)
+    reconcile_audited(connection, schema=schema, guard=guard, declared=present)
 
 
 def run_data_migrations(
@@ -333,7 +367,17 @@ def _guard(guard: str) -> dict[str, str]:
     return {"guard": guard}
 
 
-def _assert_after_revision(guard: str) -> VersionApply:
+def _close_revision(
+    guard: str, schema: str, audited: AuditedTables, *, read_only: bool
+) -> VersionApply:
+    """Audit the tables a revision created, then assert, before the revision commits.
+
+    Each structural revision commits on its own: a table it creates gets its
+    audit trigger in the same transaction, so no committed state has an
+    audited table without one. The run's last reconciliation still handles
+    markers added or removed with no revision.
+    """
+
     def on_version_apply(
         ctx: MigrationContext,
         step: MigrationInfo,
@@ -341,8 +385,12 @@ def _assert_after_revision(guard: str) -> VersionApply:
         run_args: Mapping[str, Any],
     ) -> None:
         del step, heads, run_args
-        if ctx.connection is not None:
-            assert_revision(ctx.connection, guard)
+        connection = ctx.connection
+        if connection is None:
+            return
+        if audited and not read_only:
+            _reconcile_present(connection, schema, guard, audited)
+        assert_revision(connection, guard)
 
     return on_version_apply
 

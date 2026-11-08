@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.config import ConfigError
 from loom.core.errors import MalformedJobMessage
-from loom.core.identity import Identity
+from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import failure_log_fields
@@ -36,7 +36,15 @@ from loom.serverless.aws.lambda_.functions import (
     served_trigger,
     source_of,
 )
-from loom.serverless.aws.lambda_.triggers import Decoder, eventbridge, parsed, s3, schedule, sns
+from loom.serverless.aws.lambda_.triggers import (
+    Decoded,
+    Decoder,
+    eventbridge,
+    parsed,
+    s3,
+    schedule,
+    sns,
+)
 from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 
 if TYPE_CHECKING:
@@ -199,7 +207,7 @@ def _bind_queued_events(
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
-    reader = _event_reader(name, trigger, _VIA_SQS)
+    reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
         label=trigger.job,
@@ -215,35 +223,58 @@ def _bind_direct_events(
     name: str, trigger: EventTrigger, job_type: type[Job[Any]], application: Application
 ) -> LambdaHandler:
     """The handler of a direct trigger: any failure fails the event, retried, then sent on."""
-    read = _event_reader(name, trigger, _DIRECT)
+    read = _event_reader(name, trigger, _DIRECT, trusts_requester=True)
     host = open_host(application)
     return _DirectEvents(application, host, job_type, read, trigger.job, name)
 
 
-def _event_reader(name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder]) -> Read:
-    """Reads an event of *trigger*'s source into the envelopes of its job and identity."""
+def _event_reader(
+    name: str, trigger: EventTrigger, decoders: Mapping[str, Decoder], *, trusts_requester: bool
+) -> Read:
+    """Reads an event of *trigger*'s source into the envelopes of its job and identity.
+
+    *trusts_requester* is true only when AWS delivers the event to the function
+    itself. A queued event is an SQS message body: whoever may send to the queue
+    writes it, the caller fields included, so it never names a requester.
+    """
     source = source_of(trigger)
-    decode, identity = decoders[source], _identity(name, source, trigger)
+    decode = decoders[source]
+    system = _identity(name, source, trigger, None)
+
+    def identity_of(item: Decoded) -> dict[str, Any] | None:
+        if not trusts_requester or item.requester is None:
+            return system
+        return _identity(name, source, trigger, item.requester)
 
     def read(document: Any) -> tuple[tuple[JobEnvelope, str | None], ...]:
         return tuple(
-            (JobEnvelope(job=trigger.job, payload=item.payload, identity=identity), item.event_id)
+            (
+                JobEnvelope(job=trigger.job, payload=item.payload, identity=identity_of(item)),
+                item.event_id,
+            )
             for item in decode(document)
         )
 
     return read
 
 
-def _identity(name: str, source: str, trigger: EventTrigger) -> dict[str, Any] | None:
-    """The declared identity of *trigger*, encoded for its envelopes; ``None`` runs anonymous."""
+def _identity(
+    name: str, source: str, trigger: EventTrigger, requester: str | None
+) -> dict[str, Any] | None:
+    """The declared system identity of *trigger*, encoded for its envelopes.
+
+    It acts on behalf of *requester*, the caller AWS recorded for the event,
+    when there is one: the only writer of ``loom:on_behalf_of``.
+    """
     declared = trigger.identity
-    if declared is None:
-        return None
+    attributes = dict(declared.attributes)
+    if requester is not None:
+        attributes[ON_BEHALF_OF_ATTRIBUTE] = requester
     return encode_identity(
         Identity(
             subject=declared.subject,
             roles=declared.roles,
-            attributes=declared.attributes,
+            attributes=attributes,
             mechanism=f"lambda:{name}:{source}",
         )
     )

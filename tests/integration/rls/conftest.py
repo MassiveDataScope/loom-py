@@ -106,7 +106,13 @@ def _module_database(admin_uri: str, created_roles: set[str]) -> Iterator[str]:
         yield uri
     finally:
         asyncio.run(_run(admin_uri, f'DROP DATABASE "{name}" WITH (FORCE)', autocommit=True))
-        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles))
+        # Every bootstrap also claims ``<schema>_auditor``; derive it from the owner role.
+        auditors = {
+            role.removesuffix("_owner") + "_auditor"
+            for role in created_roles
+            if role.endswith("_owner")
+        }
+        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles | auditors))
         if drops:
             asyncio.run(_run(admin_uri, *drops, autocommit=True))
 
@@ -215,7 +221,13 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
             **options,
         )
         created_roles.update(
-            {f"{schema}_owner", f"{schema}_readers", f"{schema}_writers", *passwords}
+            {
+                f"{schema}_owner",
+                f"{schema}_readers",
+                f"{schema}_writers",
+                f"{schema}_auditor",
+                *passwords,
+            }
         )
         await apply_bootstrap(module_database_uri, config, passwords)
         base = ScopedDatabase(

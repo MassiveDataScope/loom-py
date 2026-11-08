@@ -20,7 +20,7 @@ from types import ModuleType
 from typing import Any
 
 from loom.core.config.errors import ConfigError
-from loom.core.identity import Identity
+from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.config import JwtAuthConfig, JwtIssuerConfig
@@ -420,6 +420,11 @@ def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str,
         for name, value in claims.items()
         if name not in excluded and isinstance(value, str)
     }
+    return _unreserved(_unprefixed(crossing))
+
+
+def _unprefixed(crossing: Mapping[str, str]) -> dict[str, str]:
+    """Strip the attribute prefix, letting a namespaced claim win over a plain one."""
     # Filter by prefix on both sides: comparing against the stripped names would
     # keep the wire-format key too, and the domain would see the attribute twice.
     namespaced = {
@@ -433,3 +438,12 @@ def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str,
         if not name.startswith(ATTRIBUTE_CLAIM_PREFIX)
     }
     return {**plain, **namespaced}
+
+
+def _unreserved(attributes: Mapping[str, str]) -> dict[str, str]:
+    """Drop loom's own attributes (a delegation, for one): a token never sets them."""
+    return {
+        name: value
+        for name, value in attributes.items()
+        if not name.startswith(RESERVED_ATTRIBUTE_PREFIX)
+    }

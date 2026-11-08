@@ -40,7 +40,9 @@ class BootstrapConfig:
     schema; it is opt-in because that schema belongs to the whole database.
     ``scram_iterations`` is the PBKDF2 iteration count of every password
     verifier; it defaults to Postgres' own ``scram_iterations`` (4096) and may
-    only be raised.
+    only be raised. ``auditor`` names the role that reads the audit log
+    (``<schema>_auditor`` when not declared) and ``audit_retention_months`` is
+    how long its partitions are kept; without one nothing is ever dropped.
     """
 
     schema: str
@@ -49,6 +51,13 @@ class BootstrapConfig:
     names: SchemaNames
     revoke_public: bool = False
     scram_iterations: int = POSTGRES_SCRAM_ITERATIONS
+    auditor: str | None = None
+    audit_retention_months: int | None = None
+
+    @property
+    def auditor_role(self) -> str:
+        """The role that reads the audit log: the declared one or ``<schema>_auditor``."""
+        return self.auditor or f"{self.schema}_auditor"
 
     @property
     def bypass_users(self) -> tuple[str, ...]:
@@ -62,6 +71,12 @@ class BootstrapConfig:
             ValueError: Naming the first identifier Postgres would fold,
                 truncate or resolve to something else, or two roles sharing a name.
         """
+        self._check_names()
+        self._check_settings()
+        return self
+
+    def _check_names(self) -> None:
+        """Every identifier is one Postgres keeps as written, and the roles are distinct."""
         schema_identifier(self.schema)
         sql_identifier(self.names.guard, max_length=MAX_GUARD_LENGTH)
         for table in (self.names.version_table, self.names.data_version_table):
@@ -71,12 +86,20 @@ class BootstrapConfig:
             self.roles.migrator,
             self.names.readers,
             self.names.writers,
+            self.auditor_role,
             *self.database_users,
         )
         for name in roles:
             sql_identifier(name)
         if len(set(roles)) != len(roles):
             raise ValueError(f"database roles must have distinct names, got {sorted(roles)}")
+
+    def _check_settings(self) -> None:
+        """The retention, the version tables and the SCRAM iterations are usable."""
+        if self.audit_retention_months is not None and self.audit_retention_months < 1:
+            raise ValueError(
+                f"audit retention_months must be at least 1, got {self.audit_retention_months}"
+            )
         if self.names.version_table == self.names.data_version_table:
             raise ValueError("the structural and the data version tables must differ")
         if self.scram_iterations < POSTGRES_SCRAM_ITERATIONS:
@@ -84,7 +107,6 @@ class BootstrapConfig:
                 f"scram_iterations must be at least {POSTGRES_SCRAM_ITERATIONS}, "
                 f"got {self.scram_iterations}"
             )
-        return self
 
     def document(self) -> dict[str, object]:
         """The bound JSON document the guard's ``configure`` consumes."""
@@ -101,4 +123,6 @@ class BootstrapConfig:
             "revoke_public": self.revoke_public,
             "version_table": self.names.version_table,
             "data_version_table": self.names.data_version_table,
+            "auditor_role": self.auditor_role,
+            "retention_months": self.audit_retention_months,
         }

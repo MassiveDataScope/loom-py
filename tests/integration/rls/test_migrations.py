@@ -22,10 +22,15 @@ from sqlalchemy.exc import DBAPIError
 from loom.core.config import ConfigError
 from loom.core.environment import CONFIG_VARIABLE
 from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
+from loom.core.repository.sqlalchemy.migrations import (
+    ENV_TEMPLATE_PATH,
+    alembic_config,
+    check,
+    runners,
+)
 from loom.core.repository.sqlalchemy.rls import integrity
 from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
-from tests.integration.agnosticism import notes, rosters, sites
+from tests.integration.agnosticism import bookkeeping, notes, rosters, sites
 from tests.integration.rls.conftest import (
     BootstrapFactory,
     ScopedDatabase,
@@ -545,3 +550,34 @@ async def test_a_partitioned_table_takes_partitions_from_a_revision_and_checks_c
     assert await scalar(database.superuser, tables) == "alembic_version,alembic_version_data"
     registered = "SELECT count(*) FROM loom_guard_notes_parts.scoped_table"
     assert await scalar(database.superuser, registered) == 0
+
+
+async def test_a_revision_audits_the_tables_it_creates_before_it_commits(
+    scoped_database: BootstrapFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run's closing reconciliation failing leaves no audited table without its trigger."""
+    database = await scoped_database("books_revision")
+
+    def fail(*_args: Any) -> None:
+        raise RuntimeError("closing reconciliation failed")
+
+    application = application_for(bookkeeping, database, tmp_path, schema="books_revision")
+    trees = Trees(tmp_path, application)
+    config = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, config, "initial", autogenerate=True)
+    monkeypatch.setattr(runners, "_reconcile_audit", fail)
+
+    with pytest.raises(RuntimeError, match="closing reconciliation failed"):
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+    audited = (
+        "SELECT string_agg(c.relname, ',' ORDER BY c.relname) "
+        "FROM loom_guard_books_revision.audited_table a JOIN pg_class c ON c.oid = a.rel"
+    )
+    assert await scalar(database.superuser, audited) == "accounts,memos"
+    triggers = (
+        "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'books_revision' AND t.tgname = 'loom_audit_record'"
+    )
+    assert await scalar(database.superuser, triggers) == 2

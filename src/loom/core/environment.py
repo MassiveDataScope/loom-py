@@ -55,6 +55,18 @@ SPARK_IVY_DIR_VARIABLE: Final = "LOOM_SPARK_IVY_DIR"
 SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
 """``1`` makes the Spark test session use only cached jars."""
 
+SUPERUSER_URL_VARIABLE: Final = "LOOM_SUPERUSER_URL"
+"""Database URL ``loom schema bootstrap`` installs the guard with."""
+
+VERIFY_URL_VARIABLE: Final = "LOOM_VERIFY_URL"
+"""Database URL ``loom schema verify`` reads the catalogue with."""
+
+MIGRATOR_URL_VARIABLE: Final = "LOOM_MIGRATOR_URL"
+"""Database URL ``loom schema audit drop-expired`` drops a partition with."""
+
+DB_PASSWORD_PREFIX: Final = "LOOM_DB_PASSWORD_"
+"""Prefix of the variables holding a database login's password, by upper-case login."""
+
 _BASE_CONFIG_FILE: Final = "base.yaml"
 
 
@@ -289,13 +301,17 @@ def select_config_paths(
 
 __all__ = [
     "CONFIG_VARIABLE",
+    "DB_PASSWORD_PREFIX",
     "ENVIRONMENT_VARIABLE",
     "ETL_CONFIG_VARIABLE",
+    "MIGRATOR_URL_VARIABLE",
     "OVERRIDE_PREFIX",
     "SPARK_IVY_DIR_VARIABLE",
     "SPARK_OFFLINE_VARIABLE",
     "SPOOL_DIR_VARIABLE",
     "STORAGE_CONFIG_VARIABLE",
+    "SUPERUSER_URL_VARIABLE",
+    "VERIFY_URL_VARIABLE",
     "Environment",
     "config_source_paths",
     "configured_variable",

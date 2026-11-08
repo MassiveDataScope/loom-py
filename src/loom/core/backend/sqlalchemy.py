@@ -47,6 +47,7 @@ from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
 from loom.core.config import ConfigError
+from loom.core.model.audited import AuditedTable, AuditedTables, audited_table, is_audited
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
@@ -127,6 +128,7 @@ class _Compilation:
     core: dict[type, CoreModel]
     pending: dict[type, dict[str, Relation]]
     scoped: dict[tuple[str | None, str], ScopedTable] = field(default_factory=dict)
+    audited: dict[tuple[str | None, str], AuditedTable] = field(default_factory=dict)
 
 
 _COMPILATION_KEY = "loom.compilation"
@@ -163,6 +165,11 @@ def _compilation_for(metadata: MetaData | None) -> _Compilation:
 def scoped_tables(metadata: MetaData | None = None) -> Mapping[tuple[str | None, str], ScopedTable]:
     """Row-scoped tables compiled into ``metadata``, keyed by ``(schema, name)``."""
     return dict(_compilation_for(metadata).scoped)
+
+
+def audited_tables(metadata: MetaData | None = None) -> AuditedTables:
+    """Audited tables compiled into ``metadata``, keyed by ``(schema, name)``."""
+    return dict(_compilation_for(metadata).audited)
 
 
 def _build_sa_column_type(col_type: ColumnType) -> Any:
@@ -269,7 +276,18 @@ def _compile_model(
     comp.compiled[struct_cls] = sa_cls
     comp.tables[table_name] = sa_cls
     comp.pending[struct_cls] = get_relations(struct_cls)
-    table = sa_cls.__table__
+    _register_protection(struct_cls, sa_cls.__table__, comp, scopes, partition)
+    return sa_cls
+
+
+def _register_protection(
+    struct_cls: type,
+    table: Any,
+    comp: _Compilation,
+    scopes: tuple[Any, ...],
+    partition: Any,
+) -> None:
+    """Record what the guard protects on *table*: its scopes and its audit trigger."""
     scoped = None
     if scopes:
         scoped = ScopedTable(
@@ -280,6 +298,8 @@ def _compile_model(
             partition_by=None if partition is None else partition.column,
         )
         comp.scoped[(table.schema, table.name)] = scoped
+    if is_audited(struct_cls):
+        comp.audited[(table.schema, table.name)] = _audited(struct_cls, table)
     schema = comp.metadata.info.get(SCHEMA_KEY)
     if schema is not None:
         register_listeners(
@@ -288,7 +308,25 @@ def _compile_model(
             scoped=scoped,
             privileges=declared_privileges(struct_cls),
         )
-    return sa_cls
+
+
+def _audited(struct_cls: type, table: Any) -> AuditedTable:
+    """Compile the audit declaration of *struct_cls* onto its *table*.
+
+    Raises:
+        ConfigError: When an excluded column does not exist, or an excluded or
+            secret column is part of the primary key.
+    """
+    try:
+        return audited_table(
+            struct_cls,
+            schema=table.schema,
+            name=table.name,
+            columns=(column.name for column in table.columns),
+            key_columns=(column.name for column in table.primary_key.columns),
+        )
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _refuse_undeclared_column_types(

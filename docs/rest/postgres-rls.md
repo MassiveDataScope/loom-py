@@ -1358,6 +1358,165 @@ operations = SessionManager(LEDGER_OPS_URL, store=DEFAULT_STORE)
 On the application URL without an identity, the same job sees zero rows, by design. This
 is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
 
+## Audit
+
+An audited table records every insert, delete and value-changing update in
+the store's audit log: who made it, through which request, what changed.
+Postgres writes the record in the same transaction as the change, by a
+trigger the guard installs, so a write that skips loom is recorded too.
+
+### Marking a model
+
+```python
+from loom.core.model import Audited, BaseModel, ColumnField, RowScoped
+
+
+class Invoice(BaseModel, RowScoped, Audited):
+    __tablename__ = "invoices"
+    __audit_exclude__ = frozenset({"internal_note"})
+    ...
+```
+
+`Audited` adds no column. The table needs a primary key: the record names the
+row by it, and the guard refuses to audit a table without one. Columns in
+`__audit_exclude__`, and every column whose name is a credential (`password`,
+`api_token`, `secret` and the other names redaction treats as secret), are
+never written to the log. A change to one is still recorded, as
+`{"column": {"redacted": true}}`, so a password rotation leaves a trace
+without its value. An excluded or secret column cannot be part of the
+primary key. A table need not be row-scoped to be audited.
+
+An update that changes no value records nothing, which is what a retried,
+idempotent write does. Any other change is recorded or the write fails: a
+missing partition or a full disk fails the business transaction with an
+error naming the cause; the audit is never skipped silently.
+
+### What a record holds
+
+| Column | Holds |
+|---|---|
+| `at`, `txid` | When, and the transaction |
+| `schema_name`, `table_name`, `row_key` | The row, by its primary key |
+| `op`, `changed` | `I`, `U` or `D`, and `{column: {old, new}}` for the changed columns |
+| `subject`, `mechanism`, `on_behalf_of` | The actor, from the session keys below |
+| `elevated`, `scopes` | The scopes elevated with `.any`, and the row's scope values |
+| `trace_id` | The request, job or event that caused it |
+| `db_user`, `client_addr`, `backend_pid` | The connection, as Postgres sees it |
+| `app_name` | `application_name`, as the client set it |
+| `origin` | `trigger`, or `cdc` for rows a change-data-capture consumer writes |
+
+### The actor in the session
+
+Next to the scope keys, the provider sets these in every transaction of every
+external Postgres store, scoped or not, from the caller's identity:
+
+| Key | Value |
+|---|---|
+| `loom.actor.subject` | The identity's subject; empty when anonymous |
+| `loom.actor.mechanism` | How it authenticated: `jwt`, `api_key`, `lambda:<function>:<source>` |
+| `loom.actor.on_behalf_of` | The person a system identity acts for; empty otherwise |
+| `loom.trace_id` | The trace of the request, job or event |
+
+A job runs as the identity that enqueued it, so a person's job records that
+person. An event trigger runs as the identity its configuration declares;
+when AWS recorded who caused the event (an S3 uploader, the caller of an AWS
+service event), that caller is `on_behalf_of`. `on_behalf_of` comes from the
+reserved attribute `loom:on_behalf_of`, which only loom's dispatcher writes:
+an identity provider claim and a configured attribute under `loom:` are
+dropped and refused. A product `SessionSettings` cannot set any `loom.` key.
+
+The history of one row:
+
+```sql
+SELECT at, op, subject, mechanism, on_behalf_of, trace_id, changed
+FROM app.audit_log
+WHERE schema_name = 'app' AND table_name = 'invoices'
+  AND row_key = '{"tenant": "acme", "id": 42}'
+ORDER BY at;
+```
+
+### Who reads and who writes
+
+Nobody writes the log but the trigger, and nobody but the reader role reads
+it. The application and the bypass users hold no privilege on `audit_log` or
+its partitions; the reader role, `<schema>_auditor` unless
+`schema.audit.reader` names another, holds `SELECT` only. Give it to the
+operators and reporting tools that need it, never to the application.
+`UPDATE`, `DELETE` and `TRUNCATE` are refused for everyone, the schema owner
+included, and the guard refuses disabling, dropping or detaching anything the
+log depends on, in the DDL that tries.
+
+### Partitions and retention
+
+The log is partitioned by UTC month, `audit_log_pYYYYMM`, whatever the
+session's time zone. A row needs the partition of its month: the log fails
+closed, so a missing partition makes every audited write fail. To keep writes
+from depending on deploys, every deploy and every run of
+`loom schema audit ensure-partitions` (as the migrator) make sure the current
+month and the next twelve have one. The guard creates them under its own lock,
+so concurrent runs are safe, and a run with nothing missing changes nothing.
+
+Run `ensure-partitions` from a scheduler between deploys; monthly is enough,
+and a frequent schedule retries a failed run without waiting. On AWS,
+EventBridge Scheduler invoking a task or Lambda with `LOOM_MIGRATOR_URL`; on a
+database with pg_cron, `SELECT ensure_audit_partitions(12)` as the migrator.
+
+Two alarms watch the margin:
+
+| Where | Fewer than 3 months covered | This month missing |
+|---|---|---|
+| `loom schema verify` | finding `audit.horizon`, exit 1 | finding `audit.partition`, exit 1 |
+| application startup | WARNING log | ERROR log |
+
+Startup never refuses to serve over it: the application role cannot create
+partitions, so refusing would only turn a coming failure into an immediate one.
+
+Without `retention_months` nothing is ever dropped. With it, a partition
+whose month ended more than that many months ago is listed by `verify` and
+dropped by `loom schema audit drop-expired`, one per run, as the migrator.
+The guard re-checks the retention and refuses a partition within it.
+Retention lives in the guard's configuration, set by `loom schema bootstrap`,
+so a wrong value in a deploy never drops history.
+
+```yaml
+stores:
+  default:
+    schema:
+      audit:
+        enabled: true          # false removes the triggers at the next deploy
+        retention_months: 24   # none: keep everything
+        reader: app_auditor    # default <schema>_auditor
+```
+
+`enabled: false`, or removing `Audited` from a model, takes effect at the
+next deploy: the trigger goes and the history stays. `loom check --deploy`
+warns (`loom.audit.W001`) about a store whose audit is off, since its marked
+tables record nothing.
+
+### The pipeline
+
+| Step | Command | Credential |
+|---|---|---|
+| Before deploy | `loom check --deploy` | none |
+| Bootstrap | `loom schema bootstrap --config <yaml>` | `LOOM_SUPERUSER_URL`, `LOOM_DB_PASSWORD_<USER>` for the migrator and each login |
+| Migrations | the Alembic runner | the migrator |
+| After deploy | `loom schema verify --config <yaml>` | `LOOM_VERIFY_URL` or the superuser; exit 1 on drift |
+| When listed | `loom schema audit drop-expired` | `LOOM_MIGRATOR_URL` |
+
+The audit is guard revision 3. Run `loom schema bootstrap` from this release
+before marking any table: an application with audited tables refuses to
+start on an older guard. The upgrade goes one way, like every revision: an
+older loom refuses a guard it does not know.
+
+### Cost
+
+Measured on a ten-column table, a thousand updates of two columns, the
+median of five alternating series (`tests/integration/rls/test_audit_cost.py`):
+the trigger costs about 85 µs per audited row. A write committed on its own
+against a local Postgres without network latency pays 22 % to 33 % more;
+over a network the write itself costs more, so the share is smaller. An
+unmarked table pays nothing.
+
 ## Threat model
 
 - **Trusted in intent.** The owner, migrator and superuser credentials. Their deliberate
@@ -1372,6 +1531,22 @@ is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
   Row-level security defends against missing or wrong filters in application code, not
   against arbitrary code or SQL injection inside the application process (obligation
   P5). The hatch is not a setting: only a member of the owner can open it.
+
+- **Audit actor claims.** `loom.actor.*`, `loom.trace_id`, the `.any`
+  elevation flags and `application_name` are claims the connecting role
+  makes, like the scope keys: code running on the application's credential
+  can set any of them. `db_user` (the connecting role), `client_addr` and
+  `backend_pid` are the evidence the session cannot forge, so a record
+  separates "loom said ana" from "someone with the application's credential
+  said ana".
+- **The reader role carries personal data.** It reads every tenant's old and
+  new values; treat it like the bypass manager's credential.
+- **Erasure and immutability.** A deleted row's values live on in the log
+  until its partition expires; an erasure request is met by retention, not by
+  editing the log.
+- **The schema owner** can insert into the log (a change-data-capture
+  consumer would write as it), but cannot change or remove a record; a
+  superuser remains out of scope.
 
 ### Residuals
 

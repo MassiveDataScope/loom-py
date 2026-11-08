@@ -18,6 +18,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
+from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX
 
 _SECTION = "lambda.functions"
 _RETRIES = ("maximum_retry_attempts", "maximum_event_age_s")
@@ -93,7 +94,10 @@ class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_
 class EventTrigger(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True, tag_field="source"
 ):
-    """Run ``job`` for each event of the source, as ``identity`` or anonymous.
+    """Run ``job`` for each event of the source, as the system ``identity`` declared here.
+
+    The identity is required: no automatic change runs without an actor, and
+    the audit log records it as the actor of every change the job makes.
 
     Invoked directly, the deployment configures ``maximum_retry_attempts``
     and ``maximum_event_age_s`` of the asynchronous invocation; with a
@@ -101,7 +105,7 @@ class EventTrigger(
     """
 
     job: str
-    identity: TriggerIdentity | None = None
+    identity: TriggerIdentity
     queue: QueueMapping | None = None
     maximum_retry_attempts: Annotated[int, msgspec.Meta(ge=0, le=2)] | None = None
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
@@ -124,12 +128,11 @@ class EventTrigger(
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""
         yield self.job
-        if self.identity is not None:
-            yield self.identity.subject
-            yield from self.identity.roles
-            for name, value in self.identity.attributes.items():
-                yield name
-                yield value
+        yield self.identity.subject
+        yield from self.identity.roles
+        for name, value in self.identity.attributes.items():
+            yield name
+            yield value
 
 
 class EventBridgeTrigger(EventTrigger, frozen=True, kw_only=True, tag="eventbridge"):
@@ -210,12 +213,36 @@ def _check_batching(where: str, queue: QueueMapping | None) -> None:
 
 
 def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
-    if trigger.queued:
-        for key in _RETRIES:
-            if getattr(trigger, key) is not None:
-                raise ConfigError(f"{where}.{key} applies to a direct trigger only")
+    _refuse_retries_when_queued(where, trigger)
+    _refuse_placeholders(where, trigger)
+    _refuse_reserved_attributes(where, trigger)
+
+
+def _refuse_retries_when_queued(where: str, trigger: EventTrigger) -> None:
+    """Lambda's retry settings belong to a direct trigger; SQS retries a queued one."""
+    if not trigger.queued:
+        return
+    for key in _RETRIES:
+        if getattr(trigger, key) is not None:
+            raise ConfigError(f"{where}.{key} applies to a direct trigger only")
+
+
+def _refuse_placeholders(where: str, trigger: EventTrigger) -> None:
+    """The job and the identity are fixed values, never resolved from the environment."""
     if any(INTERPOLATION in value for value in trigger.written_values()):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
+
+
+def _refuse_reserved_attributes(where: str, trigger: EventTrigger) -> None:
+    """Only loom writes an attribute under its reserved prefix, such as the delegated actor."""
+    reserved = sorted(
+        n for n in trigger.identity.attributes if n.startswith(RESERVED_ATTRIBUTE_PREFIX)
+    )
+    if reserved:
+        raise ConfigError(
+            f"{where}.identity.attributes: {', '.join(reserved)} is reserved to loom "
+            f"(the {RESERVED_ATTRIBUTE_PREFIX} prefix)"
+        )
 
 
 def _unresolved(ctx: ConfigContext) -> LambdaConfig:

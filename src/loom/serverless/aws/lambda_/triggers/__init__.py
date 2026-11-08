@@ -20,10 +20,16 @@ _JSON = loom_type_of(Any)
 
 @dataclass(frozen=True)
 class Decoded:
-    """The payload of one job an event runs, and the event's id."""
+    """The payload of one job an event runs, the event's id and who caused it.
+
+    ``requester`` is the caller AWS recorded for the event; ``None`` when the
+    source records no caller. It is trusted only on direct delivery: a queued
+    event is a message body anyone allowed to send to the queue can write.
+    """
 
     payload: dict[str, Any]
     event_id: str | None = None
+    requester: str | None = None
 
 
 Decoder = Callable[[Any], tuple[Decoded, ...]]

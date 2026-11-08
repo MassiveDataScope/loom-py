@@ -7,14 +7,20 @@ undeclared role is a member of a group, that every scoped model table is
 registered and protected canonically, and that the guard installed in the
 database is one this release of loom shipped: same catalogue, owners, grants
 and settings, and the configuration the declaration describes.
+
+The audit log, when it exists, must be readable by the auditor role alone,
+its audited tables and exclusions must be the model's, this month's and the
+next month's partitions must exist, and only declared operators may be
+members of the auditor role. Partitions past the retention are listed in
+:attr:`Report.expired_audit_partitions`; they are not drift.
 """
 
 from __future__ import annotations
 
 import json
+import operator
 from collections import defaultdict
-from collections.abc import Mapping
-from collections.abc import Set as AbstractSet
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
@@ -27,13 +33,24 @@ from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
+from loom.core.repository.sqlalchemy.rls.audit_verify import (
+    audit_findings,
+    audit_privilege_findings,
+    audit_shape_findings,
+    audit_state,
+)
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.integrity import Problem, guard_problems, table_problems
+from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding
+from loom.core.repository.sqlalchemy.rls.findings import diff as _diff
+from loom.core.repository.sqlalchemy.rls.integrity import (
+    Problem,
+    guard_problems,
+    table_problems,
+)
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
 
-Acl = dict[str, dict[str, set[str]]]
 WRITES: Final = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
 USAGE: Final = frozenset({"USAGE"})
 
@@ -61,7 +78,9 @@ FOREIGN_KEYS: Final = (
 )
 GUARD_CONFIG: Final = (
     "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, version_table, "
-    "data_version_table, installer, users::text AS users FROM config"
+    "data_version_table, installer, users::text AS users, "
+    "to_jsonb(config) -> 'auditor_role' AS auditor_role, "
+    "to_jsonb(config) -> 'retention_months' AS retention_months FROM config"
 )
 REGISTERED: Final = (
     "SELECT c.relname, p.relname AS parent, "
@@ -72,8 +91,9 @@ REGISTERED: Final = (
 )
 MEMBERS: Final = (
     "SELECT m.rolname AS member, r.rolname AS role, r.rolbypassrls, m.rolsuper, "
-    "CASE WHEN current_setting('server_version_num')::int >= 160000 "
-    "THEN am.inherit_option ELSE m.rolinherit END AS inherits "
+    # pg_auth_members.inherit_option exists from Postgres 16; read through
+    # to_jsonb so the query parses on 14 and 15, where rolinherit decides.
+    "COALESCE((to_jsonb(am) ->> 'inherit_option')::boolean, m.rolinherit) AS inherits "
     "FROM pg_auth_members am JOIN pg_roles m ON m.oid = am.member "
     "JOIN pg_roles r ON r.oid = am.roleid"
 )
@@ -88,21 +108,16 @@ _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
 
 
 @dataclass(frozen=True, slots=True)
-class Finding:
-    """One difference between the declaration and the database."""
-
-    table: str | None
-    check: str
-    expected: str
-    actual: str
-
-
-@dataclass(frozen=True, slots=True)
 class Report:
-    """The outcome of ``verify``; ``ok`` when nothing differs."""
+    """The outcome of ``verify``; ``ok`` when nothing differs.
+
+    ``expired_audit_partitions`` names the audit log's partitions past the
+    configured retention, which ``loom schema audit drop-expired`` may drop.
+    """
 
     ok: bool
     findings: tuple[Finding, ...]
+    expired_audit_partitions: tuple[str, ...] = ()
 
 
 async def verify(url: str, application: Application) -> Report:
@@ -116,6 +131,10 @@ async def verify(url: str, application: Application) -> Report:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
+            audit = await audit_state(connection, bootstrap.schema, bootstrap.names.guard)
+            findings += audit_findings(audit, application.active_audited)
+            if audit.relations or application.audited:
+                findings += await audit_shape_findings(connection, bootstrap.schema)
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
             findings += await _assertion(connection)
@@ -123,7 +142,8 @@ async def verify(url: str, application: Application) -> Report:
             acl, sequences = await _acl(connection, bootstrap.schema)
             findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
-            findings += _bypass_privileges(acl, sequences, bootstrap)
+            findings += audit_privilege_findings(acl, audit, bootstrap)
+            findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
             findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
                 connection, acl, application.scoped, bootstrap
@@ -131,7 +151,7 @@ async def verify(url: str, application: Application) -> Report:
             findings += await _memberships(connection, bootstrap)
     finally:
         await engine.dispose()
-    return Report(ok=not findings, findings=tuple(findings))
+    return Report(ok=not findings, findings=tuple(findings), expired_audit_partitions=audit.expired)
 
 
 def _finding(problem: Problem, table: str | None = None) -> Finding:
@@ -167,9 +187,21 @@ def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
         _users(bootstrap.document()["users"]),
     )
     actual = None if row is None else (*row[:7], _users(json.loads(row.users)))
+    findings: list[Finding] = []
     if actual != expected:
-        return [Finding(None, "guard.config", str(expected), str(actual))]
-    return []
+        findings.append(Finding(None, "guard.config", str(expected), str(actual)))
+    return findings + _audit_config_findings(row, bootstrap)
+
+
+def _audit_config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
+    """The guard's auditor role and retention are the declared ones; nothing without a row."""
+    if row is None:
+        return []
+    audit = (bootstrap.auditor_role, bootstrap.audit_retention_months)
+    held = (row.auditor_role, row.retention_months)
+    if held == audit:
+        return []
+    return [Finding(None, "guard.audit_config", str(audit), str(held))]
 
 
 def _users(users: Any) -> list[tuple[str, bool, str]]:
@@ -265,30 +297,36 @@ async def _sequence_usage(
 
 
 def _bypass_privileges(
-    acl: Acl, sequences: frozenset[str], bootstrap: BootstrapConfig
+    acl: Acl,
+    sequences: frozenset[str],
+    bootstrap: BootstrapConfig,
+    audit_relations: frozenset[str] = frozenset(),
 ) -> list[Finding]:
-    bypass = bootstrap.bypass_users
-    version_table = bootstrap.names.version_table
-    all_row_privileges = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
     for relname, grants in acl.items():
-        for user in bypass:
+        if relname in audit_relations:
+            continue
+        check, wanted, enough = _bypass_expectation(relname, sequences, bootstrap)
+        for user in bootstrap.bypass_users:
             actual = grants.get(user, set())
-            if relname == version_table and actual != BYPASS_VERSION_PRIVILEGES:
-                findings.append(
-                    _diff(relname, "bypass.version_table", user, BYPASS_VERSION_PRIVILEGES, actual)
-                )
-            elif relname in sequences and not USAGE.issubset(actual):
-                findings.append(_diff(relname, "bypass.sequence_usage", user, USAGE, actual))
-            elif (
-                relname != version_table
-                and relname not in sequences
-                and not all_row_privileges <= actual
-            ):
-                findings.append(
-                    _diff(relname, "bypass.privileges", user, all_row_privileges, actual)
-                )
+            if not enough(wanted, actual):
+                findings.append(_diff(relname, check, user, wanted, actual))
     return findings
+
+
+def _bypass_expectation(
+    relname: str, sequences: frozenset[str], bootstrap: BootstrapConfig
+) -> tuple[str, set[str], Callable[[set[str], set[str]], bool]]:
+    """The check a bypass user's grants on *relname* answer, what it wants, and how to compare.
+
+    The version table wants exactly its privileges; a sequence and any other
+    relation want at least theirs.
+    """
+    if relname == bootstrap.names.version_table:
+        return "bypass.version_table", set(BYPASS_VERSION_PRIVILEGES), operator.eq
+    if relname in sequences:
+        return "bypass.sequence_usage", set(USAGE), operator.le
+    return "bypass.privileges", {p.value for p in READ_WRITE}, operator.le
 
 
 def _global_privileges(
@@ -345,26 +383,52 @@ def _parent_write_findings(parent: str, acl: Acl, groups: tuple[str, str]) -> li
 async def _memberships(connection: AsyncConnection, bootstrap: BootstrapConfig) -> list[Finding]:
     rows = list(await connection.execute(_MEMBERS))
     memberships: dict[str, set[str]] = defaultdict(set)
-    bypass_roles = {str(row.role) for row in rows if row.rolbypassrls}
     inherits: dict[tuple[str, str], bool] = {}
     for row in rows:
         member, role = str(row.member), str(row.role)
         memberships[member].add(role)
         inherits[(member, role)] = bool(row.inherits)
+    bypass_roles = {str(row.role) for row in rows if row.rolbypassrls}
     findings = _access_memberships(memberships, bootstrap)
     findings += _undeclared_members(rows, bootstrap)
+    findings += _migrator_inherits(inherits, bootstrap)
+    findings += _privileged_bypass(memberships, bypass_roles, bootstrap)
+    return findings + _auditor_members(memberships, bootstrap)
+
+
+def _migrator_inherits(
+    inherits: Mapping[tuple[str, str], bool], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """The migrator acts as the schema's owner only through SET ROLE, never by inheritance."""
     owner, migrator = bootstrap.roles.owner, bootstrap.roles.migrator
-    if inherits.get((migrator, owner), False):
-        findings.append(
-            Finding(
-                None, "migrator.inherit", f"{migrator} inherits nothing from {owner}", "inherits"
-            )
-        )
-    for role in (owner, migrator):
-        held = memberships[role] & bypass_roles
-        if held:
-            findings.append(_diff(None, "bypass.membership", role, set(), held))
-    return findings
+    if not inherits.get((migrator, owner), False):
+        return []
+    return [
+        Finding(None, "migrator.inherit", f"{migrator} inherits nothing from {owner}", "inherits")
+    ]
+
+
+def _privileged_bypass(
+    memberships: Mapping[str, set[str]], bypass_roles: set[str], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """Neither the schema's owner nor the migrator belongs to a role that bypasses RLS."""
+    return [
+        _diff(None, "bypass.membership", role, set(), held)
+        for role in (bootstrap.roles.owner, bootstrap.roles.migrator)
+        if (held := memberships[role] & bypass_roles)
+    ]
+
+
+def _auditor_members(
+    memberships: Mapping[str, set[str]], bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """No login the application or the deploy uses can read the audit log."""
+    auditor = bootstrap.auditor_role
+    forbidden = {bootstrap.roles.owner, bootstrap.roles.migrator, *bootstrap.database_users}
+    members = {member for member, roles in memberships.items() if auditor in roles} & forbidden
+    if not members:
+        return []
+    return [_diff(None, "auditor.membership", auditor, set(), members)]
 
 
 def _access_memberships(
@@ -396,9 +460,3 @@ def _undeclared_members(rows: list[Any], bootstrap: BootstrapConfig) -> list[Fin
 
 def _in_schema(schema: str) -> dict[str, str]:
     return {"schema": schema}
-
-
-def _diff(
-    table: str | None, check: str, subject: str, wanted: AbstractSet[str], actual: AbstractSet[str]
-) -> Finding:
-    return Finding(table, check, f"{subject}: {sorted(wanted)}", f"{subject}: {sorted(actual)}")

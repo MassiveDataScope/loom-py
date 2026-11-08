@@ -24,6 +24,8 @@ from loom.core.config import ConfigError
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+    AUDIT_GUARD_REVISION,
+    AUDIT_LOG_SHAPE,
     GUARD_REVISIONS,
     MIN_COMPATIBLE_GUARD_REVISION,
     OWNER_FUNCTIONS,
@@ -34,8 +36,36 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
 )
 
 FUNCTIONS: Final = "functions"
+AUDIT_SHAPE: Final = (
+    "WITH log AS (SELECT to_regclass(quote_ident(:schema) || '.audit_log') AS rel) "
+    "SELECT line FROM ("
+    "SELECT 1 AS kind, a.attnum AS position, a.attname || ' ' "
+    "|| format_type(a.atttypid, a.atttypmod) "
+    "|| CASE WHEN a.attnotnull THEN ' not null' ELSE '' END AS line "
+    "FROM pg_attribute a, log WHERE a.attrelid = log.rel AND a.attnum > 0 AND NOT a.attisdropped "
+    "UNION ALL SELECT 2, 0, 'constraint ' || pg_get_constraintdef(c.oid) "
+    "FROM pg_constraint c, log WHERE c.conrelid = log.rel "
+    "UNION ALL SELECT 3, 0, 'index ' || replace(pg_get_indexdef(i.indexrelid), "
+    "quote_ident(:schema) || '.', '') FROM pg_index i, log WHERE i.indrelid = log.rel"
+    ") shape ORDER BY kind, position, line"
+)
+# Whether the guard has the audit log's revision: its registry of audited tables.
+# Read from the catalogue, not through to_regclass: the application role has
+# no USAGE on the guard schema, and startup asks this as that role.
+AUDIT_SUPPORTED: Final = (
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE n.nspname = :guard AND c.relname = 'audited_table')"
+)
+AUDIT_READABLE: Final = (
+    "SELECT has_table_privilege(to_regclass(quote_ident(:schema) || '.audit_log'), 'SELECT')"
+)
 CATALOG_CHECKS: Final = (FUNCTIONS, "relations", "columns", "constraints", "triggers", "objects")
 SCHEMA_KIND: Final = "schema"
+_SCHEMA_PARAM: Final = SCHEMA_KIND
+_AUDIT_LOG: Final = "audit_log"
+_AUDIT_SHAPE_CHECK: Final = "audit.shape"
+_MISSING: Final = "missing"
 OWNER_TRIGGER: Final = "loom_deny_owner_dml"
 
 _CATALOG_SQL: Final = (
@@ -126,6 +156,38 @@ _SCOPED_TABLES_SQL: Final = (
     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
     "WHERE n.nspname = :schema AND c.relname = ANY (CAST(:names AS text[]))"
 )
+_AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
+_AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
+_AUDIT_READABLE: Final = text(AUDIT_READABLE)
+AUDIT_TRIGGER: Final = "loom_audit_record"
+# The catalogue, not the guard: the application role reads pg_trigger.
+AUDIT_TRIGGERS: Final = (
+    "SELECT c.relname FROM pg_catalog.pg_trigger g"
+    " JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE n.nspname = :schema AND g.tgname = 'loom_audit_record' AND g.tgenabled = 'A'"
+)
+_AUDIT_TRIGGERS: Final = text(AUDIT_TRIGGERS)
+# Consecutive UTC months, from this one, that a partition of the log covers; 0
+# when this month is missing, NULL without a log. Read by partition name from the
+# catalogue, so the application role can ask: the guard names every partition
+# ``audit_log_pYYYYMM`` after the UTC month its bounds span.
+AUDIT_MONTHS_COVERED: Final = (
+    "WITH log AS (SELECT to_regclass("
+    "quote_ident(coalesce(CAST(:schema AS text), current_schema())) || '.audit_log') AS rel),"
+    " parts AS (SELECT c.relname FROM pg_catalog.pg_inherits i"
+    " JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid"
+    " WHERE i.inhparent = (SELECT rel FROM log)),"
+    " months AS (SELECT i, 'audit_log_p' || to_char("
+    "date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => i), 'YYYYMM')"
+    " AS relname FROM generate_series(0, 36) AS i)"
+    " SELECT CASE WHEN (SELECT rel FROM log) IS NULL THEN NULL"
+    " ELSE coalesce(min(m.i) FILTER (WHERE m.relname NOT IN (SELECT relname FROM parts)), 37)"
+    " END AS covered FROM months m"
+)
+# Fewer covered months than this is a warning at startup and a finding in verify.
+AUDIT_HORIZON_WARNING_MONTHS: Final = 3
+_AUDIT_MONTHS_COVERED: Final = text(AUDIT_MONTHS_COVERED)
 _CATALOG: Final = text(_CATALOG_SQL)
 _ACCESS: Final = text(_ACCESS_SQL)
 _LANDING: Final = text(_LANDING_SQL)
@@ -160,7 +222,7 @@ async def guard_problems(
     rows = await connection.execute(_CATALOG, _catalog_parameters(guard, CATALOG_CHECKS))
     lines = _lines(rows)
     if not lines[FUNCTIONS]:
-        return [Problem("guard.functions", guard, "installed", "missing")]
+        return [Problem("guard.functions", guard, "installed", _MISSING)]
     problems = catalog_problems(lines, guard)
     access = list(await connection.execute(_ACCESS, _guard_parameters(guard)))
     problems += owner_problems(access, installer)
@@ -174,15 +236,105 @@ async def guard_problems(
 
 
 async def startup_problems(
-    connection: AsyncConnection, guard: str, scoped: Mapping[tuple[str | None, str], ScopedTable]
+    connection: AsyncConnection,
+    guard: str,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    *,
+    audited: bool = False,
+    recording: Sequence[str] = (),
 ) -> list[Problem]:
-    """Everything the application user can check at startup, guard and scoped tables."""
+    """Everything the application user can check at startup: guard, scoped tables, audit log.
+
+    The audit log is checked whenever it exists, marked tables or not (FR-018),
+    and an application with audited tables needs revision 3 and the log.
+    *recording* names the tables that must carry their audit trigger, so a
+    model marked but never migrated does not write unrecorded rows.
+    """
     landing = (await connection.execute(_LANDING)).one_or_none()
     if landing is None:
         return [Problem("schema.landing", "current_schema()", "an existing schema", "none")]
     problems = await guard_problems(connection, guard, str(landing.owner))
     problems += await table_problems(connection, guard, str(landing.schema), scoped)
+    problems += await audit_problems(connection, guard, str(landing.schema), audited=audited)
+    if not problems:
+        problems += await _trigger_problems(connection, str(landing.schema), recording)
     return problems
+
+
+async def audit_problems(
+    connection: AsyncConnection, guard: str, schema: str, *, audited: bool
+) -> list[Problem]:
+    """The audit log's revision, shape and read access, as any role sees them."""
+    if audited and (older := await _older_than_audit(connection, guard)):
+        return [older]
+    parameters = {_SCHEMA_PARAM: schema}
+    shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, parameters)]
+    if not shape and not audited:
+        return []
+    return audit_shape_problems(shape) + await _read_problems(connection, shape, parameters)
+
+
+async def _read_problems(
+    connection: AsyncConnection, shape: Sequence[str], parameters: dict[str, str]
+) -> list[Problem]:
+    """A problem when the connecting role can read an existing audit log."""
+    if shape and (await connection.execute(_AUDIT_READABLE, parameters)).scalar():
+        return [Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable")]
+    return []
+
+
+async def _trigger_problems(
+    connection: AsyncConnection, schema: str, recording: Sequence[str]
+) -> list[Problem]:
+    """A problem per table in *recording* without its enabled audit trigger."""
+    if not recording:
+        return []
+    rows = await connection.execute(_AUDIT_TRIGGERS, {_SCHEMA_PARAM: schema})
+    present = {str(row.relname) for row in rows}
+    return [
+        Problem("audit.trigger", name, f"{AUDIT_TRIGGER} enabled", _MISSING)
+        for name in recording
+        if name not in present
+    ]
+
+
+async def audit_months_covered(
+    connection: AsyncConnection, schema: str | None = None
+) -> int | None:
+    """Consecutive UTC months from this one the log has partitions for; ``None`` without a log.
+
+    *schema* defaults to the connection's current schema, the one startup lands in.
+    """
+    covered = (await connection.execute(_AUDIT_MONTHS_COVERED, {_SCHEMA_PARAM: schema})).scalar()
+    return None if covered is None else int(covered)
+
+
+async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem | None:
+    """A problem when the installed guard predates the audit log's revision."""
+    if (await connection.execute(_AUDIT_SUPPORTED, _guard_parameters(guard))).scalar():
+        return None
+    return Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", "older")
+
+
+def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
+    """Compare the audit log's columns, constraints and indexes with the pinned shape.
+
+    Empty when they match; the problem lists only the lines that differ.
+    """
+    if not lines:
+        return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned shape", _MISSING)]
+    if tuple(lines) == AUDIT_LOG_SHAPE:
+        return []
+    missing = _absent(AUDIT_LOG_SHAPE, lines)
+    extra = _absent(lines, AUDIT_LOG_SHAPE)
+    if not (missing or extra):
+        return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned order", "reordered")]
+    return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, missing or "nothing else", extra or "none")]
+
+
+def _absent(wanted: Sequence[str], held: Sequence[str]) -> str:
+    """The lines of *wanted* that *held* lacks, joined; empty when none."""
+    return "; ".join(line for line in wanted if line not in held)
 
 
 async def table_problems(
@@ -194,7 +346,7 @@ async def table_problems(
     """Compare every scoped model table with its canonical protection in the catalogue."""
     parameters = {
         **_guard_parameters(guard),
-        "schema": schema,
+        _SCHEMA_PARAM: schema,
         "trigger": OWNER_TRIGGER,
         "names": [table.name for table in scoped.values()],
     }
@@ -203,7 +355,7 @@ async def table_problems(
     for table in scoped.values():
         row = found.get(table.name)
         if row is None:
-            problems.append(Problem("table.missing", table.name, "present", "missing"))
+            problems.append(Problem("table.missing", table.name, "present", _MISSING))
         else:
             problems += _protection_problems(row, table)
     return problems

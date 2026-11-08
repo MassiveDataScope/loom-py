@@ -82,6 +82,10 @@ class _Observer:
 Serve = Callable[..., Any]
 
 
+_EVENT_SOURCES = frozenset({"eventbridge", "s3", "sns", "schedule"})
+_SYSTEM = {"subject": "svc:importer"}
+
+
 @pytest.fixture
 def serve(tmp_path: Path) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
@@ -95,6 +99,8 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
         written: dict[str, Any] | None = None,
         **options: Any,
     ) -> Any:
+        if trigger.get("source") in _EVENT_SOURCES:
+            trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
         document = {"lambda": {"functions": {name: function}}}
         source = composition_source(
@@ -206,13 +212,22 @@ class TestDirectTrigger:
         )
         assert caller.mechanism == f"lambda:{_FUNCTION}:eventbridge"
 
-    def test_without_an_identity_the_job_runs_anonymous(
+    def test_without_an_identity_the_trigger_is_refused(self, serve: Serve) -> None:
+        trigger = _events()
+
+        with pytest.raises(ConfigError, match="missing required field `identity`"):
+            serve(trigger, written={"trigger": trigger})
+
+    def test_the_job_runs_as_the_declared_system_identity(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         serve(_events())(LambdaEvent.eventbridge({"number": "7"}), None)
 
         ((_, caller),) = ran
-        assert not caller.is_authenticated
+        assert (caller.subject, caller.mechanism) == (
+            "svc:importer",
+            f"lambda:{_FUNCTION}:eventbridge",
+        )
 
     def test_the_span_id_is_the_event_id(self, serve: Serve) -> None:
         observer = _Observer()

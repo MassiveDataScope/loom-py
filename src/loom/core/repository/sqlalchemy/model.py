@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import DateTime, Integer, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from loom.core.identity import current_identity
 from loom.core.repository.sqlalchemy.profile_loader import ProfileLoader
 
 
@@ -39,11 +40,27 @@ class IdentityMixin:
     )
 
 
-class AuditActorMixin:
-    """Optional actor tracking for auth-enabled deployments."""
+def current_actor() -> str | None:
+    """The subject of the caller in context, or ``None`` when anonymous."""
+    identity = current_identity()
+    return identity.subject if identity.is_authenticated else None
 
-    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+class AuditActorMixin:
+    """Who created and who last changed the row, filled from the caller.
+
+    ``created_by`` is set on insert and ``updated_by`` on every update from
+    the identity in context; a value the code sets itself is kept. The audit
+    log (``Audited``) records every change; these columns are the row's own
+    summary of it.
+    """
+
+    created_by: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=current_actor
+    )
+    updated_by: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=current_actor, onupdate=current_actor
+    )
 
 
 class BaseModel(Base, IdentityMixin, TimestampMixin):

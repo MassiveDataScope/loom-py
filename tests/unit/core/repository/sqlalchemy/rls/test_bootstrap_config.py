@@ -164,6 +164,8 @@ def test_the_document_carries_every_declared_name() -> None:
         "revoke_public": False,
         "version_table": "v_struct",
         "data_version_table": "v_data",
+        "auditor_role": "s1_auditor",
+        "retention_months": None,
     }
 
 
@@ -241,3 +243,24 @@ def test_a_revision_recorded_with_another_digest_is_refused() -> None:
 
     with pytest.raises(ConfigError, match="different digest"):
         pending_revisions(applied)
+
+
+def test_a_declared_auditor_and_retention_reach_the_document() -> None:
+    config = _config(auditor="s1_readers_of_audit", audit_retention_months=24)
+
+    assert config.document()["auditor_role"] == "s1_readers_of_audit"
+    assert config.document()["retention_months"] == 24
+
+
+def test_a_retention_below_one_month_is_refused() -> None:
+    config = _config(audit_retention_months=0)
+
+    with pytest.raises(ValueError, match="retention_months"):
+        config.validated()
+
+
+def test_the_auditor_must_not_share_a_name_with_another_role() -> None:
+    config = _config(auditor="r_owner")
+
+    with pytest.raises(ValueError, match="distinct names"):
+        config.validated()

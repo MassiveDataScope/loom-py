@@ -15,6 +15,10 @@ from types import MappingProxyType
 from loom.core.errors import Forbidden, Unauthenticated
 
 _EMPTY_ATTRIBUTES: Mapping[str, str] = MappingProxyType({})
+RESERVED_ATTRIBUTE_PREFIX = "loom:"
+"""Attributes under this prefix are set only by loom itself, never by an authenticator."""
+ON_BEHALF_OF_ATTRIBUTE = f"{RESERVED_ATTRIBUTE_PREFIX}on_behalf_of"
+"""The person a system identity acts for; set by loom's event dispatchers and audited."""
 
 _NO_SUBJECT_MESSAGE = "Authentication required: the request carries no verified identity."
 

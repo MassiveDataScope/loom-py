@@ -2,20 +2,46 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, TypeVar
 
 import typer
 import yaml
 
+from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
+from loom.core.environment import (
+    DB_PASSWORD_PREFIX,
+    MIGRATOR_URL_VARIABLE,
+    SUPERUSER_URL_VARIABLE,
+    VERIFY_URL_VARIABLE,
+    loom_variable,
+)
+from loom.core.locator import load_application
 from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
+    from loom.core.repository.sqlalchemy.rls import BootstrapConfig
+    from loom.core.repository.sqlalchemy.rls.verify import Report
+
+# The commands below import SQLAlchemy inside their bodies: the CLI loads
+# without it, and only these commands require it.
+
+_T = TypeVar("_T")
 _STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
+
 schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema.")
+audit_app = typer.Typer(no_args_is_help=True, help="Operate the store's audit log.")
+schema_app.add_typer(audit_app, name="audit")
+
+_CONFIG_OPTION = typer.Option("--config", help="A config directory or file, as the app loads it.")
 
 
 @schema_app.command("init")
@@ -105,3 +131,113 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
         elif current != value:
             conflicts.append(f"{path}.{key}")
     return conflicts
+
+
+@schema_app.command("bootstrap")
+def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+    """Install or upgrade the guard and configure roles, as the superuser; idempotent.
+
+    The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
+    migrator and of each database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
+    """
+    from loom.core.repository.sqlalchemy.rls import apply_bootstrap
+
+    try:
+        settings = _bootstrap_config(config)
+        logins = [settings.roles.migrator] + [
+            name for name, user in settings.database_users.items() if user.login
+        ]
+        passwords = {name: _env(DB_PASSWORD_PREFIX + name.upper()) for name in logins}
+        asyncio.run(apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
+    except ConfigError as exc:
+        _fail(exc)
+    typer.echo(f"guard of {config} is installed and configured")
+
+
+@schema_app.command("verify")
+def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+    """Compare the database with the application; exit 1 on any drift.
+
+    The URL comes from ``LOOM_VERIFY_URL``, else ``LOOM_SUPERUSER_URL``: the
+    guard's configuration row needs a privileged reader. Audit partitions past
+    the retention are listed, not counted as drift.
+    """
+    from loom.core.repository.sqlalchemy.rls import verify
+
+    try:
+        application = load_application(str(config))
+        url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
+        report = asyncio.run(verify(url, application))
+    except ConfigError as exc:
+        _fail(exc)
+    _print_report(report)
+    if not report.ok:
+        raise typer.Exit(1)
+
+
+def _print_report(report: Report) -> None:
+    """One line per finding, then one per audit partition past the retention."""
+    for finding in report.findings:
+        subject = f"{finding.table} " if finding.table else ""
+        typer.echo(f"{subject}{finding.check}: expected {finding.expected}, found {finding.actual}")
+    for partition in report.expired_audit_partitions:
+        typer.echo(f"expired audit partition: {partition}")
+
+
+@audit_app.command("drop-expired")
+def drop_expired() -> None:
+    """Drop the oldest audit partition past the retention, as the migrator; one per run."""
+    from loom.core.repository.sqlalchemy.rls.audit import drop_expired_audit_partition
+
+    try:
+        dropped = asyncio.run(_as_migrator(drop_expired_audit_partition))
+    except ConfigError as exc:
+        _fail(exc)
+    typer.echo(f"dropped {dropped}" if dropped else "no audit partition is past the retention")
+
+
+@audit_app.command("ensure-partitions")
+def ensure_partitions() -> None:
+    """Create the audit partitions missing in the next twelve months, as the migrator.
+
+    Idempotent; meant for a scheduler between deploys (monthly is enough).
+    """
+    from loom.core.repository.sqlalchemy.rls.audit import ensure_audit_partitions
+
+    try:
+        created = asyncio.run(_as_migrator(ensure_audit_partitions))
+    except ConfigError as exc:
+        _fail(exc)
+    typer.echo(f"created {created} audit partition(s)")
+
+
+async def _as_migrator(action: Callable[[AsyncConnection], Awaitable[_T]]) -> _T:
+    """Run *action* in one transaction as the migrator (``LOOM_MIGRATOR_URL``)."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(_env(MIGRATOR_URL_VARIABLE), poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            return await action(connection)
+    finally:
+        await engine.dispose()
+
+
+def _bootstrap_config(config: Path) -> BootstrapConfig:
+    settings = load_application(str(config)).bootstrap
+    if settings is None:
+        raise ConfigError(f"{config} declares no row-scoped schema to bootstrap")
+    return settings
+
+
+def _env(name: str) -> str:
+    value = loom_variable(name)
+    if not value:
+        raise ConfigError(f"set {name}")
+    return value
+
+
+def _fail(exc: Exception) -> NoReturn:
+    typer.echo(str(exc), err=True)
+    raise typer.Exit(1) from exc

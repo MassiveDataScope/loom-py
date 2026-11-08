@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.pool import QueuePool
 
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention, scoped_tables
+from loom.core.backend.sqlalchemy import (
+    audited_tables,
+    compile_all,
+    configured_naming_convention,
+    scoped_tables,
+)
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
@@ -40,7 +45,12 @@ from loom.core.repository.sqlalchemy.registry import (
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.rls.integrity import OWNER_TRIGGER, startup_problems
+from loom.core.repository.sqlalchemy.rls.integrity import (
+    AUDIT_HORIZON_WARNING_MONTHS,
+    OWNER_TRIGGER,
+    audit_months_covered,
+    startup_problems,
+)
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -414,6 +424,15 @@ async def _check_external(
     store: _Store,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
 ) -> None:
+    await _require_tables(connection, store)
+    marked = audited_tables(store.session_manager.metadata)
+    recording = sorted(t.name for t in marked.values()) if store.schema.audit.enabled else []
+    if connection.dialect.name == POSTGRES_DIALECT and (scoped or marked):
+        await _check_guard(connection, scoped, store, audited=bool(marked), recording=recording)
+
+
+async def _require_tables(connection: AsyncConnection, store: _Store) -> None:
+    """Refuse an external store whose database lacks a table the models declare."""
     names = [table.name for table in store.session_manager.metadata.sorted_tables]
     present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
     missing = sorted(name for name in names if name not in present)
@@ -421,16 +440,17 @@ async def _check_external(
         raise ConfigError(
             f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
-    if connection.dialect.name == POSTGRES_DIALECT and scoped:
-        await _check_guard(connection, scoped, store)
 
 
 async def _check_guard(
     connection: AsyncConnection,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     store: _Store,
+    *,
+    audited: bool = False,
+    recording: Sequence[str] = (),
 ) -> None:
-    """Check, as the application user, the guard and every scoped table's protection.
+    """Check, as the application user, the guard, every scoped table and the audit log.
 
     The guard's catalogue, owners, grants, function settings and event
     triggers, and each scoped table's forced row-level security, canonical
@@ -438,13 +458,34 @@ async def _check_guard(
     configuration row is not readable here; ``verify`` checks it.
     """
     guard = require_schema_key(store.schema.guard, store.path, "guard")
-    problems = await startup_problems(connection, guard, scoped)
+    problems = await startup_problems(
+        connection, guard, scoped, audited=audited, recording=recording
+    )
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)
         raise ConfigError(
             f"the guard {guard} or the scoped tables differ from what this release of loom "
             f"ships: {details}"
         )
+    _warn_audit_horizon(store.path, await audit_months_covered(connection))
+
+
+def _warn_audit_horizon(path: str, covered: int | None) -> None:
+    """Log when the audit log's partitions run out soon; never refuse to start.
+
+    The application role cannot create partitions, so startup only raises the
+    alarm: an error when this month is missing (audited writes fail now), a
+    warning with fewer than :data:`AUDIT_HORIZON_WARNING_MONTHS` months left.
+    """
+    if covered is None or covered >= AUDIT_HORIZON_WARNING_MONTHS:
+        return
+    fix = "run `loom schema audit ensure-partitions` or deploy"
+    if covered == 0:
+        _logger.error(
+            "%s: no audit partition covers this month; audited writes fail; %s", path, fix
+        )
+    else:
+        _logger.warning("%s: audit partitions cover only %d more month(s); %s", path, covered, fix)
 
 
 async def _refuse_scoped_in_database(connection: AsyncConnection, path: str) -> None:

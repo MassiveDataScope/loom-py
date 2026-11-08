@@ -15,10 +15,14 @@ from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     JobsTrigger,
     LambdaFunction,
+    TriggerIdentity,
     declared_lambda,
 )
 
 pytestmark = pytest.mark.timeout(5)
+
+
+_SYSTEM = TriggerIdentity(subject="svc:test")
 
 
 def _declared(trigger: dict[str, Any]) -> LambdaFunction:
@@ -129,7 +133,14 @@ def test_the_form_before_trigger_is_refused() -> None:
 def test_two_functions_consuming_one_queue_are_refused() -> None:
     functions = {
         "worker": {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}},
-        "alerts": {"trigger": {"source": "sns", "queue": {"name": "jobs"}, "job": "J"}},
+        "alerts": {
+            "trigger": {
+                "source": "sns",
+                "identity": {"subject": "svc:test"},
+                "queue": {"name": "jobs"},
+                "job": "J",
+            }
+        },
     }
     config = ConfigContext.from_dict({"lambda": {"functions": functions}})
 
@@ -141,33 +152,60 @@ def test_two_functions_consuming_one_queue_are_refused() -> None:
     ("trigger", "message"),
     [
         pytest.param(
-            {"source": "eventbridge", "job": "J", "interfaces": ["X"]},
+            {
+                "source": "eventbridge",
+                "identity": {"subject": "svc:test"},
+                "job": "J",
+                "interfaces": ["X"],
+            },
             "unknown field `interfaces`",
             id="http-key-on-eventbridge",
         ),
         pytest.param({"source": "jobs", "job": "J"}, "unknown field `job`", id="event-key-on-jobs"),
         pytest.param(
-            {"source": "s3", "job": "J", "batch_size": 10},
+            {"source": "s3", "identity": {"subject": "svc:test"}, "job": "J", "batch_size": 10},
             "unknown field `batch_size`",
             id="batching-on-direct",
         ),
         pytest.param(
-            {"source": "s3", "job": "J", "via": "sqs", "queue": {"name": "jobs"}},
+            {
+                "source": "s3",
+                "identity": {"subject": "svc:test"},
+                "job": "J",
+                "via": "sqs",
+                "queue": {"name": "jobs"},
+            },
             "unknown field `via`",
             id="via-sqs",
         ),
         pytest.param(
-            {"source": "sns", "job": "J", "queue": {"name": "jobs"}, "maximum_retry_attempts": 1},
+            {
+                "source": "sns",
+                "identity": {"subject": "svc:test"},
+                "job": "J",
+                "queue": {"name": "jobs"},
+                "maximum_retry_attempts": 1,
+            },
             r"trigger\.maximum_retry_attempts applies to a direct trigger only",
             id="retries-on-queued",
         ),
         pytest.param(
-            {"source": "sns", "job": "J", "queue": {"name": "jobs", "job": "J"}},
+            {
+                "source": "sns",
+                "identity": {"subject": "svc:test"},
+                "job": "J",
+                "queue": {"name": "jobs", "job": "J"},
+            },
             "unknown field `job`",
             id="event-key-in-queue-block",
         ),
         pytest.param(
-            {"source": "schedule", "job": "J", "maximum_retry_attempts": 3},
+            {
+                "source": "schedule",
+                "identity": {"subject": "svc:test"},
+                "job": "J",
+                "maximum_retry_attempts": 3,
+            },
             "maximum_retry_attempts",
             id="retries-over-two",
         ),
@@ -197,7 +235,7 @@ def test_a_trigger_accepts_only_its_own_keys(trigger: dict[str, Any], message: s
 )
 def test_a_trigger_job_and_identity_are_literal(trigger: dict[str, Any]) -> None:
     with pytest.raises(ConfigError, match="written as values, not placeholders"):
-        _declared({"source": "eventbridge", **trigger})
+        _declared({"source": "eventbridge", "identity": {"subject": "svc:test"}, **trigger})
 
 
 class _Arrived(S3Object, frozen=True, kw_only=True):
@@ -221,7 +259,7 @@ class _Required(Job[None]):
 
 def test_a_trigger_job_with_an_input_and_no_required_parameter_is_accepted() -> None:
     jobs = {"_NoInput": _NoInput, "_Import": _Import}
-    assert trigger_job("worker", EventTrigger(job="_Import"), jobs) is _Import
+    assert trigger_job("worker", EventTrigger(job="_Import", identity=_SYSTEM), jobs) is _Import
 
 
 @pytest.mark.parametrize(
@@ -236,7 +274,7 @@ def test_a_trigger_job_with_an_input_and_no_required_parameter_is_accepted() -> 
 def test_a_trigger_job_an_event_cannot_run_is_refused(
     job: str, jobs: list[type[Job[Any]]], message: str
 ) -> None:
-    trigger = EventTrigger(job=job)
+    trigger = EventTrigger(job=job, identity=_SYSTEM)
     discovered = {cls.__name__: cls for cls in jobs}
 
     with pytest.raises(ConfigError, match=message):

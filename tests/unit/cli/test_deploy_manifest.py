@@ -132,6 +132,8 @@ def _config(package: str) -> dict[str, Any]:
 
 
 def _trigger(source: str, **declared: Any) -> dict[str, Any]:
+    if source in {"eventbridge", "s3", "sns", "schedule"}:
+        declared = {"identity": {"subject": "svc:test"}, **declared}
     return {"trigger": {"source": source, **declared}}
 
 
@@ -175,7 +177,7 @@ def _expected() -> dict[str, Any]:
                     "report_batch_item_failures": True,
                     "dead_letter_required": True,
                     "job": "ImportInvoice",
-                    "identity": None,
+                    "identity": {"subject": "svc:test", "roles": [], "attributes": {}},
                     "raw_message_delivery": False,
                 },
                 **_JOB_SECRETS,

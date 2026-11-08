@@ -87,6 +87,7 @@ lambda:
         source: eventbridge
         queue: {name: invoice_events}
         job: ImportInvoice
+        identity: {subject: svc:invoices, roles: [invoice_importer]}
 ```
 
 | `source` | The job's `Input()` | Span id |
@@ -105,12 +106,22 @@ consuming the same queue, and a `config.overridable` entry reaching
 
 The job runs as the declared `identity`, with
 `mechanism: lambda:<function>:<source>`, and never as anything the event
-says. Without `identity` it runs anonymous, so a `Caller()` or a row-level
-policy refuses it. The identity grants roles only: it implies no elevation
+says. `identity` is required on `eventbridge`, `s3`, `sns` and `schedule`
+triggers: a trigger without one fails to load, so no automatic change runs
+without an actor, and the audit log records this identity as the actor of
+every change the job makes. The identity grants roles only: it implies no elevation
 and no `BYPASSRLS`. Whoever may invoke the function, or write to its queue,
 runs the declared job as the declared identity: restrict
 `lambda:InvokeFunction` and the queue policy, and pin such a function in code
 with `LambdaAdapter(function=...)`.
+
+When AWS itself records who caused the event, the identity acts on their
+behalf: the audit log's `on_behalf_of` holds the `userIdentity.principalId` of
+an S3 record, or the `detail.userIdentity.arn` of an EventBridge event whose
+`source` starts with `aws.` (`PutEvents` refuses that prefix, so no publisher
+can forge one). A custom EventBridge event, SNS and `schedule` name nobody,
+whatever their payload says. The `loom:` attribute prefix is reserved: an
+`identity.attributes` key under it fails to load.
 
 Invoked directly, the function fails the invocation whenever a job fails,
 retryable or not, a `Command` validation error included. Lambda retries the

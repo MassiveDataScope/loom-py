@@ -12,4 +12,5 @@ Current status:
 - [ADR 0006: Hexagonal layers and one connection type per engine](0006-hexagonal-layers.md) (Accepted)
 - [ADR 0007: A transport-neutral composition root](0007-composition-root.md) (Accepted)
 - [ADR 0008: Named stores, one unit of work per store, ordered commits](0008-stores-and-units-of-work.md) (Accepted)
+- [ADR 0009: Audit every row change by the person who caused it](0009-audit-by-person.md) (Accepted)
 - Decisions tracked meanwhile in `specs/`.
