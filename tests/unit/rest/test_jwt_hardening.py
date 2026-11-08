@@ -18,8 +18,9 @@ from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from loom.core.model.redaction import Secret
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
-from loom.rest.auth.config import JwtIssuerConfig, SharedSecretFile
+from loom.rest.auth.config import JwtIssuerConfig, JwtPublicKey
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
 from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims
 from loom.rest.fastapi.auto import create_app
@@ -34,6 +35,17 @@ def _secret_file(tmp_path: Path, size: int) -> str:
     path = tmp_path / "hs.key"
     path.write_bytes(b"k" * size)
     return str(path)
+
+
+def _issuer(signing_key: str, algorithm: str = "HS256", **overrides: Any) -> JwtIssuerConfig:
+    return JwtIssuerConfig(
+        signing_key=Secret(signing_key),
+        algorithm=algorithm,  # type: ignore[arg-type]
+        audience="api",
+        issuer="gateway",
+        roles_claim="roles",
+        **overrides,
+    )
 
 
 def _credentials(token: str) -> RequestCredentials:
@@ -72,19 +84,19 @@ class TestHmacKeyStrength:
             JwtAuthenticator(config)
 
     @pytest.mark.parametrize(("algorithm", "minimum"), [("HS384", 48), ("HS512", 64)])
-    def test_the_issuer_minimum_follows_its_algorithm(
-        self, tmp_path: Path, algorithm: str, minimum: int
-    ) -> None:
-        config = JwtIssuerConfig(
-            signing_key=SharedSecretFile(_secret_file(tmp_path, minimum - 1)),
-            algorithm=algorithm,
-            audience="api",
-            issuer="gateway",
-            roles_claim="roles",
-        )
-
+    def test_the_issuer_minimum_follows_its_algorithm(self, algorithm: str, minimum: int) -> None:
         with pytest.raises(ConfigError, match=f"at least {minimum} bytes"):
-            config.load_signing_key()
+            _issuer("k" * (minimum - 1), algorithm)
+
+    def test_a_verifier_secret_is_judged_when_the_config_is_built(self) -> None:
+        with pytest.raises(ConfigError, match="at least 32 bytes"):
+            JwtAuthConfig(secret=Secret("k" * 31), algorithms=("HS256",))
+
+    def test_a_pem_key_is_never_a_shared_secret(self) -> None:
+        """Algorithm confusion: an HS secret that is a public key lets its holders sign."""
+        pem = "-----BEGIN PUBLIC KEY-----\n" + "A" * 64 + "\n-----END PUBLIC KEY-----"
+        with pytest.raises(ConfigError, match="is a PEM key"):
+            JwtAuthConfig(secret=Secret(pem), algorithms=("HS256",))
 
     def test_the_refusal_never_echoes_the_key(self, tmp_path: Path) -> None:
         path = tmp_path / "hs.key"
@@ -96,17 +108,9 @@ class TestHmacKeyStrength:
 
         assert "short-secret-value" not in str(refused.value)
 
-    def test_an_issuer_key_shorter_than_its_hash_is_refused(self, tmp_path: Path) -> None:
-        config = JwtIssuerConfig(
-            signing_key=SharedSecretFile(_secret_file(tmp_path, 31)),
-            algorithm="HS256",
-            audience="api",
-            issuer="gateway",
-            roles_claim="roles",
-        )
-
+    def test_an_issuer_key_shorter_than_its_hash_is_refused(self) -> None:
         with pytest.raises(ConfigError, match="at least 32 bytes"):
-            config.load_signing_key()
+            _issuer("k" * 31)
 
 
 class TestLeeway:
@@ -203,8 +207,8 @@ class TestAudienceAndIssuerChecks:
 
 
 class TestTestingHelper:
-    async def test_the_helper_mints_tokens_its_config_accepts(self, tmp_path: Path) -> None:
-        auth = jwt_test_auth(tmp_path)
+    async def test_the_helper_mints_tokens_its_config_accepts(self) -> None:
+        auth = jwt_test_auth()
 
         identity = await JwtAuthenticator(auth.config).authenticate(_credentials(auth.token("ada")))
 
@@ -262,30 +266,13 @@ class TestResolvedClaims:
 
 
 class TestIssuedType:
-    async def test_the_issuer_stamps_the_type_the_verifier_requires(self, tmp_path: Path) -> None:
+    async def test_the_issuer_stamps_the_type_the_verifier_requires(self) -> None:
         from loom.core.identity import Identity  # noqa: PLC0415
         from loom.rest.auth import JwtIssuer  # noqa: PLC0415
 
-        key = _secret_file(tmp_path, 32)
-        issuer = JwtIssuer(
-            JwtIssuerConfig(
-                signing_key=SharedSecretFile(key),
-                algorithm="HS256",
-                audience="api",
-                issuer="gw",
-                roles_claim="roles",
-                typ="at+jwt",
-            )
-        )
-        verifier = JwtAuthenticator(
-            JwtAuthConfig(
-                secret_path=key,
-                algorithms=("HS256",),
-                audience="api",
-                issuer="gw",
-                accepted_types=("at+jwt",),
-            )
-        )
+        config = _issuer("k" * 32, typ="at+jwt")
+        issuer = JwtIssuer(config)
+        verifier = JwtAuthenticator(JwtAuthConfig.for_issuer(config))
         token = issuer.issue(Identity(subject="ada", roles=("r",), mechanism="jwt")).token
 
         assert pyjwt.get_unverified_header(token)["typ"] == "at+jwt"
@@ -295,9 +282,9 @@ class TestIssuedType:
 
 
 class TestTestingHelperOwnsItsKey:
-    def test_it_refuses_to_override_its_own_key(self, tmp_path: Path) -> None:
+    def test_it_refuses_to_override_its_own_key(self) -> None:
         with pytest.raises(TypeError, match="algorithms"):
-            jwt_test_auth(tmp_path, algorithms=("HS512",))
+            jwt_test_auth(algorithms=("HS512",))
 
 
 class TestKeyMaterialStaysOut:
@@ -316,8 +303,8 @@ class TestKeyMaterialStaysOut:
             JwtAuthConfig(public_keys={"k1": private}, algorithms=("EdDSA",))
 
 
-def _rsa_pem(tmp_path: Path, bits: int) -> tuple[Path, str]:
-    """A private key file of *bits* and its public PEM."""
+def _rsa_pem(bits: int) -> tuple[str, str]:
+    """A private key of *bits* and its public PEM."""
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
     from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
 
@@ -332,66 +319,45 @@ def _rsa_pem(tmp_path: Path, bits: int) -> tuple[Path, str]:
         .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
         .decode()
     )
-    path = tmp_path / f"rsa{bits}.pem"
-    path.write_text(private, encoding="utf-8")
-    return path, public
+    return private, public
 
 
 class TestRsaKeySize:
     """RFC 7518 §3.3: an RSA key below 2048 bits is refused on both sides."""
 
-    def test_a_short_issuer_key_is_refused_on_load(self, tmp_path: Path) -> None:
-        from loom.rest.auth.config import PrivateKeyFile  # noqa: PLC0415
-
-        path, _ = _rsa_pem(tmp_path, 1024)
-        config = JwtIssuerConfig(
-            signing_key=PrivateKeyFile(str(path)),
-            algorithm="RS256",
-            audience="api",
-            issuer="idp",
-            roles_claim="roles",
-        )
+    def test_a_short_issuer_key_is_refused(self) -> None:
+        private, _ = _rsa_pem(1024)
 
         with pytest.raises(ConfigError, match="1024-bit RSA"):
-            config.load_signing_key()
+            _issuer(private, "RS256")
 
-    def test_a_short_published_key_is_refused(self, tmp_path: Path) -> None:
-        _, public = _rsa_pem(tmp_path, 1024)
+    def test_a_short_published_key_is_refused(self) -> None:
+        _, public = _rsa_pem(1024)
 
         with pytest.raises(ConfigError, match="1024-bit RSA"):
             JwtAuthConfig(public_keys={"k1": public}, algorithms=("RS256",))
 
-    def test_a_2048_bit_key_is_accepted(self, tmp_path: Path) -> None:
-        _, public = _rsa_pem(tmp_path, 2048)
+    def test_a_short_typed_published_key_is_refused(self) -> None:
+        _, public = _rsa_pem(1024)
+
+        with pytest.raises(ConfigError, match="1024-bit RSA"):
+            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="RS256", pem=public)})
+
+    def test_a_2048_bit_key_is_accepted(self) -> None:
+        _, public = _rsa_pem(2048)
 
         JwtAuthConfig(public_keys={"k1": public}, algorithms=("RS256",))
 
 
 class TestIssuerFields:
-    def test_a_blank_secret_is_refused(self, tmp_path: Path) -> None:
-        path = tmp_path / "blank"
-        path.write_text(" " * 40, encoding="utf-8")
-        config = JwtIssuerConfig(
-            signing_key=SharedSecretFile(str(path)),
-            algorithm="HS256",
-            audience="api",
-            issuer="idp",
-            roles_claim="roles",
-        )
+    def test_a_blank_secret_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            _issuer(" " * 40)
 
-        with pytest.raises(ConfigError, match="blank"):
-            config.load_signing_key()
-
-    def test_the_mandatory_fields_have_no_empty_default(self, tmp_path: Path) -> None:
+    def test_the_mandatory_fields_have_no_empty_default(self) -> None:
         with pytest.raises(TypeError):
-            JwtIssuerConfig(signing_key=SharedSecretFile(_secret_file(tmp_path, 32)))  # type: ignore[call-arg]
+            JwtIssuerConfig(signing_key=Secret("k" * 32))  # type: ignore[call-arg]
 
-    def test_an_unknown_algorithm_is_named_before_the_key(self, tmp_path: Path) -> None:
+    def test_an_unknown_algorithm_is_named_before_the_key(self) -> None:
         with pytest.raises(ConfigError, match="algorithm"):
-            JwtIssuerConfig(
-                signing_key=SharedSecretFile(_secret_file(tmp_path, 32)),
-                algorithm="HS999",
-                audience="api",
-                issuer="idp",
-                roles_claim="roles",
-            )
+            _issuer("short", "HS999")

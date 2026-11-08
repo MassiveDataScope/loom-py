@@ -359,7 +359,11 @@ persistence:
 The variable is named, never interpolated.
 
 On other platforms, the `${secrets:...}` and `${ssm:...}` resolvers read
-Secrets Manager and SSM at load time.
+Secrets Manager and SSM at load time, and `${file:...}` reads a mounted file
+or a cloud object (`s3://`, `gs://`, `abfss://`), the same paths `load_config`
+reads. A field typed `Secret` keeps the value out of reprs, logs and dumps.
+These three are loom's built-in resolvers; a new source is one more
+`ConfigResolver` passed to `create_app` or `load_config`.
 
 loom has no check for secrets written into the configuration. Scan the
 repository with [gitleaks](https://github.com/gitleaks/gitleaks), in

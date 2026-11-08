@@ -76,7 +76,7 @@ def test_merge_resolvers_drops_default_taken_by_explicit() -> None:
     merged = merge_resolvers([vault], default_resolvers())
 
     assert merged[0] is vault
-    assert _names(merged) == ("secrets", "ssm")
+    assert _names(merged) == ("secrets", "ssm", "file")
 
 
 def test_merge_resolvers_drops_default_already_registered(secrets_yaml: str) -> None:
@@ -84,7 +84,7 @@ def test_merge_resolvers_drops_default_already_registered(secrets_yaml: str) -> 
 
     merged = merge_resolvers((), default_resolvers())
 
-    assert _names(merged) == ("ssm",)
+    assert _names(merged) == ("ssm", "file")
     assert load_config(secrets_yaml, resolvers=merged).token == "vault:k"
 
 
@@ -114,8 +114,8 @@ def test_with_default_resolvers_matches_merge_of_defaults() -> None:
     merged = with_default_resolvers([vault])
 
     assert merged[0] is vault
-    assert _names(merged) == ("secrets", "ssm")
-    assert _names(with_default_resolvers()) == ("secrets", "ssm")
+    assert _names(merged) == ("secrets", "ssm", "file")
+    assert _names(with_default_resolvers()) == ("secrets", "ssm", "file")
 
 
 def test_importing_config_package_does_not_import_omegaconf() -> None:
@@ -131,7 +131,7 @@ def test_importing_config_package_does_not_import_omegaconf() -> None:
 def test_merge_resolvers_keeps_free_defaults() -> None:
     merged = merge_resolvers((), default_resolvers())
 
-    assert _names(merged) == ("secrets", "ssm")
+    assert _names(merged) == ("secrets", "ssm", "file")
 
 
 def test_merge_resolvers_keeps_explicit_order() -> None:
@@ -146,8 +146,8 @@ def test_default_resolvers_construct_without_boto3(monkeypatch: pytest.MonkeyPat
 
     resolvers = default_resolvers()
 
-    assert _names(resolvers) == ("secrets", "ssm")
-    for resolver in resolvers:
+    assert _names(resolvers) == ("secrets", "ssm", "file")
+    for resolver in resolvers[:2]:
         with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
             resolver.resolve("/x")
 

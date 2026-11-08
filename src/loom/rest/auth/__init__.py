@@ -14,12 +14,10 @@ Install the optional JWT dependency with::
 
 from loom.rest.auth.abc import AuthenticationUnavailable, Authenticator, RequestCredentials
 from loom.rest.auth.config import (
+    JwtAlgorithm,
     JwtAuthConfig,
     JwtIssuerConfig,
-    ManagedPrivateKey,
-    PrivateKeyFile,
-    SharedSecretFile,
-    SigningKey,
+    JwtPublicKey,
 )
 from loom.rest.auth.jwt import JwtAuthenticator, JwtIssuer
 from loom.rest.auth.middleware import AuthenticationMiddleware, JwtAuthMiddleware
@@ -28,14 +26,12 @@ __all__ = [
     "AuthenticationMiddleware",
     "AuthenticationUnavailable",
     "Authenticator",
+    "JwtAlgorithm",
     "JwtAuthConfig",
     "JwtAuthMiddleware",
     "JwtAuthenticator",
     "JwtIssuer",
     "JwtIssuerConfig",
-    "ManagedPrivateKey",
-    "PrivateKeyFile",
-    "SharedSecretFile",
-    "SigningKey",
+    "JwtPublicKey",
     "RequestCredentials",
 ]

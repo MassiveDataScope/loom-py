@@ -18,14 +18,17 @@
   `from_signing_key`: the verifier of a service that also issues reads its key,
   algorithm, audience, issuer, roles claim and `typ` from the issuer settings
   instead of thirteen loose arguments that could disagree with them.
-  `JwtIssuerConfig.signing_key` takes one typed case, `PrivateKeyFile`,
-  `ManagedPrivateKey` or `SharedSecretFile`, replacing `private_key_path`,
-  `private_key_ref`, `key_ref_region`, `secret_path` and
-  `allow_symmetric_signing`. A private key in `public_keys` is refused, and
-  the verifier reads its `secret_path` once at startup.
-- An RSA key below 2048 bits and a whitespace-only HS secret are refused, on
-  both the verifier and the issuer. `JwtIssuerConfig` requires `algorithm`,
-  `audience`, `issuer` and `roles_claim` instead of defaulting them to `""`.
+  `JwtIssuerConfig.signing_key` is the key itself as a `Secret` (a PEM private
+  key, or an HS secret), resolved by any placeholder, replacing
+  `private_key_path`, `private_key_ref`, `key_ref_region`, `secret_path` and
+  `allow_symmetric_signing`; `load_signing_key()` and `KEY_REF_RESOLVERS` are
+  gone. A private key in `public_keys` is refused, and the verifier reads its
+  `secret_path` once at startup.
+- An RSA key below 2048 bits, a whitespace-only HS secret and a PEM key used
+  as an HS secret are refused, on both the verifier and the issuer.
+  `JwtIssuerConfig` requires `algorithm`, `audience`, `issuer` and
+  `roles_claim` instead of defaulting them to `""`. `jwt_test_auth()` takes no
+  directory: its secret stays in memory.
 
 ### lambda
 
@@ -78,6 +81,17 @@
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
 
 ## ✨ Features
+
+### security
+
+- **security:** each JWT public key verifies only its own algorithm (RFC 8725
+  §3.1): `public_keys: {kid: {alg: RS256, pem: ...}}` with `JwtPublicKey`,
+  and no `algorithms` list, so a token cannot choose the algorithm and a
+  rotation can change the key type under a new `kid`. PEM-text entries with a
+  shared `algorithms` list still load; one configuration uses one form.
+  `JwtAuthConfig.secret` takes the HS secret as a `Secret`. `algorithms` and
+  `alg` are typed with `JwtAlgorithm`, so an unknown value fails when the
+  configuration is decoded.
 
 ### audit
 
@@ -204,6 +218,10 @@
 
 ### config
 
+- **config:** a built-in `file` resolver: `${file:/run/secrets/jwt.pem}` or
+  `${file:s3://bucket/key.pem}` reads a local file or a cloud object with the
+  reader `load_config` uses. Its errors name the key and the error type, and
+  never carry the file's bytes.
 - **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
   timeouts and retries; no credentials) sets the AWS client defaults every
   AWS product inherits: `dynamodb` stores, `storage.dynamodb`, the `secrets`

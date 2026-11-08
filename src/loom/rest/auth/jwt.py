@@ -57,10 +57,10 @@ class JwtAuthenticator:
     """Authenticates callers from a stateless JWT bearer token.
 
     Verification is fully stateless: no server-side session storage and no
-    remote JWKS fetch.  Signature, ``exp`` and ``sub`` are always required
-    (a token without a subject carries no identity to bind an authorization
-    decision to, nor to audit afterwards); ``aud``/``iss`` are validated only
-    when configured.
+    remote JWKS fetch, and each key verifies only its own algorithms.
+    Signature, ``exp`` and ``sub`` are always required (a token without a
+    subject carries no identity to bind an authorization decision to, nor to
+    audit afterwards); ``aud``/``iss`` are validated only when configured.
 
     Args:
         config: Validated JWT settings.
@@ -72,8 +72,7 @@ class JwtAuthenticator:
 
         authenticator = JwtAuthenticator(
             JwtAuthConfig(
-                secret_path="/run/secrets/jwt",
-                algorithms=("HS256",),
+                public_keys={"2026-08": JwtPublicKey(alg="EdDSA", pem=public_pem)},
                 roles_claim="loom_sql_roles",
             )
         )
@@ -82,7 +81,6 @@ class JwtAuthenticator:
     def __init__(self, config: JwtAuthConfig) -> None:
         self._config = config
         self._jwt = _load_pyjwt()
-        self._algorithms = list(config.algorithms)
         self._roles_claim = config.roles_claim
         self._keys = config._keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
@@ -136,8 +134,8 @@ class JwtAuthenticator:
         try:
             claims: dict[str, Any] = self._jwt.decode(
                 token,
-                key,
-                algorithms=self._algorithms,
+                key.material,
+                algorithms=list(key.algorithms),
                 audience=self._config.audience,
                 issuer=self._config.issuer,
                 leeway=self._config.leeway_seconds,
@@ -186,8 +184,7 @@ class JwtIssuer:
     caller to add a claim, so nobody can widen their own roles or speak for
     another subject through this door.
 
-    The signing key is read once here and never kept on the config, which is a
-    ``msgspec.Struct`` whose fields any serializer would publish.
+    The signing key stays a ``Secret`` on the config: only this issuer reveals it.
 
     Every issuing is logged at INFO with the subject and the roles granted. That is
     a deliberate audit trail, not diagnostics: without it an access is not
@@ -200,13 +197,12 @@ class JwtIssuer:
 
     Raises:
         ImportError: If the optional ``pyjwt`` dependency is not installed.
-        ConfigError: If the signing key cannot be read, or cannot sign with the
-            configured algorithm.
+        ConfigError: If the signing key cannot sign with the configured algorithm.
 
     Example::
 
         issuer = JwtIssuer(JwtIssuerConfig(
-            signing_key=PrivateKeyFile("/run/secrets/jwt.pem"), algorithm="EdDSA",
+            signing_key=Secret(private_pem), algorithm="EdDSA",
             audience="my-api", issuer="my-gateway", roles_claim="loom_sql_roles",
         ))
         issued = issuer.issue(identity)
@@ -215,7 +211,7 @@ class JwtIssuer:
     def __init__(self, config: JwtIssuerConfig) -> None:
         self._config = config
         self._jwt = _load_pyjwt()
-        self._key = config.load_signing_key()
+        self._key = config.signing_key.reveal()
         self._max_ttl = timedelta(seconds=config.ttl_seconds)
         headers = {"kid": config.kid, "typ": config.typ}
         self._headers = {name: value for name, value in headers.items() if value} or None

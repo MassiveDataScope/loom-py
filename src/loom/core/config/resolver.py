@@ -94,21 +94,25 @@ class ConfigResolver(Protocol):
 
 
 def default_resolvers() -> tuple[ConfigResolver, ...]:
-    """Return loom's built-in resolvers: ``secrets`` and ``ssm``.
+    """Return loom's built-in resolvers: ``secrets``, ``ssm`` and ``file``.
 
-    Both build their client lazily on the first resolution from the ``aws:``
+    The one list of built-ins: a new one is a :class:`ConfigResolver` added
+    here, and every loader that uses the defaults gains it. The AWS resolvers
+    build their client lazily on the first resolution from the ``aws:``
     section of the configuration they resolve, as written, and the AWS SDK's
     default credential chain.
 
     Returns:
-        A :class:`~loom.core.config.secrets.SecretsManagerResolver` followed
-        by a :class:`~loom.core.config.ssm.SsmResolver`, both freshly built.
+        A :class:`~loom.core.config.secrets.SecretsManagerResolver`, a
+        :class:`~loom.core.config.ssm.SsmResolver` and a
+        :class:`~loom.core.config.file.FileResolver`, freshly built.
     """
-    # Local imports keep this protocol module free of the AWS implementations.
+    # Local imports keep this protocol module free of the implementations.
+    from loom.core.config.file import FileResolver
     from loom.core.config.secrets import SecretsManagerResolver
     from loom.core.config.ssm import SsmResolver
 
-    return (SecretsManagerResolver(), SsmResolver())
+    return (SecretsManagerResolver(), SsmResolver(), FileResolver())
 
 
 def merge_resolvers(

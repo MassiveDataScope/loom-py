@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
+from loom.core.config import default_resolvers
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
@@ -19,7 +20,7 @@ from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"
 _OUTPUTS_DIR = _GOLDEN_DIR / "outputs"
-_BUILTIN_RESOLVER_NAMES = ("secrets", "ssm")
+_BUILTIN_RESOLVER_NAMES = tuple(resolver.name for resolver in default_resolvers())
 
 
 def _clear_builtin_resolvers() -> None:
@@ -30,7 +31,7 @@ def _clear_builtin_resolvers() -> None:
 
 @pytest.fixture
 def clear_builtin_resolvers() -> Iterator[None]:
-    """Unregister ``secrets`` and ``ssm`` before and after the test."""
+    """Unregister the built-in resolvers before and after the test."""
     _clear_builtin_resolvers()
     yield
     _clear_builtin_resolvers()

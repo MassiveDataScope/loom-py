@@ -89,6 +89,7 @@ from loom.core.config._includes import (
     expand_include,
     failure_detail,
     is_cloud_uri,
+    read_text,
     resolve_include,
 )
 from loom.core.config.convert import convert_config
@@ -155,11 +156,8 @@ def _fetch_cloud_content(uri: str, label: str) -> str:
     Raises:
         ConfigError: When the fetch fails.
     """
-    import fsspec
-
     try:
-        with fsspec.open(uri, mode="r", encoding="utf-8") as fh:
-            return str(fh.read())  # pyright: ignore[reportAttributeAccessIssue]
+        return read_text(uri)
     except Exception as exc:
         raise ConfigError(
             f"Failed to fetch config from {label!r}: {failure_detail(exc, label)}"
