@@ -155,7 +155,7 @@ ai-a2a = [
     "a2a-sdk>=1.1,<2",
 ]
 ai-harness = [
-    "pydantic-ai-harness[skills]>=0.28,<1",
+    "pydantic-ai-harness[skills]>=0.59,<1",
 ]
 # Logfire is an OTel distribution, not a second telemetry stack: it installs the
 # global TracerProvider that loom then SHARES via OtelConfig(endpoint="").
@@ -294,7 +294,7 @@ dev = [
     "pydantic-ai-slim[anthropic,bedrock,openai,spec,typesafe]>=2.45,<3",
     "fasta2a>=0.6,<1",
     "a2a-sdk>=1.1,<2",
-    "pydantic-ai-harness[skills]>=0.28,<1",
+    "pydantic-ai-harness[skills]>=0.59,<1",
     "typer>=0.12,<1",
     "pytest-timeout>=2.3",
     # The Lambda HTTP adapter's tests run in the fast lane, without extras.

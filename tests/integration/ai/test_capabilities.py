@@ -14,6 +14,7 @@ FR-046b, and the capability kinds the adapter announces.
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +41,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai_harness import Skills
 
 from loom.ai.abc import AgentEngine, ToolResultEvent, ToolsetContext
 from loom.ai.compiler._plan import (
@@ -72,6 +72,11 @@ from loom.core.use_case import Caller
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
 from loom.core.use_case.use_case import UseCase
 from tests.integration.ai.conftest import make_plan, make_policies
+
+_HARNESS_MISSING = pytest.mark.skipif(
+    importlib.util.find_spec("pydantic_ai_harness") is None,
+    reason="pydantic-ai-harness pins its own pydantic-ai release; the floor job runs without it",
+)
 
 CANARY = "SECRET-CANARY-9931"
 """Token planted in every row payload; it must never reach the model."""
@@ -826,6 +831,7 @@ def skills_capability(directory: str, *names: str) -> CompiledSkillsCapability:
     return CompiledSkillsCapability(library="./skills", directory=directory, names=names)
 
 
+@_HARNESS_MISSING
 class TestSkillsCapability:
     """``skills`` becomes a deferred harness capability (FR-042)."""
 
@@ -833,6 +839,8 @@ class TestSkillsCapability:
         self, tmp_path: Path
     ) -> None:
         """One ``Skills`` per grant, pointed at the directory the compiler resolved."""
+        from pydantic_ai_harness import Skills
+
         directory = write_skill_library(tmp_path)
         plan = make_plan(capabilities=(skills_capability(directory, "pricing", "forecast"),))
 
@@ -845,6 +853,8 @@ class TestSkillsCapability:
 
     def test_grants_only_the_selected_names_when_the_artefact_filters(self, tmp_path: Path) -> None:
         """The compiler already resolved the globs, so a subset reaches the harness."""
+        from pydantic_ai_harness import Skills
+
         directory = write_skill_library(tmp_path)
         plan = make_plan(capabilities=(skills_capability(directory, "pricing"),))
 

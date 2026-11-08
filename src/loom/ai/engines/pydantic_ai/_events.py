@@ -64,6 +64,8 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
         "final_result",
         "enqueued_messages",
         "tool_availability_delta",
+        "capability_load_delta",
+        "model_settings_delta",
         "output_tool_call",
         "output_tool_result",
         "deferred_tool_requests",

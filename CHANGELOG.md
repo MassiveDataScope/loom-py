@@ -343,6 +343,22 @@
 
 ## ⚠ Behaviour changes
 
+### ai
+
+- **ai:** the `ai-harness` extra requires `pydantic-ai-harness>=0.59`, which
+  fixes a tool-call limit bypass in nested CodeMode calls
+  (GHSA-3589-pxp7-3gj8). The harness pins its own `pydantic-ai-slim` release,
+  so installing the extra brings `pydantic-ai-slim` 2.59 or newer.
+- **ai:** from `pydantic-ai-slim` 2.66, a Bedrock request to a Claude model
+  with no `max_tokens` is streamed behind the scenes (`ConverseStream`), even
+  for a role with `streaming: false`. Set `max_tokens` in the role's `options`
+  to keep one-piece requests; an IAM policy for a streamed request needs
+  `bedrock:InvokeModelWithResponseStream`.
+- **ai:** a `UsageLimitUnavailableWarning` (a token or cost limit is set but a
+  response carries no usage) is classified `COST_NOT_MEASURABLE`, like the
+  other unmeasured-spend warnings, instead of a retriable
+  `PROVIDER_UNAVAILABLE`.
+
 ### jobs
 
 - **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,

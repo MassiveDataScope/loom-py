@@ -127,10 +127,14 @@ class TestEventCoverage:
         assert not unclassified, f"pydantic-ai added event kinds: {sorted(unclassified)}"
 
     def test_no_nonexistent_event_is_classified(self) -> None:
-        """The lists describe the engine, not a wish: no phantom kinds."""
+        """The lists describe the engine, not a wish: no phantom kinds.
+
+        The terminal event lives outside the union, and the kinds a newer
+        pydantic-ai release added are absent when the suite runs on the floor.
+        """
         phantom = (MAPPED_EVENT_KINDS | IGNORED_EVENT_KINDS) - _engine_event_kinds()
 
-        assert phantom == {"agent_run_result"}, "only the terminal event lives outside the union"
+        assert phantom - _NEWER_THAN_FLOOR == {"agent_run_result"}
 
 
 class TestTheUnreachableGuardStaysUnclassified:
@@ -252,6 +256,10 @@ def _engine(*, retries: int, failure: _AttemptCounter) -> AgentEngine:
     return provider.create_engine(
         make_plan(retries=retries), deps=NullDeps(), container=LoomContainer()
     )
+
+
+_NEWER_THAN_FLOOR = frozenset({"capability_load_delta", "model_settings_delta"})
+"""Event kinds a pydantic-ai release newer than the declared floor introduced."""
 
 
 def _engine_event_kinds() -> frozenset[str]:
