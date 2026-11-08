@@ -20,8 +20,10 @@ from loom.core.repository.sqlalchemy.rls.audit import EXPIRED_AUDIT_PARTITIONS
 from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding, diff
 from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_GUARD_REVISION
 from loom.core.repository.sqlalchemy.rls.integrity import (
+    AUDIT_HORIZON_WARNING_MONTHS,
     AUDIT_SHAPE,
     AUDIT_SUPPORTED,
+    audit_months_covered,
     audit_shape_problems,
 )
 
@@ -43,19 +45,8 @@ AUDIT_REGISTRY: Final = (
     "SELECT c.relname, a.excluded FROM audited_table a JOIN pg_class c ON c.oid = a.rel "
     "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :schema"
 )
-# Whether a partition covers now, and the start of next month, on the database's clock.
-AUDIT_COVERAGE: Final = (
-    "WITH m AS (SELECT now() AS this_month, "
-    "date_trunc('month', now()) + interval '1 month' AS next_month) "
-    "SELECT coalesce(bool_or(m.this_month >= p.lower_bound "
-    "AND m.this_month < p.upper_bound), false) AS this_month, "
-    "coalesce(bool_or(m.next_month >= p.lower_bound "
-    "AND m.next_month < p.upper_bound), false) AS next_month "
-    "FROM m LEFT JOIN audit_partition p ON true"
-)
 _AUDIT_RELATIONS: Final = text(AUDIT_RELATIONS)
 _AUDIT_REGISTRY: Final = text(AUDIT_REGISTRY)
-_AUDIT_COVERAGE: Final = text(AUDIT_COVERAGE)
 _EXPIRED: Final = text(EXPIRED_AUDIT_PARTITIONS)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
@@ -69,8 +60,7 @@ class AuditState:
     relations: frozenset[str] = frozenset()
     sequences: frozenset[str] = frozenset()
     registry: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    covers_this_month: bool = False
-    covers_next_month: bool = False
+    months_covered: int = 0
     expired: tuple[str, ...] = ()
 
 
@@ -81,15 +71,13 @@ async def audit_state(connection: AsyncConnection, schema: str, guard: str) -> A
     in_schema = {"schema": schema}
     relations = list(await connection.execute(_AUDIT_RELATIONS, in_schema))
     registry = await connection.execute(_AUDIT_REGISTRY, in_schema)
-    coverage = (await connection.execute(_AUDIT_COVERAGE)).one()
     expired = await connection.execute(_EXPIRED)
     return AuditState(
         supported=True,
         relations=frozenset(str(row.relname) for row in relations),
         sequences=frozenset(str(row.relname) for row in relations if row.relkind == "S"),
         registry={str(row.relname): frozenset(row.excluded or ()) for row in registry},
-        covers_this_month=bool(coverage.this_month),
-        covers_next_month=bool(coverage.next_month),
+        months_covered=await audit_months_covered(connection, schema) or 0,
         expired=tuple(str(row.relname) for row in expired),
     )
 
@@ -132,13 +120,28 @@ def _registry_findings(
 
 
 def _missing_partitions(state: AuditState) -> list[Finding]:
-    """A finding per month, this one or the next, that no partition covers."""
-    months = (("this month", state.covers_this_month), ("next month", state.covers_next_month))
-    return [
-        Finding(AUDIT_LOG, "audit.partition", f"a partition for {label}", "none")
-        for label, covered in months
-        if not covered
-    ]
+    """A finding when this month or the next has no partition, or the horizon is short.
+
+    Partitions are created :data:`AUDIT_HORIZON_MONTHS` months ahead on every
+    deploy and every ``loom schema audit ensure-partitions``; fewer than
+    :data:`AUDIT_HORIZON_WARNING_MONTHS` covered months means neither has run
+    for most of a year, and the pipeline should fail before writes do.
+    """
+    covered = state.months_covered
+    if covered == 0:
+        return [Finding(AUDIT_LOG, "audit.partition", "a partition for this month", "none")]
+    if covered == 1:
+        return [Finding(AUDIT_LOG, "audit.partition", "a partition for next month", "none")]
+    if covered < AUDIT_HORIZON_WARNING_MONTHS:
+        return [
+            Finding(
+                AUDIT_LOG,
+                "audit.horizon",
+                f"at least {AUDIT_HORIZON_WARNING_MONTHS} months of partitions",
+                f"{covered} months",
+            )
+        ]
+    return []
 
 
 async def audit_shape_findings(connection: AsyncConnection, schema: str) -> list[Finding]:

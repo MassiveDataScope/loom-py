@@ -79,6 +79,9 @@
   each login's password from `LOOM_DB_PASSWORD_<USER>`), `loom schema verify`
   (exit 1 on drift, lists expired audit partitions) and
   `loom schema audit drop-expired` (one partition past the retention per run).
+- **audit:** the log's partitions are UTC months kept twelve months ahead by
+  every deploy and by `loom schema audit ensure-partitions`, meant for a
+  scheduler; `verify` fails and startup warns with fewer than three months left.
 - **check:** `loom check --deploy` warns (`loom.audit.W001`) about a store
   whose audit is disabled.
 

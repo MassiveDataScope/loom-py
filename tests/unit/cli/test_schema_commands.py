@@ -130,17 +130,34 @@ def test_verify_clean_exits_zero(config: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_drop_expired_drops_at_most_one_partition(
     config: Path, monkeypatch: pytest.MonkeyPatch, dropped: str | None, expected: str
 ) -> None:
-    urls: list[str] = []
+    actions: list[str] = []
 
-    async def drop(url: str) -> str | None:
-        urls.append(url)
+    async def as_migrator(action: Any) -> str | None:
+        actions.append(action.__name__)
         return dropped
 
-    monkeypatch.setattr(schema_cli, "_drop_expired", drop)
-    monkeypatch.setenv("LOOM_MIGRATOR_URL", "postgresql+asyncpg://migrator@db/app")
+    monkeypatch.setattr(schema_cli, "_as_migrator", as_migrator)
 
     result = runner.invoke(app, ["schema", "audit", "drop-expired"])
 
     assert result.exit_code == 0, result.output
-    assert urls == ["postgresql+asyncpg://migrator@db/app"]
+    assert actions == ["drop_expired_audit_partition"]
     assert expected in result.output
+
+
+def test_ensure_partitions_reports_how_many_were_created(
+    config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actions: list[str] = []
+
+    async def as_migrator(action: Any) -> int:
+        actions.append(action.__name__)
+        return 1
+
+    monkeypatch.setattr(schema_cli, "_as_migrator", as_migrator)
+
+    result = runner.invoke(app, ["schema", "audit", "ensure-partitions"])
+
+    assert result.exit_code == 0, result.output
+    assert actions == ["ensure_audit_partitions"]
+    assert "created 1 audit partition" in result.output

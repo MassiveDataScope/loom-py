@@ -1448,8 +1448,29 @@ log depends on, in the DDL that tries.
 
 ### Partitions and retention
 
-The log is partitioned by month, `audit_log_pYYYYMM`. Every deploy creates
-the current and the next month's partitions; `verify` reports a missing one.
+The log is partitioned by UTC month, `audit_log_pYYYYMM`, whatever the
+session's time zone. A row needs the partition of its month: the log fails
+closed, so a missing partition makes every audited write fail. To keep writes
+from depending on deploys, every deploy and every run of
+`loom schema audit ensure-partitions` (as the migrator) make sure the current
+month and the next twelve have one. The guard creates them under its own lock,
+so concurrent runs are safe, and a run with nothing missing changes nothing.
+
+Run `ensure-partitions` from a scheduler between deploys; monthly is enough,
+and a frequent schedule retries a failed run without waiting. On AWS,
+EventBridge Scheduler invoking a task or Lambda with `LOOM_MIGRATOR_URL`; on a
+database with pg_cron, `SELECT ensure_audit_partitions(12)` as the migrator.
+
+Two alarms watch the margin:
+
+| Where | Fewer than 3 months covered | This month missing |
+|---|---|---|
+| `loom schema verify` | finding `audit.horizon`, exit 1 | finding `audit.partition`, exit 1 |
+| application startup | WARNING log | ERROR log |
+
+Startup never refuses to serve over it: the application role cannot create
+partitions, so refusing would only turn a coming failure into an immediate one.
+
 Without `retention_months` nothing is ever dropped. With it, a partition
 whose month ended more than that many months ago is listed by `verify` and
 dropped by `loom schema audit drop-expired`, one per run, as the migrator.

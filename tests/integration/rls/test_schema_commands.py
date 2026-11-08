@@ -93,8 +93,8 @@ async def test_the_pipeline_commands_bootstrap_verify_and_drop_one_expired_parti
     assert clean[0] == 0, clean[1]
     await execute(
         database.migrator,
-        "SELECT create_audit_partition('audit_log_p202401', '2024-01-01', '2024-02-01')",
-        "SELECT create_audit_partition('audit_log_p202402', '2024-02-01', '2024-03-01')",
+        "SELECT create_audit_partition('2024-01-01 00:00:00+00')",
+        "SELECT create_audit_partition('2024-02-01 00:00:00+00')",
     )
     dropped = await _run("audit", "drop-expired")
     assert dropped == (0, "dropped audit_log_p202401\n")

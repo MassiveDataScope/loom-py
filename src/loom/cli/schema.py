@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, NoReturn
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, TypeVar
 
 import typer
 import yaml
@@ -23,12 +24,15 @@ from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_
 from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
     from loom.core.repository.sqlalchemy.rls import BootstrapConfig
     from loom.core.repository.sqlalchemy.rls.verify import Report
 
 # The commands below import SQLAlchemy inside their bodies: the CLI loads
 # without it, and only these commands require it.
 
+_T = TypeVar("_T")
 _STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
@@ -183,24 +187,39 @@ def _print_report(report: Report) -> None:
 @audit_app.command("drop-expired")
 def drop_expired() -> None:
     """Drop the oldest audit partition past the retention, as the migrator; one per run."""
+    from loom.core.repository.sqlalchemy.rls.audit import drop_expired_audit_partition
+
     try:
-        dropped = asyncio.run(_drop_expired(_env(MIGRATOR_URL_VARIABLE)))
+        dropped = asyncio.run(_as_migrator(drop_expired_audit_partition))
     except ConfigError as exc:
         _fail(exc)
     typer.echo(f"dropped {dropped}" if dropped else "no audit partition is past the retention")
 
 
-async def _drop_expired(migrator_url: str) -> str | None:
-    """Open one transaction as the migrator and drop the oldest expired partition in it."""
+@audit_app.command("ensure-partitions")
+def ensure_partitions() -> None:
+    """Create the audit partitions missing in the next twelve months, as the migrator.
+
+    Idempotent; meant for a scheduler between deploys (monthly is enough).
+    """
+    from loom.core.repository.sqlalchemy.rls.audit import ensure_audit_partitions
+
+    try:
+        created = asyncio.run(_as_migrator(ensure_audit_partitions))
+    except ConfigError as exc:
+        _fail(exc)
+    typer.echo(f"created {created} audit partition(s)")
+
+
+async def _as_migrator(action: Callable[[AsyncConnection], Awaitable[_T]]) -> _T:
+    """Run *action* in one transaction as the migrator (``LOOM_MIGRATOR_URL``)."""
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import NullPool
 
-    from loom.core.repository.sqlalchemy.rls.audit import drop_expired_audit_partition
-
-    engine = create_async_engine(migrator_url, poolclass=NullPool)
+    engine = create_async_engine(_env(MIGRATOR_URL_VARIABLE), poolclass=NullPool)
     try:
         async with engine.begin() as connection:
-            return await drop_expired_audit_partition(connection)
+            return await action(connection)
     finally:
         await engine.dispose()
 

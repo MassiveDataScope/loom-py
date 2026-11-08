@@ -168,6 +168,26 @@ AUDIT_TRIGGERS: Final = (
     " WHERE n.nspname = :schema AND g.tgname = 'loom_audit_record' AND g.tgenabled = 'A'"
 )
 _AUDIT_TRIGGERS: Final = text(AUDIT_TRIGGERS)
+# Consecutive UTC months, from this one, that a partition of the log covers; 0
+# when this month is missing, NULL without a log. Read by partition name from the
+# catalogue, so the application role can ask: the guard names every partition
+# ``audit_log_pYYYYMM`` after the UTC month its bounds span.
+AUDIT_MONTHS_COVERED: Final = (
+    "WITH log AS (SELECT to_regclass("
+    "quote_ident(coalesce(CAST(:schema AS text), current_schema())) || '.audit_log') AS rel),"
+    " parts AS (SELECT c.relname FROM pg_catalog.pg_inherits i"
+    " JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid"
+    " WHERE i.inhparent = (SELECT rel FROM log)),"
+    " months AS (SELECT i, 'audit_log_p' || to_char("
+    "date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => i), 'YYYYMM')"
+    " AS relname FROM generate_series(0, 36) AS i)"
+    " SELECT CASE WHEN (SELECT rel FROM log) IS NULL THEN NULL"
+    " ELSE coalesce(min(m.i) FILTER (WHERE m.relname NOT IN (SELECT relname FROM parts)), 37)"
+    " END AS covered FROM months m"
+)
+# Fewer covered months than this is a warning at startup and a finding in verify.
+AUDIT_HORIZON_WARNING_MONTHS: Final = 3
+_AUDIT_MONTHS_COVERED: Final = text(AUDIT_MONTHS_COVERED)
 _CATALOG: Final = text(_CATALOG_SQL)
 _ACCESS: Final = text(_ACCESS_SQL)
 _LANDING: Final = text(_LANDING_SQL)
@@ -278,6 +298,17 @@ async def _trigger_problems(
     ]
 
 
+async def audit_months_covered(
+    connection: AsyncConnection, schema: str | None = None
+) -> int | None:
+    """Consecutive UTC months from this one the log has partitions for; ``None`` without a log.
+
+    *schema* defaults to the connection's current schema, the one startup lands in.
+    """
+    covered = (await connection.execute(_AUDIT_MONTHS_COVERED, {_SCHEMA_PARAM: schema})).scalar()
+    return None if covered is None else int(covered)
+
+
 async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem | None:
     """A problem when the installed guard predates the audit log's revision."""
     if (await connection.execute(_AUDIT_SUPPORTED, _guard_parameters(guard))).scalar():
@@ -294,11 +325,16 @@ def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:
         return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned shape", _MISSING)]
     if tuple(lines) == AUDIT_LOG_SHAPE:
         return []
-    missing = "; ".join(line for line in AUDIT_LOG_SHAPE if line not in lines)
-    extra = "; ".join(line for line in lines if line not in AUDIT_LOG_SHAPE)
-    if not missing and not extra:
+    missing = _absent(AUDIT_LOG_SHAPE, lines)
+    extra = _absent(lines, AUDIT_LOG_SHAPE)
+    if not (missing or extra):
         return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, "the pinned order", "reordered")]
     return [Problem(_AUDIT_SHAPE_CHECK, _AUDIT_LOG, missing or "nothing else", extra or "none")]
+
+
+def _absent(wanted: Sequence[str], held: Sequence[str]) -> str:
+    """The lines of *wanted* that *held* lacks, joined; empty when none."""
+    return "; ".join(line for line in wanted if line not in held)
 
 
 async def table_problems(

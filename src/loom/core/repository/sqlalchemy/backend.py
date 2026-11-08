@@ -45,7 +45,12 @@ from loom.core.repository.sqlalchemy.registry import (
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.rls.integrity import OWNER_TRIGGER, startup_problems
+from loom.core.repository.sqlalchemy.rls.integrity import (
+    AUDIT_HORIZON_WARNING_MONTHS,
+    OWNER_TRIGGER,
+    audit_months_covered,
+    startup_problems,
+)
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -462,6 +467,25 @@ async def _check_guard(
             f"the guard {guard} or the scoped tables differ from what this release of loom "
             f"ships: {details}"
         )
+    _warn_audit_horizon(store.path, await audit_months_covered(connection))
+
+
+def _warn_audit_horizon(path: str, covered: int | None) -> None:
+    """Log when the audit log's partitions run out soon; never refuse to start.
+
+    The application role cannot create partitions, so startup only raises the
+    alarm: an error when this month is missing (audited writes fail now), a
+    warning with fewer than :data:`AUDIT_HORIZON_WARNING_MONTHS` months left.
+    """
+    if covered is None or covered >= AUDIT_HORIZON_WARNING_MONTHS:
+        return
+    fix = "run `loom schema audit ensure-partitions` or deploy"
+    if covered == 0:
+        _logger.error(
+            "%s: no audit partition covers this month; audited writes fail; %s", path, fix
+        )
+    else:
+        _logger.warning("%s: audit partitions cover only %d more month(s); %s", path, covered, fix)
 
 
 async def _refuse_scoped_in_database(connection: AsyncConnection, path: str) -> None:

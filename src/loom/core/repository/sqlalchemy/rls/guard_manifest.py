@@ -111,9 +111,9 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
     GuardRevision(
         3,
         "0003.sql",
-        "f3752bc2ab24274b92e754e0f4c48e1b9da9ff6b692dc70b58e542edc5246e85",
+        "1dfbf550952405b2c224dcc7a78d8d9ec81c545c9d1335ecbadf87fc8182b9ed",
         _catalog(
-            functions="870e4c3c89c8d14e33778cde9310fbc80dd8fea67b2ec068ccf82c13a35b06c8",
+            functions="1065dd8a793faa698d42f38a81e6d90c248e86cd7698d9ff433c693e30072118",
             relations="d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
             columns="7244d4f6ba3cd372296a3d963125966f5bb7ce3880aacd3a3419f3d398b138ab",
             constraints="7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
@@ -201,6 +201,8 @@ OWNER_FUNCTIONS: Final = frozenset(
         "protect_audited_table",
         "unprotect_audited_table",
         "create_audit_partition",
+        "ensure_audit_partitions",
+        "utc_month",
         "protect_audit_partition",
         "drop_expired_audit_partition",
         "refuse_audit_log_change",

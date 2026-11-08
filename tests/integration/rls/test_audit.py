@@ -75,7 +75,7 @@ async def _log(database: ScopedDatabase) -> list[dict[str, Any]]:
         await engine.dispose()
 
 
-async def test_create_schema_audits_the_marked_tables_and_prepares_two_partitions(
+async def test_create_schema_audits_the_marked_tables_and_prepares_a_year_of_partitions(
     scoped_database: BootstrapFactory, tmp_path: Path
 ) -> None:
     database = await _ledger(scoped_database, tmp_path, "ledger_setup")
@@ -87,7 +87,7 @@ async def test_create_schema_audits_the_marked_tables_and_prepares_two_partition
         "ledger_setup.accounts",
         "ledger_setup.memos",
     ]
-    assert await scalar(database.superuser, partitions) == 2
+    assert await scalar(database.superuser, partitions) == 13  # this month and twelve ahead
     triggers = (
         "SELECT count(*) FROM pg_trigger WHERE tgname = 'loom_audit_record' "
         "AND tgrelid = 'ledger_setup.drafts'::regclass"

@@ -50,7 +50,7 @@ EXPECTED_DIFFS = {
     "grant_bypass": "df474254039d75c5619066e0eca545c0db5a5daa0a48b2d67f1bfd70ea27ac72",
     "configure": "157024470e40f048e8b9610b08a20a0f6d29a7fde880d3d27ff254f309335cbc",
     "on_sql_drop": "83182c535cb43d9edc09dc0a2242caccf395addd08053d0771c92cb1f2982f57",
-    "owner_functions": "e2510df74dae525ce39e4112e73929283c84ab58c129877a73d992f60516bcbe",
+    "owner_functions": "2e04ff5804b3b4b3f916367d1e525a7de80285e5a6b24c4568847bd5c4474aa9",
     "role_specs": "85189491b4bd0ea6abd723cd2383be7110c38174008e06016f75ff5828bf056b",
     "secure_guard": "e5db369a8f600c4f6e18f81080c4759aa84c8de36969c55fac722401f8efd1ba",
     "unexpected_memberships": "66b1a5a985544260ef87a9a1bf4653f9288ea05316b7217b6a31215881d4af44",

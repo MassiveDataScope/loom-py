@@ -9,6 +9,7 @@ CREATE OR REPLACE FUNCTION owner_functions() RETURNS name[] LANGUAGE sql IMMUTAB
                'create_range_partition', 'detach_partition',
                'audit_log_of', 'audit_log_rel', 'audit_trigger_source', 'prepare_audit_log', 'protect_audit_log',
                'protect_audited_table', 'unprotect_audited_table', 'create_audit_partition',
+               'ensure_audit_partitions', 'utc_month',
                'protect_audit_partition', 'drop_expired_audit_partition', 'refuse_audit_log_change',
                'require_audit_log']::name[] $$;
 CREATE FUNCTION audit_log_of(app name) RETURNS regclass LANGUAGE sql STABLE AS $$
@@ -189,13 +190,20 @@ BEGIN
   DELETE FROM audited_table WHERE rel = tbl;
   PERFORM leave_hatch();
 END $$;
-CREATE FUNCTION create_audit_partition(partition_name text, lower_bound text, upper_bound text) RETURNS boolean
+CREATE FUNCTION utc_month(at timestamptz) RETURNS timestamptz LANGUAGE sql IMMUTABLE AS $$
+  SELECT date_trunc('month', at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' $$;
+CREATE FUNCTION create_audit_partition(month timestamptz) RETURNS boolean
 LANGUAGE plpgsql AS $$
-DECLARE log regclass := require_audit_log(); qualified text := format('%I.%I', app_schema(), partition_name); part regclass;
+DECLARE
+  log regclass := require_audit_log();
+  month_end timestamptz := ((month AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC';
+  partition_name text := 'audit_log_p' || to_char(month AT TIME ZONE 'UTC', 'YYYYMM');
+  qualified text := format('%I.%I', app_schema(), partition_name);
+  part regclass;
 BEGIN
   PERFORM authorize(log, 'partition');
-  IF coalesce(octet_length(partition_name), 0) NOT BETWEEN 1 AND 63 THEN
-    PERFORM reject(format('partition name %s is empty or longer than 63 bytes', partition_name)); END IF;
+  IF month IS NULL OR month <> utc_month(month) THEN
+    PERFORM reject(format('%s is not the start of a UTC month', month)); END IF;
   part := to_regclass(qualified);
   IF part IS NOT NULL THEN
     IF EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = part AND inhparent = log)
@@ -203,9 +211,23 @@ BEGIN
     PERFORM refuse(format('%s exists and is not a registered partition of the audit log', part));
   END IF;
   PERFORM open_hatch();
-  EXECUTE format('CREATE TABLE %s PARTITION OF %s FOR VALUES FROM (%L) TO (%L)', qualified, log, lower_bound, upper_bound);
-  PERFORM protect_audit_partition(to_regclass(qualified), lower_bound::timestamptz, upper_bound::timestamptz);
+  EXECUTE format('CREATE TABLE %s PARTITION OF %s FOR VALUES FROM (%L) TO (%L)', qualified, log, month, month_end);
+  PERFORM protect_audit_partition(to_regclass(qualified), month, month_end);
   RETURN true;
+END $$;
+CREATE FUNCTION ensure_audit_partitions(months_ahead int) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE log regclass := require_audit_log(); this_month timestamptz := utc_month(now()); created int := 0;
+BEGIN
+  PERFORM authorize(log, 'extend partitions of');
+  IF months_ahead IS NULL OR months_ahead NOT BETWEEN 1 AND 24 THEN
+    PERFORM reject(format('months_ahead %s is not between 1 and 24', months_ahead)); END IF;
+  PERFORM pg_advisory_xact_lock(hashtext(guard_schema() || '.audit_partitions'));
+  FOR i IN 0..months_ahead LOOP
+    IF create_audit_partition(((this_month AT TIME ZONE 'UTC') + make_interval(months => i)) AT TIME ZONE 'UTC') THEN
+      created := created + 1; END IF;
+  END LOOP;
+  RETURN created;
 END $$;
 CREATE FUNCTION protect_audit_partition(part regclass, lower_bound timestamptz, upper_bound timestamptz) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -234,7 +256,7 @@ BEGIN
   SELECT retention_months INTO months FROM config;
   IF months IS NULL THEN
     PERFORM refuse('no audit retention is configured; the audit log is never dropped without one'); END IF;
-  IF registered.upper_bound > date_trunc('month', now()) - make_interval(months => months) THEN
+  IF registered.upper_bound > ((utc_month(now()) AT TIME ZONE 'UTC') - make_interval(months => months)) AT TIME ZONE 'UTC' THEN
     PERFORM refuse(format('%s is within the %s-month retention', partition_name, months)); END IF;
   PERFORM enter_hatch();
   DELETE FROM audit_partition WHERE rel = part;
