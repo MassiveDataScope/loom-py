@@ -109,22 +109,9 @@ class JwtIssuer:
         expires_at = issued_at + lifetime
         jti = secrets.token_urlsafe(_JTI_BYTES)
         claims = self._claims(identity, issued_at=issued_at, expires_at=expires_at, jti=jti)
-        try:
-            token = self._jwt.encode(
-                claims,
-                self._key.reveal(),
-                algorithm=self._config.algorithm,
-                headers=self._headers,
-            )
-        except Exception as exc:  # noqa: BLE001 - the boundary: nothing signing-related escapes
-            # The operator gets the error type and the algorithm, never the
-            # traceback: its frames hold the revealed key, and a handler that
-            # captures locals would record it. The caller learns only that
-            # issuing failed.
-            _logger.error(  # noqa: TRY400 - a traceback would carry the key
-                "JWT issuing failed: %s with %s", type(exc).__name__, self._config.algorithm
-            )
-            raise RuntimeError("JWT issuing failed") from None
+        token = self._sign(claims)
+        if token is None:
+            raise RuntimeError("JWT issuing failed")
         _logger.info(
             "issued token jti=%s sub=%s roles=%s aud=%s kid=%s exp=%s",
             jti,
@@ -135,6 +122,29 @@ class JwtIssuer:
             int(expires_at.timestamp()),
         )
         return IssuedToken(token=token, expires_at=expires_at, jti=jti)
+
+    def _sign(self, claims: dict[str, Any]) -> str | None:
+        """The signed token, or ``None`` when signing failed.
+
+        The boundary: nothing signing-related escapes. The operator gets the
+        error type and the algorithm, never the traceback: its frames hold the
+        revealed key, and a handler that captures locals would record it. The
+        log is written outside the handler, so the caller's error keeps no
+        context either and learns only that issuing failed.
+        """
+        try:
+            return str(
+                self._jwt.encode(
+                    claims,
+                    self._key.reveal(),
+                    algorithm=self._config.algorithm,
+                    headers=self._headers,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            failure = type(exc).__name__
+        _logger.error("JWT issuing failed: %s with %s", failure, self._config.algorithm)
+        return None
 
     def _checked_lifetime(self, ttl: timedelta | None) -> timedelta:
         if ttl is None:

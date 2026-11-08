@@ -657,8 +657,9 @@ class TestForIssuer:
 
     def test_an_asymmetric_issuer_needs_a_kid(self) -> None:
         private, _ = _keypair()
+        unnamed = _issuer_config(private, kid=None)
         with pytest.raises(ConfigError, match="kid"):
-            JwtAuthConfig.for_issuer(_issuer_config(private, kid=None))
+            JwtAuthConfig.for_issuer(unnamed)
 
     def test_previous_key_stays_published(self) -> None:
         private, public = _keypair()
@@ -690,10 +691,9 @@ class TestForIssuer:
         private, _ = _keypair()
         _, other_public = _keypair()
         issuer = _issuer_config(private)
+        previous = {_KID: JwtPublicKey(alg="EdDSA", pem=other_public)}
         with pytest.raises(ConfigError, match="reuses the issuer kid"):
-            JwtAuthConfig.for_issuer(
-                issuer, previous_keys={_KID: JwtPublicKey(alg="EdDSA", pem=other_public)}
-            )
+            JwtAuthConfig.for_issuer(issuer, previous_keys=previous)
 
     def test_a_symmetric_issuer_shares_its_secret(self) -> None:
         issuer = _issuer_config(_SHARED_SECRET, algorithm="HS256")

@@ -10,7 +10,6 @@ private material. The keyring here is what a verifier picks a token's key from.
 from __future__ import annotations
 
 import base64
-import binascii
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -101,7 +100,7 @@ class Key:
 class Keyring(Protocol):
     """The loaded keys of a verifier, picking the one that checks a token."""
 
-    def pick(self, key_id: str | None) -> Key | None:
+    def pick(self, key_id: str | None, /) -> Key | None:
         """The key for a token with this ``kid``, or ``None`` when none applies."""
         ...
 
@@ -112,7 +111,7 @@ class FixedKey:
 
     key: Key
 
-    def pick(self, key_id: str | None) -> Key | None:
+    def pick(self, _key_id: str | None, /) -> Key | None:
         return self.key
 
 
@@ -127,7 +126,7 @@ class KeySet:
 
     keys: Mapping[str, Key]
 
-    def pick(self, key_id: str | None) -> Key | None:
+    def pick(self, key_id: str | None, /) -> Key | None:
         if key_id is not None:
             # A list or object ``kid`` is unhashable: refuse it here rather
             # than rely on the JWT library to have rejected it first.
@@ -320,7 +319,7 @@ def _base64_bytes(text: str) -> bytes | None:
     padded = text + "=" * (-len(text) % 4)
     try:
         return base64.b64decode(padded, validate=True)
-    except (binascii.Error, ValueError):
+    except ValueError:  # binascii.Error is a ValueError
         pass
     if not _URLSAFE_BASE64.fullmatch(padded):
         return None

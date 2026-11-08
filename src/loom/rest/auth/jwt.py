@@ -114,9 +114,10 @@ class JwtAuthenticator:
             # DEBUG only, and never the token itself: no oracle in responses/logs.
             _logger.debug("JWT verification failed: %s: %s", type(exc).__name__, exc)
             return None
-        except Exception as exc:  # noqa: BLE001 - fail closed, and keep the key's frames out
-            # Anything else from the JWT or crypto backend refuses the token too.
-            # Its traceback would carry the revealed key, so only the type is logged.
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed: anything else from the JWT or crypto backend refuses
+            # the token too. Its traceback would carry the revealed key, so only
+            # the type is logged.
             _logger.debug("JWT verification failed: %s", type(exc).__name__)
             return None
         return claims

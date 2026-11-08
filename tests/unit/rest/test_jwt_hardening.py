@@ -74,8 +74,9 @@ class TestHmacKeyStrength:
         assert JwtAuthenticator(config).name == "jwt"
 
     def test_a_secret_signs_with_exactly_one_algorithm(self, tmp_path: Path) -> None:
+        path = _secret_file(tmp_path, 64)
         with pytest.raises(ConfigError, match="exactly one algorithm"):
-            JwtAuthConfig(secret_path=_secret_file(tmp_path, 64), algorithms=("HS256", "HS512"))
+            JwtAuthConfig(secret_path=path, algorithms=("HS256", "HS512"))
 
     def test_a_trailing_line_break_does_not_count_toward_the_size(self, tmp_path: Path) -> None:
         path = tmp_path / "hs.key"
@@ -91,14 +92,15 @@ class TestHmacKeyStrength:
             _issuer("k" * (minimum - 1), algorithm)
 
     def test_a_verifier_secret_is_judged_when_the_config_is_built(self) -> None:
+        short = Secret("k" * 31)
         with pytest.raises(ConfigError, match="at least 32 bytes"):
-            JwtAuthConfig(secret=Secret("k" * 31), algorithms=("HS256",))
+            JwtAuthConfig(secret=short, algorithms=("HS256",))
 
     def test_a_pem_key_is_never_a_shared_secret(self) -> None:
         """Algorithm confusion: an HS secret that is a public key lets its holders sign."""
-        pem = "-----BEGIN PUBLIC KEY-----\n" + "A" * 64 + "\n-----END PUBLIC KEY-----"
+        pem = Secret("-----BEGIN PUBLIC KEY-----\n" + "A" * 64 + "\n-----END PUBLIC KEY-----")
         with pytest.raises(ConfigError, match="not a shared secret"):
-            JwtAuthConfig(secret=Secret(pem), algorithms=("HS256",))
+            JwtAuthConfig(secret=pem, algorithms=("HS256",))
 
     def test_the_refusal_never_echoes_the_key(self, tmp_path: Path) -> None:
         path = tmp_path / "hs.key"
@@ -117,10 +119,9 @@ class TestHmacKeyStrength:
 
 class TestLeeway:
     def test_a_leeway_above_five_minutes_is_refused(self, tmp_path: Path) -> None:
+        path = _secret_file(tmp_path, 32)
         with pytest.raises(ConfigError, match="leeway_seconds"):
-            JwtAuthConfig(
-                secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), leeway_seconds=301
-            )
+            JwtAuthConfig(secret_path=path, algorithms=("HS256",), leeway_seconds=301)
 
     def test_a_leeway_of_five_minutes_is_accepted(self, tmp_path: Path) -> None:
         config = JwtAuthConfig(
@@ -166,10 +167,9 @@ class TestTokenType:
         assert await authenticator.authenticate(_credentials(self._token(b"k" * 32, None)))
 
     def test_a_blank_listed_type_is_refused(self, tmp_path: Path) -> None:
+        path = _secret_file(tmp_path, 32)
         with pytest.raises(ConfigError, match="accepted_types"):
-            JwtAuthConfig(
-                secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), accepted_types=(" ",)
-            )
+            JwtAuthConfig(secret_path=path, algorithms=("HS256",), accepted_types=(" ",))
 
 
 def _rest_ids(rest: dict[str, Any], **app: Any) -> list[str]:
@@ -214,18 +214,19 @@ class TestTestingHelper:
 
         identity = await JwtAuthenticator(auth.config).authenticate(_credentials(auth.token("ada")))
 
-        assert identity is not None and identity.subject == "ada"
-        assert auth.config.audience and auth.config.issuer
+        assert identity is not None
+        assert identity.subject == "ada"
+        assert auth.config.audience
+        assert auth.config.issuer
 
 
 class TestResolvedClaims:
     def test_a_blank_audience_or_issuer_is_refused(self, tmp_path: Path) -> None:
         for field in ("audience", "issuer"):
             settings: dict[str, Any] = {field: "  "}
+            path = _secret_file(tmp_path, 32)
             with pytest.raises(ConfigError, match="must not be blank"):
-                JwtAuthConfig(
-                    secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), **settings
-                )
+                JwtAuthConfig(secret_path=path, algorithms=("HS256",), **settings)
 
     @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.STAGING])
     def test_a_claim_resolved_to_nothing_refuses_a_deployed_start(
@@ -235,8 +236,9 @@ class TestResolvedClaims:
             secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), issuer="idp"
         )
 
+        empty = ConfigContext.from_dict({})
         with pytest.raises(ConfigError, match=AUDIENCE_CHECK):
-            _require_deployed_jwt_claims(ConfigContext.from_dict({}), environment, config)
+            _require_deployed_jwt_claims(empty, environment, config)
 
     def test_development_and_silencing_let_it_start(self, tmp_path: Path) -> None:
         config = JwtAuthConfig(secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",))
@@ -342,8 +344,9 @@ class TestRsaKeySize:
     def test_a_short_typed_published_key_is_refused(self) -> None:
         _, public = _rsa_pem(1024)
 
+        weak = JwtPublicKey(alg="RS256", pem=public)
         with pytest.raises(ConfigError, match="1024-bit RSA"):
-            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="RS256", pem=public)})
+            JwtAuthConfig(public_keys={"k1": weak})
 
     def test_a_2048_bit_key_is_accepted(self) -> None:
         _, public = _rsa_pem(2048)
@@ -357,8 +360,9 @@ class TestIssuerFields:
             _issuer(" " * 40)
 
     def test_the_mandatory_fields_have_no_empty_default(self) -> None:
+        key = Secret("k" * 32)
         with pytest.raises(TypeError):
-            JwtIssuerConfig(signing_key=Secret("k" * 32))  # type: ignore[call-arg]
+            JwtIssuerConfig(signing_key=key)  # type: ignore[call-arg]
 
     def test_an_unknown_algorithm_is_named_before_the_key(self) -> None:
         with pytest.raises(ConfigError, match="algorithm"):
@@ -383,8 +387,9 @@ class TestPublicKeyFit:
         )
 
     def test_a_key_of_another_type_than_its_alg_is_refused(self) -> None:
+        mismatched = JwtPublicKey(alg="RS256", pem=self._ed25519_public())
         with pytest.raises(ConfigError, match=r"is a OKP key; none of \['RS256'\]"):
-            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="RS256", pem=self._ed25519_public())})
+            JwtAuthConfig(public_keys={"k1": mismatched})
 
     def test_a_pem_text_key_keeps_only_the_algorithms_of_its_type(self) -> None:
         """The released form shares one list: an RSA key never takes EdDSA, nor the reverse."""
@@ -399,8 +404,9 @@ class TestPublicKeyFit:
         assert keys.pick("ed").algorithms == ("EdDSA",)  # type: ignore[union-attr]
 
     def test_a_pem_text_key_that_fits_no_algorithm_is_refused(self) -> None:
+        ed25519 = self._ed25519_public()
         with pytest.raises(ConfigError, match="is a OKP key; none of"):
-            JwtAuthConfig(public_keys={"k1": self._ed25519_public()}, algorithms=("RS256",))
+            JwtAuthConfig(public_keys={"k1": ed25519}, algorithms=("RS256",))
 
     def test_the_keyring_holds_the_keys_as_checked(self) -> None:
         """Validation runs when the keyring is built, so a dict changed after
@@ -423,14 +429,16 @@ class TestPublicKeyFit:
             )
             .decode()
         )
+        wrong_curve = JwtPublicKey(alg="ES256", pem=p384)
         with pytest.raises(ConfigError, match=r"is a P-384 key; none of \['ES256'\]"):
-            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES256", pem=p384)})
+            JwtAuthConfig(public_keys={"k1": wrong_curve})
         JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES384", pem=p384)})
 
     def test_a_malformed_pem_is_refused_without_keeping_the_parser_error(self) -> None:
         broken = "-----BEGIN PUBLIC KEY-----\nnot base64\n-----END PUBLIC KEY-----"
+        entry = JwtPublicKey(alg="EdDSA", pem=broken)
         with pytest.raises(ConfigError, match="is not a PEM or OpenSSH public key") as refused:
-            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="EdDSA", pem=broken)})
+            JwtAuthConfig(public_keys={"k1": entry})
 
         assert refused.value.__cause__ is None
         assert refused.value.__context__ is None
@@ -479,18 +487,18 @@ class TestPublicKeyForms:
 
     def test_the_two_forms_never_mix(self) -> None:
         _, public = self._keypair()
+        typed = JwtPublicKey(alg="EdDSA", pem=public)
         with pytest.raises(ConfigError, match="not both"):
             JwtAuthConfig(
-                public_keys={"a": public, "b": JwtPublicKey(alg="EdDSA", pem=public)},
+                public_keys={"a": public, "b": typed},
                 algorithms=("EdDSA",),
             )
 
     def test_algorithms_beside_typed_keys_is_refused(self) -> None:
         _, public = self._keypair()
+        typed = JwtPublicKey(alg="EdDSA", pem=public)
         with pytest.raises(ConfigError, match="remove it"):
-            JwtAuthConfig(
-                public_keys={"a": JwtPublicKey(alg="EdDSA", pem=public)}, algorithms=("EdDSA",)
-            )
+            JwtAuthConfig(public_keys={"a": typed}, algorithms=("EdDSA",))
 
     def test_pem_text_keys_need_algorithms(self) -> None:
         _, public = self._keypair()
@@ -531,8 +539,9 @@ class TestPublicKeyForms:
     def test_an_openssh_rsa_key_cannot_slip_under_the_size_floor(self) -> None:
         """An OpenSSH key is parsed like a PEM one, so the 2048-bit floor holds."""
         ssh = self._openssh_rsa(1024)
+        typed = JwtPublicKey(alg="RS256", pem=ssh)
         with pytest.raises(ConfigError, match="1024-bit RSA"):
-            JwtAuthConfig(public_keys={"a": JwtPublicKey(alg="RS256", pem=ssh)})
+            JwtAuthConfig(public_keys={"a": typed})
         with pytest.raises(ConfigError, match="1024-bit RSA"):
             JwtAuthConfig(public_keys={"a": ssh}, algorithms=("RS256",))
 
@@ -584,8 +593,9 @@ class TestKeyMaterialIsNeverASharedSecret:
         ],
     )
     def test_an_openssh_key_or_a_jwk_is_refused(self, material: str) -> None:
+        secret = Secret(material)
         with pytest.raises(ConfigError, match="not a shared secret; HS256"):
-            JwtAuthConfig(secret=Secret(material), algorithms=("HS256",))
+            JwtAuthConfig(secret=secret, algorithms=("HS256",))
 
 
 class TestIssuerKeyFit:
@@ -608,8 +618,9 @@ class TestIssuerKeyFit:
             _issuer(p384, "ES256")
 
     def test_a_weak_rsa_key_is_refused(self) -> None:
+        weak = _rsa_pem(1024)[0]
         with pytest.raises(ConfigError, match="1024-bit RSA"):
-            _issuer(_rsa_pem(1024)[0], "RS256")
+            _issuer(weak, "RS256")
 
     def test_the_issuer_holds_its_key_as_a_secret(self) -> None:
         from loom.rest.auth import JwtIssuer  # noqa: PLC0415
@@ -650,7 +661,8 @@ class TestOpenSshPublicKeys:
             headers={"kid": "k"},
         )
         identity = await JwtAuthenticator(config).authenticate(_credentials(token))
-        assert identity is not None and identity.subject == "u"
+        assert identity is not None
+        assert identity.subject == "u"
 
     async def test_leading_whitespace_verifies_what_startup_checked(self) -> None:
         """The checked key object verifies, so padding cannot split check and use."""
@@ -693,8 +705,9 @@ class TestDerKeyIsNeverASharedSecret:
             ec.generate_private_key(ec.SECP256R1()).public_key(),
             _ed25519().public_key(),
         ):
+            secret = Secret(self._der_base64(public))
             with pytest.raises(ConfigError, match="not a shared secret"):
-                JwtAuthConfig(secret=Secret(self._der_base64(public)), algorithms=("HS256",))
+                JwtAuthConfig(secret=secret, algorithms=("HS256",))
 
     def test_a_random_base64_secret_is_still_a_secret(self) -> None:
         import secrets  # noqa: PLC0415
@@ -717,8 +730,9 @@ class TestIssuingFailureLog:
             raise ValueError("backend detail")
 
         monkeypatch.setattr(issuer._jwt, "encode", broken)
+        identity = Identity(subject="u", roles=("r",), mechanism="jwt")
         with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
-            issuer.issue(Identity(subject="u", roles=("r",), mechanism="jwt"))
+            issuer.issue(identity)
 
         record = next(r for r in caplog.records if "issuing failed" in r.getMessage())
         assert record.exc_info is None
@@ -736,9 +750,9 @@ class TestOtherDerEncodingsAreRefused:
                 serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
             )
         )
-        material = base64.urlsafe_b64encode(der).decode().rstrip("=")
+        secret = Secret(base64.urlsafe_b64encode(der).decode().rstrip("="))
         with pytest.raises(ConfigError, match="not a shared secret"):
-            JwtAuthConfig(secret=Secret(material), algorithms=("HS256",))
+            JwtAuthConfig(secret=secret, algorithms=("HS256",))
 
     def test_an_encrypted_der_private_key_is_refused(self) -> None:
         from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
@@ -748,8 +762,9 @@ class TestOtherDerEncodingsAreRefused:
             serialization.PrivateFormat.PKCS8,
             serialization.BestAvailableEncryption(b"passphrase"),
         )
+        secret = Secret(base64.b64encode(der).decode())
         with pytest.raises(ConfigError, match="not a shared secret"):
-            JwtAuthConfig(secret=Secret(base64.b64encode(der).decode()), algorithms=("HS256",))
+            JwtAuthConfig(secret=secret, algorithms=("HS256",))
 
 
 async def test_an_unexpected_backend_error_refuses_the_token(

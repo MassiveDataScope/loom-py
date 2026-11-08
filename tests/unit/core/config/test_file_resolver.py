@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import fsspec
@@ -15,10 +14,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.model.redaction import Secret
 from loom.rest.auth import JwtIssuerConfig
 
-
-@pytest.fixture(autouse=True)
-def _fresh_resolvers(clear_builtin_resolvers: None) -> Iterator[None]:
-    yield
+pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
 
 
 def test_a_local_file_is_read_as_stored(tmp_path: Path) -> None:
@@ -36,15 +32,17 @@ def test_a_cloud_object_is_read_with_the_config_reader() -> None:
 
 
 def test_a_blank_key_is_refused() -> None:
+    resolver = FileResolver()
     with pytest.raises(ConfigError, match="must not be empty"):
-        FileResolver().resolve("  ")
+        resolver.resolve("  ")
 
 
 def test_a_missing_file_names_the_key_and_chains_nothing(tmp_path: Path) -> None:
     missing = str(tmp_path / "absent.pem")
 
+    resolver = FileResolver()
     with pytest.raises(ConfigError, match="FileNotFoundError") as refused:
-        FileResolver().resolve(missing)
+        resolver.resolve(missing)
 
     assert missing in str(refused.value)
     assert refused.value.__cause__ is None
@@ -56,8 +54,9 @@ def test_an_undecodable_file_never_carries_its_bytes(tmp_path: Path) -> None:
     key = tmp_path / "binary.der"
     key.write_bytes(b"\x30\x82\x01\x22\xff\xfe-binary-secret")
 
+    resolver, location = FileResolver(), str(key)
     with pytest.raises(ConfigError, match="UnicodeDecodeError") as refused:
-        FileResolver().resolve(str(key))
+        resolver.resolve(location)
 
     assert "binary-secret" not in str(refused.value)
     assert refused.value.__cause__ is None
