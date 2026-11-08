@@ -1,6 +1,12 @@
 # Weekly dependency updates. Dependabot names its branches dependabot/<ecosystem>/..., which
 # [tool.semantic_branch] in pyproject.toml ignores: an update is released by the next
 # feature or fix, never on its own.
+#
+# Patch and minor updates arrive grouped, one pull request per ecosystem a week, and
+# dependabot-auto-merge.yml merges them once the required checks pass. A major update
+# arrives alone and waits for a person. loom-kernel is a library: uv.lock pins what CI and
+# development run, while users install the ranges declared in pyproject.toml, so a lock
+# update changes no user's install.
 version: 2
 updates:
   # The project is locked with uv (uv.lock); the uv ecosystem updates the lock with it.
@@ -9,15 +15,24 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      uv-minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: pip
     directory: /.github/requirements
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      pip-minor-and-patch:
+        update-types: [minor, patch]
