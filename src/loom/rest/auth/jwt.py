@@ -87,7 +87,7 @@ class JwtAuthenticator:
         self._jwt = _load_pyjwt()
         self._algorithms = list(config.algorithms)
         self._roles_claim = config.roles_claim
-        self._keys = config.keyring()
+        self._keys = config._keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
@@ -123,10 +123,16 @@ class JwtAuthenticator:
         return self._to_identity(claims)
 
     def _decode(self, token: str) -> Mapping[str, Any] | None:
-        if self._accepted_types and not self._typed(token):
+        header = self._header(token)
+        if header is None:
+            return None
+        if self._accepted_types and not self._typed(header):
             _logger.debug("JWT verification failed: the typ header is not an accepted type")
             return None
-        key = self._key_for(token)
+        # The header is unverified here, which is safe: it only picks among the
+        # configured keys, and no key is ever fetched from what the token says.
+        key_id = header.get("kid")
+        key = self._keys.pick(None if key_id is None else str(key_id))
         if key is None:
             _logger.debug("JWT verification failed: no configured key applies to this token")
             return None
@@ -146,30 +152,19 @@ class JwtAuthenticator:
             return None
         return claims
 
-    def _typed(self, token: str) -> bool:
-        """Whether the token's ``typ`` header is one of the configured types (RFC 8725 §3.11)."""
+    def _header(self, token: str) -> Mapping[str, Any] | None:
+        """The unverified header, read once per token, or ``None`` when unreadable."""
         try:
-            kind = self._jwt.get_unverified_header(token).get("typ")
-        except self._jwt.PyJWTError:
-            return False
-        return isinstance(kind, str) and _media_type(kind) in self._accepted_types
-
-    def _key_for(self, token: str) -> str | None:
-        """Select the verification key for the token.
-
-        The header is unverified at this point, which is safe because it only
-        picks from the configured keys: no key is ever fetched from what the
-        token says. One shared key never reads it, since the value cannot
-        change the outcome.
-        """
-        if not self._keys.reads_kid:
-            return self._keys.pick(None)
-        try:
-            key_id = self._jwt.get_unverified_header(token).get("kid")
+            header: Mapping[str, Any] = self._jwt.get_unverified_header(token)
         except self._jwt.PyJWTError as exc:
             _logger.debug("JWT header unreadable: %s", type(exc).__name__)
             return None
-        return self._keys.pick(None if key_id is None else str(key_id))
+        return header
+
+    def _typed(self, header: Mapping[str, Any]) -> bool:
+        """Whether the ``typ`` header is one of the configured types (RFC 8725 §3.11)."""
+        kind = header.get("typ")
+        return isinstance(kind, str) and _media_type(kind) in self._accepted_types
 
     def _to_identity(self, claims: Mapping[str, Any]) -> Identity | None:
         subject = claims.get(_SUBJECT_CLAIM)
@@ -214,7 +209,7 @@ class JwtIssuer:
     Example::
 
         issuer = JwtIssuer(JwtIssuerConfig(
-            private_key_path="/run/secrets/jwt.pem", algorithm="EdDSA",
+            signing_key=PrivateKeyFile("/run/secrets/jwt.pem"), algorithm="EdDSA",
             audience="my-api", issuer="my-gateway", roles_claim="loom_sql_roles",
         ))
         issued = issuer.issue(identity)

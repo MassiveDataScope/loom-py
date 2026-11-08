@@ -18,6 +18,11 @@
   `from_signing_key`: the verifier of a service that also issues reads its key,
   algorithm, audience, issuer, roles claim and `typ` from the issuer settings
   instead of thirteen loose arguments that could disagree with them.
+  `JwtIssuerConfig.signing_key` takes one typed case, `PrivateKeyFile`,
+  `ManagedPrivateKey` or `SharedSecretFile`, replacing `private_key_path`,
+  `private_key_ref`, `key_ref_region`, `secret_path` and
+  `allow_symmetric_signing`. A private key in `public_keys` is refused, and
+  the verifier reads its `secret_path` once at startup.
 
 ### lambda
 

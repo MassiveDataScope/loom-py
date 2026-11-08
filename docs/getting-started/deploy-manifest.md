@@ -180,5 +180,5 @@ the deployment tool and stay out of loom.
   custom resolver that the application passes to `create_app` in code are
   not; add them to the role in the deployment.
 - A secret or key that code reads, such as a `JwtIssuerConfig` built with
-  `private_key_ref`, does not appear in the configuration, so the manifest
+  `ManagedPrivateKey` reference, does not appear in the configuration, so the manifest
   cannot list it. Add it to the role in the deployment.

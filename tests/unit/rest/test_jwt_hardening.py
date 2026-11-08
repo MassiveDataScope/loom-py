@@ -18,7 +18,7 @@ from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
-from loom.rest.auth.config import JwtIssuerConfig
+from loom.rest.auth.config import JwtIssuerConfig, SharedSecretFile
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
 from loom.testing import jwt_test_auth
 
@@ -71,12 +71,11 @@ class TestHmacKeyStrength:
         self, tmp_path: Path, algorithm: str, minimum: int
     ) -> None:
         config = JwtIssuerConfig(
-            secret_path=_secret_file(tmp_path, minimum - 1),
+            signing_key=SharedSecretFile(_secret_file(tmp_path, minimum - 1)),
             algorithm=algorithm,
             audience="api",
             issuer="gateway",
             roles_claim="roles",
-            allow_symmetric_signing=True,
         )
 
         with pytest.raises(ConfigError, match=f"at least {minimum} bytes"):
@@ -94,12 +93,11 @@ class TestHmacKeyStrength:
 
     def test_an_issuer_key_shorter_than_its_hash_is_refused(self, tmp_path: Path) -> None:
         config = JwtIssuerConfig(
-            secret_path=_secret_file(tmp_path, 31),
+            signing_key=SharedSecretFile(_secret_file(tmp_path, 31)),
             algorithm="HS256",
             audience="api",
             issuer="gateway",
             roles_claim="roles",
-            allow_symmetric_signing=True,
         )
 
         with pytest.raises(ConfigError, match="at least 32 bytes"):
@@ -254,12 +252,11 @@ class TestIssuedType:
         key = _secret_file(tmp_path, 32)
         issuer = JwtIssuer(
             JwtIssuerConfig(
-                secret_path=key,
+                signing_key=SharedSecretFile(key),
                 algorithm="HS256",
                 audience="api",
                 issuer="gw",
                 roles_claim="roles",
-                allow_symmetric_signing=True,
                 typ="at+jwt",
             )
         )
@@ -284,3 +281,19 @@ class TestTestingHelperOwnsItsKey:
     def test_it_refuses_to_override_its_own_key(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError, match="algorithms"):
             jwt_test_auth(tmp_path, algorithms=("HS512",))
+
+
+class TestKeyMaterialStaysOut:
+    """No configuration object may carry or print key material."""
+
+    def test_the_loaded_secret_never_appears_in_a_repr(self, tmp_path: Path) -> None:
+        path = tmp_path / "hs.key"
+        path.write_text("S" * 31 + "Z")
+        config = JwtAuthConfig(secret_path=str(path), algorithms=("HS256",))
+
+        assert "S" * 31 not in repr(config._keyring())
+
+    def test_a_private_key_is_refused_in_public_keys(self) -> None:
+        private = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI\n-----END PRIVATE KEY-----"
+        with pytest.raises(ConfigError, match="private key"):
+            JwtAuthConfig(public_keys={"k1": private}, algorithms=("EdDSA",))

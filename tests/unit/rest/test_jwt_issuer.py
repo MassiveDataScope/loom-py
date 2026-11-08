@@ -16,7 +16,15 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.identity.issuer import IssuedToken, TokenIssuer
-from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, JwtIssuer, JwtIssuerConfig
+from loom.rest.auth import (
+    JwtAuthConfig,
+    JwtAuthenticator,
+    JwtIssuer,
+    JwtIssuerConfig,
+    ManagedPrivateKey,
+    PrivateKeyFile,
+    SharedSecretFile,
+)
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.jwt import ATTRIBUTE_CLAIM_PREFIX
 
@@ -49,7 +57,7 @@ def _issuer_config(tmp_path: Path, private: str, **overrides: Any) -> JwtIssuerC
     key_file = tmp_path / "signing.pem"
     key_file.write_text(private)
     params: dict[str, Any] = {
-        "private_key_path": str(key_file),
+        "signing_key": PrivateKeyFile(str(key_file)),
         "algorithm": "EdDSA",
         "audience": _AUDIENCE,
         "issuer": _ISSUER,
@@ -228,29 +236,15 @@ def test_a_per_call_ttl_cannot_outlive_the_configured_one(tmp_path: Path) -> Non
 # ── configuración ───────────────────────────────────────────────────────────
 
 
-def test_symmetric_signing_needs_an_explicit_opt_in(tmp_path: Path) -> None:
-    secret_file = tmp_path / "hs.key"
-    secret_file.write_text("shared-secret-of-thirty-two-bytes")
-    with pytest.raises(ConfigError, match="allow_symmetric_signing"):
-        JwtIssuerConfig(
-            secret_path=str(secret_file),
-            algorithm="HS256",
-            audience=_AUDIENCE,
-            issuer=_ISSUER,
-            roles_claim=_ROLES_CLAIM,
-        )
-
-
-def test_symmetric_signing_is_allowed_when_asked_for(tmp_path: Path) -> None:
+def test_symmetric_signing_is_chosen_by_naming_a_shared_secret(tmp_path: Path) -> None:
     secret_file = tmp_path / "hs.key"
     secret_file.write_text("shared-secret-of-thirty-two-bytes")
     config = JwtIssuerConfig(
-        secret_path=str(secret_file),
+        signing_key=SharedSecretFile(str(secret_file)),
         algorithm="HS256",
         audience=_AUDIENCE,
         issuer=_ISSUER,
         roles_claim=_ROLES_CLAIM,
-        allow_symmetric_signing=True,
     )
 
     assert config.algorithm == "HS256"
@@ -263,19 +257,47 @@ def test_the_none_algorithm_is_always_forbidden(tmp_path: Path, algorithm: str) 
         _issuer_config(tmp_path, private, algorithm=algorithm)
 
 
-def test_exactly_one_key_source_is_required(tmp_path: Path) -> None:
+def test_a_private_key_cannot_sign_with_a_symmetric_algorithm(tmp_path: Path) -> None:
     private, _ = _keypair()
-    key_file = tmp_path / "k.pem"
-    key_file.write_text(private)
+    with pytest.raises(ConfigError, match="SharedSecretFile"):
+        _issuer_config(tmp_path, private, algorithm="HS256")
 
-    with pytest.raises(ConfigError, match="exactly one"):
+
+def test_a_shared_secret_cannot_sign_with_an_asymmetric_algorithm(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="not a SharedSecretFile"):
         JwtIssuerConfig(
-            private_key_path=str(key_file),
-            secret_path=str(key_file),
+            signing_key=SharedSecretFile(str(tmp_path / "hs.key")),
             algorithm="EdDSA",
             audience=_AUDIENCE,
             issuer=_ISSUER,
-            allow_symmetric_signing=True,
+            roles_claim=_ROLES_CLAIM,
+        )
+
+
+def test_the_signing_key_decodes_from_a_typed_mapping() -> None:
+    """Each case names itself with ``type`` and carries only its own settings."""
+    config = msgspec.convert(
+        {
+            "signing_key": {
+                "type": "managed_private_key",
+                "ref": "secrets:/myapp/jwt",
+                "region": "eu-west-1",
+            },
+            "algorithm": "EdDSA",
+            "audience": _AUDIENCE,
+            "issuer": _ISSUER,
+            "roles_claim": _ROLES_CLAIM,
+        },
+        JwtIssuerConfig,
+    )
+    assert config.signing_key == ManagedPrivateKey("secrets:/myapp/jwt", region="eu-west-1")
+
+
+def test_a_setting_of_another_key_case_is_refused() -> None:
+    with pytest.raises(msgspec.ValidationError, match="region"):
+        msgspec.convert(
+            {"type": "private_key_file", "path": "/k.pem", "region": "eu-west-1"},
+            PrivateKeyFile,
         )
 
 
@@ -420,12 +442,11 @@ def test_a_symmetric_secret_never_carries_into_the_struct(tmp_path: Path) -> Non
     secret_file.write_text("SHARED-SIGNING-SECRET-OF-32-BYTES")
 
     config = JwtIssuerConfig(
-        secret_path=str(secret_file),
+        signing_key=SharedSecretFile(str(secret_file)),
         algorithm="HS256",
         audience=_AUDIENCE,
         issuer=_ISSUER,
         roles_claim=_ROLES_CLAIM,
-        allow_symmetric_signing=True,
     )
 
     assert b"SHARED-SIGNING-SECRET-OF-32-BYTES" not in msgspec.json.encode(config)
@@ -466,7 +487,7 @@ def test_a_binary_key_file_fails_as_a_config_error(tmp_path: Path) -> None:
     key_file.write_bytes(b"\x30\x82\x01\x22\xff\xfe")
 
     config = JwtIssuerConfig(
-        private_key_path=str(key_file),
+        signing_key=PrivateKeyFile(str(key_file)),
         algorithm="EdDSA",
         audience=_AUDIENCE,
         issuer=_ISSUER,
@@ -521,7 +542,7 @@ def test_the_verification_config_stays_serializable(tmp_path: Path) -> None:
 
 def test_a_missing_key_file_fails_as_a_config_error(tmp_path: Path) -> None:
     config = JwtIssuerConfig(
-        private_key_path=str(tmp_path / "absent.pem"),
+        signing_key=PrivateKeyFile(str(tmp_path / "absent.pem")),
         algorithm="EdDSA",
         audience=_AUDIENCE,
         issuer=_ISSUER,
@@ -587,7 +608,7 @@ def test_a_malformed_key_fails_at_construction_not_at_the_first_login(tmp_path: 
     key_file = tmp_path / "broken.pem"
     key_file.write_text("-----BEGIN PRIVATE KEY-----\nnot base64 at all\n-----END PRIVATE KEY-----")
     config = JwtIssuerConfig(
-        private_key_path=str(key_file),
+        signing_key=PrivateKeyFile(str(key_file)),
         algorithm="EdDSA",
         audience=_AUDIENCE,
         issuer=_ISSUER,
@@ -604,7 +625,7 @@ def test_the_construction_probe_reports_an_algorithm_the_key_cannot_serve(tmp_pa
     key_file = tmp_path / "ed.pem"
     key_file.write_text(private)
     config = JwtIssuerConfig(
-        private_key_path=str(key_file),
+        signing_key=PrivateKeyFile(str(key_file)),
         algorithm="RS256",
         audience=_AUDIENCE,
         issuer=_ISSUER,
@@ -632,7 +653,7 @@ class _StaticResolver:
 
 def _ref_config(**overrides: Any) -> JwtIssuerConfig:
     params: dict[str, Any] = {
-        "private_key_ref": "secrets:/myapp/jwt-signing-key",
+        "signing_key": ManagedPrivateKey("secrets:/myapp/jwt-signing-key"),
         "algorithm": "EdDSA",
         "audience": _AUDIENCE,
         "issuer": _ISSUER,
@@ -650,24 +671,14 @@ def _patch_factory(monkeypatch: pytest.MonkeyPatch, resolver_factory: Any) -> No
 
 
 class TestSigningKeyRef:
-    def test_requires_exactly_one_source(self, tmp_path: Path) -> None:
-        private, _ = _keypair()
-        with pytest.raises(ConfigError, match="exactly one of"):
-            _issuer_config(tmp_path, private, private_key_ref="secrets:/myapp/jwt-signing-key")
-
     @pytest.mark.parametrize("ref", ["vault:/myapp/key", "secrets:", "secrets", " :key"])
     def test_rejects_malformed_ref(self, ref: str) -> None:
-        with pytest.raises(ConfigError, match="private_key_ref"):
-            _ref_config(private_key_ref=ref)
+        with pytest.raises(ConfigError, match="ManagedPrivateKey 'ref'"):
+            ManagedPrivateKey(ref)
 
-    def test_region_requires_a_ref(self, tmp_path: Path) -> None:
-        private, _ = _keypair()
-        with pytest.raises(ConfigError, match="key_ref_region"):
-            _issuer_config(tmp_path, private, key_ref_region="eu-west-1")
-
-    def test_symmetric_algorithms_reject_a_ref(self) -> None:
-        with pytest.raises(ConfigError, match="secret_path"):
-            _ref_config(algorithm="HS256", allow_symmetric_signing=True)
+    def test_symmetric_algorithms_reject_a_managed_key(self) -> None:
+        with pytest.raises(ConfigError, match="SharedSecretFile"):
+            _ref_config(algorithm="HS256")
 
     def test_loads_key_through_resolver(self, monkeypatch: pytest.MonkeyPatch) -> None:
         private, _ = _keypair()
@@ -685,7 +696,9 @@ class TestSigningKeyRef:
             return _StaticResolver(private)
 
         _patch_factory(monkeypatch, factory)
-        _ref_config(key_ref_region="eu-west-1").load_signing_key()
+        _ref_config(
+            signing_key=ManagedPrivateKey("secrets:/myapp/jwt-signing-key", region="eu-west-1")
+        ).load_signing_key()
         assert seen == ["eu-west-1"]
 
     @pytest.mark.parametrize("value", [{"pem": "not text"}, "", "   ", None])
@@ -793,9 +806,8 @@ class TestForIssuer:
         secret_file = tmp_path / "secret"
         secret_file.write_text("s" * 32)
         issuer = JwtIssuerConfig(
-            secret_path=str(secret_file),
+            signing_key=SharedSecretFile(str(secret_file)),
             algorithm="HS256",
-            allow_symmetric_signing=True,
             audience=_AUDIENCE,
             issuer=_ISSUER,
             roles_claim=_ROLES_CLAIM,
@@ -809,9 +821,8 @@ class TestForIssuer:
         secret_file.write_text("s" * 32)
         _, previous_public = _keypair()
         issuer = JwtIssuerConfig(
-            secret_path=str(secret_file),
+            signing_key=SharedSecretFile(str(secret_file)),
             algorithm="HS256",
-            allow_symmetric_signing=True,
             audience=_AUDIENCE,
             issuer=_ISSUER,
             roles_claim=_ROLES_CLAIM,

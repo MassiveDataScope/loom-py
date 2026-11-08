@@ -216,14 +216,19 @@ I/O with state and an SSRF surface. Plug a custom `Authenticator` for that.
 For tests, `loom.testing.jwt_test_auth(tmp_path)` writes a compliant secret and returns
 the matching config and a token minter.
 
-### Signing keys from a managed store
+### Where the signing key comes from
 
-`JwtIssuerConfig` accepts the signing key as a filesystem path or as a managed-store
-reference — exactly one of the two:
+`signing_key` names one case, and each case carries only its own settings:
+
+| Case | Settings | Algorithms |
+|---|---|---|
+| `PrivateKeyFile(path)` | path of a PEM file | RS*, ES*, EdDSA |
+| `ManagedPrivateKey(ref, region=None)` | `"secrets:/..."` or `"ssm:/..."`, optional AWS region | RS*, ES*, EdDSA |
+| `SharedSecretFile(path)` | path of the secret | HS* |
 
 ```python
 config = JwtIssuerConfig(
-    private_key_ref="secrets:/myapp/prod/jwt-signing-key",  # or "ssm:/..."
+    signing_key=ManagedPrivateKey("secrets:/myapp/prod/jwt-signing-key"),
     algorithm="EdDSA",
     audience="my-api",
     issuer="my-gateway",
@@ -232,10 +237,12 @@ config = JwtIssuerConfig(
 )
 ```
 
-The reference is resolved once, when the issuer loads the key, so the material never
-touches disk or config dumps. Rotating the stored value therefore requires a restart.
-`key_ref_region` pins the AWS region when it is not in boto3's own chain. Requires the
-`loom-kernel[config-ssm]` extra.
+A managed reference is resolved once, when the issuer loads the key, so the material
+never touches disk or config dumps; rotating the stored value requires a restart. It
+needs the `loom-kernel[config-ssm]` extra. A `SharedSecretFile` means every service
+that verifies can also mint: choosing that case by name is the deliberate decision.
+The verifier also reads its `secret_path` once at startup, so rotating it requires a
+restart too.
 
 ### Deriving the verifier from the signing key
 
@@ -245,7 +252,7 @@ does not fail loudly. Derive it instead:
 
 ```python
 issuer = JwtIssuerConfig(
-    private_key_ref="secrets:/myapp/jwt-signing-key",   # or private_key_path="..."
+    signing_key=ManagedPrivateKey("secrets:/myapp/jwt-signing-key"),
     algorithm="EdDSA",
     kid="2026-09",
     audience="orders-api",

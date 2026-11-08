@@ -2,7 +2,8 @@
 
 The walk covers every decodable struct. A failure names the type and the field.
 ``brokers`` and a field that only stores a path or a variable name stay plain
-text. ``headers_ref`` does not: the resolver has already filled it.
+text, as does a field typed as a struct that only names where a key lives.
+``headers_ref`` does not: the resolver has already filled it.
 """
 
 from __future__ import annotations
@@ -106,8 +107,24 @@ def _is_mapping(annotation: Any) -> bool:
     return False
 
 
+def _locates_a_key(annotation: Any) -> bool:
+    """A struct union whose cases only hold a path or a reference, never key material."""
+    options = _options(annotation)
+    return bool(options) and all(
+        isinstance(option, type)
+        and issubclass(option, msgspec.Struct)
+        and all(
+            _plain_name(field.name, field.type) or field.name in {"path", "ref", "region"}
+            for field in msgspec.structs.fields(option)
+        )
+        for option in options
+    )
+
+
 def _plain_name(name: str, annotation: Any) -> bool:
     if name in _PLAIN_ADDRESS:
+        return True
+    if _locates_a_key(annotation):
         return True
     if name.endswith("_path"):
         return True
