@@ -205,6 +205,7 @@ only where developers need it:
 | A blank (whitespace-only) secret is refused | always, verifier and issuer | A.8.24 |
 | A PEM key is never an HS secret | always, verifier and issuer | algorithm confusion: whoever holds the public half could sign |
 | Each public key verifies only its own `alg` | `public_keys` entries written as `{alg, pem}` | RFC 8725 §3.1; the token cannot pick the algorithm |
+| A public key is a PEM public key of the type and curve its algorithm needs | always, at startup | a mismatch would refuse every token; an unparsed key skipped the RSA size check |
 | The resolved audience and issuer are checked against the environment the app is composed for | staging and production, at startup | the static check sees only the written value |
 | `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
 

@@ -45,12 +45,16 @@ class FileResolver:
         Raises:
             ConfigError: When the key is blank or the file cannot be read. The
                 message names the key as written and the error type only, and
-                the cause is not chained: a ``UnicodeDecodeError`` carries the
-                file's bytes.
+                the error is neither chained nor kept as context: a
+                ``UnicodeDecodeError`` carries the file's bytes.
         """
         if not key.strip():
             raise ConfigError("file resolver key must not be empty")
         try:
             return read_text(key)
         except Exception as exc:  # noqa: BLE001 - every backend raises its own types
-            raise ConfigError(f"Could not read file {key!r}: {type(exc).__name__}") from None
+            failure = type(exc).__name__
+        # Raised outside the handler: ``from None`` only hides the cause, and
+        # ``__context__`` would still hold it, bytes included, for any logger
+        # that walks it.
+        raise ConfigError(f"Could not read file {key!r}: {failure}")

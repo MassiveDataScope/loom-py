@@ -243,7 +243,7 @@ def test_the_config_never_holds_the_shared_secret() -> None:
     assert _SECRET not in repr(config)
     assert _SECRET.encode() not in msgspec.json.encode(config)
     assert _SECRET not in str(msgspec.to_builtins(config))
-    key = config._keyring().pick(None)
+    key = config.keyring().pick(None)
     assert key is not None
     assert key.material == _SECRET
     assert _SECRET not in repr(key)
@@ -384,7 +384,7 @@ def test_an_unreadable_secret_path_fails_without_naming_the_path() -> None:
     )
 
     with pytest.raises(ConfigError) as caught:
-        config._keyring()
+        config.keyring()
 
     assert "absent.key" not in str(caught.value)
     assert caught.value.__cause__ is None

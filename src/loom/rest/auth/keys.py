@@ -138,56 +138,99 @@ class JwtPublicKey(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     def __post_init__(self) -> None:
         require_supported(self.alg, setting="JWT public key 'alg'")
         require_family(self.alg, symmetric=False, case="a public key", instead="a 'secret'")
+        # Refused here too, not only by the config holding it: ``pem`` is plain
+        # text, so this object must never exist with private material in it.
+        if "PRIVATE KEY" in self.pem:
+            raise ConfigError("A JWT public key holds a private key; publish only its public half.")
 
 
-def require_public_key(key_id: str, material: str) -> None:
-    """A usable entry holding public material only: the struct must never carry a secret."""
+def require_public_key(key_id: str, material: str, algorithms: tuple[str, ...]) -> None:
+    """A parseable public key that fits every one of *algorithms*, checked at startup.
+
+    A key of the wrong type, or one that does not parse, would only fail on
+    the first request: every valid token refused. The message names the key
+    id and the key type, never the material.
+    """
+    setting = f"JWT auth 'public_keys' entry {key_id!r}"
     if not key_id.strip() or not material.strip():
         raise ConfigError("JWT auth 'public_keys' entries need a key id and material.")
     if "PRIVATE KEY" in material:
-        raise ConfigError(
-            f"JWT auth 'public_keys' entry {key_id!r} holds a private key; "
-            "publish only its public half."
-        )
-    require_rsa_strength(material, public=True, setting=f"JWT auth 'public_keys' {key_id!r}")
+        raise ConfigError(f"{setting} holds a private key; publish only its public half.")
+    _require_fits(_public_key(material, setting=setting), algorithms, setting=setting)
 
 
-def require_rsa_strength(material: str, *, public: bool, setting: str) -> None:
-    """Refuse an RSA key below 2048 bits (RFC 7518 §3.3); other key types pass.
+def _require_fits(key: Any, algorithms: tuple[str, ...], *, setting: str) -> None:
+    """The key is of the kind every algorithm verifies with, and an RSA one is strong."""
+    kind = _key_kind(key)
+    for algorithm in algorithms:
+        needed = _ALGORITHM_KEY_KIND[algorithm]
+        if needed != kind:
+            raise ConfigError(f"{setting} is a {kind} key; {algorithm} needs {needed}.")
+    if kind == "RSA":
+        _require_rsa_bits(key.key_size, setting=setting)
 
-    The message names the size, never the key.
-    """
-    bits = _rsa_bits(material, public=public)
-    if bits is not None and bits < _MIN_RSA_BITS:
+
+_ALGORITHM_KEY_KIND: Final = {
+    **dict.fromkeys(("RS256", "RS384", "RS512", "PS256", "PS384", "PS512"), "RSA"),
+    "ES256": "P-256",
+    "ES384": "P-384",
+    "ES512": "P-521",
+    "EdDSA": "OKP",
+}
+"""The key each asymmetric algorithm verifies with (RFC 7518 §3, RFC 8037)."""
+
+_CURVE_KIND: Final = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
+
+
+def _public_key(material: str, *, setting: str) -> Any:
+    """The parsed public key; parser errors are dropped, never chained or kept as context."""
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    try:
+        return serialization.load_pem_public_key(material.encode())
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        pass
+    raise ConfigError(f"{setting} is not a PEM public key.")
+
+
+def _key_kind(key: Any) -> str:
+    """``RSA``, the curve of an EC key, ``OKP`` for Ed25519/Ed448, or the type name."""
+    from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa  # noqa: PLC0415
+
+    if isinstance(key, rsa.RSAPublicKey):
+        return "RSA"
+    if isinstance(key, ec.EllipticCurvePublicKey):
+        return _CURVE_KIND.get(key.curve.name, key.curve.name)
+    if isinstance(key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+        return "OKP"
+    return type(key).__name__
+
+
+def _require_rsa_bits(bits: int, *, setting: str) -> None:
+    """Refuse an RSA key below 2048 bits (RFC 7518 §3.3), naming the size, never the key."""
+    if bits < _MIN_RSA_BITS:
         raise ConfigError(
             f"{setting} is a {bits}-bit RSA key; at least {_MIN_RSA_BITS} bits "
             "are required (RFC 7518 section 3.3)."
         )
 
 
-def _rsa_bits(material: str, *, public: bool) -> int | None:
-    """The modulus size of an RSA key, or ``None`` for any other key.
+def _private_rsa_bits(material: str) -> int | None:
+    """The modulus size of an RSA private key, or ``None`` for any other key.
 
-    Material that does not parse is left to PyJWT, which refuses it on use:
-    the strength rule judges size, not format.
+    Material that does not parse is left to the issuer's signing probe, which
+    refuses it when the issuer is built.
     """
-    try:
-        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
-        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
-    except ImportError:  # pragma: no cover - the jwt extra ships it
-        return None
-    load = serialization.load_pem_public_key if public else _load_private_pem
-    try:
-        key: Any = load(material.encode())
-    except (ValueError, TypeError):
-        return None
-    return key.key_size if isinstance(key, (rsa.RSAPublicKey, rsa.RSAPrivateKey)) else None
-
-
-def _load_private_pem(data: bytes) -> Any:
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
 
-    return serialization.load_pem_private_key(data, password=None)
+    try:
+        key = serialization.load_pem_private_key(material.encode(), password=None)
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return None
+    return key.key_size if isinstance(key, rsa.RSAPrivateKey) else None
 
 
 def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
@@ -225,7 +268,10 @@ def read_key_file(path: str, *, setting: str) -> str:
     try:
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        raise ConfigError(f"Could not read {setting}.") from None
+        pass
+    # Raised outside the handler: ``from None`` only hides the cause, and
+    # ``__context__`` would still hold it for any logger that walks it.
+    raise ConfigError(f"Could not read {setting}.")
 
 
 def require_signing_key(material: str, algorithm: str) -> None:
@@ -236,7 +282,9 @@ def require_signing_key(material: str, algorithm: str) -> None:
         return
     if _PEM_MARKER not in material or "PRIVATE KEY" not in material:
         raise ConfigError(f"{algorithm} needs a PEM private key as {setting}.")
-    require_rsa_strength(material, public=False, setting=setting)
+    bits = _private_rsa_bits(material)
+    if bits is not None:
+        _require_rsa_bits(bits, setting=setting)
 
 
 def derived_public_key(private_pem: str) -> str:

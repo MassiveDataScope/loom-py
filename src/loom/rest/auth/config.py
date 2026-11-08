@@ -130,29 +130,31 @@ class _PublicKeys:
         for algorithm in algorithms:
             require_family(algorithm, symmetric=False, case="'public_keys'", instead="'secret'")
         for key_id, key in self.load(algorithms).keys.items():
-            require_public_key(key_id, key.material)
+            require_public_key(key_id, key.material, key.algorithms)
 
     def load(self, algorithms: tuple[str, ...]) -> KeySet:
         return KeySet({kid: _as_key(entry, algorithms) for kid, entry in self.keys.items()})
 
 
-_ALGORITHMS_PLACE: Final = {
-    True: "JWT auth 'algorithms' is set by each 'public_keys' entry's 'alg'; remove it.",
-    False: "JWT auth requires a non-empty 'algorithms' allowlist.",
-}
-
-
 def _require_one_form(entries: Iterable[str | JwtPublicKey], algorithms: tuple[str, ...]) -> None:
-    """Every entry names its ``alg`` and ``algorithms`` is empty, or none does and it is set."""
+    """Exactly one place names the algorithms: each ``{alg, pem}`` entry, or the shared list."""
+    if _all_typed(entries):
+        if algorithms:
+            raise ConfigError(
+                "JWT auth 'algorithms' is set by each 'public_keys' entry's 'alg'; remove it."
+            )
+    elif not algorithms:
+        raise ConfigError("JWT auth requires a non-empty 'algorithms' allowlist.")
+
+
+def _all_typed(entries: Iterable[str | JwtPublicKey]) -> bool:
+    """Whether every entry is a ``JwtPublicKey``, refusing a mix of the two forms."""
     forms = {isinstance(entry, JwtPublicKey) for entry in entries}
     if len(forms) > 1:
         raise ConfigError(
             "JWT auth 'public_keys' entries are all '{alg, pem}' or all PEM text, not both."
         )
-    typed = True in forms
-    # Exactly one place names the algorithms: each entry, or the shared list.
-    if typed == bool(algorithms):
-        raise ConfigError(_ALGORITHMS_PLACE[typed])
+    return forms == {True}
 
 
 def _as_key(entry: str | JwtPublicKey, algorithms: tuple[str, ...]) -> Key:
@@ -316,7 +318,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             require_supported(algorithm, setting="JWT auth 'algorithms' entry")
         self._key_source.check(self.algorithms)
 
-    def _keyring(self) -> Keyring:
+    def keyring(self) -> Keyring:
         """Load the keys a verifier checks tokens with, once, when it is built.
 
         A rotated secret therefore takes a restart, as any resolved value does.

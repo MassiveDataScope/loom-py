@@ -82,7 +82,7 @@ class JwtAuthenticator:
         self._config = config
         self._jwt = _load_pyjwt()
         self._roles_claim = config.roles_claim
-        self._keys = config._keyring()
+        self._keys = config.keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
@@ -126,8 +126,8 @@ class JwtAuthenticator:
             return None
         # The header is unverified here, which is safe: it only picks among the
         # configured keys, and no key is ever fetched from what the token says.
-        key_id = header.get("kid")
-        key = self._keys.pick(None if key_id is None else str(key_id))
+        # PyJWT refuses a header whose kid is not a string (RFC 7515 §4.1.4).
+        key = self._keys.pick(header.get("kid"))
         if key is None:
             _logger.debug("JWT verification failed: no configured key applies to this token")
             return None

@@ -25,7 +25,10 @@
   gone. A private key in `public_keys` is refused, and the verifier reads its
   `secret_path` once at startup.
 - An RSA key below 2048 bits, a whitespace-only HS secret and a PEM key used
-  as an HS secret are refused, on both the verifier and the issuer.
+  as an HS secret are refused, on both the verifier and the issuer. A public
+  key that is not a parseable PEM public key (an OpenSSH key, a malformed
+  PEM), or whose type or EC curve does not fit its algorithm, is refused when
+  the configuration is built instead of failing every request.
   `JwtIssuerConfig` requires `algorithm`, `audience`, `issuer` and
   `roles_claim` instead of defaulting them to `""`. `jwt_test_auth()` takes no
   directory: its secret stays in memory.

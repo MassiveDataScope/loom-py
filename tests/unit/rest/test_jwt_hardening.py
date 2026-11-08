@@ -7,6 +7,8 @@ deployed API must name the audience and issuer its tokens are minted for.
 
 from __future__ import annotations
 
+import base64
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -295,7 +297,7 @@ class TestKeyMaterialStaysOut:
         path.write_text("S" * 31 + "Z")
         config = JwtAuthConfig(secret_path=str(path), algorithms=("HS256",))
 
-        assert "S" * 31 not in repr(config._keyring())
+        assert "S" * 31 not in repr(config.keyring())
 
     def test_a_private_key_is_refused_in_public_keys(self) -> None:
         private = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEI\n-----END PRIVATE KEY-----"
@@ -361,3 +363,168 @@ class TestIssuerFields:
     def test_an_unknown_algorithm_is_named_before_the_key(self) -> None:
         with pytest.raises(ConfigError, match="algorithm"):
             _issuer("short", "HS999")
+
+
+class TestPublicKeyFit:
+    """A key that cannot verify with its algorithm fails at startup, not per request."""
+
+    @staticmethod
+    def _ed25519_public() -> str:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: PLC0415
+
+        return (
+            ed25519.Ed25519PrivateKey.generate()
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode()
+        )
+
+    def test_a_key_of_another_type_than_its_alg_is_refused(self) -> None:
+        with pytest.raises(ConfigError, match="is a OKP key; RS256 needs RSA"):
+            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="RS256", pem=self._ed25519_public())})
+
+    def test_a_pem_text_key_must_fit_every_shared_algorithm(self) -> None:
+        with pytest.raises(ConfigError, match="ES256 needs P-256"):
+            JwtAuthConfig(public_keys={"k1": self._ed25519_public()}, algorithms=("EdDSA", "ES256"))
+
+    def test_a_curve_must_match_its_algorithm(self) -> None:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+
+        p384 = (
+            ec.generate_private_key(ec.SECP384R1())
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode()
+        )
+        with pytest.raises(ConfigError, match="is a P-384 key; ES256 needs P-256"):
+            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES256", pem=p384)})
+        JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="ES384", pem=p384)})
+
+    def test_a_malformed_pem_is_refused_without_keeping_the_parser_error(self) -> None:
+        broken = "-----BEGIN PUBLIC KEY-----\nnot base64\n-----END PUBLIC KEY-----"
+        with pytest.raises(ConfigError, match="is not a PEM public key") as refused:
+            JwtAuthConfig(public_keys={"k1": JwtPublicKey(alg="EdDSA", pem=broken)})
+
+        assert refused.value.__cause__ is None
+        assert refused.value.__context__ is None
+
+
+class TestReadErrorsKeepNothing:
+    """``from None`` hides a cause but keeps ``__context__``: the bytes must not travel."""
+
+    def test_an_undecodable_secret_file_keeps_no_context(self, tmp_path: Path) -> None:
+        path = tmp_path / "hs.key"
+        path.write_bytes(b"\xff\xfe-binary-secret-of-many-bytes-long-enough")
+        config = JwtAuthConfig(secret_path=str(path), algorithms=("HS256",))
+
+        with pytest.raises(ConfigError, match="Could not read") as refused:
+            JwtAuthenticator(config)
+
+        assert refused.value.__cause__ is None
+        assert refused.value.__context__ is None
+
+    def test_the_testing_helper_hides_its_secret(self) -> None:
+        auth = jwt_test_auth()
+
+        assert auth.secret not in repr(auth)
+
+
+class TestPublicKeyForms:
+    @staticmethod
+    def _keypair() -> tuple[str, str]:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: PLC0415
+
+        key = ed25519.Ed25519PrivateKey.generate()
+        private = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+        public = (
+            key.public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode()
+        )
+        return private, public
+
+    def test_the_two_forms_never_mix(self) -> None:
+        _, public = self._keypair()
+        with pytest.raises(ConfigError, match="not both"):
+            JwtAuthConfig(
+                public_keys={"a": public, "b": JwtPublicKey(alg="EdDSA", pem=public)},
+                algorithms=("EdDSA",),
+            )
+
+    def test_algorithms_beside_typed_keys_is_refused(self) -> None:
+        _, public = self._keypair()
+        with pytest.raises(ConfigError, match="remove it"):
+            JwtAuthConfig(
+                public_keys={"a": JwtPublicKey(alg="EdDSA", pem=public)}, algorithms=("EdDSA",)
+            )
+
+    def test_pem_text_keys_need_algorithms(self) -> None:
+        _, public = self._keypair()
+        with pytest.raises(ConfigError, match="non-empty 'algorithms'"):
+            JwtAuthConfig(public_keys={"a": public})
+
+    def test_a_public_key_never_takes_a_symmetric_algorithm(self) -> None:
+        _, public = self._keypair()
+        with pytest.raises(ConfigError, match="needs a 'secret'"):
+            JwtPublicKey(alg="HS256", pem=public)
+
+    def test_a_public_key_object_never_holds_private_material(self) -> None:
+        private, _ = self._keypair()
+        with pytest.raises(ConfigError, match="holds a private key"):
+            JwtPublicKey(alg="EdDSA", pem=private)
+
+    def test_the_typed_form_decodes_from_yaml_values(self) -> None:
+        from loom.core.config.convert import convert_config  # noqa: PLC0415
+
+        _, public = self._keypair()
+        config = convert_config(
+            {"public_keys": {"a": {"alg": "EdDSA", "pem": public}}}, JwtAuthConfig, strict=True
+        )
+        assert config.public_keys == {"a": JwtPublicKey(alg="EdDSA", pem=public)}
+
+    def test_an_openssh_rsa_key_cannot_slip_under_the_size_floor(self) -> None:
+        """Only a parseable PEM public key passes: other formats skipped the 2048 check."""
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+
+        ssh = (
+            rsa.generate_private_key(public_exponent=65537, key_size=1024)
+            .public_key()
+            .public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+            .decode()
+        )
+        with pytest.raises(ConfigError, match="is not a PEM public key"):
+            JwtAuthConfig(public_keys={"a": JwtPublicKey(alg="RS256", pem=ssh)})
+        with pytest.raises(ConfigError, match="is not a PEM public key"):
+            JwtAuthConfig(public_keys={"a": ssh}, algorithms=("RS256",))
+
+    @pytest.mark.parametrize("kid", [1, ["a"], {"k": "a"}])
+    async def test_a_kid_that_is_not_a_string_matches_nothing(self, kid: object) -> None:
+        private, public = self._keypair()
+        authenticator = JwtAuthenticator(
+            JwtAuthConfig(public_keys={"1": JwtPublicKey(alg="EdDSA", pem=public)})
+        )
+        signed = pyjwt.encode(
+            {"sub": "ada", "exp": int(time.time()) + 60}, private, algorithm="EdDSA"
+        )
+        _, payload, signature = signed.split(".")
+        header = json.dumps({"alg": "EdDSA", "typ": "JWT", "kid": kid}).encode()
+        forged = base64.urlsafe_b64encode(header).rstrip(b"=").decode()
+
+        assert (
+            await authenticator.authenticate(_credentials(f"{forged}.{payload}.{signature}"))
+            is None
+        )

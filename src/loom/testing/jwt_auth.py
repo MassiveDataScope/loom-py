@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 from loom.core.model.redaction import Secret
@@ -35,7 +35,7 @@ class JwtTestAuth:
     """
 
     config: JwtAuthConfig
-    secret: str
+    secret: str = field(repr=False)
 
     def token(self, subject: str, *, ttl_seconds: int = 300, **claims: Any) -> str:
         """Mint a token the config accepts.

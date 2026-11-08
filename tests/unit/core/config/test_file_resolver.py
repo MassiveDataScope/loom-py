@@ -48,7 +48,7 @@ def test_a_missing_file_names_the_key_and_chains_nothing(tmp_path: Path) -> None
 
     assert missing in str(refused.value)
     assert refused.value.__cause__ is None
-    assert refused.value.__suppress_context__
+    assert refused.value.__context__ is None
 
 
 def test_an_undecodable_file_never_carries_its_bytes(tmp_path: Path) -> None:
@@ -61,6 +61,7 @@ def test_an_undecodable_file_never_carries_its_bytes(tmp_path: Path) -> None:
 
     assert "binary-secret" not in str(refused.value)
     assert refused.value.__cause__ is None
+    assert refused.value.__context__ is None
 
 
 def test_a_key_file_reaches_the_issuer_as_a_secret(tmp_path: Path) -> None:
@@ -93,3 +94,17 @@ def test_a_key_file_reaches_the_issuer_as_a_secret(tmp_path: Path) -> None:
     assert isinstance(issuer.signing_key, Secret)
     assert issuer.signing_key.reveal() == private
     assert "PRIVATE KEY" not in repr(issuer)
+
+
+def test_a_cloud_uri_passes_through_the_yaml_grammar(tmp_path: Path) -> None:
+    """``${file:memory://...}`` keeps its scheme through OmegaConf's parser."""
+    with fsspec.open("memory://loom-file-resolver/yaml-key", "w") as handle:
+        handle.write("object-value")
+    config_file = tmp_path / "app.yaml"
+    config_file.write_text(
+        "value: ${file:memory://loom-file-resolver/yaml-key}\n", encoding="utf-8"
+    )
+
+    cfg = load_config(str(config_file), resolvers=with_default_resolvers())
+
+    assert cfg.value == "object-value"
