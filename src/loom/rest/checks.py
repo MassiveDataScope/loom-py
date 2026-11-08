@@ -25,7 +25,9 @@ to null; a placeholder URL counts as published.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.checks import REST_CHECKS, Finding, deploy_check
 from loom.core.config.keys import ConfigKey
@@ -51,7 +53,7 @@ _SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
 
 @deploy_check(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
-    unauthenticated = [key for key in _auth_keys(config) if not _authenticates(config.raw(key))]
+    unauthenticated = [auth.key for auth in _auth_sections(config) if not auth.authenticates]
     if not unauthenticated:
         return None
     return Finding(
@@ -67,24 +69,51 @@ def _authentication_configured(config: ConfigContext) -> Finding | None:
     )
 
 
-def _auth_keys(config: ConfigContext) -> list[str]:
+@dataclass(frozen=True, slots=True)
+class _AuthSection:
+    """One ``auth`` mapping as written, read once so each check asks only its question."""
+
+    key: str
+    jwt: Mapping[str, Any] | None
+    custom: bool
+
+    @classmethod
+    def read(cls, key: str, written: object) -> _AuthSection:
+        auth = written if isinstance(written, dict) else {}
+        jwt = auth.get("jwt")
+        return cls(key, jwt if isinstance(jwt, dict) else None, auth.get("custom") is True)
+
+    @property
+    def authenticates(self) -> bool:
+        return self.jwt is not None or self.custom
+
+    def names(self, setting: str) -> bool:
+        """Whether the built-in ``jwt`` section names *setting*; true without one."""
+        if self.jwt is None:
+            return True
+        value = self.jwt.get(setting)
+        return isinstance(value, str) and bool(value.strip())
+
+
+def _auth_sections(config: ConfigContext) -> list[_AuthSection]:
     """``app.rest.auth`` and the trigger ``auth`` of each function of ``lambda.functions``."""
-    functions = config.raw(f"{ConfigKey.LAMBDA}.functions", {})
+    keys = [_AUTH_KEY, *_trigger_auth_keys(config.raw(f"{ConfigKey.LAMBDA}.functions", {}))]
+    return [_AuthSection.read(key, config.raw(key)) for key in keys]
+
+
+def _trigger_auth_keys(functions: object) -> list[str]:
+    """The ``trigger.auth`` key of each function that declares one."""
     declared = functions.items() if isinstance(functions, dict) else ()
-    overrides = [
+    return [
         f"{ConfigKey.LAMBDA}.functions.{name}.trigger.auth"
         for name, function in declared
-        if isinstance(function, dict)
-        and isinstance(function.get("trigger"), dict)
-        and function["trigger"].get("auth") is not None
+        if _trigger_of(function).get("auth") is not None
     ]
-    return [_AUTH_KEY, *overrides]
 
 
-def _authenticates(auth: object) -> bool:
-    return isinstance(auth, dict) and (
-        isinstance(auth.get("jwt"), dict) or auth.get("custom") is True
-    )
+def _trigger_of(function: object) -> dict[str, Any]:
+    trigger = function.get("trigger") if isinstance(function, dict) else None
+    return trigger if isinstance(trigger, dict) else {}
 
 
 @deploy_check(SCHEMA_CHECK)
@@ -115,11 +144,7 @@ def _jwt_claim_named(config: ConfigContext, setting: str, claim: str) -> Finding
 
     A placeholder counts as named: the check runs in CI without the secrets.
     """
-    unnamed = [
-        f"{key}.jwt"
-        for key in _auth_keys(config)
-        if isinstance(jwt := _jwt_section(config.raw(key)), dict) and not _named(jwt.get(setting))
-    ]
+    unnamed = [f"{auth.key}.jwt" for auth in _auth_sections(config) if not auth.names(setting)]
     if not unnamed:
         return None
     return Finding(
@@ -129,11 +154,3 @@ def _jwt_claim_named(config: ConfigContext, setting: str, claim: str) -> Finding
         ),
         hint=f"set '{setting}' to the value the identity provider writes in the '{claim}' claim.",
     )
-
-
-def _jwt_section(auth: object) -> object:
-    return auth.get("jwt") if isinstance(auth, dict) else None
-
-
-def _named(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip())

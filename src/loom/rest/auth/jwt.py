@@ -87,10 +87,7 @@ class JwtAuthenticator:
         self._jwt = _load_pyjwt()
         self._algorithms = list(config.algorithms)
         self._roles_claim = config.roles_claim
-        # Copied, not referenced: ``frozen`` stops the attribute being rebound but
-        # not the mapping being mutated, and this is an authorization allowlist.
-        self._secret = config.verification_key(None) if config.secret_path is not None else None
-        self._public_keys = dict(config.public_keys)
+        self._keys = config.keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
@@ -158,26 +155,21 @@ class JwtAuthenticator:
         return isinstance(kind, str) and _media_type(kind) in self._accepted_types
 
     def _key_for(self, token: str) -> str | None:
-        """Select the verification key from the token's ``kid``.
+        """Select the verification key for the token.
 
         The header is unverified at this point, which is safe because it only
         picks from the configured keys: no key is ever fetched from what the
-        token says.
+        token says. One shared key never reads it, since the value cannot
+        change the outcome.
         """
-        if self._secret is not None:
-            # One shared key: reading the header would deserialize it per request
-            # for a value that cannot change the outcome.
-            return self._secret
+        if not self._keys.reads_kid:
+            return self._keys.pick(None)
         try:
             key_id = self._jwt.get_unverified_header(token).get("kid")
         except self._jwt.PyJWTError as exc:
             _logger.debug("JWT header unreadable: %s", type(exc).__name__)
             return None
-        if key_id is not None:
-            return self._public_keys.get(str(key_id))
-        if len(self._public_keys) == 1:
-            return next(iter(self._public_keys.values()))
-        return None
+        return self._keys.pick(None if key_id is None else str(key_id))
 
     def _to_identity(self, claims: Mapping[str, Any]) -> Identity | None:
         subject = claims.get(_SUBJECT_CLAIM)

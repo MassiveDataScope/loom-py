@@ -244,16 +244,24 @@ two values that must match are two values that can disagree, and a stale public 
 does not fail loudly. Derive it instead:
 
 ```python
-auth = JwtAuthConfig.from_signing_key(
-    "/run/secrets/jwt-signing-key.pem",   # or private_key_ref="secrets:/..."
+issuer = JwtIssuerConfig(
+    private_key_ref="secrets:/myapp/jwt-signing-key",   # or private_key_path="..."
+    algorithm="EdDSA",
     kid="2026-09",
-    algorithms=("EdDSA",),
-    additional_public_keys={"2026-08": previous_public_pem},
+    audience="orders-api",
+    issuer="https://auth.example.com",
+    roles_claim="roles",
+    typ="at+jwt",
 )
+auth = JwtAuthConfig.for_issuer(issuer, previous_keys={"2026-08": previous_public_pem})
 ```
 
-`additional_public_keys` keeps the previous `kid` published for one rotation window —
-public material, so unlike the signing key it is safe to carry as a value.
+Everything that must match is read from the issuer settings, so the verifier cannot
+drift from them: the key, algorithm, audience, issuer, roles claim and `typ`. Only
+what belongs to the verifier is passed apart: `previous_keys`, the clock-skew
+`leeway_seconds` and `exclude_paths`. `previous_keys` keeps the earlier `kid`
+published for one rotation window; it is public material, so unlike the signing key
+it is safe to carry as a value. A symmetric issuer shares its secret file instead.
 
 ### A mechanism of your own
 

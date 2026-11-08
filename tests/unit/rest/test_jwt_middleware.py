@@ -246,7 +246,7 @@ def test_the_config_never_holds_the_shared_secret() -> None:
     assert _SECRET not in repr(config)
     assert _SECRET.encode() not in msgspec.json.encode(config)
     assert _SECRET not in str(msgspec.to_builtins(config))
-    assert config.verification_key(None) == _SECRET
+    assert config.keyring().pick(None) == _SECRET
 
 
 def test_missing_pyjwt_extra_fails_at_startup_with_hint(
@@ -366,7 +366,7 @@ def test_an_unreadable_secret_path_fails_without_naming_the_path() -> None:
     )
 
     with pytest.raises(ConfigError) as caught:
-        config.verification_key(None)
+        config.keyring()
 
     assert "absent.key" not in str(caught.value)
     assert caught.value.__cause__ is None

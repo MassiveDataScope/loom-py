@@ -724,82 +724,97 @@ class TestSigningKeyRef:
 # ---------------------------------------------------------------------------
 
 
-class TestFromSigningKey:
-    def test_derives_the_public_key(self, tmp_path: Path) -> None:
+class TestForIssuer:
+    def test_derives_the_public_key_and_shares_every_matching_value(self, tmp_path: Path) -> None:
         private, public = _keypair()
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text(private)
-        config = JwtAuthConfig.from_signing_key(
-            str(key_file),
-            kid=_KID,
-            algorithms=("EdDSA",),
-            audience=_AUDIENCE,
-            issuer=_ISSUER,
-            roles_claim=_ROLES_CLAIM,
-        )
+        issuer = _issuer_config(tmp_path, private, typ="at+jwt")
+        config = JwtAuthConfig.for_issuer(issuer)
         assert config.public_keys == {_KID: public}
+        assert config.algorithms == ("EdDSA",)
+        assert (config.audience, config.issuer, config.roles_claim) == (
+            _AUDIENCE,
+            _ISSUER,
+            _ROLES_CLAIM,
+        )
+        assert config.accepted_types == ("at+jwt",)
+
+    async def test_verifies_what_the_issuer_mints(self, tmp_path: Path) -> None:
+        private, _ = _keypair()
+        issuer_config = _issuer_config(tmp_path, private, typ="at+jwt")
+        issued = JwtIssuer(issuer_config).issue(_identity())
+        verifier = JwtAuthenticator(JwtAuthConfig.for_issuer(issuer_config))
+        recovered = await verifier.authenticate(
+            RequestCredentials(
+                headers={"authorization": f"Bearer {issued.token}"}, path="/", client_host=None
+            )
+        )
+        assert recovered is not None
+        assert recovered.subject == "ada@example.com"
 
     def test_derives_from_a_managed_store_ref(self, monkeypatch: pytest.MonkeyPatch) -> None:
         private, public = _keypair()
         _patch_factory(monkeypatch, lambda region: _StaticResolver(private))
-        config = JwtAuthConfig.from_signing_key(
-            private_key_ref="secrets:/myapp/jwt-signing-key",
-            kid=_KID,
-            algorithms=("EdDSA",),
-        )
+        config = JwtAuthConfig.for_issuer(_ref_config())
         assert config.public_keys == {_KID: public}
 
-    def test_requires_exactly_one_source(self, tmp_path: Path) -> None:
-        with pytest.raises(ConfigError, match="exactly one of"):
-            JwtAuthConfig.from_signing_key(kid=_KID, algorithms=("EdDSA",))
+    def test_an_asymmetric_issuer_needs_a_kid(self, tmp_path: Path) -> None:
+        private, _ = _keypair()
+        with pytest.raises(ConfigError, match="kid"):
+            JwtAuthConfig.for_issuer(_issuer_config(tmp_path, private, kid=None))
 
     def test_previous_key_stays_published(self, tmp_path: Path) -> None:
         private, public = _keypair()
         _, previous_public = _keypair()
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text(private)
-        config = JwtAuthConfig.from_signing_key(
-            str(key_file),
-            kid="2026-09",
-            algorithms=("EdDSA",),
-            additional_public_keys={"2026-08": previous_public},
-        )
+        issuer = _issuer_config(tmp_path, private, kid="2026-09")
+        config = JwtAuthConfig.for_issuer(issuer, previous_keys={"2026-08": previous_public})
         assert config.public_keys == {"2026-09": public, "2026-08": previous_public}
 
     def test_private_material_is_not_retained(self, tmp_path: Path) -> None:
         private, _ = _keypair()
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text(private)
-        config = JwtAuthConfig.from_signing_key(str(key_file), kid=_KID, algorithms=("EdDSA",))
+        config = JwtAuthConfig.for_issuer(_issuer_config(tmp_path, private))
         private_body = private.splitlines()[1]
         assert private_body not in repr(config)
         assert private_body.encode() not in msgspec.json.encode(config)
 
     def test_unparseable_key_chains_the_reason(self, tmp_path: Path) -> None:
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text("not a pem")
+        issuer = _issuer_config(tmp_path, "not a pem")
         with pytest.raises(ConfigError, match="derive") as excinfo:
-            JwtAuthConfig.from_signing_key(str(key_file), kid=_KID, algorithms=("EdDSA",))
+            JwtAuthConfig.for_issuer(issuer)
         assert excinfo.value.__cause__ is not None
 
-    def test_reusing_the_derived_kid_is_refused(self, tmp_path: Path) -> None:
+    def test_reusing_the_issuer_kid_is_refused(self, tmp_path: Path) -> None:
         private, _ = _keypair()
         _, other_public = _keypair()
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text(private)
-        with pytest.raises(ConfigError, match="derived kid"):
-            JwtAuthConfig.from_signing_key(
-                str(key_file),
-                kid=_KID,
-                algorithms=("EdDSA",),
-                additional_public_keys={_KID: other_public},
-            )
+        issuer = _issuer_config(tmp_path, private)
+        with pytest.raises(ConfigError, match="reuses the issuer kid"):
+            JwtAuthConfig.for_issuer(issuer, previous_keys={_KID: other_public})
 
-    def test_region_requires_a_ref(self, tmp_path: Path) -> None:
-        private, _ = _keypair()
-        key_file = tmp_path / "signing.pem"
-        key_file.write_text(private)
-        with pytest.raises(ConfigError, match="key_ref_region"):
-            JwtAuthConfig.from_signing_key(
-                str(key_file), key_ref_region="eu-west-1", kid=_KID, algorithms=("EdDSA",)
-            )
+    def test_a_symmetric_issuer_shares_its_secret_file(self, tmp_path: Path) -> None:
+        secret_file = tmp_path / "secret"
+        secret_file.write_text("s" * 32)
+        issuer = JwtIssuerConfig(
+            secret_path=str(secret_file),
+            algorithm="HS256",
+            allow_symmetric_signing=True,
+            audience=_AUDIENCE,
+            issuer=_ISSUER,
+            roles_claim=_ROLES_CLAIM,
+        )
+        config = JwtAuthConfig.for_issuer(issuer)
+        assert config.secret_path == str(secret_file)
+        assert config.algorithms == ("HS256",)
+
+    def test_previous_keys_are_refused_for_a_symmetric_issuer(self, tmp_path: Path) -> None:
+        secret_file = tmp_path / "secret"
+        secret_file.write_text("s" * 32)
+        _, previous_public = _keypair()
+        issuer = JwtIssuerConfig(
+            secret_path=str(secret_file),
+            algorithm="HS256",
+            allow_symmetric_signing=True,
+            audience=_AUDIENCE,
+            issuer=_ISSUER,
+            roles_claim=_ROLES_CLAIM,
+        )
+        with pytest.raises(ConfigError, match="asymmetric issuer only"):
+            JwtAuthConfig.for_issuer(issuer, previous_keys={"old": previous_public})

@@ -14,6 +14,10 @@
   to `typ` checking (for example `at+jwt`), `JwtIssuerConfig.typ` stamps it,
   and
   `loom.testing.jwt_test_auth` builds a compliant test configuration.
+  `JwtAuthConfig.for_issuer(issuer, previous_keys=...)` replaces
+  `from_signing_key`: the verifier of a service that also issues reads its key,
+  algorithm, audience, issuer, roles claim and `typ` from the issuer settings
+  instead of thirteen loose arguments that could disagree with them.
 
 ### lambda
 
