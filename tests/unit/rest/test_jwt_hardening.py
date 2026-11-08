@@ -54,13 +54,33 @@ class TestHmacKeyStrength:
 
         assert JwtAuthenticator(config).name == "jwt"
 
-    def test_the_strongest_listed_algorithm_sets_the_minimum(self, tmp_path: Path) -> None:
-        config = JwtAuthConfig(
-            secret_path=_secret_file(tmp_path, 40), algorithms=("HS256", "HS512")
+    def test_a_secret_signs_with_exactly_one_algorithm(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="exactly one algorithm"):
+            JwtAuthConfig(secret_path=_secret_file(tmp_path, 64), algorithms=("HS256", "HS512"))
+
+    def test_a_trailing_line_break_does_not_count_toward_the_size(self, tmp_path: Path) -> None:
+        path = tmp_path / "hs.key"
+        path.write_bytes(b"k" * 31 + b"\n")
+        config = JwtAuthConfig(secret_path=str(path), algorithms=("HS256",))
+
+        with pytest.raises(ConfigError, match="at least 32 bytes"):
+            JwtAuthenticator(config)
+
+    @pytest.mark.parametrize(("algorithm", "minimum"), [("HS384", 48), ("HS512", 64)])
+    def test_the_issuer_minimum_follows_its_algorithm(
+        self, tmp_path: Path, algorithm: str, minimum: int
+    ) -> None:
+        config = JwtIssuerConfig(
+            secret_path=_secret_file(tmp_path, minimum - 1),
+            algorithm=algorithm,
+            audience="api",
+            issuer="gateway",
+            roles_claim="roles",
+            allow_symmetric_signing=True,
         )
 
-        with pytest.raises(ConfigError, match="at least 64 bytes"):
-            JwtAuthenticator(config)
+        with pytest.raises(ConfigError, match=f"at least {minimum} bytes"):
+            config.load_signing_key()
 
     def test_the_refusal_never_echoes_the_key(self, tmp_path: Path) -> None:
         path = tmp_path / "hs.key"
@@ -103,7 +123,7 @@ class TestLeeway:
 
 class TestTokenType:
     def _token(self, secret: bytes, typ: str | None) -> str:
-        headers = {} if typ is None else {"typ": typ}
+        headers: dict[str, Any] = {"typ": typ}
         payload = {"sub": "ada", "exp": int(time.time()) + 60}
         return pyjwt.encode(payload, secret, algorithm="HS256", headers=headers)
 
@@ -126,8 +146,10 @@ class TestTokenType:
         self, tmp_path: Path, typ: str | None
     ) -> None:
         authenticator = self._authenticator(tmp_path, accepted_types=("at+jwt",))
+        token = self._token(b"k" * 32, typ)
 
-        assert await authenticator.authenticate(_credentials(self._token(b"k" * 32, typ))) is None
+        assert pyjwt.get_unverified_header(token).get("typ") == typ
+        assert await authenticator.authenticate(_credentials(token)) is None
 
     async def test_no_listed_type_accepts_any(self, tmp_path: Path) -> None:
         authenticator = self._authenticator(tmp_path)
@@ -185,3 +207,80 @@ class TestTestingHelper:
 
         assert identity is not None and identity.subject == "ada"
         assert auth.config.audience and auth.config.issuer
+
+
+class TestResolvedClaims:
+    def test_a_blank_audience_or_issuer_is_refused(self, tmp_path: Path) -> None:
+        for field in ("audience", "issuer"):
+            settings: dict[str, Any] = {field: "  "}
+            with pytest.raises(ConfigError, match="must not be blank"):
+                JwtAuthConfig(
+                    secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), **settings
+                )
+
+    @pytest.mark.parametrize("environment", ["production", "staging"])
+    def test_a_claim_resolved_to_nothing_refuses_a_deployed_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: str
+    ) -> None:
+        from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims  # noqa: PLC0415
+
+        monkeypatch.setenv("LOOM_ENV", environment)
+        config = JwtAuthConfig(
+            secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",), issuer="idp"
+        )
+
+        with pytest.raises(ConfigError, match=AUDIENCE_CHECK):
+            _require_deployed_jwt_claims(ConfigContext.from_dict({}), config)
+
+    def test_development_and_silencing_let_it_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims  # noqa: PLC0415
+
+        config = JwtAuthConfig(secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",))
+        monkeypatch.setenv("LOOM_ENV", "development")
+        _require_deployed_jwt_claims(ConfigContext.from_dict({}), config)
+
+        monkeypatch.setenv("LOOM_ENV", "production")
+        silenced = ConfigContext.from_dict({"checks": {"silenced": [AUDIENCE_CHECK, ISSUER_CHECK]}})
+        _require_deployed_jwt_claims(silenced, config)
+
+
+class TestIssuedType:
+    async def test_the_issuer_stamps_the_type_the_verifier_requires(self, tmp_path: Path) -> None:
+        from loom.core.identity import Identity  # noqa: PLC0415
+        from loom.rest.auth import JwtIssuer  # noqa: PLC0415
+
+        key = _secret_file(tmp_path, 32)
+        issuer = JwtIssuer(
+            JwtIssuerConfig(
+                secret_path=key,
+                algorithm="HS256",
+                audience="api",
+                issuer="gw",
+                roles_claim="roles",
+                allow_symmetric_signing=True,
+                typ="at+jwt",
+            )
+        )
+        verifier = JwtAuthenticator(
+            JwtAuthConfig(
+                secret_path=key,
+                algorithms=("HS256",),
+                audience="api",
+                issuer="gw",
+                accepted_types=("at+jwt",),
+            )
+        )
+        token = issuer.issue(Identity(subject="ada", roles=("r",), mechanism="jwt")).token
+
+        assert pyjwt.get_unverified_header(token)["typ"] == "at+jwt"
+        identity = await verifier.authenticate(_credentials(token))
+        assert identity is not None
+        assert identity.subject == "ada"
+
+
+class TestTestingHelperOwnsItsKey:
+    def test_it_refuses_to_override_its_own_key(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError, match="algorithms"):
+            jwt_test_auth(tmp_path, algorithms=("HS512",))

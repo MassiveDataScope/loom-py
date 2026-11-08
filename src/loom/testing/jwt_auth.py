@@ -59,7 +59,7 @@ class JwtTestAuth:
             "exp": now + ttl_seconds,
             **claims,
         }
-        return jwt.encode(payload, self.secret, algorithm=_ALGORITHM)
+        return jwt.encode(payload, self.secret, algorithm=self.config.algorithms[0])
 
 
 def jwt_test_auth(directory: Path, **overrides: Any) -> JwtTestAuth:
@@ -68,10 +68,14 @@ def jwt_test_auth(directory: Path, **overrides: Any) -> JwtTestAuth:
     Args:
         directory: Where the secret file goes, usually pytest's ``tmp_path``.
         **overrides: ``JwtAuthConfig`` fields to change, such as ``roles_claim``.
+            ``secret_path`` and ``algorithms`` are the helper's own.
 
     Returns:
         The config and the secret that signs its tokens.
     """
+    owned = {"secret_path", "algorithms"} & overrides.keys()
+    if owned:
+        raise TypeError(f"jwt_test_auth writes its own {sorted(owned)}; do not override them")
     secret = secrets.token_hex(32)
     path = directory / "loom-test-jwt.key"
     path.write_text(secret, encoding="utf-8")

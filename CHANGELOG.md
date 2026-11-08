@@ -8,9 +8,12 @@
   `loom.rest.E002` and `loom.rest.E003` refuse a deployed JWT authenticator
   without `audience` or `issuer`; `leeway_seconds` above 300 is a
   `ConfigError`; an HS secret shorter than the hash (32, 48 or 64 bytes) is
-  refused by the verifier and the issuer. `JwtAuthConfig.accepted_types` opts
-  in to `typ` checking (for example `at+jwt`), and
-  `loom.testing.jwt_test_setup` builds a compliant test configuration.
+  refused by the verifier and the issuer, and a secret signs with exactly one
+  algorithm. A blank `audience` or `issuer` is refused, and a deployed start
+  refuses one that resolves to nothing. `JwtAuthConfig.accepted_types` opts in
+  to `typ` checking (for example `at+jwt`), `JwtIssuerConfig.typ` stamps it,
+  and
+  `loom.testing.jwt_test_auth` builds a compliant test configuration.
 
 ### lambda
 

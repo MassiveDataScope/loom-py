@@ -200,17 +200,20 @@ only where developers need it:
 | `audience` declared (`loom.rest.E002`) | staging and production | without it a token minted for another service on the same identity provider is accepted |
 | `issuer` declared (`loom.rest.E003`) | staging and production | without it a token from any issuer holding the key is accepted |
 | `leeway_seconds` at most 300 | always | a larger leeway silently extends every token's lifetime |
-| HS secret of at least 32 bytes | always, verifier and issuer | RFC 7518 §3.2: an HMAC key shorter than the hash is brute-forceable |
+| HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; a hex or base64 secret needs twice or a third more characters for the same strength |
 | `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
 
 The two deployment checks follow `LOOM_ENV`: they do not run in `development` or `test`,
 and an unset `LOOM_ENV` counts as production. Silencing one is explicit
-(`checks.silenced: [loom.rest.E002]`) and logged.
+(`checks.silenced: [loom.rest.E002]`) and logged. The same rule is applied again at
+startup to the resolved values, so a placeholder that resolves to nothing is refused
+too. Pair `accepted_types: [at+jwt]` with `JwtIssuerConfig(typ="at+jwt")` when
+loom issues the tokens itself.
 
 Remote JWKS with key rotation is out of scope for the built-in verifier: it is network
 I/O with state and an SSRF surface. Plug a custom `Authenticator` for that.
 
-For tests, `loom.testing.jwt_test_setup(tmp_path)` writes a compliant secret and returns
+For tests, `loom.testing.jwt_test_auth(tmp_path)` writes a compliant secret and returns
 the matching config and a token minter.
 
 ### Signing keys from a managed store

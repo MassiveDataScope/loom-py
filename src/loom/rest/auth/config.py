@@ -94,18 +94,20 @@ def _require_supported(algorithm: str, *, setting: str) -> None:
         )
 
 
-def require_hmac_strength(secret: str, algorithms: Iterable[str], *, setting: str) -> None:
+def _require_hmac_strength(secret: str, algorithms: Iterable[str], *, setting: str) -> None:
     """Refuse an HMAC key shorter than the hash of the strongest algorithm it signs.
 
     RFC 7518 §3.2 makes the hash size a MUST, so the rule holds in every
-    environment. The message names the size, never the key.
+    environment. The message names the size, never the key. A trailing line
+    break does not count: the key is used byte for byte, so the file must
+    carry the full length without it.
 
     Raises:
         ConfigError: When the key is shorter than the largest minimum among the
             symmetric *algorithms*.
     """
     minimum = max((_HMAC_MINIMUM_BYTES.get(a.upper(), 0) for a in algorithms), default=0)
-    if len(secret.encode("utf-8")) < minimum:
+    if len(secret.rstrip("\r\n").encode("utf-8")) < minimum:
         raise ConfigError(
             f"{setting} must be at least {minimum} bytes for "
             f"{', '.join(a for a in algorithms if _is_symmetric(a))} (RFC 7518 section 3.2)."
@@ -123,6 +125,13 @@ def _read_key_file(path: str, *, setting: str) -> str:
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         raise ConfigError(f"Could not read {setting}.") from None
+
+
+def _require_not_blank(owner: str, **values: str | None) -> None:
+    """Refuse an optional setting that is set but blank, naming the first one."""
+    for name, value in values.items():
+        if value is not None and not value.strip():
+            raise ConfigError(f"{owner} {name!r} must not be blank when set.")
 
 
 def _require_usable_roles_claim(roles_claim: str) -> None:
@@ -223,6 +232,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS,
         roles_claim: str | None = None,
         additional_public_keys: dict[str, str] | None = None,
+        accepted_types: tuple[str, ...] = (),
     ) -> JwtAuthConfig:
         """Build a verifier whose public key is derived from the signing key.
 
@@ -253,6 +263,9 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
                 value. Reusing the derived ``kid`` here is refused: this
                 method exists so the published key cannot drift from the
                 signing key, and an override would reintroduce the drift.
+            accepted_types: Accepted ``typ`` header values, as
+                :attr:`accepted_types`; pair it with
+                :attr:`JwtIssuerConfig.typ`.
 
         Returns:
             A validated ``JwtAuthConfig`` publishing the derived key.
@@ -306,9 +319,23 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             leeway_seconds=leeway_seconds,
             exclude_paths=exclude_paths,
             roles_claim=roles_claim,
+            accepted_types=accepted_types,
         )
 
     def __post_init__(self) -> None:
+        self._validate_keys()
+        if not 0 <= self.leeway_seconds <= MAX_LEEWAY_SECONDS:
+            raise ConfigError(f"JWT auth 'leeway_seconds' must be in 0..{MAX_LEEWAY_SECONDS}.")
+        if any(not kind.strip() for kind in self.accepted_types):
+            raise ConfigError("JWT auth 'accepted_types' entries must not be blank.")
+        # A blank audience or issuer is never what was meant: a placeholder
+        # resolved to nothing. Refusing it keeps it from reaching PyJWT unnoticed.
+        _require_not_blank(
+            "JWT auth", roles_claim=self.roles_claim, audience=self.audience, issuer=self.issuer
+        )
+
+    def _validate_keys(self) -> None:
+        """One key source, usable entries, and each algorithm bound to its key family."""
         if (self.secret_path is None) == (not self.public_keys):
             raise ConfigError("JWT auth requires exactly one of 'secret_path' or 'public_keys'.")
         for key_id, material in self.public_keys.items():
@@ -316,12 +343,9 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
                 raise ConfigError("JWT auth 'public_keys' entries need a key id and material.")
         if not self.algorithms:
             raise ConfigError("JWT auth requires a non-empty 'algorithms' allowlist.")
-        if not 0 <= self.leeway_seconds <= MAX_LEEWAY_SECONDS:
-            raise ConfigError(f"JWT auth 'leeway_seconds' must be in 0..{MAX_LEEWAY_SECONDS}.")
-        if any(not kind.strip() for kind in self.accepted_types):
-            raise ConfigError("JWT auth 'accepted_types' entries must not be blank.")
-        if self.roles_claim is not None and not self.roles_claim.strip():
-            raise ConfigError("JWT auth 'roles_claim' must not be blank.")
+        if self.secret_path is not None and len(self.algorithms) != 1:
+            # RFC 8725 §3.1: a key is used with exactly one algorithm.
+            raise ConfigError("JWT auth 'secret_path' signs with exactly one algorithm.")
         for algorithm in self.algorithms:
             self._validate_algorithm(algorithm)
 
@@ -347,10 +371,14 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         Returns:
             The key material, or ``None`` when no configured key applies — an
             unknown ``kid``, or a missing one while several keys are configured.
+
+        Raises:
+            ConfigError: When the ``secret_path`` file cannot be read or holds a
+                key shorter than its algorithm's hash.
         """
         if self.secret_path is not None:
             secret = _read_key_file(self.secret_path, setting="JWT auth 'secret_path'")
-            require_hmac_strength(secret, self.algorithms, setting="JWT auth 'secret_path'")
+            _require_hmac_strength(secret, self.algorithms, setting="JWT auth 'secret_path'")
             return secret
         if key_id is not None:
             return self.public_keys.get(key_id)
@@ -403,6 +431,9 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
             select the right key during a rotation overlap.
         allow_symmetric_signing: Opt-in required for HS*. With a shared secret
             every verifier can also mint, so the choice must be deliberate.
+        typ: ``typ`` header stamped on every token, for example
+            ``at+jwt`` (RFC 9068 §2.1) so a verifier with ``accepted_types``
+            accepts them. ``None`` leaves PyJWT's default ``JWT``.
 
     Raises:
         ConfigError: If key sources, algorithm, audience, issuer, roles claim
@@ -438,6 +469,7 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
     ttl_seconds: int = 900
     kid: str | None = None
     allow_symmetric_signing: bool = False
+    typ: str | None = None
 
     def __post_init__(self) -> None:
         sources = [
@@ -455,15 +487,12 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
         if self.key_ref_region is not None and self.private_key_ref is None:
             raise ConfigError("JWT issuer 'key_ref_region' requires 'private_key_ref'.")
         _require_supported(self.algorithm, setting="JWT issuer 'algorithm'")
-        if not self.audience.strip():
-            raise ConfigError("JWT issuer requires a non-blank 'audience'.")
-        if not self.issuer.strip():
-            raise ConfigError("JWT issuer requires a non-blank 'issuer'.")
+        if not self.audience.strip() or not self.issuer.strip():
+            raise ConfigError("JWT issuer requires a non-blank 'audience' and 'issuer'.")
         # Optional here is what let an attribute impersonate the verifier's roles
         # claim: the issuer must always own that name.
         _require_usable_roles_claim(self.roles_claim)
-        if self.kid is not None and not self.kid.strip():
-            raise ConfigError("JWT issuer 'kid' must not be blank.")
+        _require_not_blank("JWT issuer", kid=self.kid, typ=self.typ)
         if not 0 < self.ttl_seconds <= MAX_ISSUER_TTL_SECONDS:
             raise ConfigError(f"JWT issuer 'ttl_seconds' must be in 1..{MAX_ISSUER_TTL_SECONDS}.")
         self._validate_signing_material()
@@ -503,7 +532,7 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
         """
         material = self._read_signing_key()
         if _is_symmetric(self.algorithm):
-            require_hmac_strength(material, (self.algorithm,), setting="the JWT issuer secret")
+            _require_hmac_strength(material, (self.algorithm,), setting="the JWT issuer secret")
         return material
 
     def _read_signing_key(self) -> str:

@@ -233,7 +233,8 @@ class JwtIssuer:
         self._jwt = _load_pyjwt()
         self._key = config.load_signing_key()
         self._max_ttl = timedelta(seconds=config.ttl_seconds)
-        self._headers = {"kid": config.kid} if config.kid else None
+        headers = {"kid": config.kid, "typ": config.typ}
+        self._headers = {name: value for name, value in headers.items() if value} or None
         self._assert_key_signs()
 
     def _assert_key_signs(self) -> None:
@@ -393,9 +394,14 @@ def _load_pyjwt() -> ModuleType:
 
 
 def _media_type(kind: str) -> str:
-    """Normalise a ``typ`` value (RFC 7515 §4.1.9): case-insensitive, ``application/`` optional."""
-    lowered = kind.strip().lower()
-    return lowered.removeprefix("application/")
+    """Normalise a ``typ`` value as RFC 7515 §4.1.9 compares it.
+
+    Media types compare case-insensitively, and ``application/`` may be left
+    out only when the value holds no other ``/``.
+    """
+    lowered = kind.lower()
+    rest = lowered.removeprefix("application/")
+    return rest if "/" not in rest else lowered
 
 
 def _bearer_token(header: str | None) -> str | None:
