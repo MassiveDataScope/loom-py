@@ -145,6 +145,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      # PySpark 3.5 runs on Java 8, 11 or 17. The runner image's default Java is
+      # newer on ubuntu-26.04, where Hadoop's getSubject call fails at start-up,
+      # so the lane pins the release Spark supports instead of inheriting it.
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
       # Wheels only, so no sdist setup script runs while installing uv.
       - name: Install uv
         run: |
@@ -666,6 +674,10 @@ jobs:
           set -euo pipefail
           uv pip install --python "$UV_PROJECT_ENVIRONMENT" --only-binary :all: \
             "pydantic-ai-slim[anthropic,bedrock,openai,spec,typesafe]==${pydantic_ai_floor}"
+          # pydantic-ai-harness pins one pydantic-ai release of its own, newer than the
+          # floor; the floor run checks the core agent surface without it, and the
+          # harness tests skip.
+          uv pip uninstall --python "$UV_PROJECT_ENVIRONMENT" pydantic-ai-harness
 
       - name: Run the agent suites against the floor release
         shell: bash

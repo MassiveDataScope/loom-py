@@ -49,14 +49,16 @@ be written in configuration at all.
 
 **Two HTTP libraries, one callable.**  The MCP toolset comes from
 ``pydantic-ai``, whose HTTP client is ``httpx2``, and it reaches that client
-through the MCP transport, which passes any auth object it does not recognise
-straight through; loom builds the A2A client itself, with ``httpx``.  Each of
+through the MCP transport; loom builds the A2A client itself, with ``httpx``.  Each of
 the two libraries accepts an auth object only when it is an instance of *its
 own* ``Auth`` class, a two-tuple, or a **callable**, so a class written against
 one flavour is refused by the other and loom adapts neither.  The two
 strategies loom ships therefore return a plain callable — the one shape both
 clients accept, and the supported answer for a deployment's own fixed-header
-strategy.  A strategy that needs a real flow registers a class, written against
+strategy.  The MCP boundary hands that callable to the toolset wrapped in an
+``httpx2.Auth``, because ``MCPToolset`` from pydantic-ai 2.66 reads a callable
+``auth`` as a function of the run context; the strategy itself stays a plain
+callable.  A strategy that needs a real flow registers a class, written against
 the flavour of the transport that will use it.
 
 A callable is a single-shot flow: it sets headers on the request it is handed,

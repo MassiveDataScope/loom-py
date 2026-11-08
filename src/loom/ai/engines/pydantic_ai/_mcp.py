@@ -60,10 +60,11 @@ _EXTRA = "mcp"
 
 
 class _McpSdk(Protocol):
-    """The two names the MCP island publishes."""
+    """The names the MCP island publishes."""
 
     MCPToolset: type[MCPToolset[Any]]
     StdioTransport: type[StdioTransport]
+    RequestHookAuth: Callable[[Callable[[Any], Any]], Any]
 
 
 def _sdk() -> _McpSdk:
@@ -248,13 +249,8 @@ def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float)
     component = f"mcp server '{capability.server}'"
     client = _mcp_client(component, capability)
     headers = headers_from_ref(component, capability.headers_ref) or None
-    auth = shared_mcp_auth(capability.server, capability.auth)
+    auth = _client_auth(sdk, shared_mcp_auth(capability.server, capability.auth))
     read_timeout = capability.timeout_ms / 1000
-    # ``MCPToolset`` annotates auth as ``httpx.Auth | Literal['oauth'] | str | None``,
-    # which admits no callable, while what really consumes it is fastmcp's HTTP
-    # transport: its ``_set_auth`` special-cases only ``"oauth"``, ``OAuth``, the
-    # OAuth providers and ``str``, and hands anything else to its ``httpx2`` client
-    # untouched — including the callable loom's own strategies return.
     toolset: MCPToolset[Any] = sdk.MCPToolset(
         client,
         headers=headers,
@@ -262,7 +258,46 @@ def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float)
         init_timeout=init_timeout,
         read_timeout=read_timeout,
     )
+    _require_static_auth(toolset, capability)
     return toolset
+
+
+def _client_auth(sdk: _McpSdk, auth: object) -> object:
+    """Put a strategy's result in the shape the MCP client keeps as static auth.
+
+    A strategy's request hook is a plain callable, and ``MCPToolset`` from
+    pydantic-ai 2.66 reads any callable as a function of the run context, which
+    would drop the credentials; the hook therefore reaches it as an
+    ``httpx2.Auth``.  An ``Auth`` instance and the ``"oauth"`` sentinel are not
+    callable and pass through unchanged.
+    """
+    if callable(auth):
+        return sdk.RequestHookAuth(auth)
+    return auth
+
+
+def _require_static_auth(toolset: MCPToolset[Any], capability: CompiledMcpCapability) -> None:
+    """Fail closed when a declared strategy did not reach the transport.
+
+    Raises:
+        AgentCompilationError: With ``MCP_AUTH_STRATEGY_INVALID`` when the grant
+            declares ``auth`` and the client's transport carries none, so an
+            upstream change can never turn an authenticated server into one
+            called without credentials.
+    """
+    if capability.auth is None:
+        return
+    transport = getattr(toolset.client, "transport", None)
+    if getattr(transport, "auth", None) is not None:
+        return
+    raise AgentCompilationError(
+        [
+            AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                kind=capability.auth.kind,
+                reason="the MCP client's transport received no auth from it",
+            )
+        ]
+    )
 
 
 def _mcp_client(component: str, capability: CompiledMcpCapability) -> str | ClientTransport:

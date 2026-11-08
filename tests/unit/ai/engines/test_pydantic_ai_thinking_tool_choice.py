@@ -40,7 +40,9 @@ _TARGET = InferenceTarget(
     region="us-east-1",
     output_mode="tool",
     streaming=False,
-    options={"thinking": True},
+    # A set max_tokens keeps pydantic-ai on Converse: from 2.66 a Claude request
+    # without one is streamed behind the scenes (ConverseStream).
+    options={"thinking": True, "max_tokens": 1024},
 )
 _CONVERSE_RESPONSE: dict[str, Any] = {
     "output": {
