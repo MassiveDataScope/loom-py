@@ -157,16 +157,23 @@ class JwtAuthenticator:
         subject = claims.get(_SUBJECT_CLAIM)
         if not isinstance(subject, str) or not subject:
             return None
-        if self._roles_claim is not None and self._roles_claim not in claims:
-            # Names that disagree between issuer and verifier lose every role
-            # without an error anywhere: say it once, at DEBUG, never the token.
-            _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
         return Identity(
             subject=subject,
-            roles=_roles_from_claim(claims.get(self._roles_claim)) if self._roles_claim else (),
+            roles=self._roles(claims),
             attributes=_attributes(claims, self._roles_claim),
             mechanism=MECHANISM_NAME,
         )
+
+    def _roles(self, claims: Mapping[str, Any]) -> tuple[str, ...]:
+        """The roles the configured claim grants; none when no roles claim is configured."""
+        if self._roles_claim is None:
+            return ()
+        if self._roles_claim not in claims:
+            # Names that disagree between issuer and verifier lose every role
+            # without an error anywhere: say it once, at DEBUG, never the token.
+            _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
+            return ()
+        return _roles_from_claim(claims[self._roles_claim])
 
 
 def _media_type(kind: str) -> str:
@@ -198,13 +205,15 @@ def _roles_from_claim(value: Any) -> tuple[str, ...]:
     list holding one valid role and one number is a broken token, not a
     partially authorized caller.
     """
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if not isinstance(value, (list, tuple)) or not value:
-        return ()
-    if not all(isinstance(item, str) and item for item in value):
-        return ()
-    return tuple(dict.fromkeys(value))
+    roles = [value] if isinstance(value, str) else value
+    if isinstance(roles, (list, tuple)) and all(map(_is_role, roles)):
+        return tuple(dict.fromkeys(roles))
+    return ()
+
+
+def _is_role(item: Any) -> bool:
+    """A non-empty string: the only shape a role takes."""
+    return isinstance(item, str) and bool(item)
 
 
 def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str, str]:

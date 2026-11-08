@@ -207,18 +207,23 @@ def _attribute_claims(attributes: Mapping[str, Any]) -> dict[str, str]:
         ValueError: If a name already carries the namespace, or a value is not
             a string.
     """
-    prefixed: list[str] = []
-    unstringly: list[str] = []
-    for name, value in attributes.items():
-        if name.startswith(ATTRIBUTE_CLAIM_PREFIX):
-            prefixed.append(name)
-        if not isinstance(value, str):
-            unstringly.append(name)
+    _require_unnamespaced(attributes)
+    _require_string_values(attributes)
+    return {f"{ATTRIBUTE_CLAIM_PREFIX}{name}": value for name, value in attributes.items()}
+
+
+def _require_unnamespaced(attributes: Mapping[str, Any]) -> None:
+    """Refuse an attribute name that already carries the namespace the issuer adds."""
+    prefixed = sorted(name for name in attributes if name.startswith(ATTRIBUTE_CLAIM_PREFIX))
     if prefixed:
         raise ValueError(
-            f"identity attributes {sorted(prefixed)} already carry the "
+            f"identity attributes {prefixed} already carry the "
             f"{ATTRIBUTE_CLAIM_PREFIX!r} namespace: the issuer adds it"
         )
+
+
+def _require_string_values(attributes: Mapping[str, Any]) -> None:
+    """Refuse a non-string value: it would be encoded, then dropped by the reader."""
+    unstringly = sorted(name for name, value in attributes.items() if not isinstance(value, str))
     if unstringly:
-        raise ValueError(f"identity attributes {sorted(unstringly)} must hold string values")
-    return {f"{ATTRIBUTE_CLAIM_PREFIX}{name}": value for name, value in attributes.items()}
+        raise ValueError(f"identity attributes {unstringly} must hold string values")
