@@ -343,6 +343,35 @@
 
 ## ⚠ Behaviour changes
 
+### ai
+
+- **ai:** the `ai-harness` extra requires `pydantic-ai-harness>=0.66`, which
+  fixes a tool-call limit bypass in nested CodeMode calls
+  (GHSA-3589-pxp7-3gj8). The harness pins its own `pydantic-ai-slim` release,
+  so installing the extra brings `pydantic-ai-slim` 2.66 or newer.
+- **ai:** a `skills` grant reads its library through a read-only workspace of
+  its own, rooted at the library directory and never attached to the run: no
+  run tool reaches it, and nothing in it can be written or executed. Harness
+  0.66 refuses to run `Skills` without a workspace.
+- **ai:** with `pydantic-ai-slim` 2.66, MCP servers declaring `auth: bearer`,
+  `auth: static` or a deployment's own callable strategy received no
+  credentials, because `MCPToolset` reads a callable `auth` as a function of
+  the run context. The MCP boundary now hands the strategy over as an
+  `httpx2.Auth`, and building a toolset fails with `MCP_AUTH_STRATEGY_INVALID`
+  when a declared strategy does not reach the transport.
+- **ai:** a tool call whose engine outcome is `retried`, `failed`, `denied` or
+  `interrupted` streams as `tool_result` with `ok: false` and a fixed summary;
+  with `pydantic-ai-slim` 2.66 such calls streamed as `ok: true`.
+- **ai:** from `pydantic-ai-slim` 2.66, a Bedrock request to a Claude model
+  with no `max_tokens` is streamed behind the scenes (`ConverseStream`), even
+  for a role with `streaming: false`. Set `max_tokens` in the role's `options`
+  to keep one-piece requests; an IAM policy for a streamed request needs
+  `bedrock:InvokeModelWithResponseStream`.
+- **ai:** a `UsageLimitUnavailableWarning` (a token or cost limit is set but a
+  response carries no usage) is classified `COST_NOT_MEASURABLE`, like the
+  other unmeasured-spend warnings, instead of a retriable
+  `PROVIDER_UNAVAILABLE`.
+
 ### jobs
 
 - **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,

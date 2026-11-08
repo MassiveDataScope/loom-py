@@ -37,6 +37,7 @@ structured arguments. Malformed arguments therefore become ``{}``.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 import msgspec
@@ -64,6 +65,8 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
         "final_result",
         "enqueued_messages",
         "tool_availability_delta",
+        "capability_load_delta",
+        "model_settings_delta",
         "output_tool_call",
         "output_tool_result",
         "deferred_tool_requests",
@@ -89,6 +92,23 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
 _TOOL_OK = "ok"
 _TOOL_RETRY = "the model was asked to retry the call"
 _TOOL_REFUSED = "refused"
+_TOOL_FAILED = "the call failed"
+_TOOL_DENIED = "the call was denied"
+_TOOL_INTERRUPTED = "the call was interrupted"
+_OUTCOME_SUMMARIES: Mapping[str, str] = MappingProxyType(
+    {
+        "retried": _TOOL_RETRY,
+        "failed": _TOOL_FAILED,
+        "denied": _TOOL_DENIED,
+        "interrupted": _TOOL_INTERRUPTED,
+    }
+)
+"""The summary of each engine outcome that is not a success.
+
+From pydantic-ai 2.66 a retried, failed, denied or interrupted call returns as
+a ``ToolReturnPart`` whose ``outcome`` says so; before, a retry was a
+``RetryPromptPart`` and the part carried no outcome. Each summary is fixed, so
+the event never quotes what the tool or the model wrote (FR-030b)."""
 
 _COUNTED_SHAPES: frozenset[str] = frozenset({"rows"})
 """Shapes whose summary is a count and a unit; every other shape reads ``ok``."""
@@ -153,6 +173,9 @@ def _tool_result(event: FunctionToolResultEvent) -> AgentEvent:
     part = event.part
     if isinstance(part, RetryPromptPart):
         return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=_TOOL_RETRY)
+    failure = _OUTCOME_SUMMARIES.get(getattr(part, "outcome", "success"))
+    if failure is not None:
+        return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=failure)
     if _facts(part).get("shape") == _REFUSED_SHAPE:
         return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=_TOOL_REFUSED)
     return ToolResultEvent(call_id=part.tool_call_id, ok=True, summary=_summary(part))

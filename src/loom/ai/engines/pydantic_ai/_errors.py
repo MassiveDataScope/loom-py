@@ -34,12 +34,15 @@ _UNMEASURED_SPEND_WARNINGS: tuple[type[Warning], ...] = tuple(
         CostNotFoundWarning,
         CostCalculationFailedWarning,
         getattr(pydantic_ai_exceptions, "UsageExtractionFailedWarning", None),
+        getattr(pydantic_ai_exceptions, "UsageLimitUnavailableWarning", None),
     )
     if warning is not None
 )
 """pydantic-ai's bare ``Warning`` subclasses, all of them a spend the run could
-not measure. ``UsageExtractionFailedWarning`` first ships in a pydantic-ai
-release newer than the supported floor, so it is mapped only where it exists."""
+not measure. ``UsageExtractionFailedWarning`` and ``UsageLimitUnavailableWarning``
+(a token or cost limit is set but a response carries no usage) first ship in
+pydantic-ai releases newer than the supported floor, so each is mapped only
+where it exists."""
 
 _STATUS_CODES: Mapping[int, AgentRunErrorCode] = MappingProxyType(
     {

@@ -106,6 +106,41 @@ class TestToolResultSummary:
         assert _translated_result(event).summary == "ok"
 
 
+_OUTCOME_SUMMARIES = {
+    "retried": "the model was asked to retry the call",
+    "failed": "the call failed",
+    "denied": "the call was denied",
+    "interrupted": "the call was interrupted",
+}
+"""Every non-success engine outcome and the fixed summary loom reports for it."""
+
+
+def _outcome_event(outcome: str) -> FunctionToolResultEvent:
+    """A tool return carrying ``outcome``; skips on a release without the field."""
+    if "outcome" not in getattr(ToolReturnPart, "__dataclass_fields__", {}):
+        pytest.skip("this pydantic-ai release reports no tool outcome")
+    part = ToolReturnPart(
+        tool_name="sql_reporting", content=PAYLOAD, tool_call_id="call-1", outcome=outcome
+    )
+    return FunctionToolResultEvent(part=part)
+
+
+class TestNonSuccessOutcomes:
+    """From pydantic-ai 2.66 a retried, failed, denied or interrupted call is a tool return."""
+
+    @pytest.mark.parametrize(("outcome", "summary"), sorted(_OUTCOME_SUMMARIES.items()))
+    def test_the_result_is_not_ok_with_a_fixed_summary(self, outcome: str, summary: str) -> None:
+        translated = _translated_result(_outcome_event(outcome))
+
+        assert (translated.ok, translated.summary) == (False, summary)
+
+    @pytest.mark.parametrize("outcome", sorted(_OUTCOME_SUMMARIES))
+    def test_the_summary_carries_no_byte_of_the_payload(self, outcome: str) -> None:
+        translated = _translated_result(_outcome_event(outcome))
+
+        assert CANARY not in translated.summary
+
+
 class TestRefusedResults:
     def test_the_result_is_not_ok_when_the_tool_refuses_by_value(self) -> None:
         """A refusal must not read as a normal call in the stream (FR-046b)."""

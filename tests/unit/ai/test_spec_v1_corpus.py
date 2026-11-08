@@ -24,6 +24,7 @@ real loader rejects cannot sit in the corpus pretending to be evidence.
 
 from __future__ import annotations
 
+import importlib.util
 import warnings
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,13 @@ from typing import Any
 import pytest
 import yaml
 from jsonschema import Draft202012Validator
-from pydantic_ai_harness.skills import Skills
 
 from loom.ai.declarative import AgentSpecV1, DecodedSpec, agent_spec_json_schema, load_specs
+
+_HARNESS_MISSING = pytest.mark.skipif(
+    importlib.util.find_spec("pydantic_ai_harness") is None,
+    reason="pydantic-ai-harness pins its own pydantic-ai release; the floor job runs without it",
+)
 
 _CORPUS_DIR: Path = Path(__file__).parent / "fixtures" / "corpus_v1"
 _CORPUS_PATTERN: str = "*/agent.yaml"
@@ -190,6 +195,7 @@ def test_the_library_contains_only_skill_packages(library: Path) -> None:
     assert unusable == []
 
 
+@_HARNESS_MISSING
 @pytest.mark.parametrize("library", _skill_libraries(), ids=_skill_library_ids())
 def test_the_library_loads_with_the_harness(library: Path) -> None:
     """Constructing ``Skills`` is the assertion: it parses and validates every manifest.
@@ -198,6 +204,8 @@ def test_the_library_loads_with_the_harness(library: Path) -> None:
     description or a name the loader does not expose all raise here, and the
     ``error`` filter turns the over-long-description warning into a failure too.
     """
+    from pydantic_ai_harness.skills import Skills
+
     expected = sorted(child.name for child in library.iterdir() if child.is_dir())
 
     with warnings.catch_warnings():

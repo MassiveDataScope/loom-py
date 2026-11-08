@@ -137,35 +137,47 @@ class TestOauthStrategy:
 class TestBearerStrategy:
     """``kind: bearer`` is the shape configuration cannot express by hand."""
 
-    def test_the_transport_keeps_the_object_the_strategy_built(self) -> None:
-        """fastmcp special-cases only OAuth and strings; everything else passes through."""
+    def test_the_transport_presents_the_hook_the_strategy_built(self) -> None:
+        """The transport's static auth delegates to the one shared strategy instance."""
         built = shared_mcp_auth(_BEARER.server, _BEARER.auth)
 
-        assert _transport(_BEARER).auth is built
+        assert _transport(_BEARER).auth.hook is built
 
-    @pytest.mark.parametrize("flavour", _FLAVOURS)
-    def test_the_request_carries_authorization_bearer_across_both_libraries(
-        self, flavour: str
-    ) -> None:
-        """Asserted on the wire, through the client the transport really drives."""
+    def test_the_transport_sends_authorization_bearer_on_the_wire(self) -> None:
+        """Asserted through httpx2, the client fastmcp's transport really drives."""
         auth = _transport(_BEARER).auth
 
-        assert _header_on_the_wire(flavour, auth, "Authorization") == f"Bearer {_TOKEN}"
+        assert _header_on_the_wire("httpx2", auth, "Authorization") == f"Bearer {_TOKEN}"
+
+    @pytest.mark.parametrize("flavour", _FLAVOURS)
+    def test_the_strategy_sets_authorization_bearer_in_both_libraries(self, flavour: str) -> None:
+        """The hook itself is the shape both httpx (A2A) and httpx2 (MCP) accept."""
+        built = shared_mcp_auth(_BEARER.server, _BEARER.auth)
+
+        assert _header_on_the_wire(flavour, built, "Authorization") == f"Bearer {_TOKEN}"
 
 
 class TestStaticStrategy:
     """``kind: static`` is the ``auth`` block's spelling of the ``headers_ref`` shorthand."""
 
-    def test_the_transport_keeps_the_object_the_strategy_built(self) -> None:
+    def test_the_transport_presents_the_hook_the_strategy_built(self) -> None:
         built = shared_mcp_auth(_STATIC.server, _STATIC.auth)
 
-        assert _transport(_STATIC).auth is built
+        assert _transport(_STATIC).auth.hook is built
 
-    @pytest.mark.parametrize("flavour", _FLAVOURS)
-    def test_the_request_carries_the_fixed_header_across_both_libraries(self, flavour: str) -> None:
+    def test_the_transport_sends_the_fixed_header_on_the_wire(self) -> None:
         auth = _transport(_STATIC).auth
 
-        assert _header_on_the_wire(flavour, auth, "X-API-Key") == "abc123"
+        assert _header_on_the_wire("httpx2", auth, "X-API-Key") == "abc123"
+
+    @pytest.mark.parametrize("flavour", _FLAVOURS)
+    def test_the_strategy_sets_the_fixed_header_in_both_libraries(self, flavour: str) -> None:
+        built = shared_mcp_auth(_STATIC.server, _STATIC.auth)
+
+        assert _header_on_the_wire(flavour, built, "X-API-Key") == "abc123"
+
+    def test_the_transport_auth_repr_names_no_credential(self) -> None:
+        assert "abc123" not in repr(_transport(_STATIC).auth)
 
 
 class TestThirdPartyStrategy:
@@ -218,3 +230,22 @@ class TestThirdPartyStrategy:
             other = _transport(first_agent).auth
 
         assert shared is other
+
+
+class TestDeclaredAuthNeverGoesMissing:
+    """An upstream change must not turn an authenticated server into an anonymous one."""
+
+    def test_building_fails_closed_when_the_transport_receives_no_auth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from loom.ai.engines.pydantic_ai import _mcp
+        from loom.ai.errors import AgentCompilationError, AgentErrorCode
+
+        monkeypatch.setattr(_mcp, "_client_auth", lambda _sdk, _auth: None)
+
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _transport(_BEARER)
+
+        assert [issue.code for issue in excinfo.value.issues] == [
+            AgentErrorCode.MCP_AUTH_STRATEGY_INVALID
+        ]

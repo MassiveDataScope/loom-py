@@ -29,7 +29,13 @@ import msgspec
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai._agent_graph import GraphAgentState
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -104,9 +110,15 @@ class TestOnRejectionTheEngineRetries:
         assert len(seen_by_check) == 2
         assert len(seen_by_model) == 2
         retried_request = seen_by_model[1][-1]
-        retry_parts = [part for part in retried_request.parts if isinstance(part, RetryPromptPart)]
-        assert retry_parts
-        assert "answer must be 'good'" in retry_parts[0].content
+        # The engine carries the correction back as a retry prompt or, since
+        # pydantic-ai 2.66, as the output tool's return; loom pins only that the
+        # text reaches the model.
+        carried = [
+            part.content
+            for part in retried_request.parts
+            if isinstance(part, (RetryPromptPart, ToolReturnPart))
+        ]
+        assert any("answer must be 'good'" in str(content) for content in carried)
 
     async def test_the_retry_budget_is_bounded_by_retries(self) -> None:
         seen_by_check: list[Mapping[str, Any]] = []

@@ -269,6 +269,23 @@ the model said and every tool call and result, in order; the text simply
 arrives as one delta per text part instead of many. The policies
 (`run_timeout_ms`, `max_iterations`, `max_requests`) apply as before.
 
+On Bedrock, a Claude model needs `max_tokens` in the role's `options` for this
+to hold: from `pydantic-ai-slim` 2.66, a request without it is streamed behind
+the scenes (`ConverseStream`), so a long answer is not cut off by the read
+timeout. The IAM policy of a streamed request needs
+`bedrock:InvokeModelWithResponseStream`.
+
+```yaml
+ai:
+  models:
+    reasoning:
+      provider: bedrock
+      model: <model id>
+      streaming: false
+      options:
+        max_tokens: 8192
+```
+
 It is the choice pydantic-ai offers between `run` and `run_stream`, made per
 model binding rather than per call: the artifact never has to know which model
 serves it, and a role can be moved back by deleting the line.
