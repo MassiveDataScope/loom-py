@@ -50,7 +50,7 @@ _MANIFEST_MODULE = "tests.integration.ai._agents_only_manifest"
 _ENGINE_NAME = "agentsonly-inprocess-fake"
 _AGENT = "ping-agent"
 _GROUP = "loom.ai.engines"
-_SECRET = "agents-only-integration-secret"
+_SECRET = "agents-only-integration-secret-of-32-bytes"
 _AUDIENCE = "loom-api"
 
 _AGENT_SPEC: dict[str, Any] = {

@@ -31,7 +31,7 @@ from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.sql import bind_sql_endpoints
 
 _SECRET_PATH = str(Path(tempfile.mkdtemp()) / "hs.key")
-Path(_SECRET_PATH).write_text("unit-test-secret")
+Path(_SECRET_PATH).write_text("unit-test-secret-of-thirty-two-bytes")
 
 _APP_MODULE = "loom_sqlgate_fixture_app"
 

@@ -36,7 +36,7 @@ _PING = "/ping/"
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 _SECRET_PATH = str(Path(tempfile.mkdtemp()) / "hs.key")
-Path(_SECRET_PATH).write_text("unit-test-secret")
+Path(_SECRET_PATH).write_text("unit-test-secret-of-thirty-two-bytes")
 _JWT_SECTION: dict[str, Any] = {
     "secret_path": _SECRET_PATH,
     "algorithms": ["HS256"],

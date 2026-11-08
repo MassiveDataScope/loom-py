@@ -174,9 +174,10 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:JWT_SECRET_PATH}
-        algorithms: [HS256]
+        public_keys:
+          "2026-08": {alg: EdDSA, pem: "${ssm:/myapp/jwt/2026-08}"}
         audience: loom-api
+        issuer: https://idp.example.com
         roles_claim: loom_roles
 ```
 
@@ -189,14 +190,79 @@ subset.
 
 See {doc}`sql` for the full JWT reference and the SQL endpoint startup gates.
 
-### Signing keys from a managed store
+### Hardening rules
 
-`JwtIssuerConfig` accepts the signing key as a filesystem path or as a managed-store
-reference — exactly one of the two:
+The verifier is strict where a mistake cannot be told apart from an attack, and relaxed
+only where developers need it:
+
+| Rule | Where it applies | Why |
+|---|---|---|
+| `audience` declared (`loom.rest.E002`) | staging and production | without it a token minted for another service on the same identity provider is accepted |
+| `issuer` declared (`loom.rest.E003`) | staging and production | without it a token from any issuer holding the key is accepted |
+| `leeway_seconds` at most 300 | always | a larger leeway silently extends every token's lifetime |
+| HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; the check is on length, not strength, so generate the secret randomly, and a hex or base64 secret needs twice or a third more characters for the same strength |
+| RSA key of at least 2048 bits, signing and published keys | always, verifier and issuer | RFC 7518 §3.3 |
+| A blank (whitespace-only) secret is refused | always, verifier and issuer | A.8.24 |
+| A key in a common encoding (PEM, OpenSSH, base64 or base64url DER, JWK) is never an HS secret | always, verifier and issuer | algorithm confusion: whoever holds the public half could sign |
+| Each public key verifies only its own `alg` | `public_keys` entries written as `{alg, pem}` | RFC 8725 §3.1; the token cannot pick the algorithm |
+| A public key is a PEM or OpenSSH public key of the type and curve its algorithm needs | always, at startup | a mismatch would refuse every token; an unparsed key skipped the RSA size check |
+| The resolved audience and issuer are checked against the environment the app is composed for | staging and production, at startup | the static check sees only the written value |
+| `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
+
+The two deployment checks follow `LOOM_ENV`: they do not run in `development` or `test`,
+and an unset `LOOM_ENV` counts as production. Silencing one is explicit
+(`checks.silenced: [loom.rest.E002]`) and logged. The same rule is applied again at
+startup to the resolved values, so a placeholder that resolves to nothing is refused
+too. Pair `accepted_types: [at+jwt]` with `JwtIssuerConfig(typ="at+jwt")` when
+loom issues the tokens itself.
+
+Remote JWKS with key rotation is not in the built-in verifier yet: it is network I/O
+with state and an SSRF surface. Plug a custom `Authenticator` for that meanwhile.
+
+For tests, `loom.testing.jwt_test_auth()` makes a compliant secret and returns the
+matching config and a token minter.
+
+### Where a key comes from
+
+The configurator resolves the key; these settings only judge it. Any placeholder works:
+`${file:...}` reads a local file or a cloud object (`s3://`, `gs://`, `abfss://`, the
+same paths `load_config` reads), and `${secrets:...}` or `${ssm:...}` read AWS. A secret
+lands in a `Secret`, which no repr, log or dump shows. The raw configuration tree still
+holds the resolved text before it is typed, so never dump it whole (for example with
+`OmegaConf.to_yaml(cfg, resolve=True)`): dump typed sections with `dump_config`.
+
+```yaml
+app:
+  rest:
+    auth:
+      jwt:
+        secret: ${file:/run/secrets/jwt}          # HS*: one algorithm
+        algorithms: [HS256]
+```
+
+```yaml
+      jwt:
+        public_keys:                               # RS*, PS*, ES*, EdDSA
+          rsa-2025: {alg: RS256, pem: "${ssm:/myapp/jwt/rsa-2025}"}
+          ec-2026:  {alg: ES256, pem: "${file:s3://keys/jwt/ec-2026.pem}"}
+```
+
+Each `{alg, pem}` entry verifies only its own algorithm, so `algorithms` is not written
+and a rotation can change the key type under a new `kid`. The released forms still
+load: `secret_path` (a local path or, as `${file:...}` reads, a cloud URI), and `public_keys` entries as PEM text with a shared `algorithms`
+list, where each key keeps only the algorithms of its own type (an RSA key never takes
+`EdDSA`). One configuration uses one form or the other, never both. Keys are
+read once at startup, so rotating one takes a restart.
+
+### The issuer signing key
+
+`signing_key` is the key itself, as a `Secret`: a PEM private key for RS*, PS*, ES* and
+EdDSA, a secret of at least the hash size for HS*. Bound from configuration, a
+placeholder resolves it; built in code, wrap it:
 
 ```python
 config = JwtIssuerConfig(
-    private_key_ref="secrets:/myapp/prod/jwt-signing-key",  # or "ssm:/..."
+    signing_key=Secret(Path("/run/secrets/jwt.pem").read_text()),
     algorithm="EdDSA",
     audience="my-api",
     issuer="my-gateway",
@@ -205,10 +271,10 @@ config = JwtIssuerConfig(
 )
 ```
 
-The reference is resolved once, when the issuer loads the key, so the material never
-touches disk or config dumps. Rotating the stored value therefore requires a restart.
-`key_ref_region` pins the AWS region when it is not in boto3's own chain. Requires the
-`loom-kernel[config-ssm]` extra.
+A plain string is refused, so the key cannot reach a dump. A shared HS secret means
+every service that verifies can also mint, and choosing an HS `algorithm` for the
+issuer is the whole opt-in: there is no separate acknowledgement flag. Prefer an
+asymmetric key whenever more than one service verifies.
 
 ### Deriving the verifier from the signing key
 
@@ -217,16 +283,27 @@ two values that must match are two values that can disagree, and a stale public 
 does not fail loudly. Derive it instead:
 
 ```python
-auth = JwtAuthConfig.from_signing_key(
-    "/run/secrets/jwt-signing-key.pem",   # or private_key_ref="secrets:/..."
+issuer = JwtIssuerConfig(
+    signing_key=Secret(signing_pem),
+    algorithm="EdDSA",
     kid="2026-09",
-    algorithms=("EdDSA",),
-    additional_public_keys={"2026-08": previous_public_pem},
+    audience="orders-api",
+    issuer="https://auth.example.com",
+    roles_claim="roles",
+    typ="at+jwt",
+)
+auth = JwtAuthConfig.for_issuer(
+    issuer, previous_keys={"2026-08": JwtPublicKey(alg="EdDSA", pem=previous_public_pem)}
 )
 ```
 
-`additional_public_keys` keeps the previous `kid` published for one rotation window —
-public material, so unlike the signing key it is safe to carry as a value.
+Everything that must match is read from the issuer settings, so the verifier cannot
+drift from them: the key, algorithm, audience, issuer, roles claim and `typ`. Only
+what belongs to the verifier is passed apart: `previous_keys`, the clock-skew
+`leeway_seconds` and `exclude_paths`. `previous_keys` keeps the earlier `kid`
+published for one rotation window; it is public material, so unlike the signing key
+it is safe to carry as a value, and each one names its own algorithm. A symmetric
+issuer shares its secret instead.
 
 ### A mechanism of your own
 

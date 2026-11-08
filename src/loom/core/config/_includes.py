@@ -30,6 +30,27 @@ def is_cloud_uri(uri: str) -> bool:
     return urlsplit(str(uri).strip()).scheme.lower() in _CLOUD_SCHEMES
 
 
+def read_text(uri: str) -> str:
+    """Return the UTF-8 text of a local file or a cloud object.
+
+    The one reader behind :func:`~loom.core.config.load_config` and the
+    ``file`` resolver, so both accept the same paths and schemes. Errors
+    propagate unchanged: each caller decides what its message may carry.
+
+    Args:
+        uri: Local path or cloud URI (see :func:`is_cloud_uri`).
+
+    Returns:
+        The decoded text.
+    """
+    if is_cloud_uri(uri):
+        import fsspec  # noqa: PLC0415 - the config extra; local files load without it
+
+        with fsspec.open(uri, mode="r", encoding="utf-8") as fh:
+            return str(fh.read())  # pyright: ignore[reportAttributeAccessIssue]
+    return Path(uri).read_text(encoding="utf-8")
+
+
 def resolve_include(base: str, entry: str) -> str:
     """Resolve an ``includes`` entry against the file that declares it.
 

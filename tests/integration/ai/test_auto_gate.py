@@ -119,7 +119,7 @@ def _write_project(
     """
     (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
     secret_path = tmp_path / "hs.key"
-    secret_path.write_text("integration-test-secret", encoding="utf-8")
+    secret_path.write_text("integration-test-secret-of-32-bytes!", encoding="utf-8")
     agent_dir = tmp_path / "ai" / "agents" / _AGENT
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")

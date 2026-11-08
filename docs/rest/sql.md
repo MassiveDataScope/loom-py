@@ -102,6 +102,7 @@ app:
     auth:
       jwt:
         audience: loom-api
+        issuer: https://idp.example.com
         roles_claim: loom_sql_roles
 ```
 
@@ -445,6 +446,7 @@ app:
     auth:
       jwt:
         audience: loom-analytics
+        issuer: https://idp.example.com
         roles_claim: loom_sql_roles
 
 sql:
@@ -511,39 +513,38 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:JWT_SECRET_PATH}
+        secret: ${secrets:/myapp/jwt}   # a Secret: no repr, log or dump shows it
         algorithms: [HS256]
-        audience: loom-api
-        issuer: null
-        leeway_seconds: 0
+        audience: loom-api            # required in staging and production (loom.rest.E002)
+        issuer: https://idp.example.com  # required in staging and production (loom.rest.E003)
+        leeway_seconds: 0             # at most 300
+        accepted_types: []            # e.g. [at+jwt] for an RFC 9068 identity provider
         exclude_paths: [/docs, /redoc, /openapi.json, /metrics, /health]
         roles_claim: loom_sql_roles
 ```
 
 | Key | Meaning |
 |---|---|
-| `secret_path` | HS256 — a path, not the value. |
-| `algorithms` | Explicit allowlist; `none` always rejected. |
+| `secret` | HS secret, resolved by a placeholder (`${file:...}`, `${secrets:...}`). `secret_path` is the released form. |
+| `algorithms` | The one HS algorithm, or the algorithms shared by PEM-text public keys; `none` always rejected. |
 | `audience` | Required by any `sql_endpoint` with `auth: identity`. |
-| `issuer` | Validated only when set. |
+| `issuer` | Checked against `iss` when set; a deployed API must set it (deploy check `loom.rest.E003`). |
 
-For RS256/ES256/EdDSA — one PEM per key id — the alternative is `public_keys: {"2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}}`.
+For RS*/PS*/ES*/EdDSA the alternative is one public key per key id, each with its own
+algorithm and no `algorithms` list: `public_keys: {"2026-08": {alg: EdDSA, pem: "${ssm:/myapp/jwt/2026-08}"}}`.
 
 - **Stateless** — signature, `exp` and `sub` (both required) plus `nbf`, and `aud`/`iss`
   when configured, are verified per request. No Redis or server-side session store is
   needed; early token revocation is out of scope.
 - **`sub` is mandatory.** A token without a subject carries no identity to authorize
   against, nor to audit afterwards, so it is rejected with 401.
-- Exactly one of `secret_path` (HS*) or `public_keys` (RS*/ES*/EdDSA static PEMs, keyed by
-  key id) must be set, and the algorithm allowlist must match the key type — validated
+- Exactly one of `secret`, `secret_path` (HS*) or `public_keys` (RS*/PS*/ES*/EdDSA,
+  keyed by key id) must be set, and each algorithm must fit its key — validated
   fail-fast at startup.
-- **`secret_path` is a path, not the value.** The config is a `msgspec.Struct`, so any
-  serializer emits its fields verbatim: holding an HS secret would let a config dump
-  publish the key that both verifies *and* signs. Public keys are safe to inline
-  because they only verify. The container has to materialize the value to a file:
-  Kubernetes mounts a `Secret` as a volume directly, while ECS/Fargate injects
-  task-definition secrets as **environment variables only**, so there an entrypoint
-  must write the value to a path on a `tmpfs` volume before the app starts.
+- **`secret` is a `Secret`.** A repr, a log line and `dump_config` show `***`, and an
+  encoder that does not know the type refuses it rather than publishing the key that
+  both verifies *and* signs. A plain string is refused when the config is built.
+  Public keys are safe to inline because they only verify.
 - With `public_keys`, the key is chosen by the token's `kid` header, never by trying
   each key in turn: exhaustive trial would decouple every algorithm from its key
   family, which is what makes algorithm confusion impossible here. A token with no

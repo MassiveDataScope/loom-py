@@ -18,11 +18,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.config import ConfigContext
+from loom.core.config.convert import dump_config
 from loom.core.config.errors import ConfigError
 from loom.core.identity import current_identity
+from loom.core.model.redaction import Secret
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, JwtAuthMiddleware, RequestCredentials
 
-_SECRET = "unit-test-secret"
+_SECRET = "unit-test-secret-of-thirty-two-bytes"
 # The secret is a path now: a msgspec struct emits its fields, so holding the
 # value would publish the key that both verifies and signs.
 _SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")
@@ -235,18 +237,34 @@ def test_401_message_does_not_leak_the_cryptographic_reason() -> None:
 
 
 def test_the_config_never_holds_the_shared_secret() -> None:
-    """Redaction is not the guarantee: the value is never in the struct at all.
-
-    A ``repr`` that hides the secret still leaves ``json.encode`` and
-    ``to_builtins`` free to publish it, and those are what a config dump uses.
-    Holding a path makes every serializer safe by construction.
-    """
+    """The released ``secret_path`` form keeps the value out of the struct entirely."""
     config = _config()
 
     assert _SECRET not in repr(config)
     assert _SECRET.encode() not in msgspec.json.encode(config)
     assert _SECRET not in str(msgspec.to_builtins(config))
-    assert config.verification_key(None) == _SECRET
+    key = config.keyring().pick(None)
+    assert key is not None
+    assert key.material == _SECRET
+    assert _SECRET not in repr(key)
+
+
+def test_a_secret_in_the_config_is_shown_by_no_serializer() -> None:
+    """``secret`` holds the value as a ``Secret``: a repr and a dump mask it, and an
+    encoder that does not know the type refuses it instead of publishing it."""
+    config = JwtAuthConfig(secret=Secret(_SECRET), algorithms=("HS256",))
+
+    assert _SECRET not in repr(config)
+    assert dump_config(config)["secret"] == "***"
+    with pytest.raises(TypeError):
+        msgspec.json.encode(config)
+    with pytest.raises(TypeError):
+        msgspec.to_builtins(config)
+
+
+def test_a_secret_given_as_plain_text_is_refused() -> None:
+    with pytest.raises(TypeError, match="secret must be Secret"):
+        JwtAuthConfig(secret=_SECRET, algorithms=("HS256",))  # type: ignore[arg-type]
 
 
 def test_missing_pyjwt_extra_fails_at_startup_with_hint(
@@ -366,7 +384,7 @@ def test_an_unreadable_secret_path_fails_without_naming_the_path() -> None:
     )
 
     with pytest.raises(ConfigError) as caught:
-        config.verification_key(None)
+        config.keyring()
 
     assert "absent.key" not in str(caught.value)
     assert caught.value.__cause__ is None

@@ -75,7 +75,12 @@ from loom.rest.config import (
 )
 from loom.rest.cors import CorsConfig
 from loom.rest.fastapi._auto_ai import _bind_agent_surface
-from loom.rest.fastapi._auto_auth import _AuthWiring, _mount_authentication, _resolve_authentication
+from loom.rest.fastapi._auto_auth import (
+    _AuthWiring,
+    _mount_authentication,
+    _require_deployed_jwt_claims,
+    _resolve_authentication,
+)
 from loom.rest.fastapi._auto_sql import _check_sql_section, _warn_sql_endpoints
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.app import create_fastapi_app
@@ -639,6 +644,7 @@ def compose_rest(
         authenticator,
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
+    _require_deployed_jwt_claims(ctx, source.environment, auth.jwt_config)
     _check_sql_section(ctx, auth)
     discovered, routes = served_routes(source, select_interfaces)
     declared = RestDeclaration(

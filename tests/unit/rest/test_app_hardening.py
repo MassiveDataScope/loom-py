@@ -21,7 +21,7 @@ from loom.rest.fastapi.auto import create_app
 from tests.unit.rest._fixture_app import write_project
 
 _SECRET_PATH = str(Path(tempfile.mkdtemp()) / "hs.key")
-Path(_SECRET_PATH).write_text("unit-test-secret")
+Path(_SECRET_PATH).write_text("unit-test-secret-of-thirty-two-bytes")
 
 _JWT_SECTION: dict[str, Any] = {
     "secret_path": _SECRET_PATH,

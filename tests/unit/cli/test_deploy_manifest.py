@@ -84,6 +84,7 @@ def _config(package: str) -> dict[str, Any]:
         "jwt": {
             "secret_path": "${secrets:/shop/admin-key}",
             "audience": "${ssm:/shop/admin-audience}",
+            "issuer": "shop-idp",
             "algorithms": ["HS256"],
         }
     }
@@ -95,7 +96,13 @@ def _config(package: str) -> dict[str, Any]:
                 "docs_url": None,
                 "redoc_url": None,
                 "openapi_url": None,
-                "auth": {"jwt": {"secret_path": "${secrets:/shop/jwt.path}"}},
+                "auth": {
+                    "jwt": {
+                        "secret_path": "${secrets:/shop/jwt.path}",
+                        "audience": "shop-api",
+                        "issuer": "shop-idp",
+                    }
+                },
                 "disable_routes": [{"method": "DELETE", "path": "/orders"}],
                 "interfaces": {
                     "health": {
@@ -141,11 +148,18 @@ _JOB_SECRETS = {"secrets": ["/shop/jwt"], "ssm_parameters": ["/shop/db-url"]}
 
 
 def _expected() -> dict[str, Any]:
-    app_auth = {"jwt": {"secret_path": "${secrets:/shop/jwt.path}"}}
+    app_auth = {
+        "jwt": {
+            "secret_path": "${secrets:/shop/jwt.path}",
+            "audience": "shop-api",
+            "issuer": "shop-idp",
+        }
+    }
     admin_auth = {
         "jwt": {
             "algorithms": ["HS256"],
             "audience": "${ssm:/shop/admin-audience}",
+            "issuer": "shop-idp",
             "secret_path": "${secrets:/shop/admin-key}",
         }
     }

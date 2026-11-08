@@ -13,6 +13,7 @@ import yaml
 
 SECRET = "contract-suite-secret-of-at-least-32-bytes"
 AUDIENCE = "loom-api"
+ISSUER = "loom-contract-idp"
 PUBLIC_PATH = "/public/whoami"
 ORIGIN = "https://app.example"
 MAX_BODY_BYTES = 256
@@ -190,6 +191,7 @@ def write_contract_project(
                         "secret_path": str(secret_path),
                         "algorithms": ["HS256"],
                         "audience": AUDIENCE,
+                        "issuer": ISSUER,
                         "roles_claim": "roles",
                         **exclusions,
                     }
@@ -220,5 +222,11 @@ def seen_by(config_path: str) -> list[tuple[asyncio.AbstractEventLoop, object]]:
 
 def bearer(subject: str, *roles: str) -> dict[str, str]:
     """The ``Authorization`` header of a valid token for *subject* holding *roles*."""
-    claims = {"sub": subject, "aud": AUDIENCE, "roles": list(roles), "exp": int(time.time()) + 600}
+    claims = {
+        "sub": subject,
+        "aud": AUDIENCE,
+        "iss": ISSUER,
+        "roles": list(roles),
+        "exp": int(time.time()) + 600,
+    }
     return {"authorization": f"Bearer {jwt.encode(claims, SECRET, algorithm='HS256')}"}

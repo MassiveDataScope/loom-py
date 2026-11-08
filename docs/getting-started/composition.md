@@ -46,6 +46,7 @@ lambda:
             secret_path: /secrets/admin.key
             algorithms: [HS256]
             audience: admin
+            issuer: https://idp.example.com
     worker:
       trigger:
         source: jobs

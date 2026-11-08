@@ -35,6 +35,7 @@ from tests.unit.rest._fixture_app import write_project
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 _CUSTOM_AUTH: dict[str, Any] = {**_NO_DOCS, "auth": {"custom": True}}
 _PRODUCTION = "production"
+_TOKEN_SCOPE: dict[str, str] = {"audience": "demo-api", "issuer": "demo-idp"}
 _CHECKS_LOGGER = "loom.core.checks"
 
 
@@ -71,7 +72,8 @@ class TestRestChecks:
         assert _rest_ids({"name": "demo", "rest": _NO_DOCS}) == [AUTHENTICATION_CHECK]
 
     def test_a_configured_jwt_section_passes_e001(self) -> None:
-        rest = {**_NO_DOCS, "auth": {"jwt": {"secret_path": "${oc.env:UNSET_SECRET}"}}}
+        jwt = {"secret_path": "${oc.env:UNSET_SECRET}", **_TOKEN_SCOPE}
+        rest = {**_NO_DOCS, "auth": {"jwt": jwt}}
 
         assert _rest_ids({"name": "demo", "rest": rest}) == []
 
@@ -135,7 +137,7 @@ class TestRestChecks:
         assert AUTHENTICATION_CHECK not in [r.id for r in report.results]
 
     def test_the_default_documentation_urls_publish_the_schema(self) -> None:
-        rest = {"auth": {"jwt": {"secret_path": "/k"}}}
+        rest = {"auth": {"jwt": {"secret_path": "/k", **_TOKEN_SCOPE}}}
 
         assert _rest_ids({"name": "demo", "rest": rest}) == [SCHEMA_CHECK]
 

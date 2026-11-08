@@ -179,6 +179,9 @@ the deployment tool and stay out of loom.
 - Only `secrets` and `ssm` placeholders are listed. The references of a
   custom resolver that the application passes to `create_app` in code are
   not; add them to the role in the deployment.
-- A secret or key that code reads, such as a `JwtIssuerConfig` built with
-  `private_key_ref`, does not appear in the configuration, so the manifest
-  cannot list it. Add it to the role in the deployment.
+- A secret or key that code reads, such as a `JwtIssuerConfig` built in code, does not
+  appear in the configuration, so the manifest cannot list it. Bind the key with a
+  `${secrets:...}` placeholder to have it listed, or add it to the role in the
+  deployment.
+- A `${file:...}` placeholder is not listed: reading an `s3://` object needs
+  `s3:GetObject` on it, added to the role in the deployment.

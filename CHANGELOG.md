@@ -2,6 +2,42 @@
 
 ## 💥 Breaking
 
+### security
+
+- **security:** JWT hardening aligned with ISO/IEC 27001:2022 A.8.5 and A.8.24.
+  `loom.rest.E002` and `loom.rest.E003` refuse a deployed JWT authenticator
+  without `audience` or `issuer`; `leeway_seconds` above 300 is a
+  `ConfigError`; an HS secret shorter than the hash (32, 48 or 64 bytes) is
+  refused by the verifier and the issuer, and a secret signs with exactly one
+  algorithm. A blank `audience` or `issuer` is refused, and a deployed start
+  refuses one that resolves to nothing. `JwtAuthConfig.accepted_types` opts in
+  to `typ` checking (for example `at+jwt`), `JwtIssuerConfig.typ` stamps it,
+  and
+  `loom.testing.jwt_test_auth` builds a compliant test configuration.
+  `JwtAuthConfig.for_issuer(issuer, previous_keys=...)` replaces
+  `from_signing_key`: the verifier of a service that also issues reads its key,
+  algorithm, audience, issuer, roles claim and `typ` from the issuer settings
+  instead of thirteen loose arguments that could disagree with them.
+  `JwtIssuerConfig.signing_key` is the key itself as a `Secret` (a PEM private
+  key, or an HS secret), resolved by any placeholder, replacing
+  `private_key_path`, `private_key_ref`, `key_ref_region`, `secret_path` and
+  `allow_symmetric_signing`: choosing an HS `algorithm` is now the whole
+  opt-in to symmetric issuing, with no separate flag. `load_signing_key()` and
+  `KEY_REF_RESOLVERS` are gone. `JwtAuthConfig.verification_key()` is replaced by `keyring()`. A
+  private key in `public_keys` is refused.
+- An RSA key below 2048 bits, a whitespace-only HS secret and an asymmetric
+  key (a PEM block, an OpenSSH key line, a JWK or a base64 DER key) used as an HS secret are
+  refused, on both the verifier and the issuer. A public key that does not
+  parse as PEM or OpenSSH, or whose type or EC curve fits none of its
+  algorithms, is refused when the configuration is built instead of failing
+  every request; with a shared `algorithms` list each key keeps only the
+  algorithms of its own type. The issuer's private key must fit its
+  algorithm the same way (an ES256 key is P-256, an RS256 key is RSA), so it
+  cannot mint tokens a verifier refuses.
+  `JwtIssuerConfig` requires `algorithm`, `audience`, `issuer` and
+  `roles_claim` instead of defaulting them to `""`. `jwt_test_auth()` takes no
+  directory: its secret stays in memory.
+
 ### lambda
 
 - **lambda:** `identity` is required on `eventbridge`, `s3`, `sns` and
@@ -53,6 +89,17 @@
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
 
 ## ✨ Features
+
+### security
+
+- **security:** each JWT public key verifies only its own algorithm (RFC 8725
+  §3.1): `public_keys: {kid: {alg: RS256, pem: ...}}` with `JwtPublicKey`,
+  and no `algorithms` list, so a token cannot choose the algorithm and a
+  rotation can change the key type under a new `kid`. PEM-text entries with a
+  shared `algorithms` list still load; one configuration uses one form.
+  `JwtAuthConfig.secret` takes the HS secret as a `Secret`. `algorithms` and
+  `alg` are typed with `JwtAlgorithm`, so an unknown value fails when the
+  configuration is decoded.
 
 ### audit
 
@@ -179,6 +226,12 @@
 
 ### config
 
+- **config:** a built-in `file` resolver: `${file:/run/secrets/jwt.pem}` or
+  `${file:s3://bucket/key.pem}` reads a local file or a cloud object with the
+  reader `load_config` uses. Its errors name the error type only, never the
+  path (it says where secret material lives) nor the file's bytes. The JWT
+  verifier's `secret_path` reads through the same resolver, so it also takes
+  a cloud URI.
 - **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
   timeouts and retries; no credentials) sets the AWS client defaults every
   AWS product inherits: `dynamodb` stores, `storage.dynamodb`, the `secrets`
@@ -1729,6 +1782,7 @@ by version; each release's own list is in its GitHub Release notes.
   def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
       return [Score(value=m.payload.amount) for m in messages]
 
+
   # after
   def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
       return [[Score(value=m.payload.amount)] for m in messages]
@@ -1777,13 +1831,16 @@ by version; each release's own list is in its GitHub Release notes.
   def write_batch(self, items):
       self._buffer.extend(items)
 
+
   def close(self):
       flush(self._path, self._buffer)
+
 
   # after
   def write_batch(self, items) -> int:
       self._buffer.extend(items)
       return 0  # buffered, nothing durable yet
+
 
   def close(self) -> int:
       flush(self._path, self._buffer)

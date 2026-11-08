@@ -13,17 +13,14 @@ Install the optional dependency with::
 from __future__ import annotations
 
 import logging
-import secrets
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
-from types import ModuleType
 from typing import Any
 
-from loom.core.config.errors import ConfigError
 from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
-from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.abc import RequestCredentials
-from loom.rest.auth.config import JwtAuthConfig, JwtIssuerConfig
+from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, RESERVED_CLAIMS, JwtAuthConfig
+from loom.rest.auth.issuer import JwtIssuer as JwtIssuer  # the released import path
+from loom.rest.auth.keys import FixedKey, Key, load_pyjwt
 
 _logger = logging.getLogger(__name__)
 
@@ -34,36 +31,15 @@ _AUTHORIZATION_HEADER = "authorization"
 _BEARER_SCHEME = "bearer"
 _SUBJECT_CLAIM = "sub"
 
-# Registered claims (RFC 7519 §4.1) describe the token, not the caller, so they
-# never reach the identity attributes.
-_PROTOCOL_CLAIMS = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
-
-ATTRIBUTE_CLAIM_PREFIX = "attr_"
-"""Namespace every issued attribute travels under.
-
-The issuer cannot know how a verifier is configured, so an attribute emitted
-under its own name could be read as that verifier's roles claim — privilege
-escalation from a value the caller controls. Prefixing removes the possibility
-instead of trying to detect it. Reading strips the prefix, and unprefixed custom
-claims keep working, so tokens minted elsewhere are unaffected.
-"""
-
-_JTI_BYTES = 16
-
-_PYJWT_HINT = (
-    "JWT authentication requires the optional dependency 'pyjwt'. "
-    "Install it with: pip install 'loom-kernel[jwt]'"
-)
-
 
 class JwtAuthenticator:
     """Authenticates callers from a stateless JWT bearer token.
 
     Verification is fully stateless: no server-side session storage and no
-    remote JWKS fetch.  Signature, ``exp`` and ``sub`` are always required
-    (a token without a subject carries no identity to bind an authorization
-    decision to, nor to audit afterwards); ``aud``/``iss`` are validated only
-    when configured.
+    remote JWKS fetch, and each key verifies only its own algorithms.
+    Signature, ``exp`` and ``sub`` are always required (a token without a
+    subject carries no identity to bind an authorization decision to, nor to
+    audit afterwards); ``aud``/``iss`` are validated only when configured.
 
     Args:
         config: Validated JWT settings.
@@ -75,8 +51,7 @@ class JwtAuthenticator:
 
         authenticator = JwtAuthenticator(
             JwtAuthConfig(
-                secret_path="/run/secrets/jwt",
-                algorithms=("HS256",),
+                public_keys={"2026-08": JwtPublicKey(alg="EdDSA", pem=public_pem)},
                 roles_claim="loom_sql_roles",
             )
         )
@@ -84,13 +59,16 @@ class JwtAuthenticator:
 
     def __init__(self, config: JwtAuthConfig) -> None:
         self._config = config
-        self._jwt = _load_pyjwt()
-        self._algorithms = list(config.algorithms)
+        self._jwt = load_pyjwt()
         self._roles_claim = config.roles_claim
-        # Copied, not referenced: ``frozen`` stops the attribute being rebound but
-        # not the mapping being mutated, and this is an authorization allowlist.
-        self._secret = config.verification_key(None) if config.secret_path is not None else None
-        self._public_keys = dict(config.public_keys)
+        self._keys = config.keyring()
+        self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
+        # One shared secret checks every token and no typ is required: the
+        # header could not change the outcome, so it is not read per request.
+        self._reads_header = bool(self._accepted_types) or not isinstance(self._keys, FixedKey)
+        # Registered claims describe the token, not the caller: never identity attributes.
+        roles = {config.roles_claim} if config.roles_claim else set()
+        self._excluded_claims = RESERVED_CLAIMS | roles
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
             "verify_aud": config.audience is not None,
@@ -127,13 +105,12 @@ class JwtAuthenticator:
     def _decode(self, token: str) -> Mapping[str, Any] | None:
         key = self._key_for(token)
         if key is None:
-            _logger.debug("JWT verification failed: no configured key applies to this token")
             return None
         try:
             claims: dict[str, Any] = self._jwt.decode(
                 token,
-                key,
-                algorithms=self._algorithms,
+                key.material,
+                algorithms=key.algorithms,
                 audience=self._config.audience,
                 issuer=self._config.issuer,
                 leeway=self._config.leeway_seconds,
@@ -143,241 +120,83 @@ class JwtAuthenticator:
             # DEBUG only, and never the token itself: no oracle in responses/logs.
             _logger.debug("JWT verification failed: %s: %s", type(exc).__name__, exc)
             return None
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed: anything else from the JWT or crypto backend refuses
+            # the token too. Its traceback would carry the revealed key, so only
+            # the type is logged.
+            _logger.debug("JWT verification failed: %s", type(exc).__name__)
+            return None
         return claims
 
-    def _key_for(self, token: str) -> str | None:
-        """Select the verification key from the token's ``kid``.
+    def _key_for(self, token: str) -> Key | None:
+        """The configured key that checks *token*, or ``None`` when none applies.
 
-        The header is unverified at this point, which is safe because it only
-        picks from the configured keys: no key is ever fetched from what the
-        token says.
+        The header is unverified here, which is safe: it only picks among the
+        configured keys, and no key is ever fetched from what the token says.
         """
-        if self._secret is not None:
-            # One shared key: reading the header would deserialize it per request
-            # for a value that cannot change the outcome.
-            return self._secret
+        if not self._reads_header:
+            return self._keys.pick(None)
+        return self._key_from_header(token)
+
+    def _key_from_header(self, token: str) -> Key | None:
+        """The key the unverified header selects, once its ``typ`` is accepted."""
+        header = self._header(token)
+        if header is None:
+            return None
+        if self._accepted_types and not self._typed(header):
+            _logger.debug("JWT verification failed: the typ header is not an accepted type")
+            return None
+        key = self._keys.pick(header.get("kid"))
+        if key is None:
+            _logger.debug("JWT verification failed: no configured key applies to this token")
+        return key
+
+    def _header(self, token: str) -> Mapping[str, Any] | None:
+        """The unverified header, read once per token, or ``None`` when unreadable."""
         try:
-            key_id = self._jwt.get_unverified_header(token).get("kid")
+            header: Mapping[str, Any] = self._jwt.get_unverified_header(token)
         except self._jwt.PyJWTError as exc:
             _logger.debug("JWT header unreadable: %s", type(exc).__name__)
             return None
-        if key_id is not None:
-            return self._public_keys.get(str(key_id))
-        if len(self._public_keys) == 1:
-            return next(iter(self._public_keys.values()))
-        return None
+        return header
+
+    def _typed(self, header: Mapping[str, Any]) -> bool:
+        """Whether the ``typ`` header is one of the configured types (RFC 8725 §3.11)."""
+        kind = header.get("typ")
+        return isinstance(kind, str) and _media_type(kind) in self._accepted_types
 
     def _to_identity(self, claims: Mapping[str, Any]) -> Identity | None:
         subject = claims.get(_SUBJECT_CLAIM)
         if not isinstance(subject, str) or not subject:
             return None
-        if self._roles_claim is not None and self._roles_claim not in claims:
-            # Names that disagree between issuer and verifier lose every role
-            # without an error anywhere: say it once, at DEBUG, never the token.
-            _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
         return Identity(
             subject=subject,
-            roles=_roles_from_claim(claims.get(self._roles_claim)) if self._roles_claim else (),
-            attributes=_attributes(claims, self._roles_claim),
+            roles=self._roles(claims),
+            attributes=_attributes(claims, self._excluded_claims),
             mechanism=MECHANISM_NAME,
         )
 
+    def _roles(self, claims: Mapping[str, Any]) -> tuple[str, ...]:
+        """The roles the configured claim grants; none when no roles claim is configured."""
+        if self._roles_claim is None:
+            return ()
+        if self._roles_claim not in claims:
+            # Names that disagree between issuer and verifier lose every role
+            # without an error anywhere: say it once, at DEBUG, never the token.
+            _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
+            return ()
+        return _roles_from_claim(claims[self._roles_claim])
 
-class JwtIssuer:
-    """Mints JWT bearer tokens for a verified :class:`Identity`.
 
-    Everything the token says comes from the identity: there is no way for a
-    caller to add a claim, so nobody can widen their own roles or speak for
-    another subject through this door.
+def _media_type(kind: str) -> str:
+    """Normalise a ``typ`` value as RFC 7515 §4.1.9 compares it.
 
-    The signing key is read once here and never kept on the config, which is a
-    ``msgspec.Struct`` whose fields any serializer would publish.
-
-    Every issuing is logged at INFO with the subject and the roles granted. That is
-    a deliberate audit trail, not diagnostics: without it an access is not
-    attributable to who asked for the token nor to the privileges it carried. The
-    subject is usually personal data, so route these logs accordingly. The token and
-    the key are never logged.
-
-    Args:
-        config: Validated issuer settings.
-
-    Raises:
-        ImportError: If the optional ``pyjwt`` dependency is not installed.
-        ConfigError: If the signing key cannot be read, or cannot sign with the
-            configured algorithm.
-
-    Example::
-
-        issuer = JwtIssuer(JwtIssuerConfig(
-            private_key_path="/run/secrets/jwt.pem", algorithm="EdDSA",
-            audience="my-api", issuer="my-gateway", roles_claim="loom_sql_roles",
-        ))
-        issued = issuer.issue(identity)
+    Media types compare case-insensitively, and ``application/`` may be left
+    out only when the value holds no other ``/``.
     """
-
-    def __init__(self, config: JwtIssuerConfig) -> None:
-        self._config = config
-        self._jwt = _load_pyjwt()
-        self._key = config.load_signing_key()
-        self._max_ttl = timedelta(seconds=config.ttl_seconds)
-        self._headers = {"kid": config.kid} if config.kid else None
-        self._assert_key_signs()
-
-    def _assert_key_signs(self) -> None:
-        """Sign once here so a broken key fails startup, not the first login.
-
-        Reading the key is not parsing it: a malformed PEM raises a plain
-        ``ValueError`` from ``cryptography``, which is neither a ``PyJWTError``
-        nor what the port documents ``ValueError`` to mean, so it would surface
-        at the first login disguised as an unrepresentable identity.
-        """
-        try:
-            self._jwt.encode({"probe": 0}, self._key, algorithm=self._config.algorithm)
-        except Exception:  # noqa: BLE001 - any parse or sign failure means unusable
-            raise ConfigError(
-                f"The JWT issuer signing key cannot sign with {self._config.algorithm}."
-            ) from None
-
-    def issue(self, identity: Identity, *, ttl: timedelta | None = None) -> IssuedToken:
-        """Mint a token for *identity*.
-
-        Args:
-            identity: Verified caller the token speaks for.
-            ttl: Lifetime override, bounded by the configured one.
-
-        Returns:
-            The token, its expiry and its ``jti``.
-
-        Raises:
-            ValueError: If the identity is anonymous, carries no role while a
-                roles claim is configured, holds an attribute that would be
-                unreadable once encoded, or *ttl* is out of bounds.
-            RuntimeError: If signing fails. The cause is not chained, so the
-                caller learns nothing about the key or the algorithm.
-        """
-        lifetime = self._checked_lifetime(ttl)
-        issued_at = datetime.now(tz=UTC)
-        expires_at = issued_at + lifetime
-        jti = secrets.token_urlsafe(_JTI_BYTES)
-        claims = self._claims(identity, issued_at=issued_at, expires_at=expires_at, jti=jti)
-        try:
-            token = self._jwt.encode(
-                claims, self._key, algorithm=self._config.algorithm, headers=self._headers
-            )
-        except Exception:  # noqa: BLE001 - the boundary: nothing signing-related escapes
-            # The traceback goes to the operator, who needs to know which key and
-            # algorithm failed; the raised error carries none of it, so a caller
-            # learns only that issuing failed.
-            _logger.exception("JWT issuing failed")
-            raise RuntimeError("JWT issuing failed") from None
-        _logger.info(
-            "issued token jti=%s sub=%s roles=%s aud=%s kid=%s exp=%s",
-            jti,
-            identity.subject,
-            list(identity.roles),
-            self._config.audience,
-            self._config.kid,
-            int(expires_at.timestamp()),
-        )
-        return IssuedToken(token=token, expires_at=expires_at, jti=jti)
-
-    def _checked_lifetime(self, ttl: timedelta | None) -> timedelta:
-        if ttl is None:
-            return self._max_ttl
-        if ttl <= timedelta(0):
-            raise ValueError("ttl must be positive")
-        if ttl > self._max_ttl:
-            raise ValueError(
-                f"ttl {ttl} exceeds the configured lifetime {self._max_ttl}: "
-                "the configured value is the ceiling"
-            )
-        return ttl
-
-    def _claims(
-        self,
-        identity: Identity,
-        *,
-        issued_at: datetime,
-        expires_at: datetime,
-        jti: str,
-    ) -> dict[str, Any]:
-        if not identity.subject:
-            raise ValueError("cannot issue a token for an identity with no subject")
-        roles_claim = self._config.roles_claim
-        if not identity.roles:
-            # A caller with zero privilege is a role translation that failed, not
-            # a legitimate request: a valid token with no role still authenticates.
-            raise ValueError(
-                f"cannot issue a token with an empty {roles_claim!r}: "
-                "an identity with no roles is a translation bug"
-            )
-        claims: dict[str, Any] = {
-            "sub": identity.subject,
-            "aud": self._config.audience,
-            "iss": self._config.issuer,
-            "iat": int(issued_at.timestamp()),
-            "exp": int(expires_at.timestamp()),
-            "jti": jti,
-            roles_claim: list(identity.roles),
-        }
-        claims.update(_attribute_claims(identity.attributes))
-        return claims
-
-
-def _attribute_claims(attributes: Mapping[str, Any]) -> dict[str, str]:
-    """Project identity attributes onto namespaced custom claims.
-
-    Every attribute travels under :data:`ATTRIBUTE_CLAIM_PREFIX`, so none of them
-    can occupy a bare claim name a verifier might read as its roles claim.
-
-    Args:
-        attributes: Identity attributes. Typed as ``Any`` values because
-            :class:`Identity` does not validate them and a non-string would be
-            encoded and then silently dropped by the reader.
-
-    Returns:
-        The prefixed claims.
-
-    Raises:
-        ValueError: If a name already carries the namespace, or a value is not
-            a string.
-    """
-    prefixed: list[str] = []
-    unstringly: list[str] = []
-    for name, value in attributes.items():
-        if name.startswith(ATTRIBUTE_CLAIM_PREFIX):
-            prefixed.append(name)
-        if not isinstance(value, str):
-            unstringly.append(name)
-    if prefixed:
-        raise ValueError(
-            f"identity attributes {sorted(prefixed)} already carry the "
-            f"{ATTRIBUTE_CLAIM_PREFIX!r} namespace: the issuer adds it"
-        )
-    if unstringly:
-        raise ValueError(f"identity attributes {sorted(unstringly)} must hold string values")
-    return {f"{ATTRIBUTE_CLAIM_PREFIX}{name}": value for name, value in attributes.items()}
-
-
-def _load_pyjwt() -> ModuleType:
-    """Import and return :mod:`jwt`, failing fast with an actionable hint.
-
-    The import is local on purpose: ``pyjwt`` is an optional extra, and
-    resolving it at authenticator construction turns a missing dependency into
-    a startup error instead of a broken API at first request.
-
-    Returns:
-        The imported ``jwt`` module.
-
-    Raises:
-        ImportError: If ``pyjwt`` is not installed.
-    """
-    try:
-        import jwt
-    except ImportError as exc:
-        raise ImportError(_PYJWT_HINT) from exc
-    return jwt
+    lowered = kind.lower()
+    rest = lowered.removeprefix("application/")
+    return rest if "/" not in rest else lowered
 
 
 def _bearer_token(header: str | None) -> str | None:
@@ -398,23 +217,24 @@ def _roles_from_claim(value: Any) -> tuple[str, ...]:
     list holding one valid role and one number is a broken token, not a
     partially authorized caller.
     """
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if not isinstance(value, (list, tuple)) or not value:
-        return ()
-    if not all(isinstance(item, str) and item for item in value):
-        return ()
-    return tuple(dict.fromkeys(value))
+    roles = [value] if isinstance(value, str) else value
+    if isinstance(roles, (list, tuple)) and all(map(_is_role, roles)):
+        return tuple(dict.fromkeys(roles))
+    return ()
 
 
-def _attributes(claims: Mapping[str, Any], roles_claim: str | None) -> dict[str, str]:
+def _is_role(item: Any) -> bool:
+    """A non-empty string: the only shape a role takes."""
+    return isinstance(item, str) and bool(item)
+
+
+def _attributes(claims: Mapping[str, Any], excluded: frozenset[str]) -> dict[str, str]:
     """Project the caller-describing claims onto identity attributes.
 
     Only string-valued custom claims cross: structured claims would smuggle
     unverifiable shapes into a domain value object, and the registered claims
     describe the token rather than the caller.
     """
-    excluded = _PROTOCOL_CLAIMS | ({roles_claim} if roles_claim else frozenset())
     crossing = {
         name: value
         for name, value in claims.items()
