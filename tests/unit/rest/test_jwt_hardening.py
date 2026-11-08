@@ -97,7 +97,7 @@ class TestHmacKeyStrength:
     def test_a_pem_key_is_never_a_shared_secret(self) -> None:
         """Algorithm confusion: an HS secret that is a public key lets its holders sign."""
         pem = "-----BEGIN PUBLIC KEY-----\n" + "A" * 64 + "\n-----END PUBLIC KEY-----"
-        with pytest.raises(ConfigError, match="is an asymmetric key"):
+        with pytest.raises(ConfigError, match="not a shared secret"):
             JwtAuthConfig(secret=Secret(pem), algorithms=("HS256",))
 
     def test_the_refusal_never_echoes_the_key(self, tmp_path: Path) -> None:
@@ -584,7 +584,7 @@ class TestKeyMaterialIsNeverASharedSecret:
         ],
     )
     def test_an_openssh_key_or_a_jwk_is_refused(self, material: str) -> None:
-        with pytest.raises(ConfigError, match="is an asymmetric key; HS256"):
+        with pytest.raises(ConfigError, match="not a shared secret; HS256"):
             JwtAuthConfig(secret=Secret(material), algorithms=("HS256",))
 
 
@@ -617,3 +617,109 @@ class TestIssuerKeyFit:
         private = _rsa_pem(2048)[0]
         issuer = JwtIssuer(_issuer(private, "RS256"))
         assert private not in repr(vars(issuer))
+
+
+def _ed25519() -> Any:
+    from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: PLC0415
+
+    return ed25519.Ed25519PrivateKey.generate()
+
+
+def _openssh_line(private: Any, comment: str = "") -> str:
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    line = (
+        private.public_key()
+        .public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+        .decode()
+    )
+    return f"{line} {comment}".rstrip()
+
+
+class TestOpenSshPublicKeys:
+    async def test_a_comment_naming_a_private_key_is_still_a_public_key(self) -> None:
+        """The released verifier accepted it: only a PEM private header is refused."""
+        private = _ed25519()
+        config = JwtAuthConfig(
+            public_keys={"k": _openssh_line(private, "PRIVATE KEY")}, algorithms=("EdDSA",)
+        )
+        token = pyjwt.encode(
+            {"sub": "u", "exp": int(time.time()) + 60},
+            private,
+            algorithm="EdDSA",
+            headers={"kid": "k"},
+        )
+        identity = await JwtAuthenticator(config).authenticate(_credentials(token))
+        assert identity is not None and identity.subject == "u"
+
+    async def test_leading_whitespace_verifies_what_startup_checked(self) -> None:
+        """The checked key object verifies, so padding cannot split check and use."""
+        private = _ed25519()
+        config = JwtAuthConfig(
+            public_keys={"k": "\n  " + _openssh_line(private)}, algorithms=("EdDSA",)
+        )
+        token = pyjwt.encode(
+            {"sub": "u", "exp": int(time.time()) + 60},
+            private,
+            algorithm="EdDSA",
+            headers={"kid": "k"},
+        )
+        assert await JwtAuthenticator(config).authenticate(_credentials(token)) is not None
+
+    def test_a_fido_sk_key_is_refused(self) -> None:
+        """An ``sk-`` key signs another message format: it could never verify a JWT."""
+        fido = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t x"
+        with pytest.raises(ConfigError, match="is not a PEM or OpenSSH public key"):
+            JwtAuthConfig(public_keys={"k": fido}, algorithms=("EdDSA",))
+
+
+class TestDerKeyIsNeverASharedSecret:
+    """A provider's bare base64 public key would let anyone mint HS tokens."""
+
+    @staticmethod
+    def _der_base64(public: Any) -> str:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+        der = public.public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        return base64.b64encode(der).decode()
+
+    def test_rsa_ec_and_ed25519_public_keys_are_refused(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
+
+        for public in (
+            rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key(),
+            ec.generate_private_key(ec.SECP256R1()).public_key(),
+            _ed25519().public_key(),
+        ):
+            with pytest.raises(ConfigError, match="not a shared secret"):
+                JwtAuthConfig(secret=Secret(self._der_base64(public)), algorithms=("HS256",))
+
+    def test_a_random_base64_secret_is_still_a_secret(self) -> None:
+        import secrets  # noqa: PLC0415
+
+        secret = base64.b64encode(secrets.token_bytes(48)).decode()
+        JwtAuthConfig(secret=Secret(secret), algorithms=("HS256",))
+
+
+class TestIssuingFailureLog:
+    def test_a_signing_failure_logs_no_traceback(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The traceback's frames hold the revealed key: only the error type is logged."""
+        from loom.core.identity import Identity  # noqa: PLC0415
+        from loom.rest.auth import JwtIssuer  # noqa: PLC0415
+
+        issuer = JwtIssuer(_issuer("s" * 32, "HS256"))
+
+        def broken(*_: object, **__: object) -> str:
+            raise ValueError("backend detail")
+
+        monkeypatch.setattr(issuer._jwt, "encode", broken)
+        with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
+            issuer.issue(Identity(subject="u", roles=("r",), mechanism="jwt"))
+
+        record = next(r for r in caplog.records if "issuing failed" in r.getMessage())
+        assert record.exc_info is None
+        assert "ValueError" in record.getMessage()

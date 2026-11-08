@@ -104,6 +104,7 @@ class _SharedSecret:
         require_hmac_strength(self.secret.reveal(), algorithm, setting="JWT auth 'secret'")
 
     def load(self, algorithms: tuple[str, ...]) -> Keyring:
+        self.check(algorithms)  # the keyring holds the secret as it was checked
         return FixedKey(Key(self.secret.reveal(), algorithms))
 
 
@@ -178,7 +179,8 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
 
     Binds from the ``app.rest.auth.jwt`` config section.  Validation runs on
     construction (fail-fast): exactly one key source, each algorithm fit for
-    its key.
+    its key. The one exception is a ``secret_path`` file, read and checked
+    when the verifier is built, as the released form always did.
 
     Attributes:
         secret: The shared secret for symmetric algorithms (HS*), resolved by
@@ -190,7 +192,8 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         public_keys: Public keys for asymmetric algorithms (RS*/PS*/ES*/EdDSA),
             keyed by the ``kid`` that selects them. Each entry is a
             :class:`JwtPublicKey` naming its own algorithm, or, in the released
-            form, PEM text that takes every algorithm of ``algorithms``.
+            form, PEM or OpenSSH text that takes those of ``algorithms``
+            fitting its key type.
         algorithms: Accepted algorithms for ``secret``, ``secret_path`` and PEM
             text entries. Refused with :class:`JwtPublicKey` entries, which name
             their own.  The ``none`` algorithm is always forbidden.
@@ -283,8 +286,8 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         Raises:
             ConfigError: When an asymmetric issuer has no ``kid``, previous keys
                 come with a symmetric one, ``previous_keys`` reuses the ``kid``,
-                or the signing key cannot be parsed. Parser errors are chained
-                and never carry the material.
+                or the signing key cannot be parsed. Parser errors are dropped,
+                never chained or kept as context.
         """
         return cls(
             **_verifier_keys(issuer, previous_keys or {}),

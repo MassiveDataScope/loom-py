@@ -9,6 +9,9 @@ private material. The keyring here is what a verifier picks a token's key from.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +51,10 @@ first request: a typo like ``" HS256"`` would otherwise fail per-call."""
 _PEM_MARKER: Final = "-----BEGIN "
 """What every PEM key starts with: never the material of a shared secret."""
 
+_PRIVATE_PEM: Final = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+"""The header of a PEM private key, matched as a header: the words alone may
+sit in an OpenSSH public key's free-text comment."""
+
 _MIN_RSA_BITS: Final = 2048
 """Smallest RSA modulus accepted for signing or verifying: a MUST of RFC 7518 §3.3."""
 
@@ -80,9 +87,14 @@ def require_supported(algorithm: str, *, setting: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class Key:
-    """Key material and the only algorithms it verifies (RFC 8725 §3.1)."""
+    """Key material and the only algorithms it verifies (RFC 8725 §3.1).
 
-    material: str = field(repr=False)
+    ``material`` is the shared secret for HS*, or the public key already parsed
+    and checked at startup: the JWT library verifies with that object and never
+    parses the text a second time, so what was checked is what verifies.
+    """
+
+    material: Any = field(repr=False)
     algorithms: tuple[str, ...]
 
 
@@ -143,7 +155,7 @@ class JwtPublicKey(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         require_family(self.alg, symmetric=False, case="a public key", instead="a 'secret'")
         # Refused here too, not only by the config holding it: ``pem`` is plain
         # text, so this object must never exist with private material in it.
-        if "PRIVATE KEY" in self.pem:
+        if _PRIVATE_PEM.search(self.pem):
             raise ConfigError("A JWT public key holds a private key; publish only its public half.")
 
 
@@ -159,9 +171,10 @@ def public_key(key_id: str, material: str, algorithms: tuple[str, ...]) -> Key:
     setting = f"JWT auth 'public_keys' entry {key_id!r}"
     if not key_id.strip() or not material.strip():
         raise ConfigError("JWT auth 'public_keys' entries need a key id and material.")
-    if "PRIVATE KEY" in material:
+    if _PRIVATE_PEM.search(material):
         raise ConfigError(f"{setting} holds a private key; publish only its public half.")
-    return Key(material, _fitting(_public_key(material, setting=setting), algorithms, setting))
+    parsed = _public_key(material, setting=setting)
+    return Key(parsed, _fitting(parsed, algorithms, setting))
 
 
 def _fitting(key: Any, algorithms: tuple[str, ...], setting: str) -> tuple[str, ...]:
@@ -188,8 +201,13 @@ _ALGORITHM_KEY_KIND: Final = {
 
 _CURVE_KIND: Final = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
 
-_SSH_PREFIXES: Final = ("ssh-", "ecdsa-sha2-", "sk-")
-"""OpenSSH public key lines, which the released verifier accepted next to PEM."""
+_SSH_PUBLIC_PREFIXES: Final = ("ssh-", "ecdsa-sha2-")
+"""OpenSSH public key lines a JWT can verify with, accepted next to PEM as the
+released verifier did. FIDO ``sk-`` keys sign another message format and never
+verify a JWT, so they are not among them."""
+
+_SSH_PREFIXES: Final = (*_SSH_PUBLIC_PREFIXES, "sk-")
+"""Every OpenSSH key line: none of them is ever a shared secret."""
 
 
 def _public_key(material: str, *, setting: str) -> Any:
@@ -203,7 +221,7 @@ def _public_key(material: str, *, setting: str) -> Any:
     text = material.strip()
     load = (
         serialization.load_ssh_public_key
-        if text.startswith(_SSH_PREFIXES)
+        if text.startswith(_SSH_PUBLIC_PREFIXES)
         else serialization.load_pem_public_key
     )
     try:
@@ -265,7 +283,10 @@ def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
     if _is_key_material(secret):
         # A key used as an HMAC secret is algorithm confusion: whoever holds
         # the public half could sign. The key fits an asymmetric algorithm.
-        raise ConfigError(f"{setting} is an asymmetric key; {algorithm} needs a shared secret.")
+        raise ConfigError(
+            f"{setting} is a key (PEM, OpenSSH, DER or JWK), not a shared secret; "
+            f"{algorithm} needs the raw secret."
+        )
     if len(secret.rstrip("\r\n").encode("utf-8")) < minimum:
         raise ConfigError(
             f"{setting} must be at least {minimum} bytes for {algorithm} (RFC 7518 section 3.2)."
@@ -273,13 +294,49 @@ def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
 
 
 def _is_key_material(value: str) -> bool:
-    """A PEM block, an OpenSSH key line, or a JWK: never a shared secret."""
+    """A PEM block, an OpenSSH key line, a JWK or a base64 DER key: never a shared secret."""
     text = value.strip()
     return (
         _PEM_MARKER in text
         or text.startswith(_SSH_PREFIXES)
         or (text.startswith("{") and '"kty"' in text)
+        or _is_der_key(text)
     )
+
+
+def _is_der_key(text: str) -> bool:
+    """Whether *text* is a key or certificate in bare base64 DER.
+
+    Identity providers publish public keys this way, with no PEM header
+    (Keycloak's realm ``public_key``). A random base64 secret decodes to bytes
+    no DER parser accepts, so it is never mistaken for one.
+    """
+    try:
+        der = base64.b64decode("".join(text.split()), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return any(_parses(load, der) for load in _der_loaders())
+
+
+def _der_loaders() -> tuple[Any, ...]:
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    return (
+        serialization.load_der_public_key,
+        lambda der: serialization.load_der_private_key(der, password=None),
+        x509.load_der_x509_certificate,
+    )
+
+
+def _parses(load: Any, der: bytes) -> bool:
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+
+    try:
+        load(der)
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+    return True
 
 
 def read_key_file(path: str, *, setting: str) -> str:
@@ -304,7 +361,7 @@ def require_signing_key(material: str, algorithm: str) -> None:
     if is_symmetric(algorithm):
         require_hmac_strength(material, algorithm, setting=setting)
         return
-    if _PEM_MARKER not in material or "PRIVATE KEY" not in material:
+    if not _PRIVATE_PEM.search(material):
         raise ConfigError(f"{algorithm} needs a PEM private key as {setting}.")
     # The verifiers' rule, applied to the public half: key type, EC curve and
     # RSA size all fit the one algorithm, so the issuer cannot mint tokens

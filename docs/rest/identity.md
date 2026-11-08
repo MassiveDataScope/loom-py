@@ -203,9 +203,9 @@ only where developers need it:
 | HS secret of at least the hash size (32, 48 or 64 bytes for HS256, HS384, HS512), one algorithm per secret | always, verifier and issuer | RFC 7518 §3.2 and RFC 8725 §3.1; a hex or base64 secret needs twice or a third more characters for the same strength |
 | RSA key of at least 2048 bits, signing and published keys | always, verifier and issuer | RFC 7518 §3.3 |
 | A blank (whitespace-only) secret is refused | always, verifier and issuer | A.8.24 |
-| A PEM key is never an HS secret | always, verifier and issuer | algorithm confusion: whoever holds the public half could sign |
+| A key (PEM, OpenSSH, base64 DER or JWK) is never an HS secret | always, verifier and issuer | algorithm confusion: whoever holds the public half could sign |
 | Each public key verifies only its own `alg` | `public_keys` entries written as `{alg, pem}` | RFC 8725 §3.1; the token cannot pick the algorithm |
-| A public key is a PEM public key of the type and curve its algorithm needs | always, at startup | a mismatch would refuse every token; an unparsed key skipped the RSA size check |
+| A public key is a PEM or OpenSSH public key of the type and curve its algorithm needs | always, at startup | a mismatch would refuse every token; an unparsed key skipped the RSA size check |
 | The resolved audience and issuer are checked against the environment the app is composed for | staging and production, at startup | the static check sees only the written value |
 | `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
 

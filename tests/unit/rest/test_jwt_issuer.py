@@ -275,7 +275,7 @@ def test_the_none_algorithm_is_always_forbidden(algorithm: str) -> None:
 
 def test_a_private_key_cannot_sign_with_a_symmetric_algorithm() -> None:
     private, _ = _keypair()
-    with pytest.raises(ConfigError, match="is an asymmetric key; HS256 needs a shared secret"):
+    with pytest.raises(ConfigError, match="not a shared secret; HS256 needs the raw secret"):
         _issuer_config(private, algorithm="HS256")
 
 

@@ -116,11 +116,14 @@ class JwtIssuer:
                 algorithm=self._config.algorithm,
                 headers=self._headers,
             )
-        except Exception:  # noqa: BLE001 - the boundary: nothing signing-related escapes
-            # The traceback goes to the operator, who needs to know which key and
-            # algorithm failed; the raised error carries none of it, so a caller
-            # learns only that issuing failed.
-            _logger.exception("JWT issuing failed")
+        except Exception as exc:  # noqa: BLE001 - the boundary: nothing signing-related escapes
+            # The operator gets the error type and the algorithm, never the
+            # traceback: its frames hold the revealed key, and a handler that
+            # captures locals would record it. The caller learns only that
+            # issuing failed.
+            _logger.error(  # noqa: TRY400 - a traceback would carry the key
+                "JWT issuing failed: %s with %s", type(exc).__name__, self._config.algorithm
+            )
             raise RuntimeError("JWT issuing failed") from None
         _logger.info(
             "issued token jti=%s sub=%s roles=%s aud=%s kid=%s exp=%s",

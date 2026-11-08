@@ -22,10 +22,10 @@
   key, or an HS secret), resolved by any placeholder, replacing
   `private_key_path`, `private_key_ref`, `key_ref_region`, `secret_path` and
   `allow_symmetric_signing`; `load_signing_key()` and `KEY_REF_RESOLVERS` are
-  gone. A private key in `public_keys` is refused, and the verifier reads its
-  `secret_path` once at startup.
+  gone. `JwtAuthConfig.verification_key()` is replaced by `keyring()`. A
+  private key in `public_keys` is refused.
 - An RSA key below 2048 bits, a whitespace-only HS secret and an asymmetric
-  key (a PEM block, an OpenSSH key line or a JWK) used as an HS secret are
+  key (a PEM block, an OpenSSH key line, a JWK or a base64 DER key) used as an HS secret are
   refused, on both the verifier and the issuer. A public key that does not
   parse as PEM or OpenSSH, or whose type or EC curve fits none of its
   algorithms, is refused when the configuration is built instead of failing
@@ -1779,6 +1779,7 @@ by version; each release's own list is in its GitHub Release notes.
   def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
       return [Score(value=m.payload.amount) for m in messages]
 
+
   # after
   def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
       return [[Score(value=m.payload.amount)] for m in messages]
@@ -1827,13 +1828,16 @@ by version; each release's own list is in its GitHub Release notes.
   def write_batch(self, items):
       self._buffer.extend(items)
 
+
   def close(self):
       flush(self._path, self._buffer)
+
 
   # after
   def write_batch(self, items) -> int:
       self._buffer.extend(items)
       return 0  # buffered, nothing durable yet
+
 
   def close(self) -> int:
       flush(self._path, self._buffer)
