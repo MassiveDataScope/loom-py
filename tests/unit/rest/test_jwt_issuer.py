@@ -230,7 +230,7 @@ def test_a_per_call_ttl_cannot_outlive_the_configured_one(tmp_path: Path) -> Non
 
 def test_symmetric_signing_needs_an_explicit_opt_in(tmp_path: Path) -> None:
     secret_file = tmp_path / "hs.key"
-    secret_file.write_text("shared")
+    secret_file.write_text("shared-secret-of-thirty-two-bytes")
     with pytest.raises(ConfigError, match="allow_symmetric_signing"):
         JwtIssuerConfig(
             secret_path=str(secret_file),
@@ -243,7 +243,7 @@ def test_symmetric_signing_needs_an_explicit_opt_in(tmp_path: Path) -> None:
 
 def test_symmetric_signing_is_allowed_when_asked_for(tmp_path: Path) -> None:
     secret_file = tmp_path / "hs.key"
-    secret_file.write_text("shared")
+    secret_file.write_text("shared-secret-of-thirty-two-bytes")
     config = JwtIssuerConfig(
         secret_path=str(secret_file),
         algorithm="HS256",
@@ -417,7 +417,7 @@ def test_an_already_prefixed_attribute_is_refused(tmp_path: Path) -> None:
 
 def test_a_symmetric_secret_never_carries_into_the_struct(tmp_path: Path) -> None:
     secret_file = tmp_path / "hs.key"
-    secret_file.write_text("SHARED-SIGNING-SECRET")
+    secret_file.write_text("SHARED-SIGNING-SECRET-OF-32-BYTES")
 
     config = JwtIssuerConfig(
         secret_path=str(secret_file),
@@ -428,8 +428,8 @@ def test_a_symmetric_secret_never_carries_into_the_struct(tmp_path: Path) -> Non
         allow_symmetric_signing=True,
     )
 
-    assert b"SHARED-SIGNING-SECRET" not in msgspec.json.encode(config)
-    assert config.load_signing_key() == "SHARED-SIGNING-SECRET"
+    assert b"SHARED-SIGNING-SECRET-OF-32-BYTES" not in msgspec.json.encode(config)
+    assert config.load_signing_key() == "SHARED-SIGNING-SECRET-OF-32-BYTES"
 
 
 # ── configuración: fail-fast al arrancar, no en la primera petición ─────────

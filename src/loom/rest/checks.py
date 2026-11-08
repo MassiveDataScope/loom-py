@@ -11,7 +11,12 @@ replaces ``app.rest.auth`` for that function, so it must name a mechanism too.
 which maps every route, parameter and field. The three URLs are on by
 default; an explicit ``null`` switches each off.
 
-Both read the keys as written and resolve no placeholder, so
+``loom.rest.E002`` and ``loom.rest.E003``: a built-in ``jwt`` section names
+no ``audience`` or no ``issuer``. Without them a token the same key signed for
+another service is accepted here (RFC 8725 §3.8-3.9; ISO/IEC 27001:2022 A.8.5).
+Each ``auth`` that ``E001`` reads is judged.
+
+All read the keys as written and resolve no placeholder, so
 ``loom check --deploy`` runs them in CI without the application's secrets. A
 value given by a placeholder is judged as written: ``jwt`` must be a literal
 mapping and ``custom`` the literal ``true``, since a placeholder may resolve
@@ -33,6 +38,12 @@ AUTHENTICATION_CHECK: Final = f"{REST_CHECKS}.E001"
 
 SCHEMA_CHECK: Final = f"{REST_CHECKS}.W001"
 """Id of the check warning that a deployed API publishes its schema."""
+
+AUDIENCE_CHECK: Final = f"{REST_CHECKS}.E002"
+"""Id of the check refusing a deployed jwt section that names no audience."""
+
+ISSUER_CHECK: Final = f"{REST_CHECKS}.E003"
+"""Id of the check refusing a deployed jwt section that names no issuer."""
 
 _AUTH_KEY = "app.rest.auth"
 _SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
@@ -87,3 +98,42 @@ def _schema_published(config: ConfigContext) -> Finding | None:
         message=f"the API publishes its schema through {', '.join(published)}.",
         hint="set each of them to null in the deployed configuration.",
     )
+
+
+@deploy_check(AUDIENCE_CHECK)
+def _jwt_audience_named(config: ConfigContext) -> Finding | None:
+    return _jwt_claim_named(config, "audience", "aud")
+
+
+@deploy_check(ISSUER_CHECK)
+def _jwt_issuer_named(config: ConfigContext) -> Finding | None:
+    return _jwt_claim_named(config, "issuer", "iss")
+
+
+def _jwt_claim_named(config: ConfigContext, setting: str, claim: str) -> Finding | None:
+    """Refuse each built-in ``jwt`` section that does not name *setting*.
+
+    A placeholder counts as named: the check runs in CI without the secrets.
+    """
+    unnamed = [
+        f"{key}.jwt"
+        for key in _auth_keys(config)
+        if isinstance(jwt := _jwt_section(config.raw(key)), dict) and not _named(jwt.get(setting))
+    ]
+    if not unnamed:
+        return None
+    return Finding(
+        message=(
+            f"the API accepts a token minted for any {claim}: {', '.join(unnamed)} "
+            f"{'names' if len(unnamed) == 1 else 'name'} no '{setting}'."
+        ),
+        hint=f"set '{setting}' to the value the identity provider writes in the '{claim}' claim.",
+    )
+
+
+def _jwt_section(auth: object) -> object:
+    return auth.get("jwt") if isinstance(auth, dict) else None
+
+
+def _named(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())

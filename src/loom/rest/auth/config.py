@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from loom.core.config.errors import ConfigError
 from loom.core.config.secrets import SecretsManagerResolver
@@ -21,6 +21,13 @@ DEFAULT_EXCLUDE_PATHS: tuple[str, ...] = (
 """Paths served without authentication unless the application says otherwise."""
 
 _FORBIDDEN_ALGORITHM = "none"
+
+MAX_LEEWAY_SECONDS: Final = 300
+"""Largest clock-skew tolerance a verifier accepts: RFC 7519 §4.1.4 asks for a
+small leeway, and a larger one quietly extends every token's lifetime."""
+
+_HMAC_MINIMUM_BYTES: Final = {"HS256": 32, "HS384": 48, "HS512": 64}
+"""Smallest HMAC key per algorithm: the size of its hash, a MUST of RFC 7518 §3.2."""
 
 _KEY_REF_RESOLVER_FACTORIES: dict[str, Callable[[str | None], Any]] = {
     "secrets": SecretsManagerResolver,
@@ -87,6 +94,24 @@ def _require_supported(algorithm: str, *, setting: str) -> None:
         )
 
 
+def require_hmac_strength(secret: str, algorithms: Iterable[str], *, setting: str) -> None:
+    """Refuse an HMAC key shorter than the hash of the strongest algorithm it signs.
+
+    RFC 7518 §3.2 makes the hash size a MUST, so the rule holds in every
+    environment. The message names the size, never the key.
+
+    Raises:
+        ConfigError: When the key is shorter than the largest minimum among the
+            symmetric *algorithms*.
+    """
+    minimum = max((_HMAC_MINIMUM_BYTES.get(a.upper(), 0) for a in algorithms), default=0)
+    if len(secret.encode("utf-8")) < minimum:
+        raise ConfigError(
+            f"{setting} must be at least {minimum} bytes for "
+            f"{', '.join(a for a in algorithms if _is_symmetric(a))} (RFC 7518 section 3.2)."
+        )
+
+
 def _read_key_file(path: str, *, setting: str) -> str:
     """Read key material from disk, never chaining the cause.
 
@@ -129,9 +154,16 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             exclusive with ``secret``.
         algorithms: Explicit allowlist of accepted JWT algorithms.  The
             ``none`` algorithm is always forbidden.
-        audience: Expected ``aud`` claim.  Validated only when set.
-        issuer: Expected ``iss`` claim.  Validated only when set.
-        leeway_seconds: Clock-skew tolerance applied to time-based claims.
+        audience: Expected ``aud`` claim.  Validated when set; a deployed API
+            must set it (deploy check ``loom.rest.E002``).
+        issuer: Expected ``iss`` claim.  Validated when set; a deployed API
+            must set it (deploy check ``loom.rest.E003``).
+        leeway_seconds: Clock-skew tolerance applied to time-based claims, at
+            most :data:`MAX_LEEWAY_SECONDS`.
+        accepted_types: Accepted values of the token's ``typ`` header, compared
+            case-insensitively and without an ``application/`` prefix; empty
+            accepts any. Set ``("at+jwt",)`` for an RFC 9068 access-token IdP,
+            so an ID token cannot pass as an access token.
         exclude_paths: Exact request paths that bypass authentication.
         roles_claim: Name of the verified claim carrying the roles the caller
             is authorized to use.  Consumed by the SQL endpoint: the effective
@@ -159,6 +191,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
     audience: str | None = None
     issuer: str | None = None
     leeway_seconds: int = 0
+    accepted_types: tuple[str, ...] = ()
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
     roles_claim: str | None = None
 
@@ -170,6 +203,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             f" audience={self.audience!r},"
             f" issuer={self.issuer!r},"
             f" leeway_seconds={self.leeway_seconds!r},"
+            f" accepted_types={self.accepted_types!r},"
             f" exclude_paths={self.exclude_paths!r},"
             f" roles_claim={self.roles_claim!r})"
         )
@@ -282,8 +316,10 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
                 raise ConfigError("JWT auth 'public_keys' entries need a key id and material.")
         if not self.algorithms:
             raise ConfigError("JWT auth requires a non-empty 'algorithms' allowlist.")
-        if self.leeway_seconds < 0:
-            raise ConfigError("JWT auth 'leeway_seconds' must be >= 0.")
+        if not 0 <= self.leeway_seconds <= MAX_LEEWAY_SECONDS:
+            raise ConfigError(f"JWT auth 'leeway_seconds' must be in 0..{MAX_LEEWAY_SECONDS}.")
+        if any(not kind.strip() for kind in self.accepted_types):
+            raise ConfigError("JWT auth 'accepted_types' entries must not be blank.")
         if self.roles_claim is not None and not self.roles_claim.strip():
             raise ConfigError("JWT auth 'roles_claim' must not be blank.")
         for algorithm in self.algorithms:
@@ -313,7 +349,9 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             unknown ``kid``, or a missing one while several keys are configured.
         """
         if self.secret_path is not None:
-            return _read_key_file(self.secret_path, setting="JWT auth 'secret_path'")
+            secret = _read_key_file(self.secret_path, setting="JWT auth 'secret_path'")
+            require_hmac_strength(secret, self.algorithms, setting="JWT auth 'secret_path'")
+            return secret
         if key_id is not None:
             return self.public_keys.get(key_id)
         if len(self.public_keys) == 1:
@@ -460,8 +498,15 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
                 cause is never chained: an OS error carries the path, and a
                 ``UnicodeDecodeError`` carries the file contents on
                 ``exc.object``), or if the managed store cannot answer (that
-                cause is chained: resolver errors never carry the material).
+                cause is chained: resolver errors never carry the material),
+                or if an HMAC secret is shorter than its algorithm's hash.
         """
+        material = self._read_signing_key()
+        if _is_symmetric(self.algorithm):
+            require_hmac_strength(material, (self.algorithm,), setting="the JWT issuer secret")
+        return material
+
+    def _read_signing_key(self) -> str:
         if self.private_key_ref is not None:
             return _fetch_key_ref(self.private_key_ref, region=self.key_ref_region)
         source = self.secret_path or self.private_key_path

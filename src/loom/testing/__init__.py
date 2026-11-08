@@ -15,6 +15,7 @@ from loom.testing.serverless import LambdaEvent
 
 if TYPE_CHECKING:
     from loom.testing.http_harness import HttpTestHarness
+    from loom.testing.jwt_auth import JwtTestAuth, jwt_test_auth
     from loom.testing.lambda_http import LambdaTestClient
     from loom.testing.repository_harness import (
         RepositoryIntegrationHarness,
@@ -30,6 +31,7 @@ __all__ = [
     "GoldenHarness",
     "HttpTestHarness",
     "InMemoryRepository",
+    "JwtTestAuth",
     "LambdaEvent",
     "LambdaTestClient",
     "McpHandleDouble",
@@ -40,8 +42,11 @@ __all__ = [
     "UseCaseTest",
     "agent_engine_contract_suite",
     "build_repository_harness",
+    "jwt_test_auth",
     "serialize_plan",
 ]
+
+_JWT_EXPORTS = frozenset({"JwtTestAuth", "jwt_test_auth"})
 
 _REPOSITORY_HARNESS_EXPORTS = frozenset(
     {"RepositoryIntegrationHarness", "ScenarioDict", "build_repository_harness"}
@@ -54,6 +59,8 @@ def __getattr__(name: str) -> Any:
         return _http_test_harness()
     if name == "LambdaTestClient":
         return _lambda_test_client()
+    if name in _JWT_EXPORTS:
+        return getattr(importlib.import_module("loom.testing.jwt_auth"), name)
     if name in _REPOSITORY_HARNESS_EXPORTS:
         return _repository_harness_export(name)
     raise AttributeError(name)

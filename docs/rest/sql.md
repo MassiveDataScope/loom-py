@@ -102,6 +102,7 @@ app:
     auth:
       jwt:
         audience: loom-api
+        issuer: https://idp.example.com
         roles_claim: loom_sql_roles
 ```
 
@@ -445,6 +446,7 @@ app:
     auth:
       jwt:
         audience: loom-analytics
+        issuer: https://idp.example.com
         roles_claim: loom_sql_roles
 
 sql:
@@ -513,9 +515,10 @@ app:
       jwt:
         secret_path: ${oc.env:JWT_SECRET_PATH}
         algorithms: [HS256]
-        audience: loom-api
-        issuer: null
-        leeway_seconds: 0
+        audience: loom-api            # required in staging and production (loom.rest.E002)
+        issuer: https://idp.example.com  # required in staging and production (loom.rest.E003)
+        leeway_seconds: 0             # at most 300
+        accepted_types: []            # e.g. [at+jwt] for an RFC 9068 identity provider
         exclude_paths: [/docs, /redoc, /openapi.json, /metrics, /health]
         roles_claim: loom_sql_roles
 ```

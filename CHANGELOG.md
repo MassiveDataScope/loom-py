@@ -2,6 +2,16 @@
 
 ## 💥 Breaking
 
+### security
+
+- **security:** JWT hardening aligned with ISO/IEC 27001:2022 A.8.5 and A.8.24.
+  `loom.rest.E002` and `loom.rest.E003` refuse a deployed JWT authenticator
+  without `audience` or `issuer`; `leeway_seconds` above 300 is a
+  `ConfigError`; an HS secret shorter than the hash (32, 48 or 64 bytes) is
+  refused by the verifier and the issuer. `JwtAuthConfig.accepted_types` opts
+  in to `typ` checking (for example `at+jwt`), and
+  `loom.testing.jwt_test_setup` builds a compliant test configuration.
+
 ### lambda
 
 - **lambda:** `identity` is required on `eventbridge`, `s3`, `sns` and

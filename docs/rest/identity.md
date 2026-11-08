@@ -177,6 +177,7 @@ app:
         secret_path: ${oc.env:JWT_SECRET_PATH}
         algorithms: [HS256]
         audience: loom-api
+        issuer: https://idp.example.com
         roles_claim: loom_roles
 ```
 
@@ -188,6 +189,29 @@ anything but non-empty strings — grants **no** role at all rather than a filte
 subset.
 
 See {doc}`sql` for the full JWT reference and the SQL endpoint startup gates.
+
+### Hardening rules
+
+The verifier is strict where a mistake cannot be told apart from an attack, and relaxed
+only where developers need it:
+
+| Rule | Where it applies | Why |
+|---|---|---|
+| `audience` declared (`loom.rest.E002`) | staging and production | without it a token minted for another service on the same identity provider is accepted |
+| `issuer` declared (`loom.rest.E003`) | staging and production | without it a token from any issuer holding the key is accepted |
+| `leeway_seconds` at most 300 | always | a larger leeway silently extends every token's lifetime |
+| HS secret of at least 32 bytes | always, verifier and issuer | RFC 7518 §3.2: an HMAC key shorter than the hash is brute-forceable |
+| `accepted_types` | opt-in | an RFC 9068 provider marks access tokens `at+jwt`; declaring it stops an ID token being used as an access token |
+
+The two deployment checks follow `LOOM_ENV`: they do not run in `development` or `test`,
+and an unset `LOOM_ENV` counts as production. Silencing one is explicit
+(`checks.silenced: [loom.rest.E002]`) and logged.
+
+Remote JWKS with key rotation is out of scope for the built-in verifier: it is network
+I/O with state and an SSRF surface. Plug a custom `Authenticator` for that.
+
+For tests, `loom.testing.jwt_test_setup(tmp_path)` writes a compliant secret and returns
+the matching config and a token minter.
 
 ### Signing keys from a managed store
 

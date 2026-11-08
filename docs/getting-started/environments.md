@@ -171,6 +171,7 @@ app:
         secret_path: /run/secrets/jwt
         algorithms: [HS256]
         audience: my-store
+        issuer: https://idp.example.com
 persistence:
   cursors:
     current_key_id: "2026-10"

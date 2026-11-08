@@ -44,7 +44,7 @@ ROLES_CLAIM = "loom_sql_roles"
 ROLE_A = "role_viz_reader"
 ROLE_B = "role_viz_sales"
 ROLE_FORBIDDEN = "role_admin_evil"
-SECRET = "unit-test-secret"
+SECRET = "unit-test-secret-of-thirty-two-bytes"
 SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")
 pathlib.Path(SECRET_PATH).write_text(SECRET)
 AUDIENCE = "loom-api"

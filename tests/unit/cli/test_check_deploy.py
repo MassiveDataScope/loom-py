@@ -30,7 +30,13 @@ _SAFE_APP: dict[str, Any] = {
         "docs_url": None,
         "redoc_url": None,
         "openapi_url": None,
-        "auth": {"jwt": {"secret_path": "${secrets:/demo/jwt}"}},
+        "auth": {
+            "jwt": {
+                "secret_path": "${secrets:/demo/jwt}",
+                "audience": "demo-api",
+                "issuer": "demo-idp",
+            }
+        },
     },
 }
 _UNAUTHENTICATED_APP: dict[str, Any] = {

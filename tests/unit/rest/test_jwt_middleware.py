@@ -22,7 +22,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import current_identity
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, JwtAuthMiddleware, RequestCredentials
 
-_SECRET = "unit-test-secret"
+_SECRET = "unit-test-secret-of-thirty-two-bytes"
 # The secret is a path now: a msgspec struct emits its fields, so holding the
 # value would publish the key that both verifies and signs.
 _SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")

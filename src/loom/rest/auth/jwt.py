@@ -91,6 +91,7 @@ class JwtAuthenticator:
         # not the mapping being mutated, and this is an authorization allowlist.
         self._secret = config.verification_key(None) if config.secret_path is not None else None
         self._public_keys = dict(config.public_keys)
+        self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
         self._decode_options: dict[str, Any] = {
             "require": ["exp", _SUBJECT_CLAIM],
             "verify_aud": config.audience is not None,
@@ -125,6 +126,9 @@ class JwtAuthenticator:
         return self._to_identity(claims)
 
     def _decode(self, token: str) -> Mapping[str, Any] | None:
+        if self._accepted_types and not self._typed(token):
+            _logger.debug("JWT verification failed: the typ header is not an accepted type")
+            return None
         key = self._key_for(token)
         if key is None:
             _logger.debug("JWT verification failed: no configured key applies to this token")
@@ -144,6 +148,14 @@ class JwtAuthenticator:
             _logger.debug("JWT verification failed: %s: %s", type(exc).__name__, exc)
             return None
         return claims
+
+    def _typed(self, token: str) -> bool:
+        """Whether the token's ``typ`` header is one of the configured types (RFC 8725 §3.11)."""
+        try:
+            kind = self._jwt.get_unverified_header(token).get("typ")
+        except self._jwt.PyJWTError:
+            return False
+        return isinstance(kind, str) and _media_type(kind) in self._accepted_types
 
     def _key_for(self, token: str) -> str | None:
         """Select the verification key from the token's ``kid``.
@@ -378,6 +390,12 @@ def _load_pyjwt() -> ModuleType:
     except ImportError as exc:
         raise ImportError(_PYJWT_HINT) from exc
     return jwt
+
+
+def _media_type(kind: str) -> str:
+    """Normalise a ``typ`` value (RFC 7515 §4.1.9): case-insensitive, ``application/`` optional."""
+    lowered = kind.strip().lower()
+    return lowered.removeprefix("application/")
 
 
 def _bearer_token(header: str | None) -> str | None:
