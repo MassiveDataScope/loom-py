@@ -69,6 +69,7 @@ from loom.core.model.introspection import (
     resolve_type_hints,
     scope_columns,
 )
+from loom.core.model.materialization import is_materialized
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
@@ -236,6 +237,8 @@ def _find_target_sa_class(target_table: str, comp: _Compilation) -> Any:
 
 def compile_model(struct_cls: type, *, metadata: MetaData | None = None) -> Any:
     """Compile a loom ``BaseModel`` Struct into a SQLAlchemy declarative class."""
+    if not is_materialized(struct_cls):
+        raise TypeError(f"{struct_cls.__qualname__} is NotMaterialized and cannot be compiled")
     return _compile_model(struct_cls, _compilation_for(metadata), {})
 
 
@@ -837,7 +840,7 @@ def _resolve_compile_closure(*roots: type) -> tuple[type, ...]:
 
     while queue:
         cls = queue.popleft()
-        if cls in seen:
+        if cls in seen or not is_materialized(cls):
             continue
         seen.add(cls)
         direct = _collect_direct_deps(cls)

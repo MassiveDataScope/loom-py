@@ -119,15 +119,43 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
             constraints="7aac8c7b89099f3b5e15d23acfb33f1b2cedf4312a1c2fc919acc130b9ce29d7",
         ),
     ),
+    GuardRevision(
+        4,
+        "0004.sql",
+        "a65e5f587b1ebb4ba2ff9004a292fb3c5218763b342c38c78531836642f885d6",
+        _catalog(
+            functions="ed82dcab1987499e5dcbdcb7e75d3b1c340ae914cbd3a09972461db039d97d7c",
+            relations="d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
+            columns="87dbc2dd4ee8e78188c5c07a5b74b16a94ee899d7e727df42d1c582719d47389",
+            constraints="422e6d0676b54eb6bb74ff9c0d8c797b8710befe461474aba98b18c75069f5e2",
+        ),
+    ),
 )
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1
 PARTITION_GUARD_REVISION: Final = 2
 AUDIT_GUARD_REVISION: Final = 3
+READING_GUARD_REVISION: Final = 4
 
 
-def required_guard_revision(audited: bool) -> int | None:
-    """The lowest guard revision a store needs: the audit log's when it audits, else any."""
+def required_guard_revision(audited: bool, reading: bool = False) -> int | None:
+    """The lowest guard revision a store needs.
+
+    The audit reader's when it reads the audit log, the audit log's when it
+    audits, else any.
+    """
+    if reading:
+        return READING_GUARD_REVISION
     return AUDIT_GUARD_REVISION if audited else None
+
+
+# The identity arguments of ``<schema>.read_audit_log``, as
+# ``pg_get_function_identity_arguments`` renders them; startup compares with it.
+READ_AUDIT_LOG_ARGUMENTS: Final = (
+    "p_all boolean, p_subjects text[], p_cap integer, p_from timestamp with time zone, "
+    "p_to timestamp with time zone, p_subject text, p_table text, p_tables text[], "
+    "p_row_key jsonb, p_trace_id text, p_op text, p_after_at timestamp with time zone, "
+    "p_after_id bigint, p_ascending boolean, p_limit integer"
+)
 
 
 # The columns of ``<schema>.audit_log`` as ``name type[ not null]``, in order. The
@@ -207,6 +235,14 @@ OWNER_FUNCTIONS: Final = frozenset(
         "drop_expired_audit_partition",
         "refuse_audit_log_change",
         "require_audit_log",
+        "audit_reader_source",
+        "apply_audit_reading",
+        "unbounded_tables",
+        "scope_of",
+        "duplicate_scopes",
+        "normal_scope",
+        "scope_set",
+        "tree_mismatch",
     }
 )
 OWNER_TABLES: Final = frozenset(

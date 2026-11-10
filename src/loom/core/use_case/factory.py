@@ -11,10 +11,11 @@ from __future__ import annotations
 import inspect
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, NamedTuple, TypeVar, get_args, get_origin
+from typing import Annotated, Any, NamedTuple, TypeVar, get_args, get_origin
 
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model.introspection import generic_type_arg, resolve_type_hints
+from loom.core.persistence.stores import InStore, StoreBound, store_binding
 from loom.core.repository.abc import RepoFor
 from loom.core.repository.registration import is_direct_protocol, is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
@@ -60,7 +61,7 @@ class _MainRepoDep:
         return self.contract if is_standard_capability(self.contract) else None
 
 
-DepToken = type[Any] | _MainRepoDep
+DepToken = type[Any] | StoreBound | _MainRepoDep
 
 
 class UseCaseFactory:
@@ -229,6 +230,13 @@ def _explicit_init_deps(init: Any) -> list[tuple[str, DepToken]]:
     """Return the injectable dependencies of a user-defined ``__init__``."""
     deps: list[tuple[str, DepToken]] = []
     for name, typ in _required_hints(init).items():
+        if get_origin(typ) is Annotated:
+            base, *metadata = get_args(typ)
+            marker = next((item for item in metadata if isinstance(item, InStore)), None)
+            if marker is not None:
+                deps.append((name, store_binding(base, marker.key)))
+                continue
+            typ = base
         repo_model = generic_type_arg(typ, RepoFor)
         if repo_model is not None:
             deps.append((name, _MainRepoDep(repo_model)))
@@ -240,7 +248,7 @@ def _explicit_init_deps(init: Any) -> list[tuple[str, DepToken]]:
 
 def _required_hints(init: Any) -> dict[str, Any]:
     """Return the annotations of ``init`` parameters that carry no default value."""
-    hints = resolve_type_hints(init)
+    hints = resolve_type_hints(init, include_extras=True)
     parameters = inspect.signature(init).parameters
     if not hints:
         # Fallback: use inspect for non-resolvable annotations
@@ -271,6 +279,8 @@ def _is_injectable_alias(annotation: object) -> bool:
 
 
 def _describe_key(key: object) -> str:
+    if isinstance(key, StoreBound):
+        return str(key)
     if isinstance(key, type):
         return key.__qualname__
     origin = get_origin(key)

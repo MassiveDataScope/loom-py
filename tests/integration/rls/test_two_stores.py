@@ -24,6 +24,7 @@ from sqlalchemy.pool import QueuePool
 
 from loom.core.authz import Scope
 from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
+from loom.core.authz.product import load_authz_product
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.errors import UndeclaredStoreWrite
@@ -161,7 +162,7 @@ class Store:
         """The composition's sink over this store alone, from the elevation its wiring exposes."""
         if self.elevation is None:
             raise RuntimeError(f"store {self.key!r} exposes no elevation")
-        return ScopedElevationSink({self.key: self.elevation})
+        return ScopedElevationSink({self.key: self.elevation}, load_authz_product())
 
     def checked_out(self) -> int:
         pool = self.manager.engine.sync_engine.pool
@@ -534,7 +535,7 @@ async def test_the_same_elevable_scope_in_both_stores_is_refused_at_startup(
         elevations = {k: s.elevation for k, s in stores.items() if s.elevation is not None}
         assert elevations.keys() == set(STORES)
         with pytest.raises(ElevableScopeInSeveralStores, match="stores audit, default"):
-            ScopedElevationSink(elevations)
+            ScopedElevationSink(elevations, load_authz_product())
 
 
 async def _session_setting_left_behind(store: Store) -> tuple[int, str]:

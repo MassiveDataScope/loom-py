@@ -42,3 +42,12 @@ def test_every_packaged_revision_file_is_released() -> None:
     }
 
     assert packaged == {revision.filename for revision in GUARD_REVISIONS}
+
+
+def test_revision_four_changes_only_the_functions_columns_and_constraints() -> None:
+    """Review N17: revision 4 adds functions, config columns and the ``boundary_pair`` check."""
+    audit, reading = GUARD_REVISIONS[2].catalog, GUARD_REVISIONS[3].catalog
+
+    changed = {check for check in audit if audit[check] != reading[check]}
+
+    assert changed == {"functions", "columns", "constraints"}

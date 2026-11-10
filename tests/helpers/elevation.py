@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from loom.core.authz import Permission, RoleCatalog
+from loom.core.authz.product import load_authz_product
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.persistence.elevation import ScopedElevationSink, ScopedTables
@@ -29,7 +30,9 @@ class _Declaring(SQLAlchemyStoreElevation):
     def __init__(self, manager: SessionManager, elevable: tuple[str, ...]) -> None:
         super().__init__(manager)
         columns = tuple(ScopeColumn(scope, scope, "write", elevable=True) for scope in elevable)
-        self._tables = {(None, "elevable"): ScopedTable(None, "elevable", columns, READ_WRITE)}
+        self._tables: ScopedTables = {
+            (None, "elevable"): ScopedTable(None, "elevable", columns, READ_WRITE)
+        }
 
     def scoped_tables(self) -> ScopedTables:
         return self._tables
@@ -42,4 +45,4 @@ def declaring(manager: SessionManager, *elevable: str) -> SQLAlchemyStoreElevati
 
 def sink_for(manager: SessionManager, *elevable: str) -> ScopedElevationSink:
     """The sink of an application whose one store is ``manager``'s, declaring ``elevable``."""
-    return ScopedElevationSink({manager.store: declaring(manager, *elevable)})
+    return ScopedElevationSink({manager.store: declaring(manager, *elevable)}, load_authz_product())

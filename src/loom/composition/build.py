@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypeVar, overload
@@ -22,7 +23,9 @@ from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.composition.source import AppConfig, CompositionSource
+from loom.core.audit.subjects import AuditSubjects, OwnSubjectsOnly
 from loom.core.authz.elevation import ElevationSink
+from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
@@ -308,6 +311,7 @@ def compose_application(
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
     cursor_codec = _cursor_codec(ctx, recipe)
+    authz_product = load_authz_product()
     wirings: dict[StoreKey, PersistenceWiring] = {}
     store_resources: list[Resource] = []
     for key, models in stores.items():
@@ -333,7 +337,7 @@ def compose_application(
             *refusing_reserved(modules, tuple(catalog.specs)),
             *(wiring.repo_registration_module for wiring in wirings.values()),
             cache_module_for(ctx),
-            *_elevation_modules(wirings),
+            *_elevation_modules(wirings, authz_product),
         ],
         coordinator=(
             OrderedCommits(factories, rollback_timeout=_rollback_timeout(ctx))
@@ -343,6 +347,7 @@ def compose_application(
         metrics=recipe.metrics,
         environment=source.environment,
     )
+    _register_audit_subjects(kernel.container, authz_product)
     job_resources = configure_job_service(
         ctx,
         kernel,
@@ -382,6 +387,23 @@ def compose_application(
     )
 
 
+def _register_audit_subjects(container: LoomContainer, product: AuthzProduct | None) -> None:
+    """Keep a product binding, otherwise use its authz hook or own-only visibility.
+
+    Raises:
+        ConfigError: When the authz product declares a synchronous ``audit_subjects``.
+    """
+    if not isinstance(product, AuditSubjects):
+        hook: AuditSubjects = OwnSubjectsOnly()
+    elif inspect.iscoroutinefunction(product.audit_subjects):
+        hook = product
+    else:
+        raise ConfigError(
+            f"{type(product).__qualname__}.audit_subjects must be async (AuditSubjects)"
+        )
+    container.register_default(AuditSubjects, lambda: hook)
+
+
 def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:
     """The application's one cursor codec, shared by every store; none without repositories.
 
@@ -407,6 +429,7 @@ def _rollback_timeout(ctx: ConfigContext) -> float:
 
 def _elevation_modules(
     wirings: Mapping[StoreKey, PersistenceWiring],
+    product: AuthzProduct | None,
 ) -> list[Callable[[LoomContainer], None]]:
     """Register the one elevation sink of the stores whose sessions carry elevation flags.
 
@@ -420,7 +443,7 @@ def _elevation_modules(
     stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
     if not stores:
         return []
-    sink = ScopedElevationSink(stores)
+    sink = ScopedElevationSink(stores, product)
     return [lambda container: container.register_instance(ElevationSink, sink)]
 
 

@@ -64,6 +64,8 @@ class ErrorCode(StrEnum):
     JOB_FAILED = "job_failed"
     JOB_BACKENDS_MIXED = "job_backends_mixed"
     BOUNDARY_TYPE_UNSUPPORTED = "boundary_type_unsupported"
+    AUDIT_SUBJECTS_INVALID = "audit_subjects_invalid"
+    AUDIT_READ_FAILED = "audit_read_failed"
 
 
 class Template(NamedTuple):

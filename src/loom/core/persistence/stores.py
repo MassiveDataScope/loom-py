@@ -21,7 +21,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, NewType, TypeVar
+from typing import Any, Final, NamedTuple, NewType, TypeVar
 
 from loom.core.config import (
     ConfigContext,
@@ -259,13 +259,38 @@ def store_of(model: type[Any]) -> StoreKey:
     return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")
 
 
-def store_binding(binding: type[Any], key: StoreKey) -> object:
+class StoreBound(NamedTuple):
+    """A named-store DI key, equal to its original tuple representation."""
+
+    binding: type[Any]
+    key: StoreKey
+
+    def __str__(self) -> str:
+        return f"{self.binding.__qualname__} (store {self.key!r})"
+
+
+def store_binding(binding: type[Any], key: StoreKey) -> type[Any] | StoreBound:
     """The DI key of store *key*'s *binding*: *binding* itself for the default store.
 
     The default store's binding stays injectable by type; another store's is
     keyed by ``(binding, key)``.
     """
-    return binding if key == DEFAULT_STORE else (binding, key)
+    return binding if key == DEFAULT_STORE else StoreBound(binding, key)
+
+
+@dataclass(frozen=True, slots=True)
+class InStore:
+    """Mark an injected dependency as belonging to a named store."""
+
+    key: StoreKey
+
+    def __post_init__(self) -> None:
+        store_key(self.key)
+
+
+def store_key(value: object) -> StoreKey:
+    """Validate a public store name and return its typed key."""
+    return _store_key(value, owner="store key")
 
 
 def load_catalog(ctx: ConfigContext) -> StoreCatalog:
@@ -357,6 +382,7 @@ __all__ = [
     "CONNECTION_ONLY_BACKENDS",
     "DEFAULT_STORE",
     "DEFAULT_STORE_PATH",
+    "InStore",
     "MODELS_ONLY",
     "NO_CAPABILITIES",
     "NONE_BACKEND",
@@ -367,5 +393,7 @@ __all__ = [
     "StoreSpec",
     "load_catalog",
     "store_binding",
+    "StoreBound",
+    "store_key",
     "store_of",
 ]

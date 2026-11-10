@@ -171,6 +171,9 @@ def collect_use_cases_from_interfaces(
 def infer_model_from_use_case(
     use_case_type: type[UseCase[object, object]],
 ) -> type[BaseModel] | None:
+    declared = getattr(use_case_type, "__loom_main_model__", None)
+    if isinstance(declared, type) and issubclass(declared, BaseModel):
+        return declared
     for base in getattr(use_case_type, "__orig_bases__", ()):
         if typing.get_origin(base) is not UseCase:
             continue

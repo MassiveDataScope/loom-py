@@ -14,6 +14,7 @@ configuration without the SQLAlchemy extra installed.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, ClassVar, Final, Literal, TypeVar
@@ -29,6 +30,7 @@ from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
 from loom.core.persistence.stores import SQLALCHEMY_BACKEND, load_catalog
 
 EXTERNAL: Final = "external"
+_DEFAULT_MAX_SUBJECTS: Final = 1000
 
 _ASYNCPG: Final = "postgresql+asyncpg"
 _ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "command_timeout"}
@@ -63,6 +65,60 @@ class SchemaVersionTables(msgspec.Struct, kw_only=True, frozen=True, forbid_unkn
     data: str
 
 
+class AuditReadingRoute(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``stores.<name>.schema.audit.reading.route``: the generated read route.
+
+    ``requires_roles`` is required and must name at least one role. ``prefix``
+    is optional; loom.rest uses ``/audit/<store>`` when it is absent.
+
+    Raises:
+        ValueError: When ``requires_roles`` is empty. Surfaced as
+            ``ConfigError`` by the decode.
+    """
+
+    requires_roles: tuple[str, ...]
+    prefix: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.requires_roles or any(not role.strip() for role in self.requires_roles):
+            raise ValueError("requires_roles must contain non-blank roles")
+        if self.prefix is not None and not _is_route_prefix(self.prefix):
+            raise ValueError("prefix must be an absolute path without trailing slash or whitespace")
+
+
+_PREFIX_SEGMENT = re.compile(r"[^/\s?#]+")
+
+
+def _is_route_prefix(prefix: str) -> bool:
+    """Return whether ``prefix`` is ``/seg[/seg...]`` with no empty, blank or query segment."""
+    segments = prefix.split("/")
+    return (
+        segments[0] == ""
+        and len(segments) > 1
+        and all(_PREFIX_SEGMENT.fullmatch(segment) for segment in segments[1:])
+    )
+
+
+class AuditReadingConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``stores.<name>.schema.audit.reading``: opt-in reading of the audit log.
+
+    Absent on :class:`AuditSchemaConfig` until the product writes it.
+    ``max_subjects`` is at least 1. A ``route`` needs ``enabled``.
+
+    Raises:
+        ValueError: When ``route`` is set and ``enabled`` is false. Surfaced
+            as ``ConfigError`` by the decode.
+    """
+
+    enabled: bool = False
+    max_subjects: PositiveInt = _DEFAULT_MAX_SUBJECTS
+    route: AuditReadingRoute | None = None
+
+    def __post_init__(self) -> None:
+        if self.route is not None and not self.enabled:
+            raise ValueError("schema.audit.reading.route requires enabled")
+
+
 class AuditSchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
     """``stores.<name>.schema.audit``: the store's audit log.
 
@@ -70,11 +126,13 @@ class AuditSchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknow
     next deploy and keeps the history. ``retention_months`` is how long a
     monthly partition is kept; without it nothing is ever dropped. ``reader``
     names the role that reads the log, ``<schema>_auditor`` when absent.
+    ``reading`` is absent until the product opts in to reading the log.
     """
 
     enabled: bool = True
     retention_months: PositiveInt | None = None
     reader: str | None = None
+    reading: AuditReadingConfig | None = None
 
 
 class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
@@ -157,9 +215,12 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
     Raises:
         ValueError: When the URL is empty, a timeout is set for a URL that is
-            not ``postgresql+asyncpg``, or ``connect_args`` sets the asyncpg
-            argument a timeout decides. Surfaced as ``ConfigError``, naming
-            the section, through :func:`decode_database_config`.
+            not ``postgresql+asyncpg``, ``connect_args`` sets the asyncpg
+            argument a timeout decides, ``schema.audit.reading.route`` is set
+            while reading is disabled, or ``schema.audit.reading.enabled`` is
+            set on a store that is not external Postgres with ``schema.name``
+            and ``schema.guard``. Surfaced as ``ConfigError``, naming the
+            section, through :func:`decode_database_config`.
     """
 
     _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType(
@@ -184,6 +245,8 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
     def __post_init__(self) -> None:
         require_text(self.url, "url")
+        # Before the timeout return: a store that declares no timeouts is still refused.
+        self._require_audit_reading()
         timeouts = self._asyncpg_timeouts()
         if not timeouts:
             return
@@ -213,6 +276,24 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
         options.update(self._asyncpg_timeouts())
         return options
 
+    def _require_audit_reading(self) -> None:
+        """Refuse ``schema.audit.reading.enabled`` unless this store can host the reader."""
+        reading = self.schema.audit.reading
+        if reading is None or not reading.enabled:
+            return
+        dialect = self.url.scheme.split("+", 1)[0].lower()
+        if (
+            self.schema.mode == EXTERNAL
+            and self.schema.name
+            and self.schema.guard
+            and dialect == "postgresql"
+        ):
+            return
+        raise ValueError(
+            "schema.audit.reading requires an external Postgres store "
+            "with schema.name and schema.guard"
+        )
+
     def _asyncpg_timeouts(self) -> dict[str, int]:
         """Return the declared standard timeouts under their asyncpg argument names."""
         return {
@@ -235,7 +316,10 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
     Raises:
         ConfigError: When a retired flat pool key is present (naming its
             ``pool`` replacement), a key is unknown, a value is out of range,
-            the URL is empty or a timeout does not apply to the URL's driver.
+            the URL is empty, a timeout does not apply to the URL's driver,
+            ``reading.route`` is set while reading is disabled, or
+            ``reading.enabled`` is set on a store that is not external
+            Postgres with ``schema.name`` and ``schema.guard``.
     """
     reject_retired_keys(data, path, DatabaseConfig)
     return convert_section(dict(data), path, DatabaseConfig)
@@ -281,6 +365,8 @@ def require_schema_key(value: _T | None, path: str, key: str) -> _T:
 
 __all__ = [
     "EXTERNAL",
+    "AuditReadingConfig",
+    "AuditReadingRoute",
     "DatabaseConfig",
     "PoolConfig",
     "SchemaConfig",

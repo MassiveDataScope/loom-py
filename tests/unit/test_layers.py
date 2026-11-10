@@ -25,6 +25,11 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless", "loom.jobs"),
         (),
     ),
+    "loom.core.audit": (
+        ("sqlalchemy", "loom.core.repository.sqlalchemy", "loom.rest", "loom.composition"),
+        (),
+    ),
+    "loom.core.model": (("sqlalchemy",), ()),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),

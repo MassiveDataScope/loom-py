@@ -41,6 +41,7 @@ _FILES = (
 _PACKAGES = (
     "core/repository/sqlalchemy/rls",
     "core/repository/sqlalchemy/migrations",
+    "core/repository/sqlalchemy/audit",
 )
 
 _DOMAIN_WORDS = re.compile(

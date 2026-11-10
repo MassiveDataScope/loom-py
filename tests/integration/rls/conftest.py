@@ -29,6 +29,7 @@ from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.locator import Application, load_application
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
 from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
@@ -172,6 +173,20 @@ class ScopedDatabase:
 BootstrapFactory = Callable[..., Coroutine[Any, Any, ScopedDatabase]]
 
 
+@dataclass(frozen=True)
+class _DocumentedBootstrap(BootstrapConfig):
+    """A bootstrap whose ``configure`` document also carries *extra* keys.
+
+    Tests drive guard keys the declaration does not model yet (or a value it
+    would refuse) straight into ``configure``, as the bootstrap would send them.
+    """
+
+    extra: Mapping[str, object] = field(default_factory=dict)
+
+    def document(self) -> dict[str, object]:
+        return {**super().document(), **self.extra}
+
+
 @pytest.fixture
 def scoped_database(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
     """Apply a product bootstrap for ``schema`` and return its user URLs."""
@@ -191,9 +206,11 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
     importable while the mechanism is still red.
     """
 
-    async def factory(schema: str, **options: Any) -> ScopedDatabase:
+    async def factory(
+        schema: str, *, document: Mapping[str, object] | None = None, **options: Any
+    ) -> ScopedDatabase:
+        """*document* holds extra ``configure`` keys sent with the bootstrap's own."""
         from loom.core.repository.sqlalchemy.rls import (
-            BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,
             SchemaNames,
@@ -209,7 +226,7 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
                 f"{schema}_ops",
             )
         }
-        config = BootstrapConfig(
+        config = _DocumentedBootstrap(
             schema=schema,
             roles=DatabaseRoles(owner=f"{schema}_owner", migrator=f"{schema}_migrator"),
             database_users={
@@ -218,6 +235,7 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
                 f"{schema}_ops": DatabaseUser(login=True, access="bypass"),
             },
             names=options.pop("names", SchemaNames.derived(schema)),
+            extra=dict(document or {}),
             **options,
         )
         created_roles.update(
@@ -267,8 +285,12 @@ def application_for(
     *,
     schema: str | None = None,
     store: StoreKey = DEFAULT_STORE,
+    audit: Mapping[str, Any] | None = None,
 ) -> Application:
-    """Load a synthetic product as *store*'s ``Application`` from a generated configuration file."""
+    """Load a synthetic product as *store*'s ``Application`` from a generated configuration file.
+
+    *audit*, when given, is the store's ``schema.audit`` section.
+    """
     name = schema or product.SCHEMA
     config = {
         "app": {
@@ -299,6 +321,8 @@ def application_for(
             }
         },
     }
+    if audit is not None:
+        config["stores"][store]["schema"]["audit"] = dict(audit)
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config))
     return load_application(str(path), store=store)

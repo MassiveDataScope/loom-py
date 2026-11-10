@@ -248,6 +248,27 @@ def test_a_relative_code_path_resolves_against_the_config_directory(
     assert set(application.metadata.tables) == {"gadgets"}
 
 
+def test_locator_metadata_excludes_a_not_materialized_model(tmp_path: Path) -> None:
+    package = tmp_path / "marker_models"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "models.py").write_text(
+        "from loom.core.model import BaseModel, ColumnField, NotMaterialized\n\n"
+        "class AuditView(BaseModel, NotMaterialized):\n"
+        '    __tablename__ = "audit_views"\n'
+        "    id: int = ColumnField(primary_key=True)\n"
+    )
+    config = _config("marker_models.models", mode="create_all")
+    app_section = config["app"]
+    assert isinstance(app_section, dict)
+    app_section["code_path"] = "."
+
+    application = load_application(_write(tmp_path, "marker.yaml", config))
+
+    assert {model.__name__ for model in application.models} == {"AuditView"}
+    assert not application.metadata.tables
+
+
 def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path) -> None:
     schema = {**_scoped_schema(), "name": "Notes"}
 
@@ -265,7 +286,7 @@ def test_a_naming_convention_names_the_constraints_of_the_compiled_metadata(
 
     application = load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
 
-    assert application.metadata.naming_convention["pk"] == "pk_%(table_name)s"
+    assert application.metadata.naming_convention.get("pk") == "pk_%(table_name)s"
     assert application.metadata.tables["notes"].primary_key.name == "pk_notes"
 
 
@@ -349,7 +370,9 @@ class TestAddCodePath:
 @pytest.fixture
 def two_stores(tmp_path: Path) -> str:
     config = _config(TWO_STORES_MODULE)
-    config["stores"] = {**config["stores"], "audit": {"backend": "sqlalchemy", "url": AUDIT_URL}}
+    stores = config["stores"]
+    assert isinstance(stores, dict)
+    config["stores"] = {**stores, "audit": {"backend": "sqlalchemy", "url": AUDIT_URL}}
     return _write(tmp_path, "two.yaml", config)
 
 

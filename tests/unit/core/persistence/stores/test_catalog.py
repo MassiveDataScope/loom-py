@@ -8,10 +8,16 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, Integer
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
+    InStore,
     StoreKey,
     load_catalog,
     store_of,
 )
+
+
+def test_in_store_rejects_invalid_key() -> None:
+    with pytest.raises(ConfigError):
+        InStore(StoreKey("bad-key"))
 
 
 class DefaultRecord(BaseModel):
@@ -44,13 +50,13 @@ def test_default_store_loads_its_backend_and_own_config_section() -> None:
     spec = catalog.specs[DEFAULT_STORE]
 
     assert len(catalog.specs) == 1
-    assert StoreKey.__supertype__ is str
+    assert isinstance(StoreKey("default"), str)
     assert StoreKey("default") == DEFAULT_STORE
     assert spec.key == DEFAULT_STORE
     assert spec.backend == "sqlalchemy"
     assert spec.settings() == {"url": "sqlite+aiosqlite:///:memory:"}
     with pytest.raises(AttributeError):
-        spec.backend = "mongo"
+        spec.backend = "mongo"  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_catalog_loads_all_declared_store_keys_and_backends() -> None:

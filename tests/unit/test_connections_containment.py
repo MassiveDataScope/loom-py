@@ -23,7 +23,7 @@ from tests.helpers.imports import imported_roots
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
-_SDKS = ("boto3", "botocore", "clickhouse_connect", "pymongo")
+_SDKS = ("boto3", "botocore", "clickhouse_connect", "pymongo", "sqlalchemy")
 
 _SCRIPT = """
 import json
@@ -79,6 +79,47 @@ _ISLANDS: dict[str, frozenset[str]] = {
             "core/repository/mongo/repository.py",  # results, errors
             "core/repository/mongo/uow.py",  # sessions
             "streaming/mongo/_bytewax_source.py",  # change-stream errors
+        }
+    ),
+    "sqlalchemy": frozenset(
+        {
+            "cli/schema.py",
+            "core/backend/core_model.py",
+            "core/backend/scoped_ddl.py",
+            "core/backend/sqlalchemy.py",
+            "core/locator.py",
+            "core/repository/sqlalchemy/_pool_metrics.py",
+            "core/repository/sqlalchemy/audit/reader.py",  # T13
+            "core/repository/sqlalchemy/backend.py",
+            "core/repository/sqlalchemy/integrity.py",
+            "core/repository/sqlalchemy/loaders.py",
+            "core/repository/sqlalchemy/migrations/env_template.py",
+            "core/repository/sqlalchemy/migrations/operations.py",
+            "core/repository/sqlalchemy/migrations/runners.py",
+            "core/repository/sqlalchemy/mixins.py",
+            "core/repository/sqlalchemy/model.py",
+            "core/repository/sqlalchemy/profile_loader.py",
+            "core/repository/sqlalchemy/query_compiler/compiler.py",
+            "core/repository/sqlalchemy/query_compiler/cursor.py",
+            "core/repository/sqlalchemy/query_compiler/filters.py",
+            "core/repository/sqlalchemy/query_compiler/subquery.py",
+            "core/repository/sqlalchemy/repository.py",
+            "core/repository/sqlalchemy/rls/audit.py",
+            "core/repository/sqlalchemy/rls/audit_verify.py",
+            "core/repository/sqlalchemy/rls/bootstrap.py",
+            # T11 (derive_audit_boundary uses sqlalchemy.dialects.postgresql)
+            "core/repository/sqlalchemy/rls/config.py",
+            "core/repository/sqlalchemy/rls/elevate.py",
+            "core/repository/sqlalchemy/rls/integrity.py",
+            "core/repository/sqlalchemy/rls/partitions.py",
+            "core/repository/sqlalchemy/rls/provider.py",
+            "core/repository/sqlalchemy/rls/schema.py",
+            "core/repository/sqlalchemy/rls/verify.py",
+            "core/repository/sqlalchemy/session_manager.py",
+            "core/repository/sqlalchemy/session_settings.py",
+            "core/repository/sqlalchemy/uow.py",
+            "core/repository/sqlalchemy/values.py",
+            "streaming/nodes/_table/_sqlalchemy.py",
         }
     ),
 }

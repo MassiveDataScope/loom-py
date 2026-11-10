@@ -6,11 +6,16 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 import pytest
 
 from loom.core.authz import Permission, Role, RoleCatalog
-from loom.core.authz.product import clear_authz_product, register_authz_product
+from loom.core.authz.product import (
+    clear_authz_product,
+    load_authz_product,
+    register_authz_product,
+)
 from loom.core.config import ConfigError
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.scoped import ScopeColumn, ScopedTable
@@ -26,6 +31,12 @@ from tests.helpers.elevation import MANAGE, Product
 from tests.helpers.issue_catalogue import IssueCall, check_renders, issue_calls
 
 pytestmark = pytest.mark.timeout(10)
+
+
+def test_scoped_elevation_sink_requires_explicit_product() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, ScopedElevationSink)({})
+
 
 CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 AUDIT = StoreKey("audit")
@@ -140,7 +151,7 @@ async def _done() -> None:
 
 
 def _sink(default: _Store, audit: _Store) -> ScopedElevationSink:
-    return ScopedElevationSink({DEFAULT_STORE: default, AUDIT: audit})
+    return ScopedElevationSink({DEFAULT_STORE: default, AUDIT: audit}, load_authz_product())
 
 
 class TestScopedElevationSink:

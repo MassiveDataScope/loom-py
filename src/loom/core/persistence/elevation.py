@@ -9,11 +9,11 @@ routes the frame's requests to the store that declares each scope.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Iterable, Mapping
+from collections.abc import Awaitable, Iterable, KeysView, Mapping
 from enum import unique
 from typing import Protocol
 
-from loom.core.authz.product import AuthzProduct, load_authz_product
+from loom.core.authz.product import AuthzProduct
 from loom.core.config import ConfigError
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.model.scoped import ScopedTables, declared_scopes
@@ -91,9 +91,13 @@ class ScopedElevationSink:
         ConfigError: See :func:`validate_elevations`.
     """
 
-    def __init__(self, stores: Mapping[StoreKey, StoreElevation]) -> None:
+    def __init__(
+        self,
+        stores: Mapping[StoreKey, StoreElevation],
+        product: AuthzProduct | None,
+    ) -> None:
         scoped = {key: store.scoped_tables() for key, store in stores.items()}
-        validate_elevations(load_authz_product(), scoped)
+        validate_elevations(product, scoped)
         self._stores = stores
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
@@ -192,13 +196,7 @@ def validate_elevations(
     declared = {key: declared_scopes(tables).keys() for key, tables in scoped.items()}
     elevable = frozenset().union(*(elevable_scopes(tables) for tables in scoped.values()))
     elevations = {} if product is None else product.elevations
-    for scope in elevations:
-        if not any(scope in scopes for scopes in declared.values()):
-            raise ConfigError(f"AuthzProduct.elevations names unknown scope {scope!r}")
-        if scope not in elevable:
-            raise ConfigError(
-                f"AuthzProduct.elevations names scope {scope!r}, which is not elevable"
-            )
+    _validate_product_scopes(elevations, declared, elevable)
     for scope in sorted(elevable | elevations.keys()):
         stores = sorted(key for key, scopes in declared.items() if scope in scopes)
         if len(stores) > 1:
@@ -206,6 +204,21 @@ def validate_elevations(
                 scope=scope, stores=stores
             )
             raise ElevableScopeInSeveralStores(issue)
+
+
+def _validate_product_scopes(
+    elevations: Mapping[str, object],
+    declared: Mapping[StoreKey, KeysView[str]],
+    elevable: frozenset[str],
+) -> None:
+    """Refuse product elevations absent from the declared elevable scopes."""
+    for scope in elevations:
+        if not any(scope in scopes for scopes in declared.values()):
+            raise ConfigError(f"AuthzProduct.elevations names unknown scope {scope!r}")
+        if scope not in elevable:
+            raise ConfigError(
+                f"AuthzProduct.elevations names scope {scope!r}, which is not elevable"
+            )
 
 
 __all__ = [

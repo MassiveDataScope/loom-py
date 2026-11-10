@@ -125,6 +125,8 @@ class HttpErrorMapper:
         ErrorCode.JOB_FAILED: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.JOB_BACKENDS_MIXED: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.BOUNDARY_TYPE_UNSUPPORTED: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.AUDIT_SUBJECTS_INVALID: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.AUDIT_READ_FAILED: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
     def to_http(self, error: LoomError) -> HTTPException:

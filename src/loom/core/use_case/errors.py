@@ -28,6 +28,7 @@ from enum import unique
 from loom.core.config import ConfigError
 from loom.core.di.container import ResolutionError
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
+from loom.core.model.materialization import is_materialized
 
 
 @unique
@@ -58,8 +59,7 @@ class UseCaseErrorCode(IssueCode):
         "UNSERVED_MODEL",
         Template(
             "{component} injects {parameter}: repository for {model}, which is not "
-            "registered in the container. Add {model} to MODELS in your manifest module, "
-            "or include its module in app.discovery, so its repository is registered.",
+            "registered in the container. {guidance}",
             field="{parameter}",
         ),
     )
@@ -92,7 +92,15 @@ class UnservedModelError(ResolutionError):
     ) -> UnservedModelError:
         """Return the error for *component*'s *parameter* reading *model*."""
         issue = UseCaseErrorCode.UNSERVED_MODEL.issue(
-            component=component, parameter=parameter, model=model
+            component=component,
+            parameter=parameter,
+            model=model,
+            guidance=(
+                f"Add {model} to MODELS in your manifest module, or include its module "
+                "in app.discovery, so its repository is registered."
+                if is_materialized(model)
+                else "NotMaterialized models have no repository."
+            ),
         )
         return cls(issue, model)
 

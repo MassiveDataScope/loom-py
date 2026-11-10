@@ -181,7 +181,8 @@ def _sink(stores: _Stores) -> ScopedElevationSink:
         {
             DEFAULT_STORE: declaring(stores.default, "editor"),
             AUDIT: declaring(stores.audit, "reviewer"),
-        }
+        },
+        None,
     )
 
 
