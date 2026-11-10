@@ -179,6 +179,10 @@ def test_the_document_names_every_config_column() -> None:
         "retention_months",
         "users",
         "revoke_public",
+        "audit_reading",
+        "boundary_scope",
+        "boundary_type",
+        "clear_audit_boundary",
     }
 
 

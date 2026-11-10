@@ -151,7 +151,10 @@ def load_application(
     metadata = _compiled_metadata(models, schema, spec.path)
     scoped = scoped_tables(metadata)
     audited = audited_tables(metadata)
-    bootstrap = _bootstrap(schema, spec.path) if scoped or audited else None
+    reading = _reading_enabled(schema)
+    bootstrap = (
+        _bootstrap(schema, spec.path, scoped, metadata) if scoped or audited or reading else None
+    )
     scope_sources = _scope_sources(schema, scoped, spec.path) if scoped else {}
     return Application(
         models=tuple(models),
@@ -225,9 +228,23 @@ def _schema_name(name: str, path: str) -> str:
         raise ConfigError(f"{path}.schema.name: {exc}") from exc
 
 
-def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
-    from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
+def _reading_enabled(schema: SchemaConfig) -> bool:
+    """Whether the store opts in to reading its audit log (``schema.audit.reading.enabled``)."""
+    reading = schema.audit.reading
+    return reading is not None and reading.enabled
 
+
+def _bootstrap(
+    schema: SchemaConfig, path: str, scoped: ScopedTables, metadata: MetaData
+) -> BootstrapConfig:
+    """The bootstrap of the store; ``B`` is derived only while reading is on (FR-012)."""
+    from loom.core.repository.sqlalchemy.rls.config import (
+        BootstrapConfig,
+        DatabaseRoles,
+        derive_audit_boundary,
+    )
+
+    reading = _reading_enabled(schema)
     name = require_schema_key(schema.name, path, "name")
     roles = require_schema_key(schema.roles, path, "roles")
     users = require_schema_key(schema.database_users, path, "database_users")
@@ -248,6 +265,8 @@ def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
         ),
         auditor=schema.audit.reader,
         audit_retention_months=schema.audit.retention_months,
+        audit_reading=reading,
+        audit_boundary=derive_audit_boundary(scoped, metadata, path=path) if reading else None,
     )
     try:
         return config.validated()

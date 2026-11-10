@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
+from sqlalchemy.engine import make_url
+
+from loom.core.config import ConfigError
 from loom.core.schema_names import SchemaNames, schema_identifier, sql_identifier
+
+if TYPE_CHECKING:
+    from sqlalchemy import MetaData
+    from sqlalchemy.types import TypeEngine
+
+    from loom.core.model.scoped import ScopedTables
 
 Access = Literal["read", "write", "bypass"]
 
@@ -14,6 +24,16 @@ BYPASS_VERSION_PRIVILEGES: Final = frozenset({"SELECT"})
 MAX_GUARD_LENGTH: Final = 58
 MAX_VERSION_TABLE_LENGTH: Final = 59
 POSTGRES_SCRAM_ITERATIONS: Final = 4096
+# The spellings SQLAlchemy's PostgreSQL dialect compiles that ``format_type(t, NULL)`` renders
+# otherwise; every other compiled base type is already Postgres' own name in upper case.
+_FORMAT_TYPE_NAMES: Final = {
+    "varchar": "character varying",
+    "char": "character",
+    "float": "double precision",
+}
+_TYPE_MODIFIER: Final = re.compile(r"\([^)]*\)")
+# The dialect loom stores use; compiling a type loads no driver.
+_POSTGRES: Final = make_url("postgresql+asyncpg://").get_dialect()()
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +63,10 @@ class BootstrapConfig:
     only be raised. ``auditor`` names the role that reads the audit log
     (``<schema>_auditor`` when not declared) and ``audit_retention_months`` is
     how long its partitions are kept; without one nothing is ever dropped.
+    ``audit_reading`` is the store's ``schema.audit.reading.enabled``;
+    ``audit_boundary`` is the boundary ``B`` (scope name and Postgres base
+    type) derived while reading is on, and ``clear_audit_boundary`` asks
+    ``configure`` to forget a recorded ``B``, which it allows with reading off.
     """
 
     schema: str
@@ -53,6 +77,9 @@ class BootstrapConfig:
     scram_iterations: int = POSTGRES_SCRAM_ITERATIONS
     auditor: str | None = None
     audit_retention_months: int | None = None
+    audit_reading: bool = False
+    audit_boundary: tuple[str, str] | None = None
+    clear_audit_boundary: bool = False
 
     @property
     def auditor_role(self) -> str:
@@ -125,4 +152,48 @@ class BootstrapConfig:
             "data_version_table": self.names.data_version_table,
             "auditor_role": self.auditor_role,
             "retention_months": self.audit_retention_months,
+            "audit_reading": self.audit_reading,
+            "boundary_scope": self.audit_boundary[0] if self.audit_boundary else None,
+            "boundary_type": self.audit_boundary[1] if self.audit_boundary else None,
+            "clear_audit_boundary": self.clear_audit_boundary,
         }
+
+
+def derive_audit_boundary(
+    scoped: ScopedTables, metadata: MetaData, *, path: str
+) -> tuple[str, str] | None:
+    """The one boundary ``B`` every scoped table shares: its scope name and Postgres base type.
+
+    The type is the boundary column's type compiled by the PostgreSQL dialect
+    without its modifier, as ``format_type(t, NULL)`` renders it, so
+    ``varchar(36)`` and ``varchar(64)`` are one base type.
+
+    Returns:
+        ``None`` when *scoped* is empty.
+
+    Raises:
+        ConfigError: Naming ``<path>.schema.audit.reading`` and the tables of
+            each boundary when they use more than one name or base type (FR-012).
+    """
+    tables: dict[tuple[str, str], list[str]] = {}
+    for (schema, name), table in sorted(scoped.items(), key=lambda item: item[0][1]):
+        boundary = table.boundary
+        column = metadata.tables[f"{schema}.{name}" if schema else name].c[boundary.column]
+        tables.setdefault((boundary.scope, _base_type(column.type)), []).append(name)
+    if len(tables) > 1:
+        found = "; ".join(
+            f"{scope} ({type_name}) on {', '.join(names)}"
+            for (scope, type_name), names in sorted(tables.items())
+        )
+        raise ConfigError(
+            f"{path}.schema.audit.reading needs one boundary scope and column type on every "
+            f"scoped table; found {found}"
+        )
+    return next(iter(tables), None)
+
+
+def _base_type(column_type: TypeEngine[object]) -> str:
+    """*column_type* compiled for PostgreSQL, without modifier, in ``format_type`` spelling."""
+    compiled = column_type.compile(dialect=_POSTGRES)
+    base = " ".join(_TYPE_MODIFIER.sub("", compiled).lower().split())
+    return _FORMAT_TYPE_NAMES.get(base, base)

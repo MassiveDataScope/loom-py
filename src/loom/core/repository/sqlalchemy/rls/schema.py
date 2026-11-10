@@ -92,7 +92,7 @@ async def _create_protected(
     await connection.execute(_LOCK_TIMEOUT, {"lock": lock_timeout})
     await connection.execute(_SCHEMA_LOCK, {"schema": schema})
     await _require_guard(connection, schema, guard)
-    minimum = required_guard_revision(bool(application.audited))
+    minimum = required_guard_revision(bool(application.audited), reading=bootstrap.audit_reading)
     await require_guard_revision(connection, guard, minimum=minimum)
     path = {"schema": schema, "guard": guard}
     info = (await connection.get_raw_connection()).info

@@ -43,6 +43,14 @@ PRESENT_TABLES: Final = (
 )
 AUDIT_LOG_EXISTS: Final = "SELECT to_regclass(quote_ident(:schema) || '.audit_log') IS NOT NULL"
 ENSURE_AUDIT_PARTITIONS: Final = "SELECT ensure_audit_partitions(CAST(:months AS int))"
+# Whether the guard has the audit reader's revision (4): its owner step, read from the
+# catalogue like AUDIT_SUPPORTED.
+READING_SUPPORTED: Final = (
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+    " WHERE n.nspname = :guard AND p.proname = 'apply_audit_reading')"
+)
+APPLY_AUDIT_READING: Final = "SELECT apply_audit_reading()"
 # A scheduled run must not queue audited writes behind a long lock wait.
 SCHEDULED_LOCK_TIMEOUT: Final = "SET LOCAL lock_timeout = '5s'"
 # The one definition of an expired partition, on the database's clock in UTC (the
@@ -77,6 +85,8 @@ _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _PRESENT_TABLES: Final = text(PRESENT_TABLES)
 _AUDIT_LOG_EXISTS: Final = text(AUDIT_LOG_EXISTS)
 _ENSURE_AUDIT_PARTITIONS: Final = text(ENSURE_AUDIT_PARTITIONS)
+_READING_SUPPORTED: Final = text(READING_SUPPORTED)
+_APPLY_AUDIT_READING: Final = text(APPLY_AUDIT_READING)
 _SCHEDULED_LOCK_TIMEOUT: Final = text(SCHEDULED_LOCK_TIMEOUT)
 _OLDEST_EXPIRED_AUDIT_PARTITION: Final = text(OLDEST_EXPIRED_AUDIT_PARTITION)
 _DROP_EXPIRED_AUDIT_PARTITION: Final = text(DROP_EXPIRED_AUDIT_PARTITION)
@@ -94,7 +104,10 @@ def reconcile_audited(
     The caller's connection acts as the schema's owner with the guard first on
     its path; everything runs in the caller's transaction, so the guard's
     assertion at commit sees the final state. On a guard that predates the
-    audit log and with nothing to audit, nothing is done.
+    audit log and with nothing to audit, nothing is done. On a guard with the
+    audit reader's revision the owner step ``apply_audit_reading()`` runs last,
+    with *declared* empty too, so the history stays readable after
+    ``schema.audit.enabled`` turns false.
 
     Args:
         connection: The migrator's connection, inside the deploy transaction.
@@ -118,6 +131,13 @@ def reconcile_audited(
         connection.execute(_UNPROTECT_AUDITED, {"rel": registered[name]})
     if connection.execute(_AUDIT_LOG_EXISTS, {"schema": schema}).scalar():
         connection.execute(_ENSURE_AUDIT_PARTITIONS, {"months": AUDIT_HORIZON_MONTHS})
+    _apply_audit_reading(connection, guard)
+
+
+def _apply_audit_reading(connection: Connection, guard: str) -> None:
+    """Run the guard's owner step for the audit reader when the guard has it."""
+    if connection.execute(_READING_SUPPORTED, {"guard": guard}).scalar():
+        connection.execute(_APPLY_AUDIT_READING)
 
 
 def present_audited(connection: Connection, schema: str, declared: AuditedTables) -> AuditedTables:

@@ -117,7 +117,7 @@ def run_migrations(
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
     require_landing(connection, owner, schema)
-    minimum = required_guard_revision(bool(application.audited))
+    minimum = required_guard_revision(bool(application.audited), reading=bootstrap.audit_reading)
     require_guard_revision_sync(connection, names.guard, minimum=minimum)
     if read_only:
         connection.commit()

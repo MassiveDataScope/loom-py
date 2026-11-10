@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn, TypeVar
@@ -134,16 +135,29 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
 
 
 @schema_app.command("bootstrap")
-def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+def bootstrap(
+    config: Annotated[Path, _CONFIG_OPTION],
+    clear_audit_boundary: Annotated[
+        bool,
+        typer.Option(
+            "--clear-audit-boundary",
+            help="Forget the recorded audit boundary; the guard allows it with reading off.",
+        ),
+    ] = False,
+) -> None:
     """Install or upgrade the guard and configure roles, as the superuser; idempotent.
 
     The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
     migrator and of each database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
+    ``--clear-audit-boundary`` is the step that lets a store change its audit
+    boundary: disable reading and bootstrap, bootstrap with the flag, then enable it again.
     """
     from loom.core.repository.sqlalchemy.rls import apply_bootstrap
 
     try:
         settings = _bootstrap_config(config)
+        if clear_audit_boundary:
+            settings = dataclasses.replace(settings, clear_audit_boundary=True)
         logins = [settings.roles.migrator] + [
             name for name, user in settings.database_users.items() if user.login
         ]

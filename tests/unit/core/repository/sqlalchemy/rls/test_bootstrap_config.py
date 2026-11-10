@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+from pathlib import Path
 
 import pytest
+import yaml
+from sqlalchemy import MetaData
 
+from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
+from loom.core.locator import Application, load_application
+from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
+from loom.core.model.types import Integer, String
 from loom.core.repository.sqlalchemy.rls import (
     MIN_SERVER_VERSION_NUM,
     BootstrapConfig,
@@ -19,12 +26,15 @@ from loom.core.repository.sqlalchemy.rls.bootstrap import (
     SET_PASSWORD,
     scram_sha256_verifier,
 )
+from loom.core.repository.sqlalchemy.rls.config import derive_audit_boundary
 from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
     pending_revisions,
 )
 
 SALT = b"0123456789abcdef"
+STORE_PATH = "stores.default"
+READING_KEYS = ("audit_reading", "boundary_scope", "boundary_type", "clear_audit_boundary")
 
 
 def _config(**overrides: object) -> BootstrapConfig:
@@ -166,6 +176,10 @@ def test_the_document_carries_every_declared_name() -> None:
         "data_version_table": "v_data",
         "auditor_role": "s1_auditor",
         "retention_months": None,
+        "audit_reading": False,
+        "boundary_scope": None,
+        "boundary_type": None,
+        "clear_audit_boundary": False,
     }
 
 
@@ -264,3 +278,167 @@ def test_the_auditor_must_not_share_a_name_with_another_role() -> None:
 
     with pytest.raises(ValueError, match="distinct names"):
         config.validated()
+
+
+# Spec 009, FR-002 and FR-012: the reading keys of the document and the one ``B`` derivation.
+
+
+class _Ticket(BaseModel, RowScoped):
+    __tablename__ = "boot_cfg_tickets"
+    tenant: str = ScopedField(String(36), primary_key=True, scope="tenant")
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class _WideTicket(BaseModel, RowScoped):
+    __tablename__ = "boot_cfg_wide_tickets"
+    tenant: str = ScopedField(String(64), primary_key=True, scope="tenant")
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class _Count(BaseModel, RowScoped):
+    __tablename__ = "boot_cfg_counts"
+    tenant: int = ScopedField(Integer, primary_key=True, scope="tenant")
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class _Site(BaseModel, RowScoped):
+    __tablename__ = "boot_cfg_sites"
+    region: int = ScopedField(Integer, primary_key=True, scope="region")
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+def _boundary(*models: type) -> tuple[str, str] | None:
+    metadata = MetaData()
+    compile_all(*models, metadata=metadata)
+    return derive_audit_boundary(scoped_tables(metadata), metadata, path=STORE_PATH)
+
+
+def test_the_reading_keys_reach_the_document() -> None:
+    config = _config(
+        audit_reading=True,
+        audit_boundary=("tenant", "character varying"),
+        clear_audit_boundary=True,
+    )
+
+    document = config.document()
+
+    assert {key: document[key] for key in READING_KEYS} == {
+        "audit_reading": True,
+        "boundary_scope": "tenant",
+        "boundary_type": "character varying",
+        "clear_audit_boundary": True,
+    }
+
+
+def test_without_reading_the_document_records_no_boundary() -> None:
+    document = _config().document()
+
+    assert {key: document[key] for key in READING_KEYS} == {
+        "audit_reading": False,
+        "boundary_scope": None,
+        "boundary_type": None,
+        "clear_audit_boundary": False,
+    }
+
+
+def test_one_boundary_is_its_scope_and_postgres_base_type() -> None:
+    assert _boundary(_Ticket) == ("tenant", "character varying")
+    assert _boundary(_Site) == ("region", "integer")
+
+
+def test_type_modifiers_do_not_split_the_boundary() -> None:
+    assert _boundary(_Ticket, _WideTicket) == ("tenant", "character varying")
+
+
+def test_no_scoped_table_has_no_boundary() -> None:
+    assert _boundary() is None
+
+
+@pytest.mark.parametrize(
+    ("models", "named"),
+    [((_Ticket, _Site), "boot_cfg_sites"), ((_Ticket, _Count), "boot_cfg_counts")],
+    ids=["two-names", "two-base-types"],
+)
+def test_two_boundaries_are_refused_naming_the_tables(models: tuple[type, ...], named: str) -> None:
+    with pytest.raises(ConfigError, match=rf"{STORE_PATH}\.schema\.audit\.reading") as refused:
+        _boundary(*models)
+
+    assert named in str(refused.value)
+    assert "boot_cfg_tickets" in str(refused.value)
+
+
+def _store_config(module: str, *, reading: bool | None) -> dict[str, object]:
+    schema: dict[str, object] = {
+        "mode": "external",
+        "name": "bc",
+        "roles": {"owner": "bc_owner", "migrator": "bc_migrator"},
+        "database_users": {"bc_rw": {"login": True, "access": "write"}},
+        "scopes": {
+            "tenant": "identity.subject",
+            "region": "identity.region",
+            "owner": "identity.subject",
+            "editor": "request.editor",
+        },
+        "guard": "bc_guard",
+        "groups": {"readers": "bc_readers", "writers": "bc_writers"},
+        "version_tables": {"structure": "bc_versions", "data": "bc_data_versions"},
+    }
+    if reading is not None:
+        schema["audit"] = {"reading": {"enabled": reading}}
+    return {
+        "app": {
+            "name": "bc",
+            "discovery": {"mode": "modules", "modules": {"include": [module]}},
+        },
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": "postgresql+asyncpg://u:p@localhost/db",
+                "schema": schema,
+            }
+        },
+    }
+
+
+def _load(tmp_path: Path, module: str, *, reading: bool | None) -> Application:
+    path = tmp_path / "bc.yaml"
+    path.write_text(yaml.safe_dump(_store_config(module, reading=reading)))
+    return load_application(str(path))
+
+
+def test_the_locator_records_reading_and_its_boundary(tmp_path: Path) -> None:
+    application = _load(tmp_path, "tests.integration.agnosticism.notes", reading=True)
+
+    assert application.bootstrap is not None
+    assert application.bootstrap.audit_reading is True
+    assert application.bootstrap.audit_boundary == ("owner", "character varying")
+
+
+def test_the_locator_bootstraps_a_reading_store_without_scoped_or_audited_tables(
+    tmp_path: Path,
+) -> None:
+    application = _load(tmp_path, "tests.unit.core.locator_fixtures.plain", reading=True)
+
+    assert application.bootstrap is not None
+    assert application.bootstrap.audit_reading is True
+    assert application.bootstrap.audit_boundary is None
+
+
+def test_the_locator_refuses_a_multi_boundary_store_with_reading_on(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="boot_cfg_sites"):
+        _load(tmp_path, __name__, reading=True)
+
+
+@pytest.mark.parametrize("reading", [False, None], ids=["off", "absent"])
+def test_the_locator_derives_nothing_with_reading_off(tmp_path: Path, reading: bool | None) -> None:
+    application = _load(tmp_path, __name__, reading=reading)
+
+    assert application.bootstrap is not None
+    assert application.bootstrap.audit_reading is False
+    assert application.bootstrap.audit_boundary is None
+
+
+def test_a_plain_store_without_reading_has_no_bootstrap(tmp_path: Path) -> None:
+    application = _load(tmp_path, "tests.unit.core.locator_fixtures.plain", reading=None)
+
+    assert application.bootstrap is None
