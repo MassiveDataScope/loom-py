@@ -44,6 +44,7 @@ from loom.core.repository.sqlalchemy.registry import (
     register_session_manager,
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.rls.config import derive_audit_boundary
 from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.rls.integrity import (
     AUDIT_HORIZON_WARNING_MONTHS,
@@ -424,11 +425,23 @@ async def _check_external(
     store: _Store,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
 ) -> None:
+    """Require the declared tables, then check the guard when anything needs it.
+
+    Scoped tables, audited tables and reading the audit log each need the
+    guard; a reading store with neither kind of table is still checked.
+    """
     await _require_tables(connection, store)
     marked = audited_tables(store.session_manager.metadata)
     recording = sorted(t.name for t in marked.values()) if store.schema.audit.enabled else []
-    if connection.dialect.name == POSTGRES_DIALECT and (scoped or marked):
+    needs_guard = scoped or marked or _reads_audit(store)
+    if connection.dialect.name == POSTGRES_DIALECT and needs_guard:
         await _check_guard(connection, scoped, store, audited=bool(marked), recording=recording)
+
+
+def _reads_audit(store: _Store) -> bool:
+    """Whether *store* reads its audit log (``schema.audit.reading.enabled``)."""
+    reading = store.schema.audit.reading
+    return reading is not None and reading.enabled
 
 
 async def _require_tables(connection: AsyncConnection, store: _Store) -> None:
@@ -450,16 +463,24 @@ async def _check_guard(
     audited: bool = False,
     recording: Sequence[str] = (),
 ) -> None:
-    """Check, as the application user, the guard, every scoped table and the audit log.
+    """Check, as the application user, the guard, every scoped table, the audit log and reader.
 
     The guard's catalogue, owners, grants, function settings and event
     triggers, and each scoped table's forced row-level security, canonical
     permissive policies and owner trigger bound to this guard. The guard's
-    configuration row is not readable here; ``verify`` checks it.
+    configuration row is not readable here; ``verify`` checks it. While the
+    store reads its audit log, the scoped tables must share one boundary (FR-012).
+
+    Raises:
+        ConfigError: When the scoped tables of a reading store have more than
+            one boundary, or the database differs from what loom ships.
     """
     guard = require_schema_key(store.schema.guard, store.path, "guard")
+    reading = _reads_audit(store)
+    if reading:
+        derive_audit_boundary(scoped, store.session_manager.metadata, path=store.path)
     problems = await startup_problems(
-        connection, guard, scoped, audited=audited, recording=recording
+        connection, guard, scoped, audited=audited, recording=recording, reading=reading
     )
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)

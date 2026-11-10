@@ -4,14 +4,16 @@ The guard audits exactly the model's tables with the model's exclusions;
 this month's and the next month's partitions exist on the database's clock;
 the log and its partitions grant SELECT to the auditor alone; and its shape
 is the pinned one. Partitions past the retention are listed, not drift; they
-are the same ones ``loom schema audit drop-expired`` would drop.
+are the same ones ``loom schema audit drop-expired`` would drop. The audit
+reader is the released one and only the readers group may execute it, and
+only while the store reads (FR-002, FR-003, SC-003).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -23,8 +25,12 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
     AUDIT_HORIZON_WARNING_MONTHS,
     AUDIT_SHAPE,
     AUDIT_SUPPORTED,
+    READ_AUDIT_LOG,
     audit_months_covered,
     audit_shape_problems,
+    installed_reader,
+    reader_shape_problems,
+    reader_source_problems,
 )
 
 if TYPE_CHECKING:
@@ -175,3 +181,43 @@ def audit_privilege_findings(
         if held != wanted:
             findings.append(diff(relname, "audit.privileges", relname, wanted, held))
     return findings
+
+
+async def audit_reader_findings(
+    connection: AsyncConnection, bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """Read the audit reader and the released source, then compare; see :func:`reader_findings`.
+
+    The released source exists from the reader's guard revision on; below it
+    there is none, so any reader found there is drift.
+    """
+    rows, source = await installed_reader(connection, bootstrap.names.guard, bootstrap.schema)
+    return reader_findings(rows, source, bootstrap)
+
+
+def reader_findings(
+    rows: Sequence[Any], source: str | None, bootstrap: BootstrapConfig
+) -> list[Finding]:
+    """The reader is installed while reading, released as is, and executable by readers alone.
+
+    *rows* are the readers ``AUDIT_READER`` reads and *source* the body
+    the guard's ``audit_reader_source()`` releases. EXECUTE goes to the readers group,
+    without grant option, while ``bootstrap.audit_reading``; to nobody else.
+    """
+    if not rows:
+        missing = Finding(READ_AUDIT_LOG, "audit.reader", "installed", "missing")
+        return [missing] if bootstrap.audit_reading else []
+    findings = [
+        Finding(READ_AUDIT_LOG, problem.check, problem.expected, problem.actual)
+        for problem in reader_shape_problems(rows) + reader_source_problems(rows, source)
+    ]
+    return findings + _reader_grant_findings(rows, bootstrap)
+
+
+def _reader_grant_findings(rows: Sequence[Any], bootstrap: BootstrapConfig) -> list[Finding]:
+    """EXECUTE on the reader goes to the readers group alone, and only while reading."""
+    wanted = {f"{bootstrap.names.readers}:EXECUTE"} if bootstrap.audit_reading else set()
+    held = {str(grant) for row in rows for grant in row.grants}
+    if held == wanted:
+        return []
+    return [diff(READ_AUDIT_LOG, "audit.reader_grants", READ_AUDIT_LOG, wanted, held)]

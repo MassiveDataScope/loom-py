@@ -7,7 +7,7 @@ from typing import Any
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
-from loom.core.model.materialization import is_materialized
+from loom.core.model.materialization import materialized_models
 from loom.core.persistence.stores import store_binding
 from loom.core.repository import (
     RepositoryBuildContext,
@@ -127,7 +127,7 @@ def build_sqlalchemy_repository_registration_module(
         return repository_type()
 
     register = build_main_repository_module(
-        models=[model for model in models if is_materialized(model)],
+        models=materialized_models(models),
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
         default_repository_type=RepositorySQLAlchemy,

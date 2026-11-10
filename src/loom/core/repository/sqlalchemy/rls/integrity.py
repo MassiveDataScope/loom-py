@@ -31,6 +31,8 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     OWNER_FUNCTIONS,
     OWNER_TABLES,
     PINNED_SETTINGS,
+    READ_AUDIT_LOG_ARGUMENTS,
+    READING_GUARD_REVISION,
     GuardRevision,
     catalog_digest,
 )
@@ -56,6 +58,49 @@ AUDIT_SUPPORTED: Final = (
     "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c"
     " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
     " WHERE n.nspname = :guard AND c.relname = 'audited_table')"
+)
+READ_AUDIT_LOG: Final = "read_audit_log"
+# Every ``<schema>.read_audit_log`` as the catalogue holds it, readable by any
+# role: its identity arguments, whether the schema's owner owns it, whether it
+# runs as its definer, its settings, the one setting the guard gives it as
+# Postgres renders it (identifiers quoted), every grant but the owner's as
+# ``grantee:privilege[ (grantable)]``, whether the connecting role may execute
+# it, its source, volatility, language and result type.
+AUDIT_READER: Final = (
+    "SELECT pg_get_function_identity_arguments(p.oid) AS arguments,"
+    " p.proowner = n.nspowner AS owned, p.prosecdef AS definer,"
+    " coalesce(p.proconfig, ARRAY[]::text[]) AS config,"
+    " format('search_path=pg_catalog, %I, pg_temp', n.nspname) AS search_path,"
+    " ARRAY(SELECT coalesce(g.rolname, 'PUBLIC') || ':' || a.privilege_type"
+    " || CASE WHEN a.is_grantable THEN ' (grantable)' ELSE '' END"
+    " FROM pg_catalog.aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a"
+    " LEFT JOIN pg_catalog.pg_roles g ON g.oid = a.grantee"
+    " WHERE a.grantee <> p.proowner ORDER BY 1) AS grants,"
+    " has_function_privilege(p.oid, 'EXECUTE') AS executable, p.prosrc AS source,"
+    " p.provolatile::text AS volatility, l.lanname::text AS language,"
+    " pg_get_function_result(p.oid) AS result"
+    " FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+    " JOIN pg_catalog.pg_language l ON l.oid = p.prolang"
+    " WHERE n.nspname = :schema AND p.proname = 'read_audit_log' ORDER BY p.oid"
+)
+# What ``guard/0004.sql`` releases the reader as: STABLE, in PL/pgSQL, returning
+# this table as ``pg_get_function_result`` renders it.
+READ_AUDIT_LOG_VOLATILITY: Final = "s"
+READ_AUDIT_LOG_LANGUAGE: Final = "plpgsql"
+READ_AUDIT_LOG_RESULT: Final = (
+    "TABLE(id bigint, at timestamp with time zone, op text, schema_name text, table_name text, "
+    "row_key text, changed jsonb, subject text, mechanism text, on_behalf_of text, "
+    "trace_id text, elevated text[], origin text)"
+)
+# The body ``<guard>.audit_reader_source()`` returns, rendered from its catalogued
+# source, which the guard's functions digest pins: ``format`` over the template
+# between its ``$src$`` quotes, with the guard's name. Any role can read it, and
+# no search path resolves it; the application role may not call the function.
+# It ships in the reader's revision, so a guard without it predates that revision.
+RELEASED_READER_SOURCE: Final = (
+    "SELECT format(split_part(p.prosrc, '$src$', 2), n.nspname)"
+    " FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+    " WHERE n.nspname = :guard AND p.proname = 'audit_reader_source'"
 )
 AUDIT_READABLE: Final = (
     "SELECT has_table_privilege(to_regclass(quote_ident(:schema) || '.audit_log'), 'SELECT')"
@@ -159,6 +204,12 @@ _SCOPED_TABLES_SQL: Final = (
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_READABLE: Final = text(AUDIT_READABLE)
+_AUDIT_READER: Final = text(AUDIT_READER)
+_RELEASED_READER_SOURCE: Final = text(RELEASED_READER_SOURCE)
+_READER_GRANT: Final = "audit.reader_grant"
+_READER_SHAPE: Final = "audit.reader_shape"
+_READER_SOURCE: Final = "audit.reader_source"
+_PUBLIC: Final = "PUBLIC"
 AUDIT_TRIGGER: Final = "loom_audit_record"
 # The catalogue, not the guard: the application role reads pg_trigger.
 AUDIT_TRIGGERS: Final = (
@@ -242,36 +293,185 @@ async def startup_problems(
     *,
     audited: bool = False,
     recording: Sequence[str] = (),
+    reading: bool = False,
 ) -> list[Problem]:
     """Everything the application user can check at startup: guard, scoped tables, audit log.
 
-    The audit log is checked whenever it exists, marked tables or not (FR-018),
-    and an application with audited tables needs revision 3 and the log.
+    The audit log is checked whenever it exists, marked tables or not (FR-018);
+    an application with audited tables needs revision 3 and the log, and a
+    reading store needs the log (N13).
     *recording* names the tables that must carry their audit trigger, so a
-    model marked but never migrated does not write unrecorded rows.
+    model marked but never migrated does not write unrecorded rows. *reading*
+    is the store's ``schema.audit.reading.enabled``; see :func:`reading_problems`.
     """
     landing = (await connection.execute(_LANDING)).one_or_none()
     if landing is None:
         return [Problem("schema.landing", "current_schema()", "an existing schema", "none")]
+    schema = str(landing.schema)
     problems = await guard_problems(connection, guard, str(landing.owner))
-    problems += await table_problems(connection, guard, str(landing.schema), scoped)
-    problems += await audit_problems(connection, guard, str(landing.schema), audited=audited)
+    problems += await table_problems(connection, guard, schema, scoped)
+    problems += await audit_problems(connection, guard, schema, audited=audited, reading=reading)
+    problems += await reading_problems(connection, guard, schema, reading=reading)
     if not problems:
         problems += await _trigger_problems(connection, str(landing.schema), recording)
     return problems
 
 
 async def audit_problems(
-    connection: AsyncConnection, guard: str, schema: str, *, audited: bool
+    connection: AsyncConnection, guard: str, schema: str, *, audited: bool, reading: bool
 ) -> list[Problem]:
-    """The audit log's revision, shape and read access, as any role sees them."""
+    """The audit log's revision, shape and read access, as any role sees them.
+
+    The log must exist when tables are *audited* or the store is *reading*;
+    otherwise only an existing log is checked.
+    """
     if audited and (older := await _older_than_audit(connection, guard)):
         return [older]
     parameters = {_SCHEMA_PARAM: schema}
     shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, parameters)]
-    if not shape and not audited:
+    if not (shape or audited or reading):
         return []
     return audit_shape_problems(shape) + await _read_problems(connection, shape, parameters)
+
+
+async def reading_problems(
+    connection: AsyncConnection, guard: str, schema: str, *, reading: bool
+) -> list[Problem]:
+    """The audit reader as the application user sees it; see :func:`reader_problems`.
+
+    The released source is read only while *reading*. A guard that releases
+    none is below the reader's revision, and that is then the only problem:
+    it names the function that revision installs (US1 #3).
+    """
+    if not reading:
+        return _unread_reader_problems(await _audit_readers(connection, schema))
+    source = await released_reader_source(connection, guard)
+    if source is None:
+        return [_older_than_reading(guard)]
+    return reader_problems(await _audit_readers(connection, schema), source, reading=True)
+
+
+async def installed_reader(
+    connection: AsyncConnection, guard: str, schema: str
+) -> tuple[list[Any], str | None]:
+    """Every reader in *schema* and, only when there is one, the body *guard* releases."""
+    rows = await _audit_readers(connection, schema)
+    return rows, (await released_reader_source(connection, guard) if rows else None)
+
+
+async def _audit_readers(connection: AsyncConnection, schema: str) -> list[Any]:
+    """Every ``<schema>.read_audit_log`` as ``AUDIT_READER`` reads it."""
+    return list(await connection.execute(_AUDIT_READER, {_SCHEMA_PARAM: schema}))
+
+
+async def released_reader_source(connection: AsyncConnection, guard: str) -> str | None:
+    """The reader body the guard *guard* releases; ``None`` below the reader's revision."""
+    source = (await connection.execute(_RELEASED_READER_SOURCE, _guard_parameters(guard))).scalar()
+    return None if source is None else str(source)
+
+
+def reader_problems(rows: Sequence[Any], source: str | None, *, reading: bool) -> list[Problem]:
+    """Compare the readers in *rows* with what the store's *reading* flag needs.
+
+    While reading, the reader must exist, be the released shape with the
+    released *source*, and be executable by the connecting role through one
+    grantee. While not, nobody but its owner may hold EXECUTE: a grant implies
+    the flag.
+    """
+    if not reading:
+        return _unread_reader_problems(rows)
+    if not rows:
+        return [Problem("audit.reader", READ_AUDIT_LOG, "installed", _MISSING)]
+    problems = reader_shape_problems(rows) + reader_source_problems(rows, source)
+    return problems + _reader_grant_problems(rows[0])
+
+
+def reader_source_problems(rows: Sequence[Any], source: str | None) -> list[Problem]:
+    """A problem per reader whose body is not the released *source*; ``None`` matches none."""
+    return [
+        Problem(_READER_SOURCE, READ_AUDIT_LOG, "the released source", "changed")
+        for row in rows
+        if row.source != source
+    ]
+
+
+def _unread_reader_problems(rows: Sequence[Any]) -> list[Problem]:
+    """A problem when the connecting role may execute the reader or its ACL names a grantee.
+
+    The ACL catches a member that does not inherit the grantee's privileges.
+    """
+    executable = any(bool(row.executable) for row in rows)
+    held = [str(grant) for row in rows for grant in row.grants]
+    if not (executable or held):
+        return []
+    actual = "EXECUTE" if executable else ", ".join(held)
+    return [Problem(_READER_GRANT, READ_AUDIT_LOG, "no EXECUTE while not reading", actual)]
+
+
+def _reader_grant_problems(row: Any) -> list[Problem]:
+    """EXECUTE goes to one role besides PUBLIC, without grant option, and reaches this user.
+
+    Startup does not know the readers group's name; ``verify`` compares it exactly.
+    PUBLIC is a shape problem.
+    """
+    held = [grant for grant in _grants(row) if grant.role != _PUBLIC]
+    if len(held) != 1 or (held[0].privilege, held[0].grantable) != ("EXECUTE", False):
+        wanted = "EXECUTE to the readers group alone, without grant option"
+        actual = ", ".join(map(str, held)) or "none"
+        return [Problem(_READER_GRANT, READ_AUDIT_LOG, wanted, actual)]
+    if not row.executable:
+        return [Problem(_READER_GRANT, READ_AUDIT_LOG, "EXECUTE", "none")]
+    return []
+
+
+def reader_shape_problems(rows: Sequence[Any]) -> list[Problem]:
+    """One reader, in the released shape, with no PUBLIC grant.
+
+    The shape is its arguments, result type, language, volatility, owner,
+    definer rights and settings, as ``guard/0004.sql`` releases them.
+    """
+    if len(rows) > 1:
+        return [Problem(_READER_SHAPE, READ_AUDIT_LOG, "one function", f"{len(rows)} functions")]
+    row = rows[0]
+    public = [str(grant) for grant in _grants(row) if grant.role == _PUBLIC]
+    checks = (
+        (row.arguments == READ_AUDIT_LOG_ARGUMENTS, READ_AUDIT_LOG_ARGUMENTS, str(row.arguments)),
+        (row.result == READ_AUDIT_LOG_RESULT, READ_AUDIT_LOG_RESULT, str(row.result)),
+        (row.language == READ_AUDIT_LOG_LANGUAGE, READ_AUDIT_LOG_LANGUAGE, str(row.language)),
+        (row.volatility == READ_AUDIT_LOG_VOLATILITY, "stable", f"provolatile {row.volatility}"),
+        (bool(row.owned), "owned by the schema's owner", "another owner"),
+        (bool(row.definer), "security definer", "security invoker"),
+        (list(row.config) == [row.search_path], str([row.search_path]), str(list(row.config))),
+        (not public, "no PUBLIC grant", ", ".join(public)),
+    )
+    return [
+        Problem(_READER_SHAPE, READ_AUDIT_LOG, wanted, got)
+        for passed, wanted, got in checks
+        if not passed
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class _Grant:
+    """One ``ROLE:PRIVILEGE[ (grantable)]`` entry of ``AUDIT_READER``'s grants."""
+
+    role: str
+    privilege: str
+    grantable: bool
+
+    def __str__(self) -> str:
+        return f"{self.role}:{self.privilege}{' (grantable)' if self.grantable else ''}"
+
+
+def _grants(row: Any) -> list[_Grant]:
+    """Parse the grants of a reader row; the role is everything before the last colon."""
+    return [_grant(str(grant)) for grant in row.grants]
+
+
+def _grant(entry: str) -> _Grant:
+    role, _, rest = entry.rpartition(":")
+    privilege, _, option = rest.partition(" ")
+    return _Grant(role, privilege, option == "(grantable)")
 
 
 async def _read_problems(
@@ -314,6 +514,16 @@ async def _older_than_audit(connection: AsyncConnection, guard: str) -> Problem 
     if (await connection.execute(_AUDIT_SUPPORTED, _guard_parameters(guard))).scalar():
         return None
     return Problem("audit.guard_revision", guard, f"revision {AUDIT_GUARD_REVISION}", "older")
+
+
+def _older_than_reading(guard: str) -> Problem:
+    """The problem naming the reader for a guard that predates its revision (review N3)."""
+    return Problem(
+        "audit.reading_revision",
+        guard,
+        f"revision {READING_GUARD_REVISION}",
+        f"older; guard revision {READING_GUARD_REVISION} installs {READ_AUDIT_LOG}",
+    )
 
 
 def audit_shape_problems(lines: Sequence[str]) -> list[Problem]:

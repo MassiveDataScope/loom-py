@@ -28,7 +28,11 @@ from loom.core.model.introspection import (
     is_row_scoped,
     scope_columns,
 )
-from loom.core.model.materialization import NotMaterialized, is_materialized
+from loom.core.model.materialization import (
+    NotMaterialized,
+    is_materialized,
+    materialized_models,
+)
 from loom.core.model.partition import PartitionRange, RangePartition, range_partitions
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.projection import (
@@ -121,6 +125,7 @@ __all__ = [
     "get_table_name",
     "is_pydantic_model",
     "is_materialized",
+    "materialized_models",
     "loom_type",
     "loom_type_of",
     "msgspec_type",

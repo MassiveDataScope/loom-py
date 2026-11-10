@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from collections.abc import Iterable
+from typing import ClassVar, TypeVar
+
+ModelT = TypeVar("ModelT", bound=type)
 
 
 class NotMaterialized:
@@ -14,3 +17,8 @@ class NotMaterialized:
 def is_materialized(model: type) -> bool:
     """Whether a model should be compiled to a table and repository."""
     return bool(getattr(model, "__materialized__", True))
+
+
+def materialized_models(models: Iterable[ModelT]) -> tuple[ModelT, ...]:
+    """The models of *models* that are compiled to tables, in their order."""
+    return tuple(model for model in models if is_materialized(model))

@@ -31,11 +31,13 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
+from loom.core.model.materialization import materialized_models
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
 from loom.core.repository.sqlalchemy.rls.audit_verify import (
     audit_findings,
     audit_privilege_findings,
+    audit_reader_findings,
     audit_shape_findings,
     audit_state,
 )
@@ -80,7 +82,10 @@ GUARD_CONFIG: Final = (
     "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, version_table, "
     "data_version_table, installer, users::text AS users, "
     "to_jsonb(config) -> 'auditor_role' AS auditor_role, "
-    "to_jsonb(config) -> 'retention_months' AS retention_months FROM config"
+    "to_jsonb(config) -> 'retention_months' AS retention_months, "
+    "(to_jsonb(config) ->> 'audit_reading')::boolean AS audit_reading, "
+    "to_jsonb(config) -> 'boundary_scope' AS boundary_scope, "
+    "to_jsonb(config) -> 'boundary_type' AS boundary_type FROM config"
 )
 REGISTERED: Final = (
     "SELECT c.relname, p.relname AS parent, "
@@ -133,7 +138,7 @@ async def verify(url: str, application: Application) -> Report:
             findings = await _guard_integrity(connection, bootstrap)
             audit = await audit_state(connection, bootstrap.schema, bootstrap.names.guard)
             findings += audit_findings(audit, application.active_audited)
-            if audit.relations or application.audited:
+            if audit.relations or application.audited or bootstrap.audit_reading:
                 findings += await audit_shape_findings(connection, bootstrap.schema)
             findings += await _registry(connection, application.scoped)
             findings += await _protection(connection, application.scoped, bootstrap)
@@ -143,6 +148,7 @@ async def verify(url: str, application: Application) -> Report:
             findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
             findings += audit_privilege_findings(acl, audit, bootstrap)
+            findings += await audit_reader_findings(connection, bootstrap)
             findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
             findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
@@ -190,7 +196,9 @@ def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
     findings: list[Finding] = []
     if actual != expected:
         findings.append(Finding(None, "guard.config", str(expected), str(actual)))
-    return findings + _audit_config_findings(row, bootstrap)
+    return (
+        findings + _audit_config_findings(row, bootstrap) + _audit_reading_findings(row, bootstrap)
+    )
 
 
 def _audit_config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
@@ -202,6 +210,27 @@ def _audit_config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding
     if held == audit:
         return []
     return [Finding(None, "guard.audit_config", str(audit), str(held))]
+
+
+def _audit_reading_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
+    """The recorded reading flag is the declared one, and so is ``B`` while reading.
+
+    A guard before the reader's revision records no flag: it reads as off. A
+    ``B`` kept while reading is off is not drift; the operator clears it.
+    """
+    if row is None:
+        return []
+    boundary = None if row.boundary_scope is None else (row.boundary_scope, row.boundary_type)
+    checks: list[tuple[str, object, object]] = [
+        ("audit_reading", bootstrap.audit_reading, row.audit_reading is True)
+    ]
+    if bootstrap.audit_reading:
+        checks.append(("boundary", bootstrap.audit_boundary, boundary))
+    return [
+        Finding(None, "guard.audit_reading", f"{name} {wanted}", f"{name} {held}")
+        for name, wanted, held in checks
+        if held != wanted
+    ]
 
 
 def _users(users: Any) -> list[tuple[str, bool, str]]:
@@ -334,7 +363,7 @@ def _global_privileges(
 ) -> list[Finding]:
     groups = {"readers": bootstrap.names.readers, "writers": bootstrap.names.writers}
     findings: list[Finding] = []
-    for model in application.models:
+    for model in materialized_models(application.models):
         if is_row_scoped(model):
             continue
         table = get_table_name(model)

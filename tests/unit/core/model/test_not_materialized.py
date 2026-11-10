@@ -9,7 +9,7 @@ from loom.core.backend.sqlalchemy import compile_all, compile_model, get_compile
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, NotMaterialized
-from loom.core.model.materialization import is_materialized
+from loom.core.model.materialization import is_materialized, materialized_models
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.repository.abc import CursorCodec, RepoFor
 from loom.core.repository.sqlalchemy.registry import (
@@ -100,3 +100,9 @@ def test_repository_registration_skips_marker_and_verify_names_it() -> None:
     with pytest.raises(UnservedModelError, match="NotMaterialized") as error:
         factory.verify()
     assert error.value.model is _AuditView
+
+
+def test_materialized_models_keeps_only_tables_in_their_order() -> None:
+    assert materialized_models((_AuditView, _Stored)) == (_Stored,)
+    assert materialized_models((_Stored, _AuditView, _Stored)) == (_Stored, _Stored)
+    assert materialized_models(()) == ()
