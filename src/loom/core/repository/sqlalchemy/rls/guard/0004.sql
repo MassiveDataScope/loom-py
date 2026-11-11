@@ -493,6 +493,7 @@ END $$;
 -- anchored by oid through its registered partitions too, so moving or renaming it still counts.
 -- UNION ALL, not UNION: the guard tables are never analysed, and hashing their estimated rows
 -- costs ten times the walk. Inheritance has no cycles, and a repeated oid is harmless.
+-- The anchor through the parents of partitions is defense in depth: lineage(audit_partition) reaches the log too.
 CREATE FUNCTION guarded_relations() RETURNS SETOF oid LANGUAGE plpgsql STABLE AS $$
 BEGIN
   RETURN QUERY
@@ -586,6 +587,7 @@ END $$;
 -- Whether an object the ending DDL dropped can change what this guard asserts. Before Postgres 15
 -- a dropped trigger or policy carries no schema: its address names its schema and table. As above,
 -- once either schema no longer resolves by name, every drop counts.
+-- That schema check is defense in depth: on_ddl_end also runs for a DROP, and ddl_wakes_guard has it too.
 CREATE FUNCTION drop_wakes_guard(app name, grd name) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
 BEGIN
   IF to_regnamespace(quote_ident(app)) IS NULL OR to_regnamespace(quote_ident(grd)) IS NULL THEN RETURN true; END IF;

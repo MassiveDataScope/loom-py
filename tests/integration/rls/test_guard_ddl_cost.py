@@ -263,6 +263,18 @@ async def test_an_unknown_schemaless_command_wakes_every_store(
     assert _calls(counts, ASSERT) == dict.fromkeys(STORES, 1)
 
 
+async def test_an_unknown_schemaless_drop_wakes_every_store(
+    five: list[ScopedDatabase],
+) -> None:
+    """Fail closed: a dropped object naming no schema and not listed harmless asserts everywhere."""
+    a = five[0]
+    await execute(a.superuser, "CREATE SCHEMA cost_ext", "CREATE EXTENSION pg_trgm SCHEMA cost_ext")
+
+    counts = await _measured(a.superuser, a.superuser, ["DROP EXTENSION pg_trgm"])
+
+    assert _calls(counts, ASSERT) == dict.fromkeys(STORES, 1)
+
+
 async def test_a_partition_made_in_another_schema_wakes_the_store_of_its_parent(
     five: list[ScopedDatabase],
 ) -> None:

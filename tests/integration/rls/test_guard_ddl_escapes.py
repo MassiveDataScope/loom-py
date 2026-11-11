@@ -66,6 +66,32 @@ async def test_renaming_the_store_schema_is_refused_at_commit(
     )
 
 
+async def test_renaming_the_store_schema_alone_is_refused_at_commit(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """No view wakes the guard here: only the schema that no longer resolves does."""
+    schema = "esc_rename_alone"
+    database = await _created(scoped_database, tmp_path, schema)
+
+    await _refused_at_commit(database.superuser, f"ALTER SCHEMA {schema} RENAME TO {schema}_moved")
+
+
+async def test_a_table_made_in_the_renamed_store_schema_is_refused_at_commit(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """The new table lives in a schema no guard names; the guard fails closed all the same."""
+    schema = "esc_rename_table"
+    database = await _created(scoped_database, tmp_path, schema)
+    moved = f"{schema}_moved"
+
+    await _refused_at_commit(
+        database.superuser,
+        f"ALTER SCHEMA {schema} RENAME TO {moved}",
+        f"CREATE TABLE {moved}.sneaky (id int PRIMARY KEY)",
+        f"ALTER TABLE {moved}.sneaky ENABLE ROW LEVEL SECURITY",
+    )
+
+
 # --- F2: the audit log is anchored by oid ------------------------------------------------------
 
 
