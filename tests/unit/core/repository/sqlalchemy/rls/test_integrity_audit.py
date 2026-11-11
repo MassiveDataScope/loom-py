@@ -20,7 +20,9 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
     Problem,
     audit_problems,
     audit_shape_problems,
+    log_trigger_problems,
     reader_problems,
+    view_problems,
 )
 
 
@@ -244,3 +246,33 @@ def test_a_changed_body_is_a_source_problem() -> None:
     changed = _Reader(source=SOURCE + " -- and more")
 
     assert _checks(reader_problems([changed], SOURCE, reading=True)) == ["audit.reader_source"]
+
+
+# --- Views over the audit log (spec 009, T12b) -----------------------------------------------
+
+
+def test_no_view_over_the_log_is_no_problem() -> None:
+    assert view_problems([]) == []
+
+
+def test_a_view_over_the_log_names_every_view_and_how_to_fix_it() -> None:
+    """A view runs with its owner's rights, so one over the log exposes every boundary."""
+    [problem] = view_problems(["public.leak", "public.t rule copy"])
+
+    assert (problem.check, problem.subject) == ("audit.view", "audit_log")
+    assert problem.actual.startswith("public.leak, public.t rule copy; ")
+    assert "security_invoker" in problem.actual
+    assert "rerun the bootstrap" in problem.actual
+
+
+def test_no_foreign_trigger_on_the_log_is_no_problem() -> None:
+    assert log_trigger_problems([]) == []
+
+
+def test_a_foreign_trigger_on_the_log_names_it_and_how_to_fix_it() -> None:
+    """Review M2: a trigger on the log runs on every audited write and sees each row."""
+    [problem] = log_trigger_problems(["s1.audit_log.leak"])
+
+    assert (problem.check, problem.subject) == ("audit.log_trigger", "audit_log")
+    assert problem.actual.startswith("s1.audit_log.leak; ")
+    assert "rerun the bootstrap" in problem.actual

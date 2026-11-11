@@ -1,6 +1,6 @@
 """``verify`` reports what the guard's assertion cannot require (T018, FR-024).
 
-Two synthetic products share the module database: ``notes`` brings serial
+Two synthetic products share the test's database: ``notes`` brings serial
 sequences and an elevable scope, ``ledger`` brings a global table with
 declared privileges and a boundary that is a foreign key to it. Every negative
 applies one change as the superuser, expects one check to fail, and reverts.
@@ -39,8 +39,10 @@ async def _run(url: str, statements: Sequence[str]) -> None:
     """Run statements through the driver's simple protocol, which accepts multi-command scripts."""
     async with _admin(url) as conn:
         raw = await conn.get_raw_connection()
+        driver = raw.driver_connection
+        assert driver is not None
         for statement in statements:
-            await raw.driver_connection.execute(statement)
+            await driver.execute(statement)
 
 
 @pytest.fixture(scope="module")

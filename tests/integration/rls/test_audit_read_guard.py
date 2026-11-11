@@ -27,6 +27,7 @@ import msgspec
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -645,7 +646,8 @@ async def test_turning_reading_off_refuses_while_another_grantee_holds_execute(
 ) -> None:
     """FR-002, security review (low): ``configure`` revokes only the readers group, so any
     other ``EXECUTE`` holder, ``PUBLIC`` included, makes turning reading off refuse (the
-    assertion's "no other grantee", LG002)."""
+    assertion's "no other grantee", LG002). The guard asserts at COMMIT (T12c), which the
+    bootstrap runs through SQLAlchemy."""
     schema = f"rg_stray_{grantee.lower()}"
     database, _ = await _deployed(scoped_database, tmp_path, schema, document=READING_ON)
     role = "PUBLIC" if grantee == "PUBLIC" else f"{schema}_role"
@@ -654,7 +656,7 @@ async def test_turning_reading_off_refuses_while_another_grantee_holds_execute(
         await _run(database.superuser, f"CREATE ROLE {role} NOLOGIN")
     await _behind_the_guard(database, f"GRANT EXECUTE ON FUNCTION {_reader(schema)} TO {role}")
     try:
-        with pytest.raises(asyncpg.PostgresError, match="audit reader grant") as refused:
+        with pytest.raises(DBAPIError, match="audit reader grant") as refused:
             await scoped_database(schema, document=READING_OFF)
     finally:
         # Another guard's drifted grant would refuse every later DDL in this database.
@@ -662,7 +664,7 @@ async def test_turning_reading_off_refuses_while_another_grantee_holds_execute(
             database, f"REVOKE EXECUTE ON FUNCTION {_reader(schema)} FROM {role}"
         )
 
-    assert getattr(refused.value, "sqlstate", "") == VIOLATION
+    assert getattr(refused.value.orig, "sqlstate", "") == VIOLATION
 
 
 async def _behind_the_guard(database: ScopedDatabase, statement: str) -> None:

@@ -21,6 +21,7 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     OWNER_FUNCTIONS,
     READ_AUDIT_LOG_ARGUMENTS,
     READING_GUARD_REVISION,
+    SCHEMA_DEFINERS,
     required_guard_revision,
 )
 
@@ -59,11 +60,13 @@ _REPLACED = {name: body for name, (replaces, body) in _DEFINED.items() if replac
 _CREATED = {name: body for name, (replaces, body) in _DEFINED.items() if not replaces}
 
 EXPECTED_DIFFS = {
-    "assert_scoped_schema": "87f8a7f783d092a9e1bed9e838648564b868942ea39ded99760643eb0dbbdb52",
+    "assert_scoped_schema": "7feffb6cfa34f2375f5d2692277e295679345ac6f42832246170a117245027e2",
     "protect_scoped_table": "3f04c320c167a931292fce3f78d5f725cf7de84a3c75a885625ba67103264c8d",
-    "assert_audited_schema": "bd34090f06f1057f77982206f8833c1fced8cbd5473db715a3919a2d91f65358",
+    "assert_audited_schema": "5a3d689c214e1d2a715d6bc054a33bd8ab1c99180e19b24cd87fbb3ff7f5b153",
     "configure": "b420f7c2d9df55bf928229dd9dd519aef842556e44302a0cd91001dd58cf04e1",
     "owner_functions": "5cdd55977a17b55f11b3e5221a8e760615953c2eb64bb66572b197df84bb232c",
+    "on_ddl_end": "fafefa3944b9de8443ef6f777c761944fa977c19fe784116d173f225788db7c2",
+    "on_sql_drop": "c60f897a16ae58b7da5f93cc2efbb40b5f5d6c61413b828c8a73dbf93e2b4af1",
 }
 
 
@@ -93,10 +96,22 @@ def test_every_replaced_function_replaces_an_earlier_definition() -> None:
 
 def test_the_created_functions_are_the_reader_source_the_owner_step_and_its_checks() -> None:
     assert sorted(_CREATED) == [
+        "acl_written",
         "apply_audit_reading",
+        "audit_log_readers",
         "audit_reader_source",
+        "ddl_wakes_guard",
+        "drop_wakes_guard",
         "duplicate_scopes",
+        "guarded_relations",
+        "harmless_drops",
+        "harmless_tags",
+        "lineage",
+        "may_expose",
+        "namespace_tags",
         "normal_scope",
+        "reader_name",
+        "refuse_audit_log_views",
         "scope_of",
         "scope_set",
         "tree_mismatch",
@@ -153,3 +168,95 @@ def test_reading_needs_revision_four() -> None:
     assert required_guard_revision(True) == AUDIT_GUARD_REVISION
     assert required_guard_revision(False, reading=True) == READING_GUARD_REVISION
     assert required_guard_revision(True, reading=True) == READING_GUARD_REVISION
+
+
+def test_ddl_defers_the_full_assertion_and_the_walk_to_commit() -> None:
+    """T12c: the event triggers enter the hatch; its deferred check asserts once, at COMMIT."""
+    for name in ("on_ddl_end", "on_sql_drop"):
+        body = _REPLACED[name]
+        assert "PERFORM enter_hatch();" in body, name
+        assert "assert_scoped_schema" not in body, name
+        assert "refuse_audit_log_views" not in body, name
+    assert "PERFORM refuse_audit_log_views();" in _REPLACED["assert_audited_schema"]
+
+
+def test_guard_schema_ddl_is_still_refused_at_the_statement() -> None:
+    """The one immediate check: cheap, exact, and before anything else."""
+    for name in ("on_ddl_end", "on_sql_drop"):
+        body = _REPLACED[name]
+        assert body.index("forbid_guard_ddl") < body.index("hatch_open()"), name
+
+
+def test_only_ddl_that_may_expose_the_log_runs_the_walk_again() -> None:
+    """T12c R2: views, rules and their options; never a refresh."""
+    exposure = _CREATED["may_expose"]
+    assert "'view', 'materialized view', 'rule'" in exposure
+    assert "REFRESH MATERIALIZED VIEW" in exposure
+    assert "may_expose(" in _CREATED["ddl_wakes_guard"]
+
+
+def test_the_harmless_schemaless_commands_are_the_approved_list() -> None:
+    """T12c R1.5: any other command naming no schema wakes every guard (fail closed)."""
+    tags = set(re.findall(r"'([A-Z ]+)'", _CREATED["harmless_tags"]))
+    assert tags == {
+        "ALTER DEFAULT PRIVILEGES",
+        "CREATE PUBLICATION",
+        "ALTER PUBLICATION",
+        "CREATE SUBSCRIPTION",
+        "ALTER SUBSCRIPTION",
+        "CREATE LANGUAGE",
+        "CREATE CAST",
+        "CREATE ACCESS METHOD",
+        "CREATE FOREIGN DATA WRAPPER",
+        "ALTER FOREIGN DATA WRAPPER",
+        "CREATE SERVER",
+        "ALTER SERVER",
+        "CREATE USER MAPPING",
+        "ALTER USER MAPPING",
+    }
+    assert set(re.findall(r"'([A-Z ]+)'", _CREATED["namespace_tags"])) == {
+        "CREATE SCHEMA",
+        "ALTER SCHEMA",
+        "COMMENT",
+        "SECURITY LABEL",
+    }
+
+
+def test_the_revision_refuses_an_existing_view_as_soon_as_it_can() -> None:
+    """Review L1: an upgrade over a view fails naming it, before anything else is replaced."""
+    created = _CREATED["refuse_audit_log_views"]
+    following = _REVISION[_REVISION.index(created) + len(created) :]
+
+    assert following.lstrip().startswith("SELECT refuse_audit_log_views();")
+
+
+def test_the_view_check_and_on_ddl_end_skip_a_guard_without_configuration() -> None:
+    """Info: before ``configure`` the log's name is unknown; ``format('%I', NULL)`` raises."""
+    early = "IF app_schema() IS NULL THEN RETURN; END IF;"
+
+    assert early in _CREATED["refuse_audit_log_views"]
+    assert "DECLARE app name := app_schema();" in _REPLACED["on_ddl_end"]
+    assert "IF app IS NULL OR hatch_open() THEN RETURN; END IF;" in _REPLACED["on_ddl_end"]
+
+
+def test_the_view_check_lists_what_audit_log_readers_returns() -> None:
+    """Review M1: views and rules come from one function, which a test compares with Python."""
+    assert "audit_log_readers()" in _CREATED["refuse_audit_log_views"]
+    readers = _CREATED["audit_log_readers"]
+    assert "rulename <> '_RETURN'" in readers
+    assert "security_invoker" in readers
+
+
+def test_the_assertion_refuses_a_foreign_trigger_on_the_log() -> None:
+    """Review M2: only the guard's two immutability triggers may sit on the log tree."""
+    assert "NOT g.tgisinternal" in _REPLACED["assert_audited_schema"]
+
+
+def test_the_schema_definers_are_the_functions_the_guard_creates_in_the_store_schema() -> None:
+    """The verify allow-list names what the guard text installs as ``<app schema>.<name>``."""
+    text = "".join((_GUARD / name).read_text() for name in ("0001.sql", "0002.sql", "0003.sql"))
+    text += _REVISION
+    qualified = set(re.findall(r"%I\.(\w+)\(", text))
+    guard_functions = set(_definitions(text)) | set(_previous())
+
+    assert qualified - guard_functions == {name.partition("(")[0] for name in SCHEMA_DEFINERS}

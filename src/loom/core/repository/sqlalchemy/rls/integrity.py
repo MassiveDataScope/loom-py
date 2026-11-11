@@ -105,6 +105,64 @@ RELEASED_READER_SOURCE: Final = (
 AUDIT_READABLE: Final = (
     "SELECT has_table_privilege(to_regclass(quote_ident(:schema) || '.audit_log'), 'SELECT')"
 )
+# Whether the connecting role reads a column of the audit log or of a partition while
+# it cannot read the log itself (``AUDIT_READABLE`` reports that): a column grant
+# reads past every boundary all the same.
+AUDIT_COLUMNS_READABLE: Final = (
+    "WITH log AS (SELECT to_regclass(quote_ident(:schema) || '.audit_log') AS rel)"
+    " SELECT NOT has_table_privilege(log.rel, 'SELECT') AND EXISTS ("
+    "SELECT 1 FROM pg_catalog.pg_partition_tree(log.rel) t"
+    " WHERE has_any_column_privilege(t.relid, 'SELECT')) FROM log"
+)
+# What reads ``<schema>.audit_log`` with another role's rights, as the guard's
+# ``audit_log_readers()`` lists it, so both find the same set: every view and
+# materialized view over the log or a partition, directly or through other views,
+# unless it is a ``security_invoker`` view (Postgres 15+), and every relation
+# with a rule (not a view's ``_RETURN``) that depends on any of them, the log's
+# own rules included. Names are ``schema.relation[ rule name]``, quoted as
+# identifiers. The catalogue is readable by any role.
+AUDIT_LOG_VIEWS: Final = (
+    "WITH RECURSIVE reads(rel) AS ("
+    "SELECT t.relid::oid FROM pg_catalog.pg_partition_tree("
+    "to_regclass(quote_ident(:schema) || '.audit_log')) t"
+    " UNION SELECT rw.ev_class FROM reads"
+    " JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_rewrite'::regclass"
+    " AND d.refclassid = 'pg_catalog.pg_class'::regclass AND d.refobjid = reads.rel"
+    " JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid"
+    " JOIN pg_catalog.pg_class v ON v.oid = rw.ev_class AND v.relkind IN ('v', 'm')"
+    " WHERE rw.ev_class <> reads.rel)"
+    " SELECT format('%I.%I', n.nspname, c.relname) AS name FROM reads"
+    " JOIN pg_catalog.pg_class c ON c.oid = reads.rel"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE c.relkind IN ('v', 'm') AND NOT EXISTS ("
+    "SELECT 1 FROM pg_catalog.pg_options_to_table(c.reloptions) o"
+    " WHERE o.option_name = 'security_invoker' AND o.option_value::boolean)"
+    " UNION SELECT format('%I.%I rule %I', n.nspname, c.relname, rw.rulename)"
+    " FROM pg_catalog.pg_rewrite rw JOIN pg_catalog.pg_class c ON c.oid = rw.ev_class"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " WHERE rw.rulename <> '_RETURN' AND EXISTS ("
+    "SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_rewrite'::regclass"
+    " AND d.objid = rw.oid AND d.refclassid = 'pg_catalog.pg_class'::regclass"
+    " AND d.refobjid IN (SELECT rel FROM reads)) ORDER BY 1"
+)
+# Every trigger on the audit log or a partition but the guard's two immutability
+# triggers, as ``schema.relation.trigger``: one runs on each audited write with
+# its owner's rights and sees the row.
+LOG_TRIGGERS: Final = (
+    "SELECT format('%I.%I.%I', n.nspname, c.relname, g.tgname) AS name"
+    " FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid"
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+    " JOIN pg_catalog.pg_proc f ON f.oid = g.tgfoid"
+    " JOIN pg_catalog.pg_namespace fn ON fn.oid = f.pronamespace"
+    " WHERE g.tgrelid IN (SELECT t.relid FROM pg_catalog.pg_partition_tree("
+    "to_regclass(quote_ident(:schema) || '.audit_log')) t) AND NOT g.tgisinternal"
+    " AND NOT (g.tgname IN ('loom_audit_log_immutable_row', 'loom_audit_log_immutable_truncate')"
+    " AND f.proname = 'refuse_audit_log_change' AND fn.nspname = :guard) ORDER BY 1"
+)
+VIEW_REMEDY: Final = (
+    "drop them (or recreate a view with security_invoker), then rerun the bootstrap"
+)
+TRIGGER_REMEDY: Final = "drop them, then rerun the bootstrap"
 CATALOG_CHECKS: Final = (FUNCTIONS, "relations", "columns", "constraints", "triggers", "objects")
 SCHEMA_KIND: Final = "schema"
 _SCHEMA_PARAM: Final = SCHEMA_KIND
@@ -204,6 +262,9 @@ _SCOPED_TABLES_SQL: Final = (
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_READABLE: Final = text(AUDIT_READABLE)
+_AUDIT_COLUMNS_READABLE: Final = text(AUDIT_COLUMNS_READABLE)
+_AUDIT_LOG_VIEWS: Final = text(AUDIT_LOG_VIEWS)
+_LOG_TRIGGERS: Final = text(LOG_TRIGGERS)
 _AUDIT_READER: Final = text(AUDIT_READER)
 _RELEASED_READER_SOURCE: Final = text(RELEASED_READER_SOURCE)
 _READER_GRANT: Final = "audit.reader_grant"
@@ -320,7 +381,7 @@ async def startup_problems(
 async def audit_problems(
     connection: AsyncConnection, guard: str, schema: str, *, audited: bool, reading: bool
 ) -> list[Problem]:
-    """The audit log's revision, shape and read access, as any role sees them.
+    """The audit log's revision, shape, read access and views, as any role sees them.
 
     The log must exist when tables are *audited* or the store is *reading*;
     otherwise only an existing log is checked.
@@ -331,7 +392,38 @@ async def audit_problems(
     shape = [str(row.line) for row in await connection.execute(_AUDIT_SHAPE, parameters)]
     if not (shape or audited or reading):
         return []
-    return audit_shape_problems(shape) + await _read_problems(connection, shape, parameters)
+    problems = audit_shape_problems(shape) + await _read_problems(connection, shape, parameters)
+    problems += await _column_read_problems(connection, shape, parameters)
+    return problems + await audit_exposure_problems(connection, guard, schema)
+
+
+async def audit_exposure_problems(
+    connection: AsyncConnection, guard: str, schema: str
+) -> list[Problem]:
+    """What reads *schema*'s audit log with another role's rights: views, rules, triggers."""
+    views = await connection.execute(_AUDIT_LOG_VIEWS, {_SCHEMA_PARAM: schema})
+    triggers = await connection.execute(_LOG_TRIGGERS, {_SCHEMA_PARAM: schema, "guard": guard})
+    return view_problems([str(row.name) for row in views]) + log_trigger_problems(
+        [str(row.name) for row in triggers]
+    )
+
+
+def view_problems(views: Sequence[str]) -> list[Problem]:
+    """One problem naming every view or rule that reads the audit log, and the remedy."""
+    if not views:
+        return []
+    actual = f"{', '.join(views)}; {VIEW_REMEDY}"
+    return [Problem("audit.view", _AUDIT_LOG, "no view or rule reads the log", actual)]
+
+
+def log_trigger_problems(triggers: Sequence[str]) -> list[Problem]:
+    """One problem naming every trigger on the log but the guard's, and the remedy."""
+    if not triggers:
+        return []
+    actual = f"{', '.join(triggers)}; {TRIGGER_REMEDY}"
+    return [
+        Problem("audit.log_trigger", _AUDIT_LOG, "only the guard's immutability triggers", actual)
+    ]
 
 
 async def reading_problems(
@@ -481,6 +573,15 @@ async def _read_problems(
     if shape and (await connection.execute(_AUDIT_READABLE, parameters)).scalar():
         return [Problem("audit.read", _AUDIT_LOG, "only the auditor reads", "readable")]
     return []
+
+
+async def _column_read_problems(
+    connection: AsyncConnection, shape: Sequence[str], parameters: dict[str, str]
+) -> list[Problem]:
+    """A problem when the connecting role reads columns of an existing log it cannot read whole."""
+    readable = shape and (await connection.execute(_AUDIT_COLUMNS_READABLE, parameters)).scalar()
+    expected = "no column grant on the log or a partition"
+    return [Problem("audit.read_columns", _AUDIT_LOG, expected, "readable")] if readable else []
 
 
 async def _trigger_problems(

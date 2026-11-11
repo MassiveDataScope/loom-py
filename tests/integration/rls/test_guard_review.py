@@ -69,7 +69,7 @@ async def _state(url: str, *statements: str) -> str:
                 for statement in statements:
                     await conn.execute(statement)
         except asyncpg.PostgresError as exc:
-            return str(exc.sqlstate)
+            return str(getattr(exc, "sqlstate", None))
     return "none"
 
 
@@ -155,7 +155,7 @@ async def _verify_checks(url: str, application: Application) -> set[str]:
 @pytest.mark.parametrize("stolen", ["migrator", "login user"])
 async def test_n1_a_bootstrap_never_adopts_a_role_of_another_schema(
     scoped_database: BootstrapFactory,
-    module_database_uri: str,
+    database_uri: str,
     created_roles: set[str],
     stolen: str,
 ) -> None:
@@ -175,7 +175,7 @@ async def test_n1_a_bootstrap_never_adopts_a_role_of_another_schema(
         victim_url = victim.write
 
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="never adopts"):
-        await apply_bootstrap(module_database_uri, config, {foreign: "taken-over"})
+        await apply_bootstrap(database_uri, config, {foreign: "taken-over"})
 
     assert await scalar(victim_url, "SELECT 1") == 1
 
@@ -191,7 +191,7 @@ async def test_n1_an_owner_granted_a_predefined_role_is_refused_on_rerun(
 
 
 async def test_n1_a_rerun_never_adopts_a_foreign_existing_role(
-    scoped_database: BootstrapFactory, module_database_uri: str, created_roles: set[str]
+    scoped_database: BootstrapFactory, database_uri: str, created_roles: set[str]
 ) -> None:
     database = await scoped_database(_name())
     foreign = f"{database.schema}_foreign"
@@ -203,7 +203,7 @@ async def test_n1_a_rerun_never_adopts_a_foreign_existing_role(
     )
 
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="never adopts"):
-        await apply_bootstrap(module_database_uri, config, {})
+        await apply_bootstrap(database_uri, config, {})
 
 
 async def test_n2_unprotect_and_a_hand_policy_fail_at_commit(
@@ -282,9 +282,10 @@ async def test_n4_a_violation_left_under_an_open_hatch_fails_at_commit(
     assert await scalar(database.superuser, forced) is True
 
 
-async def test_n5_a_broken_schema_blocks_only_its_own_ddl_and_every_grant(
+async def test_n5_a_broken_schema_blocks_only_its_own_ddl_and_grants(
     scoped_database: BootstrapFactory,
 ) -> None:
+    """T12c: a GRANT names no schema, yet wakes only the store whose privileges it changes."""
     broken = await _guarded_table(scoped_database)
     healthy = await scoped_database(_name())
     a, b = broken.schema, healthy.schema
@@ -304,11 +305,19 @@ async def test_n5_a_broken_schema_blocks_only_its_own_ddl_and_every_grant(
             f"CREATE TABLE {b}.other (id int)",
             f"GRANT SELECT ON {b}.other TO {b}_readers",
         )
+        own_ddl = await _state(
+            broken.superuser, f"SET LOCAL ROLE {a}_owner", f"CREATE TABLE {a}.plain (id int)"
+        )
+        own_grant = await _state(
+            broken.superuser, f"SET LOCAL ROLE {a}_owner", f"GRANT SELECT ON {a}.t TO {a}_readers"
+        )
     finally:
         await _drop_event_triggers(broken.superuser, a)
 
     assert created == "none"
-    assert granted == "LG002"
+    assert granted == "none"
+    assert own_ddl == "LG002"
+    assert own_grant == "LG002"
 
 
 async def test_arch3_a_bootstrap_waits_for_a_migration_of_the_same_schema(
@@ -328,26 +337,24 @@ async def test_arch3_a_bootstrap_waits_for_a_migration_of_the_same_schema(
 
 
 async def test_arch4_removing_a_declared_user_revokes_what_it_held(
-    module_database_uri: str, created_roles: set[str]
+    database_uri: str, created_roles: set[str]
 ) -> None:
     schema = _name()
     writer, bypass = f"{schema}_gone_rw", f"{schema}_gone_ops"
     created_roles.update({writer, bypass, *(f"{schema}_{s}" for s in ("owner", "migrator"))})
     created_roles.update({f"{schema}_{s}" for s in ("readers", "writers", "ro", "rw", "ops")})
     extra = {writer: DatabaseUser(True, "write"), bypass: DatabaseUser(True, "bypass")}
-    await apply_bootstrap(
-        module_database_uri, _config(schema, database_users=_users(schema, **extra)), {}
-    )
+    await apply_bootstrap(database_uri, _config(schema, database_users=_users(schema, **extra)), {})
 
-    await apply_bootstrap(module_database_uri, _config(schema), {})
+    await apply_bootstrap(database_uri, _config(schema), {})
 
     held = (
         f"SELECT pg_has_role('{writer}', '{schema}_readers', 'MEMBER') "
         f"OR pg_has_role('{writer}', '{schema}_writers', 'MEMBER') "
         f"OR has_schema_privilege('{bypass}', '{schema}', 'USAGE')"
     )
-    assert await scalar(module_database_uri, held) is False
-    await _drop_event_triggers(module_database_uri, schema)
+    assert await scalar(database_uri, held) is False
+    await _drop_event_triggers(database_uri, schema)
 
 
 async def test_arch8_startup_refuses_an_owner_trigger_outside_the_guard(
@@ -398,7 +405,7 @@ async def test_arch1_startup_reports_a_guard_below_the_minimum_revision(
 
 
 async def test_n7_scram_iterations_reach_the_stored_verifier(
-    module_database_uri: str, created_roles: set[str]
+    database_uri: str, created_roles: set[str]
 ) -> None:
     schema = _name()
     created_roles.update({f"{schema}_{s}" for s in ("owner", "migrator", "readers", "writers")})
@@ -406,14 +413,14 @@ async def test_n7_scram_iterations_reach_the_stored_verifier(
     password = secrets.token_urlsafe(12)
 
     await apply_bootstrap(
-        module_database_uri, _config(schema, scram_iterations=8192), {f"{schema}_ro": password}
+        database_uri, _config(schema, scram_iterations=8192), {f"{schema}_ro": password}
     )
 
     stored = f"SELECT rolpassword FROM pg_authid WHERE rolname = '{schema}_ro'"
-    assert str(await scalar(module_database_uri, stored)).startswith("SCRAM-SHA-256$8192:")
-    login = make_url(module_database_uri).set(username=f"{schema}_ro", password=password)
+    assert str(await scalar(database_uri, stored)).startswith("SCRAM-SHA-256$8192:")
+    login = make_url(database_uri).set(username=f"{schema}_ro", password=password)
     assert await scalar(login.render_as_string(hide_password=False), "SELECT 1") == 1
-    await _drop_event_triggers(module_database_uri, schema)
+    await _drop_event_triggers(database_uri, schema)
 
 
 async def test_n7_the_bootstrap_quiets_logging_before_anything_else(
@@ -434,7 +441,7 @@ async def test_n7_the_bootstrap_quiets_logging_before_anything_else(
 
 
 async def test_n10_a_rerun_with_another_version_table_is_refused(
-    scoped_database: BootstrapFactory, module_database_uri: str
+    scoped_database: BootstrapFactory, database_uri: str
 ) -> None:
     database = await scoped_database(_name())
     names = SchemaNames.derived(database.schema)
@@ -450,4 +457,4 @@ async def test_n10_a_rerun_with_another_version_table_is_refused(
     )
 
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="configured for another"):
-        await apply_bootstrap(module_database_uri, config, {})
+        await apply_bootstrap(database_uri, config, {})

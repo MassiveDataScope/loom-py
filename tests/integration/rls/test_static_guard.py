@@ -310,13 +310,13 @@ async def test_tampering_with_the_guard_is_reported(
 
 
 async def test_the_bootstrap_never_adopts_a_guard_schema_it_did_not_create(
-    scoped_database: BootstrapFactory, module_database_uri: str, created_roles: set[str]
+    scoped_database: BootstrapFactory, database_uri: str, created_roles: set[str]
 ) -> None:
     name = f"n{secrets.token_hex(3)}"
     squatter = f"{name}_squatter"
     created_roles.add(squatter)
     await _run(
-        module_database_uri,
+        database_uri,
         f"CREATE ROLE {squatter} NOLOGIN",
         f"CREATE SCHEMA loom_guard_{name} AUTHORIZATION {squatter}",
     )
@@ -326,13 +326,13 @@ async def test_the_bootstrap_never_adopts_a_guard_schema_it_did_not_create(
 
 
 async def test_the_bootstrap_never_adopts_an_application_schema_owned_by_someone_else(
-    scoped_database: BootstrapFactory, module_database_uri: str, created_roles: set[str]
+    scoped_database: BootstrapFactory, database_uri: str, created_roles: set[str]
 ) -> None:
     name = f"n{secrets.token_hex(3)}"
     squatter = f"{name}_squatter"
     created_roles.add(squatter)
     await _run(
-        module_database_uri,
+        database_uri,
         f"CREATE ROLE {squatter} NOLOGIN",
         f"CREATE SCHEMA {name} AUTHORIZATION {squatter}",
     )
@@ -340,7 +340,7 @@ async def test_the_bootstrap_never_adopts_an_application_schema_owned_by_someone
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="never adopts"):
         await scoped_database(name)
     await _run(
-        module_database_uri,
+        database_uri,
         f"DROP EVENT TRIGGER IF EXISTS loom_guard_{name}_ddl",
         f"DROP EVENT TRIGGER IF EXISTS loom_guard_{name}_drop",
     )

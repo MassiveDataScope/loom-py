@@ -6,7 +6,10 @@ the log and its partitions grant SELECT to the auditor alone; and its shape
 is the pinned one. Partitions past the retention are listed, not drift; they
 are the same ones ``loom schema audit drop-expired`` would drop. The audit
 reader is the released one and only the readers group may execute it, and
-only while the store reads (FR-002, FR-003, SC-003).
+only while the store reads (FR-002, FR-003, SC-003). No view, rule or foreign
+trigger reads the log. Any other security definer function the schema's owner,
+or a member of it, holds outside the guard is a warning, and drift when an
+application role may execute it and it reads the log (T12b).
 """
 
 from __future__ import annotations
@@ -19,13 +22,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.repository.sqlalchemy.rls.audit import EXPIRED_AUDIT_PARTITIONS
-from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding, diff
-from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_GUARD_REVISION
+from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding, diff, problem_finding
+from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+    AUDIT_GUARD_REVISION,
+    SCHEMA_DEFINERS,
+)
 from loom.core.repository.sqlalchemy.rls.integrity import (
     AUDIT_HORIZON_WARNING_MONTHS,
     AUDIT_SHAPE,
     AUDIT_SUPPORTED,
     READ_AUDIT_LOG,
+    audit_exposure_problems,
     audit_months_covered,
     audit_shape_problems,
     installed_reader,
@@ -47,12 +54,54 @@ AUDIT_RELATIONS: Final = (
     "OR c.oid IN (SELECT d.objid FROM pg_depend d WHERE d.deptype IN ('a', 'i') "
     "AND d.refobjid = to_regclass(quote_ident(:schema) || '.audit_log')))"
 )
+# Every column grant on the audit log or any partition, as ``relation.column:grantee:privilege``.
+AUDIT_COLUMN_GRANTS: Final = (
+    "SELECT c.relname || '.' || a.attname || ':' || coalesce(r.rolname, 'PUBLIC') || ':' "
+    "|| x.privilege_type AS line FROM pg_catalog.pg_partition_tree("
+    "to_regclass(quote_ident(:schema) || '.audit_log')) t "
+    "JOIN pg_catalog.pg_class c ON c.oid = t.relid "
+    "JOIN pg_catalog.pg_attribute a ON a.attrelid = t.relid AND a.attacl IS NOT NULL, "
+    "LATERAL aclexplode(a.attacl) x LEFT JOIN pg_catalog.pg_roles r ON r.oid = x.grantee"
+)
 AUDIT_REGISTRY: Final = (
     "SELECT c.relname, a.excluded FROM audited_table a JOIN pg_class c ON c.oid = a.rel "
     "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :schema"
 )
+# Every security definer function outside the guard whose owner is the store
+# schema's owner or a member of it (the migrator inherits nothing, so MEMBER, not
+# USAGE; superusers own the catalogue and the guards, and are left out), with its
+# schema, its ``name(arguments)``, its qualified signature and whether it is
+# escalated: executable by PUBLIC or one of *roles*, and reading the log by name
+# in its source or by a dependency (``BEGIN ATOMIC``).
+OWNER_DEFINERS: Final = (
+    "WITH owner AS (SELECT n.nspowner AS oid FROM pg_catalog.pg_namespace n"
+    " WHERE n.nspname = :schema),"
+    " tree AS (SELECT t.relid FROM pg_catalog.pg_partition_tree("
+    "to_regclass(quote_ident(:schema) || '.audit_log')) t)"
+    " SELECT n.nspname AS schema,"
+    " p.proname || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')' AS identity,"
+    " format('%I.%I', n.nspname, p.proname) || '('"
+    " || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')' AS signature,"
+    " (EXISTS (SELECT 1 FROM pg_catalog.aclexplode("
+    "coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a"
+    " WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE')"
+    " OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = ANY (CAST(:roles AS text[]))"
+    " AND pg_catalog.has_function_privilege(r.oid, p.oid, 'EXECUTE')))"
+    " AND (p.prosrc ~* 'audit_log' OR EXISTS (SELECT 1 FROM pg_catalog.pg_depend d"
+    " WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid"
+    " AND d.refclassid = 'pg_catalog.pg_class'::regclass"
+    " AND d.refobjid IN (SELECT relid FROM tree)))"
+    " AS escalated"
+    " FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+    " JOIN pg_catalog.pg_roles o ON o.oid = p.proowner, owner"
+    " WHERE p.prosecdef AND n.nspname <> :guard AND NOT o.rolsuper"
+    " AND pg_catalog.pg_has_role(p.proowner, owner.oid, 'MEMBER') ORDER BY 3"
+)
+_DEFINERS: Final = "security definer functions of the schema owner"
 _AUDIT_RELATIONS: Final = text(AUDIT_RELATIONS)
+_OWNER_DEFINERS: Final = text(OWNER_DEFINERS)
 _AUDIT_REGISTRY: Final = text(AUDIT_REGISTRY)
+_AUDIT_COLUMN_GRANTS: Final = text(AUDIT_COLUMN_GRANTS)
 _EXPIRED: Final = text(EXPIRED_AUDIT_PARTITIONS)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
@@ -154,15 +203,44 @@ async def audit_shape_findings(connection: AsyncConnection, schema: str) -> list
     """The audit log's columns, constraints and indexes are the pinned ones."""
     shape = await connection.execute(_AUDIT_SHAPE, {"schema": schema})
     lines = [str(row.line) for row in shape]
-    return [
-        Finding(
-            AUDIT_LOG,
-            problem.check,
-            f"{problem.subject}: {problem.expected}",
-            f"{problem.subject}: {problem.actual}",
-        )
-        for problem in audit_shape_problems(lines)
-    ]
+    return [problem_finding(problem, AUDIT_LOG) for problem in audit_shape_problems(lines)]
+
+
+async def audit_exposure_findings(
+    connection: AsyncConnection, guard: str, schema: str
+) -> list[Finding]:
+    """No view, rule or foreign trigger reads the audit log, even one made before the guard."""
+    problems = await audit_exposure_problems(connection, guard, schema)
+    return [problem_finding(problem, AUDIT_LOG) for problem in problems]
+
+
+async def definer_checks(
+    connection: AsyncConnection, bootstrap: BootstrapConfig
+) -> tuple[list[Finding], list[Finding]]:
+    """Read ``OWNER_DEFINERS`` for the store; see :func:`definer_findings`."""
+    names = bootstrap.names
+    roles = sorted({names.readers, names.writers, *bootstrap.database_users})
+    parameters = {"schema": bootstrap.schema, "guard": names.guard, "roles": roles}
+    rows = list(await connection.execute(_OWNER_DEFINERS, parameters))
+    return definer_findings(rows, bootstrap.schema)
+
+
+def definer_findings(rows: Sequence[Any], schema: str) -> tuple[list[Finding], list[Finding]]:
+    """The owner's definer functions the guard did not install: findings, then warnings.
+
+    *rows* are ``OWNER_DEFINERS`` rows; the guard's own are ``SCHEMA_DEFINERS``
+    in *schema*, by full signature. An escalated one is drift. The rest is a
+    heuristic: an application may own such a function legitimately, but one can
+    read the audit log past every boundary, so a person reviews each.
+    """
+    unknown = [r for r in rows if not (r.schema == schema and r.identity in SCHEMA_DEFINERS)]
+    escalated = {str(row.signature) for row in unknown if row.escalated}
+    others = {str(row.signature) for row in unknown if not row.escalated}
+    return _definers("audit.definer_reads", escalated), _definers("audit.definer", others)
+
+
+def _definers(check: str, signatures: set[str]) -> list[Finding]:
+    return [diff(None, check, _DEFINERS, set(), signatures)] if signatures else []
 
 
 def audit_privilege_findings(
@@ -181,6 +259,13 @@ def audit_privilege_findings(
         if held != wanted:
             findings.append(diff(relname, "audit.privileges", relname, wanted, held))
     return findings
+
+
+async def audit_column_findings(connection: AsyncConnection, schema: str) -> list[Finding]:
+    """No column of the log or a partition is granted to anyone: the table grants are the ACL."""
+    rows = await connection.execute(_AUDIT_COLUMN_GRANTS, {"schema": schema})
+    held = {str(row.line) for row in rows}
+    return [diff(AUDIT_LOG, "audit.column_privileges", AUDIT_LOG, set(), held)] if held else []
 
 
 async def audit_reader_findings(

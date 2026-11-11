@@ -341,7 +341,7 @@ async def test_the_guard_check_refuses_only_the_store_whose_table_lost_its_prote
             ):
                 await stores[broken].wiring.startup_checks()
     finally:
-        # A table left unforced blocks every later bootstrap of the module's database.
+        # A table left unforced blocks every later bootstrap of the test's database.
         await _force_row_security(database, force=True)
 
 

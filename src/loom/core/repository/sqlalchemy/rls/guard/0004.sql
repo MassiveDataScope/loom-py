@@ -160,6 +160,10 @@ BEGIN
   IF bad IS NOT NULL THEN PERFORM violation(format('FK from an unscoped table into a scoped one: %s', bad)); END IF;
   SELECT string_agg(i.inhrelid::regclass::text, ', ') INTO bad FROM pg_inherits i JOIN scoped_table t ON t.rel = i.inhparent WHERE i.inhrelid NOT IN (SELECT rel FROM scoped_table);
   IF bad IS NOT NULL THEN PERFORM violation(format('unregistered partitions: %s', bad)); END IF;
+  -- A parent reads the rows of its children with its own policies: every ancestor of a registered table is registered.
+  SELECT string_agg(i.inhrelid::regclass::text || ' under ' || i.inhparent::regclass::text, ', ') INTO bad FROM pg_inherits i
+    WHERE i.inhrelid IN (SELECT rel FROM scoped_table) AND i.inhparent NOT IN (SELECT rel FROM scoped_table);
+  IF bad IS NOT NULL THEN PERFORM violation(format('registered tables under an unregistered parent: %s', bad)); END IF;
   PERFORM assert_audited_schema();
 END $$;
 CREATE FUNCTION audit_reader_source() RETURNS text LANGUAGE sql STABLE AS $$
@@ -337,6 +341,35 @@ BEGIN
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM %I', reader, c.readers_role);
   END IF;
 END $$;
+CREATE FUNCTION audit_log_readers() RETURNS SETOF text LANGUAGE sql STABLE AS $$
+  WITH RECURSIVE reads(rel) AS (
+    SELECT t.relid::oid FROM pg_partition_tree(audit_log_rel()) t
+    UNION
+    SELECT rw.ev_class FROM reads
+      JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.refclassid = 'pg_class'::regclass AND d.refobjid = reads.rel
+      JOIN pg_rewrite rw ON rw.oid = d.objid
+      JOIN pg_class v ON v.oid = rw.ev_class AND v.relkind IN ('v', 'm')
+    WHERE rw.ev_class <> reads.rel)
+  SELECT format('%I.%I', n.nspname, c.relname) FROM reads JOIN pg_class c ON c.oid = reads.rel JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relkind IN ('v', 'm') AND NOT EXISTS (
+    SELECT 1 FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker' AND o.option_value::boolean)
+  UNION
+  SELECT format('%I.%I rule %I', n.nspname, c.relname, rw.rulename)
+  FROM pg_rewrite rw JOIN pg_class c ON c.oid = rw.ev_class JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE rw.rulename <> '_RETURN' AND EXISTS (
+    SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_rewrite'::regclass AND d.objid = rw.oid
+      AND d.refclassid = 'pg_class'::regclass AND d.refobjid IN (SELECT rel FROM reads)) $$;
+CREATE FUNCTION refuse_audit_log_views() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE bad text;
+BEGIN
+  IF app_schema() IS NULL THEN RETURN; END IF;
+  IF audit_log_rel() IS NULL THEN RETURN; END IF;
+  SELECT string_agg(r, ', ' ORDER BY r) INTO bad FROM audit_log_readers() r;
+  IF bad IS NOT NULL THEN
+    PERFORM violation(format('views or rules read the audit log with their owner''s rights, past every boundary: %s; '
+                             'drop them (or recreate a view with security_invoker), then rerun the bootstrap', bad)); END IF;
+END $$;
+SELECT refuse_audit_log_views();
 CREATE OR REPLACE FUNCTION assert_audited_schema() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
@@ -344,7 +377,7 @@ DECLARE
   record_trigger name := 'loom_audit_record';
   row_trigger name := 'loom_audit_log_immutable_row';
   truncate_trigger name := 'loom_audit_log_immutable_truncate';
-  readers bigint; reader oid;
+  readers bigint; reader oid; tree oid[];
 BEGIN
   SELECT * INTO cfg FROM config;
   writer := to_regprocedure(format('%I.write_audit_row()', cfg.app_schema));
@@ -377,8 +410,14 @@ BEGIN
   END IF;
   IF log IS NULL THEN
     IF EXISTS (SELECT 1 FROM audited_table) THEN PERFORM violation('audited tables without an audit log'); END IF;
+    -- Registered partitions mean a log was made: it was moved or renamed, not dropped (that is refused).
+    IF EXISTS (SELECT 1 FROM audit_partition) THEN
+      PERFORM violation(format('the audit log has registered partitions and is not %I.audit_log', cfg.app_schema)); END IF;
     RETURN;
   END IF;
+  -- The log and its direct partitions: the checks below make that the whole tree (only plain tables are registered).
+  tree := ARRAY(SELECT log::oid UNION ALL SELECT inhrelid FROM pg_inherits WHERE inhparent = log);
+  PERFORM refuse_audit_log_views();
   IF writer IS NULL OR NOT EXISTS (
        SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
        WHERE p.oid = writer AND p.prosecdef AND r.rolname = cfg.owner_role AND p.prosrc = audit_trigger_source()
@@ -399,24 +438,191 @@ BEGIN
     WHERE t.relid <> a.rel::oid AND NOT EXISTS (
       SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.relid AND g.tgname = record_trigger AND g.tgenabled IN ('A', 'O') AND g.tgfoid = writer);
   IF bad IS NOT NULL THEN PERFORM violation(format('partitions of audited tables without the audit trigger: %s', bad)); END IF;
-  SELECT string_agg(x.r::regclass::text, ', ') INTO bad
-    FROM (SELECT log::oid UNION ALL SELECT inhrelid FROM pg_inherits WHERE inhparent = log) AS x(r)
+  SELECT string_agg(x.r::regclass::text, ', ') INTO bad FROM unnest(tree) AS x(r)
     WHERE NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = x.r AND g.tgname = row_trigger AND g.tgenabled = 'A'
                         AND g.tgfoid = refuser AND (g.tgtype & 1) <> 0 AND (g.tgtype & 2) <> 0 AND (g.tgtype & 24) = 24)
        OR NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = x.r AND g.tgname = truncate_trigger AND g.tgenabled = 'A'
                         AND g.tgfoid = refuser AND (g.tgtype & 1) = 0 AND (g.tgtype & 32) <> 0);
   IF bad IS NOT NULL THEN PERFORM violation(format('audit log immutability triggers missing or disabled: %s', bad)); END IF;
+  SELECT string_agg(x.relid::regclass::text || '.' || quote_ident(g.tgname), ', ') INTO bad
+    FROM pg_partition_tree(log) x JOIN pg_trigger g ON g.tgrelid = x.relid
+    WHERE NOT g.tgisinternal AND NOT (g.tgname IN (row_trigger, truncate_trigger) AND g.tgfoid = refuser);
+  IF bad IS NOT NULL THEN
+    PERFORM violation(format('triggers on the audit log run on every audited write with their owner''s rights: %s; '
+                             'drop them, then rerun the bootstrap', bad)); END IF;
   SELECT string_agg(DISTINCT c.relname || ':' || a.privilege_type || '->' || coalesce(g.rolname, 'PUBLIC'), ', ') INTO bad
-    FROM (SELECT log::oid UNION ALL SELECT inhrelid FROM pg_inherits WHERE inhparent = log) AS x(r)
+    FROM unnest(tree) AS x(r)
     JOIN pg_class c ON c.oid = x.r, LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles g ON g.oid = a.grantee
     WHERE a.grantee <> c.relowner AND NOT (g.rolname IS NOT DISTINCT FROM cfg.auditor_role AND a.privilege_type = 'SELECT');
   IF bad IS NOT NULL THEN PERFORM violation(format('audit log grant outside {auditor: SELECT}: %s', bad)); END IF;
+  SELECT string_agg(DISTINCT x.r::regclass::text || '.' || quote_ident(a.attname), ', ') INTO bad
+    FROM unnest(tree) AS x(r) JOIN pg_attribute a ON a.attrelid = x.r WHERE a.attacl IS NOT NULL;
+  IF bad IS NOT NULL THEN PERFORM violation(format('column grants on the audit log are not allowed: %s', bad)); END IF;
   SELECT string_agg(i.inhrelid::regclass::text, ', ') INTO bad FROM pg_inherits i
     WHERE i.inhparent = log AND i.inhrelid NOT IN (SELECT rel::oid FROM audit_partition);
   IF bad IS NOT NULL THEN PERFORM violation(format('unregistered audit log partitions: %s', bad)); END IF;
   SELECT string_agg(p.rel::text, ', ') INTO bad FROM audit_partition p
     WHERE NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = p.rel AND i.inhparent = log);
   IF bad IS NOT NULL THEN PERFORM violation(format('audit log partitions detached: %s', bad)); END IF;
+  SELECT string_agg(p.rel::text, ', ') INTO bad FROM audit_partition p JOIN pg_class c ON c.oid = p.rel WHERE c.relkind <> 'r';
+  IF bad IS NOT NULL THEN PERFORM violation(format('audit log partitions that are not plain tables: %s', bad)); END IF;
+END $$;
+-- How a guard costs DDL (T12c). Every store's guard has its own event triggers, so every DDL in
+-- the database wakes every guard. A guard asserts only DDL that can change what it asserts, and
+-- never at the statement: it enters its hatch, whose deferred close_hatch runs the full assertion
+-- once, at COMMIT. Refused at the statement still: DDL on the guard schema, and dropping a
+-- registered table, the audit log or one of its registered partitions.
+--
+-- Every DDL wakes every guard, so the path that finds nothing to do must stay cheap however many
+-- stores share the database. Each guard function pins search_path, and that costs more per call
+-- than a catalogue lookup: the relevance checks below read the guard's names once, call one small
+-- function per command (may_expose) and none per catalogue row, and look the guard's rows up by
+-- oid, never by scanning a catalogue.
+--
+-- Relations and every table they sit under, at any depth, walked through pg_inherits:
+-- pg_partition_tree would lock every partition, on every DDL, in every guard. PL/pgSQL keeps the
+-- plan; a SQL function is planned again on every call.
+CREATE FUNCTION lineage(rels oid[]) RETURNS SETOF oid LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
+    WITH RECURSIVE up(rel) AS (SELECT unnest(rels) UNION SELECT i.inhparent FROM pg_inherits i JOIN up ON i.inhrelid = up.rel)
+    SELECT up.rel FROM up WHERE up.rel IS NOT NULL;
+END $$;
+-- The relations a guard asserts wherever they live: its registered and audited tables, its audit
+-- log tree, and every table above any of them (a parent reads the rows of its children). The log is
+-- anchored by oid through its registered partitions too, so moving or renaming it still counts.
+-- UNION ALL, not UNION: the guard tables are never analysed, and hashing their estimated rows
+-- costs ten times the walk. Inheritance has no cycles, and a repeated oid is harmless.
+CREATE FUNCTION guarded_relations() RETURNS SETOF oid LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
+    WITH RECURSIVE tree(rel) AS (SELECT audit_log_rel()::oid
+                                 UNION ALL SELECT i.inhparent FROM audit_partition p JOIN pg_inherits i ON i.inhrelid = p.rel
+                                 UNION ALL SELECT i.inhrelid FROM pg_inherits i JOIN tree t ON i.inhparent = t.rel)
+    SELECT lineage(ARRAY(SELECT s.rel::oid FROM scoped_table s UNION ALL SELECT a.rel::oid FROM audited_table a
+                         UNION ALL SELECT p.rel::oid FROM audit_partition p UNION ALL SELECT t.rel FROM tree t));
+END $$;
+CREATE FUNCTION reader_name() RETURNS name LANGUAGE sql IMMUTABLE AS $$ SELECT 'read_audit_log'::name $$;
+-- GRANT and REVOKE name neither their object nor its schema. Each rewrites the catalogue row it
+-- changes, so a guard checks whether this transaction rewrote (by xmin) one of the rows its
+-- assertion reads privileges from: its relations (rels, from guarded_relations) and their columns
+-- (a column grant writes only pg_attribute), the reader, its schemas. A transaction that began
+-- after this one and has committed counts too: that only asserts more.
+CREATE FUNCTION acl_written(app name, grd name, rels oid[]) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  now bigint := current_xid() % 4294967296;
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM (SELECT k.xmin FROM pg_class k WHERE k.oid = ANY (rels)
+                   UNION ALL SELECT a.xmin FROM pg_attribute a WHERE a.attrelid = ANY (rels)
+                   UNION ALL SELECT p.xmin FROM pg_proc p
+                             WHERE p.proname = reader_name() AND p.pronamespace = to_regnamespace(quote_ident(app))
+                   UNION ALL SELECT n.xmin FROM pg_namespace n WHERE n.nspname IN (app, grd)) w(x)
+    WHERE (w.x::text::bigint - now + 4294967296) % 4294967296 < 2147483648);
+END $$;
+-- What a command on a schema other than the guard's may do without waking it.
+CREATE FUNCTION namespace_tags() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY['CREATE SCHEMA', 'ALTER SCHEMA', 'COMMENT', 'SECURITY LABEL'] $$;
+-- The commands that name no schema and cannot change what any guard asserts. Any other command
+-- naming no schema wakes every guard (fail closed), so an unknown or new tag is always asserted.
+CREATE FUNCTION harmless_tags() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY[
+    'ALTER DEFAULT PRIVILEGES',                                  -- later objects; their own DDL is asserted
+    'CREATE PUBLICATION', 'ALTER PUBLICATION',                   -- row copies: a later revision (T12b)
+    'CREATE SUBSCRIPTION', 'ALTER SUBSCRIPTION',
+    'CREATE LANGUAGE', 'CREATE CAST', 'CREATE ACCESS METHOD',    -- no relation, policy or privilege
+    'CREATE FOREIGN DATA WRAPPER', 'ALTER FOREIGN DATA WRAPPER',
+    'CREATE SERVER', 'ALTER SERVER', 'CREATE USER MAPPING', 'ALTER USER MAPPING'] $$;
+-- The dropped objects naming no schema that cannot change what any guard asserts, as above.
+CREATE FUNCTION harmless_drops() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY['default acl', 'publication', 'publication relation', 'publication namespace', 'subscription',
+               'language', 'cast', 'access method', 'foreign-data wrapper', 'server', 'user mapping'] $$;
+-- A command that may make a view or a rule read the audit log: the walk must run again. A view or
+-- a rule anywhere can read the log, so such a command wakes every guard that has one. Every
+-- command on a rule reports it as one; a refresh changes neither a definition nor an option.
+CREATE FUNCTION may_expose(object_type text, tag text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT object_type IN ('view', 'materialized view', 'rule') AND tag <> 'REFRESH MATERIALIZED VIEW' $$;
+-- Whether a command of the ending DDL can change what this guard asserts. A relation counts if it,
+-- or any table above it, is in the store or guard schema or is one of the relations of the guard
+-- (guarded_relations holds every table above those too). Triggers, policies and rules report no
+-- schema: they count through the relation they sit on, and fail closed when it cannot be found.
+-- Both schemas are found by name: once one no longer resolves (renamed, dropped), every DDL counts.
+-- A view or rule on a temporary relation is private to its session (any role has TEMP): it counts
+-- only when its rules read a relation of the guard or any view (a reader of the log may be one).
+CREATE FUNCTION ddl_wakes_guard(app name, grd name) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  spaces oid[] := ARRAY[to_regnamespace(quote_ident(app))::oid, to_regnamespace(quote_ident(grd))::oid];
+  guarded oid[];
+  has_log boolean;
+BEGIN
+  IF array_position(spaces, NULL) IS NOT NULL THEN RETURN true; END IF;
+  guarded := ARRAY(SELECT guarded_relations());
+  has_log := audit_log_of(app) IS NOT NULL OR EXISTS (SELECT 1 FROM audit_partition);
+  RETURN EXISTS (
+    SELECT 1 FROM pg_event_trigger_ddl_commands() c,
+      -- A catalogue row's tableoid is its catalogue, so the object is looked up only where it lives.
+      LATERAL (SELECT coalesce((SELECT k.oid FROM pg_class k WHERE k.oid = c.objid AND k.tableoid = c.classid),
+                               (SELECT g.tgrelid FROM pg_trigger g WHERE g.oid = c.objid AND g.tableoid = c.classid),
+                               (SELECT p.polrelid FROM pg_policy p WHERE p.oid = c.objid AND p.tableoid = c.classid),
+                               (SELECT w.ev_class FROM pg_rewrite w WHERE w.oid = c.objid AND w.tableoid = c.classid)),
+                      c.object_type IN ('trigger', 'policy', 'rule')) r(rel, on_relation)
+    WHERE c.schema_name IN (app, grd)
+       OR (c.classid = 'pg_namespace'::regclass AND (c.objid = ANY (spaces) OR c.command_tag <> ALL (namespace_tags())))
+       OR (r.on_relation AND r.rel IS NULL)
+       OR (r.rel IS NOT NULL AND EXISTS (SELECT 1 FROM lineage(ARRAY[r.rel]) p(oid) JOIN pg_class k ON k.oid = p.oid
+                                         WHERE k.relnamespace = ANY (spaces) OR p.oid = ANY (guarded)))
+       OR (c.command_tag IN ('GRANT', 'REVOKE') AND acl_written(app, grd, guarded))
+       OR (c.schema_name IS NULL AND c.command_tag NOT IN ('GRANT', 'REVOKE')
+           AND c.classid IS DISTINCT FROM 'pg_namespace'::regclass AND NOT r.on_relation
+           AND c.command_tag <> ALL (harmless_tags()))
+       OR (has_log AND may_expose(c.object_type, c.command_tag)
+           AND (NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = r.rel AND k.relpersistence = 't')
+                OR EXISTS (SELECT 1 FROM pg_rewrite w
+                             JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = w.oid
+                                             AND d.refclassid = 'pg_class'::regclass AND d.refobjid <> w.ev_class
+                             JOIN pg_class v ON v.oid = d.refobjid
+                           WHERE w.ev_class = r.rel AND (v.oid = ANY (guarded) OR v.relkind IN ('v', 'm'))))));
+END $$;
+-- Whether an object the ending DDL dropped can change what this guard asserts. Before Postgres 15
+-- a dropped trigger or policy carries no schema: its address names its schema and table. As above,
+-- once either schema no longer resolves by name, every drop counts.
+CREATE FUNCTION drop_wakes_guard(app name, grd name) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF to_regnamespace(quote_ident(app)) IS NULL OR to_regnamespace(quote_ident(grd)) IS NULL THEN RETURN true; END IF;
+  RETURN EXISTS (
+    SELECT 1 FROM pg_event_trigger_dropped_objects() d,
+      LATERAL (SELECT d.object_type IN ('trigger', 'policy', 'rule')) r(on_relation)
+    WHERE d.schema_name IN (app, grd)
+       OR (d.object_type = 'schema' AND d.object_name IN (app, grd))
+       OR d.objid IN (SELECT guarded_relations())
+       OR (r.on_relation
+           AND (coalesce(cardinality(d.address_names), 0) < 2 OR d.address_names[1] IN (app, grd)
+                OR to_regclass(format('%I.%I', d.address_names[1], d.address_names[2])) IN (SELECT guarded_relations())))
+       OR (d.schema_name IS NULL AND d.object_type <> 'schema' AND NOT r.on_relation
+           AND d.object_type <> ALL (harmless_drops())));
+END $$;
+CREATE OR REPLACE FUNCTION on_ddl_end() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE app name := app_schema(); grd name := guard_schema();
+BEGIN
+  PERFORM forbid_guard_ddl(EXISTS (SELECT 1 FROM pg_event_trigger_ddl_commands() c WHERE c.schema_name = grd));
+  IF app IS NULL OR hatch_open() THEN RETURN; END IF;
+  IF ddl_wakes_guard(app, grd) THEN PERFORM enter_hatch(); END IF;
+END $$;
+CREATE OR REPLACE FUNCTION on_sql_drop() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE bad text; wakes boolean := false; app name := app_schema(); grd name := guard_schema();
+BEGIN
+  PERFORM forbid_guard_ddl(EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() d
+                                   WHERE d.schema_name = grd OR d.object_identity = quote_ident(grd)));
+  SELECT string_agg(object_identity, ', ') INTO bad FROM pg_event_trigger_dropped_objects() d
+    WHERE d.object_type IN ('table','partitioned table') AND d.objid IN (SELECT rel::oid FROM scoped_table);
+  IF bad IS NOT NULL THEN PERFORM violation(format('unprotect before dropping a registered table: %s', bad)); END IF;
+  SELECT string_agg(object_identity, ', ') INTO bad FROM pg_event_trigger_dropped_objects() d
+    WHERE d.object_type IN ('table','partitioned table')
+      AND ((d.schema_name = app AND d.object_name = 'audit_log') OR d.objid IN (SELECT rel::oid FROM audit_partition));
+  IF bad IS NOT NULL THEN PERFORM violation(format('the audit log is dropped only by drop_expired_audit_partition: %s', bad)); END IF;
+  IF app IS NOT NULL AND NOT hatch_open() THEN wakes := drop_wakes_guard(app, grd); END IF;
+  DELETE FROM audited_table a WHERE NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = a.rel);
+  IF wakes THEN PERFORM enter_hatch(); END IF;
 END $$;
 CREATE OR REPLACE FUNCTION configure(doc jsonb) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE

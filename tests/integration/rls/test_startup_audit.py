@@ -28,6 +28,7 @@ from tests.integration.rls.test_audit_verify import (
     READER,
     TENANT,
     drifted,
+    leak_view,
     reader_body_drift,
 )
 
@@ -332,3 +333,33 @@ async def test_a_grant_the_user_does_not_hold_still_implies_the_flag(
         problems = await _problems(database, audited=True, reading=False)
 
     assert problems == {"audit.reader_grant"}
+
+
+async def test_a_view_over_the_log_stops_startup(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """T12b: a view made before the guard's revision, or behind its back, is read as any role."""
+    database = await scoped_database("av_start")
+    await create_schema(
+        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
+    )
+    async with drifted(database, *leak_view("av_start")):
+        assert await _problems(database, audited=True) == {"audit.view"}
+
+
+async def test_a_column_grant_on_the_log_stops_startup(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """T12c fix round F3: a column grant reads the log too, though the table is not readable."""
+    database = await scoped_database("ac_start")
+    await create_schema(
+        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
+    )
+    async with drifted(
+        database,
+        "GRANT SELECT (subject, changed) ON ac_start.audit_log TO ac_start_writers",
+        "REVOKE SELECT (subject, changed) ON ac_start.audit_log FROM ac_start_writers",
+    ):
+        problems = await _problems(database, audited=True)
+
+    assert problems == {"audit.read_columns"}

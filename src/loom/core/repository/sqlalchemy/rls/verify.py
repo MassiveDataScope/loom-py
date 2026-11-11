@@ -11,8 +11,11 @@ and settings, and the configuration the declaration describes.
 The audit log, when it exists, must be readable by the auditor role alone,
 its audited tables and exclusions must be the model's, this month's and the
 next month's partitions must exist, and only declared operators may be
-members of the auditor role. Partitions past the retention are listed in
-:attr:`Report.expired_audit_partitions`; they are not drift.
+members of the auditor role. No view, rule or foreign trigger may read the
+log, nor a security definer function of the owner that an application role may
+execute. Partitions past the retention are listed in
+:attr:`Report.expired_audit_partitions`, and the owner's other security definer
+functions in :attr:`Report.warnings`; neither is drift.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from __future__ import annotations
 import json
 import operator
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
@@ -35,20 +38,19 @@ from loom.core.model.materialization import materialized_models
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
 from loom.core.repository.sqlalchemy.rls.audit_verify import (
+    audit_column_findings,
+    audit_exposure_findings,
     audit_findings,
     audit_privilege_findings,
     audit_reader_findings,
     audit_shape_findings,
     audit_state,
+    definer_checks,
 )
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding
+from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding, problem_finding
 from loom.core.repository.sqlalchemy.rls.findings import diff as _diff
-from loom.core.repository.sqlalchemy.rls.integrity import (
-    Problem,
-    guard_problems,
-    table_problems,
-)
+from loom.core.repository.sqlalchemy.rls.integrity import guard_problems, table_problems
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
@@ -118,11 +120,29 @@ class Report:
 
     ``expired_audit_partitions`` names the audit log's partitions past the
     configured retention, which ``loom schema audit drop-expired`` may drop.
+    ``warnings`` are advisory findings a person reviews; like expired
+    partitions, they are listed and are not drift, so ``ok`` ignores them.
     """
 
     ok: bool
     findings: tuple[Finding, ...]
     expired_audit_partitions: tuple[str, ...] = ()
+    warnings: tuple[Finding, ...] = ()
+
+    @classmethod
+    def of(
+        cls,
+        findings: Sequence[Finding],
+        warnings: Sequence[Finding] = (),
+        expired: Sequence[str] = (),
+    ) -> Report:
+        """The report of *findings*, ``ok`` without any; *warnings* never count."""
+        return cls(
+            ok=not findings,
+            findings=tuple(findings),
+            expired_audit_partitions=tuple(expired),
+            warnings=tuple(warnings),
+        )
 
 
 async def verify(url: str, application: Application) -> Report:
@@ -148,7 +168,13 @@ async def verify(url: str, application: Application) -> Report:
             findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
             findings += audit_privilege_findings(acl, audit, bootstrap)
+            findings += await audit_column_findings(connection, bootstrap.schema)
             findings += await audit_reader_findings(connection, bootstrap)
+            findings += await audit_exposure_findings(
+                connection, bootstrap.names.guard, bootstrap.schema
+            )
+            escalated, warnings = await definer_checks(connection, bootstrap)
+            findings += escalated
             findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
             findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
@@ -157,16 +183,7 @@ async def verify(url: str, application: Application) -> Report:
             findings += await _memberships(connection, bootstrap)
     finally:
         await engine.dispose()
-    return Report(ok=not findings, findings=tuple(findings), expired_audit_partitions=audit.expired)
-
-
-def _finding(problem: Problem, table: str | None = None) -> Finding:
-    return Finding(
-        table,
-        problem.check,
-        f"{problem.subject}: {problem.expected}",
-        f"{problem.subject}: {problem.actual}",
-    )
+    return Report.of(findings, warnings, audit.expired)
 
 
 async def _guard_integrity(
@@ -177,7 +194,7 @@ async def _guard_integrity(
     problems = await guard_problems(
         connection, bootstrap.names.guard, bootstrap.roles.owner, installer
     )
-    return [_finding(problem) for problem in problems] + _config_findings(row, bootstrap)
+    return [problem_finding(problem) for problem in problems] + _config_findings(row, bootstrap)
 
 
 def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
@@ -266,7 +283,7 @@ async def _protection(
     bootstrap: BootstrapConfig,
 ) -> list[Finding]:
     problems = await table_problems(connection, bootstrap.names.guard, bootstrap.schema, scoped)
-    return [_finding(problem, problem.subject) for problem in problems]
+    return [problem_finding(problem, problem.subject) for problem in problems]
 
 
 async def _assertion(connection: AsyncConnection) -> list[Finding]:

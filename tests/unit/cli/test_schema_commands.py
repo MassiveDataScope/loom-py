@@ -123,6 +123,47 @@ def test_verify_clean_exits_zero(config: Path, monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code == 0, result.output
 
 
+def test_verify_prints_warnings_without_failing(
+    config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T12b: an advisory finding is listed, and only findings make verify exit one."""
+    warning = Finding(None, "audit.definer", "definers: []", "definers: ['leak()']")
+
+    async def check(url: str, application: Any) -> Report:
+        return Report(ok=True, findings=(), warnings=(warning,))
+
+    monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+    monkeypatch.setattr(rls, "verify", check)
+    monkeypatch.setenv("LOOM_VERIFY_URL", "postgresql+asyncpg://verifier@db/app")
+
+    result = runner.invoke(app, ["schema", "verify", "--config", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert "warning: audit.definer: expected definers: [], found definers: ['leak()']" in (
+        result.output
+    )
+
+
+def test_verify_escapes_what_it_prints(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review L4: a catalogue name cannot forge a report line or a terminal sequence."""
+    finding = Finding("audit_log", "audit.view", "none", 'public."a\nb\x1b[2J"')
+    warning = Finding(None, "audit.definer", "[]", "['side.f\tg()']")
+
+    async def check(url: str, application: Any) -> Report:
+        return Report(ok=False, findings=(finding,), warnings=(warning,))
+
+    monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+    monkeypatch.setattr(rls, "verify", check)
+    monkeypatch.setenv("LOOM_VERIFY_URL", "postgresql+asyncpg://verifier@db/app")
+
+    result = runner.invoke(app, ["schema", "verify", "--config", str(config)])
+
+    assert result.output.count("\n") == 2
+    assert "\x1b" not in result.output
+    assert '"a\\nb\\x1b[2J"' in result.output
+    assert "side.f\\tg()" in result.output
+
+
 @pytest.mark.parametrize(
     ("dropped", "expected"),
     [("audit_log_p202401", "audit_log_p202401"), (None, "no audit partition")],

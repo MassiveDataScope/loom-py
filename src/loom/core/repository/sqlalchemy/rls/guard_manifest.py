@@ -122,9 +122,9 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
     GuardRevision(
         4,
         "0004.sql",
-        "a65e5f587b1ebb4ba2ff9004a292fb3c5218763b342c38c78531836642f885d6",
+        "fd001c6245dfd0288392c62c3358f3bd57b6f31da949074fef44aa578d11ff56",
         _catalog(
-            functions="ed82dcab1987499e5dcbdcb7e75d3b1c340ae914cbd3a09972461db039d97d7c",
+            functions="1a4f971f5063c94ba854b9de5c9f23d8b77375fa493a9373517630af76844b3f",
             relations="d89b2c29543840c6d4c8383026b6d2e7000dff1535cdf0ce83db0d5943658dce",
             columns="87dbc2dd4ee8e78188c5c07a5b74b16a94ee899d7e727df42d1c582719d47389",
             constraints="422e6d0676b54eb6bb74ff9c0d8c797b8710befe461474aba98b18c75069f5e2",
@@ -244,6 +244,13 @@ OWNER_FUNCTIONS: Final = frozenset(
         "scope_set",
         "tree_mismatch",
     }
+)
+# The security definer functions the guard installs in the store schema, owned by
+# its owner, by full signature: the audit writer and the audit reader. ``verify``
+# reports any other one the owner holds, since it may read the audit log (T12b).
+# An overload shares the name, never the signature.
+SCHEMA_DEFINERS: Final = frozenset(
+    {"write_audit_row()", f"read_audit_log({READ_AUDIT_LOG_ARGUMENTS})"}
 )
 OWNER_TABLES: Final = frozenset(
     {"config", "scoped_table", "scoped_policy", "audited_table", "audit_partition"}

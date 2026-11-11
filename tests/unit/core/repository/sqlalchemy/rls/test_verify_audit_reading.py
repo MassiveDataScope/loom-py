@@ -15,15 +15,19 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.redaction import Dsn
 from loom.core.persistence.database import DatabaseConfig
-from loom.core.repository.sqlalchemy.rls.audit_verify import reader_findings
+from loom.core.repository.sqlalchemy.rls.audit_verify import definer_findings, reader_findings
 from loom.core.repository.sqlalchemy.rls.config import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
 )
 from loom.core.repository.sqlalchemy.rls.findings import Acl, Finding
-from loom.core.repository.sqlalchemy.rls.guard_manifest import READ_AUDIT_LOG_ARGUMENTS
+from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+    READ_AUDIT_LOG_ARGUMENTS,
+    SCHEMA_DEFINERS,
+)
 from loom.core.repository.sqlalchemy.rls.verify import (
+    Report,
     _audit_reading_findings,
     _global_privileges,
 )
@@ -191,3 +195,67 @@ def test_global_privileges_skip_a_model_that_is_never_a_table() -> None:
 
     assert {finding.table for finding in findings} <= {"ledgers"}
     assert "AuditEntry_default" not in str(findings)
+
+
+@dataclass(frozen=True, slots=True)
+class _Definer:
+    """One security definer function as ``OWNER_DEFINERS`` reads it."""
+
+    schema: str
+    identity: str
+    escalated: bool = False
+
+    @property
+    def signature(self) -> str:
+        return f"{self.schema}.{self.identity}"
+
+
+WRITER = "write_audit_row()"
+READER = f"read_audit_log({READ_AUDIT_LOG_ARGUMENTS})"
+
+
+def test_the_definers_are_the_writer_and_the_reader_by_their_full_signature() -> None:
+    """Review M3: an overload shares the name, never the signature."""
+    assert {WRITER, READER} == SCHEMA_DEFINERS
+
+
+def test_the_guards_own_definers_are_neither_finding_nor_warning() -> None:
+    own = [_Definer("s1", WRITER, escalated=True), _Definer("s1", READER, escalated=True)]
+
+    assert definer_findings(own, "s1") == ([], [])
+
+
+def test_an_overload_of_the_writer_is_not_the_writer() -> None:
+    """Review M3: ``write_audit_row(integer)`` passed the name allow-list."""
+    findings, warnings = definer_findings([_Definer("s1", "write_audit_row(integer)")], "s1")
+
+    assert findings == []
+    assert [warning.check for warning in warnings] == ["audit.definer"]
+
+
+def test_the_writer_signature_in_another_schema_is_not_the_guards() -> None:
+    _, warnings = definer_findings([_Definer("side", WRITER)], "s1")
+
+    assert "side.write_audit_row()" in warnings[0].actual
+
+
+def test_an_exposed_definer_that_reads_the_log_is_drift_and_the_rest_a_warning() -> None:
+    """Review M3: executable by an application role and reading the log is a finding."""
+    rows = [_Definer("s1", "leak()", escalated=True), _Definer("side", "helper()")]
+
+    findings, warnings = definer_findings(rows, "s1")
+
+    assert [(f.check, "s1.leak()" in f.actual) for f in findings] == [("audit.definer_reads", True)]
+    assert [(w.check, "side.helper()" in w.actual) for w in warnings] == [("audit.definer", True)]
+
+
+def test_a_report_with_only_warnings_is_ok() -> None:
+    """Verifier F4: warnings never make ``verify`` fail; a finding does."""
+    warning = Finding(None, "audit.definer", "[]", "['side.helper()']")
+    finding = Finding("audit_log", "audit.view", "none", "public.leak")
+
+    assert Report.of([], [warning]).ok
+    assert not Report.of([finding], [warning]).ok
+    assert Report.of([], [warning], ("audit_log_p202401",)).expired_audit_partitions == (
+        "audit_log_p202401",
+    )

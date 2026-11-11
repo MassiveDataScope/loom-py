@@ -80,12 +80,12 @@ async def _seed(dsn: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def guarded(module_database_uri: str, created_roles: set[str]) -> Guarded:
+def guarded(module_database_uri: str, module_roles: set[str]) -> Guarded:
     suffixes = ("owner", "migrator", "readers", "writers", "ro", "rw", "ops")
     for schema in SCHEMAS:
-        created_roles.update(f"{schema}_{suffix}" for suffix in suffixes)
+        module_roles.update(f"{schema}_{suffix}" for suffix in suffixes)
         asyncio.run(apply_bootstrap(module_database_uri, _config(schema), passwords={}))
-    created_roles.add("notes_new")
+    module_roles.add("notes_new")
     url = make_url(module_database_uri).set(drivername="postgresql")
     dsn = url.render_as_string(hide_password=False)
     asyncio.run(_seed(dsn))
@@ -96,8 +96,13 @@ async def _sqlstate(conn: asyncpg.Connection, statement: str) -> str:
     try:
         await conn.execute(statement)
     except asyncpg.PostgresError as exc:
-        return exc.sqlstate
+        return str(getattr(exc, "sqlstate", ""))
     return "none"
+
+
+# The guard asserts DDL at COMMIT, in the hatch's deferred check (T12c). A test that rolls
+# back to keep the shared database clean fires that check first, exactly as COMMIT would.
+COMMIT_CHECKS = "SET CONSTRAINTS ALL IMMEDIATE"
 
 
 async def _run(
@@ -117,6 +122,8 @@ async def _run(
             for step in prelude:
                 await conn.execute(step)
             got = await _sqlstate(conn, statement)
+            if got == "none" and not commit:
+                got = await _sqlstate(conn, COMMIT_CHECKS)
         except BaseException:
             await tx.rollback()
             raise
@@ -130,7 +137,7 @@ async def _committed(tx: Transaction) -> str:
     try:
         await tx.commit()
     except asyncpg.PostgresError as exc:
-        return str(exc.sqlstate)
+        return str(getattr(exc, "sqlstate", None))
     return "none"
 
 
@@ -176,6 +183,8 @@ def _guarded_again(schema: str) -> str:
 
 
 GRANT_ON_NOTES = "GRANT SELECT ON notes.notes TO notes_readers"
+# A command naming no schema and not on the guard's harmless list wakes every guard (T12c).
+FAIL_CLOSED = "COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language'"
 
 
 def _protect(schema: str, table: str, scopes: str, privileges: str) -> str:
@@ -225,7 +234,7 @@ async def _attempt_as(conn: asyncpg.Connection, role: str, statement: str) -> st
             await conn.execute(f"SET LOCAL ROLE {role}")
             await conn.execute(statement)
     except asyncpg.PostgresError as exc:
-        return exc.sqlstate
+        return str(getattr(exc, "sqlstate", ""))
     return "none"
 
 
@@ -403,7 +412,7 @@ class TestForeignKeysCascadeAndOwnerDml:
             await conn.execute("SET LOCAL ROLE notes_owner")
             with pytest.raises(asyncpg.PostgresError) as failure:
                 await conn.execute("DELETE FROM notes.notes WHERE editor='ana'")
-        assert failure.value.sqlstate == "LG001"
+        assert getattr(failure.value, "sqlstate", None) == "LG001"
         assert "loom_guard[notes]" in str(failure.value)
 
     async def test_g5_7_truncate_is_denied_to_the_app(self, guarded: Guarded) -> None:
@@ -882,7 +891,7 @@ class TestThreeProductsInOneDatabase:
             await _run(guarded, role="ledger_rw", prelude=ledger_keys, statement=parent) == "42501"
         )
 
-    async def test_x4_to_x7_a_broken_guard_blocks_ddl_everywhere_until_repaired(
+    async def test_x4_to_x7_a_broken_guard_blocks_its_store_until_repaired(
         self, guarded: Guarded
     ) -> None:
         break_rls = "ALTER TABLE sites.site_readings NO FORCE ROW LEVEL SECURITY"
@@ -902,7 +911,11 @@ class TestThreeProductsInOneDatabase:
             )
             scratch = _scoped("notes.scratch_a")
             assert await _run(guarded, role="notes_owner", statement=scratch) == "none"
-            assert await _run(guarded, role="notes_owner", statement=GRANT_ON_NOTES) == "LG002"
+            # T12c: a GRANT wakes only the store whose privileges it changes.
+            assert await _run(guarded, role="notes_owner", statement=GRANT_ON_NOTES) == "none"
+            own = "CREATE TABLE sites.scratch_b (x int)"
+            assert await _run(guarded, role="sites_owner", statement=own) == "LG002"
+            assert await _run(guarded, statement=FAIL_CLOSED) == "LG002"
             assert (
                 await _run(guarded, role="notes_rw", statement="CREATE TEMP TABLE scratch2 (x int)")
                 == "none"
@@ -928,8 +941,8 @@ class TestThreeProductsInOneDatabase:
                 await conn.execute(_guarded_again("sites"))
             try:
                 with pytest.raises(asyncpg.PostgresError) as failure:
-                    await conn.execute(GRANT_ON_NOTES)
-                assert failure.value.sqlstate == "LG002"
+                    await conn.execute(FAIL_CLOSED)
+                assert getattr(failure.value, "sqlstate", None) == "LG002"
                 assert "loom_guard[sites]" in str(failure.value)
             finally:
                 async with conn.transaction():

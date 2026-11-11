@@ -40,14 +40,14 @@ async def test_the_bootstrap_applies_and_every_user_logs_in_with_its_scram_passw
 
 
 async def test_the_bootstrap_is_idempotent(
-    scoped_database: BootstrapFactory, module_database_uri: str
+    scoped_database: BootstrapFactory, database_uri: str
 ) -> None:
     database = await scoped_database("guard_b")
     roles = "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'guard_b%'"
     before = await scalar(database.superuser, roles)
 
     await apply_bootstrap(
-        module_database_uri,
+        database_uri,
         BootstrapConfig(
             schema="guard_b",
             roles=DatabaseRoles(owner="guard_b_owner", migrator="guard_b_migrator"),
@@ -66,12 +66,10 @@ async def test_the_bootstrap_is_idempotent(
 
 
 async def test_an_existing_role_is_never_adopted(
-    module_database_uri: str, created_roles: set[str]
+    database_uri: str, created_roles: set[str]
 ) -> None:
     created_roles.add("guard_c_ro")
-    engine = create_async_engine(
-        module_database_uri, poolclass=NullPool, isolation_level="AUTOCOMMIT"
-    )
+    engine = create_async_engine(database_uri, poolclass=NullPool, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
             await conn.execute(text("DROP ROLE IF EXISTS guard_c_ro"))
@@ -87,12 +85,12 @@ async def test_an_existing_role_is_never_adopted(
     )
 
     with pytest.raises(asyncpg.PostgresError) as failure:
-        await apply_bootstrap(module_database_uri, bootstrap_config, passwords={})
+        await apply_bootstrap(database_uri, bootstrap_config, passwords={})
 
-    assert failure.value.sqlstate == "42501"
+    assert getattr(failure.value, "sqlstate", None) == "42501"
     assert "never adopts a role" in str(failure.value)
     guard = "SELECT to_regnamespace('loom_guard_guard_c')"
-    assert await scalar(module_database_uri, guard) is None
+    assert await scalar(database_uri, guard) is None
 
 
 async def test_a_recorded_role_whose_attributes_changed_is_refused_on_rerun(

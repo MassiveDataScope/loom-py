@@ -28,7 +28,7 @@ _Schema = Callable[..., Awaitable[str]]
 
 
 @pytest.fixture
-def probe_schema(module_database_uri: str, created_roles: set[str]) -> _Schema:
+def probe_schema(database_uri: str, created_roles: set[str]) -> _Schema:
     """Create a schema, run *statements* in it as the superuser, return a plain user's URL.
 
     The user is neither superuser nor bypass, and its search path is that schema alone.
@@ -39,14 +39,14 @@ def probe_schema(module_database_uri: str, created_roles: set[str]) -> _Schema:
         password = secrets.token_urlsafe(12)
         created_roles.add(name)
         await execute(
-            module_database_uri,
+            database_uri,
             f"CREATE ROLE {name} LOGIN PASSWORD '{password}'",
             f"CREATE SCHEMA {name}",
             f"GRANT USAGE ON SCHEMA {name} TO {name}",
             f"ALTER ROLE {name} SET search_path = {name}",
             *(statement.format(schema=name) for statement in statements),
         )
-        url = make_url(module_database_uri).set(username=name, password=password)
+        url = make_url(database_uri).set(username=name, password=password)
         return url.render_as_string(hide_password=False)
 
     return create
@@ -99,9 +99,9 @@ class _Plain(BaseModel):
 
 
 async def test_create_all_as_a_superuser_is_refused_before_creating_anything(
-    module_database_uri: str,
+    database_uri: str,
 ) -> None:
-    store = {"backend": "sqlalchemy", "url": module_database_uri, "schema": {"mode": "create_all"}}
+    store = {"backend": "sqlalchemy", "url": database_uri, "schema": {"mode": "create_all"}}
     cursors = {"cursors": {"signing": "ephemeral"}}
     ctx = ConfigContext.from_dict({"stores": {"default": store}, "persistence": cursors})
     wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
@@ -110,7 +110,4 @@ async def test_create_all_as_a_superuser_is_refused_before_creating_anything(
     with pytest.raises(ConfigError, match=r"stores\.default\.url connects as a superuser"):
         await wiring.startup_checks()
 
-    assert (
-        await scalar(module_database_uri, "SELECT to_regclass('privileged_create_all_rows')")
-        is None
-    )
+    assert await scalar(database_uri, "SELECT to_regclass('privileged_create_all_rows')") is None

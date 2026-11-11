@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
 
     from loom.core.repository.sqlalchemy.rls import BootstrapConfig
+    from loom.core.repository.sqlalchemy.rls.findings import Finding
     from loom.core.repository.sqlalchemy.rls.verify import Report
 
 # The commands below import SQLAlchemy inside their bodies: the CLI loads
@@ -190,12 +191,27 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
 
 
 def _print_report(report: Report) -> None:
-    """One line per finding, then one per audit partition past the retention."""
+    """One line per finding, one per warning, then one per audit partition past the retention."""
     for finding in report.findings:
-        subject = f"{finding.table} " if finding.table else ""
-        typer.echo(f"{subject}{finding.check}: expected {finding.expected}, found {finding.actual}")
+        typer.echo(_finding_line(finding))
+    for warning in report.warnings:
+        typer.echo(f"warning: {_finding_line(warning)}")
     for partition in report.expired_audit_partitions:
-        typer.echo(f"expired audit partition: {partition}")
+        typer.echo(f"expired audit partition: {_printable(partition)}")
+
+
+def _finding_line(finding: Finding) -> str:
+    subject = f"{finding.table} " if finding.table else ""
+    line = f"{subject}{finding.check}: expected {finding.expected}, found {finding.actual}"
+    return _printable(line)
+
+
+def _printable(text: str) -> str:
+    """*text* with every non-printable character escaped as ``repr`` would (review L4).
+
+    Catalogue names may hold newlines or terminal sequences; one finding stays one line.
+    """
+    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
 
 
 @audit_app.command("drop-expired")

@@ -42,9 +42,12 @@ from tests.integration.rls.conftest import (
     ScopedDatabase,
     application_for,
     scalar,
+    shared_module_database,
 )
 
 pytestmark = pytest.mark.integration
+# The read-only stores below are shared by every test of the module (``_shared``).
+database_uri, created_roles = shared_module_database()
 
 SCHEMA = "audit_read_visibility"
 SCOPE_BINDINGS = {
@@ -380,9 +383,8 @@ async def _seeded(
     return database
 
 
-# Every guard's event triggers fire on every DDL of the module database, so each
-# bootstrap slows the next. Tests that only read share one store per module
-# database; a failed build is kept and raised again, so a red run builds it once.
+# Tests that only read share one store per module database, which every test of
+# the module uses; a failed build is kept and raised again, so a red run builds it once.
 _SHARED: dict[tuple[str, str], ScopedDatabase | BaseException] = {}
 
 

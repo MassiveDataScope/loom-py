@@ -1,7 +1,9 @@
 """Postgres fixtures for the row-scoped schema integration tests.
 
-Every test module gets its own database so bootstraps, guards and event
-triggers never leak between modules. The ``scoped_database`` factory applies a
+Every test gets its own database, cloned from an empty session template, so
+bootstraps, guards and event triggers never leak between tests; a module that
+shares one expensive store across its tests points ``database_uri`` at
+``module_database_uri`` instead. The ``scoped_database`` factory applies a
 ``BootstrapConfig`` for one schema and returns the connection URLs of the
 users that bootstrap created, so tests connect exactly as the product would.
 """
@@ -98,10 +100,19 @@ def _admin_uri(env_var: str, compose_command: str) -> str:
     return uri
 
 
-def _module_database(admin_uri: str, created_roles: set[str]) -> Iterator[str]:
-    """Create a database on the server of *admin_uri*; drop it and *created_roles* after."""
+TEMPLATE_STRATEGY = "FILE_COPY"
+"""How a test database is cloned on Postgres 15+: faster than ``WAL_LOG`` to create and drop
+for an empty template (measured for T12c); Postgres 14 knows no other way and no clause."""
+
+
+def _database(admin_uri: str, created_roles: set[str], clone: str = "") -> Iterator[str]:
+    """Create a database on the server of *admin_uri*; drop it and *created_roles* after.
+
+    *clone*, when given, is the ``TEMPLATE ...`` clause it is created with.
+    """
     name = f"loom_rls_{secrets.token_hex(4)}"
-    asyncio.run(_run(admin_uri, f'CREATE DATABASE "{name}"', autocommit=True))
+    create = f'CREATE DATABASE "{name}"{clone}'
+    asyncio.run(_run(admin_uri, create, autocommit=True))
     uri = make_url(admin_uri).set(database=name).render_as_string(hide_password=False)
     try:
         yield uri
@@ -118,6 +129,14 @@ def _module_database(admin_uri: str, created_roles: set[str]) -> Iterator[str]:
             asyncio.run(_run(admin_uri, *drops, autocommit=True))
 
 
+def _template(admin_uri: str) -> Iterator[str]:
+    """The clause cloning an empty database, which nothing ever connects to, for each test."""
+    version = int(asyncio.run(scalar(admin_uri, "SHOW server_version_num")))
+    strategy = f" STRATEGY {TEMPLATE_STRATEGY}" if version >= 150000 else ""
+    for uri in _database(admin_uri, set()):
+        yield f' TEMPLATE "{make_url(uri).database}"{strategy}'
+
+
 @pytest.fixture(scope="session")
 def pg_admin_uri() -> str:
     return _admin_uri(URI_ENV_VAR, COMPOSE_COMMAND)
@@ -129,26 +148,73 @@ def pg_admin_uri_b() -> str:
     return _admin_uri(URI_ENV_VAR_B, COMPOSE_COMMAND_B)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
+def template_clone(pg_admin_uri: str) -> Iterator[str]:
+    yield from _template(pg_admin_uri)
+
+
+@pytest.fixture(scope="session")
+def template_clone_b(pg_admin_uri_b: str) -> Iterator[str]:
+    yield from _template(pg_admin_uri_b)
+
+
+@pytest.fixture
 def created_roles() -> set[str]:
-    """Roles are cluster-wide: every role a module creates is dropped after its database."""
+    """Roles are cluster-wide: every role a test creates is dropped after its database."""
     return set()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def created_roles_b() -> set[str]:
-    """The roles a module creates on server B, whose cluster is not server A's."""
+    """The roles a test creates on server B, whose cluster is not server A's."""
+    return set()
+
+
+@pytest.fixture
+def database_uri(pg_admin_uri: str, template_clone: str, created_roles: set[str]) -> Iterator[str]:
+    """The test's own database on server A."""
+    yield from _database(pg_admin_uri, created_roles, template_clone)
+
+
+@pytest.fixture
+def database_uri_b(
+    pg_admin_uri_b: str, template_clone_b: str, created_roles_b: set[str]
+) -> Iterator[str]:
+    """The test's own database on server B."""
+    yield from _database(pg_admin_uri_b, created_roles_b, template_clone_b)
+
+
+@pytest.fixture(scope="module")
+def module_roles() -> set[str]:
+    """The roles of :func:`module_database_uri`, dropped after it."""
     return set()
 
 
 @pytest.fixture(scope="module")
-def module_database_uri(pg_admin_uri: str, created_roles: set[str]) -> Iterator[str]:
-    yield from _module_database(pg_admin_uri, created_roles)
+def module_database_uri(pg_admin_uri: str, module_roles: set[str]) -> Iterator[str]:
+    """One database for a whole module, for a module whose tests share an expensive store.
+
+    Such a module overrides ``database_uri`` and ``created_roles`` with this and
+    :func:`module_roles` with :func:`shared_module_database`.
+    """
+    yield from _database(pg_admin_uri, module_roles)
 
 
-@pytest.fixture(scope="module")
-def module_database_uri_b(pg_admin_uri_b: str, created_roles_b: set[str]) -> Iterator[str]:
-    yield from _module_database(pg_admin_uri_b, created_roles_b)
+def shared_module_database() -> tuple[Any, Any]:
+    """The ``database_uri`` and ``created_roles`` overrides of a module sharing one database.
+
+    Assign them in the module: ``database_uri, created_roles = shared_module_database()``.
+    """
+
+    @pytest.fixture
+    def database_uri(module_database_uri: str) -> str:
+        return module_database_uri
+
+    @pytest.fixture
+    def created_roles(module_roles: set[str]) -> set[str]:
+        return module_roles
+
+    return database_uri, created_roles
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,19 +254,19 @@ class _DocumentedBootstrap(BootstrapConfig):
 
 
 @pytest.fixture
-def scoped_database(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
+def scoped_database(database_uri: str, created_roles: set[str]) -> BootstrapFactory:
     """Apply a product bootstrap for ``schema`` and return its user URLs."""
-    return _bootstrap_factory(module_database_uri, created_roles)
+    return _bootstrap_factory(database_uri, created_roles)
 
 
 @pytest.fixture
-def scoped_database_b(module_database_uri_b: str, created_roles_b: set[str]) -> BootstrapFactory:
+def scoped_database_b(database_uri_b: str, created_roles_b: set[str]) -> BootstrapFactory:
     """:func:`scoped_database` on server B."""
-    return _bootstrap_factory(module_database_uri_b, created_roles_b)
+    return _bootstrap_factory(database_uri_b, created_roles_b)
 
 
-def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
-    """The factory applying a bootstrap in *module_database_uri*, recording its roles.
+def _bootstrap_factory(database_uri: str, created_roles: set[str]) -> BootstrapFactory:
+    """The factory applying a bootstrap in *database_uri*, recording its roles.
 
     The factory imports the bootstrap API lazily so this module stays
     importable while the mechanism is still red.
@@ -247,10 +313,10 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
                 *passwords,
             }
         )
-        await apply_bootstrap(module_database_uri, config, passwords)
+        await apply_bootstrap(database_uri, config, passwords)
         base = ScopedDatabase(
             schema=schema,
-            superuser=module_database_uri,
+            superuser=database_uri,
             migrator="",
             read="",
             write="",
@@ -258,7 +324,7 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
         )
         return ScopedDatabase(
             schema=schema,
-            superuser=module_database_uri,
+            superuser=database_uri,
             migrator=base.as_user(f"{schema}_migrator", passwords[f"{schema}_migrator"]),
             read=base.as_user(f"{schema}_ro", passwords[f"{schema}_ro"]),
             write=base.as_user(f"{schema}_rw", passwords[f"{schema}_rw"]),
@@ -269,8 +335,8 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
 
 
 @pytest.fixture
-async def admin_connection(module_database_uri: str) -> AsyncIterator[Any]:
-    engine = create_async_engine(module_database_uri, poolclass=NullPool)
+async def admin_connection(database_uri: str) -> AsyncIterator[Any]:
+    engine = create_async_engine(database_uri, poolclass=NullPool)
     try:
         async with engine.connect() as conn:
             yield conn

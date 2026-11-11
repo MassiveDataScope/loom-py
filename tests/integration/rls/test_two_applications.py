@@ -90,12 +90,12 @@ async def _desk(application: Application) -> str:
 
 
 async def test_each_application_keeps_the_sources_registered_when_it_was_composed(
-    module_database_uri: str,
+    database_uri: str,
 ) -> None:
     register_scope_source("desk", lambda: "north")
-    first = _compose(module_database_uri, "first")
+    first = _compose(database_uri, "first")
     clear_scope_sources()
     register_scope_source("desk", lambda: "south")
-    second = _compose(module_database_uri, "second")
+    second = _compose(database_uri, "second")
 
     assert [await _desk(first), await _desk(second)] == ["north", "south"]

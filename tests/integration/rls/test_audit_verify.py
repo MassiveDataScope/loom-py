@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import asyncpg
@@ -131,6 +132,23 @@ async def test_a_grant_made_with_the_event_triggers_off_is_drift(
     assert "audit.privileges" in _checks(report)
 
 
+async def test_a_column_grant_on_a_log_partition_is_drift(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """T12c fix round F3: column grants on the log or a partition are drift of their own."""
+    database, application = await _created(scoped_database, tmp_path, "books_columns")
+    partition = datetime.now(UTC).strftime("audit_log_p%Y%m")
+    async with drifted(
+        database,
+        f"GRANT SELECT (subject) ON books_columns.{partition} TO books_columns_readers",
+        f"REVOKE SELECT (subject) ON books_columns.{partition} FROM books_columns_readers",
+    ):
+        report = await verify(database.superuser, application)
+
+    found = {finding.check: finding.actual for finding in report.findings}
+    assert f"{partition}.subject:books_columns_readers:SELECT" in found["audit.column_privileges"]
+
+
 async def test_a_model_that_audits_other_tables_or_excludes_other_columns_is_drift(
     scoped_database: BootstrapFactory, tmp_path: Path
 ) -> None:
@@ -185,6 +203,7 @@ async def test_a_reading_schema_verifies_clean(
     report = await verify(database.superuser, application)
 
     assert report.findings == ()
+    assert report.warnings == ()
 
 
 async def test_a_reading_store_without_the_log_is_drift(
@@ -327,3 +346,120 @@ async def test_the_recorded_reading_flag_is_read_without_the_json_codec(
 
     assert row is not None
     assert row["audit_reading"] is True
+
+
+# --- Views and definer functions over the audit log (T12b) ---------------------------------
+
+
+def leak_view(schema: str) -> tuple[str, str]:
+    """The statements that create a view over *schema*'s audit log outside it, and drop it."""
+    view = f"public.{schema}_leak"
+    return (
+        f"CREATE VIEW {view} AS SELECT * FROM {schema}.audit_log",
+        f"DROP VIEW IF EXISTS {view}",
+    )
+
+
+def _this_month_partition() -> str:
+    return datetime.now(UTC).strftime("audit_log_p%Y%m")
+
+
+@pytest.mark.parametrize(
+    ("schema", "as_migrator", "create", "drop"),
+    [
+        (
+            "av_inside",
+            True,
+            "CREATE VIEW {s}.leak AS SELECT * FROM {s}.audit_log",
+            "DROP VIEW IF EXISTS {s}.leak",
+        ),
+        (
+            "av_outside",
+            False,
+            "CREATE VIEW public.{s}_leak AS SELECT id, subject FROM {s}.audit_log",
+            "DROP VIEW IF EXISTS public.{s}_leak",
+        ),
+        (
+            "av_partition",
+            False,
+            "CREATE MATERIALIZED VIEW public.{s}_leak AS SELECT * FROM {s}.{partition}",
+            "DROP MATERIALIZED VIEW IF EXISTS public.{s}_leak",
+        ),
+    ],
+    ids=["owner-in-schema", "outside-the-schema", "materialized-over-a-partition"],
+)
+async def test_the_guard_refuses_a_view_over_the_audit_log(
+    scoped_database: BootstrapFactory,
+    tmp_path: Path,
+    schema: str,
+    as_migrator: bool,
+    create: str,
+    drop: str,
+) -> None:
+    """A view runs with its owner's rights: one over the log would read every tenant's rows."""
+    database, _ = await _created(scoped_database, tmp_path, schema)
+    names = {"s": schema, "partition": _this_month_partition()}
+    url = database.migrator if as_migrator else database.superuser
+    try:
+        with pytest.raises(DBAPIError, match=r"read the audit log with their owner"):
+            await execute(url, create.format(**names))
+    finally:
+        await execute(database.superuser, drop.format(**names))
+
+
+async def test_the_guard_refuses_a_view_over_a_view_over_the_audit_log(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """The outer view depends on the inner one, not on the log; the guard walks the chain."""
+    schema = "av_nested"
+    database, _ = await _created(scoped_database, tmp_path, schema)
+    outer = f"public.{schema}_outer"
+    async with drifted(database, *leak_view(schema)):
+        try:
+            with pytest.raises(DBAPIError, match=rf"read the audit log.*{schema}_outer"):
+                await execute(
+                    database.superuser,
+                    f"CREATE VIEW {outer} AS SELECT id FROM public.{schema}_leak",
+                )
+        finally:
+            # While the inner view exists the guard refuses every DDL, this drop included.
+            await _drift(database, f"DROP VIEW IF EXISTS {outer}")
+
+
+async def test_a_view_made_with_the_event_triggers_off_is_drift(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """A view that predates the guard's revision, or was made behind its back, is reported."""
+    database, application = await _created(scoped_database, tmp_path, "av_drift")
+    async with drifted(database, *leak_view("av_drift")):
+        report = await verify(database.superuser, application)
+
+    assert {"audit.view", "assertion"} <= _checks(report)
+    assert not report.ok
+
+
+async def test_an_unknown_definer_function_is_a_warning_and_the_guards_own_are_not(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    """A definer function the owner adds may read the log; verify names it, advisory only."""
+    schema = "av_definer"
+    database, application = await _reading(scoped_database, tmp_path, schema)
+    function = f"{schema}.leak()"
+    try:
+        await execute(
+            database.migrator,
+            f"CREATE FUNCTION {function} RETURNS bigint LANGUAGE sql SECURITY DEFINER "
+            f"AS 'SELECT count(*) FROM {schema}.audit_log'",
+            f"REVOKE EXECUTE ON FUNCTION {function} FROM PUBLIC",
+        )
+        report = await verify(database.superuser, application)
+    finally:
+        await execute(database.superuser, f"DROP FUNCTION IF EXISTS {function}")
+
+    assert report.findings == ()
+    assert report.ok
+    [warning] = report.warnings
+    assert warning.check == "audit.definer"
+    assert "leak()" in warning.actual
+    assert "read_audit_log" not in warning.actual
+    assert "write_audit_row" not in warning.actual
