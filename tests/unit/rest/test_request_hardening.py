@@ -8,7 +8,8 @@ an unbounded page size, or a trace identifier the caller wrote themselves.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable
 from http import HTTPStatus
 from typing import Any
 
@@ -31,7 +32,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, send_payload_too_large
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi._exclusions import verify_exclusion_paths
+from loom.rest.fastapi._exclusions import require_authenticated_path, verify_exclusion_paths
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.middleware import TraceIdMiddleware, _accepted_trace_id
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
@@ -91,6 +92,38 @@ def test_an_exclusion_matching_no_route_is_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Paths that must stay authenticated: exact (SQL endpoint) or with sub-paths (audit)
+# ---------------------------------------------------------------------------
+
+_SQL_PATH = "/sql/analytics"
+_AUDIT_PREFIX = "/audit/ledger"
+
+
+@pytest.mark.parametrize("excluded", [f"{_SQL_PATH}/", f"{_SQL_PATH}/rows", "/sql"])
+def test_the_sql_endpoint_refuses_only_its_exact_path(excluded: str) -> None:
+    """N15: the SQL endpoint keeps its exact-path check; neighbours pass as before."""
+    require_authenticated_path("SQL connection 'analytics'", _SQL_PATH, (excluded,), subpaths=False)
+
+    with pytest.raises(ConfigError, match=re.escape(_SQL_PATH)):
+        require_authenticated_path(
+            "SQL connection 'analytics'", _SQL_PATH, (excluded, _SQL_PATH), subpaths=False
+        )
+
+
+@pytest.mark.parametrize(
+    "excluded", [_AUDIT_PREFIX, f"{_AUDIT_PREFIX}/", f"{_AUDIT_PREFIX}/deep/path"]
+)
+def test_a_prefix_refuses_itself_and_every_path_under_it(excluded: str) -> None:
+    with pytest.raises(ConfigError, match=re.escape(repr(excluded))):
+        require_authenticated_path("audit_ledger", _AUDIT_PREFIX, (excluded,), subpaths=True)
+
+
+@pytest.mark.parametrize("excluded", ["/audit", "/audit/ledgers", "/audit/ledger-old"])
+def test_a_prefix_leaves_its_parent_and_siblings_alone(excluded: str) -> None:
+    require_authenticated_path("audit_ledger", _AUDIT_PREFIX, (excluded,), subpaths=True)
+
+
+# ---------------------------------------------------------------------------
 # Request body size
 # ---------------------------------------------------------------------------
 
@@ -140,7 +173,7 @@ async def test_the_raw_413_carries_a_plain_int_status_and_json_body() -> None:
 async def test_a_chunked_body_is_cut_when_it_crosses_the_cap() -> None:
     """A lying or absent Content-Length must not buy unbounded memory."""
 
-    async def _endless() -> Any:
+    async def _endless() -> AsyncIterator[bytes]:
         for _ in range(1000):
             yield b"x" * 1024
 

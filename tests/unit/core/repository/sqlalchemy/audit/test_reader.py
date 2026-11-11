@@ -654,6 +654,9 @@ async def test_a_cursor_replayed_with_the_other_sort_direction_is_refused() -> N
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
 
+_READING_ON: dict[str, Any] = {"audit": {"reading": {"enabled": True}}}
+
+
 def _guarded(**schema: Any) -> dict[str, Any]:
     return {
         "backend": "sqlalchemy",
@@ -679,7 +682,7 @@ def _container(wiring: PersistenceWiring, *before: Any) -> LoomContainer:
 
 def test_a_guarded_store_of_only_the_audit_model_binds_the_reader_and_no_repository() -> None:
     model = audit_entry_for("ledger")
-    container = _container(_wiring(_guarded(), model))
+    container = _container(_wiring(_guarded(**_READING_ON), model))
 
     reader = container.resolve(store_binding(AuditLogReader, _LEDGER))
     assert isinstance(reader, SQLAlchemyAuditLogReader)
@@ -699,17 +702,31 @@ def test_max_subjects_comes_from_reading() -> None:
 def test_a_binding_made_before_the_backend_module_is_kept() -> None:
     own = object()
 
-    container = _container(_wiring(_guarded()), own)
+    container = _container(_wiring(_guarded(**_READING_ON)), own)
 
     assert container.resolve(store_binding(AuditLogReader, _LEDGER)) is own
 
 
-def test_a_guarded_store_without_a_schema_name_fails_at_build() -> None:
-    section = _guarded()
+def test_a_reading_store_without_a_schema_name_fails_at_build() -> None:
+    section = _guarded(**_READING_ON)
     del section["schema"]["name"]
 
-    with pytest.raises(ConfigError, match=r"stores\.ledger\.schema\.name"):
+    with pytest.raises(ConfigError, match=r"stores\.ledger.*schema\.name"):
         _wiring(section)
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [{}, {"audit": {"reading": {}}}, {"audit": {"reading": {"enabled": False}}}],
+    ids=["no-reading", "reading-default", "reading-disabled"],
+)
+def test_a_guarded_store_that_does_not_read_its_log_binds_no_reader(
+    schema: dict[str, Any],
+) -> None:
+    """Fails closed (security review S1): no reader to inject without reading enabled."""
+    container = _container(_wiring(_guarded(**schema)))
+
+    assert not container.is_registered(store_binding(AuditLogReader, _LEDGER))
 
 
 @pytest.mark.parametrize(

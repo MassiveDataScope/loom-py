@@ -253,6 +253,19 @@ def test_custom_sql_path_excluded_from_jwt_authentication_fails_at_startup(
         create_app(config_path)
 
 
+def test_excluding_paths_below_the_sql_path_still_starts(tmp_path: Path) -> None:
+    """N15: the SQL endpoint mounts one exact path, so only that path is checked."""
+    config_path = _write_project(
+        tmp_path,
+        sql_section=_sql_section({"enabled": True, "auth": "identity"}),
+        jwt_section={**_JWT_SECTION, "exclude_paths": ["/sql/analytics/", "/sql/analytics/x"]},
+    )
+
+    app = create_app(config_path)
+
+    assert "/sql/analytics" in _route_paths(app)
+
+
 def test_enabled_endpoint_without_auth_field_does_not_mount(tmp_path: Path) -> None:
     """``enabled: true`` without ``auth`` boots the app but mounts nothing."""
     config_path = _write_project(tmp_path, sql_section=_sql_section({"enabled": True}))

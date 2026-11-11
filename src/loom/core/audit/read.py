@@ -35,6 +35,7 @@ _LOG = logging.getLogger(__name__)
 _EQ_FIELDS = frozenset({"subject", "table", "row_key", "trace_id", "op"})
 _MAX_WINDOW = timedelta(days=31)
 _MAX_LIMIT = 100
+_MAX_ROW_KEY = 4096
 _VALID_OPS = frozenset({"I", "U", "D"})
 _TABLE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -57,9 +58,11 @@ def _validated_eq_filter(item: FilterSpec, seen: set[tuple[str, FilterOp]]) -> F
     if item.field == "op" and item.value not in _VALID_OPS:
         raise _unsupported("op must be I, U or D")
     if item.field == "row_key":
+        if isinstance(item.value, str) and len(item.value) > _MAX_ROW_KEY:
+            raise _unsupported(f"row_key must be at most {_MAX_ROW_KEY} characters")
         try:
             parsed = json.loads(item.value)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, RecursionError) as exc:
             raise _unsupported("row_key must be JSON") from exc
         return replace(item, value=json.dumps(parsed, sort_keys=True, separators=(",", ":")))
     return item
@@ -191,6 +194,13 @@ def _for_store(key: StoreKey, tables: tuple[str, ...]) -> type[ReadAuditLog]:
         ReadAuditLog.__init__(self, reader, subjects, key, tables)
 
     __init__.__annotations__["reader"] = Annotated[AuditLogReader, InStore(key)]
+
+    async def execute(self: ReadAuditLog, query: QuerySpec) -> CursorResult[AuditEntry]:
+        return await ReadAuditLog.execute(self, query)
+
+    # The REST compiler publishes the result named here: one schema per store.
+    result = CursorResult[model]  # type: ignore[valid-type]
+    execute.__annotations__.update({"query": QuerySpec, "return": result})
     generated = cast(
         type[ReadAuditLog],
         type(
@@ -198,6 +208,9 @@ def _for_store(key: StoreKey, tables: tuple[str, ...]) -> type[ReadAuditLog]:
             (ReadAuditLog,),
             {
                 "__init__": __init__,
+                "execute": execute,
+                # Inherited by a product subclass, unlike the main model.
+                "__audit_store__": key,
                 "__module__": __name__,
             },
         ),

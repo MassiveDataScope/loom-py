@@ -234,12 +234,16 @@ class RouteSources:
         unserved: Python interfaces this transport does not serve (another
             Lambda function does). Compiled only so a *disabled* entry naming
             one of their routes is still recognised; none of them mounts.
+        audit_prefixes: Prefixes of the generated ``audit_<store>``
+            interfaces among *config*: paths the authentication in effect
+            must cover, sub-paths included.
     """
 
     python: Sequence[type[RestInterface[Any]]] = ()
     config: Sequence[type[RestInterface[Any]]] = ()
     disabled: Sequence[tuple[str, str]] = ()
     unserved: Sequence[type[RestInterface[Any]]] = ()
+    audit_prefixes: Sequence[str] = ()
 
     def __post_init__(self) -> None:
         # A frozen dataclass only stops rebinding the field itself; a caller
@@ -251,6 +255,7 @@ class RouteSources:
         object.__setattr__(self, "config", tuple(self.config))
         object.__setattr__(self, "disabled", tuple(self.disabled))
         object.__setattr__(self, "unserved", tuple(self.unserved))
+        object.__setattr__(self, "audit_prefixes", tuple(self.audit_prefixes))
 
 
 class InterfaceCompilationError(Exception):

@@ -483,3 +483,89 @@ def test_the_findings_go_to_stderr_and_the_manifest_alone_to_stdout(project: Pro
     assert "environment: production" in result.stderr
     assert "silenced: loom.cursors.E001" in result.stderr
     assert "WARNING loom.rest.W001" in result.stderr
+
+
+_JWT_AUTH = {
+    "secret_path": "${secrets:/shop/audit-key}",
+    "algorithms": ["HS256"],
+    "audience": "shop-audit",
+    "issuer": "shop-idp",
+}
+
+
+def _audit_function(config: dict[str, Any]) -> dict[str, Any]:
+    """A ledger store reading its audit log behind a secret URL, and a function serving it."""
+    config["stores"]["ledger"] = {
+        "backend": "sqlalchemy",
+        "url": "${secrets:/shop/ledger-url}",
+        "schema": {
+            "mode": "external",
+            "name": "ledger",
+            "guard": "ledger_guard",
+            "audit": {"reading": {"enabled": True, "route": {"requires_roles": ["auditor"]}}},
+        },
+    }
+    config["lambda"]["functions"]["audit"] = _trigger(
+        "http", interfaces=["audit_ledger"], auth={"jwt": dict(_JWT_AUTH)}
+    )
+    return config
+
+
+def test_a_dedicated_function_lists_only_the_audit_route_without_resolving_secrets(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """US1 #12, FR-010 and review r2 M5: the store URL is never resolved."""
+    resolved: list[str] = []
+
+    def record(_resolver: object, key: str, _root_: object = None) -> str:
+        resolved.append(key)
+        return _SENTINEL
+
+    monkeypatch.setattr(SecretsManagerResolver, "resolve", record)
+    monkeypatch.setattr(SsmResolver, "resolve", record)
+
+    result = _manifest(project(_audit_function), "--function", "audit")
+
+    assert result.exit_code == 0, result.stderr
+    event = json.loads(result.stdout)["functions"]["audit"]["event"]
+    assert event["routes"] == [{"method": "GET", "path": "/audit/ledger/"}]
+    assert resolved == []
+
+
+def _audit_function_with_auth(auth: dict[str, Any]) -> Edit:
+    def edit(config: dict[str, Any]) -> dict[str, Any]:
+        config = _audit_function(config)
+        config["lambda"]["functions"]["audit"]["trigger"]["auth"] = auth
+        # An operator may silence the deploy check for a deliberately public API;
+        # the audit route must still be refused.
+        config["checks"]["silenced"].append("loom.rest.E001")
+        return config
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    ("auth", "message"),
+    [
+        pytest.param({}, "requires an authenticated caller", id="no-authenticator"),
+        pytest.param(
+            {"jwt": {**_JWT_AUTH, "exclude_paths": ["/audit/ledger/rows"]}},
+            "'/audit/ledger/rows' is listed in the authentication 'exclude_paths'",
+            id="excluded-sub-path",
+        ),
+    ],
+)
+def test_an_audit_route_the_function_leaves_open_is_refused(
+    project: Project, auth: dict[str, Any], message: str
+) -> None:
+    """Security review S3: the manifest refuses what the Lambda Init would.
+
+    Outside a deployed environment, so no deploy check refuses it first.
+    """
+    config = project(_audit_function_with_auth(auth))
+    result = runner.invoke(
+        app, ["deploy", "manifest", "--env", "test", "--function", "audit", str(config)]
+    )
+
+    assert result.exit_code != 0
+    assert message in result.output

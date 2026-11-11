@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast, get_args, get_type_hints
 
@@ -16,6 +17,7 @@ from loom.core.audit import (
     AuditLogReader,
     AuditSubjects,
     ReadAuditLog,
+    audit_entry_for,
 )
 from loom.core.audit.errors import AuditSubjectsInvalid
 from loom.core.di.container import LoomContainer
@@ -91,6 +93,68 @@ def test_for_store_normalizes_tables_and_names_the_bound_class() -> None:
     assert first is ReadAuditLog.for_store("ledger", ("a", "b", "a"))
     assert first.__name__ == "ReadAuditLog_ledger__a__b"
     assert ReadAuditLog.for_store("ledger", ("a_b",)).__name__ == "ReadAuditLog_ledger__a_b"
+
+
+def _row_key_query(value: str) -> QuerySpec:
+    return QuerySpec(
+        pagination=PaginationMode.CURSOR,
+        filters=FilterGroup((FilterSpec("row_key", FilterOp.EQ, value),)),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["[" * 100_000 + "]" * 100_000, '"' + "k" * 4095 + '"'],
+    ids=["deeply-nested", "over-4096-characters"],
+)
+def test_a_row_key_over_4096_characters_is_an_unsupported_query(value: str) -> None:
+    """Security review S6: refused as 400 before it is parsed."""
+    reader = Reader()
+
+    with pytest.raises(UnsupportedQuery, match="row_key"):
+        invoke(_row_key_query(value), reader=reader)
+
+    assert reader.calls == []
+
+
+def test_a_row_key_that_exhausts_the_parser_stack_is_an_unsupported_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Security review S6: a stack limit lower than the cap allows is a 400, not a 500."""
+
+    def too_deep(_: str) -> object:
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON array")
+
+    monkeypatch.setattr(json, "loads", too_deep)
+
+    with pytest.raises(UnsupportedQuery, match="row_key"):
+        invoke(_row_key_query("[[1]]"))
+
+
+def test_a_row_key_of_4096_characters_is_accepted() -> None:
+    reader, _ = invoke(_row_key_query('"' + "k" * 4094 + '"'))
+
+    assert len(reader.calls) == 1
+
+
+def test_each_store_publishes_its_own_result_model() -> None:
+    """Site 8: the compiler reads ``execute``'s return annotation; it names the store's model."""
+    for key in ("ledger", "books"):
+        returned = get_type_hints(ReadAuditLog.for_store(key).execute)["return"]
+        assert returned == CursorResult[audit_entry_for(key)]
+    assert get_type_hints(ReadAuditLog.execute)["return"] == CursorResult[AuditEntry]
+
+
+def test_the_generated_execute_runs_the_base_contract() -> None:
+    reader = Reader()
+    use_case = cast(Any, ReadAuditLog.for_store("ledger"))(reader, Hook())
+    token = set_identity(Identity(subject="alice"))
+    try:
+        result = asyncio.run(use_case.execute(QuerySpec(pagination=PaginationMode.CURSOR)))
+    finally:
+        reset_identity(token)
+    assert result.items == ()
+    assert reader.calls[0][1] == frozenset({"alice"})
 
 
 @pytest.mark.parametrize(

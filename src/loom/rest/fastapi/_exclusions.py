@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from starlette.applications import Starlette
-from starlette.routing import Match
+from starlette.routing import BaseRoute, Match
 
 from loom.core.config.errors import ConfigError
 
@@ -54,17 +54,46 @@ def verify_exclusion_paths(app: Starlette, exclude_paths: Sequence[str]) -> None
         )
 
 
+def require_authenticated_path(
+    subject: str, path: str, exclude_paths: Sequence[str], *, subpaths: bool
+) -> None:
+    """Refuse an exclusion that would serve *path* without authentication.
+
+    Args:
+        subject: What serves *path*, for the message.
+        path: The path that must stay authenticated.
+        exclude_paths: Paths served without authentication.
+        subpaths: Also refuse ``path + "/"`` and any path below it, for a
+            route mounted under *path* as a prefix; exactly *path* otherwise.
+
+    Raises:
+        ConfigError: When an exclusion is *path*, or under it with *subpaths*.
+    """
+    below = f"{path}/"
+    for excluded in exclude_paths:
+        if excluded == path or (subpaths and excluded.startswith(below)):
+            raise ConfigError(
+                f"{subject}: {excluded!r} is listed in the authentication 'exclude_paths', "
+                f"which would serve {path!r} without authentication. Remove it from the "
+                "exclusion list."
+            )
+
+
 def _templated_matches(app: Starlette, path: str) -> list[str]:
     """Return the path templates matching *path* that are not *path* itself."""
-    scope = _probe_scope(path)
     matched: list[str] = []
     for route in app.router.routes:
         template = getattr(route, "path", None)
         if template is None or template == path:
             continue
-        if route.matches(scope)[0] != Match.NONE:
+        if reaches(route, path):
             matched.append(template)
     return matched
+
+
+def reaches(route: BaseRoute, path: str) -> bool:
+    """Whether a ``GET`` of *path* reaches *route*, fully or on its path alone."""
+    return route.matches(_probe_scope(path))[0] != Match.NONE
 
 
 def _probe_scope(path: str) -> dict[str, Any]:

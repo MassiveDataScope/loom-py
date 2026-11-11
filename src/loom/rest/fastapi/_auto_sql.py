@@ -10,6 +10,7 @@ from loom.core.sql import SqlConfig
 from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_jwt_audience
+from loom.rest.fastapi._exclusions import require_authenticated_path
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism
 
 
@@ -35,7 +36,12 @@ def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
         if auth.jwt_config is not None:
             _require_jwt_audience(f"SQL connection {name!r}", auth.jwt_config)
         _require_role_binding(name, connection.allowed_roles, authenticator)
-        _require_authenticated_path(name, endpoint.path or f"/sql/{name}", auth.exclude_paths)
+        require_authenticated_path(
+            f"SQL connection {name!r}",
+            endpoint.path or f"/sql/{name}",
+            auth.exclude_paths,
+            subpaths=False,
+        )
 
 
 def _require_authenticator(name: str, auth: _AuthWiring) -> Authenticator:
@@ -66,17 +72,6 @@ def _require_role_binding(
         "pick any allowlisted role. Either configure the mechanism to provide roles "
         "(for JWT: 'app.rest.auth.jwt.roles_claim'), or leave 'allowed_roles' empty and "
         "pin a single 'default_role'."
-    )
-
-
-def _require_authenticated_path(name: str, path: str, exclude_paths: tuple[str, ...]) -> None:
-    """A mounted SQL path listed in the exclusions would bypass auth (§4)."""
-    if path not in exclude_paths:
-        return
-    raise ConfigError(
-        f"SQL connection {name!r}: the endpoint path {path!r} is listed in the "
-        "authentication 'exclude_paths', which would serve SQL without "
-        "authentication. Remove it from the exclusion list."
     )
 
 

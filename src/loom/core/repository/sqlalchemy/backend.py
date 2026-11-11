@@ -169,7 +169,9 @@ class SQLAlchemyBackend:
             module = build_sqlalchemy_repository_registration_module(
                 session_manager, models, cursor_codec=cursor_codec
             )
-            if settings is not None and db_cfg.schema.guard is not None:
+            # Bound only for a store that reads its log (decoding requires a guard
+            # then), so elsewhere a ReadAuditLog fails to resolve instead of reading.
+            if settings is not None and _reads_audit(db_cfg.schema):
                 module = _with_audit_reader(
                     module, _audit_reader(db_cfg, spec, session_manager, cursor_codec)
                 )
@@ -221,7 +223,7 @@ def _audit_reader(
     session_manager: SessionManager,
     cursor_codec: CursorCodec,
 ) -> SQLAlchemyAuditLogReader:
-    """The audit-log reader of a guarded store, capped by ``reading`` or its default.
+    """The audit-log reader of a store that reads its log, capped by ``reading``.
 
     Raises:
         ConfigError: When the store declares no ``schema.name``.
@@ -477,14 +479,14 @@ async def _check_external(
     await _require_tables(connection, store)
     marked = audited_tables(store.session_manager.metadata)
     recording = sorted(t.name for t in marked.values()) if store.schema.audit.enabled else []
-    needs_guard = scoped or marked or _reads_audit(store)
+    needs_guard = scoped or marked or _reads_audit(store.schema)
     if connection.dialect.name == POSTGRES_DIALECT and needs_guard:
         await _check_guard(connection, scoped, store, audited=bool(marked), recording=recording)
 
 
-def _reads_audit(store: _Store) -> bool:
-    """Whether *store* reads its audit log (``schema.audit.reading.enabled``)."""
-    reading = store.schema.audit.reading
+def _reads_audit(schema: SchemaConfig) -> bool:
+    """Whether a store reads its audit log (``schema.audit.reading.enabled``)."""
+    reading = schema.audit.reading
     return reading is not None and reading.enabled
 
 
@@ -520,7 +522,7 @@ async def _check_guard(
             one boundary, or the database differs from what loom ships.
     """
     guard = require_schema_key(store.schema.guard, store.path, "guard")
-    reading = _reads_audit(store)
+    reading = _reads_audit(store.schema)
     if reading:
         derive_audit_boundary(scoped, store.session_manager.metadata, path=store.path)
     problems = await startup_problems(

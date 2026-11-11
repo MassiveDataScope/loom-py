@@ -211,7 +211,7 @@ def _http_event(
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
     # The rest extra is needed only by an http function.
     from loom.rest.compiler import InterfaceCompilationError, published_routes
-    from loom.rest.fastapi.adapter import served_routes
+    from loom.rest.fastapi.adapter import require_declared_audit_authentication, served_routes
 
     served = http_function(source.config, name, functions)
     try:
@@ -219,10 +219,13 @@ def _http_event(
         published = published_routes(sources)
     except (InterfaceCompilationError, RuntimeError) as exc:
         raise ConfigError(f"lambda.functions.{name} cannot be composed: {exc}") from exc
+    auth_section = served.auth_section or "app.rest.auth"
+    auth = source.config.raw(auth_section)
+    require_declared_audit_authentication(sources.audit_prefixes, auth, auth_section)
     routes = sorted(published, key=lambda route: (route[1], route[0]))
     return {
         "routes": [{"method": method, "path": path} for method, path in routes],
-        "auth": source.config.raw(served.auth_section or "app.rest.auth"),
+        "auth": auth,
     }
 
 

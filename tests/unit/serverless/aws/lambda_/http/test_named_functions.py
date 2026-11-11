@@ -11,6 +11,7 @@ import yaml
 from fastapi import FastAPI
 
 from loom.composition import create_app
+from loom.composition.build import load_source
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
 from loom.core.identity import Identity
@@ -398,3 +399,84 @@ def test_a_function_resolves_only_its_own_secrets(
     serve(path, resolvers=[secrets])
 
     assert secrets.read == read
+
+
+# ---------------------------------------------------------------------------
+# The generated audit_<store> interface in lambda.functions
+# ---------------------------------------------------------------------------
+
+
+def _audit_store(*, route: bool = True) -> Edit:
+    """Add ``stores.ledger``, a guarded Postgres store reading its audit log."""
+
+    def edit(config: dict[str, Any], _root: Path) -> None:
+        reading: dict[str, Any] = {"enabled": True}
+        if route:
+            reading["route"] = {"requires_roles": ["auditor"]}
+        schema = {"mode": "external", "name": "ledger", "guard": "ledger_guard"}
+        config["stores"]["ledger"] = {
+            "backend": "sqlalchemy",
+            "url": "postgresql+asyncpg://app@db/app",
+            "schema": {**schema, "audit": {"reading": reading}},
+        }
+
+    return edit
+
+
+def _discovered_models(path: str, function: str) -> list[str]:
+    source = load_source(
+        path, config_dir=None, environment=_TEST, code_path=None, resolvers=(), caller="test"
+    )
+    recipe = LambdaAdapter(function=function).recipe(source)
+    return [model.__name__ for model in recipe.discovered.models]
+
+
+def test_a_function_not_serving_the_audit_route_is_warned_about_and_composes_without_it(
+    project: Callable[..., str], serve: Callable[..., Any]
+) -> None:
+    """US1 #11 (N21) and the Option C cut: no ``AuditEntry_ledger``, so no ledger store."""
+    path = project("public_api", _ITEM_ONLY, _audit_store())
+
+    with pytest.warns(UserWarning, match="serves .*audit_ledger"):
+        call = lambda_client(serve(path))
+
+    assert call("GET", "/items/12", headers=bearer("alice")).status == 200
+    assert "AuditEntry_ledger" not in _discovered_models(path, "public_api")
+
+
+def test_a_function_serving_the_audit_route_discovers_its_model(
+    project: Callable[..., str],
+) -> None:
+    path = project("audit_api", {"audit_api": _http("audit_ledger")}, _audit_store())
+
+    assert "AuditEntry_ledger" in _discovered_models(path, "audit_api")
+
+
+def test_a_function_not_serving_the_audit_route_needs_no_authenticator_for_it(
+    project: Callable[..., str], serve: Callable[..., Any]
+) -> None:
+    """N10: only a function that serves ``audit_<store>`` must authenticate its prefix."""
+    functions = {"public_api": _http("ItemInterface", auth={}), "audit_api": _http("audit_ledger")}
+    path = project("public_api", functions, _audit_store())
+
+    call = lambda_client(serve(path))
+
+    assert call("GET", "/items/12").status == 200
+
+
+def test_the_audit_route_uses_the_function_authentication(project: Callable[..., str]) -> None:
+    """N14: a function's ``trigger.auth`` is the authentication in effect."""
+    path = project("audit_api", {"audit_api": _http("audit_ledger", auth={})}, _audit_store())
+
+    with pytest.raises(ConfigError, match=r"/audit/ledger.*authenticated caller"):
+        create_app(path, environment=_TEST)
+
+
+def test_a_function_listing_the_audit_route_without_a_route_is_refused(
+    project: Callable[..., str], serve: Callable[..., Any]
+) -> None:
+    """US1 #13 (N21): without ``reading.route`` there is no ``audit_ledger``."""
+    path = project("audit_api", {"audit_api": _http("audit_ledger")}, _audit_store(route=False))
+
+    with pytest.raises(ConfigError, match="names 'audit_ledger': no discovered RestInterface"):
+        serve(path)
