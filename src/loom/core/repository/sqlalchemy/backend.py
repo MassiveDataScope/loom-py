@@ -13,6 +13,7 @@ from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.pool import QueuePool
 
+from loom.core.audit.ports import AuditLogReader
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
 from loom.core.backend.sqlalchemy import (
     audited_tables,
@@ -22,11 +23,13 @@ from loom.core.backend.sqlalchemy import (
 )
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
 from loom.core.persistence.database import (
     EXTERNAL,
+    AuditReadingConfig,
     DatabaseConfig,
     SchemaConfig,
     require_schema_key,
@@ -37,8 +40,10 @@ from loom.core.persistence.stores import (
     StoreCapabilities,
     StoreKey,
     StoreSpec,
+    store_binding,
 )
 from loom.core.repository.abc import CursorCodec
+from loom.core.repository.sqlalchemy.audit.reader import SQLAlchemyAuditLogReader
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -164,6 +169,10 @@ class SQLAlchemyBackend:
             module = build_sqlalchemy_repository_registration_module(
                 session_manager, models, cursor_codec=cursor_codec
             )
+            if settings is not None and db_cfg.schema.guard is not None:
+                module = _with_audit_reader(
+                    module, _audit_reader(db_cfg, spec, session_manager, cursor_codec)
+                )
             prepare = functools.partial(
                 _prepare_models,
                 path=spec.path,
@@ -204,6 +213,41 @@ def _open_session_manager(
     if settings is not None:
         install_pool_reset(session_manager.engine)
     return session_manager
+
+
+def _audit_reader(
+    db_cfg: DatabaseConfig,
+    spec: StoreSpec,
+    session_manager: SessionManager,
+    cursor_codec: CursorCodec,
+) -> SQLAlchemyAuditLogReader:
+    """The audit-log reader of a guarded store, capped by ``reading`` or its default.
+
+    Raises:
+        ConfigError: When the store declares no ``schema.name``.
+    """
+    reading = db_cfg.schema.audit.reading or AuditReadingConfig()
+    return SQLAlchemyAuditLogReader(
+        session_manager,
+        cursor_codec,
+        schema=require_schema_key(db_cfg.schema.name, spec.path, "name"),
+        store=spec.key,
+        max_subjects=reading.max_subjects,
+    )
+
+
+def _with_audit_reader(
+    module: Callable[[LoomContainer], None], reader: SQLAlchemyAuditLogReader
+) -> Callable[[LoomContainer], None]:
+    """Run *module*, then bind *reader* unless the caller already bound the store's reader."""
+
+    def register(container: LoomContainer) -> None:
+        module(container)
+        container.register_default(
+            store_binding(AuditLogReader, reader.store), lambda: reader, scope=Scope.APPLICATION
+        )
+
+    return register
 
 
 def _prepare_models(
