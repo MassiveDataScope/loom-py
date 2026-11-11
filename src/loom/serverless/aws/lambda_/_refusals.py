@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 COMPONENT = "LambdaAdapter"
 """The adapter refusals and composition errors name."""
-MANIFEST_AGENTS_KEY = "manifest.AGENTS"
-"""The :attr:`LambdaUnservedConfigError.key` of the agents a manifest module declares."""
+_STDIO = "stdio"
+"""The MCP transport that runs a server as a subprocess, which a frozen function cannot keep."""
 
 
 class LambdaUnservedConfigError(ConfigError):
@@ -22,8 +22,7 @@ class LambdaUnservedConfigError(ConfigError):
     Raised by the recipe, before anything opens.
 
     Attributes:
-        key: Where the unserved declaration lives: a configuration key, or
-            :data:`MANIFEST_AGENTS_KEY` for the agents a manifest module declares.
+        key: The configuration key of the unserved declaration.
     """
 
     def __init__(self, key: str, message: str) -> None:
@@ -34,37 +33,33 @@ class LambdaUnservedConfigError(ConfigError):
 def refuse_unserved_config(source: CompositionSource) -> None:
     """Refuse, from the configuration alone, what no Lambda function serves.
 
-    Runs before discovery: a metrics scrape and an agent runtime.
+    Runs before discovery: a metrics scrape and an MCP server spoken to over
+    stdio. The ``ai`` section is read as written, so a transport given by an
+    interpolation is not seen here.
 
     Args:
         source: What the entry point composes from.
 
     Raises:
-        LambdaUnservedConfigError: When metrics are enabled or an ``ai``
-            section is declared.
+        LambdaUnservedConfigError: When metrics are enabled or an MCP server
+            declares ``transport: stdio``.
     """
     if source.observability_config.prometheus.enabled:
         raise LambdaUnservedConfigError(
             "observability.prometheus.enabled",
             "a Lambda function serves no metrics scrape. Disable it for this entry point.",
         )
-    if source.config.has(ConfigKey.AI):
-        raise LambdaUnservedConfigError(
-            ConfigKey.AI,
-            f"{COMPONENT} does not host agents. Serve them with FastAPIAdapter, "
-            "or drop the section from this entry point's configuration.",
-        )
+    _refuse_stdio_servers(source.config.raw(f"{ConfigKey.AI}.mcp_servers"))
 
 
-def refuse_manifest_agents(agent_specs: tuple[str, ...]) -> None:
-    """Refuse the agents a manifest module declares, once discovery has read them.
-
-    Raises:
-        LambdaUnservedConfigError: When *agent_specs* is not empty.
-    """
-    if agent_specs:
-        raise LambdaUnservedConfigError(
-            MANIFEST_AGENTS_KEY,
-            f"the manifest declares agents, which {COMPONENT} does not host. "
-            "Serve them with FastAPIAdapter.",
-        )
+def _refuse_stdio_servers(servers: object) -> None:
+    """Refuse the first of *servers*, ``ai.mcp_servers`` as written, spoken to over stdio."""
+    if not isinstance(servers, dict):
+        return
+    for name, server in servers.items():
+        if isinstance(server, dict) and server.get("transport") == _STDIO:
+            raise LambdaUnservedConfigError(
+                f"{ConfigKey.AI}.mcp_servers.{name}.transport",
+                f"{COMPONENT} cannot run an MCP server over stdio: a frozen function keeps "
+                "no subprocess. Reach the server over http, or serve it with FastAPIAdapter.",
+            )

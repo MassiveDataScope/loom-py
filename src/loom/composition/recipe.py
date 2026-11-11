@@ -32,6 +32,10 @@ class Recipe:
         agents: Whether this entry point hosts the agent runtime; without it
             an ``ai`` section is ignored and any compiled use case declaring
             an ``Agent()`` or ``Mcp()`` marker is refused at start-up.
+        agent_endpoints: Whether this entry point serves its agents over
+            HTTP endpoints too, so it builds every declared agent. Without
+            them, agents are reached only through ``Agent()`` and ``Mcp()``
+            markers.
         metrics: Use-case metrics, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
             serves a scrape.
@@ -45,6 +49,7 @@ class Recipe:
     default_backend: str = NONE_BACKEND
     skip_checks: frozenset[str] = frozenset()
     agents: bool = False
+    agent_endpoints: bool = True
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False

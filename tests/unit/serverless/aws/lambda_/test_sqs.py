@@ -229,7 +229,7 @@ def test_recipe_uses_lambda_profile_and_skips_rest(source: CompositionSource) ->
     adapter = LambdaAdapter(jobs=[LocalJob])
     recipe = adapter.recipe(source)
     assert recipe.profile is LAMBDA_PROFILE
-    assert recipe.agents is False
+    assert (recipe.agents, recipe.agent_endpoints) == (True, False)
     assert REST_CHECKS in recipe.skip_checks
 
 
@@ -646,11 +646,8 @@ def _manifest_source(source: CompositionSource, module: str, **sections: Any) ->
 
 @pytest.mark.parametrize(
     ("sections", "key"),
-    [
-        ({"ai": {"models": {}}}, "ai"),
-        ({"observability": {"prometheus": {"enabled": True}}}, "observability.prometheus.enabled"),
-    ],
-    ids=["ai-section", "metrics"],
+    [({"observability": {"prometheus": {"enabled": True}}}, "observability.prometheus.enabled")],
+    ids=["metrics"],
 )
 def test_what_lambda_does_not_serve_is_refused_before_discovery(
     source: CompositionSource, sections: dict[str, Any], key: str
@@ -664,21 +661,3 @@ def test_what_lambda_does_not_serve_is_refused_before_discovery(
     with pytest.raises(LambdaUnservedConfigError) as raised:
         adapter.recipe(undiscoverable)
     assert raised.value.key == key
-
-
-def test_manifest_agents_are_refused(
-    source: CompositionSource,
-    probe: tuple[type[Job[None]], Probe],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manifest = ModuleType("tests.unit.serverless.aws.lambda_._agents_manifest")
-    manifest.JOBS = [probe[0]]  # type: ignore[attr-defined]
-    manifest.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
-    configured = _manifest_source(source, manifest.__name__)
-
-    adapter = LambdaAdapter()
-
-    with pytest.raises(LambdaUnservedConfigError) as raised:
-        adapter.recipe(configured)
-    assert raised.value.key == "manifest.AGENTS"
