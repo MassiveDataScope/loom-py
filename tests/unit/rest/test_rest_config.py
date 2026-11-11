@@ -465,6 +465,8 @@ class TestFieldDefaultsMatchThePythonRoute:
         built_route = interface.routes[0]
         reference_route = RestRoute(use_case=PingUseCase, method="GET", path="/")
 
+        assert built_route.max_limit is None
+
         for f in dataclasses.fields(RestRoute):
             if f.name in _ROUTE_REQUIRED_FIELDS:
                 continue

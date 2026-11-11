@@ -93,6 +93,8 @@ class RestRoute:
         allow_pagination_override: Whether callers may override the resolved
             pagination mode using query parameters.  When ``None``, inherits
             from the interface or global default.
+        max_limit: Optional per-route ceiling for ``?limit=``. Cannot exceed
+            the global ceiling when set.
         requires_roles: Roles that grant access to this route.  A caller
             holding **any** of them is served; anyone else is refused before
             the use case is constructed.  Empty inherits the interface
@@ -132,12 +134,21 @@ class RestRoute:
     status_code: int = 200
     pagination_mode: PaginationMode | None = None
     allow_pagination_override: bool | None = None
+    max_limit: int | None = None
     profile_default: str = ""
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
     filterable: DeclaredFields | None = None
     sortable: DeclaredFields | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_limit is not None and (
+            isinstance(self.max_limit, bool)
+            or not isinstance(self.max_limit, int)
+            or self.max_limit <= 0
+        ):
+            raise ValueError("max_limit must be a positive int")
 
 
 def _extract_model_type(cls: type[Any]) -> type[Any] | None:

@@ -85,6 +85,7 @@ class RestRouteConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
         status_code: Default HTTP success status code.
         pagination_mode: Override pagination strategy for this route.
         allow_pagination_override: Whether callers may override pagination.
+        max_limit: Optional per-route ceiling for ``?limit=``.
         profile_default: Default query profile for this route.
         allowed_profiles: Profiles callers may request.
         expose_profile: Whether ``?profile=`` is publicly accepted.
@@ -102,6 +103,7 @@ class RestRouteConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     status_code: int = 200
     pagination_mode: PaginationMode | None = None
     allow_pagination_override: bool | None = None
+    max_limit: int | None = None
     profile_default: str = ""
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
@@ -220,6 +222,7 @@ def _build_route(interface_name: str, route_cfg: RestRouteConfig) -> RestRoute:
         status_code=route_cfg.status_code,
         pagination_mode=route_cfg.pagination_mode,
         allow_pagination_override=route_cfg.allow_pagination_override,
+        max_limit=route_cfg.max_limit,
         profile_default=route_cfg.profile_default,
         allowed_profiles=route_cfg.allowed_profiles,
         expose_profile=route_cfg.expose_profile,

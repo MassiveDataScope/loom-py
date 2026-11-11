@@ -807,7 +807,11 @@ class RestInterfaceCompiler:
                     interface_tags=interface.tags,
                     execute_param_types=self._resolve_execute_param_types(route.use_case),
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
-                    effective_max_limit=self._defaults.max_limit,
+                    effective_max_limit=(
+                        min(route.max_limit, self._defaults.max_limit)
+                        if route.max_limit is not None
+                        else self._defaults.max_limit
+                    ),
                     query_fields=self._resolve_query_fields(where, takes_query_spec, route, plan),
                     filter_fields=columns.filter_fields(route.filterable, interface.filterable),
                     sort_fields=columns.sort_fields(route.sortable, interface.sortable),
