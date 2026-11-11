@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
+from typing import Any
 
 from loom.core.errors.codes import ErrorCode
 
@@ -18,6 +20,22 @@ class LoomError(Exception):
     ``SQSErrorCode``) for failures only that adapter reports; a literal
     string is not a code.
 
+    An application error may declare the HTTP answer itself, on the class
+    or on the instance, and still not import a web framework:
+
+    - ``http_status``: a 4xx or 5xx status (an :class:`~http.HTTPStatus` or
+      its int), or ``None`` (the default) to keep the status the error's
+      ``code`` maps to. Any other value is a misdeclaration: the REST mapper
+      logs it and answers 500 with the fixed message. The attribute is typed
+      ``int | None`` because :class:`~http.HTTPStatus` is an ``IntEnum`` and
+      core does not import ``http``.
+    - ``public_detail``: extra fields the HTTP detail gains. The default
+      returns an empty mapping. A key the mapper already set is a
+      misdeclaration, answered the same way, and does not replace that key.
+    - ``public_message``: when ``True``, a 5xx response shows this error's
+      message. The default ``False`` keeps the fixed 5xx text, so a message
+      that names a host is not sent to the client.
+
     Args:
         message: Human-readable description of the error.
         code: The catalogue member that discriminates the error.
@@ -25,6 +43,9 @@ class LoomError(Exception):
     Attributes:
         retryable: Whether running the work again could still succeed; a
             subclass a retry would repeat or make worse sets it ``False``.
+        http_status: A 4xx or 5xx status (an ``HTTPStatus`` or its int), or
+            ``None`` to keep the code table.
+        public_message: Whether a 5xx response may show :attr:`message`.
 
     Example::
 
@@ -32,11 +53,17 @@ class LoomError(Exception):
     """
 
     retryable: bool = True
+    http_status: int | None = None
+    public_message: bool = False
 
     def __init__(self, message: str, *, code: StrEnum) -> None:
         self.message = message
         self.code: StrEnum = code
         super().__init__(message)
+
+    def public_detail(self) -> Mapping[str, Any]:
+        """Return fields an HTTP error detail may add. Empty unless overridden."""
+        return {}
 
 
 class DomainError(LoomError):

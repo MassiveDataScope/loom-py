@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, ClassVar
@@ -26,6 +28,7 @@ from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHEN
 _DESCRIPTION_MAX_LENGTH = 256
 _INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
 _UNAVAILABLE_MESSAGE = "The service is temporarily unavailable"
+_logger = logging.getLogger(__name__)
 
 
 class ErrorField(StrEnum):
@@ -86,6 +89,23 @@ class HttpErrorMapper:
 
     Unknown error codes default to ``500 Internal Server Error``.
 
+    An application error may opt into the answer instead of raising
+    ``HTTPException`` from domain code. Set these on the class or the
+    instance; leaving them unset keeps the behaviour above:
+
+    - ``http_status``: a 4xx or 5xx status (an :class:`~http.HTTPStatus` or
+      its int), or ``None`` to keep the code table. Any other value is a
+      misdeclaration.
+    - ``public_detail``: extra fields merged into the detail. A key this
+      mapper already set (``code``, ``message``, ``trace_id``, and the
+      type-specific ones) is a misdeclaration and does not replace it.
+    - ``public_message``: when ``True``, a 5xx shows the error's own
+      message. The default ``False`` keeps the fixed 5xx text.
+
+    A misdeclaration is logged and answered as ``500`` with the error's
+    code, the fixed message and the trace id, and no extra fields.
+    :meth:`to_http` does not raise for one.
+
     Example::
 
         mapper = HttpErrorMapper()
@@ -138,48 +158,144 @@ class HttpErrorMapper:
             structured detail body keyed by :class:`ErrorField`.  A ``401``
             also carries the ``WWW-Authenticate`` challenge required by
             RFC 9110 §11.6.1, and a :class:`~loom.core.errors.RateLimited`
-            the ``Retry-After`` delay of RFC 9110 §10.2.3.
+            the ``Retry-After`` delay of RFC 9110 §10.2.3. A misdeclared
+            status or public detail is the fixed internal error instead,
+            and this method does not raise for one.
         """
-        status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
-        detail: dict[str, Any] = {
+        try:
+            return _convert(self, error)
+        except _Misdeclared as failure:
+            _logger.error(
+                "Misdeclared HTTP error %s: %s (trace_id=%s)",
+                type(error).__name__,
+                failure.problem,
+                get_trace_id(),
+                exc_info=True,
+            )
+            return _internal_fallback(error)
+
+    def _status_for(self, error: LoomError) -> HTTPStatus:
+        """Return the error's declared status, or the one its code maps to."""
+        declared = error.http_status
+        if declared is None:
+            return self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
+        return _coerce_status(declared)
+
+
+class _Misdeclared(Exception):
+    """An error's HTTP declaration cannot be published."""
+
+    def __init__(self, problem: str) -> None:
+        self.problem = problem
+        super().__init__(problem)
+
+
+def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
+    status = mapper._status_for(error)
+    detail: dict[str, Any] = {
+        ErrorField.CODE: error.code,
+        ErrorField.MESSAGE: _public_message(
+            status, error.message, reveal=error.public_message is True
+        ),
+        ErrorField.TRACE_ID: get_trace_id(),
+    }
+
+    if isinstance(error, NotFound):
+        detail[ErrorField.ENTITY] = error.entity
+        detail[ErrorField.ID] = error.id
+
+    if isinstance(error, Forbidden):
+        if error.reason is not None:
+            detail[ErrorField.REASON] = error.reason
+        if error.missing:
+            detail[ErrorField.MISSING] = list(error.missing)
+
+    if isinstance(error, RuleViolation):
+        detail[ErrorField.FIELD] = error.field
+
+    if isinstance(error, RuleViolations):
+        detail[ErrorField.VIOLATIONS] = _rule_violation_fields(error.violations)
+
+    if isinstance(error, BoundaryValidationError):
+        detail[ErrorField.VIOLATIONS] = _boundary_violation_fields(error.violations)
+
+    if isinstance(error, PostCommitError):
+        detail[ErrorField.COMMITTED] = error.committed
+
+    _add_public_detail(detail, error)
+    return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
+
+
+def _internal_fallback(error: LoomError) -> HTTPException:
+    """Answer a misdeclaration with the fixed internal body and nothing else."""
+    return HTTPException(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        detail={
             ErrorField.CODE: error.code,
-            ErrorField.MESSAGE: _public_message(status, error.message),
+            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id(),
-        }
-
-        if isinstance(error, NotFound):
-            detail[ErrorField.ENTITY] = error.entity
-            detail[ErrorField.ID] = error.id
-
-        if isinstance(error, Forbidden):
-            if error.reason is not None:
-                detail[ErrorField.REASON] = error.reason
-            if error.missing:
-                detail[ErrorField.MISSING] = list(error.missing)
-
-        if isinstance(error, RuleViolation):
-            detail[ErrorField.FIELD] = error.field
-
-        if isinstance(error, RuleViolations):
-            detail[ErrorField.VIOLATIONS] = [
-                {ErrorField.FIELD: v.field, ErrorField.MESSAGE: v.message} for v in error.violations
-            ]
-
-        if isinstance(error, BoundaryValidationError):
-            detail[ErrorField.VIOLATIONS] = [
-                {ErrorField.FIELD: field, ErrorField.MESSAGE: message}
-                for field, message in error.violations
-            ]
-
-        if isinstance(error, PostCommitError):
-            detail[ErrorField.COMMITTED] = error.committed
-
-        return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
+        },
+    )
 
 
-def _public_message(status: int, message: str) -> str:
-    """Return *message*, or the fixed one a ``5xx`` answers with instead."""
-    if status < HTTPStatus.INTERNAL_SERVER_ERROR:
+def _coerce_status(declared: object) -> HTTPStatus:
+    """Return *declared* as a 4xx or 5xx status.
+
+    A bare int is accepted and normalised with :class:`HTTPStatus`, so
+    ``401`` is :attr:`HTTPStatus.UNAUTHORIZED`. ``bool`` is not a status,
+    and neither is an unassigned code.
+    """
+    if isinstance(declared, int) and declared >= HTTPStatus.BAD_REQUEST:
+        try:
+            return HTTPStatus(declared)
+        except ValueError:
+            pass
+    raise _Misdeclared("http_status is not a registered 4xx or 5xx status")
+
+
+def _rule_violation_fields(violations: tuple[RuleViolation, ...]) -> list[dict[str, Any]]:
+    return [
+        {ErrorField.FIELD: violation.field, ErrorField.MESSAGE: violation.message}
+        for violation in violations
+    ]
+
+
+def _boundary_violation_fields(violations: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]:
+    return [{ErrorField.FIELD: field, ErrorField.MESSAGE: message} for field, message in violations]
+
+
+def _add_public_detail(detail: dict[str, Any], error: LoomError) -> None:
+    """Merge ``public_detail`` into *detail*.
+
+    Owned keys are whatever this response already carries, including a
+    type-specific field such as ``entity``. A public field must not replace
+    one of them.
+    """
+    try:
+        extra = error.public_detail()
+    except Exception as exc:  # recovery: an application hook failed; answered as misdeclared
+        raise _Misdeclared(f"public_detail raised {type(exc).__name__}") from None
+    if not isinstance(extra, Mapping):
+        raise _Misdeclared("public_detail did not return a mapping")
+    overlap = _owned_overlap(detail, extra)
+    if overlap:
+        names = ", ".join(sorted(overlap))
+        raise _Misdeclared(f"public_detail overrides a field the mapper owns: {names}")
+    detail.update(extra)
+
+
+def _owned_overlap(detail: Mapping[str, Any], extra: Mapping[str, Any]) -> set[str]:
+    """Keys *extra* would replace. Compared as text, so enum keys match."""
+    return set(detail) & set(extra)
+
+
+def _public_message(status: int, message: str, *, reveal: bool = False) -> str:
+    """Return *message*, or the fixed one a ``5xx`` answers with instead.
+
+    *reveal* is the error's ``public_message`` opt-in. A ``5xx`` shows
+    *message* only when it is true; the default keeps the fixed text.
+    """
+    if reveal or status < HTTPStatus.INTERNAL_SERVER_ERROR:
         return message
     if status == HTTPStatus.SERVICE_UNAVAILABLE:
         return _UNAVAILABLE_MESSAGE

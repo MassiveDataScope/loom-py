@@ -243,6 +243,22 @@ A 5xx body carries a fixed text per status ("An unexpected error occurred",
 time"). It keeps `code`, `trace_id` and `committed`. The original message goes
 to the log under the same `trace_id`.
 
+An application `LoomError` may declare that answer on the class or the
+instance, so domain code does not raise `HTTPException`. `http_status` is a
+registered 4xx or 5xx `HTTPStatus` or its int, or `None` to keep the code
+table. Each of these is a misdeclaration:
+- any other status value;
+- a `public_detail()` key the mapper already set (`code`, `message`,
+  `trace_id`, or a type-specific one such as `entity`);
+- a `public_detail()` that raises or does not return a mapping.
+
+A misdeclaration is logged with the trace id but without the declared values.
+It is answered as 500 with the error's code, the fixed message and the trace
+id, and no extra fields. `public_message` defaults to false, so a 5xx still
+shows the fixed text; only `True` shows the error's own message. Errors that
+set none of these keep the response above. Core still does not import `http`;
+the mapper is what reads the declaration.
+
 **R5. Core never imports `http`, `fastapi` or `starlette`.** Core errors say
 what happened; the transport decides the status. The status numbers in the
 `core/sql/abc/errors.py:3-7` docstring are removed.
