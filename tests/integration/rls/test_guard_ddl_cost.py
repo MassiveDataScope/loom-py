@@ -72,6 +72,24 @@ async def _settled(superuser: str, marker: int) -> Counter[tuple[str, str]]:
     raise AssertionError(f"the statistics never showed {MARKER} called {marker} times")
 
 
+async def _flushed(superuser: str) -> Counter[tuple[str, str]]:
+    """The counts once every earlier session's statistics have arrived.
+
+    Before Postgres 15 a closed session reports its calls to the statistics
+    collector asynchronously, so counts read right after the setup can miss
+    work the setup did; that work would then be measured as the DDL's. A
+    marker called from a new session, and waited for, comes after it. Every
+    earlier marker call was waited for, so the count read first is exact.
+    """
+    called = (await _counts(superuser))[("public", MARKER)]
+    connection = await asyncpg.connect(_dsn(superuser))
+    try:
+        await connection.execute(f"SELECT public.{MARKER}()")
+    finally:
+        await connection.close()
+    return await _settled(superuser, called + 1)
+
+
 async def _prepared(superuser: str) -> None:
     """Track every function of this test's database, and create the marker."""
     connection = await asyncpg.connect(_dsn(superuser))
@@ -89,7 +107,7 @@ async def _measured(
     superuser: str, url: str, statements: Sequence[str]
 ) -> Counter[tuple[str, str]]:
     """Each guard function's calls while *statements* run in one transaction as *url*'s user."""
-    before = await _counts(superuser)
+    before = await _flushed(superuser)
     connection = await asyncpg.connect(_dsn(url))
     try:
         async with connection.transaction():
