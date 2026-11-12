@@ -90,6 +90,32 @@
 
 ## ✨ Features
 
+### model
+
+- **model:** `StrictStruct` (`loom.core.model`): base for contracts the
+  application owns. Frozen, keyword-only, refuses unknown fields, no `rename`,
+  same secret redaction. A subclass may pass `forbid_unknown_fields=False` or
+  `kw_only=False`.
+- **model:** type checkers (ty, pyright, mypy) now see that a `LoomFrozenStruct`
+  subclass inherits `frozen`; no need to repeat `frozen=True`. No run-time change.
+
+### rest
+
+- **rest:** a `LoomError` subclass declares its own HTTP answer, so domain code no
+  longer raises `HTTPException`:
+  - `http_status` is a registered 4xx or 5xx `HTTPStatus`, or its int. Without
+    it, the lookup by `code` applies as before.
+  - `public_detail()` returns extra fields that are merged into `detail`. A field
+    may not override the fields loom writes.
+  - A 5xx keeps the fixed message unless the class or the instance sets
+    `public_message = True`.
+
+  A misdeclaration answers the fixed JSON 500 (`code`, message, `trace_id`, no
+  extra fields) and is logged at `ERROR` without the declared values. It covers
+  an unregistered status, a colliding field, and a `public_detail()` that raises
+  or does not return a mapping. FastAPI and the Lambda HTTP adapter give the
+  same answer. Existing errors are unchanged.
+
 ### security
 
 - **security:** each JWT public key verifies only its own algorithm (RFC 8725
