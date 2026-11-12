@@ -178,3 +178,15 @@ class TestRenewal:
 
 async def _async(value: Any) -> Any:
     return value
+
+
+class TestWithoutTheMcpClient:
+    def test_a_failure_is_judged_unsafe_when_mcp_is_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from loom.ai.engines.pydantic_ai._failures import Outcome, classify
+
+        monkeypatch.setitem(sys.modules, "mcp", None)
+        assert classify(ConnectionError("Connection closed")) is Outcome.UNSAFE

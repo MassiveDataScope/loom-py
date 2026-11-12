@@ -89,15 +89,19 @@ def classify(exc: BaseException) -> Outcome:
         JSON-RPC error outside the client's own codes or the tool's own error,
         ``UNSAFE`` for anything else.
     """
-    from mcp import MCPError
-
     if isinstance(exc, ModelRetry | ToolFailed):
         cause = exc.__cause__
         return Outcome.COMPLETED if cause is None else classify(cause)
+    try:
+        from mcp import MCPError
+    except ImportError:  # without the client no error can be a server's answer
+        return Outcome.UNSAFE
     if not isinstance(exc, MCPError):
         return Outcome.UNSAFE
-    if exc.code not in CLIENT_MADE_CODES:
+    # Read by name: a checker without the client cannot narrow to MCPError.
+    code, message = getattr(exc, "code", None), getattr(exc, "message", None)
+    if code not in CLIENT_MADE_CODES:
         return Outcome.COMPLETED
-    if exc.code == _INVALID_REQUEST and exc.message in _SESSION_UNKNOWN:
+    if code == _INVALID_REQUEST and message in _SESSION_UNKNOWN:
         return Outcome.SAFE
     return Outcome.UNSAFE
