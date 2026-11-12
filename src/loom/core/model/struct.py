@@ -1,9 +1,16 @@
-"""Framework-wide base struct types."""
+"""Framework-wide base struct types.
+
+- :class:`StrictStruct`: a contract the application owns; frozen,
+  keyword-only, refuses unknown fields.
+- :class:`LoomFrozenStruct`: an immutable value that may carry unknown
+  fields, such as an external row.
+- :class:`LoomStruct`: mutable, no options.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, dataclass_transform
 
 import msgspec
 
@@ -93,6 +100,8 @@ class LoomStruct(msgspec.Struct):
         return f"{cls.__module__}.{cls.__qualname__}"
 
 
+# Typing only: tells type checkers that subclasses inherit ``frozen``.
+@dataclass_transform(frozen_default=True, field_specifiers=(msgspec.field,))
 class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMeta):
     """Base immutable struct for Loom value contracts.
 
@@ -110,3 +119,30 @@ class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMe
         if override is not None:
             return str(override)
         return f"{cls.__module__}.{cls.__qualname__}"
+
+
+class _StrictStructMeta(_RedactingStructMeta):
+    """Make each subclass keyword-only: msgspec does not inherit ``kw_only``."""
+
+    def __new__(
+        cls,
+        name: str,
+        bases: tuple[type, ...],
+        namespace: dict[str, Any],
+        **kwargs: Any,
+    ) -> _RedactingStructMeta:
+        kwargs.setdefault("kw_only", True)
+        return super().__new__(cls, name, bases, namespace, **kwargs)
+
+
+@dataclass_transform(frozen_default=True, kw_only_default=True, field_specifiers=(msgspec.field,))
+class StrictStruct(
+    LoomFrozenStruct,
+    frozen=True,
+    forbid_unknown_fields=True,
+    metaclass=_StrictStructMeta,
+):
+    """Base for contracts the application owns: frozen, keyword-only, closed.
+
+    A subclass may pass ``forbid_unknown_fields=False`` or ``kw_only=False``.
+    """
