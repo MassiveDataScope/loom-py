@@ -46,7 +46,6 @@ _CONFIG_REFUSALS = [
         "sql.connections.analytics.sql_endpoint",
         id="sql-endpoint",
     ),
-    pytest.param({"ai": {"models": {}}}, "ai", id="ai-section"),
     pytest.param(
         {"observability": {"prometheus": {"enabled": True}}},
         "observability.prometheus.enabled",
@@ -73,21 +72,20 @@ def recipe(contract_project: ProjectFactory) -> Recipe:
 
 @pytest.mark.parametrize(
     ("field", "expected"),
-    [("profile", LAMBDA_PROFILE), ("pool_metrics", None), ("agents", False)],
+    [
+        ("profile", LAMBDA_PROFILE),
+        ("pool_metrics", None),
+        ("agents", True),
+        ("agent_endpoints", False),
+    ],
 )
-def test_the_recipe_asks_for_one_connection_and_no_pool_metrics_or_agents(
+def test_the_recipe_asks_for_one_connection_and_no_pool_metrics_or_agent_endpoints(
     recipe: Recipe, field: str, expected: object
 ) -> None:
     assert getattr(recipe, field) == expected
 
 
-@pytest.mark.parametrize(
-    ("options", "key"),
-    [
-        *_CONFIG_REFUSALS,
-        pytest.param({"agents": ("agents/*.yaml",)}, "manifest.AGENTS", id="agents"),
-    ],
-)
+@pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
 def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
     contract_project: ProjectFactory, options: dict[str, Any], key: str
 ) -> None:

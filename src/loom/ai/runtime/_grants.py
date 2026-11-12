@@ -40,7 +40,7 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
 import msgspec
 
@@ -58,6 +58,12 @@ from loom.core.sql.abc import SqlQueryResult
 from loom.core.sql.service import SqlQueryService
 
 _T = TypeVar("_T")
+
+INTERRUPTED_CALL_CODE: Final = AgentRunErrorCode.MCP_CALL_INTERRUPTED
+"""The code an interrupted call reaches a use case's ``Mcp()`` marker or ``handle.mcp`` with.
+
+The same code an agent run fails with, so every path reports it alike: the call
+may have run, so no caller retries it (owner decision A, 2026-11-12)."""
 
 
 def _tool_allowed(name: str, *, include: tuple[str, ...], exclude: tuple[str, ...]) -> bool:
@@ -262,7 +268,12 @@ class McpGrantView:
 
     @asynccontextmanager
     async def _guard(self, tool: str) -> AsyncIterator[None]:
-        """Bound one call by this view's own tool timeout, inside its own span."""
+        """Bound one call by this view's own tool timeout, inside its own span.
+
+        A call the session reports ``MCP_CALL_INTERRUPTED`` (it may have run,
+        or was never sent, and is not repeated) reaches the use case under
+        :data:`INTERRUPTED_CALL_CODE`, with the session's own account of it.
+        """
         with self._span(tool):
             try:
                 async with asyncio.timeout(self._timeout_s):
@@ -272,6 +283,12 @@ class McpGrantView:
                     AgentRunErrorCode.TOOL_TIMEOUT,
                     f"tool {tool!r} of mcp server {self._capability.server!r} exceeded "
                     f"the {self._timeout_s:.3f}s tool timeout",
+                ) from exc
+            except AgentRunError as exc:
+                if exc.code is not AgentRunErrorCode.MCP_CALL_INTERRUPTED:
+                    raise
+                raise AgentRunError(
+                    INTERRUPTED_CALL_CODE, f"mcp server {self._capability.server!r}: {exc}"
                 ) from exc
 
     def _span(self, tool: str) -> AbstractContextManager[None]:

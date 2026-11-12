@@ -197,7 +197,7 @@ _INSENSITIVE: dict[str, AgentPlan] = {
     ),
     "region": _target(region="us-east-1"),
     "endpoint": _target(endpoint="https://gateway.invalid"),
-    "credentials": _target(credentials_ref="cuimo-dev"),
+    "credentials": _target(credentials_ref="acme-dev"),
     "streaming": _target(streaming=False),
     "price": msgspec.structs.replace(
         _BASE, price=ModelPrice(input=Decimal("1"), output=Decimal("2"))

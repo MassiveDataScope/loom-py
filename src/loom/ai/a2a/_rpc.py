@@ -77,6 +77,9 @@ RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
         AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED: ("the tool returned no structured content"),
         AgentRunErrorCode.TOOL_DECODE_FAILED: "the tool result could not be decoded",
         AgentRunErrorCode.TOOL_CALL_FAILED: "the tool call failed",
+        AgentRunErrorCode.MCP_CALL_INTERRUPTED: (
+            "a tool call was cut off mid-flight and was not repeated"
+        ),
         AgentRunErrorCode.AGENT_CALL_CYCLE: "the agent call graph contains a cycle",
         AgentRunErrorCode.AGENT_CALL_TOO_DEEP: "the agent call depth limit was exceeded",
         AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK: (

@@ -255,11 +255,11 @@ class TestConcurrency:
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return _answer(_TENANT.get(), info)
 
-        _TENANT.set("cuimo")
+        _TENANT.set("acme")
 
         out = _map(_runner(tmp_path, lambda: FunctionModel(respond)), _messages("hola"))
 
-        assert out["answer"].to_list() == ["CUIMO"]
+        assert out["answer"].to_list() == ["ACME"]
 
     def test_two_steps_mapping_at_once_do_not_share_a_runtime(self, tmp_path: Path) -> None:
         probe = _ConcurrencyProbe(delay=0.05)

@@ -35,6 +35,9 @@ _DEFAULT_500_CODES: frozenset[AgentRunErrorCode] = frozenset(
         AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED,
         AgentRunErrorCode.TOOL_DECODE_FAILED,
         AgentRunErrorCode.TOOL_CALL_FAILED,
+        # Not a 503: that status is retried by default, and the interrupted
+        # call may already have run (is_retriable(MCP_CALL_INTERRUPTED) is False).
+        AgentRunErrorCode.MCP_CALL_INTERRUPTED,
         AgentRunErrorCode.AGENT_CALL_CYCLE,
         AgentRunErrorCode.AGENT_CALL_TOO_DEEP,
         AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK,

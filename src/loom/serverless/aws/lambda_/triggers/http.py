@@ -43,11 +43,7 @@ from loom.rest.fastapi.router_runtime import (
     path_param_annotation,
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
-from loom.serverless.aws.lambda_._refusals import (
-    COMPONENT,
-    LambdaUnservedConfigError,
-    refuse_manifest_agents,
-)
+from loom.serverless.aws.lambda_._refusals import COMPONENT, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.interfaces import http_function
 
 _PATH_LOCATION = "path"
@@ -58,8 +54,9 @@ def compose_http(
 ) -> tuple[Recipe, Callable[[Application], LambdaHTTPHandler]]:
     """The FastAPI recipe with the Lambda pool profile, and how to bind its application.
 
-    Health, metrics, SQL endpoints, agents and OpenAPI are not served; a
-    configuration declaring metrics, an SQL endpoint or agents is refused.
+    Health, metrics, SQL endpoints, agent endpoints and OpenAPI are not
+    served; a configuration declaring metrics or an SQL endpoint is refused.
+    Agents are hosted for the use cases, reached through their markers.
     Left at their default, the authentication exclusions are therefore none:
     a route at ``/health`` or ``/docs`` requires a token. An explicit
     ``exclude_paths`` is honoured as written.
@@ -74,7 +71,7 @@ def compose_http(
 
     Raises:
         LambdaUnservedConfigError: When the configuration mounts an SQL
-            endpoint, or the manifest declares agents.
+            endpoint.
         ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
             raises it.
     """
@@ -87,8 +84,9 @@ def compose_http(
         auth_section=served.auth_section,
         select_interfaces=served.select,
     )
-    refuse_manifest_agents(recipe.discovered.agent_specs)
-    recipe = dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
+    recipe = dataclasses.replace(
+        recipe, profile=LAMBDA_PROFILE, agents=True, agent_endpoints=False, pool_metrics=None
+    )
     return recipe, functools.partial(_bind, declared)
 
 

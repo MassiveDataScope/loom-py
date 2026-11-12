@@ -27,7 +27,11 @@ from loom.serverless.aws.lambda_._jobs import (
     open_host,
     run_envelope,
 )
-from loom.serverless.aws.lambda_._refusals import COMPONENT, refuse_unserved_config
+from loom.serverless.aws.lambda_._refusals import (
+    COMPONENT,
+    check_resolved_ai,
+    refuse_unserved_config,
+)
 from loom.serverless.aws.lambda_.checks import trigger_job
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
@@ -152,6 +156,7 @@ class LambdaAdapter:
             CompositionStateError: When :meth:`recipe` has not run on this
                 instance, or it is already bound.
             ConfigError: When an authentication exclusion reaches a templated route.
+            LambdaUnservedConfigError: When an MCP server resolves to ``transport: stdio``.
             Exception: The failure to open the application, as itself.
         """
         if self._bind is None:
@@ -162,6 +167,7 @@ class LambdaAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
+        check_resolved_ai(application.ai.config)
         self._handler = self._bind(application)
         return self._handler
 

@@ -59,7 +59,7 @@ from loom.ai.engines.pydantic_ai._guards import (
     guarded_toolset,
     require_authenticated,
 )
-from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._native import native_capability as _native_capability
 from loom.ai.engines.pydantic_ai._returns import (
     bounded_return,
@@ -339,13 +339,12 @@ def _python_context(
 ) -> _PythonToolsetContext:
     """Build the factory's context over the plan's own ``mcp`` grants.
 
-    Each session wraps the very toolset ``for_build`` hands the agent's ``mcp``
-    capability, so a factory that reuses a remote shares the worker's one
-    connection to it rather than opening a second.
+    Each is the connection's own session, the one the agent's ``mcp`` grant and
+    every grant view use, so a factory that reuses a remote shares the worker's
+    one connection to it, and its renewals, rather than opening a second.
     """
     remotes = {
-        grant.server: _ToolsetSession(context.mcp.for_build(grant, context.agent))
-        for grant in context.mcp_grants
+        grant.server: context.mcp.session_for(grant, context.agent) for grant in context.mcp_grants
     }
     return _PythonToolsetContext(
         agent=context.agent,

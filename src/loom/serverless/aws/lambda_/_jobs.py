@@ -19,7 +19,6 @@ from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
-from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents
 
 if TYPE_CHECKING:
     from loom.composition import Application, CompositionSource
@@ -44,13 +43,10 @@ def jobs_recipe(
     """The recipe of a function running jobs, with Lambda pool defaults, and the jobs by name.
 
     AutoCRUD use cases for discovered models are not compiled, and discovered
-    callbacks are not registered.
-
-    Raises:
-        LambdaUnservedConfigError: When the manifest declares agents.
+    callbacks are not registered. Agents are hosted for the use cases, without
+    their HTTP endpoints.
     """
     resolved = resolve_worker_components(source.config, jobs, use_cases)
-    refuse_manifest_agents(resolved.agent_specs)
     if resolved.models:
         _log.warning(
             "Lambda ignores AutoCRUD use cases for discovered models",
@@ -65,9 +61,11 @@ def jobs_recipe(
             use_cases=cast(Any, resolved.compilables),
             interfaces=(),
             jobs=resolved.jobs,
+            agent_specs=resolved.agent_specs,
         ),
         skip_checks=frozenset({REST_CHECKS}),
-        agents=False,
+        agents=True,
+        agent_endpoints=False,
         metrics=metrics,
         connection_only=not resolved.models,
     )
