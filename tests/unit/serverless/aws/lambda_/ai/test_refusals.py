@@ -226,3 +226,63 @@ def test_an_http_function_enters_the_agent_runtime_once_at_init(
 
     assert lifetime == ["enter", "exit"]
     assert statuses == [401, 401]
+
+
+def test_a_stdio_transport_given_by_an_interpolation_is_refused_before_init(
+    tmp_path: Path, jobs_manifest: str, lifetime: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_MCP_TRANSPORT", "stdio")
+    server = {"transport": "${oc.env:LOOM_TEST_MCP_TRANSPORT}", "command": "mcp-server"}
+    adapter = LambdaAdapter()
+    application = compose_application(
+        _jobs_source(tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}), adapter
+    )
+
+    with pytest.raises(LambdaUnservedConfigError) as raised:
+        adapter.bind(application)
+
+    assert raised.value.key == "ai.mcp_servers.x.transport"
+    assert "stdio" in str(raised.value)
+    assert lifetime == []
+
+
+_ENDPOINT = {"enabled": True, "auth": "default"}
+_A2A = {"base_url": "https://agents.example.com", "expose": [_AGENT]}
+
+
+@pytest.mark.parametrize(
+    ("ai", "keys"),
+    [
+        pytest.param(_AI, [], id="unset"),
+        pytest.param(
+            {**_AI, "endpoints": {_AGENT: {**_ENDPOINT, "enabled": False}}}, [], id="disabled"
+        ),
+        pytest.param(
+            {**_AI, "endpoints": {_AGENT: _ENDPOINT, "other": _ENDPOINT}, "a2a": _A2A},
+            [f"ai.endpoints.{_AGENT}.enabled", "ai.endpoints.other.enabled", "ai.a2a.expose"],
+            id="set",
+        ),
+    ],
+)
+def test_agent_endpoint_keys_are_warned_once_each_at_init(
+    tmp_path: Path,
+    jobs_manifest: str,
+    probe: ProbeFixture,
+    lifetime: list[str],
+    caplog: pytest.LogCaptureFixture,
+    ai: dict[str, Any],
+    keys: list[str],
+) -> None:
+    adapter = LambdaAdapter()
+    application = compose_application(_jobs_source(tmp_path, jobs_manifest, ai), adapter)
+
+    caplog.clear()
+    handler = adapter.bind(application)
+    for message_id in ("1", "2"):
+        handler({"Records": [make_record(message_id, "a", job_name=probe[0].__qualname__)]}, None)
+    adapter.close()
+
+    ignored = [message for message in caplog.messages if "ignored on Lambda" in message]
+    assert len(ignored) == len(keys)
+    for key in keys:
+        assert sum(key in message for message in ignored) == 1

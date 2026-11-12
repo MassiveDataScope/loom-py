@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -155,18 +155,22 @@ def resolve_ai(
     code_path: Path,
     manifest_agent_specs: tuple[str, ...],
     use_case_mcp_bindings: DeclaringMcpBindings,
+    names: Collection[str] | None = None,
 ) -> AiWiring:
     """Load the optional ``ai:`` section into its compiled agent runtime.
 
     Absent section -> empty wiring, and the AI pillar is never imported.
-    Present section -> the configured engine is resolved, every declared
-    artifact is compiled offline, and the runtime is built without opening a
-    single connection: its live clients open inside the app lifespan.
+    Present section -> the configured engine is resolved, the declared
+    artifacts are compiled offline, and the runtime is built without opening
+    a single connection: its live clients open inside the app lifespan.
 
     Args:
         use_case_mcp_bindings: Use cases declaring an ``Mcp()`` marker, from
             ``verify_mcp_markers`` — already verified against
             ``ai.mcp_servers`` by the caller, before this function ever runs.
+        names: The agents to compile, see :func:`marker_agents`; ``None``
+            compiles every declared artifact. An agent left out is never
+            entered, so its MCP servers are never opened.
     """
     if not ctx.has(ConfigKey.AI):
         return AiWiring(config=None, runtime=None)
@@ -186,6 +190,7 @@ def resolve_ai(
     runtime = build_agent_runtime(
         ai_cfg,
         root=code_path,
+        names=names,
         specs=specs,
         engine_provider=provider,
         registry=kernel.registry,
@@ -197,6 +202,23 @@ def resolve_ai(
         ),
     )
     return AiWiring(config=ai_cfg, runtime=runtime, plans=runtime.plans)
+
+
+def marker_agents(
+    use_cases: Sequence[type[Compilable]], compiler: UseCaseCompiler
+) -> frozenset[str]:
+    """The agents an ``Agent()`` marker of a compiled use case names.
+
+    Only these are reachable from an entry point that serves no agent
+    endpoints. An A2A capability names a remote agent, never a local one, so
+    the set needs no transitive closure. A name no artifact declares is kept:
+    :func:`verify_agent_markers` reports it, as it is absent from the plans.
+    """
+    return frozenset(
+        binding.agent
+        for _, bindings in declaring_agent_bindings(use_cases, compiler)
+        for binding in bindings
+    )
 
 
 def compile_use_case_mcp(

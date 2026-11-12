@@ -10,6 +10,7 @@ from loom.composition._ai import (
     AiWiring,
     bind_agent_resolver,
     bind_mcp_resolver,
+    marker_agents,
     reject_ai_markers,
     reject_manifest_agents_without_ai_section,
     resolve_ai,
@@ -484,7 +485,8 @@ def _compose_agents(
     """Build the agent runtime when the entry point hosts it, else nothing.
 
     An entry point that does not host agents still refuses, at start-up, any
-    compiled use case declaring an ``Agent()`` or ``Mcp()`` marker.
+    compiled use case declaring an ``Agent()`` or ``Mcp()`` marker. One that
+    serves no agent endpoints builds only the agents a marker names.
 
     Raises:
         AgentCompilationError: When a marker cannot be satisfied.
@@ -504,6 +506,9 @@ def _compose_agents(
         code_path=code_path,
         manifest_agent_specs=discovered.agent_specs,
         use_case_mcp_bindings=use_case_mcp_bindings,
+        names=(
+            None if recipe.agent_endpoints else marker_agents(discovered.use_cases, kernel.compiler)
+        ),
     )
     verify_agent_markers(discovered.use_cases, kernel.compiler, kernel.registry, ai)
     bind_agent_resolver(kernel, ai)
