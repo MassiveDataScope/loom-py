@@ -122,7 +122,7 @@ class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMe
 
 
 class _StrictStructMeta(_RedactingStructMeta):
-    """Make each subclass keyword-only: msgspec does not inherit ``kw_only``."""
+    """Make each subclass keyword-only (msgspec does not inherit ``kw_only``); keep it frozen."""
 
     def __new__(
         cls,
@@ -131,6 +131,8 @@ class _StrictStructMeta(_RedactingStructMeta):
         namespace: dict[str, Any],
         **kwargs: Any,
     ) -> _RedactingStructMeta:
+        if kwargs.get("frozen", True) is not True:
+            raise TypeError(f"{name}: a StrictStruct is frozen; frozen=False is not allowed")
         kwargs.setdefault("kw_only", True)
         return super().__new__(cls, name, bases, namespace, **kwargs)
 

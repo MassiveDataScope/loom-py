@@ -45,6 +45,13 @@ def test_a_subclass_can_reopen_unknown_fields_and_positional_args() -> None:
     assert Positional(1) == Positional(a=1)
 
 
+def test_a_subclass_cannot_unfreeze() -> None:
+    with pytest.raises(TypeError, match="frozen=False is not allowed"):
+
+        class Mutable(StrictStruct, frozen=False):  # type: ignore[misc]  # pyright: ignore[reportGeneralTypeIssues]
+            a: int
+
+
 class _Plain(msgspec.Struct, frozen=True):
     name: str
 
