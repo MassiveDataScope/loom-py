@@ -36,7 +36,7 @@ pytest.importorskip(
 )
 
 from fastmcp.client.auth import OAuth  # noqa: E402
-from fastmcp.client.transports import StreamableHttpTransport  # noqa: E402
+from fastmcp.client.transports import SSETransport, StreamableHttpTransport  # noqa: E402
 
 from loom.ai.compiler import CompiledRemoteAuth  # noqa: E402
 
@@ -216,6 +216,27 @@ class TestTheClientBehavesAsBefore:
             response = await client.post(_URL)
 
         assert (response.status_code, sent) == (307, [_URL])
+
+
+class TestAnSseServer:
+    def test_keeps_the_stock_transport_with_the_credentials_on_the_toolset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bearer = _Bearer()
+        monkeypatch.setattr(_mcp, "shared_mcp_auth", lambda server, declared: bearer)
+        capability = CompiledMcpCapability(
+            server="orders",
+            url="https://orders.example.com/sse",
+            timeout_ms=20000,
+            headers_ref=Secret("X-Key=abc123"),
+            auth=CompiledRemoteAuth(kind="token-service", settings=()),
+        )
+
+        toolset = build_mcp_toolset(capability, init_timeout=10.0)
+
+        assert type(toolset.client.transport) is SSETransport
+        assert toolset.client.transport.headers == {"X-Key": "abc123"}
+        assert toolset.client.transport.auth is bearer
 
 
 class TestBehindAProxy:

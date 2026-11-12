@@ -19,8 +19,8 @@ from loom.ai.abc import McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _ToolsetSession
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime._grants import McpGrantView
+from loom.ai.errors import AgentRunError
+from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE, McpGrantView
 from loom.core.identity import Identity
 
 pytest.importorskip("mcp", reason="the MCP client is not installed: uv sync --group mcp-tests")
@@ -90,6 +90,11 @@ class _Toolset:
         self.drained.set()
         self.enter_gate: asyncio.Event | None = None
         self.exit_gate: asyncio.Event | None = None
+        self.exit_fails = False
+        self.close_fails = False
+        self.listed = 0
+        self.list_gate: asyncio.Event | None = None
+        self.list_fails = False
         self.pool = _Pool()
         self.client = SimpleNamespace(
             call_tool_mcp=self._call, close=self._close, transport=SimpleNamespace(pool=self.pool)
@@ -118,11 +123,28 @@ class _Toolset:
             if self.exit_gate is not None:
                 await self.exit_gate.wait()
             self.closes += 1
+            if self.exit_fails:
+                raise RuntimeError("the transport died under the exit")
+
+    async def list_tools(self) -> list[Any]:
+        """List the tools: once per toolset, as ``MCPToolset`` caches its list."""
+        self.listed += 1
+        if self.list_gate is not None:
+            await self.list_gate.wait()
+        if self.list_fails:
+            raise _cut()
+        return [SimpleNamespace(name="write_orders", output_schema=None)]
+
+    async def get_tools(self, ctx: object) -> dict[str, Any]:
+        """List the tools as the agent path does, through the cached listing."""
+        return {tool.name: tool for tool in await self.list_tools()}
 
     async def _close(self) -> None:
         """Cut the connection; like fastmcp, return only once the cut calls have drained."""
         self.closed.set()
         await self.drained.wait()
+        if self.close_fails:
+            raise RuntimeError("the dead transport raised from its close")
 
     async def _call(self, name: str, arguments: dict[str, Any]) -> Any:
         self.reached.append(name)
@@ -229,7 +251,7 @@ class TestASafeFailure:
         with pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
-        assert raised.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE
+        assert raised.value.code is INTERRUPTED_CALL_CODE
         assert isinstance(raised.value.__cause__, McpCallInterrupted)
         assert len(first.reached) + len(second.reached) == 2
         assert factory.built == 1
@@ -274,7 +296,7 @@ class TestAnUnsafeFailure:
         with pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
-        assert raised.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE
+        assert raised.value.code is INTERRUPTED_CALL_CODE
         assert first.reached == ["write_orders"]
         assert factory.built == 0
 
@@ -553,6 +575,197 @@ class TestBoundedSessions:
             await session.call_tool("write_orders", {})
         assert first.reached == []
         assert _says_not_sent(refused.value)
+
+    @_bounded
+    async def test_a_toolset_whose_exit_fails_is_still_released(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        first = _Toolset("first", _Ledger())
+        first.exit_fails = True
+        session = await _open(first, _Factory())
+
+        await session.aclose()
+
+        assert (first.closes, first.pool.released) == (1, 1)
+        assert "did not close cleanly" in caplog.text
+
+    @_bounded
+    async def test_a_force_close_that_raises_still_releases_the_entry(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ledger, gate = _Ledger(), asyncio.Event()
+        first = _Toolset("first", ledger, gate)
+        first.close_fails = True
+        session = await _open(first, _Factory())
+        slow = asyncio.create_task(session.call_tool("slow", {}))
+        await asyncio.sleep(0)
+
+        await session.aclose()
+
+        with pytest.raises(McpCallInterrupted):
+            await slow
+        assert (first.closes, first.over_exits, first.pool.released) == (1, 0, 1)
+        assert not any(toolset.is_open for toolset in ledger.toolsets)
+        assert "did not close cleanly" in caplog.text
+
+    @_bounded
+    async def test_a_renewal_waits_for_an_earlier_close_still_running(self) -> None:
+        ledger, first_slow, second_slow = _Ledger(), asyncio.Event(), asyncio.Event()
+        first = _Toolset("first", ledger, first_slow, _cut())
+        second = _Toolset("second", ledger, None, second_slow, _cut())
+        third = _Toolset("third", ledger)
+        session = await _open(first, _Factory(second, third))
+        slow = asyncio.create_task(session.call_tool("slow", {}))
+        await asyncio.sleep(0)
+        with pytest.raises(McpCallInterrupted):
+            await session.call_tool("write_orders", {})
+        await session.call_tool("write_orders", {})  # renewed: first is retired, draining
+        first.exit_gate = exiting = asyncio.Event()
+        first_slow.set()
+        await slow  # first drained: its close starts and hangs in the exit
+        await _until(lambda: bool(exiting._waiters))
+        slow = asyncio.create_task(session.call_tool("slow", {}))
+        await asyncio.sleep(0)
+        with pytest.raises(McpCallInterrupted):
+            await session.call_tool("write_orders", {})
+
+        renewing = asyncio.ensure_future(session.call_tool("write_orders", {}))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        entered_early = third.holds
+        exiting.set()
+        await renewing
+
+        assert (entered_early, third.holds, first.closes, first.pool.released) == (0, 1, 1, 1)
+        second_slow.set()
+        await slow
+        await session.aclose()
+
+
+class TestTheRenewalListsTools:
+    @_bounded
+    async def test_before_the_new_toolset_serves_anyone(self) -> None:
+        ledger = _Ledger()
+        first, second = _Toolset("first", ledger, _forgotten()), _Toolset("second", ledger)
+        session = await _open(first, _Factory(second))
+
+        await session.call_tool("write_orders", {})
+
+        assert second.listed == 1
+        assert second.reached == ["write_orders"]
+
+    @_bounded
+    async def test_one_that_cannot_list_closes_the_new_toolset_and_sends_nothing(self) -> None:
+        ledger = _Ledger()
+        first, second = _Toolset("first", ledger, _cut()), _Toolset("second", ledger)
+        second.list_fails = True
+        session = await _open(first, _Factory(second))
+        with pytest.raises(McpCallInterrupted):
+            await session.call_tool("write_orders", {})
+
+        with pytest.raises(McpCallInterrupted) as refused:
+            await session.call_tool("write_orders", {})
+
+        await _drained(session)
+        assert _says_not_sent(refused.value)
+        assert second.reached == []
+        assert (second.holds, second.pool.released) == (0, 1)
+        assert first.holds == 1
+
+
+class TestAListInFlight:
+    @_bounded
+    async def test_keeps_a_retired_toolset_open_until_it_returns(self) -> None:
+        ledger, listing = _Ledger(), asyncio.Event()
+        first, second = _Toolset("first", ledger, _cut()), _Toolset("second", ledger)
+        session = await _open(first, _Factory(second))
+        first.list_gate = listing
+        slow_list = asyncio.ensure_future(session.list_tools())
+        await _until(lambda: bool(listing._waiters))
+        with pytest.raises(McpCallInterrupted):
+            await session.call_tool("write_orders", {})
+        await session.call_tool("write_orders", {})
+        closes_while_listing = first.closes
+
+        listing.set()
+
+        assert [tool.name for tool in await slow_list] == ["write_orders"]
+        await _drained(session)
+        assert (closes_while_listing, first.closes, first.pool.released) == (0, 1, 1)
+
+
+class TestAnAgentListing:
+    @_bounded
+    async def test_keeps_a_retired_toolset_open_until_it_returns(self) -> None:
+        ledger, listing = _Ledger(), asyncio.Event()
+        first, second = _Toolset("first", ledger, _cut()), _Toolset("second", ledger)
+        session = await _open(first, _Factory(second))
+        first.list_gate = listing
+        slow_list = asyncio.ensure_future(session.tools(None))  # type: ignore[arg-type]
+        await _until(lambda: bool(listing._waiters))
+        with pytest.raises(McpCallInterrupted):
+            await session.call_tool("write_orders", {})
+        await session.call_tool("write_orders", {})
+        closes_while_listing = first.closes
+
+        listing.set()
+
+        assert list(await slow_list) == ["write_orders"]
+        await _drained(session)
+        assert (closes_while_listing, first.closes) == (0, 1)
+
+
+class TestASessionThatHoldsNothing:
+    """Over a connection start-up could not open: each use enters and leaves the toolset."""
+
+    @_bounded
+    async def test_renews_into_a_toolset_it_does_not_hold_either(self) -> None:
+        ledger = _Ledger()
+        first, second = _Toolset("first", ledger, _forgotten()), _Toolset("second", ledger)
+        session = _ToolsetSession(first, rebuild=_Factory(second), held=False)  # type: ignore[arg-type]
+
+        result = await session.call_tool("write_orders", {})
+
+        assert result.structured == {"by": "second"}
+        assert (first.holds, second.holds, second.listed) == (0, 0, 0)
+
+    @_bounded
+    async def test_closes_without_leaving_what_it_never_entered(self) -> None:
+        first = _Toolset("first", _Ledger())
+        session = _ToolsetSession(first, held=False)  # type: ignore[arg-type]
+        await session.call_tool("write_orders", {})
+
+        await session.aclose()
+
+        assert (first.over_exits, first.holds, first.pool.released) == (0, 0, 1)
+
+
+class TestAnInterruptedListing:
+    @_bounded
+    async def test_is_reported_as_a_listing_not_as_a_tool_call(self) -> None:
+        first = _Toolset("first", _Ledger())
+        first.list_fails = True
+        session = await _open(first, _Factory())
+
+        with pytest.raises(McpCallInterrupted) as raised:
+            await session.list_tools()
+
+        assert "tools/list" not in str(raised.value)
+        assert "listing" in str(raised.value)
+
+
+class TestTheMarkersView:
+    @_bounded
+    async def test_says_a_refused_call_was_not_sent(self) -> None:
+        session = await _open(_Toolset("first", _Ledger()), _Factory())
+        await session.aclose()
+
+        with pytest.raises(AgentRunError) as raised:
+            await _view(session).call_untyped("write_orders", {})
+
+        assert raised.value.code is INTERRUPTED_CALL_CODE
+        assert "not sent" in str(raised.value)
+        assert "may have run" not in str(raised.value)
 
 
 async def test_a_first_connect_that_fails_releases_the_pool() -> None:

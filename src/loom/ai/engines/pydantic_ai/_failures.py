@@ -17,6 +17,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Final
 
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
+
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 
 CLIENT_MADE_CODES: Final[frozenset[int]] = frozenset(
@@ -52,36 +54,46 @@ class McpCallInterrupted(AgentRunError):
 
     It is never repeated, and the session renews before the next call. Being a
     run error with its own code is what lets an engine-neutral caller recognise
-    it: a marker's grant view turns it into ``TOOL_UNAVAILABLE``. A call refused
+    it: a marker's grant view reports it under ``INTERRUPTED_CALL_CODE``. A call refused
     before it was sent -- the session is closed, or a renewal could not
     connect -- carries the same code, and its message says it was not sent.
 
     Args:
-        tool: The tool the interrupted call named.
+        tool: The tool the interrupted call named, or ``None`` for a listing.
         sent: Whether the call reached the transport, so it may have run.
     """
 
-    def __init__(self, tool: str, *, sent: bool = True) -> None:
-        fate = "was interrupted and may have run" if sent else "was not sent"
+    def __init__(self, tool: str | None, *, sent: bool = True) -> None:
+        if tool is None:
+            what, fate = "listing the mcp server's tools", "was interrupted"
+        else:
+            what, fate = f"the call to mcp tool {tool!r}", "was interrupted and may have run"
         super().__init__(
             AgentRunErrorCode.MCP_CALL_INTERRUPTED,
-            f"the call to mcp tool {tool!r} {fate}; it is not repeated",
+            f"{what} {fate if sent else 'was not sent'}; it is not repeated",
         )
 
 
-def classify(exc: Exception) -> Outcome:
+def classify(exc: BaseException) -> Outcome:
     """Return what a call's failure proves about the server.
+
+    On the agent path pydantic-ai's ``MCPToolset`` raises its own ``ModelRetry``
+    or ``ToolFailed`` over the client's error, so such a signal is judged by its
+    cause; one with no cause is the tool's own error, an answer.
 
     Args:
         exc: What the call raised.
 
     Returns:
         ``SAFE`` for a session the server does not know, ``COMPLETED`` for a
-        JSON-RPC error outside the client's own codes, ``UNSAFE`` for anything
-        else.
+        JSON-RPC error outside the client's own codes or the tool's own error,
+        ``UNSAFE`` for anything else.
     """
     from mcp import MCPError
 
+    if isinstance(exc, ModelRetry | ToolFailed):
+        cause = exc.__cause__
+        return Outcome.COMPLETED if cause is None else classify(cause)
     if not isinstance(exc, MCPError):
         return Outcome.UNSAFE
     if exc.code not in CLIENT_MADE_CODES:

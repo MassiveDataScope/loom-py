@@ -85,3 +85,28 @@ def test_an_interrupted_call_is_a_run_error_nobody_retries() -> None:
     assert interrupted.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
     assert not is_retriable(AgentRunErrorCode.MCP_CALL_INTERRUPTED)
     assert "write_orders" in str(interrupted)
+
+
+def _wrapped(cause: BaseException | None) -> Exception:
+    """What pydantic-ai's ``MCPToolset`` raises: its own ``ModelRetry`` over the client's error."""
+    from pydantic_ai.exceptions import ModelRetry
+
+    retry = ModelRetry("the tool call failed")
+    retry.__cause__ = cause
+    return retry
+
+
+@pytest.mark.parametrize(
+    ("cause", "outcome"),
+    [
+        (MCPError(-32000, "Connection closed"), Outcome.UNSAFE),
+        (MCPError(-32600, "Session terminated"), Outcome.SAFE),
+        (_sent_by_server(-32043, "middleware-sent JSON-RPC error"), Outcome.COMPLETED),
+        (None, Outcome.COMPLETED),
+    ],
+    ids=["cut", "forgotten", "answered", "the-tools-own-error"],
+)
+def test_a_model_retry_is_judged_by_what_caused_it(
+    cause: BaseException | None, outcome: Outcome
+) -> None:
+    assert classify(_wrapped(cause)) is outcome

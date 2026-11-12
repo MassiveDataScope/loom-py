@@ -37,6 +37,10 @@ class _Toolset:
     async def __aexit__(self, *args: object) -> None:
         self.exited += 1
 
+    async def list_tools(self) -> list[Any]:
+        """What a renewal lists before serving anyone."""
+        return []
+
     async def _call(self, name: str, arguments: dict[str, Any]) -> Any:
         self.calls.append(name)
         await asyncio.sleep(0)

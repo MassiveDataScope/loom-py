@@ -74,7 +74,7 @@ Scenario = Callable[[InProcessServer, Any, Any], Awaitable[None]]
 
 
 async def _after_warm_call(monkeypatch: pytest.MonkeyPatch, test: Scenario) -> InProcessServer:
-    """Open the shared session, make one call, then run *test* with a clean log.
+    """Open the shared session as the runtime does, make one call, then run *test*, log cleared.
 
     *test* gets the server, the grant view's session and the raw toolset the
     model's own tool calls go through.
@@ -83,16 +83,33 @@ async def _after_warm_call(monkeypatch: pytest.MonkeyPatch, test: Scenario) -> I
         _logging_drops(monkeypatch, server)
         shared = SharedMcpToolsets()
         async with shared.open(server.capability) as session:
+            await session.list_tools()  # as the runtime does at start-up
             await session.call_tool("echo", {"text": "warm"})
             server.log.clear()
             await test(server, session, shared.for_build(server.capability, "agent"))
     return server
 
 
-async def _model_call(toolset: Any, tool: str, arguments: dict[str, Any]) -> Any:
-    """A call as the model's own tool call makes it: straight through the shared toolset."""
-    async with toolset:
-        return await toolset.client.call_tool_mcp(tool, arguments)
+async def _model_call(toolset: Any, tool: str, arguments: dict[str, Any]) -> str:
+    """One agent run whose model calls *tool* once through the engine's toolset; what it got."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool, arguments)])
+        returned = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
+
+    return (await Agent(FunctionModel(model), toolsets=[toolset]).run("go")).output
 
 
 async def _started(server: InProcessServer, call: Awaitable[Any]) -> asyncio.Task[Any]:
@@ -195,7 +212,7 @@ class TestTheModelsOwnCalls:
             clock.now += 10.0
             await session.call_tool("echo", {"text": "view"})
             server.release.set()
-            assert (await slow).structured_content == {"result": "done"}
+            assert "done" in await slow
 
         server = await _after_warm_call(monkeypatch, view_call_beside_a_slow_model_call)
 
@@ -353,3 +370,45 @@ class _Chunks(httpx2.AsyncByteStream):
 class _Chunked(httpx2.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, stream=_Chunks(), request=request)
+
+
+class TestADrop:
+    async def test_swaps_the_new_pool_in_before_the_old_one_finishes_closing(
+        self, clock: _WallClock
+    ) -> None:
+        """A request arriving while the old pool still closes already goes to the new one."""
+        closing = asyncio.Event()
+        old, new = _ClosingSlowly(closing), _Answering()
+        pools = iter([old, new])
+        transport = EvictableTransport(inner=lambda: next(pools))
+
+        clock.now += 60.0
+        dropping = asyncio.ensure_future(
+            transport.handle_async_request(httpx2.Request("POST", _URL))
+        )
+        await _until_waiting(closing)
+        beside = await transport.handle_async_request(httpx2.Request("POST", _URL))
+        closing.set()
+        await dropping
+
+        assert (old.sent, beside.status_code) == (0, 200)
+
+
+class _ClosingSlowly(_Answering):
+    """A pool that is still closing until a test lets it finish, and counts what it sent."""
+
+    def __init__(self, closing: asyncio.Event) -> None:
+        self.closing = closing
+        self.sent = 0
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        self.sent += 1
+        return await super().handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self.closing.wait()
+
+
+async def _until_waiting(event: asyncio.Event) -> None:
+    while not event._waiters:
+        await asyncio.sleep(0)
