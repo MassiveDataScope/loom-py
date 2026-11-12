@@ -56,7 +56,8 @@ and requires identical replies. Some features have no Lambda equivalent:
 | Health, OpenAPI and docs routes | Not served. With no `exclude_paths`, no route is public, so a route at `/health` needs a token |
 | `observability.prometheus.enabled` | Refused at startup |
 | SQL endpoints (`app.rest.sql`) | Refused at startup |
-| Agents (an `ai` section, manifest `AGENTS`) | Refused at startup |
+| Agents (an `ai` section, manifest `AGENTS`) | Hosted for the use cases: only the agents an `Agent()` marker names are built, and no agent HTTP or A2A endpoint is served. See [Agents and MCP on Lambda](#agents-and-mcp-on-lambda) |
+| MCP servers over `transport: stdio` | Refused at startup |
 | CORS (`app.rest.cors`) | Applied by the application, as on FastAPI. Do not configure it in API Gateway as well |
 
 Placeholders such as `${secrets:...}` and `${ssm:...}` resolve once, during
@@ -66,6 +67,36 @@ Several functions can share one configuration, each with its own `trigger`:
 an HTTP API, a worker for loom jobs, or a function run by EventBridge, S3,
 SNS or a schedule. See [Composition and lifecycle](composition.md) for
 `lambda.functions` and `LOOM__APP__ENTRY=<function>`.
+
+### Agents and MCP on Lambda
+
+An `ai` section works on every trigger: `http`, `jobs`, `eventbridge`,
+`s3`, `sns` and `schedule`. The agent
+runtime and the session of every MCP server the function reaches open once,
+during Init, and stay open across warm invocations. A Lambda function serves no
+agent endpoint, so:
+
+- it builds only the agents named by the `Agent()` markers of its use cases,
+  and opens only their servers and those of its `Mcp()` markers;
+- `ai.endpoints.<name>.enabled` and `ai.a2a.expose` are ignored, with one
+  warning each at Init;
+- an MCP server over `transport: stdio` is refused at startup: a frozen
+  function keeps no subprocess.
+
+Two limits apply:
+
+- **Init has about 10 seconds**, and `ai.startup_timeout_ms` defaults to
+  `10000`. Set it lower on Lambda, so a slow MCP server fails Init by name
+  before Lambda stops Init, and the rest of Init still has time.
+- **API Gateway allows about 29 seconds per request.** A long agent run belongs
+  on a `jobs` trigger.
+
+An MCP call interrupted mid-flight fails with `MCP_CALL_INTERRUPTED` and is
+never repeated. An `http` request answers `500` `internal_error` with a
+`trace_id`, and the code appears in the log only. A `jobs` record is reported
+in `batchItemFailures`, so SQS delivers it again. How sessions survive
+a freeze, and what each case costs, is in [MCP on AWS
+Lambda](../ai/mcp.md#mcp-on-aws-lambda).
 
 ## 3. Test it without AWS
 

@@ -175,6 +175,25 @@
 - **rest:** `loom.rest.E001` also fails a `lambda.functions.<name>.trigger.auth`
   that names no mechanism (`{}`, `jwt: null`, `custom: false`): it replaces
   `app.rest.auth` for that function.
+- **lambda:** a Lambda function hosts the `ai` section and manifest `AGENTS`
+  on every trigger (`http`, `jobs`, `eventbridge`, `s3`, `sns`, `schedule`). The agent runtime and every reachable MCP
+  server's session open once at Init and stay open across warm invocations.
+  Only the agents an `Agent()` marker names are compiled, and only their
+  servers and the `Mcp()` servers are opened. `transport: stdio` is refused
+  with `LambdaUnservedConfigError` naming the key, before discovery and again
+  on the resolved configuration. `ai.endpoints.<name>.enabled` and
+  `ai.a2a.expose` are logged as ignored. `Recipe.agent_endpoints` (default
+  `True`) tells the composition root whether the entry point serves agents
+  over HTTP. See "MCP on AWS Lambda" in the MCP guide and ADR 0011.
+- **ai:** one MCP session per server is shared by `Mcp()` markers,
+  `handle.mcp()`, a python factory's `remote()` and the model's own calls, so
+  a renewal any of them makes serves them all, and agent runs now recover
+  from a dead session too. A call the server answered "Session not found" is
+  renewed and sent once more. A streamable-HTTP pool replaces its idle
+  connections after a wall-clock gap of more than 5 seconds, keeping the
+  session, so the first call after a Lambda thaw does not hit a dead
+  connection. Behind a configured proxy the stock transport is kept, with no
+  eviction.
 
 ### testing
 
@@ -345,6 +364,27 @@
 
 ### ai
 
+- **ai:** an MCP call that may have run on the server and failed (a cut
+  connection, the client's own timeout, any client-made JSON-RPC code even
+  when a server sent it) raises the new `MCP_CALL_INTERRUPTED`, on every path:
+  `Mcp()`, `handle.mcp()`, `remote()` and the model's own call. It is not
+  retriable (`is_retriable` is `False`): an agent endpoint answers `500` with
+  the code, a REST use case that lets it through answers `500`
+  `internal_error` with the code in the log. The call is never
+  repeated; the next call renews the session. A call refused before it was
+  sent carries the same code and says "was not sent". Before, a marker call
+  raised the transport's own exception.
+- **ai:** an agent run whose MCP call is interrupted now fails with
+  `MCP_CALL_INTERRUPTED` instead of handing the model a refusal it could act
+  on by calling again; the run is not replayed. A client-made code sent by a
+  server (for example `-32603`) now fails the run the same way instead of
+  reaching the model; a server-sent `-32600` "Session not found" or "Session
+  terminated" is renewed and retried once.
+- **ai:** an agent granted a server that did not connect at start-up
+  (`ai.remote_clients: optional`) connects on each listing or tool call,
+  instead of once per run. While it is down, a run fails at the listing with
+  `PROVIDER_UNAVAILABLE`, and a tool call through the session with
+  `MCP_CALL_INTERRUPTED`.
 - **ai:** the `ai-harness` extra requires `pydantic-ai-harness>=0.66`, which
   fixes a tool-call limit bypass in nested CodeMode calls
   (GHSA-3589-pxp7-3gj8). The harness pins its own `pydantic-ai-slim` release,

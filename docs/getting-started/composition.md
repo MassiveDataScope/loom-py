@@ -226,6 +226,7 @@ A `Recipe` is a frozen dataclass:
 | `default_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
 | `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
 | `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
+| `agent_endpoints` | Whether the adapter mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
 | `metrics` | Use-case metrics, or `None`. |
 | `pool_metrics` | Connection-pool metrics, for an entry point that serves a scrape. |
 | `connection_only` | Ask the backend for its connection only, no repository (see [Workers without models](#workers-without-models)). |

@@ -287,7 +287,7 @@ class TestASafeFailure:
 
 
 class TestAnUnsafeFailure:
-    async def test_reaches_the_marker_once_as_tool_unavailable(self) -> None:
+    async def test_reaches_the_marker_once_as_mcp_call_interrupted(self) -> None:
         ledger = _Ledger()
         first, second = _Toolset("first", ledger, _cut()), _Toolset("second", ledger)
         factory = _Factory(second)

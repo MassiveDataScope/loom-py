@@ -41,8 +41,9 @@ class WorkerManifest:
     A manifest module does not declare an instance of this type (a module-level
     ``MANIFEST`` is refused): it declares the module-level lists ``JOBS``,
     ``USE_CASES``, ``INTERFACES``, ``MODELS`` and ``CALLBACKS``, any of them
-    optional but at least one present, and may declare ``AGENTS``, which a
-    worker reads only to refuse. Discovery reads them when
+    optional but at least one present, and may declare ``AGENTS``: a Lambda
+    function builds those an ``Agent()`` marker names, and a Celery worker
+    hosts no agent runtime. Discovery reads them when
     ``app.discovery.mode == "manifest"`` is configured.
 
     Attributes:
@@ -53,8 +54,8 @@ class WorkerManifest:
             are extracted and compiled automatically.
         models: Model classes available to the transport for optional generated use cases.
         callbacks: Job callback classes to register for execution.
-        agents: Agent artifact paths or globs the manifest declares, for an
-            entry point to refuse: a worker hosts no agent runtime.
+        agents: Agent artifact paths or globs the manifest declares; a
+            Lambda function builds those an ``Agent()`` marker names.
 
     Example::
 
@@ -80,7 +81,8 @@ class WorkerManifest:
 class WorkerComponents:
     """Resolved worker graph after discovery/explicit merging.
 
-    ``agent_specs`` are the agents the manifest declares, which no worker hosts.
+    ``agent_specs`` are the agents the manifest declares. A Lambda function
+    builds those an ``Agent()`` marker names; a Celery worker ignores them.
     """
 
     compilables: tuple[type[Compilable], ...]

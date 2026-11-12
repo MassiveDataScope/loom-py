@@ -102,14 +102,15 @@ marker's own `Mcp()` grant (`loom/ai/runtime/_grants.py`), whose own
 `asyncio.timeout` guard raises the same `TOOL_TIMEOUT` directly to the caller,
 never a refusal value the model reads: a use case invoked outside a run has no
 model to hand the refusal to. With both deadlines at their default of `20000`
-ms, the two races to the same number with different outcomes: if the
-supervisor's `asyncio.timeout` wins, the call fails `TOOL_TIMEOUT` and the
-run ends; if the transport wins first, `guarded` turns the failure into a
-refusal value the model reads and may retry on its own. Whichever deadline a
-deployment cares about winning should be set strictly shorter than the
-other — in general, `policies.tool_timeout_ms` at or below the server's
-`timeout_ms` gives the model a chance to see and react to the refusal, rather
-than ending the run outright.
+ms, the two race to the same number, and either one ends the run: if the
+supervisor's `asyncio.timeout` wins, the call fails `TOOL_TIMEOUT`; if the
+transport wins first, the MCP client raises its own request timeout, which
+proves nothing about whether the tool ran, so the run fails
+`MCP_CALL_INTERRUPTED` (see [A failed call is retried only when it never
+ran](#a-failed-call-is-retried-only-when-it-never-ran)). Neither reaches the
+model as a refusal it could retry. Set the deadline whose code you want to
+see strictly shorter than the other; `policies.tool_timeout_ms` below the
+server's `timeout_ms` reports a slow tool as `TOOL_TIMEOUT`.
 
 Under `transport: http` (the default) the URL must be `https://`, carry no
 credentials in its userinfo and no query string — compilation refuses anything
@@ -162,9 +163,13 @@ behind an address; stdio is for the servers you only consume.
 What stdio does not do:
 
 - **it does not supervise the child.** A dead subprocess fails the call that
-  finds it, exactly as a dead HTTP server does. A call made through `Mcp()`
-  after that one spawns a new child (see "A session that died after it opened
-  is replaced by the next call"); an agent's own capability does not;
+  finds it, exactly as a dead HTTP server does. The next call through the
+  server's session spawns a new child, whichever path makes it (see [A failed
+  call is retried only when it never
+  ran](#a-failed-call-is-retried-only-when-it-never-ran));
+- **it does not run on AWS Lambda.** A frozen function keeps no subprocess, so
+  a Lambda function refuses `transport: stdio` at start-up (see [MCP on AWS
+  Lambda](#mcp-on-aws-lambda));
 - **it spawns one process per server, for the whole worker.** Start-up spawns
   it and every agent granted that server speaks to that one child. It dies with
   the last holder of the connection — normally the runtime, briefly a straggler
@@ -291,23 +296,36 @@ spent the shared start-up budget, the verification pass is given a fresh
 `startup_timeout_ms` rather than the exhausted one — otherwise one hanging
 server would fail the filters of every server that answered.
 
-**Nothing becomes lazy.** A start-up client that never opened is not reconnected
-by the runtime; reconnecting it needs a supervisor task that does not exist yet.
-The run path holds the *same* toolset the runtime opened, so when that toolset
-never connected it is simply not open, and the run finds out for itself.
+**A server that never opened connects on each use.** The runtime does not
+reconnect a start-up client that failed; that would need a supervisor task that
+does not exist. The agent path and a `kind: python` factory's `remote()` still
+reach the server through the connection's one session, but that session holds
+nothing open: each use connects, does its work and closes again. A use is a
+run listing the server's tools, or one tool call.
 
-Be clear about what that costs. The engine enters the toolset once per run,
-before it sends anything to the model, so a server that is *still* unreachable
-fails the run as a whole with a provider error — not as a per-tool refusal the
-model could work around. And once the network returns, each run opens the
-connection and closes it again when it ends, because nothing outside the run
-holds it: that is one connection, and on a server that registers clients
-dynamically one registration, **per run** rather than per worker.
+Be clear about what that costs. While the server is still unreachable:
 
-That recovery belongs to the agent path alone. A server reached through an
-`Mcp()` marker does not recover: its grant is resolved once, when the runtime
-is entered, so a tolerated outage keeps every marker call failing
-`TOOL_UNAVAILABLE` until the worker restarts.
+- an agent run granted it fails at the tool listing, before the model is
+  called, with `PROVIDER_UNAVAILABLE` (retriable; `503` on an agent endpoint).
+  Every run fails this way until the server is back;
+- a tool call through the session, such as one from `remote()`, fails with
+  `MCP_CALL_INTERRUPTED` and the message "may have run", although nothing was
+  sent: the connection itself failed. A renewal of such a session only swaps
+  in another toolset that is not connected either, so it never connects
+  ahead of the next call.
+
+Once the network returns, every use opens a connection and closes it again,
+because nothing holds it between uses: that is one connection, and on a server
+that registers clients dynamically one registration, **per listing or call**
+rather than per worker.
+
+That recovery belongs to the agent's own `mcp` capability and `remote()`. A
+server reached through an `Mcp()` marker does not recover: its grant is
+resolved once, when the runtime is entered, so a tolerated outage keeps every
+marker call failing `TOOL_UNAVAILABLE` ("the server never connected at
+start-up") until the worker restarts. `handle.mcp(server)` does not recover
+either: the agent's grants hold only servers that opened, so it raises
+`MCP_GRANT_UNKNOWN` for that server until the worker restarts.
 
 `optional` is for a laptop, a CI job or a side-car that has not come up yet;
 it is not a production posture.
@@ -551,6 +569,10 @@ longer hold the same `client.auth` object — they hold two wrappers around one
 function. For a fixed header that is a distinction without a difference, and it
 is the reason a stateful strategy is a class.
 
+Credentials are static for the life of the connection, so every caller can
+share one session per server (below); an internal guard refuses per-run `auth`
+or `headers` callables, which no configuration produces.
+
 ```{admonition} Public contract
 :class: note
 `shared_mcp_auth` and `shared_a2a_auth` are exported, and their return type has
@@ -564,8 +586,10 @@ matching for the built-in `bearer` and `static` strategies.
 A `kind: python` factory of the same agent can wrap a remote tool — run one
 canonical query instead of letting the model dictate it — without opening a
 second connection. Its `ToolsetContext.remote(server)` returns the worker's
-shared session for one of the agent's own `mcp` grants, so the registration and
-the credential above are still resolved once per worker. The context is
+shared session for one of the agent's own `mcp` grants, the one the model's own
+calls and every `Mcp()` marker use, so the registration and the credential
+above are still resolved once per worker, and a renewal any of them makes
+serves them all. The context is
 build-time only, the reach is bounded to that agent's grants, and calls through
 the session bypass the grant's `include`/`exclude`. Details and failure codes in
 [the `python` capability](#python-application-owned-toolsets).
@@ -602,50 +626,13 @@ surfaces only on the first business request that reaches it, as
 `TOOL_UNAVAILABLE`. Extending the probe to a use-case-only server is future
 work, not something this version does.
 
-### A session that died after it opened is replaced by the next call
-
-A server that connected at start-up can still go away later: a transport error
-under an in-flight call, a redeploy of the server, a stdio child that exits.
-The worker's one session is held open for its whole life, and that holder is
-also what stops the underlying client from ever being re-entered — so before
-this was handled, every call through `Mcp()` failed from then on, in a
-millisecond each, until the worker restarted, while the health probe kept
-answering `ok`.
-
-`_ToolsetSession` now replaces the session itself. Nothing can be asked of the
-client: once its transport is gone it still reports itself connected. The
-evidence is the call. A tool's own error comes back as a result flagged
-`is_error`; **an exception out of the round trip is the transport failing**.
-So:
-
-- **the call that found it dead is raised as it is, and never repeated.** It
-  may have run on the server, and a tool with side effects is not run twice on
-  your behalf. Retrying it is your decision;
-- **the next call opens a new session first**, against the same connection —
-  over stdio, that is a new child process. Concurrent calls that find it dead
-  renew it once;
-- **a renewal that cannot connect raises**, and the call after it tries again:
-  an outage costs one connection attempt per call, bounded by the handshake
-  deadline, and ends with the first call made after the server is back;
-- **suspecting a healthy session costs one reconnection.** A single failed call
-  is not proof the session died; opening another is cheap and harmless, so it
-  is not weighed further.
-
-This covers the `Mcp()` path and whatever else calls through the runtime's
-session. **An agent's own `mcp` capability does not recover yet**: the compiled
-agent holds the toolset it was built with, and swapping that needs the engine
-build to go through an indirection it does not have. Two other things are
-unchanged: a server that never connected at start-up under `optional` is still
-not reconnected (above), and the health probe still does not see a
-use-case-only server.
-
 ### A use case's call runs in parallel with other grant views
 
 A use case's tool call goes through `_ToolsetSession`
-(`loom/ai/engines/pydantic_ai/_mcp.py`) — the same reference-counted
-`MCPToolset` the model's own tool calls and every other grant view over
-that server share: another use case's `Mcp()`, and an agent handle's own
-`handle.mcp(server)`. None of them takes a lock over the others, so they
+(`loom/ai/engines/pydantic_ai/_mcp.py`) — the same session the model's own
+tool calls and every other caller of that server share: another use case's
+`Mcp()`, an agent handle's own `handle.mcp(server)` and a `kind: python`
+factory's `remote()`. None of them takes a lock over the others, so they
 all run concurrently, the same way the model's own calls always have.
 
 `timeout_ms` bounds the wait exactly where you would expect on the
@@ -664,6 +651,270 @@ reaches it (`shield_and_drain`, `loom/ai/_concurrency.py`). That drain
 exists only because a locked, single-framed session would otherwise leave
 its next holder desynchronised; it is the cost of the lock, not of the
 timeout.
+
+## When a call fails
+
+Every caller of a server goes through the connection's one session: a use
+case's `Mcp()` marker, an agent handle's `handle.mcp(server)`, a `kind:
+python` factory's `remote()` and the model's own tool calls. They share one
+renewal, one count of the calls in flight and one rule for what a failure
+proves. The rule is that loom never sends a call twice unless the server
+proved the first one never ran.
+
+### A failed call is retried only when it never ran
+
+The MCP client raises one exception class, `MCPError`, both for an error the
+server sent and for one the client made itself, such as a closed connection or
+its own request timeout. Only the JSON-RPC code tells them apart. On a tool
+call, the client (mcp 2.3.0) makes these six codes and no other:
+
+| Code | Name |
+|---|---|
+| `-32000` | connection closed |
+| `-32001` | request timeout |
+| `-32600` | invalid request |
+| `-32601` | method not found |
+| `-32603` | internal error |
+| `-32700` | parse error |
+
+A failed call is read this way:
+
+| What the call raised | What it proves | What loom does |
+|---|---|---|
+| A result flagged `is_error`, or the tool's own error | The server answered | Passes it through unchanged. The model receives it as a tool error it may react to |
+| An `MCPError` whose code is outside the six above, such as `-32043` | The server answered | Passes it through unchanged |
+| `-32600` with the message `Session not found` or `Session terminated` | The server no longer knows the session, so nothing ran | Renews the session and sends the call **once** more |
+| Any other code of the six, **even when the server sent it**, or any other exception | The call may have run | Raises `MCP_CALL_INTERRUPTED`, never repeats the call, and renews before the next one |
+
+The six codes are a fixed set in `loom/ai/engines/pydantic_ai/_failures.py`. A
+server that sends one of them itself, for example a middleware answering
+`-32603`, is treated as an interruption: the code cannot prove the server
+answered. An exception that is not the client's `MCPError` is an
+interruption too. This includes an exception group, even one that holds a
+server's own error.
+
+`MCP_CALL_INTERRUPTED` is the same code on every path: a use case's `Mcp()`
+marker, `handle.mcp(server)`, a python tool's `remote()` and the model's own
+call.
+
+- It is not retriable: `is_retriable` returns `False`, because the tool may
+  already have run. An agent endpoint answers `500` with the code
+  `MCP_CALL_INTERRUPTED`. A REST use case that lets it through answers `500`
+  `internal_error` with a `trace_id`; the code appears in the log only.
+  Whether to send the call again is your decision, made knowing the tool may
+  have run.
+- A call refused before it was sent carries the same code. This happens when
+  the session is closed, or when the renewal before the call cannot connect.
+  Its message says the call "was not sent".
+- When the one retry also fails, the call raises `MCP_CALL_INTERRUPTED` (or
+  the server's own answer, if that is what came back). There is never a third
+  attempt, and never the raw transport exception.
+- The caller's tool deadline bounds the first attempt, the renewal and the
+  retry together. That is the plan's `policies.tool_timeout_ms` for the
+  model's own calls, `handle.mcp(server)` and `remote()`, and the server's
+  `timeout_ms` for an `Mcp()` marker.
+
+**An agent run fails rather than guessing.** When the model's own call is
+interrupted, the run fails with `MCP_CALL_INTERRUPTED`. The failure is not
+turned into a refusal the model reads, the model is not called again for that
+step, and the run is not replayed, so the tool runs at most once. Before this
+release such a failure reached the model as a refusal, and the model could
+issue the same call again. A server that sends one of the client's own codes
+now fails the run the same way instead of reaching the model, for example
+`-32603`. The exception is a server-sent `-32600` with "Session not found" or
+"Session terminated", which is renewed and retried once.
+
+### A renewal serves every caller
+
+- **The next call after an interruption opens a new session first**, against
+  the same connection. Over stdio, that is a new child process. Concurrent
+  calls that find the session suspect renew it once.
+- **A renewal lists the server's tools once, before it serves anyone.** The
+  client caches that list, so later runs do not list again. An agent run's
+  listing never renews: it reads the cached list, even from a suspect session,
+  so a run that calls no tool of that server is never held up by a renewal.
+  The renewal happens on the next call instead, bounded by that call's
+  deadline.
+- **A renewal does not cut calls that are still running.** The replaced
+  session is retired and closed when its last call returns. At most two are
+  open at once: a renewal that finds an earlier one still draining closes it
+  first, and the calls left on it fail with `MCP_CALL_INTERRUPTED`. A renewal
+  also waits for every close still in progress before it connects.
+- **A renewal that cannot connect raises**, with "was not sent", and the call
+  after it tries again. An outage costs one connection attempt per call,
+  bounded by the handshake deadline, and ends with the first call made after
+  the server is back.
+- **Suspecting a healthy session costs one reconnection.** A single failed
+  call does not prove the session died. Opening another is cheap and safe, so
+  loom does not try to tell the cases apart.
+
+loom does not ask the client whether it is connected before a call. Over
+streamable HTTP the client still reports itself connected after the server has
+restarted, so the answer would not catch a dead connection. Two other things
+are unchanged. A server that never connected at start-up under `optional` is
+not reconnected by the runtime, and is connected on each use (above). The
+health probe still does not see a server named only by an `Mcp()` marker.
+
+### An idle gap replaces pooled connections, not the session
+
+A server reached directly over streamable HTTP gets an HTTP connection pool of
+its own, which every caller of its session goes through. Before each request,
+the pool reads the wall clock. When more than 5 seconds have passed since a
+request last started or finished, and none of the pool's own requests is in
+flight, it closes its pooled connections and opens fresh ones. The MCP session
+is kept: there is no new `initialize` and no new `tools/list`.
+
+- 5 seconds is httpcore2's own keep-alive expiry. On a running clock httpcore2
+  would not reuse those connections either, so on FastAPI an eviction costs
+  nothing extra. On AWS Lambda it is what keeps the first call after a freeze
+  off a dead connection (see [MCP on AWS Lambda](#mcp-on-aws-lambda)).
+- The check costs two wall-clock reads per request: the check itself, and the
+  timestamp taken when the response body closes. loom reads no monotonic clock
+  for it.
+- A `GET` request does not count as in flight. In the handshake era of the
+  protocol, a `GET` is the server's event stream, which stays open for the
+  whole session. An eviction cuts that stream, and the MCP client reopens it
+  on its own.
+
+**Behind a proxy there is no eviction.** When the environment
+(`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) or the system's proxy settings name a
+proxy for the server URL's scheme, or for all schemes, loom keeps the MCP
+client's stock transport. That transport applies httpx2's proxy and `NO_PROXY`
+rules, which a pool of loom's own would ignore. This holds even when `NO_PROXY`
+exempts the server. A stale connection is then left to the rules above. The
+first call that hits it fails `MCP_CALL_INTERRUPTED` (nothing ran), and the
+next call renews the session. An SSE URL and a stdio server also keep their
+stock transport.
+
+## MCP on AWS Lambda
+
+A Lambda function hosts the `ai` section on every trigger: `http`, `jobs`,
+and the event triggers (`eventbridge`, `s3`, `sns`, `schedule`). The agent runtime is opened once, during Init, together with the
+session of every server the function can reach. The sessions stay open across
+warm invocations and close at shutdown, as on FastAPI. Every rule of [When a
+call fails](#when-a-call-fails) applies unchanged.
+
+### What a Lambda function builds
+
+- **Only the agents a use case can reach.** A Lambda function serves no agent
+  endpoint, so it builds only the agents named by the `Agent()` markers of the
+  use cases it compiles, including agents a manifest declares under `AGENTS`.
+  Any other agent is not compiled, and Init sends no request to the servers
+  that only it uses. An `Agent("missing")` marker still fails start-up. An
+  `a2a` capability names a remote agent, so it adds no local one.
+- **The servers of those agents and of every `Mcp()` marker.** Init opens them
+  under `ai.startup_timeout_ms`, as on FastAPI.
+- **No agent endpoints.** A function serves no agent over HTTP or A2A. Init
+  logs one warning for each `ai.endpoints.<name>.enabled` that is set and for
+  `ai.a2a.expose`, saying it is ignored on Lambda. Serving agents over HTTP
+  from a Lambda function is future work.
+- **No stdio.** A frozen function keeps no subprocess, so
+  `ai.mcp_servers.<name>.transport: stdio` raises `LambdaUnservedConfigError`
+  naming that key. It is caught before discovery from the configuration as
+  written, and again during Init from the resolved configuration, so a
+  transport given by an interpolation is refused too.
+- **`remote_clients: optional`** works as described above. A server that did
+  not open at Init connects on each use, which on Lambda means one connection
+  per listing or call.
+
+Two limits shape a function that hosts agents:
+
+- **Init has about 10 seconds**, and `ai.startup_timeout_ms` defaults to
+  `10000`. Set it lower on Lambda, so that a slow server fails Init by name
+  with `MCP_SERVER_UNREACHABLE` before Lambda stops Init on its own, and the
+  rest of Init has time to run.
+- **API Gateway allows about 29 seconds per request.** A long agent run
+  belongs on a queue (`jobs`) trigger rather than behind an `http` route.
+
+### Freezes and thaws
+
+Lambda freezes the process between invocations. While it is frozen, the server
+or a gateway may close idle connections, and httpcore2's monotonic clock may not
+move, so without help the first call after a thaw would be written to a dead
+connection. The idle-gap eviction above handles it: the first call after a
+wall-clock gap of more than 5 seconds evicts the pool and goes out over a new
+connection, with the same session.
+
+What else happens depends on the protocol era the server negotiates:
+
+- **Modern era** (`server/discover`, as a FastMCP 4 server answers): the
+  session is stateless, with no session id, so there is no session for the
+  server to forget. Eviction is the whole fix.
+- **Handshake era** (`initialize` and an `Mcp-Session-Id`): if the server
+  forgot the session during the freeze, the first call gets "Session not
+  found". That is the safe retry: one renewal, and the call succeeds.
+  - With mcp 2.3.0, every `POST` answered as an event stream opens its own TCP
+    connection and closes it once the response is read. A warm call therefore
+    costs one TCP (and TLS) connect, and no `POST` connection stays pooled to
+    go stale.
+  - The `GET` event stream cut by an eviction reopens only during an
+    invocation, because the event loop runs only then. The client waits one
+    second and tries twice. If both attempts fail, the session keeps working
+    without an event stream, and only server-to-client notifications are lost.
+
+Known limits:
+
+- **The wall clock may slew instead of jump.** If Lambda restores the wall
+  clock after a thaw gradually, the first call may see a gap under 5 seconds.
+  It then reuses a stale connection and fails `MCP_CALL_INTERRUPTED`, with
+  nothing run, and the next call renews and works. The A3 measurement below
+  records both clocks' gaps to show whether this happens.
+- **A server that closes idle connections in under 5 seconds** races
+  httpcore2's own expiry, freeze or not. uvicorn's default `timeout_keep_alive`
+  is 5 seconds.
+- **Behind a proxy there is no eviction** (see above). The first call after a
+  thaw may fail `MCP_CALL_INTERRUPTED`, and the next one renews.
+- **Plan B, not built:** a pool that keeps no idle connection
+  (`httpx2.Limits(max_keepalive_connections=0)`) is correct by construction
+  but costs a TCP and TLS handshake per call. It would replace eviction only
+  if eviction proved fragile.
+
+### An interrupted call on a queue
+
+On a `jobs` trigger, a job whose MCP call is interrupted fails. Its record is
+reported in `batchItemFailures` and SQS delivers it again. With
+`report_batch_item_failures: false`, the whole batch fails instead. loom never
+repeats the call itself, but a redelivery runs the job again, so the tool may
+run a second time. Until idempotent delivery exists, make such a tool
+idempotent on the server, or keep it off a queue.
+
+### What it costs, and how it is measured (A3)
+
+These request counts are tested on every pull request, against a real
+`LambdaAdapter` function on both triggers and a real streamable-HTTP FastMCP
+server behind a local TCP proxy
+([`tests/integration/ai/freeze/test_cost.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/test_cost.py)):
+
+| Situation | MCP requests | TCP connects |
+|---|---|---|
+| Warm invocation | the tool calls only | modern: 0; handshake era: 1 per call |
+| First call after a thaw, session still valid | the tool call only | 1 (the eviction) |
+| First call after a thaw, session expired (handshake era) | the refused call, `server/discover`, `initialize`, `notifications/initialized`, `tools/list`, the retried call | 6, with the new event stream |
+| Interrupted call | the failed call, once; the next call renews (modern: `server/discover`, `tools/list`) and then calls | - |
+| Init, per reachable server | modern: `server/discover`, `tools/list`; handshake era: also `initialize`, `notifications/initialized` and the event stream | modern: 1; handshake era: 4 |
+| Init, server of an agent the function does not build | none | 0 |
+
+A credential is fetched once at Init and not again while it is valid.
+
+The deployed measurement is separate and does not gate a release. The probe
+application
+([`tests/integration/ai/freeze/probe.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/probe.py))
+is deployed unchanged, at 1024 MB, against the real MCP gateway. The harness
+([`tests/integration/ai/freeze/measure.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/measure.py))
+invokes it and reports p50, p95 and p99 for:
+
+- the warm per-invocation MCP time, over 500 invocations each of a marker and
+  of an agent use case. The pass rule is p95 at or below 150 ms, against a 2 s
+  endpoint target;
+- the first call after an expired session, over 30 samples, with the session
+  expired by the gateway's TTL or by a server-side drop;
+- the MCP part of a cold Init, over 30 cold starts, against the Init budget.
+
+It also records the wall-clock and monotonic gaps of each invocation, the TCP
+connects per call, the gateway's protocol era and its idle timeout. The method
+and the results are kept with the specification
+(`.specify/specs/010-usecase-entrypoints/a3.md`). A missed target opens a
+follow-up task. It does not block a release.
 
 ## The rule: your own tools are a `usecase` grant
 
@@ -727,8 +978,9 @@ use case — it just is not how *your* agent should reach *your* tools.
 ## Operational notes
 
 **One connection per server per worker.** The connection is shared by the whole
-worker: start-up and every agent granted the server work over one `MCPToolset`,
-whose entries are reference-counted, so ten agents naming one server are one
+worker: start-up and every agent granted the server work over one session,
+which speaks through one `MCPToolset` at a time (a renewal swaps it, see [When
+a call fails](#when-a-call-fails)), so ten agents naming one server are one
 session and not eleven. That matters beyond sockets — a server that registers
 clients dynamically sees one registration and one credential resolution per
 worker, not one per agent. A server a use case names with `Mcp()` joins that
@@ -747,15 +999,15 @@ address, credential and deadline. Two grants that disagree abort start-up with
 `MCP_CONNECTION_CONFLICT`, naming the server and both agents; `include` and
 `exclude` are per-agent views over the shared connection and never conflict.
 
-**Sessions are lifespan-scoped, and the last holder closes them.** The runtime
-opens every client inside a single `AsyncExitStack` and releases them in strict
-reverse order from the task that entered it. That release is a reference-count
-decrement, not necessarily the close: if a run is still in flight it holds the
-last reference and the actual close happens there. This is safe for a stronger
-reason than task affinity — the client keeps its session in an `asyncio.Task`
-of its own, created precisely so it outlives the individual context-manager
-scopes that enter and leave it, so the closing task is not the one the session
-is bound to.
+**Sessions are lifespan-scoped.** The runtime opens every client inside a
+single `AsyncExitStack` and releases them in strict reverse order from the task
+that entered it. Releasing a session closes every toolset it holds, each in a
+task of its own, and waits for them all; a call still in flight at that moment
+is cut. A toolset retired by a renewal is closed the same way, by whichever
+task sees its last call return. Closing from another task is safe: the client
+keeps its session in an `asyncio.Task` of its own, created precisely so it
+outlives the individual context-manager scopes that enter and leave it, so the
+closing task is not the one the session is bound to.
 
 **Every result is untrusted input.** A tool result from a remote server is
 data from another system, exactly like a remote agent's answer. The agent's
