@@ -386,7 +386,8 @@ def probe_function(
             for target, name, value in probe.patches():
                 monkeypatch.setattr(target, name, value)
             monkeypatch.setenv(probe.CURSOR_KEY_VARIABLE, _CURSOR_KEY)
-            config = probe.project(tmp_path, server.url, secret=_PROBE_SECRET)
+            monkeypatch.setenv("A3_JWT_SECRET", _PROBE_SECRET)
+            config = probe.project(tmp_path, server.url)
             handler = create_app(str(config), adapter=LambdaAdapter(), environment="test")
             stack.callback(handler.close)
             return _ProbeFunction(server, handler, clock, capsys)

@@ -18,12 +18,12 @@ from typing import Any
 import httpx2
 import pytest
 
+pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
+
 from loom.ai.engines.pydantic_ai import _mcp, _transport
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._transport import EvictableTransport
 from tests.unit.ai.engines.mcp.server import InProcessServer, serving
-
-pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 
 _HANDSHAKE = ("server/discover", "initialize", "tools/list")
 _URL = "http://orders.test/mcp"

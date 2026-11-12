@@ -232,20 +232,15 @@ def install() -> None:
         setattr(target, name, value)
 
 
-def project(
-    directory: Path, url: str, *, secret: str, auth: Mapping[str, Any] | None = None
-) -> Path:
+def project(directory: Path, url: str, *, auth: Mapping[str, Any] | None = None) -> Path:
     """Write the probe's configuration and agent under *directory*; the configuration's path.
 
     Args:
         directory: Where to write; the application's code path.
         url: The MCP server's URL.
-        secret: The HS256 secret bearer tokens are signed with.
         auth: The MCP server's ``auth`` block, if it needs one.
     """
-    key = directory / "jwt.key"
-    key.parent.mkdir(parents=True, exist_ok=True)
-    key.write_text(secret, encoding="utf-8")
+    directory.mkdir(parents=True, exist_ok=True)
     agents = directory / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     spec = {
@@ -276,7 +271,8 @@ def project(
             "rest": {
                 "auth": {
                     "jwt": {
-                        "secret_path": str(key),
+                        # Read from the environment, never written to disk.
+                        "secret": "${oc.env:A3_JWT_SECRET}",
                         "algorithms": ["HS256"],
                         "audience": AUDIENCE,
                         "issuer": ISSUER,
@@ -315,7 +311,6 @@ def __getattr__(name: str) -> Any:
         install()
         auth = json.loads(os.environ.get("A3_MCP_AUTH", "null"))
         directory = Path(os.environ.get("A3_DIRECTORY", "/tmp/a3"))  # noqa: S108
-        url, secret = os.environ["A3_MCP_URL"], os.environ["A3_JWT_SECRET"]
-        config = project(directory, url, secret=secret, auth=auth)
+        config = project(directory, os.environ["A3_MCP_URL"], auth=auth)
         _HANDLER.append(create_app(str(config), adapter=LambdaAdapter()))
     return _HANDLER[0]

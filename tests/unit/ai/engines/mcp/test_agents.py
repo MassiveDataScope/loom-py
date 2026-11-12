@@ -18,20 +18,6 @@ from typing import Any
 
 import pytest
 
-from loom.ai.compiler import CompiledPythonCapability
-from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
-from loom.ai.engines.pydantic_ai._guards import BuildContext
-from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE
-from loom.ai.runtime._handle import _BoundAgentHandle, mcp_marker_resolver
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
-from loom.core.di.container import LoomContainer
-from loom.core.identity import Identity
-from loom.core.sql.service import NullSqlQueryService
-from tests.unit.ai.engines.mcp.server import InProcessServer, serving
-
 pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 
 from pydantic_ai import Agent  # noqa: E402
@@ -49,6 +35,20 @@ from pydantic_ai.models.test import TestModel  # noqa: E402
 from pydantic_ai.tools import RunContext  # noqa: E402
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset  # noqa: E402
 from pydantic_ai.usage import RunUsage  # noqa: E402
+
+from loom.ai.compiler import CompiledPythonCapability
+from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
+from loom.ai.engines.pydantic_ai._guards import BuildContext
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.runtime import AgentRuntime
+from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE
+from loom.ai.runtime._handle import _BoundAgentHandle, mcp_marker_resolver
+from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.core.di.container import LoomContainer
+from loom.core.identity import Identity
+from loom.core.sql.service import NullSqlQueryService
+from tests.unit.ai.engines.mcp.server import InProcessServer, serving
 
 _HANDSHAKE = ("server/discover", "initialize")
 

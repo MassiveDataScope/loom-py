@@ -20,15 +20,7 @@ from typing import Any
 import httpx2
 import pytest
 
-from loom.ai.compiler import CompiledMcpCapability
-from loom.ai.engines.pydantic_ai import _mcp
-from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _ToolsetSession, build_mcp_toolset
-from loom.ai.engines.pydantic_ai._transport import EvictableTransport, PooledHttpTransport
-from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.core.config.errors import ConfigError
-from loom.core.model.redaction import Secret
-from tests.unit.ai.engines.mcp.server import serving
-
+pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 pytest.importorskip(
     "pydantic_ai.mcp",
     reason="the MCP client is not installed: uv sync --group mcp-tests",
@@ -38,7 +30,17 @@ pytest.importorskip(
 from fastmcp.client.auth import OAuth  # noqa: E402
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport  # noqa: E402
 
-from loom.ai.compiler import CompiledRemoteAuth  # noqa: E402
+from loom.ai.compiler import (
+    CompiledMcpCapability,
+    CompiledRemoteAuth,  # noqa: E402
+)
+from loom.ai.engines.pydantic_ai import _mcp
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _ToolsetSession, build_mcp_toolset
+from loom.ai.engines.pydantic_ai._transport import EvictableTransport, PooledHttpTransport
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.core.config.errors import ConfigError
+from loom.core.model.redaction import Secret
+from tests.unit.ai.engines.mcp.server import serving
 
 _URL = "https://orders.example.com/mcp"
 
