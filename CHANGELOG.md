@@ -90,6 +90,15 @@
 
 ## ✨ Features
 
+### model
+
+- **model:** `StrictStruct` (`loom.core.model`): base for contracts the
+  application owns. Frozen, keyword-only, refuses unknown fields, no `rename`,
+  same secret redaction. A subclass may pass `forbid_unknown_fields=False` or
+  `kw_only=False`.
+- **model:** type checkers (ty, pyright, mypy) now see that a `LoomFrozenStruct`
+  subclass inherits `frozen`; no need to repeat `frozen=True`. No run-time change.
+
 ### rest
 
 - **rest:** a `LoomError` subclass declares its own HTTP answer, so domain code no

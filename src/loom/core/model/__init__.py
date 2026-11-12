@@ -36,7 +36,7 @@ from loom.core.model.projection import (
 )
 from loom.core.model.relation import Relation, RelationField
 from loom.core.model.scoped import RowScoped, ScopeColumn, ScopedTable
-from loom.core.model.struct import LoomFrozenStruct, LoomStruct
+from loom.core.model.struct import LoomFrozenStruct, LoomStruct, StrictStruct
 from loom.core.model.timestamped import TimestampedModel
 from loom.core.model.types import (
     JSON,
@@ -79,6 +79,7 @@ __all__ = [
     "scope_columns",
     "LoomFrozenStruct",
     "LoomStruct",
+    "StrictStruct",
     "TimestampedModel",
     "BigInteger",
     "Boolean",
