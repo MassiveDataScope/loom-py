@@ -262,7 +262,12 @@ class McpGrantView:
 
     @asynccontextmanager
     async def _guard(self, tool: str) -> AsyncIterator[None]:
-        """Bound one call by this view's own tool timeout, inside its own span."""
+        """Bound one call by this view's own tool timeout, inside its own span.
+
+        A call the session reports ``MCP_CALL_INTERRUPTED`` (it may have run,
+        and is not repeated) reaches the use case as ``TOOL_UNAVAILABLE``, the
+        code a marker already reads for a server it cannot use.
+        """
         with self._span(tool):
             try:
                 async with asyncio.timeout(self._timeout_s):
@@ -272,6 +277,14 @@ class McpGrantView:
                     AgentRunErrorCode.TOOL_TIMEOUT,
                     f"tool {tool!r} of mcp server {self._capability.server!r} exceeded "
                     f"the {self._timeout_s:.3f}s tool timeout",
+                ) from exc
+            except AgentRunError as exc:
+                if exc.code is not AgentRunErrorCode.MCP_CALL_INTERRUPTED:
+                    raise
+                raise AgentRunError(
+                    AgentRunErrorCode.TOOL_UNAVAILABLE,
+                    f"tool {tool!r} of mcp server {self._capability.server!r} was interrupted "
+                    "and may have run; it was not repeated",
                 ) from exc
 
     def _span(self, tool: str) -> AbstractContextManager[None]:

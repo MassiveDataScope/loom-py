@@ -826,6 +826,7 @@ class AgentRunErrorCode(StrEnum):
     TOOL_RESULT_UNSTRUCTURED = "TOOL_RESULT_UNSTRUCTURED"
     TOOL_DECODE_FAILED = "TOOL_DECODE_FAILED"
     TOOL_CALL_FAILED = "TOOL_CALL_FAILED"
+    MCP_CALL_INTERRUPTED = "MCP_CALL_INTERRUPTED"
     AGENT_CALL_CYCLE = "AGENT_CALL_CYCLE"
     AGENT_CALL_TOO_DEEP = "AGENT_CALL_TOO_DEEP"
     AGENT_RUN_SHAPE_WITH_HOOK = "AGENT_RUN_SHAPE_WITH_HOOK"
@@ -914,6 +915,10 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
         AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.TOOL_DECODE_FAILED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.TOOL_CALL_FAILED: AgentRunErrorClass.INFRASTRUCTURE,
+        # An MCP call that failed after it may have run on the server: the
+        # infrastructure failed, but repeating the run could run the call
+        # twice, so it is carved out of 'is_retriable' (_NEVER_RETRIED).
+        AgentRunErrorCode.MCP_CALL_INTERRUPTED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.AGENT_CALL_CYCLE: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.AGENT_CALL_TOO_DEEP: AgentRunErrorClass.LIMIT,
         AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK: AgentRunErrorClass.APPLICATION,
@@ -952,32 +957,36 @@ def run_error_class(code: AgentRunErrorCode) -> AgentRunErrorClass:
     return _RUN_ERROR_CLASSES[code]
 
 
-_NEVER_RETRIED: frozenset[AgentRunErrorCode] = frozenset({AgentRunErrorCode.COST_NOT_MEASURABLE})
-"""``INFRASTRUCTURE``-classed codes that retrying can never help.
+_NEVER_RETRIED: frozenset[AgentRunErrorCode] = frozenset(
+    {AgentRunErrorCode.COST_NOT_MEASURABLE, AgentRunErrorCode.MCP_CALL_INTERRUPTED}
+)
+"""``INFRASTRUCTURE``-classed codes that retrying can never help, or could harm.
 
 An explicit exception list, not a change to :data:`AgentRunErrorClass`:
 ``COST_NOT_MEASURABLE`` stays ``INFRASTRUCTURE`` (mapped to HTTP 500, not
 503, so callers and gateways do not retry it without consulting
 :func:`is_retriable`) but is raised only after the run's provider call has
 already returned and already been billed, so retrying would only spend the
-caller's money again on a gap it does not control."""
+caller's money again on a gap it does not control. ``MCP_CALL_INTERRUPTED``
+is the same carve-out for a different reason: the MCP call it reports may
+already have run on the server, so a retried run could run it twice."""
 
 
 def is_retriable(code: AgentRunErrorCode) -> bool:
     """Return whether a run-time failure may be retried by the caller.
 
     Only :data:`AgentRunErrorClass.INFRASTRUCTURE` failures are retriable,
-    with one explicit exception: ``COST_NOT_MEASURABLE`` stays
-    ``INFRASTRUCTURE`` but is never retriable, because the provider call it
-    reports on has already returned and already been billed.
+    with the explicit exceptions of :data:`_NEVER_RETRIED`:
+    ``COST_NOT_MEASURABLE`` (the provider call has already been billed) and
+    ``MCP_CALL_INTERRUPTED`` (the MCP call may already have run).
 
     Args:
         code: Run-time error code to test.
 
     Returns:
         ``True`` when the code's class is ``INFRASTRUCTURE``; ``False`` for
-        every other class, and for ``COST_NOT_MEASURABLE`` despite its
-        ``INFRASTRUCTURE`` class.
+        every other class, and for the codes of :data:`_NEVER_RETRIED`
+        despite their ``INFRASTRUCTURE`` class.
     """
     if code in _NEVER_RETRIED:
         return False

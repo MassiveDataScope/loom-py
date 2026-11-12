@@ -38,20 +38,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import urllib.parse
+import urllib.request
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, Final, Protocol, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, cast
 
 from loom.ai.abc import ConcurrentMcpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
+from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome, classify
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
+from loom.core.config.errors import ConfigError
 from loom.core.model.redaction import Secret
 
 if TYPE_CHECKING:
     from fastmcp.client.transports import ClientTransport, StdioTransport
     from pydantic_ai.mcp import MCPToolset
+
+    from loom.ai.engines.pydantic_ai._transport import EvictableTransport
 
 _logger = logging.getLogger(__name__)
 
@@ -87,6 +94,35 @@ carries a deadline rather than falling through to
 :class:`~pydantic_ai.mcp.MCPToolset`'s own ``5``-second default."""
 
 
+@dataclass(eq=False)
+class _OpenToolset:
+    """One toolset a session holds entered, with what its calls need to know about it.
+
+    Attributes:
+        toolset: The entered toolset.
+        pool: Its HTTP pool, or ``None`` for a transport that has none.
+        in_flight: Calls sent through it that have not returned yet.
+        suspect: Whether a call failed on it, so the next call renews it first.
+    """
+
+    toolset: MCPToolset[Any]
+    pool: EvictableTransport | None
+    in_flight: int = 0
+    suspect: bool = False
+
+    @classmethod
+    def of(cls, toolset: MCPToolset[Any]) -> _OpenToolset:
+        """Hold *toolset* with the pool its builder put on its transport, if any.
+
+        ``build_mcp_toolset`` gives an ``http`` toolset a
+        :class:`~._transport.PooledHttpTransport`, which carries the pool;
+        ``stdio`` and SSE transports carry none. ``Client.transport`` is
+        fastmcp's public attribute.
+        """
+        transport = getattr(getattr(toolset, "client", None), "transport", None)
+        return cls(toolset, getattr(transport, "pool", None))
+
+
 class _ToolsetSession(ConcurrentMcpSession):
     """Adapts a connected ``MCPToolset`` to the runtime's session contract.
 
@@ -102,15 +138,26 @@ class _ToolsetSession(ConcurrentMcpSession):
     ``__aexit__`` to decide when the connection opens and closes; that is a
     connection-lifecycle concern, not what makes concurrent calls safe.
 
-    A session that died after it opened is replaced by the next call. The
-    ``fastmcp`` client still reports itself connected once its transport is
-    gone, so the evidence is the call: a tool's own error is a result flagged
-    ``is_error``, and an exception out of the round trip is the transport
-    failing. That call is raised and never repeated -- it may have run on the
-    server -- and the one after it opens a fresh toolset first.
+    A failed call is classified (:func:`~._failures.classify`). One the
+    server answered passes through unchanged. One that provably never ran — the
+    server no longer knows the session — is sent once more on a renewed
+    toolset. Any other may have run on the server: it is raised as
+    :class:`~._failures.McpCallInterrupted`, never repeated, and the next call
+    renews first.
+
+    A renewal retires the toolset it replaces rather than closing it under a
+    call still in flight there; the last such call to return hands its close
+    off, so the call's own result and deadline are never touched by it. At
+    most two toolsets are open: a renewal that finds an earlier one still
+    draining closes it first, cutting the calls left on it. Every close runs in
+    a task of its own, so a caller cancelled while waiting for one never
+    leaves it half done, and :meth:`aclose` waits for all of them. A closed
+    session refuses every later call. The freeze check lives in the toolset's
+    pool (:class:`~._transport.EvictableTransport`), which sees every caller.
 
     Args:
-        toolset: Already-entered toolset speaking to one server.
+        toolset: Already-entered toolset speaking to one server; the session
+            holds that entry and releases it in :meth:`aclose`.
         rebuild: Builds a new, not yet entered toolset for the same
             connection; ``None`` never replaces the one given.
     """
@@ -121,39 +168,64 @@ class _ToolsetSession(ConcurrentMcpSession):
         *,
         rebuild: Callable[[], MCPToolset[Any]] | None = None,
     ) -> None:
-        self._toolset = toolset
+        self._current = _OpenToolset.of(toolset)
+        self._retired: _OpenToolset | None = None
         self._rebuild = rebuild
-        self._suspect: MCPToolset[Any] | None = None
         self._renewing = asyncio.Lock()
-        self._renewed: list[MCPToolset[Any]] = []
+        self._closing: set[asyncio.Task[None]] = set()
+        self._closed = False
 
-    async def _live(self) -> MCPToolset[Any]:
+    async def _live(self) -> _OpenToolset:
         """Return the toolset to speak through, replacing a suspect one at most once.
 
         A renewal that cannot connect raises and leaves the suspect in place,
-        so the next call tries again.
+        so the next call tries again. The session may close while a call waits
+        for the renewal, so it is checked again before the toolset is handed out.
+
+        Raises:
+            RuntimeError: When the session is closed.
         """
-        toolset = self._toolset
-        if self._rebuild is None or self._suspect is not toolset:
-            return toolset
+        held = self._current
+        if not self._closed and (self._rebuild is None or not held.suspect):
+            return held
         async with self._renewing:
-            if self._toolset is not toolset:
-                return self._toolset
-            fresh = self._rebuild()
-            await fresh.__aenter__()
-            self._renewed.append(fresh)
-            self._toolset = fresh
-            _logger.warning("mcp session renewed after a failed call")
-            return fresh
+            if not self._closed and self._current is held and self._rebuild is not None:
+                await self._renew(held, self._rebuild())
+            if self._closed:
+                raise RuntimeError("the mcp session is closed")
+            return self._current
+
+    async def _renew(self, held: _OpenToolset, toolset: MCPToolset[Any]) -> None:
+        """Put *toolset*, once connected, in place of *held*; a session closed since closes it."""
+        retired, self._retired = self._retired, None
+        if retired is not None:
+            await asyncio.shield(self._close(retired))
+        fresh = await _entered_toolset(toolset)
+        if self._closed:
+            await asyncio.shield(self._close(fresh))
+            return
+        self._current = fresh
+        if held.in_flight:
+            self._retired = held
+        else:
+            await asyncio.shield(self._close(held))
+        _logger.warning("mcp session renewed after a failed call")
+
+    def _close(self, held: _OpenToolset) -> asyncio.Task[None]:
+        """Close *held* in a task of its own, tracked until it is done."""
+        task = asyncio.create_task(_shut(held))
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+        return task
 
     async def aclose(self) -> None:
-        """Close the toolsets this session opened itself; the first belongs to its opener."""
-        while self._renewed:
-            toolset = self._renewed.pop()
-            try:
-                await toolset.__aexit__(None, None, None)
-            except Exception:
-                _logger.warning("a renewed mcp session did not close cleanly", exc_info=True)
+        """Close every toolset this session holds, the one it was given included; refuse calls."""
+        self._closed = True
+        retired, self._retired = self._retired, None
+        if retired is not None:
+            self._close(retired)
+        self._close(self._current)
+        await asyncio.shield(asyncio.gather(*self._closing))
 
     async def list_tools(self) -> tuple[McpToolInfo, ...]:
         """Return the tools the server exposes, each with its output-schema flag.
@@ -165,7 +237,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         """
         return tuple(
             McpToolInfo(name=tool.name, has_output_schema=tool.output_schema is not None)
-            for tool in await (await self._live()).list_tools()
+            for tool in await (await self._live()).toolset.list_tools()
         )
 
     async def call_tool(self, name: str, arguments: Mapping[str, Any]) -> McpToolCallResult:
@@ -198,15 +270,93 @@ class _ToolsetSession(ConcurrentMcpSession):
 
         Returns:
             The server's own error flag and structured content, verbatim.
+
+        Raises:
+            McpCallInterrupted: When the call may have run on the server, or a
+                renewal before it could not connect.
         """
-        toolset = await self._live()
+        held = await self._ready(name)
         try:
-            async with toolset:
-                result = await toolset.client.call_tool_mcp(name, dict(arguments))
-        except Exception:
-            self._suspect = toolset
-            raise
+            result = await self._send(held, name, arguments)
+        except Exception as exc:
+            outcome = classify(exc)
+            if self._rebuild is None or outcome is not Outcome.SAFE:
+                _raise_failure(held, exc, name, outcome)
+            held.suspect = True
+            result = await self._retry(name, arguments)
         return McpToolCallResult(ok=not result.is_error, structured=result.structured_content)
+
+    async def _retry(self, name: str, arguments: Mapping[str, Any]) -> Any:
+        """Send a call that provably never ran once more, on a renewed toolset; never again."""
+        held = await self._ready(name)
+        try:
+            return await self._send(held, name, arguments)
+        except Exception as exc:
+            _raise_failure(held, exc, name, classify(exc))
+
+    async def _ready(self, name: str) -> _OpenToolset:
+        """Return the toolset to send *name* through; a renewal that cannot connect sent nothing."""
+        try:
+            return await self._live()
+        except Exception as exc:
+            raise McpCallInterrupted(name, sent=False) from exc
+
+    async def _send(self, held: _OpenToolset, name: str, arguments: Mapping[str, Any]) -> Any:
+        """Send one call through *held*; the last call on a retired toolset hands off its close."""
+        held.in_flight += 1
+        try:
+            async with held.toolset:
+                return await held.toolset.client.call_tool_mcp(name, dict(arguments))
+        finally:
+            held.in_flight -= 1
+            if held is self._retired and not held.in_flight:
+                self._retired = None
+                self._close(held)
+
+
+def _raise_failure(held: _OpenToolset, exc: Exception, name: str, outcome: Outcome) -> NoReturn:
+    """Raise what a failed call ends as: the server's own error, or an interruption.
+
+    An interruption marks the toolset suspect, so the next call renews it first.
+    """
+    if outcome is Outcome.COMPLETED:
+        raise exc
+    held.suspect = True
+    raise McpCallInterrupted(name) from exc
+
+
+async def _entered_toolset(toolset: MCPToolset[Any]) -> _OpenToolset:
+    """Enter a freshly built toolset; one that cannot connect releases the pool it made."""
+    held = _OpenToolset.of(toolset)
+    try:
+        await toolset.__aenter__()
+    except BaseException:
+        await _released(held)
+        raise
+    return held
+
+
+async def _shut(held: _OpenToolset) -> None:
+    """Release a session's entry of a toolset and its pool; calls still in flight are cut.
+
+    A close never raises: a toolset whose transport died raises from its exit.
+    """
+    try:
+        if held.in_flight:
+            await held.toolset.client.close()  # type: ignore[no-untyped-call]  # fastmcp
+        await held.toolset.__aexit__(None, None, None)
+    except Exception:
+        _logger.warning("an mcp session did not close cleanly", exc_info=True)
+    await _released(held)
+
+
+async def _released(held: _OpenToolset) -> None:
+    if held.pool is None:
+        return
+    try:
+        await held.pool.release()
+    except Exception:
+        _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
 
 
 def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float) -> MCPToolset[Any]:
@@ -247,19 +397,39 @@ def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float)
     """
     sdk = _sdk()
     component = f"mcp server '{capability.server}'"
-    client = _mcp_client(component, capability)
     headers = headers_from_ref(component, capability.headers_ref) or None
     auth = _client_auth(sdk, shared_mcp_auth(capability.server, capability.auth))
-    read_timeout = capability.timeout_ms / 1000
+    _refuse_per_run(capability.server, headers, auth)
+    client = _http_transport(_mcp_client(component, capability), headers=headers, auth=auth)
+    # A transport built here carries the credentials itself; MCPToolset refuses
+    # them twice. Only an SSE URL still hands them to MCPToolset.
+    credentials: dict[str, Any] = (
+        {"headers": headers, "auth": auth} if isinstance(client, str) else {}
+    )
     toolset: MCPToolset[Any] = sdk.MCPToolset(
         client,
-        headers=headers,
-        auth=cast("Any", auth),
+        **credentials,
         init_timeout=init_timeout,
-        read_timeout=read_timeout,
+        read_timeout=capability.timeout_ms / 1000,
     )
     _require_static_auth(toolset, capability)
     return toolset
+
+
+def _refuse_per_run(server: str, headers: object, auth: object) -> None:
+    """Refuse credentials a toolset would resolve per run.
+
+    ``MCPToolset`` copies itself for each run whose ``auth`` or ``headers`` is
+    a callable, which would split the session every caller shares.
+
+    Raises:
+        ConfigError: Naming the server.
+    """
+    if callable(headers) or callable(auth):
+        raise ConfigError(
+            f"mcp server {server!r}: per-run auth or headers are not supported; "
+            "the server's credentials must be static"
+        )
 
 
 def _client_auth(sdk: _McpSdk, auth: object) -> object:
@@ -324,6 +494,37 @@ def _mcp_client(component: str, capability: CompiledMcpCapability) -> str | Clie
             )
         ]
     )
+
+
+def _http_transport(
+    client: str | ClientTransport, *, headers: dict[str, str] | None, auth: object
+) -> str | ClientTransport:
+    """Turn a streamable-HTTP URL into a transport with the credentials and a pool of its own.
+
+    A transport already built (``stdio``), an SSE URL and a URL reached through
+    a proxy pass through, so ``MCPToolset`` builds its stock transport as it
+    always did. A client given its own transport ignores the environment's
+    proxies, and only httpx2 applies their rules -- ``NO_PROXY`` included -- so
+    behind any proxy there is no freeze eviction: a stale connection is left
+    to the safe retry and the renewal. The MCP extra is already loaded by the
+    caller.
+    """
+    from fastmcp.mcp_config import infer_transport_type_from_url
+
+    if not isinstance(client, str) or infer_transport_type_from_url(client) == "sse":
+        return client
+    if _proxied(client):
+        return client
+
+    from loom.ai.engines.pydantic_ai._transport import PooledHttpTransport
+
+    return PooledHttpTransport(client, headers=headers, auth=auth)
+
+
+def _proxied(url: str) -> bool:
+    """Whether the environment or the system names a proxy for *url*'s scheme, or for all."""
+    proxies = urllib.request.getproxies()
+    return bool(proxies.get(urllib.parse.urlsplit(url).scheme) or proxies.get("all"))
 
 
 def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientTransport:
@@ -479,16 +680,24 @@ class SharedMcpToolsets:
         """
         connection = mcp_connection(capability)
         self._opened.add(connection)
-        toolset = self._toolset(connection)
-        async with toolset:
-            session = _ToolsetSession(
-                toolset,
-                rebuild=lambda: build_mcp_toolset(connection, init_timeout=self._init_timeout),
-            )
-            try:
-                yield session
-            finally:
-                await session.aclose()
+        async with _entered(
+            self._toolset(connection),
+            rebuild=lambda: build_mcp_toolset(connection, init_timeout=self._init_timeout),
+        ) as session:
+            yield session
+
+
+@asynccontextmanager
+async def _entered(
+    toolset: MCPToolset[Any], *, rebuild: Callable[[], MCPToolset[Any]] | None = None
+) -> AsyncIterator[_ToolsetSession]:
+    """Enter *toolset* and hand that entry to a session, which closes all it holds on exit."""
+    await _entered_toolset(toolset)
+    session = _ToolsetSession(toolset, rebuild=rebuild)
+    try:
+        yield session
+    finally:
+        await session.aclose()
 
 
 @asynccontextmanager
@@ -520,5 +729,5 @@ async def create_mcp_client(
             names = await session.list_tools()
     """
     toolset = build_mcp_toolset(capability, init_timeout=DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS)
-    async with toolset:
-        yield _ToolsetSession(toolset)
+    async with _entered(toolset) as session:
+        yield session

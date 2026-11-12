@@ -313,7 +313,7 @@ async def _check_usage_only_on_final(
 
 
 _NEVER_RETRIED_DESPITE_INFRASTRUCTURE: frozenset[AgentRunErrorCode] = frozenset(
-    {AgentRunErrorCode.COST_NOT_MEASURABLE}
+    {AgentRunErrorCode.COST_NOT_MEASURABLE, AgentRunErrorCode.MCP_CALL_INTERRUPTED}
 )
 """Codes FR-028's own class-implies-retriable rule does not hold for.
 
