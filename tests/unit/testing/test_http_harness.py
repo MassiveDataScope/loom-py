@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
+import pytest
+
+from loom.composition import Application
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.model import LoomStruct
+from loom.core.repository.abc import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
+from loom.testing import http_harness
 from loom.testing.http_harness import HttpTestHarness
 from loom.testing.in_memory import InMemoryRepository
 
@@ -326,3 +331,62 @@ class TestDisableRoutesForwarding:
 
         assert client.get("/products/1").status_code == 404
         assert client.post("/products/", json={"name": "still-here"}).status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Capability keys — a fake is bound as a store binds its repository
+# ---------------------------------------------------------------------------
+
+
+class AcmeItem(LoomStruct):
+    id: int
+    name: str
+
+
+class AcmeItemLookup(Readable[AcmeItem], Protocol):
+    async def get_by_name(self, name: str) -> AcmeItem | None: ...
+
+
+# Declared as a store's repository is, over a subscripted base: capability
+# detection reads the class's own ``__orig_bases__``.
+class AcmeItemFake(InMemoryRepository[AcmeItem], AcmeItemLookup):
+    def __init__(self) -> None:
+        super().__init__(AcmeItem)
+
+    async def get_by(self, field: str, value: Any, profile: str = "default") -> AcmeItem | None:
+        return None
+
+    async def get_by_name(self, name: str) -> AcmeItem | None:
+        return None
+
+
+class GetAcmeItemUseCase(UseCase[AcmeItem, AcmeItem | None]):
+    async def execute(self, item_id: int) -> AcmeItem | None:
+        return await self.main_repo.get_by_id(item_id)
+
+
+class AcmeItemInterface(RestInterface[AcmeItem]):
+    prefix = "/items"
+    routes = (RestRoute(use_case=GetAcmeItemUseCase, method="GET", path="/{item_id}"),)
+
+
+class TestCapabilityKeys:
+    def test_the_fake_is_bound_under_its_standard_and_custom_capabilities(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        composed: list[Application] = []
+        compose = http_harness.compose_application
+
+        def captured(*args: Any, **kwargs: Any) -> Application:
+            composed.append(compose(*args, **kwargs))
+            return composed[-1]
+
+        monkeypatch.setattr(http_harness, "compose_application", captured)
+        fake = AcmeItemFake()
+        harness = HttpTestHarness()
+        harness.inject_repo(AcmeItem, fake)
+        harness.build_app(interfaces=[AcmeItemInterface])
+
+        container = composed[0].kernel.container
+        assert container.resolve(Readable[AcmeItem]) is fake
+        assert container.resolve(AcmeItemLookup) is fake

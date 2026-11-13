@@ -444,6 +444,23 @@
   `loom.composition.pipeline.ai.reject_manifest_agents_without_ai_section`,
   `loom.composition.pipeline.load.load_application_config` and
   `loom.composition.pipeline.load.add_code_path`.
+- **testing:** `HttpTestHarness.build_app` composes its application through
+  the same pipeline as `create_app`, with the new `Recipe.lenient` flag: as
+  before, it runs no deploy check, does not verify use-case dependencies,
+  refuse a store a component cannot write to, or refuse an agent or MCP
+  marker; a failing `APPLICATION` binding is still refused. Its container
+  binds the `AppConfig` of a `test-harness` application in place of a private
+  placeholder config, and also an inline `JobService`, `SqlQueryService`,
+  `CallerBoundSql`, `ObservabilityRuntime`, `StoreCatalog`,
+  `UseCaseRegistry`, `ApplicationInvoker` and the unconfigured cache keys, so
+  a use case injecting one of them is served. It logs the
+  `loom.composition.*` phase events. It no longer calls the deprecated
+  `bootstrap_app`.
+- **testing:** `HttpTestHarness.inject_repo` also binds the fake under each
+  capability its class declares, as a store binds its repository: the
+  standard ones (`Readable[Model]`, …) and its own repository `Protocol`
+  bases. A use case injecting a custom repository protocol is served by a
+  fake that subclasses it.
 
 ### plugins
 

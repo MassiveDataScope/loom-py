@@ -1,0 +1,113 @@
+"""``Recipe.lenient``, which the HTTP harness sets: the checks it skips (D15).
+
+It skips the deploy checks, the use-case factory's verification, the store
+refusal and the AI marker refusal. Each is skipped only under a lenient
+recipe: a strict one still refuses the same composition. A failing
+``APPLICATION`` binding is refused either way.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import pytest
+
+from loom.ai.errors import AgentCompilationError
+from loom.composition import compose_application
+from loom.composition.source import CompositionSource
+from loom.core.bootstrap import BootstrapError
+from loom.core.checks import DeployCheckError
+from loom.core.config import ConfigContext
+from loom.core.di.container import ResolutionError
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.environment import Environment
+from loom.core.use_case.errors import UncomposedWriteStore
+from tests.helpers.composition import Serving, composition_source
+from tests.unit.composition.pipeline.components import (
+    AcmeAgentUser,
+    AcmeLedgerWriter,
+    AcmeNeedsService,
+    AcmePing,
+    AcmeRecord,
+    binds_unbuildable,
+)
+from tests.unit.composition.pipeline.paths import SQLITE
+
+_LEDGER: dict[str, Any] = {
+    "app": {"name": "acme", "job_service": "inline"},
+    "stores": {"default": SQLITE, "ledger": {"backend": "none"}},
+    "persistence": {"cursors": {"signing": "ephemeral"}},
+}
+# No store builds a cursor codec, so only a deploy check refuses the ephemeral keys;
+# composed with no component, so no other lenient skip is involved.
+_EPHEMERAL_KEYS: dict[str, Any] = {
+    "app": {"name": "acme", "job_service": "inline"},
+    "persistence": {"cursors": {"signing": "ephemeral"}},
+}
+_SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
+    "factory-verify": ({"use_cases": (AcmePing, AcmeNeedsService)}, ResolutionError),
+    "unservable-store": ({"jobs": (AcmeLedgerWriter,)}, UncomposedWriteStore),
+    "ai-marker": ({"use_cases": (AcmePing, AcmeAgentUser)}, AgentCompilationError),
+}
+
+
+@pytest.fixture
+def ledger_source() -> CompositionSource:
+    """``acme`` over SQLite, beside a ``ledger`` store with no unit of work; jobs inline."""
+    return composition_source(ConfigContext.from_dict(_LEDGER))
+
+
+@pytest.mark.parametrize("check", list(_SKIPPED))
+def test_a_strict_recipe_refuses_what_a_lenient_one_skips(
+    check: str, ledger_source: CompositionSource
+) -> None:
+    components, refused = _SKIPPED[check]
+
+    with pytest.raises(refused):
+        compose_application(ledger_source, Serving(AcmeRecord, **components))
+
+
+@pytest.mark.parametrize("check", list(_SKIPPED))
+def test_a_lenient_recipe_skips_the_check(check: str, ledger_source: CompositionSource) -> None:
+    components, _ = _SKIPPED[check]
+
+    adapter = Serving(AcmeRecord, **components, lenient=True)
+
+    kernel = compose_application(ledger_source, adapter).kernel
+
+    assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
+
+
+def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
+    ledger_source: CompositionSource,
+) -> None:
+    with pytest.raises(BootstrapError) as caught:
+        compose_application(
+            ledger_source,
+            Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
+            modules=(binds_unbuildable,),
+        )
+
+    assert isinstance(caught.value.__cause__, ResolutionError)
+
+
+def test_a_strict_recipe_runs_the_deploy_checks() -> None:
+    production = composition_source(
+        ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=Environment.PRODUCTION
+    )
+
+    with pytest.raises(DeployCheckError):
+        compose_application(production, Serving())
+
+
+@pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.TEST])
+def test_a_lenient_recipe_runs_no_deploy_check(
+    environment: Environment, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = composition_source(ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=environment)
+
+    with caplog.at_level(logging.DEBUG, logger="loom.core.checks"):
+        compose_application(source, Serving(lenient=True))
+
+    assert [r for r in caplog.records if r.name == "loom.core.checks"] == []

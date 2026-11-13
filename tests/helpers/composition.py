@@ -57,7 +57,10 @@ def composition_source(
 
 
 class Serving:
-    """An adapter composing exactly the models, use cases and jobs it is given, with *overrides*."""
+    """An adapter composing exactly the models, use cases and jobs it is given, with *overrides*.
+
+    *lenient* is passed to its recipe as :attr:`Recipe.lenient`.
+    """
 
     def __init__(
         self,
@@ -65,15 +68,22 @@ class Serving:
         use_cases: tuple[type, ...] = (),
         jobs: tuple[type, ...] = (),
         overrides: tuple[Callable[[LoomContainer], None], ...] = (),
+        lenient: bool = False,
     ) -> None:
         self.discovered = DiscoveryResult(
             models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
         )
         self.overrides = overrides
+        self.lenient = lenient
 
     def recipe(self, source: CompositionSource) -> Recipe:
         del source
-        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered, overrides=self.overrides)
+        return Recipe(
+            profile=SERVER_PROFILE,
+            discovered=self.discovered,
+            overrides=self.overrides,
+            lenient=self.lenient,
+        )
 
     def bind(self, application: Application) -> Application:
         return application

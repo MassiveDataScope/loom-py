@@ -17,9 +17,9 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig, Application, compose_application
 from loom.composition.recipe import Adapter
-from loom.core.bootstrap import BootstrapResult, bootstrap_app, create_kernel
+from loom.core.bootstrap import bootstrap_app, create_kernel
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
@@ -120,35 +120,37 @@ def harness(
 ) -> LoomContainer:
     """``HttpTestHarness.build_app`` serving *composition*'s interfaces over a fake repository.
 
-    The harness keeps its bootstrap result to itself: the path captures it.
+    The harness keeps its composed application to itself: the path captures it.
 
-    Survey of the harness-based suites on today's code (T01a, input to T01e):
-    one graph would trip a structural refusal. In
+    Survey of the harness-based suites before the pipeline (T01a, input to
+    T01e): one graph would trip a structural refusal. In
     ``tests/integration/core/rest/test_rest_error_mapping.py``,
     ``ProductRestInterface`` routes ``FindProductByNameUseCase``, whose
     constructor injects ``ProductRepo``, which the harness never binds (it
     binds only ``("repo", Product)``): a missing binding (refusal 1) once every
-    route's use case is a root. It passes today only because no test calls that
-    route. The owner decided (D18) that T01e fixes the fixture. No harness
-    test or use case depends on ``_NullConfig``.
+    route's use case is a root. It passed only because no test called that
+    route. Fixed in T01e (D18): the harness binds a fake under its repository
+    protocol bases too, and that file injects an ``InMemoryProductRepository``.
+    No harness test or use case depends on the ``_NullConfig`` the harness
+    bound before T01e.
     """
     del tmp_path
     pytest.importorskip("fastapi")
     from loom.testing import http_harness
 
-    results: list[BootstrapResult] = []
+    applications: list[Application] = []
 
-    def captured(*args: Any, **kwargs: Any) -> BootstrapResult:
-        result = bootstrap_app(*args, **kwargs)
-        results.append(result)
-        return result
+    def captured(*args: Any, **kwargs: Any) -> Application:
+        application = compose_application(*args, **kwargs)
+        applications.append(application)
+        return application
 
-    monkeypatch.setattr(http_harness, "bootstrap_app", captured)
+    monkeypatch.setattr(http_harness, "compose_application", captured)
     built = http_harness.HttpTestHarness()
     built.inject_repo(AcmeRecord, InMemoryRepository(AcmeRecord))
     built.build_app(interfaces=list(composition.interfaces))
-    (result,) = results
-    return result.container
+    (application,) = applications
+    return application.kernel.container
 
 
 def standalone_kernel(

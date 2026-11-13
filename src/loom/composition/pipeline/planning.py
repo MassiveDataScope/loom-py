@@ -20,12 +20,15 @@ class Planned:
 def plan(source: CompositionSource, adapter: Adapter[object]) -> Planned:
     """Ask *adapter* for its recipe, then refuse a failing deploy check.
 
+    A lenient recipe runs no deploy check.
+
     Raises:
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
     """
     recipe = adapter.recipe(source)
-    # After the code path and discovery: checks.modules may name the
-    # application's modules, and no resource exists yet.
-    enforce_deploy_checks(source.config, source.environment, skip=recipe.skip_checks)
+    if not recipe.lenient:
+        # After the code path and discovery: checks.modules may name the
+        # application's modules, and no resource exists yet.
+        enforce_deploy_checks(source.config, source.environment, skip=recipe.skip_checks)
     return Planned(source=source, recipe=recipe)

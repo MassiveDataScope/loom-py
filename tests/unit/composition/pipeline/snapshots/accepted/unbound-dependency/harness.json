@@ -5,14 +5,59 @@
       "resolved": "InMemoryRepository",
       "scope": "APPLICATION"
     },
+    "AppConfig": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "AppConfig",
+      "scope": "APPLICATION"
+    },
+    "ApplicationInvoker": {
+      "provider": "install_kernel.<locals>.<lambda>",
+      "resolved": "AppInvoker",
+      "scope": "APPLICATION"
+    },
+    "CachedCalls": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "_UnconfiguredCalls",
+      "scope": "APPLICATION"
+    },
+    "CallerBoundSql": {
+      "provider": "register_sql_collaborators.<locals>.<lambda>",
+      "resolved": "CallerBoundSql",
+      "scope": "APPLICATION"
+    },
     "Environment": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "Environment",
       "scope": "APPLICATION"
     },
+    "JobService": {
+      "provider": "configure_job_service.<locals>.<lambda>",
+      "resolved": "InlineJobService",
+      "scope": "APPLICATION"
+    },
+    "ObservabilityRuntime": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "ObservabilityRuntime",
+      "scope": "APPLICATION"
+    },
+    "RepositoryDecorator": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "function",
+      "scope": "APPLICATION"
+    },
     "RuntimeExecutor": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "install_kernel.<locals>.<lambda>",
       "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "SqlQueryService": {
+      "provider": "register_sql_collaborators.<locals>.<lambda>",
+      "resolved": "NullSqlQueryService",
+      "scope": "APPLICATION"
+    },
+    "StoreCatalog": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "StoreCatalog",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {
@@ -20,9 +65,9 @@
       "resolved": "UseCaseFactory",
       "scope": "APPLICATION"
     },
-    "_NullConfig": {
-      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "_NullConfig",
+    "UseCaseRegistry": {
+      "provider": "install_kernel.<locals>.<lambda>",
+      "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
     }
   },

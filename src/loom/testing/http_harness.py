@@ -18,32 +18,28 @@ Usage::
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from fastapi.testclient import TestClient
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.composition import compose_application
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.use_case.use_case import UseCase
+from loom.core.repository.registration import capability_keys
 from loom.rest.compiler import RouteSources
-from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
-
-
-class _NullConfig:
-    """Placeholder config used when no real config is needed in tests."""
+from loom.testing.harness import HarnessAdapter, harness_source
 
 
 class HttpTestHarness:
     """Builds a FastAPI ``TestClient`` with injected fake repositories.
 
-    Combines :func:`~loom.core.bootstrap.bootstrap.bootstrap_app` and
-    :func:`~loom.rest.fastapi.app.create_fastapi_app` into a single
-    test-oriented entry point.
+    Composes the application through the same pipeline as
+    :func:`~loom.composition.create_app`, from an in-memory configuration and
+    leniently (see :class:`~loom.composition.Recipe`), then mounts the routes
+    with :func:`~loom.rest.fastapi.app.create_fastapi_app`.
 
     Repositories are keyed by **domain model type** (the ``TModel`` generic
     parameter of the use case) rather than by interface.  The harness derives
@@ -72,8 +68,11 @@ class HttpTestHarness:
         """Register a fake repository for a domain model type.
 
         The harness resolves the model from the use-case generic parameter
-        (``UseCase[Model, …]``) at bootstrap time and injects ``fake`` as its
-        repository.
+        (``UseCase[Model, …]``) when the application is composed and injects
+        ``fake`` as its repository. Like a store's repository, ``fake`` is
+        also bound under each capability its class implements: the standard
+        ones (``Readable[Model]``, …) and its own repository ``Protocol``
+        bases, so a use case injecting such a protocol receives it.
 
         Args:
             model: ``msgspec.Struct`` subclass used as the resolution key.
@@ -138,11 +137,9 @@ class HttpTestHarness:
                 # Use an explicit per-model token to avoid DI key collisions
                 # when multiple models share the same fake repository type.
                 token = ("repo", model)
-                container.register(
-                    token,
-                    _make_provider(effective),
-                    scope=Scope.APPLICATION,
-                )
+                provider = _make_provider(effective)
+                for key in (token, *capability_keys(type(fake), model)):
+                    container.register(key, provider, scope=Scope.APPLICATION)
                 container.register_repo(model, token)
 
         return _module
@@ -158,7 +155,7 @@ class HttpTestHarness:
         """Build a ``TestClient`` from REST interface declarations.
 
         Extracts use cases from every interface's route declarations
-        (Python-declared and config-declared alike), bootstraps the
+        (Python-declared and config-declared alike), composes the
         application with the injected fake repositories, and returns a
         :class:`~fastapi.testclient.TestClient` ready for HTTP assertions.
 
@@ -188,22 +185,10 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        all_interfaces = (*interfaces, *config_interfaces)
-        use_cases: list[type[UseCase[Any, Any]]] = list(
-            dict.fromkeys(route.use_case for iface in all_interfaces for route in iface.routes)
-        )
-        with warnings.catch_warnings():  # removed in T01e
-            # The harness itself still builds through bootstrap_app: its
-            # deprecation is for the harness's callers to never see.
-            warnings.filterwarnings("ignore", "bootstrap_app is deprecated", DeprecationWarning)
-            result = bootstrap_app(
-                config=_NullConfig(),
-                use_cases=use_cases,
-                modules=[self._build_module()],
-            )
-        app = create_fastapi_app(
-            result,
+        adapter = HarnessAdapter(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
+            overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
+        app = adapter.bind(compose_application(harness_source(), adapter))
         return TestClient(app, raise_server_exceptions=False)

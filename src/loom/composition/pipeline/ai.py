@@ -21,7 +21,8 @@ def wire_ai(registered: Registered) -> AiWiring:
 
     An entry point that does not host agents still refuses, at start-up, any
     compiled use case declaring an ``Agent()`` or ``Mcp()`` marker. One that
-    serves no agent endpoints builds only the agents a marker names.
+    serves no agent endpoints builds only the agents a marker names. A
+    lenient recipe that hosts no agents refuses no marker.
 
     Raises:
         AgentCompilationError: When a marker cannot be satisfied.
@@ -31,7 +32,8 @@ def wire_ai(registered: Registered) -> AiWiring:
     ctx = source.config
     discovered = recipe.discovered
     if not recipe.agents:
-        reject_ai_markers(discovered.use_cases, kernel.compiler, kernel.registry)
+        if not recipe.lenient:
+            reject_ai_markers(discovered.use_cases, kernel.compiler, kernel.registry)
         return AiWiring(config=None, runtime=None)
     reject_manifest_agents_without_ai_section(ctx, discovered.agent_specs)
     use_case_mcp_bindings = verify_mcp_markers(

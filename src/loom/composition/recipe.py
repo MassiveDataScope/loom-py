@@ -48,6 +48,12 @@ class Recipe:
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Set by the testing harness; no
             production entry point sets them.
+        lenient: Skip the checks a test double cannot pass: the deploy
+            checks, the use-case factory's verification, the refusal of a
+            store a component cannot write to, and the refusal of an agent
+            marker on an entry point that hosts no agents. A missing binding
+            an ``APPLICATION`` singleton needs is still refused. Set by the
+            testing harness; no production entry point sets it.
     """
 
     profile: RuntimeProfile
@@ -60,6 +66,7 @@ class Recipe:
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
+    lenient: bool = False
 
 
 class Adapter(Protocol[T_co]):

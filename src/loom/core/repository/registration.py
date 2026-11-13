@@ -82,7 +82,7 @@ def capabilities_of(repository_type: type) -> tuple[type, ...]:
     return tuple(proto for proto in _STANDARD_PROTOCOLS if proto in mro)
 
 
-def _capability_keys(repository_type: type, model: type[LoomStruct]) -> tuple[Any, ...]:
+def _standard_capability_keys(repository_type: type, model: type[LoomStruct]) -> tuple[Any, ...]:
     """Return the ``Protocol[model]`` DI keys for the capabilities of *repository_type*."""
     return tuple(cast(Any, proto)[model] for proto in capabilities_of(repository_type))
 
@@ -97,11 +97,14 @@ def is_direct_protocol(cls: type) -> bool:
     return bool(cls.__dict__.get("_is_protocol"))
 
 
-def _detect_capability_keys(
+def capability_keys(
     repository_type: type[Any],
     model: type[LoomStruct],
 ) -> tuple[Any, ...]:
-    """Return the DI keys this repository should be registered under.
+    """Return the DI keys a repository of *repository_type* for *model* is bound under.
+
+    Store wiring binds a registered repository under these keys, and
+    :class:`~loom.testing.HttpTestHarness` binds a fake under them.
 
     Detects two categories:
 
@@ -119,7 +122,7 @@ def _detect_capability_keys(
     Returns:
         Tuple of DI keys in stable order, with no duplicates.
     """
-    keys: list[Any] = list(_capability_keys(repository_type, model))
+    keys: list[Any] = list(_standard_capability_keys(repository_type, model))
 
     for base in getattr(repository_type, "__orig_bases__", ()):
         origin: Any = getattr(base, "__origin__", base)
@@ -145,7 +148,7 @@ def _default_capability_keys(
     """
     if default_repository_type is None:
         return ()
-    return _capability_keys(default_repository_type, model)
+    return _standard_capability_keys(default_repository_type, model)
 
 
 @dataclass(frozen=True)
@@ -178,11 +181,11 @@ def _build_repository_specs(
 def _registered_repository_spec(
     registration: RepositoryRegistration,
 ) -> _RepositoryBindingSpec:
-    capability_keys = _detect_capability_keys(registration.repository_type, registration.model)
-    binding_key = capability_keys[0] if capability_keys else registration.repository_type
+    keys = capability_keys(registration.repository_type, registration.model)
+    binding_key = keys[0] if keys else registration.repository_type
     return _RepositoryBindingSpec(
         registration=registration,
-        capability_keys=capability_keys,
+        capability_keys=keys,
         binding_key=binding_key,
     )
 

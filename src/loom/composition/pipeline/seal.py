@@ -18,6 +18,8 @@ from loom.core.use_case.factory import ModelRead
 def seal(registered: Registered) -> None:
     """Seal the container and build its singletons; refuse an unservable store; verify use cases.
 
+    A lenient recipe stops after building the singletons.
+
     Raises:
         BootstrapError: Wrapping the failure of an ``APPLICATION`` binding's
             instantiation, cause chained.
@@ -26,12 +28,15 @@ def seal(registered: Registered) -> None:
         ResolutionError: When a use case's dependency or marker read cannot be served.
     """
     persisted, kernel = registered.persisted, registered.kernel
-    source, discovered = persisted.planned.source, persisted.planned.recipe.discovered
+    source, recipe = persisted.planned.source, persisted.planned.recipe
+    discovered = recipe.discovered
     kernel.container.seal()
     try:
         kernel.container.validate()
     except ResolutionError as exc:
         raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+    if recipe.lenient:
+        return
     _refuse_unservable_stores(
         kernel, (*discovered.use_cases, *discovered.jobs), source.catalog, persisted.factories
     )
