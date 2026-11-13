@@ -2,38 +2,12 @@
 
 An *execution* is one run of a use case, a job or an agent turn. Each one gets
 an :class:`ExecutionContext`, published in a :class:`~contextvars.ContextVar`
-for as long as the run lasts. The context answers two questions for code that
-runs inside it:
-
-- **Who is calling?** :attr:`ExecutionContext.identity` is the identity the
-  execution runs as, fixed when it starts. Handles (an agent, an MCP server, a
-  typed invoker) read it through :func:`execution_identity` at the moment they
-  are called, never when they are built, so one handle built at startup can
-  serve every caller (spec 011, D2).
-- **What has this execution already built?** The context holds a small cache
-  so a ``REQUEST`` binding is built once per execution and shared by the whole
-  graph of that execution (D4).
-
-Identity rules:
-    - **The caller decides the identity.** :func:`enter` installs exactly the
-      identity it is given; it does not inherit the enclosing execution's.
-      The one place that computes the effective identity (explicit, else the
-      enclosing execution's, else ``None``) is the executor, once per
-      execution (plan NS2).
-    - **Every execution has its own context.** :func:`enter` always builds a
-      new :class:`ExecutionContext`, so a nested execution gets a fresh cache
-      and shares no ``REQUEST`` instance with the one around it (L12),
-      whatever identity it runs as.
-    - **``None`` means "no caller".** An execution may run with no identity
-      (a job callback, D7, runs inside :func:`detached`). Reading the identity
-      there raises :class:`~loom.core.errors.Unauthenticated`.
-    - **No execution means no identity.** Outside an execution
-      :func:`execution_identity` raises :class:`ExecutionRequired`, even when
-      :func:`~loom.core.identity.set_identity` installed an identity in the
-      ambient context: the two are separate on purpose, and this module never
-      reads :func:`~loom.core.identity.current_identity`.
-    - **:data:`~loom.core.identity.ANONYMOUS` is an identity.** It is carried
-      like any other; refusing it is the consumer's rule.
+while it runs. Handles read its identity through :func:`execution_identity`
+when they are called, never when they are built (spec 011, D2), and a
+``REQUEST`` binding is built once per execution through its cache (D4). The
+rules live where they apply: inheritance and fresh contexts in :func:`enter`,
+the token pair in :func:`leave`, failing closed in :func:`execution_identity`,
+singleton construction in :class:`NoExecution`.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
@@ -41,22 +15,6 @@ Concurrency:
     keeps both if it outlives the execution. ``asyncio.to_thread`` copies the
     context too; ``loop.run_in_executor`` does not, so a handle called there
     fails closed with :class:`ExecutionRequired`.
-
-Token rule:
-    :func:`enter` and :func:`leave` are a pair: every token is left exactly
-    once, in the reverse order of entering, in the :mod:`contextvars` context
-    that entered it (a ``finally`` block does all three). A token left twice,
-    out of order, or after another execution was entered over it is misuse:
-    :func:`leave` then *closes* the current :mod:`contextvars` context and
-    raises :class:`RuntimeError`. A closed context reads as "no execution"
-    (:func:`current_execution` returns ``None``, :func:`execution_identity`
-    raises :class:`ExecutionRequired`) and stays closed: a later ``leave`` of
-    an enclosing token, or the end of a :class:`NoExecution` block, cannot
-    bring back a caller, so no identity survives the mistake. A token from
-    another :mod:`contextvars` context (a task that copied it) raises
-    :class:`ValueError` and changes nothing in either context.
-    :class:`ExecutionScope` and :class:`NoExecution` wrap the pair for code
-    that is not on the per-call hot path.
 """
 
 from __future__ import annotations
@@ -64,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Hashable
 from contextvars import ContextVar, Token
 from types import TracebackType
+from typing import cast
 
 from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionRequired
@@ -75,7 +34,7 @@ _NO_EXECUTION_MESSAGE = (
 )
 _NO_CALLER_MESSAGE = (
     "Authentication required: the execution in progress runs with no caller "
-    "(a job callback or a detached frame)."
+    "(such as a job callback)."
 )
 _MISUSED_TOKEN_MESSAGE = (
     "Execution token misuse: a token must be left once, in reverse order of entering; "
@@ -171,9 +130,13 @@ def current_execution() -> ExecutionContext | None:
 def enter(identity: Identity | None) -> Token[ExecutionContext | None]:
     """Open a new execution that runs as ``identity``.
 
-    No inheritance happens here: ``identity`` is installed as given, and
-    ``None`` means the execution runs with no caller even inside another
-    execution. The new context starts with an empty cache.
+    No inheritance happens here (NS2): ``identity`` is installed as given, even
+    inside another execution. The executor computes the effective identity
+    (explicit, else the enclosing execution's, else ``None``) once per
+    execution. ``None`` means no caller: job callbacks run under
+    ``enter(None)`` (D7). Every call builds a new :class:`ExecutionContext`,
+    so a nested execution gets a fresh cache and shares no ``REQUEST``
+    instance with the one around it (L12).
 
     Args:
         identity: The effective identity, computed by the caller.
@@ -198,18 +161,21 @@ def enter(identity: Identity | None) -> Token[ExecutionContext | None]:
 def leave(token: Token[ExecutionContext | None]) -> None:
     """Close the execution ``token`` opened and restore the one before it.
 
+    Leave every token exactly once, in reverse order of entering, in the
+    :mod:`contextvars` context that entered it: a ``finally`` block does all
+    three.
+
     Args:
-        token: The token returned by the matching :func:`enter` or
-            :func:`detached`.
+        token: The token returned by the matching :func:`enter`.
 
     Raises:
         RuntimeError: If ``token`` is not the token of the execution in
             progress (left twice, out of order, or with an execution entered
             over it and not left). The current :mod:`contextvars` context is
-            then closed, so every later identity read fails closed instead of
-            seeing a stale caller.
+            then *closed*: it reads as no execution, and no later ``leave``
+            or :class:`NoExecution` exit can bring a caller back.
         ValueError: If ``token`` was created in another :mod:`contextvars`
-            context; nothing changes in either context.
+            context (a task that copied it); nothing changes in either.
     """
     context = _current.get()
     if context is None or context._token is not token:  # pyright: ignore[reportPrivateUsage]
@@ -219,24 +185,11 @@ def leave(token: Token[ExecutionContext | None]) -> None:
     context._token = None  # pyright: ignore[reportPrivateUsage]
 
 
-def detached() -> Token[ExecutionContext | None]:
-    """Open an execution that runs with no caller, whatever encloses it.
-
-    Job callbacks run here (D7): a handle called inside raises
-    :class:`~loom.core.errors.Unauthenticated` instead of acting as the
-    execution that scheduled the job. Leave it with :func:`leave`.
-
-    Returns:
-        The token to pass to :func:`leave` in a ``finally`` block.
-    """
-    return enter(None)
-
-
 def execution_identity() -> Identity:
     """Return the identity of the execution in progress, failing closed.
 
-    This is what a handle reads each time it is called (D2). It never falls
-    back to :func:`~loom.core.identity.current_identity`.
+    It never falls back to :func:`~loom.core.identity.current_identity`: the
+    ambient identity and the execution identity are separate on purpose.
 
     Returns:
         The identity, :data:`~loom.core.identity.ANONYMOUS` included.
@@ -245,7 +198,8 @@ def execution_identity() -> Identity:
         ExecutionRequired: Outside any execution, even while
             :func:`~loom.core.identity.set_identity` is active, and in a
             context closed by a token misuse.
-        Unauthenticated: When the execution runs with no caller.
+        Unauthenticated: When the execution runs with no caller. Refusing
+            ``ANONYMOUS`` is the consumer's rule.
     """
     context = _current.get()
     if context is None:
@@ -262,10 +216,9 @@ def execution_identity() -> Identity:
 class ExecutionScope:
     """Run a ``with`` body as an execution with the given identity.
 
-    The class form of :func:`enter` / :func:`leave` for code that opens an
-    execution outside the executor: an agent run, or building a ``REQUEST``
-    binding outside any execution. One instance opens one execution at a
-    time; entering it again before leaving raises :class:`RuntimeError`.
+    The class form of :func:`enter` / :func:`leave` for code off the per-call
+    hot path: an agent run, or building a ``REQUEST`` binding outside any
+    execution. Entering an open instance again raises :class:`RuntimeError`.
 
     Args:
         identity: The identity the body runs as; ``None`` for no caller.
@@ -293,9 +246,7 @@ class ExecutionScope:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        token = self._token
-        if token is None:
-            raise RuntimeError("This ExecutionScope is not open")
+        token = cast("Token[ExecutionContext | None]", self._token)
         self._token = None
         leave(token)
 
@@ -304,15 +255,11 @@ class NoExecution:
     """Run a ``with`` body outside any execution, even inside one.
 
     Singletons are built here, so a constructor that reads the execution
-    identity raises :class:`ExecutionRequired` instead of freezing the
-    identity of whichever execution happened to build it first. The enclosing
-    execution, if any, is back after the body.
-
-    The body must leave every execution it enters. If one is still open when
-    the block ends, or a token misuse closed the context inside it, the block
-    closes the context and raises :class:`RuntimeError` instead of restoring
-    the enclosing execution: that execution may be the one a misused token
-    already tried to leave.
+    identity raises :class:`ExecutionRequired` instead of freezing whichever
+    caller built it first. The enclosing execution is back after the body,
+    unless the body left an execution open or misused a token: then the block
+    closes the context and raises :class:`RuntimeError`, since the enclosing
+    execution may be the one a misused token already tried to leave.
 
     Example::
 
@@ -336,9 +283,7 @@ class NoExecution:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        token = self._token
-        if token is None:
-            raise RuntimeError("This NoExecution is not open")
+        token = cast("Token[ExecutionContext | None]", self._token)
         self._token = None
         if _current.get() is not None:
             _current.set(_CLOSED)

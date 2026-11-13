@@ -8,20 +8,8 @@ from loom.core.errors import SystemError
 class ExecutionRequired(SystemError):
     """Raised when code reads the execution identity outside any execution.
 
-    The identity of a call is the identity of the execution in progress, read
-    when the call happens. Outside an execution there is no such identity, and
-    this error is raised instead of falling back to the ambient
-    :func:`~loom.core.identity.current_identity`: a handle used from a
-    singleton constructor, a module import or a thread pool that did not copy
-    the context fails closed rather than acting as whoever set the identity
-    last.
-
-    Args:
-        message: Names what needed the execution.
-
-    Example::
-
-        raise ExecutionRequired("acme.billing.InvoiceAgent was called outside an execution")
+    There is no fallback to the ambient identity: a handle called from a
+    singleton constructor or an uncopied thread fails closed.
     """
 
     retryable = False  # a programming error: a retry meets it again

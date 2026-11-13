@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, current_execution, enter, execution_identity, leave
 from loom.core.identity import Identity
 
@@ -53,6 +54,17 @@ def test_enter_installs_the_identity_given_without_inheriting() -> None:
         finally:
             leave(token)
         assert execution_identity() is _ALICE
+
+
+def test_enter_none_outside_any_execution_is_still_an_execution() -> None:
+    """D7: a job callback runs under ``enter(None)``; it has no caller, not no execution."""
+    token = enter(None)
+    try:
+        with pytest.raises(Unauthenticated):
+            execution_identity()
+    finally:
+        leave(token)
+    assert current_execution() is None
 
 
 def test_the_identity_of_an_execution_is_read_only() -> None:

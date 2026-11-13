@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from loom.core.errors import Unauthenticated
 from loom.core.execution import (
     ExecutionRequired,
     ExecutionScope,
@@ -34,11 +33,6 @@ def test_no_execution_raises_execution_required_even_with_an_ambient_identity() 
             execution_identity()
     finally:
         reset_identity(token)
-
-
-def test_an_execution_with_no_caller_raises_unauthenticated() -> None:
-    with ExecutionScope(None), pytest.raises(Unauthenticated):
-        execution_identity()
 
 
 def test_the_anonymous_identity_is_carried_like_any_other() -> None:
@@ -99,12 +93,6 @@ async def test_a_cancelled_body_closes_the_execution() -> None:
     assert current_identity() is ANONYMOUS
 
 
-def test_an_unresolved_marker_reads_as_an_absent_attribute() -> None:
-    """S4: ``getattr`` with a default and ``hasattr`` treat it as missing."""
-
-    class AcmeMarker:
-        def __getattr__(self, name: str) -> object:
-            raise MarkerNotResolved(name)
-
-    assert getattr(AcmeMarker(), "ask", None) is None
-    assert not hasattr(AcmeMarker(), "ask")
+def test_an_unresolved_marker_is_an_attribute_error() -> None:
+    """S4; T07 owns the marker behaviour."""
+    assert issubclass(MarkerNotResolved, AttributeError)
