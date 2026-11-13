@@ -445,6 +445,19 @@
   `loom.composition.pipeline.load.load_application_config` and
   `loom.composition.pipeline.load.add_code_path`.
 
+### plugins
+
+- **plugins:** `loom.core.plugins.entrypoints.list_entry_points` reads the
+  installed distributions once per entry-point group for the life of the
+  process, instead of on every lookup; each read takes milliseconds. Composing
+  an application whose two stores both host models read them 4 times; the
+  first composition in a process now reads them once and every later one
+  not at all (4 → 1 → 0; with one store, 2 → 1 → 0). A group with no entry
+  point is cached too. A distribution installed after the first lookup of its
+  group (persistence backends, AI engines, ...) is no longer seen until the
+  process restarts; a long-lived process that installs a plugin later calls
+  `list_entry_points.cache_clear()` first.
+
 ### ai
 
 - **ai:** an MCP call that may have run on the server and failed (a cut

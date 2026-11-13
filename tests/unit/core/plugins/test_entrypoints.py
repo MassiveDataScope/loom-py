@@ -1,8 +1,8 @@
 """Unit tests for the shared entry-point loader.
 
 These tests pin the public contract of ``loom.core.plugins.entrypoints``:
-duplicate-name policies, ``None`` on a miss, the not-found error and the
-API-version handshake.
+duplicate-name policies, ``None`` on a miss, the not-found error, the
+API-version handshake and one read of the installed distributions per group.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from loom.core.plugins.entrypoints import (
     EntryPointError,
     EntryPointNotFoundError,
     check_api_version,
+    list_entry_points,
     load_entry_point,
     select_entry_point,
 )
@@ -552,3 +553,23 @@ class TestCheckApiVersion:
             check_api_version(engine, self.REQUIREMENT)
 
         assert excinfo.value.requirement is self.REQUIREMENT
+
+
+class TestReadOncePerGroup:
+    def test_reads_the_installed_distributions_once_per_group(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reads: list[str] = []
+
+        def counted() -> _FakeEntryPoints:
+            reads.append("entry_points")
+            return _FakeEntryPoints((_FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("a")),))
+
+        monkeypatch.setattr(entrypoints_module, "entry_points", counted)
+
+        for _ in range(3):
+            load_entry_point(_GROUP, _NAME, on_duplicate="error")
+        list_entry_points("loom.persistence.backends")
+
+        assert len(reads) == 2
