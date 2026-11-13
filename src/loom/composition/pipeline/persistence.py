@@ -1,14 +1,15 @@
-"""Build store wiring and resources before kernel registration."""
+"""Build the job settings, store wirings and store resources before any registration."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from loom.composition.pipeline.planning import Planned
 from loom.composition.recipe import Recipe
 from loom.composition.resources import Resource, ResourceKind
-from loom.composition.source import CompositionSource
 from loom.core.config import ConfigError, ConfigKey
+from loom.core.job.config import JobSettings
 from loom.core.persistence import BackendRuntime, PersistenceWiring
 from loom.core.persistence.stores import DEFAULT_STORE, DEFAULT_STORE_PATH, StoreKey
 from loom.core.repository.abc import CursorCodec
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Persisted:
+    """The planned composition with its job settings and one wiring and resource per store."""
+
+    planned: Planned
+    job_settings: JobSettings
     wirings: dict[StoreKey, PersistenceWiring]
     store_resources: tuple[Resource, ...]
 
@@ -29,9 +34,18 @@ class Persisted:
         return {key: w.uow_factory for key, w in self.wirings.items() if w.uow_factory is not None}
 
 
-def persist(source: CompositionSource, recipe: Recipe) -> Persisted:
+def persist(planned: Planned) -> Persisted:
+    """Read each job's settings, then build and prepare every store the discovered models use.
+
+    Raises:
+        ConfigError: When a job's settings, ``persistence.cursors`` or a
+            store section is invalid, or a store is named after the default
+            store's backend.
+    """
+    source, recipe = planned.source, planned.recipe
     ctx = source.config
     discovered = recipe.discovered
+    job_settings = JobSettings.from_config(ctx, discovered.jobs)
     catalog = source.catalog
     stores = catalog.models_by_store(discovered.models)
     backends = {key: source.backend(key, default=recipe.default_backend) for key in stores}
@@ -57,7 +71,12 @@ def persist(source: CompositionSource, recipe: Recipe) -> Persisted:
         wiring.prepare_models(models)
         label = default_label if key == DEFAULT_STORE else key
         store_resources.append(_store_resource(key, wiring, label=label))
-    return Persisted(wirings=wirings, store_resources=tuple(store_resources))
+    return Persisted(
+        planned=planned,
+        job_settings=job_settings,
+        wirings=wirings,
+        store_resources=tuple(store_resources),
+    )
 
 
 def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:

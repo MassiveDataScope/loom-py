@@ -1,15 +1,31 @@
-"""Run deploy checks after the adapter has discovered its recipe."""
+"""Take the adapter's recipe and run the deploy checks on it."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from loom.composition.recipe import Adapter, Recipe
 from loom.composition.source import CompositionSource
 from loom.core.checks import enforce_deploy_checks
 
 
-def plan(source: CompositionSource, adapter: Adapter[object]) -> Recipe:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Planned:
+    """What to compose: the loaded source and the recipe its adapter declared."""
+
+    source: CompositionSource
+    recipe: Recipe
+
+
+def plan(source: CompositionSource, adapter: Adapter[object]) -> Planned:
+    """Ask *adapter* for its recipe, then refuse a failing deploy check.
+
+    Raises:
+        DeployCheckError: When a deploy check of level error fails in a
+            deployed environment.
+    """
     recipe = adapter.recipe(source)
     # After the code path and discovery: checks.modules may name the
     # application's modules, and no resource exists yet.
     enforce_deploy_checks(source.config, source.environment, skip=recipe.skip_checks)
-    return recipe
+    return Planned(source=source, recipe=recipe)

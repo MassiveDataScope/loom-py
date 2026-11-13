@@ -14,7 +14,9 @@ import pytest
 from loom.composition import AppConfig, Application, CompositionSource, Recipe
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
@@ -55,21 +57,23 @@ def composition_source(
 
 
 class Serving:
-    """An adapter composing exactly the models, use cases and jobs it is given."""
+    """An adapter composing exactly the models, use cases and jobs it is given, with *overrides*."""
 
     def __init__(
         self,
         *models: type[BaseModel],
         use_cases: tuple[type, ...] = (),
         jobs: tuple[type, ...] = (),
+        overrides: tuple[Callable[[LoomContainer], None], ...] = (),
     ) -> None:
         self.discovered = DiscoveryResult(
             models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
         )
+        self.overrides = overrides
 
     def recipe(self, source: CompositionSource) -> Recipe:
         del source
-        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered)
+        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered, overrides=self.overrides)
 
     def bind(self, application: Application) -> Application:
         return application
@@ -98,6 +102,20 @@ def fixture_project(tmp_path: Path) -> ProjectFactory:
         return write_project(directory, **options)
 
     return write
+
+
+@pytest.fixture
+def executors(monkeypatch: pytest.MonkeyPatch) -> list[RuntimeExecutor]:
+    """Every ``RuntimeExecutor`` constructed during the test, in order."""
+    built: list[RuntimeExecutor] = []
+    construct = RuntimeExecutor.__init__
+
+    def counted(self: RuntimeExecutor, *args: Any, **kwargs: Any) -> None:
+        built.append(self)
+        construct(self, *args, **kwargs)
+
+    monkeypatch.setattr(RuntimeExecutor, "__init__", counted)
+    return built
 
 
 @pytest.fixture

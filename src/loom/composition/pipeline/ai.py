@@ -8,16 +8,15 @@ from loom.composition._ai import (
     bind_mcp_resolver,
     marker_agents,
     reject_ai_markers,
+    reject_manifest_agents_without_ai_section,
     resolve_ai,
     verify_agent_markers,
     verify_mcp_markers,
 )
 from loom.composition.pipeline.registration import Registered
-from loom.composition.recipe import Recipe
-from loom.composition.source import CompositionSource
 
 
-def wire_ai(source: CompositionSource, recipe: Recipe, registered: Registered) -> AiWiring:
+def wire_ai(registered: Registered) -> AiWiring:
     """Build the agent runtime when the entry point hosts it, else nothing.
 
     An entry point that does not host agents still refuses, at start-up, any
@@ -27,14 +26,14 @@ def wire_ai(source: CompositionSource, recipe: Recipe, registered: Registered) -
     Raises:
         AgentCompilationError: When a marker cannot be satisfied.
     """
-    from loom.composition import build
-
-    ctx, kernel = source.config, registered.kernel
+    planned = registered.persisted.planned
+    source, recipe, kernel = planned.source, planned.recipe, registered.kernel
+    ctx = source.config
     discovered = recipe.discovered
     if not recipe.agents:
         reject_ai_markers(discovered.use_cases, kernel.compiler, kernel.registry)
         return AiWiring(config=None, runtime=None)
-    build.reject_manifest_agents_without_ai_section(ctx, discovered.agent_specs)
+    reject_manifest_agents_without_ai_section(ctx, discovered.agent_specs)
     use_case_mcp_bindings = verify_mcp_markers(
         discovered.use_cases, kernel.compiler, kernel.registry, ctx
     )

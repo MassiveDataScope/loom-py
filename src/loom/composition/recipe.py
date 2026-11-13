@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
@@ -10,6 +11,7 @@ from loom.core.persistence.stores import NONE_BACKEND
 if TYPE_CHECKING:
     from loom.composition.application import Application
     from loom.composition.source import CompositionSource
+    from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
@@ -42,6 +44,10 @@ class Recipe:
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
             :class:`~loom.core.persistence.BackendRuntime`).
+        overrides: DI modules run right after the caller's modules, under the
+            same reserved-key check; a test double of a repository binds under
+            the key its store would bind it. Set by the testing harness; no
+            production entry point sets them.
     """
 
     profile: RuntimeProfile
@@ -53,6 +59,7 @@ class Recipe:
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
+    overrides: tuple[Callable[[LoomContainer], None], ...] = ()
 
 
 class Adapter(Protocol[T_co]):

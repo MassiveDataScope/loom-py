@@ -11,7 +11,7 @@
       "scope": "APPLICATION"
     },
     "AppConfig": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "_bind_application.<locals>.<lambda>",
       "resolved": "AppConfig",
       "scope": "APPLICATION"
     },
@@ -41,7 +41,7 @@
       "scope": "APPLICATION"
     },
     "Environment": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "_bind_application.<locals>.<lambda>",
       "resolved": "Environment",
       "scope": "APPLICATION"
     },
@@ -51,7 +51,7 @@
       "scope": "APPLICATION"
     },
     "ObservabilityRuntime": {
-      "provider": "compose_application.<locals>.<lambda>",
+      "provider": "_bind_application.<locals>.<lambda>",
       "resolved": "ObservabilityRuntime",
       "scope": "APPLICATION"
     },
@@ -86,12 +86,12 @@
       "scope": "APPLICATION"
     },
     "StoreCatalog": {
-      "provider": "compose_application.<locals>.<lambda>",
+      "provider": "_bind_application.<locals>.<lambda>",
       "resolved": "StoreCatalog",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "_compiled.<locals>.<lambda>",
       "resolved": "UseCaseFactory",
       "scope": "APPLICATION"
     },
@@ -172,9 +172,9 @@
     }
   },
   "executors": {
-    "constructed": 2,
+    "constructed": 1,
     "served": [
-      1
+      0
     ]
   },
   "repo_bindings": {

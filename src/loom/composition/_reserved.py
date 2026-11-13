@@ -49,7 +49,7 @@ def reserved_keys(stores: Iterable[StoreKey]) -> tuple[BindingKey, ...]:
 def refusing_reserved(
     modules: Sequence[Callable[[LoomContainer], None]], stores: Sequence[StoreKey]
 ) -> list[Callable[[LoomContainer], None]]:
-    """Wrap each caller module so binding a reserved key fails right after it runs.
+    """Wrap each caller module so binding or replacing a reserved key fails right after it runs.
 
     ``JobService``, repositories and ``DefaultRepositoryBuilder`` are not
     reserved: the framework registers them only where no module did.
@@ -65,9 +65,12 @@ def _refusing(
 ) -> Callable[[LoomContainer], None]:
     @functools.wraps(module)
     def register(container: LoomContainer) -> None:
+        view = container.bindings()
+        before = dict(view)
         module(container)
+        # Listed after the module ran: it may have imported a store's sessions class.
         for key in reserved_keys(stores):
-            if container.is_registered(key):
+            if view.get(key) is not before.get(key):
                 raise ReservedBindingError.for_key(module, key)
 
     return register

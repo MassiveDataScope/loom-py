@@ -115,7 +115,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         captured["runtime"] = observability_runtime
         return FastAPI()
 
-    monkeypatch.setattr("loom.composition.build.load_application_config", _fake_load)
+    monkeypatch.setattr("loom.composition.pipeline.load.load_application_config", _fake_load)
     monkeypatch.setattr(ObservabilityRuntime, "from_config", classmethod(_fake_from_config))
     # The config names no interface module. An empty result lets recipe()
     # continue so create_app still mounts the middlewares under test.
@@ -123,10 +123,12 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         "loom.rest.fastapi.adapter._discover_components",
         lambda _source: DiscoveryResult(models=(), use_cases=(), interfaces=()),
     )
-    monkeypatch.setattr("loom.composition.build.configure_job_service", _fake_configure_job_service)
+    monkeypatch.setattr(
+        "loom.composition.pipeline.registration.configure_job_service", _fake_configure_job_service
+    )
     monkeypatch.setattr("loom.rest.fastapi.adapter.create_fastapi_app", _fake_create_fastapi_app)
     monkeypatch.setattr(
-        "loom.composition.build.add_code_path",
+        "loom.composition.pipeline.load.add_code_path",
         lambda code_path, config_dir: Path(code_path),
     )
 

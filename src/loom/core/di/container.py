@@ -11,8 +11,9 @@ resolved eagerly for ``APPLICATION`` scope during validation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, TypeVar
 
 from loom.core.di.scope import Scope
@@ -204,6 +205,16 @@ class LoomContainer:
                         f"Failed to instantiate APPLICATION-scope binding "
                         f"for {_describe_key(interface)}: {exc}"
                     ) from exc
+
+    def bindings(self) -> Mapping[BindingKey, object]:
+        """Every bound key, as a read-only view that follows later registrations.
+
+        Each value is an opaque token standing for the key's binding, only
+        meant to be compared by identity: :meth:`register` and
+        :meth:`register_instance` give a key a new one, so a key whose token
+        changed between two reads was bound or replaced in between.
+        """
+        return MappingProxyType(self._bindings)
 
     def is_registered(self, interface: BindingKey) -> bool:
         """Return ``True`` if ``interface`` has a registered binding.

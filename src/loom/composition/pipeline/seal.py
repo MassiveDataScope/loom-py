@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from loom.composition.pipeline.persistence import Persisted
 from loom.composition.pipeline.registration import Registered
-from loom.composition.recipe import Recipe
-from loom.composition.source import CompositionSource
 from loom.core.bootstrap import KernelRuntime
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExistsStep, LoadStep
@@ -17,10 +14,16 @@ from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStor
 from loom.core.use_case.factory import ModelRead
 
 
-def seal(
-    source: CompositionSource, recipe: Recipe, persisted: Persisted, registered: Registered
-) -> None:
-    kernel, discovered = registered.kernel, recipe.discovered
+def seal(registered: Registered) -> None:
+    """Refuse a store no invocation could commit, then verify every use case can be built.
+
+    Raises:
+        UncomposedWriteStore: See :func:`_refuse_unservable_stores`.
+        JoinedAutocommitStore: See :func:`_refuse_unservable_stores`.
+        ResolutionError: When a use case's dependency or marker read cannot be served.
+    """
+    persisted, kernel = registered.persisted, registered.kernel
+    source, discovered = persisted.planned.source, persisted.planned.recipe.discovered
     _refuse_unservable_stores(
         kernel, (*discovered.use_cases, *discovered.jobs), source.catalog, persisted.factories
     )

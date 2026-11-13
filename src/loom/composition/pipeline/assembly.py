@@ -6,33 +6,25 @@ from collections.abc import Sequence
 
 from loom.composition._ai import AiWiring
 from loom.composition.application import Application
-from loom.composition.pipeline.persistence import Persisted
 from loom.composition.pipeline.registration import Registered
-from loom.composition.recipe import Recipe
 from loom.composition.resources import Resource, ResourceKind, closing
-from loom.composition.source import CompositionSource
 from loom.core.cache.wiring import CacheGateways
-from loom.core.job.config import JobSettings
 
 
-def assemble(
-    source: CompositionSource,
-    recipe: Recipe,
-    persisted: Persisted,
-    registered: Registered,
-    ai: AiWiring,
-    job_settings: JobSettings,
-) -> Application:
+def assemble(registered: Registered, ai: AiWiring) -> Application:
+    """The composed application, owning every resource the phases built."""
+    persisted = registered.persisted
+    source = persisted.planned.source
     return Application(
         kernel=registered.kernel,
         config=source.config,
         environment=source.environment,
         code_path=source.code_path,
-        discovered=recipe.discovered,
+        discovered=persisted.planned.recipe.discovered,
         observability=source.observability,
         sql=registered.sql,
         ai=ai,
-        job_settings=job_settings,
+        job_settings=persisted.job_settings,
         resources=_resources(registered, persisted.store_resources, ai),
     )
 

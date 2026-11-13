@@ -388,6 +388,26 @@
 
 ## ⚠ Behaviour changes
 
+### composition
+
+- **composition:** a composed application (`create_app`, `build_application`,
+  `compose_application`, the Celery worker and every Lambda entry) builds one
+  `RuntimeExecutor`, not a throwaway one first. An `APPLICATION` provider that
+  resolves `RuntimeExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
+  `ObservabilityRuntime` or `StoreCatalog` while start-up validates the
+  container gets the application's own instances.
+- **composition:** a composed application no longer logs the `[BOOT]`
+  container, module, validation and completion info lines of
+  `bootstrap_app`; the use-case compilation lines stay.
+- **composition:** `loom.composition.build` no longer re-exports
+  `configure_job_service`, `reject_manifest_agents_without_ai_section`,
+  `load_application_config` or `add_code_path`. A test that patched them there
+  patches the phase module that calls them instead:
+  `loom.composition.pipeline.registration.configure_job_service`,
+  `loom.composition.pipeline.ai.reject_manifest_agents_without_ai_section`,
+  `loom.composition.pipeline.load.load_application_config` and
+  `loom.composition.pipeline.load.add_code_path`.
+
 ### ai
 
 - **ai:** an MCP call that may have run on the server and failed (a cut

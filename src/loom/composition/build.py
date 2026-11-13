@@ -5,18 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
-from loom.composition._ai import (
-    reject_manifest_agents_without_ai_section as reject_manifest_agents_without_ai_section,
-)
-from loom.composition._jobs import configure_job_service as configure_job_service
 from loom.composition.application import Application
 from loom.composition.pipeline import compose
-from loom.composition.pipeline.load import load_source
+from loom.composition.pipeline.load import load_source as load_source
 from loom.composition.source import CompositionSource
 from loom.core.config import ConfigError, ConfigResolver
-from loom.core.config.overrides import load_application_config as load_application_config
 from loom.core.environment import Environment
-from loom.core.locator import add_code_path as add_code_path
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Adapter
@@ -198,11 +192,4 @@ def compose_application(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    observability, catalog = source.observability, source.catalog
-    return compose(
-        source,
-        adapter,
-        modules=modules,
-        observability_provider=lambda: observability,
-        catalog_provider=lambda: catalog,
-    )
+    return compose(source, adapter, modules=modules)

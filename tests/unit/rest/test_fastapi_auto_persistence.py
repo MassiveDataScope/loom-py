@@ -86,7 +86,7 @@ def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     # Composition now refuses manifest agents when the ai section is absent.
     # These tests select a persistence backend; they never build an agent runtime.
     monkeypatch.setattr(
-        "loom.composition.build.reject_manifest_agents_without_ai_section",
+        "loom.composition.pipeline.ai.reject_manifest_agents_without_ai_section",
         lambda _ctx, _specs: None,
     )
 

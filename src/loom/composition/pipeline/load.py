@@ -7,7 +7,9 @@ from pathlib import Path
 
 from loom.composition.source import AppConfig, CompositionSource
 from loom.core.config import ConfigError, ConfigKey, ConfigResolver, with_default_resolvers
+from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, resolve_environment, select_config_paths
+from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 
@@ -37,11 +39,9 @@ def load_source(
     Raises:
         ConfigError: When the configuration is incomplete or invalid.
     """
-    from loom.composition import build
-
     resolved_environment = resolve_environment(environment)
     paths = select_config_paths(config_paths, config_dir, resolved_environment, caller=caller)
-    ctx = build.load_application_config(
+    ctx = load_application_config(
         *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
     )
     observability_config = ctx.section_or_default(
@@ -60,7 +60,7 @@ def load_source(
     return CompositionSource(
         config=ctx,
         environment=resolved_environment,
-        code_path=build.add_code_path(
+        code_path=add_code_path(
             code_path if code_path is not None else app_cfg.code_path, config_root
         ),
         config_root=config_root,

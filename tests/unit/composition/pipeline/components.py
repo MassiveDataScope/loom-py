@@ -13,11 +13,14 @@ from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.job.job import Job
+from loom.core.job.service import JobService
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.abc import RepoFor
+from loom.core.repository.registry import RepositoryToken
 from loom.core.sql import SqlQueryService
 from loom.core.use_case import Agent, Input, Joined, LoadById, Mcp, UseCase
 from loom.rest.model import RestInterface, RestRoute
+from loom.testing.in_memory import InMemoryRepository
 
 
 class AcmeRecord(BaseModel):
@@ -199,3 +202,16 @@ def raises_at_registration(container: LoomContainer) -> None:
     """Fails while it registers."""
     del container
     raise RuntimeError("acme module failed")
+
+
+FAKE_RECORDS = InMemoryRepository(AcmeRecord)
+"""The repository an override binds for ``AcmeRecord``."""
+
+FAKE_JOBS = object()
+"""The ``JobService`` an override binds."""
+
+
+def overrides_repository_and_jobs(container: LoomContainer) -> None:
+    """Binds ``FAKE_RECORDS`` under the default store's key of ``AcmeRecord``, and ``FAKE_JOBS``."""
+    container.register_instance(RepositoryToken(AcmeRecord), FAKE_RECORDS)
+    container.register_instance(JobService, FAKE_JOBS)
