@@ -3,61 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
 from loom.composition._ai import (
-    AiWiring,
-    bind_agent_resolver,
-    bind_mcp_resolver,
-    marker_agents,
-    reject_ai_markers,
-    reject_manifest_agents_without_ai_section,
-    resolve_ai,
-    verify_agent_markers,
-    verify_mcp_markers,
+    reject_manifest_agents_without_ai_section as reject_manifest_agents_without_ai_section,
 )
-from loom.composition._jobs import configure_job_service
-from loom.composition._reserved import refusing_reserved
-from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
+from loom.composition._jobs import configure_job_service as configure_job_service
 from loom.composition.application import Application
-from loom.composition.resources import Resource, ResourceKind, closing
-from loom.composition.source import AppConfig, CompositionSource
-from loom.core.authz.elevation import ElevationSink
-from loom.core.bootstrap import KernelRuntime, create_kernel
-from loom.core.cache.wiring import CacheGateways, cache_module_for
-from loom.core.checks import enforce_deploy_checks
-from loom.core.config import ConfigError, ConfigKey, ConfigResolver, with_default_resolvers
-from loom.core.config.overrides import load_application_config
-from loom.core.di.scope import Scope
-from loom.core.engine.compilable import Compilable
-from loom.core.engine.plan import ExistsStep, LoadStep
-from loom.core.environment import Environment, resolve_environment, select_config_paths
-from loom.core.job.config import JobSettings
-from loom.core.locator import add_code_path
-from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.elevation import ScopedElevationSink
-from loom.core.persistence.stores import (
-    DEFAULT_STORE,
-    DEFAULT_STORE_PATH,
-    StoreCatalog,
-    StoreKey,
-)
-from loom.core.repository.abc import CursorCodec
-from loom.core.uow.abc import UnitOfWorkFactory
-from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
-from loom.core.use_case.errors import (
-    JoinedAutocommitStore,
-    UncomposedWriteStore,
-    UseCaseErrorCode,
-)
-from loom.core.use_case.factory import ModelRead
+from loom.composition.pipeline.load import load_source
+from loom.composition.source import CompositionSource
+from loom.core.config import ConfigError, ConfigResolver
+from loom.core.config.overrides import load_application_config as load_application_config
+from loom.core.environment import Environment
+from loom.core.locator import add_code_path as add_code_path
 
 if TYPE_CHECKING:
-    from loom.composition.recipe import Adapter, Recipe
-    from loom.core.config import ConfigContext
+    from loom.composition.recipe import Adapter
     from loom.core.di.container import LoomContainer
 
 T = TypeVar("T")
@@ -205,61 +166,6 @@ def build_application(
     return compose_application(source, adapter, modules=modules)
 
 
-def load_source(
-    *config_paths: str,
-    config_dir: str | None,
-    environment: Environment | str | None,
-    code_path: str | None,
-    resolvers: Sequence[ConfigResolver],
-    caller: str,
-) -> CompositionSource:
-    """Load the configuration, environment and code an application composes from.
-
-    Args:
-        *config_paths: See :func:`create_app`.
-        config_dir: See :func:`create_app`.
-        environment: See :func:`create_app`.
-        code_path: See :func:`create_app`.
-        resolvers: See :func:`create_app`.
-        caller: Entry point named when the paths are invalid.
-
-    Returns:
-        The loaded source.
-
-    Raises:
-        ConfigError: When the configuration is incomplete or invalid.
-    """
-    resolved_environment = resolve_environment(environment)
-    paths = select_config_paths(config_paths, config_dir, resolved_environment, caller=caller)
-    ctx = load_application_config(
-        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
-    )
-    observability_config = ctx.section_or_default(
-        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
-    )
-    observability = ObservabilityRuntime.from_config(
-        observability_config, environment=resolved_environment
-    )
-    if not ctx.has(f"{ConfigKey.APP}.name"):
-        raise ConfigError(
-            f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
-            "it labels the API, the worker and their metrics"
-        )
-    app_cfg = ctx.section(ConfigKey.APP, AppConfig)
-    config_root = Path(paths[0]).resolve().parent
-    return CompositionSource(
-        config=ctx,
-        environment=resolved_environment,
-        code_path=add_code_path(
-            code_path if code_path is not None else app_cfg.code_path, config_root
-        ),
-        config_root=config_root,
-        app=app_cfg,
-        observability=observability,
-        observability_config=observability_config,
-    )
-
-
 def compose_application(
     source: CompositionSource,
     adapter: Adapter[object],
@@ -291,274 +197,12 @@ def compose_application(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    ctx, observability = source.config, source.observability
-    recipe = adapter.recipe(source)
-    # After the code path and discovery: checks.modules may name the
-    # application's modules, and no resource exists yet.
-    enforce_deploy_checks(ctx, source.environment, skip=recipe.skip_checks)
+    from loom.composition.pipeline import compose
 
-    discovered = recipe.discovered
-    job_settings = JobSettings.from_config(ctx, discovered.jobs)
-    catalog = source.catalog
-    stores = catalog.models_by_store(discovered.models)
-    backends = {key: source.backend(key, default=recipe.default_backend) for key in stores}
-    default_label = backends[DEFAULT_STORE].name
-    if default_label in stores:
-        raise ConfigError(
-            f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
-            f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
-        )
-    cursor_codec = _cursor_codec(ctx, recipe)
-    wirings: dict[StoreKey, PersistenceWiring] = {}
-    store_resources: list[Resource] = []
-    for key, models in stores.items():
-        runtime = BackendRuntime(
-            recipe.profile,
-            pool_metrics=recipe.pool_metrics,
-            connection_only=recipe.connection_only,
-            catalog=catalog,
-            store=key,
-            cursor_codec=cursor_codec,
-        )
-        wiring = wirings[key] = backends[key].build(ctx, models, runtime)
-        wiring.prepare_models(models)
-        label = default_label if key == DEFAULT_STORE else key
-        store_resources.append(_store_resource(key, wiring, label=label))
-    factories = {key: w.uow_factory for key, w in wirings.items() if w.uow_factory is not None}
-    # Caller modules first, then repositories, then the framework's own. A
-    # caller module binding a framework-owned key fails right after it runs.
-    kernel = create_kernel(
-        config=source.app,
-        use_cases=discovered.use_cases,
-        modules=[
-            *refusing_reserved(modules, tuple(catalog.specs)),
-            *(wiring.repo_registration_module for wiring in wirings.values()),
-            cache_module_for(ctx),
-            *_elevation_modules(wirings),
-        ],
-        coordinator=(
-            OrderedCommits(factories, rollback_timeout=_rollback_timeout(ctx))
-            if factories
-            else None
-        ),
-        metrics=recipe.metrics,
-        environment=source.environment,
-    )
-    job_resources = configure_job_service(
-        ctx,
-        kernel,
-        observability,
-        backend=source.app.job_service,
-        jobs=discovered.jobs,
-        settings=job_settings,
-    )
-    sql = resolve_sql(ctx)
-    register_sql_collaborators(kernel.container, sql, observability)
-    # Registered, not merely passed: capability spans resolve it from the
-    # container, and an unregistered runtime makes every Scope.TOOL span a
-    # silent no-op in production while passing every test that injects one.
-    kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
-    kernel.container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
-    ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
-    _refuse_unservable_stores(kernel, (*discovered.use_cases, *discovered.jobs), catalog, factories)
-    kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
-
-    return Application(
-        kernel=kernel,
-        config=ctx,
-        environment=source.environment,
-        code_path=source.code_path,
-        discovered=discovered,
-        observability=observability,
-        sql=sql,
-        ai=ai,
-        job_settings=job_settings,
-        resources=_resources(
-            kernel=kernel,
-            stores=store_resources,
-            sql=sql,
-            ai=ai,
-            job_resources=job_resources,
-        ),
-    )
-
-
-def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:
-    """The application's one cursor codec, shared by every store; none without repositories.
-
-    Built before any store: an invalid ``persistence.cursors`` fails with no
-    engine or client built.
-    """
-    if recipe.connection_only or not recipe.discovered.models:
-        return None
-    return CursorCodec.from_context(ctx)
-
-
-def _rollback_timeout(ctx: ConfigContext) -> float:
-    """``persistence.rollback_timeout``: seconds the rollbacks of one invocation may take together.
-
-    Raises:
-        ConfigError: When it is not above zero.
-    """
-    timeout = ctx.section_or_default("persistence.rollback_timeout", float, ROLLBACK_TIMEOUT_S)
-    if timeout <= 0:
-        raise ConfigError(f"persistence.rollback_timeout must be above zero, got {timeout}")
-    return timeout
-
-
-def _elevation_modules(
-    wirings: Mapping[StoreKey, PersistenceWiring],
-) -> list[Callable[[LoomContainer], None]]:
-    """Register the one elevation sink of the stores whose sessions carry elevation flags.
-
-    Run once every store's models are prepared: the sink knows each store's
-    elevable scopes, and the product's elevations are checked against all of
-    them. Without such a store nothing is registered.
-
-    Raises:
-        ConfigError: See :func:`~loom.core.persistence.elevation.validate_elevations`.
-    """
-    stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
-    if not stores:
-        return []
-    sink = ScopedElevationSink(stores)
-    return [lambda container: container.register_instance(ElevationSink, sink)]
-
-
-def _marker_reads(
-    kernel: KernelRuntime, use_cases: Sequence[type[Compilable]]
-) -> tuple[ModelRead, ...]:
-    """The models the compiled plans read through ``LoadById``, ``Load`` or ``Exists``."""
-    reads: list[ModelRead] = []
-    for use_case in use_cases:
-        plan = kernel.compiler.get_plan(use_case)
-        if plan is None:
-            continue
-        steps: tuple[LoadStep | ExistsStep, ...] = (*plan.load_steps, *plan.exists_steps)
-        reads.extend(ModelRead(use_case, step.name, step.entity_type) for step in steps)
-    return tuple(reads)
-
-
-def _refuse_unservable_stores(
-    kernel: KernelRuntime,
-    components: Sequence[type[Compilable]],
-    catalog: StoreCatalog,
-    factories: Mapping[StoreKey, UnitOfWorkFactory],
-) -> None:
-    """Refuse a store a component writes to that its invocation could not commit.
-
-    Compiles each use case or job, as its first execution would. A read-only
-    one writes nowhere; without any unit of work every execution runs bare.
-
-    Raises:
-        CompilationError: When a component does not compile.
-        ConfigError: When a primary or joined store is not declared.
-        JoinedAutocommitStore: When a joined store is not transactional.
-        UncomposedWriteStore: When a store written to has no unit of work.
-    """
-    for component in components:
-        plan = kernel.compiler.compile(component)
-        if plan.primary != DEFAULT_STORE:
-            catalog.require(plan.primary, purpose=f"the __store__ of {component.__qualname__}")
-        for key in sorted(plan.joined):
-            spec = catalog.require(key, purpose=f"Joined in {component.__qualname__}")
-            if not spec.capabilities.transactional:
-                issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
-                    component=component, store=key
-                )
-                raise JoinedAutocommitStore(issue)
-        uncomposed = sorted({plan.primary, *plan.joined} - factories.keys())
-        if factories and not plan.read_only and uncomposed:
-            issue = UseCaseErrorCode.UNCOMPOSED_WRITE_STORE.issue(
-                component=component, store=uncomposed[0]
-            )
-            raise UncomposedWriteStore(issue)
-
-
-def _compose_agents(
-    ctx: ConfigContext,
-    recipe: Recipe,
-    kernel: KernelRuntime,
-    sql: SqlWiring,
-    code_path: Path,
-) -> AiWiring:
-    """Build the agent runtime when the entry point hosts it, else nothing.
-
-    An entry point that does not host agents still refuses, at start-up, any
-    compiled use case declaring an ``Agent()`` or ``Mcp()`` marker. One that
-    serves no agent endpoints builds only the agents a marker names.
-
-    Raises:
-        AgentCompilationError: When a marker cannot be satisfied.
-    """
-    discovered = recipe.discovered
-    if not recipe.agents:
-        reject_ai_markers(discovered.use_cases, kernel.compiler, kernel.registry)
-        return AiWiring(config=None, runtime=None)
-    reject_manifest_agents_without_ai_section(ctx, discovered.agent_specs)
-    use_case_mcp_bindings = verify_mcp_markers(
-        discovered.use_cases, kernel.compiler, kernel.registry, ctx
-    )
-    ai = resolve_ai(
-        ctx,
-        kernel=kernel,
-        sql_cfg=sql.config,
-        code_path=code_path,
-        manifest_agent_specs=discovered.agent_specs,
-        use_case_mcp_bindings=use_case_mcp_bindings,
-        names=(
-            None if recipe.agent_endpoints else marker_agents(discovered.use_cases, kernel.compiler)
-        ),
-    )
-    verify_agent_markers(discovered.use_cases, kernel.compiler, kernel.registry, ai)
-    bind_agent_resolver(kernel, ai)
-    bind_mcp_resolver(kernel, ai)
-    return ai
-
-
-def _resources(
-    *,
-    kernel: KernelRuntime,
-    stores: Sequence[Resource],
-    sql: SqlWiring,
-    ai: AiWiring,
-    job_resources: Sequence[Resource],
-) -> tuple[Resource, ...]:
-    """Everything the application owns; :class:`Application` orders it by kind."""
-    resources: list[Resource] = list(job_resources)
-    if kernel.container.is_registered(CacheGateways):
-        gateways = kernel.container.resolve(CacheGateways).distinct()
-        for name, gateway in zip(("data", "counters"), gateways, strict=False):
-            resources.append(
-                Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
-            )
-    registry, runtime = sql.registry, ai.runtime
-    if registry is not None:
-        resources.append(
-            Resource(
-                kind=ResourceKind.SQL,
-                name="clickhouse",
-                manager=lambda: registry,
-                check=registry.check,
-            )
-        )
-    if runtime is not None:
-        resources.append(Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime))
-    resources.extend(stores)
-    return tuple(resources)
-
-
-def _store_resource(key: StoreKey, wiring: PersistenceWiring, *, label: str) -> Resource:
-    """The resource of store *key*, whose readiness is reported under *label*.
-
-    The default store keeps its backend's name as the label: ``/health`` has
-    always reported it under that key.
-    """
-    return Resource(
-        kind=ResourceKind.STORE,
-        name=key,
-        manager=wiring.lifespan_init,
-        check=wiring.startup_checks,
-        readiness=wiring.readiness,
-        readiness_key=label,
+    return compose(
+        source,
+        adapter,
+        modules=modules,
+        observability_provider=lambda: source.observability,
+        catalog_provider=lambda: source.catalog,
     )
