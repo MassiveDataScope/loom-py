@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "AcmeLedgerWriter writes to store ledger, which has no unit of work: no discovered model belongs to it, or its backend persists nothing.",
+  "type": "loom.core.use_case.errors.UncomposedWriteStore",
+  "wrapped": false
+}

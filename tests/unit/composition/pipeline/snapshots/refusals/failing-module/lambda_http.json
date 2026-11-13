@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "acme module failed",
+    "type": "builtins.RuntimeError"
+  },
+  "message": "Bootstrap failed: acme module failed",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

@@ -1,0 +1,35 @@
+{
+  "bindings": {
+    "AppConfig": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "AppConfig",
+      "scope": "APPLICATION"
+    },
+    "ApplicationInvoker": {
+      "provider": "create_kernel.<locals>.<lambda>",
+      "resolved": "AppInvoker",
+      "scope": "APPLICATION"
+    },
+    "Environment": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "Environment",
+      "scope": "APPLICATION"
+    },
+    "RuntimeExecutor": {
+      "provider": "create_kernel.<locals>.<lambda>",
+      "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "UseCaseFactory": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "UseCaseFactory",
+      "scope": "APPLICATION"
+    },
+    "UseCaseRegistry": {
+      "provider": "create_kernel.<locals>.<lambda>",
+      "resolved": "UseCaseRegistry",
+      "scope": "APPLICATION"
+    }
+  },
+  "repo_bindings": {}
+}

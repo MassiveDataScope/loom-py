@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "DI module binds_sql_service binds SqlQueryService, which the framework registers itself. Remove the binding from the module; a module may override JobService and repositories (repository_for, DefaultRepositoryBuilder), not this key.",
+  "type": "loom.composition.errors.ReservedBindingError",
+  "wrapped": false
+}

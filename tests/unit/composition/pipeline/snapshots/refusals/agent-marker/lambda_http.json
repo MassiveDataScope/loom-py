@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "Agent compilation failed with 1 error(s): AcmeAgentUser: parameter 'triage' names unknown agent 'triage'; compiled agents: none",
+  "type": "loom.ai.errors.AgentCompilationError",
+  "wrapped": false
+}

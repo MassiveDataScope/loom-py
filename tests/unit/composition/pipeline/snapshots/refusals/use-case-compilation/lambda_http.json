@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "AcmeUncompilable.execute: only one Input() parameter is allowed",
+    "type": "loom.core.engine.compiler.CompilationError"
+  },
+  "message": "Bootstrap failed: AcmeUncompilable.execute: only one Input() parameter is allowed",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

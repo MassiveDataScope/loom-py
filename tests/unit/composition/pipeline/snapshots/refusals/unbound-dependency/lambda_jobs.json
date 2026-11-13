@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "AcmeNeedsService injects service: AcmeUnregistered, which is not registered in the container.",
+  "type": "loom.core.di.container.ResolutionError",
+  "wrapped": false
+}

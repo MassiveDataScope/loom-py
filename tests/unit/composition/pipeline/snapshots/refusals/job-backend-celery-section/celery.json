@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "task_default_queue='default' is not declared in queues=['emails']. Callbacks would be silently routed to an unconsumed queue. Add the queue name to the 'queues' list.",
+    "type": "builtins.ValueError"
+  },
+  "message": "the celery section is invalid: task_default_queue='default' is not declared in queues=['emails']. Callbacks would be silently routed to an unconsumed queue. Add the queue name to the 'queues' list.",
+  "type": "loom.composition.errors.JobBackendError",
+  "wrapped": false
+}

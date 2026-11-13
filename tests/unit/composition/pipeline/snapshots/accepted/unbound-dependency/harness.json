@@ -1,0 +1,32 @@
+{
+  "bindings": {
+    "('repo', AcmeRecord)": {
+      "provider": "HttpTestHarness._build_module.<locals>._make_provider.<locals>._provider",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "Environment": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "Environment",
+      "scope": "APPLICATION"
+    },
+    "RuntimeExecutor": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "UseCaseFactory": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "UseCaseFactory",
+      "scope": "APPLICATION"
+    },
+    "_NullConfig": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "_NullConfig",
+      "scope": "APPLICATION"
+    }
+  },
+  "repo_bindings": {
+    "AcmeRecord": "('repo', AcmeRecord)"
+  }
+}

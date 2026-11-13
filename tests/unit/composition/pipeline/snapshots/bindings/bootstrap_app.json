@@ -1,0 +1,31 @@
+{
+  "bindings": {
+    "AppConfig": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "AppConfig",
+      "scope": "APPLICATION"
+    },
+    "Environment": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "Environment",
+      "scope": "APPLICATION"
+    },
+    "RuntimeExecutor": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "UseCaseFactory": {
+      "provider": "bootstrap_app.<locals>.<lambda>",
+      "resolved": "UseCaseFactory",
+      "scope": "APPLICATION"
+    }
+  },
+  "executors": {
+    "constructed": 1,
+    "served": [
+      0
+    ]
+  },
+  "repo_bindings": {}
+}

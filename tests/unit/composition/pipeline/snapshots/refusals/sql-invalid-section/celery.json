@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "Object contains unknown field `unknown` - at `$.connections[...]`",
+    "type": "msgspec.ValidationError"
+  },
+  "message": "Config section 'sql' failed validation as 'SqlConfig': Object contains unknown field `unknown` - at `$.connections[...]`",
+  "type": "loom.core.config.errors.ConfigError",
+  "wrapped": false
+}
