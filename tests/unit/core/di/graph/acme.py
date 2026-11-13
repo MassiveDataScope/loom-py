@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Generic, TypeVar, get_args
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, DependencyGraph, GraphAnalysis, analyse
+from loom.core.di.graph import ClassNode, GraphAnalysis, analyse
 from loom.core.execution import Kind
 
 T = TypeVar("T")
@@ -42,4 +42,4 @@ def container() -> LoomContainer:
 
 def analysed(built: LoomContainer, *roots: type[Any]) -> GraphAnalysis:
     """*built*'s graph analysed from *roots*."""
-    return analyse(DependencyGraph(built), [ClassNode(root) for root in roots])
+    return analyse(built.graph, [ClassNode(root) for root in roots])

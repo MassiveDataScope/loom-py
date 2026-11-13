@@ -12,9 +12,9 @@ from loom.composition.source import CompositionSource
 from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer
 from loom.core.di.errors import DependencyUnresolvable
-from loom.core.di.graph import ClassNode, DependencyGraphError, KeyNode
+from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, KeyNode
 from loom.core.logger import get_logger
-from loom.core.repository.abc import RepoFor
+from loom.core.repository.abc import Listable, RepoFor
 from loom.core.use_case import UnservedModelError, UseCase
 from tests.helpers.composition import Serving
 from tests.unit.composition.pipeline.components import (
@@ -161,3 +161,26 @@ def test_an_unresolvable_parameter_of_a_binding_warns(source: CompositionSource)
 
     with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
         compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+
+
+class AcmeListsRecords(UseCase[AcmeRecord, int, Listable[AcmeRecord]]):
+    """Declares its main repository as listable."""
+
+    async def execute(self) -> int:
+        return 0
+
+
+def test_a_use_case_reaches_its_main_repository_and_capability(source: CompositionSource) -> None:
+    planned = pipeline.plan(source, Serving(AcmeRecord, use_cases=(AcmeListsRecords,)))
+    registered = pipeline.register(
+        pipeline.persist(planned), modules=(), logger=get_logger("tests.acme")
+    )
+
+    container, analysis = registered.kernel.container, registered.analysis
+    repository = KeyNode(container._repo_bindings[AcmeRecord])  # noqa: SLF001 - the mapped key
+    assert set(analysis.graph.edges(ClassNode(AcmeListsRecords))) == {
+        Edge(repository, "main_repo"),
+        Edge(KeyNode(Listable[AcmeRecord]), "main_repo"),
+    }
+    assert {repository, KeyNode(Listable[AcmeRecord])} <= analysis.reachable
+    assert analysis.graph is registered.kernel.factory.graph

@@ -9,12 +9,12 @@ zero per-request reflection.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any, NamedTuple, TypeVar
 
-from loom.core.di.container import LoomContainer, ResolutionError, _describe_key
-from loom.core.di.introspection import KeyDependency, RepoDependency, constructor_dependencies
-from loom.core.repository.abc import RepoFor
+from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.errors import describe_key
+from loom.core.di.graph import ClassNode
+from loom.core.di.introspection import Constructor, KeyDependency, RepoDependency
 from loom.core.repository.dependency import classify_key
 from loom.core.repository.registration import is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
@@ -38,27 +38,24 @@ class ModelRead(NamedTuple):
     model: type[object]
 
 
-@dataclass(frozen=True, slots=True)
-class _MainRepoDep:
-    """Model-centric repository dependency resolved through the repo mapping.
-
-    ``contract`` is the capability the use case declared for its main
-    repository (``RepoFor[Any]`` when it declared none).  A standard
-    capability such as ``Listable[Order]`` is verified against the container
-    as well as the model mapping.
-    """
-
-    model: type[Any]
-    contract: object = RepoFor[Any]
-
-    @property
-    def capability_key(self) -> object | None:
-        """The standard capability DI key the contract requires, if any."""
-        return self.contract if is_standard_capability(self.contract) else None
-
-
 DepToken = object
-"""A container key, or a :class:`_MainRepoDep` resolved through the repository mapping."""
+"""A container key, or a :class:`~loom.core.di.introspection.RepoDependency` resolved
+through the repository mapping."""
+
+
+def main_repository(cls: type[Any]) -> Constructor:
+    """The main repository a use case built through ``UseCase.__init__`` gets injected.
+
+    Its generics name the model; a standard capability declared for it
+    (``Listable[Order]``) is the key the repository must also be bound under.
+    A use case with its own ``__init__``, or no main model, gets none.
+    """
+    model = getattr(cls, "__loom_main_model__", None)
+    if model is None or cls.__init__ is not UseCase.__init__:
+        return ()
+    contract = getattr(cls, "__loom_main_repo_contract__", None)
+    capability = contract if is_standard_capability(contract) else None
+    return (("main_repo", RepoDependency(model, capability)),)
 
 
 class UseCaseFactory:
@@ -84,14 +81,21 @@ class UseCaseFactory:
 
         factory = UseCaseFactory(container)
         use_case = factory.build(CreateOrderUseCase)
+
+    Attributes:
+        graph: The container's dependency graph, read from now on as loom
+            reads a use case or a job: constructor annotations classified
+            with :func:`~loom.core.repository.dependency.classify_key`, a
+            use case's main repository included (:func:`main_repository`).
+            The one reader of constructors; the composition analyses it and
+            the container seals with that analysis.
     """
 
     def __init__(self, container: LoomContainer) -> None:
         self._container = container
-        # Maps use_case_type -> list of (param_name, resolved_token) pairs.
-        # The token is either:
-        # - a concrete dependency type (resolved via container.resolve)
-        # - a _MainRepoDep for model-centric repo resolution
+        self.graph = container.read_with(classify_key=classify_key, implicit=main_repository)
+        # Maps use_case_type -> list of (param_name, token) pairs: a container
+        # key, or a RepoDependency resolved through the repository mapping.
         self._dep_cache: dict[type[Any], list[tuple[str, DepToken]]] = {}
 
     def build(self, use_case_type: type[_T]) -> _T:
@@ -114,7 +118,7 @@ class UseCaseFactory:
         deps = self._get_deps(use_case_type)
         kwargs: dict[str, Any] = {}
         for name, dep in deps:
-            if isinstance(dep, _MainRepoDep):
+            if isinstance(dep, RepoDependency):
                 kwargs[name] = self._container.resolve_repo(dep.model)
                 continue
             kwargs[name] = self._container.resolve(dep)
@@ -169,64 +173,33 @@ class UseCaseFactory:
             ModelRead(use_case_type, name, dep.model)
             for use_case_type, deps in self._dep_cache.items()
             for name, dep in deps
-            if isinstance(dep, _MainRepoDep)
+            if isinstance(dep, RepoDependency)
         ]
 
     def _missing_key(self, dep: DepToken) -> str | None:
         """Describe the key the container lacks for ``dep``; ``None`` when provided."""
-        if isinstance(dep, _MainRepoDep):
+        if isinstance(dep, RepoDependency):
             return self._missing_main_repo_key(dep)
-        return None if self._container.is_registered(dep) else _describe_key(dep)
+        return None if self._container.is_registered(dep) else describe_key(dep)
 
-    def _missing_main_repo_key(self, dep: _MainRepoDep) -> str | None:
+    def _missing_main_repo_key(self, dep: RepoDependency) -> str | None:
         """The capability key a mapped main repository lacks; the mapping is checked first."""
-        key = dep.capability_key
+        key = dep.contract
         if key is not None and not self._container.is_registered(key):
-            return f"{_describe_key(key)} (main repository capability)"
+            return f"{describe_key(key)} (main repository capability)"
         return None
 
     def _get_deps(self, use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
-        """Return the cached (or freshly computed) dependency list for a UseCase.
+        """Return the cached (or freshly read) keys and repositories ``use_case_type`` injects.
 
-        The constructor is read by
-        :func:`~loom.core.di.introspection.constructor_dependencies` with
-        :func:`~loom.core.repository.dependency.classify_key`; only its keys
-        and repositories are injected.
-
-        Args:
-            use_case_type: UseCase subclass to inspect.
-
-        Returns:
-            List of ``(param_name, token)`` pairs from ``__init__``.
+        Read from :attr:`graph`, so the factory and the composition's analysis
+        read a constructor once and alike.
         """
-        if use_case_type in self._dep_cache:
-            return self._dep_cache[use_case_type]
-
-        init = use_case_type.__init__
-        if init is UseCase.__init__:
-            deps = _default_init_deps(use_case_type)
-        else:
-            deps = self._explicit_init_deps(use_case_type)
-        self._dep_cache[use_case_type] = deps
+        deps = self._dep_cache.get(use_case_type)
+        if deps is None:
+            deps = self._dep_cache[use_case_type] = [
+                (name, dependency.key if isinstance(dependency, KeyDependency) else dependency)
+                for name, dependency in self.graph.constructor(ClassNode(use_case_type))
+                if isinstance(dependency, KeyDependency | RepoDependency)
+            ]
         return deps
-
-    def _explicit_init_deps(self, use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
-        """Return the keys and repositories a user-defined ``__init__`` injects."""
-        deps: list[tuple[str, DepToken]] = []
-        kinds = self._container.kinds
-        for name, dependency in constructor_dependencies(use_case_type, kinds, classify_key):
-            match dependency:
-                case RepoDependency(model):
-                    deps.append((name, _MainRepoDep(model)))
-                case KeyDependency(key):
-                    deps.append((name, key))
-        return deps
-
-
-def _default_init_deps(use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
-    """Return the main-repository dependency the ``UseCase`` generics declare."""
-    main_model = getattr(use_case_type, "__loom_main_model__", None)
-    if main_model is None:
-        return []
-    contract = getattr(use_case_type, "__loom_main_repo_contract__", RepoFor[Any])
-    return [("main_repo", _MainRepoDep(main_model, contract))]

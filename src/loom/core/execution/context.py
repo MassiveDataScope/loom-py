@@ -20,10 +20,11 @@ Concurrency:
 
 from __future__ import annotations
 
-from collections.abc import Hashable
+import threading
+from collections.abc import Callable, Hashable
 from contextvars import ContextVar, Token
 from types import TracebackType
-from typing import cast
+from typing import Any, cast
 
 from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionRequired
@@ -50,8 +51,12 @@ class ExecutionContext:
     """The state of one execution: its identity and its per-execution cache.
 
     Built by :func:`enter`; code reads it through :func:`current_execution`.
-    The cache is allocated on the first :meth:`store`, so an execution that
-    builds no ``REQUEST`` binding allocates nothing beyond this object.
+    The cache is allocated on the first store, so an execution that builds
+    no ``REQUEST`` binding allocates nothing beyond this object. It holds
+    what :meth:`store` and :func:`per_execution` keep, each value under its
+    key, and, for each key :func:`per_execution` has built, the reentrant
+    lock it builds under, keyed ``(_BUILDING, key)`` with a private tag no
+    caller's key can equal.
 
     Example::
 
@@ -105,12 +110,25 @@ class ExecutionContext:
                 never a bare string another library could also pick.
             value: The value to keep.
         """
+        self._allocated()[key] = value
+
+    def _allocated(self) -> dict[Hashable, object]:
+        """The cache, allocated once even when threads sharing this execution race for it."""
         cache = self._cache
         if cache is None:
-            self._cache = {key: value}
-        else:
-            cache[key] = value
+            with _ALLOCATING:
+                cache = self._cache
+                if cache is None:
+                    cache = self._cache = {}
+        return cache
 
+
+_ALLOCATING = threading.Lock()
+"""Taken only to allocate an execution's cache, once per execution that stores anything."""
+
+
+_BUILDING = object()
+"""Tags the key of a per-execution build lock in the cache: ``(_BUILDING, key)``."""
 
 _current: ContextVar[ExecutionContext | None] = ContextVar("loom_execution", default=None)
 _CLOSED = ExecutionContext(None)
@@ -127,6 +145,61 @@ def current_execution() -> ExecutionContext | None:
     """
     context = _current.get()
     return None if context is _CLOSED else context
+
+
+def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], object]:
+    """Return a callable giving one value of *make* per execution, kept under *key*.
+
+    Inside an execution the value is built once, kept in its cache and
+    returned to everything that execution runs, its tasks and copied threads
+    included; outside any execution, or in a closed context, each call builds
+    a fresh one. The cache is read directly, with no call on the hit path.
+
+    A miss builds under a reentrant lock of this execution and *key*, kept
+    in the cache from the key's first build, so threads sharing one
+    execution (``asyncio.to_thread`` copies its context) wait for the one
+    build of a key while builds of other keys proceed: *make* may need
+    another per-execution value, on its thread or on another one it waits
+    for. Two threads each waiting for the other's build of the same key
+    wait forever, as a cycle of providers does (a bug either way).
+    ``loop.run_in_executor`` copies no context: its thread runs outside the
+    execution. A singleton is built under ``NoExecution``, so it
+    never waits for a per-execution build.
+
+    Args:
+        key: A binding-key object (a type or a private key instance), never
+            a bare string another library could also pick.
+        make: Builds the value.
+
+    Example::
+
+        acme_session = per_execution(AcmeSession, AcmeSession)
+        with ExecutionScope(acme_identity):
+            assert acme_session() is acme_session()
+    """
+    current = _current.get
+    building = (_BUILDING, key)
+
+    def value() -> object:
+        context = current()
+        if context is None:
+            return make()
+        cache = context._cache  # pyright: ignore[reportPrivateUsage]
+        if cache is not None and key in cache:
+            return cache[key]
+        if context is _CLOSED:
+            return make()
+        cache = context._allocated()  # pyright: ignore[reportPrivateUsage]
+        lock: Any = cache.get(building)
+        if lock is None:
+            # setdefault is atomic: threads racing here all get the one lock stored.
+            lock = cache.setdefault(building, threading.RLock())
+        with lock:
+            if key not in cache:
+                cache[key] = make()
+            return cache[key]
+
+    return value
 
 
 def enter(identity: Identity | None) -> Token[ExecutionContext | None]:

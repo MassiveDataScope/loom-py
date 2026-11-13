@@ -447,6 +447,82 @@
   Python's default filters hide a `DeprecationWarning` outside `__main__`;
   test runners such as pytest show it, and `-W error::DeprecationWarning`
   turns it into an error.
+- **di (behaviour change, D4):** `Scope.REQUEST` (and `Scope.TRANSACTION`)
+  means one instance per execution: everything one execution resolves shares
+  it, and so does a task the execution creates, even one that outlives it; a
+  nested execution gets its own. Outside any execution each `resolve` still
+  builds a fresh one, so nothing changes until the executor runs builds
+  inside the execution.
+- **di:** a class bound with `register(Port, Impl)` gets its required
+  constructor parameters from the container (autowiring): a key, a
+  `RepoFor[Model]` through the repository mapping, or an execution kind
+  (`Caller()`, and `Agent()` / `Mcp()` once their resolvers are bound)
+  resolved through its resolver. A class `Impl()` builds today is built as
+  today; a parameter with a default is left to Python. An execution kind with
+  no resolver bound fails the build naming the parameter and the kind,
+  instead of handing the raw marker to the adapter. Resolution follows a
+  closure compiled once per binding; a missing binding, an unmapped
+  repository, an input marker or a cycle reached while compiling raises
+  `loom.core.di.graph.DependencyGraphError` with the path. A singleton is
+  built outside any execution (`NoExecution`), so a constructor reading the
+  execution identity raises `ExecutionRequired`; a singleton whose provider
+  returns `None` is built once. A required parameter annotated with a
+  primitive, `typing.Any` (a class since Python 3.11) or a class nothing is
+  bound under now raises
+  `DependencyGraphError` naming the path instead of `TypeError`, and
+  `validate()` re-raises it unwrapped rather than as "Failed to instantiate";
+  an unannotated one still gets Python's `TypeError`.
+- **di:** each singleton is built once under a lock of its own, and no
+  container lock is held while a provider runs, so a provider may wait on
+  another thread that resolves from the container. A cycle of providers split
+  across two threads waits forever instead of recursing (a bug either way).
+  A `REQUEST` binding is built once per execution, even by threads sharing it
+  (`asyncio.to_thread`): the others wait for that key's build, while builds of
+  other keys proceed, so a provider may wait on a thread that builds another
+  per-execution value. Two threads each waiting for the other's build of the
+  same key wait forever, as a cycle of providers does. `loop.run_in_executor`
+  copies no context, so its thread resolves outside the execution.
+- **di (new API):** `loom.core.execution.per_execution(key, make)` returns a
+  callable building one value per execution (fresh outside one).
+  `LoomContainer.graph` is the container's `DependencyGraph`;
+  `LoomContainer.read_with(*, classify_key, implicit)` sets how it reads
+  constructors, once (the same reading again returns it, another raises
+  `ValueError`); `LoomContainer.seal(analysis=None, *, deferred=())` takes
+  the start-up analysis and the execution kinds to defer.
+  `UseCaseFactory.graph` is that same graph, read through
+  `loom.core.use_case.factory.main_repository`, which gives a use case built
+  through `UseCase.__init__` its main repository.
+- **di:** a composed application's seal builds its singletons with no
+  execution: those its use cases, jobs and callbacks reach first, then every
+  other `APPLICATION` binding, as `validate()` does. A singleton the graph
+  reaches that declares an `Agent()`, `Mcp()` or other kind no resolver is
+  bound for is refused at start-up with the path, as a `BootstrapError`
+  wrapping a `DependencyGraphError`. `HttpTestHarness` defers the agent and
+  MCP kinds instead: such a singleton warns with
+  `loom.core.di.errors.DependencyWarning`, is not built, and is built by its
+  first resolve once a resolver is bound. A singleton nothing reaches whose construction
+  would be refused, or that declares an execution kind, is not built: it
+  warns with `loom.core.di.errors.DependencyWarning` and fails with the reason
+  when first resolved. `DependencyUnresolvable` is now a `DependencyWarning`.
+- **di (behaviour change, F8):** registering a key drops that key's built
+  instance and the compiled construction of every binding built on it,
+  transitively, so a binding built per execution or per resolve gets the new
+  binding from then on, before or after seal. A singleton already built on
+  it keeps its instance.
+- **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
+  on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
+  bind them, so a standalone kernel serves a per-execution adapter declaring
+  `Agent()` or `Mcp()`. An `APPLICATION` adapter holding `Agent()` or `Mcp()`
+  still cannot be built until T12, with or without these resolvers: they build
+  a handle for the identity of the execution in progress, a singleton is built
+  with none, so `create_kernel` fails with `BootstrapError` (cause
+  `ExecutionRequired`).
+- **composition:** a use case built through `UseCase.__init__` reaches its
+  main repository in the start-up graph: the repository mapped to its model
+  and, when it declares a standard capability (`Listable[Order]`), that
+  capability's key. A missing capability binding was refused by the factory's
+  verification at seal, as a bare `ResolutionError`; it is now refused at the
+  end of registration, as a `BootstrapError` wrapping `DependencyGraphError`.
 - **core:** `create_kernel` builds one `RuntimeExecutor`, not a throwaway one
   first, and validates its container once, with the kernel's keys bound: an
   `APPLICATION` provider resolving `RuntimeExecutor` while it validates gets

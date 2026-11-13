@@ -1,65 +1,74 @@
 """Minimal dependency injection container.
 
-Provides key-based registration and resolution with application and request
-scopes. The resolution graph is validated at startup
-(via :meth:`LoomContainer.validate`) so missing bindings are caught before the
-first request.
-
-No reflection occurs after :meth:`LoomContainer.validate` - all providers are
-resolved eagerly for ``APPLICATION`` scope during validation.
+Provides key-based registration and resolution with application and
+per-execution scopes. A class binding's required constructor parameters are
+resolved from the container (autowiring), through a closure compiled once per
+binding (:mod:`loom.core.di.compiler`), so serving a binding reflects on
+nothing.
 
 An application seals its container once it has started
-(:meth:`LoomContainer.seal`); registering into it afterwards still works but
-warns with :class:`~loom.core.di.errors.ContainerSealedWarning`.
+(:meth:`LoomContainer.seal`): its singletons are built then, and registering
+into it afterwards still works but warns with
+:class:`~loom.core.di.errors.ContainerSealedWarning`.
 """
 
 from __future__ import annotations
 
+import threading
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, TypeVar
 
-from loom.core.di.errors import ContainerSealedWarning
-from loom.core.di.introspection import KeyClassifier, plain_key
+from loom.core.di.compiler import (
+    COLD_PATH,
+    UNBUILT,
+    Closure,
+    RepoMapping,
+    compile_key,
+    refusing,
+)
+from loom.core.di.errors import (
+    ContainerSealedWarning,
+    DependencyWarning,
+    ResolutionError,
+    describe_key,
+)
+from loom.core.di.graph import (
+    UNREACHED_REFUSALS,
+    DependencyGraph,
+    DependencyGraphError,
+    GraphAnalysis,
+    KeyNode,
+    Node,
+    Rule,
+    analyse,
+    refuse_unbound,
+)
+from loom.core.di.introspection import Constructor, KeyClassifier, plain_key
 from loom.core.di.scope import Scope
-from loom.core.execution import ExecutionKinds
+from loom.core.execution import ExecutionKinds, Kind
 
 T = TypeVar("T")
 BindingKey = object
 
-
-class ResolutionError(Exception):
-    """Raised when a dependency cannot be resolved from the container.
-
-    Args:
-        message: Human-readable description of the resolution failure.
-
-    Example::
-
-        raise ResolutionError("No binding registered for: UserRepository")
-    """
+__all__ = ["BindingKey", "LoomContainer", "ResolutionError"]
 
 
-@dataclass
+@dataclass(eq=False, slots=True)
 class _Binding:
-    """Internal binding record."""
+    """One registration: compared by identity, so it also keys an execution's cache.
+
+    A singleton is built once under :attr:`lock`, its own: building it waits
+    on no other binding, and a provider resolving another on the same thread
+    recurses.
+    """
 
     provider: Callable[[], Any]
     scope: Scope
-    _instance: Any | None = field(default=None, repr=False)
-
-
-def _describe_key(interface: BindingKey) -> str:
-    """Return a stable human-readable name for a DI binding key, ``Origin[Arg]`` for an alias."""
-    if isinstance(interface, type):
-        return interface.__qualname__
-    origin = get_origin(interface)
-    if isinstance(origin, type):
-        args = ", ".join(_describe_key(arg) for arg in get_args(interface))
-        return f"{origin.__qualname__}[{args}]"
-    return repr(interface)
+    instance: object = field(default=UNBUILT, repr=False)
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
 
 class LoomContainer:
@@ -67,8 +76,10 @@ class LoomContainer:
 
     Dependencies are registered at startup and resolved at runtime without
     dynamic reflection per request. Application-scope instances are
-    singletons; request-scope instances are created fresh per
-    :meth:`resolve` call.
+    singletons, built outside any execution; request-scope instances are
+    built once per execution, and fresh on each :meth:`resolve` outside one.
+    A class bound as a provider gets its required constructor parameters
+    from the container.
 
     Args:
         classify_key: The :data:`~loom.core.di.introspection.KeyClassifier`
@@ -92,9 +103,48 @@ class LoomContainer:
     def __init__(self, *, classify_key: KeyClassifier = plain_key) -> None:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
+        self._compiled: dict[BindingKey, Closure] = {}
+        self._dependents: dict[object, set[BindingKey]] = {}
         self._sealed = False
         self._classify_key = classify_key
         self.kinds = ExecutionKinds()
+        self._graph = DependencyGraph(self)
+        self._reading: tuple[KeyClassifier, Callable[[type[Any]], Constructor]] | None = None
+
+    @property
+    def graph(self) -> DependencyGraph:
+        """The dependency graph the bindings form, the one :meth:`seal` takes the analysis of."""
+        return self._graph
+
+    def read_with(
+        self, *, classify_key: KeyClassifier, implicit: Callable[[type[Any]], Constructor]
+    ) -> DependencyGraph:
+        """Read constructors with *classify_key* and *implicit* from now on; return :attr:`graph`.
+
+        What loom builds reads as the graph does, so every use-case factory
+        on this container calls this, and they all get the one graph: a
+        ``register*`` forgets what it read for its key, and :meth:`seal`
+        refuses the analysis of any other graph. The first call compiles
+        again anything compiled before; a built singleton is kept.
+
+        Args:
+            classify_key: How a constructor annotation becomes a key.
+            implicit: The dependencies loom injects into a class it builds
+                beyond its signature, such as a use case's main repository.
+
+        Raises:
+            ValueError: When constructors are already read another way.
+        """
+        reading = (classify_key, implicit)
+        with COLD_PATH:
+            if self._reading is None:
+                self._reading = reading
+                self._graph = DependencyGraph(self, classify_key=classify_key, implicit=implicit)
+                self._compiled.clear()
+                self._dependents.clear()
+            elif self._reading != reading:
+                raise ValueError("the container already reads constructors another way")
+        return self._graph
 
     def register(
         self,
@@ -174,8 +224,8 @@ class LoomContainer:
         """Return an instance bound to ``interface``.
 
         For ``APPLICATION`` scope, the same instance is returned on every call.
-        For ``REQUEST`` (and ``TRANSACTION``) scope, a new instance is created
-        each time.
+        For ``REQUEST`` (and ``TRANSACTION``) scope, one instance per
+        execution, and a new one on each call outside any execution.
 
         Args:
             interface: The DI key to resolve.
@@ -185,15 +235,14 @@ class LoomContainer:
 
         Raises:
             ResolutionError: If no binding is registered for ``interface``.
+            DependencyGraphError: If a binding it needs is missing or
+                refused, or they form a cycle; the message holds the path.
         """
-        binding = self._bindings.get(interface)
-        if binding is None:
-            raise ResolutionError(f"No binding registered for: {_describe_key(interface)}")
-        if binding.scope is Scope.APPLICATION:
-            if binding._instance is None:
-                binding._instance = binding.provider()
-            return binding._instance
-        return binding.provider()
+        try:
+            closure = self._compiled[interface]
+        except KeyError:
+            closure = compile_key(self, interface)
+        return closure()
 
     def validate(self) -> None:
         """Eagerly validate and instantiate all ``APPLICATION`` scope bindings.
@@ -208,26 +257,125 @@ class LoomContainer:
         """
         for interface, binding in self._bindings.items():
             if binding.scope is Scope.APPLICATION:
-                try:
-                    self.resolve(interface)
-                except ResolutionError:
-                    raise
-                except Exception as exc:
-                    raise ResolutionError(
-                        f"Failed to instantiate APPLICATION-scope binding "
-                        f"for {_describe_key(interface)}: {exc}"
-                    ) from exc
+                self._instantiate(interface)
 
-    def seal(self) -> None:
-        """Mark the container as complete: the application has started on it.
+    def seal(
+        self, analysis: GraphAnalysis | None = None, *, deferred: Collection[Kind] = ()
+    ) -> None:
+        """Mark the container as complete and build its singletons, outside any execution.
+
+        Compiles what *analysis* reaches, then builds every ``APPLICATION``
+        binding as :meth:`validate` does, the reachable ones first, holding no
+        container lock while a provider runs. Under a strict seal (nothing
+        *deferred*) a reached binding that does not compile is raised. Refusal 7
+        is one policy over the singletons *analysis* reaches: one declaring
+        a kind with no resolver bound is refused, unless the kind is in
+        *deferred* (a lenient composition defers the agent and MCP kinds);
+        then it warns with :class:`~loom.core.di.errors.DependencyWarning`
+        and is not built, but keeps its binding, so a resolver bound later
+        serves it. A singleton no root reaches whose construction a refusal
+        2-5 refuses, or that declares an execution kind, warns the same way
+        and fails with the reason whenever resolved. Without *analysis*, no
+        binding is reached.
 
         Every ``register*`` afterwards warns with
         :class:`~loom.core.di.errors.ContainerSealedWarning` naming the key,
-        then replaces only that key's binding, dropping only that key's built
-        instance: every other built instance, and whatever already holds one,
-        is kept.
+        then replaces that key's binding and recompiles what was compiled on
+        it. Only that key's built instance is dropped: every other built
+        instance, and whatever already holds one, is kept.
+
+        Raises:
+            ValueError: When *analysis* analysed another dependency graph
+                than :attr:`graph`.
+            DependencyGraphError: Refusal 7, with the path from its root.
+            ResolutionError: If an ``APPLICATION`` binding fails to
+                instantiate, worded as :meth:`validate` words it.
         """
-        self._sealed = True
+        with COLD_PATH:
+            reached = frozenset[Node]()
+            if analysis is not None:
+                reached = self._reached(analysis, deferred)
+            self._sealed = True
+            self._compile_reached(reached, lenient=bool(deferred))
+            buildable = self._buildable(reached)
+        for key in buildable:
+            self._instantiate(key)
+
+    def _reached(self, analysis: GraphAnalysis, deferred: Collection[Kind]) -> frozenset[Node]:
+        """What *analysis* reaches, once refusal 7 passed from its roots, *deferred* skipped."""
+        if analysis.graph is not self._graph:
+            raise ValueError("seal() was given the analysis of another dependency graph")
+        analyse(self._graph, analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
+        return analysis.reachable
+
+    def _compile_reached(self, reached: frozenset[Node], *, lenient: bool) -> None:
+        """Compile each reached binding.
+
+        A strict analysis refused whatever would not compile, so a failure
+        here (a key registered again since) is raised. A lenient one let it
+        through: that binding fails at its first resolve instead.
+        """
+        for node in reached:
+            if isinstance(node, KeyNode) and node.key in self._bindings:
+                try:
+                    compile_key(self, node.key)
+                except ResolutionError:
+                    if not lenient:
+                        raise
+
+    def _buildable(self, reached: frozenset[Node]) -> list[BindingKey]:
+        """The singletons seal builds, the reached ones first; the others are refused, warned.
+
+        A reached one is left unbuilt only for a deferred kind and keeps its
+        binding; one no root reaches is refused for good.
+        """
+        reachable: list[BindingKey] = []
+        unreached: list[BindingKey] = []
+        for key, binding in self._bindings.items():
+            if binding.scope is Scope.APPLICATION:
+                (reachable if KeyNode(key) in reached else unreached).append(key)
+        deferred = (refuse_unbound(self.kinds),)
+        buildable = [key for key in reachable if self._refusal(key, deferred) is None]
+        for key in unreached:
+            refused = self._refusal(key, UNREACHED_REFUSALS)
+            if refused is None:
+                buildable.append(key)
+            else:
+                self._compiled[key] = refusing(refused)
+        return buildable
+
+    def _refusal(self, key: BindingKey, rules: tuple[Rule, ...]) -> str | None:
+        """Why one of *rules* refuses building the singleton under *key*, warned; else ``None``.
+
+        A provider declares nothing, so no rule can refuse it: it is not analysed.
+        """
+        node = KeyNode(key)
+        if not self._graph.constructor(node):
+            return None
+        try:
+            analyse(self._graph, (node,), rules)
+        except DependencyGraphError as refused:
+            warnings.warn(
+                DependencyWarning(
+                    f"{describe_key(key)} is not built at start-up: {refused}; "
+                    "it fails when first resolved"
+                ),
+                stacklevel=4,
+            )
+            return str(refused)
+        return None
+
+    def _instantiate(self, interface: BindingKey) -> None:
+        """Resolve *interface*; a failure other than a resolution error is wrapped in one."""
+        try:
+            self.resolve(interface)
+        except ResolutionError:
+            raise
+        except Exception as exc:
+            raise ResolutionError(
+                f"Failed to instantiate APPLICATION-scope binding "
+                f"for {describe_key(interface)}: {exc}"
+            ) from exc
 
     def _bind(
         self, interface: BindingKey, provider: Callable[[], Any] | type[Any], scope: Scope
@@ -238,14 +386,33 @@ class LoomContainer:
         the sealed-container warning names the caller of that ``register*``.
         """
         self._warn_if_sealed(interface, stacklevel=4)
-        self._bindings[interface] = _Binding(provider=provider, scope=scope)
+        with COLD_PATH:
+            self._bindings[interface] = _Binding(provider, scope)
+            self._graph.forget(interface)
+            self._drop(interface)
+
+    def _depends(self, dependent: BindingKey, *, on: object) -> None:
+        """Record that the compiled closure of *dependent* holds the one of *on*."""
+        self._dependents.setdefault(on, set()).add(dependent)
+
+    def _drop(self, changed: object) -> None:
+        """Drop the closures of *changed* and of its dependents, transitively.
+
+        Each is compiled again at its next resolve. A built singleton is kept:
+        its closure, compiled again, serves the instance it was built with.
+        """
+        dropped = [changed]
+        while dropped:
+            key = dropped.pop()
+            self._compiled.pop(key, None)
+            dropped.extend(self._dependents.pop(key, ()))
 
     def _warn_if_sealed(self, interface: BindingKey, *, stacklevel: int) -> None:
         """Warn that *interface* is registered into a sealed container, *stacklevel* frames up."""
         if self._sealed:
             warnings.warn(
                 ContainerSealedWarning(
-                    f"{_describe_key(interface)} registered into a sealed container: only "
+                    f"{describe_key(interface)} registered into a sealed container: only "
                     "that key changes, and this becomes an error in the next major "
                     "version; bind it in a module passed to the application instead"
                 ),
@@ -278,7 +445,10 @@ class LoomContainer:
             interface: DI key previously bound via :meth:`register`.
         """
         self._warn_if_sealed(model, stacklevel=3)
-        self._repo_bindings[model] = interface
+        with COLD_PATH:
+            self._repo_bindings[model] = interface
+            self._graph.forget_edges()
+            self._drop(RepoMapping(model))
 
     def resolve_repo(self, model: type[Any]) -> Any:
         """Resolve a repository instance by model type.

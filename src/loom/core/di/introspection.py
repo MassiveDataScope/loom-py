@@ -27,9 +27,14 @@ class KeyDependency:
 
 @dataclass(frozen=True, slots=True)
 class RepoDependency:
-    """A parameter the container serves from the repository mapped to ``model``."""
+    """A parameter the container serves from the repository mapped to ``model``.
+
+    ``contract``, when set, is a key that repository must also be bound
+    under, such as the standard capability a use case declares for it.
+    """
 
     model: type[Any]
+    contract: object = None
 
 
 @dataclass(frozen=True, slots=True)

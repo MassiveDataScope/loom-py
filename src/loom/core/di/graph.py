@@ -11,13 +11,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard
 
-from loom.core.di.container import LoomContainer, ResolutionError, _Binding, _describe_key
-from loom.core.di.errors import DependencyUnresolvable
+from loom.core.di.errors import DependencyUnresolvable, ResolutionError, describe_key
 from loom.core.di.introspection import (
     Constructor,
     ExecutionDependency,
+    KeyClassifier,
     KeyDependency,
     RefusedDependency,
     RepoDependency,
@@ -25,6 +25,10 @@ from loom.core.di.introspection import (
     constructor_dependencies,
 )
 from loom.core.di.scope import Scope
+from loom.core.execution import ExecutionKinds, Kind
+
+if TYPE_CHECKING:
+    from loom.core.di.container import LoomContainer, _Binding
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +38,7 @@ class KeyNode:
     key: object
 
     def __str__(self) -> str:
-        return _describe_key(self.key)
+        return describe_key(self.key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,20 +83,50 @@ class DependencyGraphError(ResolutionError):
     """The dependency graph is refused; the message holds the path from a root."""
 
 
+def _nothing_implicit(cls: type[Any]) -> Constructor:
+    return ()
+
+
 class DependencyGraph:
     """The nodes a container's bindings and loom's own classes form, read on demand.
 
+    What it reads is memoised per node; the container forgets a key's entries
+    when the key is registered again (:meth:`forget`).
+
     Args:
-        container: The container whose bindings, repository mappings,
-            execution kinds and key classifier the graph reads.
+        container: The container whose bindings, repository mappings and
+            execution kinds the graph reads.
+        classify_key: How a constructor annotation becomes a key; defaults
+            to the container's classifier.
+        implicit: The dependencies loom injects into a class it builds
+            beyond those its signature declares, such as a use case's main
+            repository; none by default.
     """
 
-    __slots__ = ("_constructors", "_container", "_edges")
+    __slots__ = ("_classify_key", "_constructors", "_container", "_edges", "_implicit")
 
-    def __init__(self, container: LoomContainer) -> None:
+    def __init__(
+        self,
+        container: LoomContainer,
+        *,
+        classify_key: KeyClassifier | None = None,
+        implicit: Callable[[type[Any]], Constructor] = _nothing_implicit,
+    ) -> None:
         self._container = container
+        self._classify_key = classify_key or container._classify_key
+        self._implicit = implicit
         self._constructors: dict[Node, Constructor] = {}
         self._edges: dict[Node, tuple[Edge, ...]] = {}
+
+    def forget(self, key: object) -> None:
+        """Drop what was read for the binding under *key*: it was registered again."""
+        node = KeyNode(key)
+        self._constructors.pop(node, None)
+        self._edges.pop(node, None)
+
+    def forget_edges(self) -> None:
+        """Drop every memoised edge: a repository mapping changed, and edges follow mappings."""
+        self._edges.clear()
 
     def edges(self, node: Node) -> tuple[Edge, ...]:
         """The one source of edges, derived once per node; an unmapped repository gives none.
@@ -130,24 +164,34 @@ class DependencyGraph:
                 return None
 
     def _introspect(self, node: Node) -> Constructor:
-        """None for a provider, or a class with a custom ``__new__`` or metaclass ``__call__``."""
+        """None for a provider, or a class with a custom ``__new__`` or metaclass ``__call__``.
+
+        A class loom builds itself adds what :attr:`_implicit` injects.
+        """
         match node:
             case ClassNode(cls):
                 built: object = cls
+                implicit = self._implicit(cls)
             case KeyNode():
                 binding = self._binding(node)
                 built = None if binding is None else binding.provider
+                implicit = ()
         if not _built_by_type(built):
-            return ()
-        return constructor_dependencies(built, self._container.kinds, self._container._classify_key)
+            return implicit
+        kinds = self._container.kinds
+        return (*constructor_dependencies(built, kinds, self._classify_key), *implicit)
 
     def _derive(self, node: Node) -> Iterator[Edge]:
         for name, dependency in self.constructor(node):
             match dependency:
                 case KeyDependency(key):
                     yield Edge(KeyNode(key), name)
-                case RepoDependency(model) if (repository := self.repository(model)) is not None:
-                    yield Edge(repository, name)
+                case RepoDependency(model, contract):
+                    repository = self.repository(model)
+                    if repository is not None:
+                        yield Edge(repository, name)
+                    if contract is not None:
+                        yield Edge(KeyNode(contract), name)
                 case ExecutionDependency(kind=kind, annotation=annotation):
                     yield from (Edge(ClassNode(t), name, True) for t in kind.targets(annotation))
 
@@ -188,13 +232,16 @@ _PER_EXECUTION = (Scope.REQUEST, Scope.TRANSACTION)
 
 
 def _held_by_singleton(path: Path, graph: DependencyGraph) -> bool:
-    """Whether an ``APPLICATION`` binding holds the end of *path*; a call edge stops the search."""
+    """Whether an ``APPLICATION`` binding holds the end of *path*; a call edge stops the search.
+
+    The root counts too: a singleton rooting the walk holds what it reaches.
+    """
     for edge in reversed(path.edges):
         if graph.scope(edge.target) is Scope.APPLICATION:
             return True
         if edge.call_edge:
             return False
-    return False
+    return graph.scope(path.root) is Scope.APPLICATION
 
 
 def _refuse_missing_binding(node: Node, path: Path, graph: DependencyGraph) -> str | None:
@@ -268,14 +315,54 @@ def refuse_unmapped_repository(nodes: Collection[Node]) -> Rule:
     return refuse
 
 
-LENIENT_REFUSALS: tuple[Rule, ...] = (
+def refuse_unbound(kinds: ExecutionKinds, skip: Collection[Kind] = ()) -> Rule:
+    """Refusal 7: a singleton declares a kind of *kinds* no resolver is bound for.
+
+    Only ``APPLICATION`` bindings: seal builds them, while a per-execution
+    adapter fails at its first build, as an ``execute()`` marker does. A kind
+    in *skip* is left to that first build too.
+    """
+
+    def refuse(node: Node, path: Path, graph: DependencyGraph) -> str | None:
+        if graph.scope(node) is not Scope.APPLICATION:
+            return None
+        unbound = (
+            f"{name}: no resolver is bound for {dependency.kind.name!r}"
+            for name, dependency in graph.constructor(node)
+            if isinstance(dependency, ExecutionDependency)
+            and dependency.kind not in skip
+            and not kinds.bound(dependency.kind)
+        )
+        return next(unbound, None)
+
+    return refuse
+
+
+def _refuse_ungranted_kind(node: Node, path: Path, graph: DependencyGraph) -> str | None:
+    """A binding no root reaches declares a kind: nothing granted what it would resolve."""
+    for name, dependency in graph.constructor(node):
+        match dependency:
+            case ExecutionDependency(kind=kind):
+                return f"{name}: declares a {kind.name!r} dependency no root reaches"
+    return None
+
+
+_CONSTRUCTION_REFUSALS: tuple[Rule, ...] = (
     _refuse_cycle,
     _refuse_captive,
     _refuse_unsafe_kind,
     _refuse_declaration,
-    _refuse_unresolvable_root,
 )
+
+LENIENT_REFUSALS: tuple[Rule, ...] = (*_CONSTRUCTION_REFUSALS, _refuse_unresolvable_root)
 """The refusals a lenient composition keeps: all but the missing binding."""
+
+UNREACHED_REFUSALS: tuple[Rule, ...] = (*_CONSTRUCTION_REFUSALS, _refuse_ungranted_kind)
+"""Why seal leaves unbuilt a singleton no root reaches (C-B2): refusals 2-5, or a kind.
+
+A missing binding or an unresolvable parameter is not among them: building
+the singleton fails startup, as ``validate()`` does.
+"""
 
 REFUSALS: tuple[Rule, ...] = (_refuse_missing_binding, *LENIENT_REFUSALS)
 """The structural refusals, in the order they win."""

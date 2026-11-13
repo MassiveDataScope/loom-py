@@ -26,6 +26,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
+from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.repository.dependency import classify_key
 from loom.core.uow.coordinator import Coordinator
@@ -64,6 +65,8 @@ def create_kernel(
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
+    agent_resolver: Callable[[str, Identity], Any] | None = None,
+    mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
@@ -87,6 +90,13 @@ def create_kernel(
             Registered at ``APPLICATION`` scope before the modules run, so a
             module's service or a use case can inject
             :class:`~loom.core.environment.Environment`.
+        agent_resolver: Bound on the executor as by
+            :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
+            Until T12 its handles are built at call time, inside an
+            execution, so a singleton holding ``Agent()`` cannot be built.
+        mcp_resolver: Bound as by
+            :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`;
+            the same holds for a singleton holding ``Mcp()``.
 
     Returns:
         Fully built :class:`KernelRuntime`.
@@ -107,6 +117,8 @@ def create_kernel(
             metrics=metrics,
             coordinator=coordinator,
             repo_resolver=repo_resolver,
+            agent_resolver=agent_resolver,
+            mcp_resolver=mcp_resolver,
         )
         log.info("[BOOT] Validating container bindings")
         container.validate()
@@ -186,6 +198,8 @@ def install_kernel(
     metrics: MetricsAdapter | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
+    agent_resolver: Callable[[str, Identity], Any] | None = None,
+    mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
 ) -> KernelRuntime:
     """Compile *use_cases* and register the kernel's keys in the filled *container*.
 
@@ -198,7 +212,8 @@ def install_kernel(
     :class:`~loom.core.use_case.registry.UseCaseRegistry` and
     :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Declares the
     use-case and AI kinds on ``container.kinds``, binds the ``Caller()``
-    resolver there and gives the executor that registry. Validates nothing:
+    resolver there and gives the executor that registry, with the agent and
+    MCP resolvers given, if any. Validates nothing:
     the caller does once the container is complete.
 
     Raises:
@@ -217,6 +232,8 @@ def install_kernel(
         repo_resolver=repo_resolver or container.resolve_repo,
         resolvers=kinds,
         elevation_sink=_registered_sink(container),
+        agent_resolver=agent_resolver,
+        mcp_resolver=mcp_resolver,
     )
     registry = UseCaseRegistry.build(list(use_cases))
     app = AppInvoker(factory=base.factory, executor=executor, registry=registry)

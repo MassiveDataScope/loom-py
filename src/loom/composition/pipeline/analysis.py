@@ -6,7 +6,6 @@ import warnings
 
 from loom.composition.recipe import Recipe
 from loom.core.bootstrap import BootstrapError
-from loom.core.di.container import LoomContainer
 from loom.core.di.graph import (
     LENIENT_REFUSALS,
     REFUSALS,
@@ -19,8 +18,11 @@ from loom.core.di.graph import (
 )
 
 
-def analysed(container: LoomContainer, recipe: Recipe) -> GraphAnalysis:
-    """The analysis of *container*'s graph, rooted at the classes loom builds for *recipe*.
+def analysed(graph: DependencyGraph, recipe: Recipe) -> GraphAnalysis:
+    """The analysis of *graph*, rooted at the classes loom builds for *recipe*.
+
+    *graph* is the use-case factory's, which reads a use case's main
+    repository as one of its dependencies.
 
     Each :class:`~loom.core.di.errors.DependencyUnresolvable` is emitted as a
     warning.
@@ -38,7 +40,7 @@ def analysed(container: LoomContainer, recipe: Recipe) -> GraphAnalysis:
         LENIENT_REFUSALS if recipe.lenient else (*REFUSALS, refuse_unmapped_repository(callbacks))
     )
     try:
-        analysis = analyse(DependencyGraph(container), roots, rules)
+        analysis = analyse(graph, roots, rules)
     except DependencyGraphError as exc:
         raise BootstrapError(f"Bootstrap failed: {exc}") from exc
     for warning in analysis.warnings:

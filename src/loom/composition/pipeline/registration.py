@@ -83,7 +83,7 @@ def register(
     return Registered(
         persisted=persisted,
         kernel=kernel,
-        analysis=analysed(kernel.container, persisted.planned.recipe),
+        analysis=analysed(kernel.factory.graph, persisted.planned.recipe),
         job_resources=tuple(job_resources),
         sql=sql,
     )

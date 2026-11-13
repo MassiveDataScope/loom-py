@@ -17,6 +17,7 @@ from loom.core.execution.context import (
     enter,
     execution_identity,
     leave,
+    per_execution,
 )
 from loom.core.execution.errors import ExecutionRequired, MarkerNotResolved
 from loom.core.execution.resolvers import ExecutionKinds, ExecutionResolver, Kind
@@ -34,4 +35,5 @@ __all__ = [
     "enter",
     "execution_identity",
     "leave",
+    "per_execution",
 ]

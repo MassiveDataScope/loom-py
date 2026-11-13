@@ -8,6 +8,7 @@ from loom.composition.pipeline.registration import Registered
 from loom.core.bootstrap import BootstrapError, KernelRuntime
 from loom.core.di.container import ResolutionError
 from loom.core.engine.compilable import Compilable
+from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey
 from loom.core.uow.abc import UnitOfWorkFactory
@@ -18,11 +19,15 @@ from loom.core.use_case.factory import ModelRead
 def seal(registered: Registered) -> None:
     """Seal the container and build its singletons; refuse an unservable store; verify use cases.
 
-    A lenient recipe stops after building the singletons.
+    The container refuses a singleton the analysed graph reaches that
+    declares a kind no resolver is bound for (refusal 7): seal would build
+    it. A lenient recipe defers the agent and MCP kinds (such a singleton is
+    built by its first resolve once a resolver is bound) and stops after
+    building the singletons.
 
     Raises:
-        BootstrapError: Wrapping the failure of an ``APPLICATION`` binding's
-            instantiation, cause chained.
+        BootstrapError: Wrapping refusal 7, with its path, or the failure of
+            an ``APPLICATION`` binding's instantiation, cause chained.
         UncomposedWriteStore: See :func:`_refuse_unservable_stores`.
         JoinedAutocommitStore: See :func:`_refuse_unservable_stores`.
         ResolutionError: When a use case's dependency or marker read cannot be served.
@@ -30,9 +35,9 @@ def seal(registered: Registered) -> None:
     persisted, kernel = registered.persisted, registered.kernel
     source, recipe = persisted.planned.source, persisted.planned.recipe
     discovered = recipe.discovered
-    kernel.container.seal()
+    container, analysis = kernel.container, registered.analysis
     try:
-        kernel.container.validate()
+        container.seal(analysis, deferred=(AGENT, MCP) if recipe.lenient else ())
     except ResolutionError as exc:
         raise BootstrapError(f"Bootstrap failed: {exc}") from exc
     if recipe.lenient:
