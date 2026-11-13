@@ -122,28 +122,48 @@ class _RemoteUrl:
     machine, and TLS to a developer's own server buys nothing) and to a private host when
     the configuration opts in with ``allow_private_plaintext``. Every other ``http`` URL is
     refused. Both exceptions are deliberate, so neither is silent: ``warn_plaintext``
-    announces them at start-up.
+    announces them at start-up. Whatever the scheme, the URL must declare a host and carry
+    no userinfo and no query string.
 
-    The URL is parsed once; ``fault`` and ``warn_plaintext`` read the same parts.
+    The URL is judged once, when built: ``fault`` is the verdict, ``warn_plaintext`` reads
+    why a plaintext URL was let through.
     """
 
-    __slots__ = ("_parts", "_private_plaintext")
-
     def __init__(self, url: str, *, private_plaintext: bool = False) -> None:
-        """Parse *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
-        self._private_plaintext = private_plaintext
-        try:
-            self._parts: SplitResult | None = urlsplit(url)
-        except ValueError:
-            self._parts = None
-
-    def fault(self) -> str | None:
+        """Judge *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
+        self._host: str | None = None
+        self._plaintext_reason: str | None = None
+        self.fault: str | None = self._judge(url, private_plaintext)
         """Why the URL is unsafe, or ``None`` when it is acceptable."""
-        parts = self._parts
-        if parts is None:
+
+    def warn_plaintext(self, component: str) -> None:
+        """Announce an accepted plaintext URL and why it was let through.
+
+        Args:
+            component: Configuration path the URL came from.
+        """
+        if self._plaintext_reason is not None:
+            _logger.warning(
+                "%s uses plaintext http at %s. %s", component, self._host, self._plaintext_reason
+            )
+
+    def _judge(self, url: str, private_plaintext: bool) -> str | None:
+        try:
+            parts: SplitResult = urlsplit(url)
+        except ValueError:
             return "the URL is malformed"
-        if parts.scheme != "https":
-            return self._plaintext_fault(parts)
+        self._host = parts.hostname
+        if parts.scheme == "http":
+            if _is_loopback(parts.hostname):
+                self._plaintext_reason = _LOOPBACK_PLAINTEXT
+            elif not private_plaintext:
+                return "the scheme must be https"
+            elif _is_private(parts.hostname):
+                self._plaintext_reason = _PRIVATE_PLAINTEXT
+            else:
+                return "allow_private_plaintext admits only a private host"
+        elif parts.scheme != "https":
+            return "the scheme must be https"
         if not parts.hostname:
             return "the URL declares no host"
         if parts.username is not None or parts.password is not None:
@@ -152,63 +172,41 @@ class _RemoteUrl:
             return "the URL carries a query string, which may embed credentials"
         return None
 
-    def warn_plaintext(self, component: str) -> None:
-        """Announce an accepted plaintext URL and why it was let through.
 
-        Args:
-            component: Configuration path the URL came from.
-        """
-        parts = self._parts
-        if parts is None or parts.scheme != "http" or self.fault() is not None:
-            return
-        if _RemoteUrl._is_loopback(parts.hostname):
-            why = (
-                "Allowed because the traffic cannot leave this machine; the same URL on "
-                "any other host is refused, so this configuration is local-only."
-            )
-        else:
-            why = (
-                "Allowed by allow_private_plaintext: the host is only reachable inside a "
-                "private network, which must be trusted."
-            )
-        _logger.warning("%s uses plaintext http at %s. %s", component, parts.hostname, why)
+_LOOPBACK_PLAINTEXT = (
+    "Allowed because the traffic cannot leave this machine; the same URL on any other "
+    "host is refused, so this configuration is local-only."
+)
+_PRIVATE_PLAINTEXT = (
+    "Allowed by allow_private_plaintext: the host is only reachable inside a private "
+    "network, which must be trusted."
+)
 
-    def _plaintext_fault(self, parts: SplitResult) -> str | None:
-        if parts.scheme != "http":
-            return "the scheme must be https"
-        if _RemoteUrl._is_loopback(parts.hostname):
-            return None
-        if not self._private_plaintext:
-            return "the scheme must be https"
-        if _RemoteUrl._is_private(parts.hostname):
-            return None
-        return "allow_private_plaintext admits only a private host"
 
-    @staticmethod
-    def _is_loopback(hostname: str | None) -> bool:
-        """``localhost`` or an address in a loopback range."""
-        if hostname is None:
-            return False
-        if hostname == "localhost":
-            return True
-        try:
-            return ip_address(hostname.strip("[]")).is_loopback
-        except ValueError:
-            return False
+def _is_loopback(hostname: str | None) -> bool:
+    """``localhost`` or an address in a loopback range."""
+    if hostname is None:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
-    @staticmethod
-    def _is_private(hostname: str | None) -> bool:
-        """A private, loopback or link-local address, or a name public DNS never answers."""
-        if hostname is None:
-            return False
-        host = hostname.strip("[]").lower().rstrip(".")
-        if host.endswith(_PRIVATE_SUFFIXES):
-            return True
-        try:
-            address = ip_address(host)
-        except ValueError:
-            return False
-        return address.is_private or address.is_loopback or address.is_link_local
+
+def _is_private(hostname: str | None) -> bool:
+    """A private address (loopback and link-local included) or a name public DNS never
+    answers. ``urlsplit`` already lowercases the host and drops IPv6 brackets."""
+    if hostname is None:
+        return False
+    host = hostname.rstrip(".")
+    if host.endswith(_PRIVATE_SUFFIXES):
+        return True
+    try:
+        return ip_address(host).is_private
+    except ValueError:
+        return False
 
 
 def _redact_url(url: str) -> str:
@@ -363,13 +361,15 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         # and the error publish only the redacted form.
         address = self.base_url.reveal()
         remote = _RemoteUrl(address)
-        fault = remote.fault()
-        if fault is None:
-            remote.warn_plaintext("ai.a2a.base_url")
-        if fault is not None:
+        if remote.fault is not None:
             raise AgentCompilationError(
-                [AgentErrorCode.A2A_BASE_URL_INVALID.issue(url=_redact_url(address), reason=fault)]
+                [
+                    AgentErrorCode.A2A_BASE_URL_INVALID.issue(
+                        url=_redact_url(address), reason=remote.fault
+                    )
+                ]
             )
+        remote.warn_plaintext("ai.a2a.base_url")
 
 
 class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -503,11 +503,10 @@ def _validate_remote_url(
     """
     address = url.reveal() if isinstance(url, Dsn) else url
     remote = _RemoteUrl(address, private_plaintext=private_plaintext)
-    fault = remote.fault()
-    if fault is None:
-        remote.warn_plaintext(component)
-        return []
-    return [invalid.issue(component=component, url=_redact_url(address), reason=fault)]
+    if remote.fault is not None:
+        return [invalid.issue(component=component, url=_redact_url(address), reason=remote.fault)]
+    remote.warn_plaintext(component)
+    return []
 
 
 def _validate_headers_ref(

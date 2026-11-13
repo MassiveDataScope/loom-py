@@ -63,6 +63,7 @@ def _config_with(**overrides: object) -> AiConfig:
 
 _UNSAFE_URLS: list[str] = [
     "http://knowledge.example.com/mcp",
+    "http://knowledge.example.internal/mcp",
     "https://user:pass@knowledge.example.com/mcp",
     "https://knowledge.example.com/mcp?token=abc",
     "not a url",
@@ -70,6 +71,7 @@ _UNSAFE_URLS: list[str] = [
 ]
 _UNSAFE_URL_IDS: list[str] = [
     "plain_http",
+    "private_http_without_opt_in",
     "userinfo",
     "query_string",
     "malformed",
@@ -361,13 +363,19 @@ class TestMcpServerRegistry:
         assert AgentErrorCode.MCP_URL_INVALID in _codes(excinfo.value)
         assert "only a private host" in str(excinfo.value)
 
-    def test_without_the_opt_in_a_private_http_host_is_still_refused(self) -> None:
-        server = McpServerConfig(url=Dsn("http://mcp.example.internal:8081/mcp"))
+    @pytest.mark.parametrize(
+        "url",
+        ["http://user:pass@10.0.0.5/mcp", "http://10.0.0.5/mcp?token=x"],
+        ids=["userinfo", "query-string"],
+    )
+    def test_allow_private_plaintext_keeps_the_credential_checks(self, url: str) -> None:
+        """Plain http to a private host still carries no credential in the URL."""
+        server = McpServerConfig(url=Dsn(url), allow_private_plaintext=True)
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers={"gateway": server})
 
-        assert "the scheme must be https" in str(excinfo.value)
+        assert AgentErrorCode.MCP_URL_INVALID in _codes(excinfo.value)
 
     def test_allow_private_plaintext_does_not_apply_to_stdio(self) -> None:
         server = McpServerConfig(
