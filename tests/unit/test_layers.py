@@ -35,6 +35,11 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.serverless.aws.lambda_.handler",
         ),
     ),
+    # The execution context sits under the container, the engine and the use cases (spec 011).
+    "loom.core.execution": (
+        ("loom.core.di", "loom.core.engine", "loom.core.use_case", "loom.ai"),
+        (),
+    ),
     "loom.rest": (("loom.serverless",), ()),
     # A job backend raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),
