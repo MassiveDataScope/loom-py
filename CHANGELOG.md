@@ -525,6 +525,15 @@
   capability's key. A missing capability binding was refused by the factory's
   verification at seal, as a bare `ResolutionError`; it is now refused at the
   end of registration, as a `BootstrapError` wrapping `DependencyGraphError`.
+- **use cases (behaviour change):** an `Agent()`, `Mcp()` or `Caller()` marker
+  that reaches code unresolved (its class was built by a provider loom does not
+  read, such as a lambda) raises `MarkerNotResolved` on its first attribute
+  use, naming the marker and the remedy (let loom build the class), instead of
+  failing later with a bare `AttributeError` on an anonymous object.
+  `MarkerNotResolved` is an `AttributeError`, so `hasattr`, `getattr` with a
+  default, copy, pickle and `inspect.signature` keep working, and the markers'
+  own fields (`.name`, `.server`, `.include`) read as before. The three markers
+  now have a readable `repr` (`Mcp('acme-crm', include=['find_*'])`).
 - **use cases (behaviour change):** `UseCaseFactory` builds a use case or a job
   through its compiled plan, compiled once from the container's graph (and
   again after any `register*`), as a binding is: `UseCaseFactory.compiled(type)`

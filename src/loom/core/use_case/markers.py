@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, NoReturn, TypeVar
+
+from loom.core.execution.errors import MarkerNotResolved
 
 EntityT = TypeVar("EntityT")
 
@@ -48,7 +50,28 @@ def marks_input(default: object) -> bool:
     return isinstance(default, _InputMarker)
 
 
-class _CallerMarker:
+class _ExecutionMarker:
+    """A parameter default loom replaces with the object its resolver returns.
+
+    Loom resolves it in ``execute()`` and in the constructor of every class it
+    builds. One reaching code unresolved was built by a provider loom does not
+    read, so its first attribute use raises :class:`MarkerNotResolved` instead
+    of handing the sentinel on. Dunders and the marker's own unset slots raise
+    a plain :class:`AttributeError`, as copy, pickle and introspection expect.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> NoReturn:
+        if name.startswith("__") or name in type(self).__slots__:
+            raise AttributeError(name)
+        raise MarkerNotResolved(
+            f"{self!r}.{name}: the marker was never resolved; let loom build the class "
+            "declaring it (register(Port, Impl)) instead of constructing it in a provider"
+        )
+
+
+class _CallerMarker(_ExecutionMarker):
     """Marks a parameter as the verified identity running the execution.
 
     Carries no configuration — it is a pure marker, like ``_InputMarker``.
@@ -60,12 +83,15 @@ class _CallerMarker:
 
     __slots__ = ()
 
+    def __repr__(self) -> str:
+        return "Caller()"
+
 
 class _QueryMarker:
     __slots__ = ()
 
 
-class _AgentMarker:
+class _AgentMarker(_ExecutionMarker):
     """Marks a parameter as a named agent handle bound to the verified caller.
 
     Carries only the agent's name — no configuration and no output type, like
@@ -90,8 +116,11 @@ class _AgentMarker:
     def __init__(self, name: str) -> None:
         self.name = name
 
+    def __repr__(self) -> str:
+        return f"Agent({self.name!r})"
 
-class _McpMarker:
+
+class _McpMarker(_ExecutionMarker):
     """Marks a parameter as a named MCP server handle bound to this execution.
 
     Carries only the server name and the tool filter — no output type, like
@@ -116,6 +145,9 @@ class _McpMarker:
     def __init__(self, server: str, include: tuple[str, ...]) -> None:
         self.server = server
         self.include = include
+
+    def __repr__(self) -> str:
+        return f"Mcp({self.server!r}, include={list(self.include)!r})"
 
 
 class _LoadByIdMarker(Generic[EntityT]):
