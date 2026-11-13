@@ -487,8 +487,9 @@
   `LoomContainer.graph` is the container's `DependencyGraph`;
   `LoomContainer.read_with(*, classify_key, implicit)` sets how it reads
   constructors, once (the same reading again returns it, another raises
-  `ValueError`); `LoomContainer.seal(analysis=None, *, deferred=())` takes
-  the start-up analysis and the execution kinds to defer.
+  `ValueError`); `LoomContainer.seal(analysis=None, *, deferred=(), strict=True)`
+  takes the start-up analysis, the execution kinds to defer, and whether a
+  reached binding that does not compile fails the seal or its first resolve.
   `UseCaseFactory.graph` is that same graph, read through
   `loom.core.use_case.factory.main_repository`, which gives a use case built
   through `UseCase.__init__` its main repository.
@@ -505,10 +506,11 @@
   warns with `loom.core.di.errors.DependencyWarning` and fails with the reason
   when first resolved. `DependencyUnresolvable` is now a `DependencyWarning`.
 - **di (behaviour change, F8):** registering a key drops that key's built
-  instance and the compiled construction of every binding built on it,
-  transitively, so a binding built per execution or per resolve gets the new
-  binding from then on, before or after seal. A singleton already built on
-  it keeps its instance.
+  instance, and every binding's compiled construction is rebuilt once at its
+  next resolve, so a binding built per execution or per resolve gets the new
+  binding from then on, before or after seal. Every other built instance is
+  kept, so a singleton already built on the key keeps what it holds. After
+  seal, a `register*` thus recompiles every key once, on the start-up path.
 - **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
   on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
   bind them, so a standalone kernel serves a per-execution adapter declaring

@@ -10,8 +10,9 @@ outside any execution (D4).
 
 Concurrency:
     :data:`COLD_PATH`, one reentrant lock for the whole process, guards
-    structure only: compiling (the compiled closures, the dependents, the
-    graph's memo) and changing a binding. No provider runs under it.
+    structure only: compiling (the compiled closures, the graph's memo) and
+    changing a binding, which clears every compiled closure. No provider runs
+    under it.
     Building a singleton takes its binding's own reentrant lock, a once-cell:
     one thread builds while the others wait for that singleton alone, and a
     provider resolving another singleton on its own thread recurses. Locks
@@ -27,7 +28,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from itertools import repeat
 from typing import TYPE_CHECKING, Any
 
@@ -53,14 +53,7 @@ COLD_PATH = threading.RLock()
 """Taken to compile a binding or change one; never while a provider runs."""
 
 UNBUILT: Any = object()
-"""The instance of a singleton not built yet, and a miss in an execution's cache."""
-
-
-@dataclass(frozen=True, slots=True)
-class RepoMapping:
-    """The repository mapping of ``model``: a binding may depend on it as on a key."""
-
-    model: type[Any]
+"""The instance of a singleton not built yet."""
 
 
 def compile_key(container: LoomContainer, key: object) -> Closure:
@@ -73,15 +66,6 @@ def compile_key(container: LoomContainer, key: object) -> Closure:
     """
     with COLD_PATH:
         return _Compilation(container).compile(Path(KeyNode(key)), key)
-
-
-def refusing(message: str) -> Closure:
-    """A closure that raises :class:`DependencyGraphError` with *message* whenever called."""
-
-    def refuse() -> object:
-        raise DependencyGraphError(message)
-
-    return refuse
 
 
 class _Compilation:
@@ -104,6 +88,8 @@ class _Compilation:
         binding = container._bindings.get(key)
         if binding is None:
             raise _unbound(path, key)
+        if binding.refused is not None:
+            raise DependencyGraphError(binding.refused)
         self._open.add(key)
         try:
             make = self._maker(path, key, binding)
@@ -119,34 +105,29 @@ class _Compilation:
         arguments = tuple(
             (name, argument)
             for name, dependency in constructor
-            if (argument := self._argument(path, key, name, dependency)) is not None
+            if (argument := self._argument(path, name, dependency)) is not None
         )
         return _calling(binding.provider, arguments) if arguments else binding.provider
 
-    def _argument(
-        self, path: Path, dependent: object, name: str, dependency: Dependency
-    ) -> Closure | None:
+    def _argument(self, path: Path, name: str, dependency: Dependency) -> Closure | None:
         """The closure of one parameter; ``None`` leaves it to Python, as ``Impl()`` did."""
         match dependency:
             case KeyDependency(key):
-                return self._dependency(path, dependent, name, key)
+                return self._dependency(path, name, key)
             case RepoDependency(model):
-                mapped = self._mapped(path, dependent, name, model)
-                return self._dependency(path, dependent, name, mapped)
+                return self._dependency(path, name, self._mapped(path, name, model))
             case ExecutionDependency():
                 return _resolving(self._container.kinds, dependency, f"{path}: {name}")
             case RefusedDependency(reason):
                 raise DependencyGraphError(f"{path}: {name}: {reason}")
         return None
 
-    def _dependency(self, path: Path, dependent: object, name: str, key: object) -> Closure:
-        """The closure of *key*, recorded as a dependency of *dependent*, which ends *path*."""
-        self._container._depends(dependent, on=key)
+    def _dependency(self, path: Path, name: str, key: object) -> Closure:
+        """The closure of *key*, reached from the end of *path* through parameter *name*."""
         return self.compile(path.to(Edge(KeyNode(key), name)), key)
 
-    def _mapped(self, path: Path, dependent: object, name: str, model: type[Any]) -> object:
-        """The key *model*'s repository is mapped to, recorded as a dependency of *dependent*."""
-        self._container._depends(dependent, on=RepoMapping(model))
+    def _mapped(self, path: Path, name: str, model: type[Any]) -> object:
+        """The key *model*'s repository is mapped to."""
         key = self._container._repo_bindings.get(model)
         if key is None:
             raise DependencyGraphError(
@@ -191,7 +172,7 @@ def _scoped(
 ) -> Closure:
     if binding.scope is Scope.APPLICATION:
         instance = binding.instance
-        if instance is not UNBUILT:  # compiled again after a dependency changed
+        if instance is not UNBUILT:  # compiled again after a registration
             return repeat(instance).__next__
         return _singleton(compiled, key, binding, make)
     # The binding record keys the execution's cache: a key registered again gets

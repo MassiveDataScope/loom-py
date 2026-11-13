@@ -37,7 +37,9 @@ def seal(registered: Registered) -> None:
     discovered = recipe.discovered
     container, analysis = kernel.container, registered.analysis
     try:
-        container.seal(analysis, deferred=(AGENT, MCP) if recipe.lenient else ())
+        container.seal(
+            analysis, deferred=(AGENT, MCP) if recipe.lenient else (), strict=not recipe.lenient
+        )
     except ResolutionError as exc:
         raise BootstrapError(f"Bootstrap failed: {exc}") from exc
     if recipe.lenient:

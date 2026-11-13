@@ -171,3 +171,12 @@ def acme_resolver() -> Any:
             return "acme-crm-handle"
 
     return Resolver()
+
+
+def test_the_unbuilt_singleton_warning_points_at_the_caller_of_seal() -> None:
+    container = _bound(Scope.APPLICATION)
+
+    with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built") as caught:
+        container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
+
+    assert caught[0].filename == __file__

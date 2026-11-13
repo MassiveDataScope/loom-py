@@ -23,6 +23,7 @@ from loom.core.di.introspection import (
     RepoDependency,
     UnresolvableDependency,
     constructor_dependencies,
+    plain_key,
 )
 from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionKinds, Kind
@@ -97,7 +98,7 @@ class DependencyGraph:
         container: The container whose bindings, repository mappings and
             execution kinds the graph reads.
         classify_key: How a constructor annotation becomes a key; defaults
-            to the container's classifier.
+            to :func:`~loom.core.di.introspection.plain_key`.
         implicit: The dependencies loom injects into a class it builds
             beyond those its signature declares, such as a use case's main
             repository; none by default.
@@ -109,11 +110,11 @@ class DependencyGraph:
         self,
         container: LoomContainer,
         *,
-        classify_key: KeyClassifier | None = None,
+        classify_key: KeyClassifier = plain_key,
         implicit: Callable[[type[Any]], Constructor] = _nothing_implicit,
     ) -> None:
         self._container = container
-        self._classify_key = classify_key or container._classify_key
+        self._classify_key = classify_key
         self._implicit = implicit
         self._constructors: dict[Node, Constructor] = {}
         self._edges: dict[Node, tuple[Edge, ...]] = {}

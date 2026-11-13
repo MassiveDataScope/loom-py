@@ -88,7 +88,7 @@ class AcmeSettlement:
 
 
 def test_refusal_1_an_unmapped_repository_of_a_node_the_rule_names() -> None:
-    graph = DependencyGraph(LoomContainer(classify_key=classify_key))
+    graph = LoomContainer(classify_key=classify_key).graph
     root = ClassNode(AcmeSettlement)
     rules = (*REFUSALS, refuse_unmapped_repository({root}))
 
@@ -100,7 +100,7 @@ def test_refusal_1_an_unmapped_repository_of_a_node_the_rule_names() -> None:
 
 
 def test_an_unmapped_repository_of_a_node_the_rule_does_not_name_is_left_alone() -> None:
-    graph = DependencyGraph(LoomContainer(classify_key=classify_key))
+    graph = LoomContainer(classify_key=classify_key).graph
     rules = (*REFUSALS, refuse_unmapped_repository(set()))
 
     analysis = analyse(graph, [ClassNode(AcmeSettlement)], rules)
