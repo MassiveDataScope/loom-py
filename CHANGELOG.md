@@ -477,6 +477,9 @@
 
 ### ai
 
+- **ai:** in a use case that declares both `Agent()` and `Mcp()`, the resolvers now
+  run in declaration order, and a missing identity or an unbound resolver names the
+  first-declared marker; before, agents always came first.
 - **ai:** an MCP call that may have run on the server and failed (a cut
   connection, the client's own timeout, any client-made JSON-RPC code even
   when a server sent it) raises the new `MCP_CALL_INTERRUPTED`, on every path:

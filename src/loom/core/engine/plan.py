@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loom.core.engine.kinds import AGENT, MCP
+from loom.core.execution import Kind
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
@@ -72,6 +74,23 @@ class CallerBinding:
     """
 
     name: str
+
+
+@dataclass(frozen=True)
+class ExecutionBinding:
+    """One ``execute`` parameter resolved per execution through its kind's resolver.
+
+    Args:
+        name: Parameter name as declared in the signature.
+        kind: The kind whose resolver builds the value.
+        declaration: The parameter's default, the marker the resolver reads.
+        annotation: Resolved annotation of the parameter.
+    """
+
+    name: str
+    kind: Kind
+    declaration: Any
+    annotation: Any
 
 
 @dataclass(frozen=True)
@@ -220,10 +239,8 @@ class ExecutionPlan:
         input_binding: Command payload binding, or ``None`` if absent.
         caller_binding: Caller-identity binding, or ``None`` when the use case
             declares no ``Caller()`` parameter.
-        agent_bindings: ``Agent()`` marker bindings, in declaration order;
-            empty when the use case declares none.
-        mcp_bindings: ``Mcp()`` marker bindings, in declaration order; empty
-            when the use case declares none.
+        execution_bindings: Parameters resolved through an execution kind
+            (``Agent()``, ``Mcp()``), in declaration order.
         query_binding: ``Query()`` binding, or ``None`` when the use case
             declares no ``Query()`` parameter.
         load_steps: Entity prefetch steps, in declaration order.
@@ -270,8 +287,25 @@ class ExecutionPlan:
     rule_steps: tuple[RuleStep, ...]
     read_only: bool = False
     caller_binding: CallerBinding | None = None
-    agent_bindings: tuple[AgentBinding, ...] = ()
-    mcp_bindings: tuple[McpBinding, ...] = ()
+    execution_bindings: tuple[ExecutionBinding, ...] = ()
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE
     joined: frozenset[StoreKey] = frozenset()
+
+    @property
+    def agent_bindings(self) -> tuple[AgentBinding, ...]:
+        """The ``Agent()`` execution bindings, in declaration order."""
+        return tuple(
+            AgentBinding(b.name, b.declaration.name, b.annotation)
+            for b in self.execution_bindings
+            if b.kind is AGENT
+        )
+
+    @property
+    def mcp_bindings(self) -> tuple[McpBinding, ...]:
+        """The ``Mcp()`` execution bindings, in declaration order."""
+        return tuple(
+            McpBinding(b.name, b.declaration.server, b.declaration.include)
+            for b in self.execution_bindings
+            if b.kind is MCP
+        )

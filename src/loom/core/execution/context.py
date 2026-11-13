@@ -11,10 +11,11 @@ singleton construction in :class:`NoExecution`.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
-    copies the context, so it sees the same identity and the same cache, and
-    keeps both if it outlives the execution. ``asyncio.to_thread`` copies the
-    context too; ``loop.run_in_executor`` does not, so a handle called there
-    fails closed with :class:`ExecutionRequired`.
+    (each child of an ``asyncio.gather`` included) copies the context, so it
+    sees the same identity and shares the same cache, and keeps both if it
+    outlives the execution. ``asyncio.to_thread`` copies the context too;
+    ``loop.run_in_executor`` does not, so a handle called there fails closed
+    with :class:`ExecutionRequired`.
 """
 
 from __future__ import annotations
@@ -100,7 +101,8 @@ class ExecutionContext:
         including one that outlives it.
 
         Args:
-            key: Any hashable key, typically the binding key.
+            key: A binding-key object (a type or a private key instance),
+                never a bare string another library could also pick.
             value: The value to keep.
         """
         cache = self._cache

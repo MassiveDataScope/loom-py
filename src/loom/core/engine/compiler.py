@@ -7,16 +7,16 @@ from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import (
-    AgentBinding,
     CallerBinding,
     ComputeStep,
+    ExecutionBinding,
     ExecutionPlan,
     ExistsStep,
     InputBinding,
     LoadStep,
-    McpBinding,
     ParamBinding,
     QueryBinding,
     RuleStep,
@@ -71,8 +71,7 @@ class _SignatureBindings:
     param_bindings: list[ParamBinding] = field(default_factory=list)
     load_steps: list[LoadStep] = field(default_factory=list)
     exists_steps: list[ExistsStep] = field(default_factory=list)
-    agent_bindings: list[AgentBinding] = field(default_factory=list)
-    mcp_bindings: list[McpBinding] = field(default_factory=list)
+    execution_bindings: list[ExecutionBinding] = field(default_factory=list)
     input_binding: InputBinding | None = None
     caller_binding: CallerBinding | None = None
     query_binding: QueryBinding | None = None
@@ -191,8 +190,7 @@ class UseCaseCompiler:
             rule_steps=rule_steps,
             read_only=bool(getattr(use_case_type, "read_only", False)),
             caller_binding=bindings.caller_binding,
-            agent_bindings=tuple(bindings.agent_bindings),
-            mcp_bindings=tuple(bindings.mcp_bindings),
+            execution_bindings=tuple(bindings.execution_bindings),
             query_binding=bindings.query_binding,
             primary=primary,
             joined=_joined_stores(use_case_type) - {primary},
@@ -252,11 +250,13 @@ class UseCaseCompiler:
             return
 
         if isinstance(marker, _AgentMarker):
-            self._collect_agent(name, annotation, marker, bindings)
+            binding = ExecutionBinding(name, AGENT, marker, annotation)
+            self._collect_execution(binding, f"Agent: {marker.name!r}", bindings)
             return
 
         if isinstance(marker, _McpMarker):
-            self._collect_mcp(name, marker, bindings)
+            binding = ExecutionBinding(name, MCP, marker, annotation)
+            self._collect_execution(binding, f"Mcp: {marker.server!r}", bindings)
             return
 
         if isinstance(marker, _LoadByIdMarker):
@@ -341,45 +341,19 @@ class UseCaseCompiler:
         bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
         self._logger.info(f"[BOOT]  - Detected Query: {annotation.__name__} -> {name}")
 
-    def _collect_agent(
-        self,
-        name: str,
-        annotation: Any,
-        marker: _AgentMarker,
-        bindings: _SignatureBindings,
+    def _collect_execution(
+        self, binding: ExecutionBinding, detected: str, bindings: _SignatureBindings
     ) -> None:
-        """Record one ``Agent()`` marker; several may appear in one signature.
+        """Record one ``Agent()`` or ``Mcp()`` marker; several may appear in one signature.
 
-        Only the parameter name, the declared agent name and the raw
-        annotation are kept here. Whether that agent exists and whether the
-        annotation's type argument matches its declared output cannot be
+        Whether the agent or server it names exists, and whether an agent
+        annotation's type argument matches its declared output, cannot be
         checked here: this compiler runs regardless of whether the optional
-        AI pillar is even installed, so that check happens once, in the
-        composition root, only after the AI runtime it needs has been built.
+        AI pillar is even installed, so those checks happen once, in the
+        composition root, after the AI runtime they need has been built.
         """
-        bindings.agent_bindings.append(
-            AgentBinding(name=name, agent=marker.name, annotation=annotation)
-        )
-        self._logger.info(f"[BOOT]  - Detected Agent: {marker.name!r} -> {name}")
-
-    def _collect_mcp(
-        self,
-        name: str,
-        marker: _McpMarker,
-        bindings: _SignatureBindings,
-    ) -> None:
-        """Record one ``Mcp()`` marker; several may appear in one signature.
-
-        Only the parameter name, the declared server name and the declared
-        ``include`` are kept here. Whether that server exists cannot be
-        checked here: this compiler runs regardless of whether the optional
-        AI pillar is even installed, the same reason ``_collect_agent``
-        cannot validate the agent name either.
-        """
-        bindings.mcp_bindings.append(
-            McpBinding(name=name, server=marker.server, include=marker.include)
-        )
-        self._logger.info(f"[BOOT]  - Detected Mcp: {marker.server!r} -> {name}")
+        bindings.execution_bindings.append(binding)
+        self._logger.info(f"[BOOT]  - Detected {detected} -> {binding.name}")
 
     @staticmethod
     def _build_load_by_id_step(name: str, marker: _LoadByIdMarker[Any]) -> LoadStep:

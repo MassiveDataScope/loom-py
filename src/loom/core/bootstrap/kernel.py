@@ -23,12 +23,14 @@ from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
+from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
 
@@ -191,18 +193,25 @@ def install_kernel(
     :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation sink
     is the bound :class:`~loom.core.authz.elevation.ElevationSink`, if any),
     :class:`~loom.core.use_case.registry.UseCaseRegistry` and
-    :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Validates
-    nothing: the caller does once the container is complete.
+    :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Declares the
+    use-case and AI kinds on ``container.kinds``, binds the ``Caller()``
+    resolver there and gives the executor that registry. Validates nothing:
+    the caller does once the container is complete.
 
     Raises:
         CompilationError: When a use case does not compile.
     """
     base = install_use_cases(container, use_cases, logger=logger, metrics=metrics)
+    kinds = container.kinds
+    use_case_kinds(kinds)
+    declare_ai_kinds(kinds)
+    kinds.bind(CALLER, CallerResolver())
     executor = RuntimeExecutor(
         base.compiler,
         coordinator=coordinator,
         metrics=metrics,
         repo_resolver=repo_resolver or container.resolve_repo,
+        resolvers=kinds,
         elevation_sink=_registered_sink(container),
     )
     registry = UseCaseRegistry.build(list(use_cases))

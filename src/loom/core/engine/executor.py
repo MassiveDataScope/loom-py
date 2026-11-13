@@ -13,6 +13,7 @@ from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep
 from loom.core.engine.post_commit import (
@@ -30,6 +31,14 @@ from loom.core.errors import (
     RuleViolation,
     RuleViolations,
     Unauthenticated,
+)
+from loom.core.execution import (
+    ExecutionKinds,
+    ExecutionResolver,
+    Kind,
+    enter,
+    execution_identity,
+    leave,
 )
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
@@ -66,6 +75,11 @@ _ERROR_KIND_BUSINESS = "business"
 _ERROR_KIND_COMMIT = "commit"
 _ERROR_KIND_CANCELLED = "cancelled"
 _ERROR_KIND_POST_COMMIT = "post_commit"
+# The marker, the resolver and the binding method each execution kind's errors name.
+_KIND_WORDING = {
+    AGENT: ("Agent()", "agent", "bind_agent_resolver"),
+    MCP: ("Mcp()", "MCP", "bind_mcp_resolver"),
+}
 
 
 class ParameterBindingError(ValueError):
@@ -174,16 +188,12 @@ class RuntimeExecutor:
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when
             ``dependencies`` override is not passed to :meth:`execute`.
-        agent_resolver: Optional callable resolving an ``Agent()`` marker
-            parameter to a handle, given the agent's deployment name and the
-            verified caller of this execution. ``None`` until
-            :meth:`bind_agent_resolver` is called — see that method for why
-            it is bound after construction rather than passed in here.
-        mcp_resolver: Optional callable resolving an ``Mcp()`` marker
-            parameter to a handle, given the marker's server name, its own
-            declared ``include`` and the verified caller of this execution.
-            ``None`` until :meth:`bind_mcp_resolver` is called, for the same
-            reason ``agent_resolver`` is bound after construction.
+        resolvers: The execution kinds whose resolvers build each
+            ``Agent()`` / ``Mcp()`` parameter; the kernel passes its
+            container's, so both share one registry. A new one by default.
+        agent_resolver: Bound as by :meth:`bind_agent_resolver`, which
+            explains why the kernel binds it after construction instead.
+        mcp_resolver: Bound as by :meth:`bind_mcp_resolver`.
 
     Example::
 
@@ -208,6 +218,7 @@ class RuntimeExecutor:
         logger: LoggerPort | None = None,
         metrics: MetricsAdapter | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
+        resolvers: ExecutionKinds | None = None,
         agent_resolver: Callable[[str, Identity], Any] | None = None,
         mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
         elevation_sink: ElevationSink | None = None,
@@ -219,8 +230,13 @@ class RuntimeExecutor:
         self._logger = logger or get_logger(__name__)
         self._metrics = metrics
         self._repo_resolver = repo_resolver
-        self._agent_resolver = agent_resolver
-        self._mcp_resolver = mcp_resolver
+        self._kinds = ExecutionKinds() if resolvers is None else resolvers
+        self._agent_resolver: Callable[[str, Identity], Any] | None = None
+        self._mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None
+        if agent_resolver is not None:
+            self.bind_agent_resolver(agent_resolver)
+        if mcp_resolver is not None:
+            self.bind_mcp_resolver(mcp_resolver)
 
     def bind_agent_resolver(self, resolver: Callable[[str, Identity], Any]) -> None:
         """Bind the resolver used by every ``Agent()`` marker parameter.
@@ -234,6 +250,11 @@ class RuntimeExecutor:
         called fails at its first execution with a clear error, not with a
         missing-attribute crash.
 
+        The resolver is bound to :data:`~loom.core.engine.kinds.AGENT` on
+        this executor's registry: as is when it implements
+        :class:`~loom.core.execution.ExecutionResolver`, else wrapped to be
+        called with the execution identity at resolve time.
+
         Args:
             resolver: Builds one agent handle from the agent's deployment
                 name and the verified caller of one execution.
@@ -243,7 +264,10 @@ class RuntimeExecutor:
         """
         if self._agent_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_agent_resolver() called more than once")
-        self._agent_resolver = resolver
+        given = resolver  # its declared type; pyright narrows `resolver` below
+        shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyAgent(resolver)
+        self._kinds.bind(AGENT, shim)
+        self._agent_resolver = given
 
     def bind_mcp_resolver(self, resolver: Callable[[str, tuple[str, ...], Identity], Any]) -> None:
         """Bind the resolver used by every ``Mcp()`` marker parameter.
@@ -269,7 +293,10 @@ class RuntimeExecutor:
         """
         if self._mcp_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_mcp_resolver() called more than once")
-        self._mcp_resolver = resolver
+        given = resolver  # its declared type; pyright narrows `resolver` below
+        shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyMcp(resolver)
+        self._kinds.bind(MCP, shim)
+        self._mcp_resolver = given
 
     async def run(
         self,
@@ -677,8 +704,8 @@ class RuntimeExecutor:
         self._check_query(plan, inputs.params or {})
         self._bind_params(plan, inputs.params or {}, bound)
         self._bind_caller(plan, inputs.identity, bound)
-        self._bind_agents(plan, inputs.identity, bound)
-        self._bind_mcp(plan, inputs.identity, bound)
+        if plan.execution_bindings:
+            self._bind_executions(plan, inputs.identity, bound)
         fields_set = self._build_command(plan, inputs.payload, bound)
         await self._execute_loads(
             plan, compilable, bound, inputs.dependencies, inputs.load_overrides
@@ -831,74 +858,43 @@ class RuntimeExecutor:
             )
         bound[binding.name] = identity
 
-    def _bind_agents(
+    def _bind_executions(
         self,
         plan: ExecutionPlan,
         identity: Identity | None,
         bound: dict[str, Any],
     ) -> None:
-        """Inject one handle per ``Agent()`` marker, closed over this caller.
+        """Inject one value per execution binding, resolved as this caller.
 
-        Requires an explicit identity for the same reason ``_bind_caller``
-        does: substituting ``ANONYMOUS`` for a missing one would turn a
-        transport bug into a silently unauthenticated agent call. An
-        explicitly anonymous identity is still accepted here — the handle
-        itself, not the executor, refuses it, and only once its ``run`` is
-        actually invoked, so the refusal happens right before the model call
-        rather than at bind time (design: an anonymous caller must be
-        refused before touching the network, not before it is even known
-        whether this execution will call ``run`` at all).
+        Requires an explicit identity for the reason ``_bind_caller`` does.
+        An explicitly anonymous one is accepted: the handle refuses it when
+        used, right before the network call, not before it is known whether
+        this execution makes one. A kind with no resolver bound fails loud,
+        naming the method that binds it, instead of handing the raw marker
+        to the use case. The resolvers run inside an execution entered here
+        for that caller (T08 widens it to the whole lifecycle).
         """
-        if not plan.agent_bindings:
-            return
+        bindings = plan.execution_bindings
         if identity is None:
+            marker = _KIND_WORDING[bindings[0].kind][0]
             raise Unauthenticated(
-                f"{plan.use_case_type.__qualname__}.execute declares an Agent() "
+                f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
                 "parameter but this execution carried no identity. The transport "
                 "must pass identity=... to the executor (pass ANONYMOUS explicitly "
                 "to run without a caller)."
             )
-        if self._agent_resolver is None:
-            raise RuntimeError(
-                f"{plan.use_case_type.__qualname__}.execute declares an Agent() "
-                "parameter but no agent resolver is bound on this executor. Call "
-                "RuntimeExecutor.bind_agent_resolver() once the AI runtime exists."
-            )
-        for binding in plan.agent_bindings:
-            bound[binding.name] = self._agent_resolver(binding.agent, identity)
-
-    def _bind_mcp(
-        self,
-        plan: ExecutionPlan,
-        identity: Identity | None,
-        bound: dict[str, Any],
-    ) -> None:
-        """Inject one handle per ``Mcp()`` marker, closed over this caller.
-
-        Mirrors :meth:`_bind_agents`: an explicit identity is required for
-        the same reason — substituting ``ANONYMOUS`` for a missing one would
-        turn a transport bug into a silently unauthenticated tool call — and
-        an unbound resolver fails loud, naming :meth:`bind_mcp_resolver`,
-        instead of handing the raw marker object back to the use case, which
-        would only fail later with an opaque ``AttributeError``.
-        """
-        if not plan.mcp_bindings:
-            return
-        if identity is None:
-            raise Unauthenticated(
-                f"{plan.use_case_type.__qualname__}.execute declares an Mcp() "
-                "parameter but this execution carried no identity. The transport "
-                "must pass identity=... to the executor (pass ANONYMOUS explicitly "
-                "to run without a caller)."
-            )
-        if self._mcp_resolver is None:
-            raise RuntimeError(
-                f"{plan.use_case_type.__qualname__}.execute declares an Mcp() "
-                "parameter but no MCP resolver is bound on this executor. Call "
-                "RuntimeExecutor.bind_mcp_resolver() once the AI runtime exists."
-            )
-        for binding in plan.mcp_bindings:
-            bound[binding.name] = self._mcp_resolver(binding.server, binding.include, identity)
+        kinds = self._kinds
+        token = enter(identity)
+        try:
+            for binding in bindings:
+                try:
+                    value = kinds.resolve(binding.kind, binding.declaration, binding.annotation)
+                except KeyError:
+                    _refuse_unbound(kinds, plan, binding.kind)
+                    raise
+                bound[binding.name] = value
+        finally:
+            leave(token)
 
     @staticmethod
     def _coerce_param(
@@ -1169,6 +1165,18 @@ def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> No
             raise JoinedAutocommitStore(issue)
 
 
+def _refuse_unbound(kinds: ExecutionKinds, plan: ExecutionPlan, kind: Kind) -> None:
+    """Raise the "no resolver bound" error when ``kind`` has none."""
+    if kinds.bound(kind):
+        return
+    marker, resolver, method = _KIND_WORDING[kind]
+    raise RuntimeError(
+        f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
+        f"parameter but no {resolver} resolver is bound on this executor. "
+        f"Call RuntimeExecutor.{method}() once the AI runtime exists."
+    ) from None
+
+
 def _refuse_nesting(use_case: str) -> None:
     """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
 
@@ -1185,3 +1193,27 @@ def _refuse_nesting(use_case: str) -> None:
         and current_identity() != scope.identity
     ):
         raise NestedIdentityMismatch.joining(use_case)
+
+
+class _LegacyAgent:
+    """Calls a ``(name, identity)`` agent resolver with the execution identity."""
+
+    __slots__ = ("_resolver",)
+
+    def __init__(self, resolver: Callable[[str, Identity], Any]) -> None:
+        self._resolver = resolver
+
+    def resolve(self, declaration: Any, annotation: object) -> object:
+        return self._resolver(declaration.name, execution_identity())
+
+
+class _LegacyMcp:
+    """Calls a ``(server, include, identity)`` MCP resolver with the execution identity."""
+
+    __slots__ = ("_resolver",)
+
+    def __init__(self, resolver: Callable[[str, tuple[str, ...], Identity], Any]) -> None:
+        self._resolver = resolver
+
+    def resolve(self, declaration: Any, annotation: object) -> object:
+        return self._resolver(declaration.server, declaration.include, execution_identity())

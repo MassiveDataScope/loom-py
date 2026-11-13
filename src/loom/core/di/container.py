@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 
 from loom.core.di.errors import ContainerSealedWarning
 from loom.core.di.scope import Scope
+from loom.core.execution import ExecutionKinds
 
 T = TypeVar("T")
 BindingKey = object
@@ -64,6 +65,10 @@ class LoomContainer:
     singletons; request-scope instances are created fresh per
     :meth:`resolve` call.
 
+    Attributes:
+        kinds: The execution kinds of this application, shared with its
+            executor; empty until the kernel declares them.
+
     Example::
 
         container = LoomContainer()
@@ -78,6 +83,7 @@ class LoomContainer:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
         self._sealed = False
+        self.kinds = ExecutionKinds()
 
     def register(
         self,
