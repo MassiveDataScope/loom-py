@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "Object contains unknown field `unknown`",
+    "type": "msgspec.ValidationError"
+  },
+  "message": "Config section 'jobs.AcmeJob' failed validation as 'JobConfig': Object contains unknown field `unknown`",
+  "type": "loom.core.config.errors.ConfigError",
+  "wrapped": false
+}
