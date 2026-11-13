@@ -161,7 +161,7 @@ def build_application(
         environment=environment,
         code_path=code_path,
         resolvers=resolvers,
-        caller="create_app",
+        caller="build_application",
     )
     return compose_application(source, adapter, modules=modules)
 

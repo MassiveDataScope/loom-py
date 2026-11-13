@@ -14,11 +14,11 @@ from loom.core.observability.runtime import ObservabilityRuntime
 
 def load_source(
     *config_paths: str,
-    config_dir: str | None,
-    environment: Environment | str | None,
-    code_path: str | None,
-    resolvers: Sequence[ConfigResolver],
-    caller: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    caller: str = "load_source",
 ) -> CompositionSource:
     """Load the configuration, environment and code an application composes from.
 
@@ -28,7 +28,8 @@ def load_source(
         environment: See :func:`create_app`.
         code_path: See :func:`create_app`.
         resolvers: See :func:`create_app`.
-        caller: Entry point named when the paths are invalid.
+        caller: Entry point named when the paths are invalid. Loom's own entry
+            points pass their name; callers leave the default.
 
     Returns:
         The loaded source.

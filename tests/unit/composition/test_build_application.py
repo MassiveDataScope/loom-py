@@ -66,6 +66,23 @@ def test_load_source_requires_app_name_with_or_without_app_section(tmp_path: Pat
         load_source(str(config), **options)
 
 
+def test_load_source_needs_only_the_config_paths(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("app:\n  name: acme\n", encoding="utf-8")
+
+    source = load_source(str(config))
+
+    assert source.app.name == "acme"
+
+
+def test_build_application_names_itself_when_paths_conflict(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("app:\n  name: acme\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=r"^build_application takes config files"):
+        build_application(str(config), adapter=_Bare(), config_dir=str(tmp_path))
+
+
 class _CreateRecord(Command, frozen=True):
     name: str
 
