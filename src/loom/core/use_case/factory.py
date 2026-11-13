@@ -1,20 +1,20 @@
 """UseCase factory for declarative infrastructure injection.
 
-Inspects ``UseCase.__init__`` type hints **once at startup** and caches the
-dependency list.  At request time, it resolves each dependency from
-:class:`~loom.core.di.container.LoomContainer` and constructs the instance —
-zero per-request reflection.
+Reads a use case's or a job's constructor **once**, from the container's
+dependency graph, and compiles it into a *plan*: a closure that builds the
+instance with every dependency resolved from
+:class:`~loom.core.di.container.LoomContainer`, with zero per-request
+reflection.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple, TypeVar
 
-from loom.core.di.container import LoomContainer, ResolutionError
-from loom.core.di.errors import describe_key
-from loom.core.di.graph import ClassNode
-from loom.core.di.introspection import Constructor, KeyDependency, RepoDependency
+from loom.core.di.container import LoomContainer
+from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError, analyse
+from loom.core.di.introspection import Constructor, RepoDependency
 from loom.core.repository.dependency import classify_key
 from loom.core.repository.registration import is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
@@ -38,11 +38,6 @@ class ModelRead(NamedTuple):
     model: type[object]
 
 
-DepToken = object
-"""A container key, or a :class:`~loom.core.di.introspection.RepoDependency` resolved
-through the repository mapping."""
-
-
 def main_repository(cls: type[Any]) -> Constructor:
     """The main repository a use case built through ``UseCase.__init__`` gets injected.
 
@@ -61,12 +56,12 @@ def main_repository(cls: type[Any]) -> Constructor:
 class UseCaseFactory:
     """Builds UseCase instances by resolving constructor dependencies from the container.
 
-    The factory inspects ``UseCase.__init__`` type hints once (at startup or
-    on first use for each class) and stores the resolved dependency list.
-    Every subsequent :meth:`build` call resolves instances from the container
-    without further reflection. :meth:`verify`, called once the host has
-    finished wiring, surfaces every dependency the container cannot provide
-    before the first request.
+    Each class is compiled once into a plan (:meth:`compiled`), the closure
+    every :meth:`build` runs, so building reflects on nothing. A plan is
+    compiled again after any registration into the container. :meth:`verify`,
+    called once the host has finished wiring, compiles every registered class
+    and surfaces each dependency the container cannot provide before the
+    first request.
 
     Args:
         container: The :class:`~loom.core.di.container.LoomContainer` to
@@ -94,15 +89,15 @@ class UseCaseFactory:
     def __init__(self, container: LoomContainer) -> None:
         self._container = container
         self.graph = container.read_with(classify_key=classify_key, implicit=main_repository)
-        # Maps use_case_type -> list of (param_name, token) pairs: a container
-        # key, or a RepoDependency resolved through the repository mapping.
-        self._dep_cache: dict[type[Any], list[tuple[str, DepToken]]] = {}
+        self._registered: dict[type[Any], None] = {}
 
     def build(self, use_case_type: type[_T]) -> _T:
         """Construct an instance with dependencies injected from the container.
 
-        Accepts any class whose constructor dependencies are resolvable from
-        the container — both :class:`~loom.core.use_case.use_case.UseCase`
+        Runs the plan of ``use_case_type`` (:meth:`compiled`); outside an
+        execution each per-execution dependency is built fresh. Accepts any
+        class whose constructor dependencies are resolvable from the
+        container — both :class:`~loom.core.use_case.use_case.UseCase`
         and :class:`~loom.core.job.job.Job` subclasses are valid inputs.
 
         Args:
@@ -112,38 +107,45 @@ class UseCaseFactory:
             A fully constructed instance of ``use_case_type``.
 
         Raises:
-            ~loom.core.di.container.ResolutionError: If a required dependency
-                is not registered in the container.
+            ~loom.core.di.graph.DependencyGraphError: Naming the path to a
+                dependency the container cannot provide.
         """
-        deps = self._get_deps(use_case_type)
-        kwargs: dict[str, Any] = {}
-        for name, dep in deps:
-            if isinstance(dep, RepoDependency):
-                kwargs[name] = self._container.resolve_repo(dep.model)
-                continue
-            kwargs[name] = self._container.resolve(dep)
-        return use_case_type(**kwargs)
+        return self._container.compiled(use_case_type)()
+
+    def compiled(self, use_case_type: type[_T]) -> Callable[[], _T]:
+        """The plan :meth:`build` runs (:meth:`~loom.core.di.container.LoomContainer.compiled`)."""
+        return self._container.compiled(use_case_type)
 
     def register(self, use_case_type: type[Any]) -> None:
-        """Pre-warm the dependency cache for ``use_case_type`` at startup.
+        """Record ``use_case_type`` for :meth:`verify`, refusing a parameter loom cannot provide.
 
-        Only inspects and caches: a dependency the host registers later (a job
-        service, the application invoker) is legitimate here. :meth:`verify`
-        checks the cached dependencies once wiring is complete.
+        A dependency the host registers later (a job service, the application
+        invoker) is legitimate here; :meth:`verify` checks them once wiring
+        is complete.
 
         Args:
-            use_case_type: Class to inspect and cache. Supports both
-                ``UseCase`` and ``Job`` subclasses.
+            use_case_type: Class to record. Supports both ``UseCase`` and
+                ``Job`` subclasses.
+
+        Raises:
+            ~loom.core.di.graph.DependencyGraphError: When a required
+                parameter names nothing the container can serve, naming the
+                class and the parameter.
         """
-        self._get_deps(use_case_type)
+        root = ClassNode(use_case_type)
+        reason = next(self.graph.unresolvable(root), None)
+        if reason is not None:
+            raise DependencyGraphError(f"{root}: {reason}")
+        self._registered[use_case_type] = None
 
     def verify(self, *, reads: Iterable[ModelRead] = ()) -> None:
-        """Check every registered class against the container's bindings.
+        """Check every registered class against the container's bindings and compile it.
 
         Call once the host has finished wiring, so that a missing binding
-        fails the bootstrap instead of the first request.  A main repository
-        declared with a standard capability contract (``Listable[Order]``)
-        must be mapped for its model *and* registered under that capability.
+        fails the bootstrap instead of the first request, and no build
+        compiles afterwards. A main repository declared with a standard
+        capability contract (``Listable[Order]``) must be mapped for its
+        model *and* registered under that capability.
 
         Args:
             reads: Models the registered classes read besides their main
@@ -153,53 +155,20 @@ class UseCaseFactory:
         Raises:
             UnservedModelError: When a main repository or one of *reads*
                 names a model no repository is registered for.
-            ~loom.core.di.container.ResolutionError: Naming the class, the
-                constructor parameter and the key the container lacks.
+            ~loom.core.di.graph.DependencyGraphError: Naming the path from
+                the class to the key the container lacks, or to a cycle.
         """
         for component, parameter, model in (*self._main_repository_reads(), *reads):
             if not self._container.has_repo_mapping(model):
                 raise UnservedModelError.for_parameter(component, parameter, model)
-        for use_case_type, deps in self._dep_cache.items():
-            for name, dep in deps:
-                missing = self._missing_key(dep)
-                if missing is not None:
-                    raise ResolutionError(
-                        f"{use_case_type.__qualname__} injects {name}: {missing}, "
-                        "which is not registered in the container."
-                    )
+        analyse(self.graph, map(ClassNode, self._registered), BINDING_REFUSALS)
+        for use_case_type in self._registered:
+            self._container.compiled(use_case_type)
 
     def _main_repository_reads(self) -> list[ModelRead]:
         return [
-            ModelRead(use_case_type, name, dep.model)
-            for use_case_type, deps in self._dep_cache.items()
-            for name, dep in deps
-            if isinstance(dep, RepoDependency)
+            ModelRead(use_case_type, name, dependency.model)
+            for use_case_type in self._registered
+            for name, dependency in self.graph.constructor(ClassNode(use_case_type))
+            if isinstance(dependency, RepoDependency)
         ]
-
-    def _missing_key(self, dep: DepToken) -> str | None:
-        """Describe the key the container lacks for ``dep``; ``None`` when provided."""
-        if isinstance(dep, RepoDependency):
-            return self._missing_main_repo_key(dep)
-        return None if self._container.is_registered(dep) else describe_key(dep)
-
-    def _missing_main_repo_key(self, dep: RepoDependency) -> str | None:
-        """The capability key a mapped main repository lacks; the mapping is checked first."""
-        key = dep.contract
-        if key is not None and not self._container.is_registered(key):
-            return f"{describe_key(key)} (main repository capability)"
-        return None
-
-    def _get_deps(self, use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
-        """Return the cached (or freshly read) keys and repositories ``use_case_type`` injects.
-
-        Read from :attr:`graph`, so the factory and the composition's analysis
-        read a constructor once and alike.
-        """
-        deps = self._dep_cache.get(use_case_type)
-        if deps is None:
-            deps = self._dep_cache[use_case_type] = [
-                (name, dependency.key if isinstance(dependency, KeyDependency) else dependency)
-                for name, dependency in self.graph.constructor(ClassNode(use_case_type))
-                if isinstance(dependency, KeyDependency | RepoDependency)
-            ]
-        return deps

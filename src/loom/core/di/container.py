@@ -25,6 +25,7 @@ from loom.core.di.compiler import (
     COLD_PATH,
     UNBUILT,
     Closure,
+    compile_class,
     compile_key,
 )
 from loom.core.di.errors import (
@@ -104,6 +105,7 @@ class LoomContainer:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
         self._compiled: dict[BindingKey, Closure] = {}
+        self._plans: dict[type[Any], Callable[[], Any]] = {}
         self._sealed = False
         self.kinds = ExecutionKinds()
         self._graph = DependencyGraph(self, classify_key=classify_key)
@@ -138,7 +140,7 @@ class LoomContainer:
             if self._reading is None:
                 self._reading = reading
                 self._graph = DependencyGraph(self, classify_key=classify_key, implicit=implicit)
-                self._compiled.clear()
+                self._drop_compiled()
             elif self._reading != reading:
                 raise ValueError("the container already reads constructors another way")
         return self._graph
@@ -240,6 +242,22 @@ class LoomContainer:
         except KeyError:
             closure = compile_key(self, interface)
         return closure()
+
+    def compiled(self, cls: type[T]) -> Callable[[], T]:
+        """Return the plan of *cls*, a class loom builds itself such as a use case.
+
+        Each call builds a new *cls*, its constructor resolved as a class
+        binding's is. Compiled on first use and again after any ``register*``.
+
+        Raises:
+            DependencyGraphError: When a dependency is missing, unmapped,
+                refused or part of a construction cycle, with the path.
+        """
+        try:
+            plan = self._plans[cls]
+        except KeyError:
+            plan = compile_class(self, cls)
+        return plan
 
     def validate(self) -> None:
         """Eagerly validate and instantiate all ``APPLICATION`` scope bindings.
@@ -349,7 +367,7 @@ class LoomContainer:
             )
             if not is_reached:
                 self._bindings[key].refused = refused
-                self._compiled.clear()  # a closure compiled before may hold it
+                self._drop_compiled()  # a closure compiled before may hold it
         return buildable, unbuilt
 
     def _refusal(self, key: BindingKey, rules: tuple[Rule, ...]) -> str | None:
@@ -394,7 +412,12 @@ class LoomContainer:
         with COLD_PATH:
             self._bindings[interface] = _Binding(provider, scope)
             self._graph.forget(interface)
-            self._compiled.clear()
+            self._drop_compiled()
+
+    def _drop_compiled(self) -> None:
+        """Every compiled closure and plan is stale: each compiles again on its next use."""
+        self._compiled.clear()
+        self._plans.clear()
 
     def _warn_if_sealed(self, interface: BindingKey, *, stacklevel: int) -> None:
         """Warn that *interface* is registered into a sealed container, *stacklevel* frames up."""
@@ -437,7 +460,7 @@ class LoomContainer:
         with COLD_PATH:
             self._repo_bindings[model] = interface
             self._graph.forget_edges()
-            self._compiled.clear()
+            self._drop_compiled()
 
     def resolve_repo(self, model: type[Any]) -> Any:
         """Resolve a repository instance by model type.

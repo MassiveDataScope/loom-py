@@ -525,6 +525,40 @@
   capability's key. A missing capability binding was refused by the factory's
   verification at seal, as a bare `ResolutionError`; it is now refused at the
   end of registration, as a `BootstrapError` wrapping `DependencyGraphError`.
+- **use cases (behaviour change):** `UseCaseFactory` builds a use case or a job
+  through its compiled plan, compiled once from the container's graph (and
+  again after any `register*`), as a binding is: `UseCaseFactory.compiled(type)`
+  and `LoomContainer.compiled(type)` return it. Inside an execution a build
+  shares that execution's `REQUEST` instances; outside one each is built
+  fresh, as before. A constructor's `Agent()`, `Mcp()` or `Caller()` default
+  is resolved at build instead of passed through as the raw marker, so a
+  `Caller()` one raises `ExecutionRequired` when built outside an execution
+  (the executor builds inside its execution from T08). An `Agent()` or
+  `Mcp()` one with no resolver bound passes start-up and every build raises
+  `ResolutionError` (no resolver is bound); with a resolver it still needs an
+  execution, which the request path gives from T08 and a singleton from T12.
+  An input marker (`Input()`, `Query()`, `LoadById()`, `Load()`, `Exists()`)
+  as a constructor default now fails `verify()` with the refusal-5 message
+  (the composed pipeline already refused it at start-up), and every build on
+  a standalone `create_kernel`. `register(type)` raises `DependencyGraphError` for a required
+  parameter that names nothing the container serves (`X: p: tuple[str, ...]
+  names nothing the container can serve`), which failed the first build with
+  a `TypeError`; `create_kernel` and `bootstrap_app` thus fail at start-up
+  with a `BootstrapError` wrapping it. `verify()` checks the registered
+  classes only (a class merely built before it is no longer verified): the
+  graph refuses a missing binding, a main repository's capability included,
+  or a cycle, then every registered class is compiled, so no build compiles
+  afterwards; a mapped main repository whose capability is not bound still
+  builds unverified, as before; a missing key now reads
+  `X -> p: K: no binding is registered for it` (was `X injects p: K, which is
+  not registered in the container.`), a missing main-repository capability
+  `X -> main_repo: Listable[M]: no binding is registered for it` (was
+  `... (main repository capability), which is not registered ...`), both
+  `DependencyGraphError`. A build reaching an unbound key or an unmapped model
+  raises the same path form (was `No binding registered for: K` /
+  `No repository mapping registered for model: M`). Removed
+  `loom.core.use_case.factory.DepToken`; new `DependencyGraph.unresolvable(node)`
+  and `loom.core.di.graph.BINDING_REFUSALS` (refusals 1 and 2).
 - **core:** `create_kernel` builds one `RuntimeExecutor`, not a throwaway one
   first, and validates its container once, with the kernel's keys bound: an
   `APPLICATION` provider resolving `RuntimeExecutor` while it validates gets

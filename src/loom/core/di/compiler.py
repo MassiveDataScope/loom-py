@@ -6,7 +6,8 @@ dependency becomes the closure of the binding it names, and the scope wraps
 the result in one branch. An ``APPLICATION`` binding is built once, outside
 any execution, then served as a constant; a ``REQUEST`` or ``TRANSACTION``
 one is built once per execution and kept in its cache, or built fresh
-outside any execution (D4).
+outside any execution (D4). A class loom builds itself, such as a use case
+or a job, compiles the same way into its *plan*, with no scope.
 
 Concurrency:
     :data:`COLD_PATH`, one reentrant lock for the whole process, guards
@@ -32,7 +33,7 @@ from itertools import repeat
 from typing import TYPE_CHECKING, Any
 
 from loom.core.di.errors import ResolutionError, describe_key
-from loom.core.di.graph import DependencyGraphError, Edge, KeyNode, Path
+from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, KeyNode, Node, Path
 from loom.core.di.introspection import (
     Dependency,
     ExecutionDependency,
@@ -68,6 +69,16 @@ def compile_key(container: LoomContainer, key: object) -> Closure:
         return _Compilation(container).compile(Path(KeyNode(key)), key)
 
 
+def compile_class(container: LoomContainer, cls: type[Any]) -> Callable[[], Any]:
+    """Return the plan of *cls*, compiled once with *cls* as its own provider; see ``compiled``."""
+    node = ClassNode(cls)
+    with COLD_PATH:
+        plan = container._plans.get(cls)
+        if plan is None:
+            plan = container._plans[cls] = _Compilation(container)._maker(Path(node), node, cls)
+        return plan
+
+
 class _Compilation:
     """One compile, from one key: the keys whose compile is still open detect a cycle."""
 
@@ -92,22 +103,22 @@ class _Compilation:
             raise DependencyGraphError(binding.refused)
         self._open.add(key)
         try:
-            make = self._maker(path, key, binding)
+            make = self._maker(path, KeyNode(key), binding.provider)
         finally:
             self._open.discard(key)
         compiled = container._compiled
         closure = compiled[key] = _scoped(compiled, key, binding, make)
         return closure
 
-    def _maker(self, path: Path, key: object, binding: _Binding) -> Closure:
-        """The binding's provider, given its constructor's arguments when it has any."""
-        constructor = self._container.graph.constructor(KeyNode(key))
+    def _maker(self, path: Path, node: Node, provider: Callable[..., object]) -> Closure:
+        """*node*'s *provider*, given its constructor's arguments when it has any."""
+        constructor = self._container.graph.constructor(node)
         arguments = tuple(
             (name, argument)
             for name, dependency in constructor
             if (argument := self._argument(path, name, dependency)) is not None
         )
-        return _calling(binding.provider, arguments) if arguments else binding.provider
+        return _calling(provider, arguments) if arguments else provider
 
     def _argument(self, path: Path, name: str, dependency: Dependency) -> Closure | None:
         """The closure of one parameter; ``None`` leaves it to Python, as ``Impl()`` did."""

@@ -147,6 +147,15 @@ class DependencyGraph:
             constructor = self._constructors[node] = self._introspect(node)
         return constructor
 
+    def unresolvable(self, node: Node) -> Iterator[str]:
+        """Why each required parameter of *node* names nothing the container serves."""
+        for name, dependency in self.constructor(node):
+            match dependency:
+                case UnresolvableDependency(None):
+                    yield f"{name} has no annotation"
+                case UnresolvableDependency(annotation):
+                    yield f"{name}: {annotation!r} names nothing the container can serve"
+
     def scope(self, node: Node) -> Scope | None:
         """The scope of *node*'s binding; ``None`` for a class or an unbound key."""
         binding = self._binding(node)
@@ -293,7 +302,7 @@ def _refuse_unresolvable_root(node: Node, path: Path, graph: DependencyGraph) ->
     """Refusal 6: a required parameter of a root names nothing the container serves."""
     if path.edges:
         return None
-    return next(_unresolvable(node, graph), None)
+    return next(graph.unresolvable(node), None)
 
 
 def refuse_unmapped_repository(nodes: Collection[Node]) -> Rule:
@@ -365,6 +374,9 @@ A missing binding or an unresolvable parameter is not among them: building
 the singleton fails startup, as ``validate()`` does.
 """
 
+BINDING_REFUSALS: tuple[Rule, ...] = (_refuse_missing_binding, _refuse_cycle)
+"""Refusals 1 and 2: a key with no binding, a main repository's capability included, or a cycle."""
+
 REFUSALS: tuple[Rule, ...] = (_refuse_missing_binding, *LENIENT_REFUSALS)
 """The structural refusals, in the order they win."""
 
@@ -411,18 +423,8 @@ def analyse(
         DependencyUnresolvable(f"{node} -> {reason}")
         for node in reachable
         if node not in roots
-        for reason in _unresolvable(node, graph)
+        for reason in graph.unresolvable(node)
     )
     return GraphAnalysis(
         roots=roots, reachable=frozenset(reachable), warnings=warnings, graph=graph
     )
-
-
-def _unresolvable(node: Node, graph: DependencyGraph) -> Iterator[str]:
-    """Why each required parameter of *node* names nothing the container serves."""
-    for name, dependency in graph.constructor(node):
-        match dependency:
-            case UnresolvableDependency(None):
-                yield f"{name} has no annotation"
-            case UnresolvableDependency(annotation):
-                yield f"{name}: {annotation!r} names nothing the container can serve"

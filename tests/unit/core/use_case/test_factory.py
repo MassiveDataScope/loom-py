@@ -9,6 +9,8 @@ from typing import Any, Protocol, cast
 import pytest
 
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.graph import ClassNode
+from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.repository.abc import Listable, RepoFor
@@ -145,6 +147,15 @@ def _make_provider(obj: Any) -> Any:
     return _provider
 
 
+def _dependencies(factory: UseCaseFactory, use_case_type: type) -> list[tuple[str, object]]:
+    """The keys and repositories the factory injects into *use_case_type*, read from its graph."""
+    return [
+        (name, dependency.key if isinstance(dependency, KeyDependency) else dependency)
+        for name, dependency in factory.graph.constructor(ClassNode(use_case_type))
+        if isinstance(dependency, KeyDependency | RepoDependency)
+    ]
+
+
 def _container_with(*pairs: tuple[type, object]) -> LoomContainer:
     c = LoomContainer()
     for iface, impl in pairs:
@@ -202,25 +213,26 @@ def test_build_missing_dep_raises() -> None:
         factory.build(SingleDepUseCase)
 
 
-def test_dep_cache_populated_on_register() -> None:
+def test_plan_compiled_on_verify_after_register() -> None:
     container = _container_with((IOrderRepo, FakeOrderRepo()))
     factory = UseCaseFactory(container)
 
     factory.register(SingleDepUseCase)
-    assert SingleDepUseCase in factory._dep_cache
+    factory.verify()
+    assert container._plans[SingleDepUseCase] is factory.compiled(SingleDepUseCase)
 
 
-def test_dep_cache_populated_after_first_build() -> None:
+def test_plan_compiled_on_first_build() -> None:
     container = _container_with((IOrderRepo, FakeOrderRepo()))
     factory = UseCaseFactory(container)
 
-    assert SingleDepUseCase not in factory._dep_cache
+    assert SingleDepUseCase not in container._plans
     factory.build(SingleDepUseCase)
-    assert SingleDepUseCase in factory._dep_cache
-    # Same list object returned on second call
-    deps_first = factory._dep_cache[SingleDepUseCase]
+    assert SingleDepUseCase in container._plans
+    # Same plan object on second call
+    plan_first = container._plans[SingleDepUseCase]
     factory.build(SingleDepUseCase)
-    assert factory._dep_cache[SingleDepUseCase] is deps_first
+    assert container._plans[SingleDepUseCase] is plan_first
 
 
 def test_register_raises_if_dep_not_in_container() -> None:
@@ -316,7 +328,7 @@ def test_annotation_free_init_takes_the_inspect_fallback_and_yields_no_deps() ->
 
     factory = UseCaseFactory(LoomContainer())
 
-    assert factory._get_deps(UntypedUseCase) == []
+    assert _dependencies(factory, UntypedUseCase) == []
 
 
 def test_unresolvable_annotations_fall_back_to_the_inspect_signature() -> None:
@@ -324,7 +336,7 @@ def test_unresolvable_annotations_fall_back_to_the_inspect_signature() -> None:
     repo = FakeOrderRepo()
     factory = UseCaseFactory(_container_with((IOrderRepo, repo)))
 
-    assert factory._get_deps(use_case_type) == [("repo", IOrderRepo)]
+    assert _dependencies(factory, use_case_type) == [("repo", IOrderRepo)]
     assert cast(Any, factory.build(use_case_type))._repo is repo
 
 
@@ -514,13 +526,13 @@ def test_defaulted_parameter_is_not_a_dependency_regardless_of_annotation() -> N
 
     factory.verify()
 
-    assert [name for name, _ in factory._get_deps(TaggedUseCase)] == ["main_repo"]
-    assert factory._get_deps(OptionalListingUseCase) == []
+    assert [name for name, _ in _dependencies(factory, TaggedUseCase)] == ["main_repo"]
+    assert _dependencies(factory, OptionalListingUseCase) == []
     assert cast(Any, factory.build(TaggedUseCase))._tags == ()
 
 
 def test_plain_generic_container_annotation_is_not_a_dependency() -> None:
     factory = UseCaseFactory(_container_with((IOrderRepo, FakeOrderRepo())))
 
-    assert factory._get_deps(ContainerAnnotatedUseCase) == [("repo", IOrderRepo)]
+    assert _dependencies(factory, ContainerAnnotatedUseCase) == [("repo", IOrderRepo)]
     factory.verify()
