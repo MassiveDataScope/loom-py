@@ -128,6 +128,33 @@ def _is_loopback(hostname: str | None) -> bool:
         return False
 
 
+_PRIVATE_SUFFIXES = (".internal", ".local", ".localdomain", ".lan", ".home.arpa")
+"""DNS suffixes that never resolve on the public internet (RFC 6762, RFC 8375, ICANN's
+reserved ``.internal``): a name under them can only be a private network's."""
+
+
+def _is_private(hostname: str | None) -> bool:
+    """Whether *hostname* can only be reached inside a private network.
+
+    Args:
+        hostname: Host component of a URL, or ``None`` when it declares none.
+
+    Returns:
+        ``True`` for a private, loopback or link-local address and for a name
+        under a suffix that public DNS never answers.
+    """
+    if hostname is None:
+        return False
+    host = hostname.strip("[]").lower().rstrip(".")
+    if host.endswith(_PRIVATE_SUFFIXES):
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
 def _warn_plaintext_loopback(component: str, url: str) -> None:
     """Announce a plaintext loopback URL, which is allowed only because it is one.
 
@@ -151,8 +178,30 @@ def _warn_plaintext_loopback(component: str, url: str) -> None:
     )
 
 
-def _url_fault(url: str) -> str | None:
-    """Return why a remote URL is unsafe, or ``None`` when it is acceptable."""
+def _warn_plaintext_private(component: str, url: str) -> None:
+    """Announce a plaintext URL to a private host, admitted by an explicit opt-in.
+
+    Args:
+        component: Configuration path the URL came from.
+        url: The accepted URL, already redacted.
+    """
+    parts = urlsplit(url)
+    if parts.scheme != "http" or _is_loopback(parts.hostname):
+        return
+    _logger.warning(
+        "%s uses plaintext http at %s. Allowed by allow_private_plaintext: the host "
+        "is only reachable inside a private network, which must be trusted.",
+        component,
+        parts.hostname,
+    )
+
+
+def _url_fault(url: str, *, private_plaintext: bool = False) -> str | None:
+    """Return why a remote URL is unsafe, or ``None`` when it is acceptable.
+
+    *private_plaintext* is a server's explicit ``allow_private_plaintext``:
+    it admits ``http`` to a host that only a private network reaches.
+    """
     try:
         parts: SplitResult = urlsplit(url)
     except ValueError:
@@ -166,6 +215,10 @@ def _url_fault(url: str) -> str | None:
             # Anywhere else the refusal stands: see _warn_plaintext_loopback,
             # which makes the exception audible rather than silent.
             return None
+        if parts.scheme == "http" and private_plaintext:
+            if _is_private(parts.hostname):
+                return None
+            return "allow_private_plaintext admits only a private host"
         return "the scheme must be https"
     if not parts.hostname:
         return "the URL declares no host"
@@ -222,6 +275,11 @@ class McpServerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             the other's.
         url: ``https://`` server URL, free of userinfo and query string.
             Required under ``http``; refused under ``stdio``.
+        allow_private_plaintext: Admit an ``http://`` URL whose host only a
+            private network reaches: a private or link-local address, or a name
+            under ``.internal``, ``.local``, ``.localdomain``, ``.lan`` or
+            ``.home.arpa``. For a server behind an internal load balancer
+            without TLS; any public host is still refused, and start-up warns.
         headers_ref: Reference to headers resolved by the secrets resolver.
             Never a literal secret.  The resolved payload must be a single
             ``Name=value`` header pair, a shape checked at start-up rather than
@@ -249,6 +307,7 @@ class McpServerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     command: str | None = None
     args: tuple[str, ...] = ()
     env: RedactedMap | None = None
+    allow_private_plaintext: bool = False
 
 
 class A2AAgentConfig(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -449,16 +508,21 @@ def _warn_unused_prices(
 
 
 def _validate_remote_url(
-    component: str, url: Dsn | str, invalid: AgentErrorCode
+    component: str,
+    url: Dsn | str,
+    invalid: AgentErrorCode,
+    *,
+    private_plaintext: bool = False,
 ) -> list[AgentCompilationIssue]:
     """Collect the fault of one remote URL, redacted so it cannot leak a secret.
 
     The *invalid* code takes ``component, url, reason``.
     """
     address = url.reveal() if isinstance(url, Dsn) else url
-    fault = _url_fault(address)
+    fault = _url_fault(address, private_plaintext=private_plaintext)
     if fault is None:
         _warn_plaintext_loopback(component, address)
+        _warn_plaintext_private(component, address)
         return []
     return [invalid.issue(component=component, url=_redact_url(address), reason=fault)]
 
@@ -556,7 +620,14 @@ def _validate_http_server(component: str, server: McpServerConfig) -> list[Agent
             )
         )
     if server.url is not None:
-        issues.extend(_validate_remote_url(component, server.url, AgentErrorCode.MCP_URL_INVALID))
+        issues.extend(
+            _validate_remote_url(
+                component,
+                server.url,
+                AgentErrorCode.MCP_URL_INVALID,
+                private_plaintext=server.allow_private_plaintext,
+            )
+        )
     issues.extend(_validate_headers_ref(component, server.headers_ref))
     issues.extend(_validate_auth(component, server.headers_ref, server.auth))
     return issues
@@ -579,6 +650,14 @@ def _validate_stdio_server(component: str, server: McpServerConfig) -> list[Agen
                 component=component,
                 field=_TRANSPORT_FIELD,
                 reason="'url' only applies to transport 'http'",
+            )
+        )
+    if server.allow_private_plaintext:
+        issues.append(
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="'allow_private_plaintext' only applies to transport 'http'",
             )
         )
     if server.headers_ref is not None or server.auth is not None:

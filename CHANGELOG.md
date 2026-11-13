@@ -90,6 +90,16 @@
 
 ## ✨ Features
 
+### ai
+
+- **ai:** `ai.mcp_servers.<name>.allow_private_plaintext` (default `false`)
+  admits an `http://` URL whose host only a private network reaches: a
+  private, loopback or link-local address, or a name under `.internal`,
+  `.local`, `.localdomain`, `.lan` or `.home.arpa`. For an MCP server behind
+  an internal load balancer without TLS. A public host is still refused, the
+  flag is refused under `transport: stdio`, and start-up warns for every URL
+  it admits.
+
 ### model
 
 - **model:** `StrictStruct` (`loom.core.model`): base for contracts the
