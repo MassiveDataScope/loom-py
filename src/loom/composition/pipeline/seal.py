@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from loom.composition.pipeline.persistence import Persisted
+from loom.composition.pipeline.registration import Registered
+from loom.composition.recipe import Recipe
+from loom.composition.source import CompositionSource
 from loom.core.bootstrap import KernelRuntime
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExistsStep, LoadStep
@@ -14,14 +18,13 @@ from loom.core.use_case.factory import ModelRead
 
 
 def seal(
-    kernel: KernelRuntime,
-    use_cases: Sequence[type[Compilable]],
-    jobs: Sequence[type[Compilable]],
-    catalog: StoreCatalog,
-    factories: Mapping[StoreKey, UnitOfWorkFactory],
+    source: CompositionSource, recipe: Recipe, persisted: Persisted, registered: Registered
 ) -> None:
-    _refuse_unservable_stores(kernel, (*use_cases, *jobs), catalog, factories)
-    kernel.factory.verify(reads=_marker_reads(kernel, use_cases))
+    kernel, discovered = registered.kernel, recipe.discovered
+    _refuse_unservable_stores(
+        kernel, (*discovered.use_cases, *discovered.jobs), source.catalog, persisted.factories
+    )
+    kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
 
 
 def _marker_reads(

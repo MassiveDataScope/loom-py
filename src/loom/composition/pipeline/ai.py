@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from loom.composition._ai import (
     AiWiring,
     bind_agent_resolver,
@@ -14,19 +12,12 @@ from loom.composition._ai import (
     verify_agent_markers,
     verify_mcp_markers,
 )
-from loom.composition._sql import SqlWiring
+from loom.composition.pipeline.registration import Registered
 from loom.composition.recipe import Recipe
-from loom.core.bootstrap import KernelRuntime
-from loom.core.config import ConfigContext
+from loom.composition.source import CompositionSource
 
 
-def wire_ai(
-    ctx: ConfigContext,
-    recipe: Recipe,
-    kernel: KernelRuntime,
-    sql: SqlWiring,
-    code_path: Path,
-) -> AiWiring:
+def wire_ai(source: CompositionSource, recipe: Recipe, registered: Registered) -> AiWiring:
     """Build the agent runtime when the entry point hosts it, else nothing.
 
     An entry point that does not host agents still refuses, at start-up, any
@@ -38,6 +29,7 @@ def wire_ai(
     """
     from loom.composition import build
 
+    ctx, kernel = source.config, registered.kernel
     discovered = recipe.discovered
     if not recipe.agents:
         reject_ai_markers(discovered.use_cases, kernel.compiler, kernel.registry)
@@ -49,8 +41,8 @@ def wire_ai(
     ai = resolve_ai(
         ctx,
         kernel=kernel,
-        sql_cfg=sql.config,
-        code_path=code_path,
+        sql_cfg=registered.sql.config,
+        code_path=source.code_path,
         manifest_agent_specs=discovered.agent_specs,
         use_case_mcp_bindings=use_case_mcp_bindings,
         names=(

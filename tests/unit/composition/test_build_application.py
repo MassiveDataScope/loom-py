@@ -75,12 +75,34 @@ def test_load_source_needs_only_the_config_paths(tmp_path: Path) -> None:
     assert source.app.name == "acme"
 
 
-def test_build_application_names_itself_when_paths_conflict(tmp_path: Path) -> None:
+def _bootstrap_worker(*paths: str, config_dir: str) -> object:
+    celery_bootstrap = pytest.importorskip("loom.celery.bootstrap")
+    return celery_bootstrap.bootstrap_worker(*paths, config_dir=config_dir)
+
+
+@pytest.mark.parametrize(
+    ("entry", "name"),
+    [
+        (
+            lambda *p, config_dir: create_app(*p, adapter=_Bare(), config_dir=config_dir),
+            "create_app",
+        ),
+        (
+            lambda *p, config_dir: build_application(*p, adapter=_Bare(), config_dir=config_dir),
+            "build_application",
+        ),
+        (_bootstrap_worker, "bootstrap_worker"),
+    ],
+    ids=["create_app", "build_application", "bootstrap_worker"],
+)
+def test_each_entry_point_names_itself_when_paths_conflict(
+    tmp_path: Path, entry: Any, name: str
+) -> None:
     config = tmp_path / "config.yaml"
     config.write_text("app:\n  name: acme\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match=r"^build_application takes config files"):
-        build_application(str(config), adapter=_Bare(), config_dir=str(tmp_path))
+    with pytest.raises(ConfigError, match=rf"^{name} takes config files"):
+        entry(str(config), config_dir=str(tmp_path))
 
 
 class _CreateRecord(Command, frozen=True):

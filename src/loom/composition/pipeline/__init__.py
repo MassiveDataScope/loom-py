@@ -1,4 +1,8 @@
-"""The ordered application composition phases."""
+"""The ordered application composition phases.
+
+Loading the source (:func:`~loom.composition.pipeline.load.load_source`) is the
+step before them: the entry points load, then call :func:`compose`.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from loom.composition.pipeline.seal import seal
 from loom.composition.recipe import Adapter
 from loom.composition.source import CompositionSource
 from loom.core.di.container import LoomContainer
+from loom.core.job.config import JobSettings
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence.stores import StoreCatalog
 
@@ -27,21 +32,17 @@ def compose(
     catalog_provider: Callable[[], StoreCatalog],
 ) -> Application:
     recipe = plan(source, adapter)
+    job_settings = JobSettings.from_config(source.config, recipe.discovered.jobs)
     persisted = persist(source, recipe)
     registered = register(
         source,
         recipe,
         persisted,
+        job_settings,
         modules=modules,
         observability_provider=observability_provider,
         catalog_provider=catalog_provider,
     )
-    ai = wire_ai(source.config, recipe, registered.kernel, registered.sql, source.code_path)
-    seal(
-        registered.kernel,
-        recipe.discovered.use_cases,
-        recipe.discovered.jobs,
-        persisted.catalog,
-        persisted.factories,
-    )
-    return assemble(source, recipe, persisted, registered, ai)
+    ai = wire_ai(source, recipe, registered)
+    seal(source, recipe, persisted, registered)
+    return assemble(source, recipe, persisted, registered, ai, job_settings)

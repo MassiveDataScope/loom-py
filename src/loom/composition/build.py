@@ -10,6 +10,7 @@ from loom.composition._ai import (
 )
 from loom.composition._jobs import configure_job_service as configure_job_service
 from loom.composition.application import Application
+from loom.composition.pipeline import compose
 from loom.composition.pipeline.load import load_source
 from loom.composition.source import CompositionSource
 from loom.core.config import ConfigError, ConfigResolver
@@ -197,12 +198,11 @@ def compose_application(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    from loom.composition.pipeline import compose
-
+    observability, catalog = source.observability, source.catalog
     return compose(
         source,
         adapter,
         modules=modules,
-        observability_provider=lambda: source.observability,
-        catalog_provider=lambda: source.catalog,
+        observability_provider=lambda: observability,
+        catalog_provider=lambda: catalog,
     )

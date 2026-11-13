@@ -17,6 +17,7 @@ from loom.core.cache.wiring import cache_module_for
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.job.config import JobSettings
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.elevation import ScopedElevationSink
@@ -35,6 +36,7 @@ def register(
     source: CompositionSource,
     recipe: Recipe,
     persisted: Persisted,
+    job_settings: JobSettings,
     *,
     modules: Sequence[Callable[[LoomContainer], None]],
     observability_provider: Callable[[], ObservabilityRuntime],
@@ -44,7 +46,7 @@ def register(
 
     ctx, observability = source.config, source.observability
     discovered = recipe.discovered
-    catalog, wirings, factories = persisted.catalog, persisted.wirings, persisted.factories
+    catalog, wirings, factories = source.catalog, persisted.wirings, persisted.factories
     # Caller modules first, then repositories, then the framework's own. A
     # caller module binding a framework-owned key fails right after it runs.
     kernel = create_kernel(
@@ -70,7 +72,7 @@ def register(
         observability,
         backend=source.app.job_service,
         jobs=discovered.jobs,
-        settings=persisted.job_settings,
+        settings=job_settings,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
