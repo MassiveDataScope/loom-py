@@ -118,6 +118,20 @@ else and redacts the URL in the error, so the message cannot leak the credential
 it just rejected. `headers_ref` is a reference the deployment's secret resolver
 looks up; a literal secret is rejected fail-closed.
 
+A server reached only inside a private network, behind an internal load
+balancer without TLS, opts in with `allow_private_plaintext: true`. It admits
+`http://` when the host is a private, loopback or link-local address, or a name
+under `.internal`, `.local`, `.localdomain`, `.lan` or `.home.arpa`; any other
+host is still refused, and start-up logs a warning naming the host:
+
+```yaml
+ai:
+  mcp_servers:
+    gateway:
+      url: http://mcp.production.example.internal:8081/mcp
+      allow_private_plaintext: true
+```
+
 **Under the SSE transport, the server's `timeout_ms` governs a second thing as
 well.** Whenever a server declares `headers_ref` or `auth`, loom builds its
 transport explicitly rather than letting the client infer one, and the same

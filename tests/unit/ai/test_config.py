@@ -14,6 +14,7 @@ except where the contract is precisely about the message (secret absence).
 
 from __future__ import annotations
 
+import logging
 from typing import get_args
 
 import msgspec
@@ -62,6 +63,7 @@ def _config_with(**overrides: object) -> AiConfig:
 
 _UNSAFE_URLS: list[str] = [
     "http://knowledge.example.com/mcp",
+    "http://knowledge.example.internal/mcp",
     "https://user:pass@knowledge.example.com/mcp",
     "https://knowledge.example.com/mcp?token=abc",
     "not a url",
@@ -69,6 +71,7 @@ _UNSAFE_URLS: list[str] = [
 ]
 _UNSAFE_URL_IDS: list[str] = [
     "plain_http",
+    "private_http_without_opt_in",
     "userinfo",
     "query_string",
     "malformed",
@@ -322,6 +325,67 @@ class TestMcpServerRegistry:
             _config_with(mcp_servers=mcp_servers)
 
         assert AgentErrorCode.MCP_URL_INVALID in _codes(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://mcp.production.example.internal:8081/mcp",
+            "http://mcp.local/mcp",
+            "http://10.20.10.5:8081/mcp",
+            "http://192.168.1.4/mcp",
+            "http://[fd00::1]/mcp",
+        ],
+        ids=["internal", "local", "rfc1918-10", "rfc1918-192", "ula-ipv6"],
+    )
+    def test_allow_private_plaintext_admits_http_to_a_private_host(
+        self, url: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An internal load balancer without TLS is reachable once the server opts in."""
+        server = McpServerConfig(url=Dsn(url), allow_private_plaintext=True)
+
+        with caplog.at_level(logging.WARNING, logger="loom.ai.config"):
+            config = _config_with(mcp_servers={"gateway": server})
+
+        assert config.mcp_servers["gateway"] is server
+        assert "allow_private_plaintext" in caplog.text
+
+    @pytest.mark.parametrize(
+        "url",
+        ["http://mcp.example.com/mcp", "http://8.8.8.8/mcp", "http://internal.example.com/mcp"],
+        ids=["public-name", "public-ip", "internal-label-not-suffix"],
+    )
+    def test_allow_private_plaintext_still_refuses_a_public_host(self, url: str) -> None:
+        server = McpServerConfig(url=Dsn(url), allow_private_plaintext=True)
+
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(mcp_servers={"gateway": server})
+
+        assert AgentErrorCode.MCP_URL_INVALID in _codes(excinfo.value)
+        assert "only a private host" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        ["http://user:pass@10.0.0.5/mcp", "http://10.0.0.5/mcp?token=x"],
+        ids=["userinfo", "query-string"],
+    )
+    def test_allow_private_plaintext_keeps_the_credential_checks(self, url: str) -> None:
+        """Plain http to a private host still carries no credential in the URL."""
+        server = McpServerConfig(url=Dsn(url), allow_private_plaintext=True)
+
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(mcp_servers={"gateway": server})
+
+        assert AgentErrorCode.MCP_URL_INVALID in _codes(excinfo.value)
+
+    def test_allow_private_plaintext_does_not_apply_to_stdio(self) -> None:
+        server = McpServerConfig(
+            transport="stdio", command="mcp-server", allow_private_plaintext=True
+        )
+
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(mcp_servers={"local": server})
+
+        assert AgentErrorCode.MCP_TRANSPORT_INVALID in _codes(excinfo.value)
 
     def test_the_message_does_not_contain_the_userinfo_when_the_url_is_rejected(self) -> None:
         """The rejection must not leak the credential embedded in the URL."""
