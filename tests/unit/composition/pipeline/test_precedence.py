@@ -1,16 +1,22 @@
-"""Which refusal reaches the caller when two are present at once, on today's code.
+"""Which refusal reaches the caller when two are present at once.
 
-Each scenario provokes two refusals that today's phases raise at different
-points, and the comment above it names them in today's order. The caller
-catches the earlier one; a reordering of the phases would surface the
-other. Each snapshot ``precedence/<scenario>/<path>.json`` records the
-caught refusal as ``refusals/`` does.
+Each scenario provokes two refusals that the phases raise at different
+points, and the comment above it names them in order. The caller catches the
+earlier one; a reordering of the phases would surface the other. Each
+snapshot ``precedence/<scenario>/<path>.json`` records the caught refusal as
+``refusals/`` does.
+
+The scenarios of ``_SCENARIOS`` keep the order of the code before the
+pipeline. The ``validated-at-seal-after-<family>`` ones pin an intended T01d
+change: the container is validated when it is sealed, so a failing
+``APPLICATION`` provider now surfaces after the refusals registration and the
+AI phase raise, where before T01d it surfaced ahead of them.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -32,8 +38,10 @@ from tests.unit.composition.pipeline.components import (
     AcmeNeedsServiceInterface,
     AcmePing,
     binds_sql_service,
+    binds_unbuildable,
 )
 from tests.unit.composition.pipeline.snapshot import describe_refusal, matches_snapshot
+from tests.unit.composition.pipeline.test_refusals import REFUSALS
 
 _INVALID_SQL = {
     "sql": {"connections": {"main": {"url": "clickhouse://acme:8123/acme", "unknown": 1}}}
@@ -128,3 +136,56 @@ def test_the_earlier_refusal_reaches_the_caller_as_before(
     assert isinstance(caught, refused) or isinstance(caught.__cause__, refused)
     recorded = describe_refusal(caught, tmp_path=tmp_path)
     matches_snapshot(f"precedence/{scenario}/{path}", recorded)
+
+
+_VALIDATED_AT_SEAL_AFTER = (
+    "job-backend",
+    "job-backend-celery-extra",
+    "job-backend-celery-section",
+    "sqs-queue",
+    "sql-invalid-section",
+    "agent-marker",
+    "mcp-marker",
+)
+"""Refusal families raised before seal on some path, each now ahead of a failing provider."""
+
+_VALIDATED_AT_PLAN = frozenset(
+    {("sql-invalid-section", "fastapi"), ("sql-invalid-section", "lambda_http")}
+)
+"""The HTTP adapters validate the sql section in their recipe, during plan: unchanged."""
+
+_AI_MARKERS_ON_CELERY = ("celery",)
+"""Celery refuses a marker in ``reject_ai_markers``, the other paths in ``verify_*``."""
+
+
+def _representatives(family: str) -> tuple[str, ...]:
+    """The first path where *family* now precedes seal, plus Celery where it refuses otherwise."""
+    paths_before_seal = [
+        path for path in REFUSALS[family].paths if (family, path) not in _VALIDATED_AT_PLAN
+    ]
+    markers = family in ("agent-marker", "mcp-marker")
+    return (paths_before_seal[0], *(_AI_MARKERS_ON_CELERY if markers else ()))
+
+
+_SEAL_CASES = [
+    pytest.param(family, path, id=f"{family}-{path}")
+    for family in _VALIDATED_AT_SEAL_AFTER
+    for path in _representatives(family)
+]
+
+
+@pytest.mark.parametrize(("family", "path"), _SEAL_CASES)
+def test_a_failing_provider_surfaces_after_the_refusals_before_seal(
+    family: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refusal = REFUSALS[family]
+    if refusal.prepare is not None:
+        refusal.prepare(monkeypatch)
+    composition = replace(
+        refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
+    )
+    with pytest.raises(refusal.refused) as caught:
+        paths.COMPOSED[path](composition, tmp_path, monkeypatch)
+
+    recorded = describe_refusal(caught.value, tmp_path=tmp_path)
+    matches_snapshot(f"precedence/validated-at-seal-after-{family}/{path}", recorded)

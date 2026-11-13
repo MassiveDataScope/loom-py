@@ -396,9 +396,46 @@
   resolves `RuntimeExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
   `ObservabilityRuntime` or `StoreCatalog` while start-up validates the
   container gets the application's own instances.
-- **composition:** a composed application no longer logs the `[BOOT]`
-  container, module, validation and completion info lines of
-  `bootstrap_app`; the use-case compilation lines stay.
+- **composition:** a composed application logs one structured info event per
+  start-up phase through `loom.core.logger` (logger
+  `loom.composition.pipeline`): `loom.composition.planned` (`adapter`,
+  `use_cases`, `jobs`), `loom.composition.persisted` (`backends`: each
+  store and the backend that built it), `loom.composition.registered`
+  (`keys`, `modules`, `overrides`), `loom.composition.ai_wired` (`agents`,
+  `mcp_servers`), `loom.composition.sealed` and `loom.composition.composed`,
+  each with its `duration_ms` (`composed` carries the total). It keeps the
+  `[BOOT]` container and use-case compilation lines of `bootstrap_app`, and
+  its `[BOOT] Registering module` line for every module it runs: the
+  caller's, the overrides, each store's repository module and the cache
+  module. It no longer logs the validation and completion lines.
+- **composition:** a composed application validates its container when it is
+  sealed, after the job service, SQL and AI wiring, instead of right after its
+  modules ran. When an `APPLICATION` provider fails and the job backend, the
+  `sql` section, the SQS routing or an agent or MCP marker is also wrong, the
+  latter's error (`JobBackendError`, `ConfigError`, `SQSQueueConfigError`,
+  `AgentCompilationError`) now reaches the caller first; the provider's failure
+  is still a `BootstrapError` wrapping the `ResolutionError`.
+- **composition:** a composed application's container is sealed once it has
+  started. Registering into it afterwards (`register`, `register_default`,
+  `register_instance`, `register_repo`, through `Application.kernel.container`
+  or `WorkerBootstrapResult.container`) still replaces that one key, dropping
+  only that key's built instance, but warns with
+  `loom.core.di.ContainerSealedWarning`, a `DeprecationWarning`: it becomes an
+  error in the next major. Bind the key in a module passed to the application.
+  Python's default filters hide a `DeprecationWarning` outside `__main__`;
+  test runners such as pytest show it, and `-W error::DeprecationWarning`
+  turns it into an error.
+- **core:** `create_kernel` builds one `RuntimeExecutor`, not a throwaway one
+  first, and validates its container once, with the kernel's keys bound: an
+  `APPLICATION` provider resolving `RuntimeExecutor` while it validates gets
+  the one the kernel serves, and resolving `ApplicationInvoker` or
+  `UseCaseRegistry` gets the kernel's own instead of failing as unbound.
+- **deprecation:** `loom.core.bootstrap.bootstrap_app` warns with a
+  `DeprecationWarning`; compose the application with
+  `loom.composition.create_app`, or build a kernel with `create_kernel`, which
+  is not deprecated. Its result is unchanged. Like any `DeprecationWarning`
+  it is hidden under Python's default filters outside `__main__` and shown by
+  test runners.
 - **composition:** `loom.composition.build` no longer re-exports
   `configure_job_service`, `reject_manifest_agents_without_ai_section`,
   `load_application_config` or `add_code_path`. A test that patched them there

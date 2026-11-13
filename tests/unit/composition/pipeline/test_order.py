@@ -71,28 +71,23 @@ def _binds_module_service(container: LoomContainer) -> None:
 def events(monkeypatch: pytest.MonkeyPatch) -> list[Event]:
     """Each binding a container makes and each compilation, in order."""
     recorded: list[Event] = []
-    register, register_instance = LoomContainer.register, LoomContainer.register_instance
+    bind = LoomContainer._bind  # noqa: SLF001 - every register* binds through it
     build_plan = UseCaseCompiler._build_plan  # noqa: SLF001
 
-    def registering(
+    def binding(
         self: LoomContainer,
         interface: BindingKey,
         provider: Callable[[], Any] | type[Any],
-        scope: Scope = Scope.REQUEST,
+        scope: Scope,
     ) -> None:
         recorded.append(("bind", interface))
-        register(self, interface, provider, scope)
-
-    def registering_instance(self: LoomContainer, interface: BindingKey, instance: Any) -> None:
-        recorded.append(("bind", interface))
-        register_instance(self, interface, instance)
+        bind(self, interface, provider, scope)
 
     def compiling(self: UseCaseCompiler, use_case_type: type[Any]) -> Any:
         recorded.append(("compile", use_case_type))
         return build_plan(self, use_case_type)
 
-    monkeypatch.setattr(LoomContainer, "register", registering)
-    monkeypatch.setattr(LoomContainer, "register_instance", registering_instance)
+    monkeypatch.setattr(LoomContainer, "_bind", binding)
     monkeypatch.setattr(UseCaseCompiler, "_build_plan", compiling)
     return recorded
 

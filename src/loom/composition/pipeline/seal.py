@@ -1,11 +1,12 @@
-"""Verify store reachability and the compiled marker reads."""
+"""Seal the container, build its singletons, verify store reachability and marker reads."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
 from loom.composition.pipeline.registration import Registered
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import BootstrapError, KernelRuntime
+from loom.core.di.container import ResolutionError
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey
@@ -15,15 +16,22 @@ from loom.core.use_case.factory import ModelRead
 
 
 def seal(registered: Registered) -> None:
-    """Refuse a store no invocation could commit, then verify every use case can be built.
+    """Seal the container and build its singletons; refuse an unservable store; verify use cases.
 
     Raises:
+        BootstrapError: Wrapping the failure of an ``APPLICATION`` binding's
+            instantiation, cause chained.
         UncomposedWriteStore: See :func:`_refuse_unservable_stores`.
         JoinedAutocommitStore: See :func:`_refuse_unservable_stores`.
         ResolutionError: When a use case's dependency or marker read cannot be served.
     """
     persisted, kernel = registered.persisted, registered.kernel
     source, discovered = persisted.planned.source, persisted.planned.recipe.discovered
+    kernel.container.seal()
+    try:
+        kernel.container.validate()
+    except ResolutionError as exc:
+        raise BootstrapError(f"Bootstrap failed: {exc}") from exc
     _refuse_unservable_stores(
         kernel, (*discovered.use_cases, *discovered.jobs), source.catalog, persisted.factories
     )

@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from loom.core.bootstrap import BootstrapError
-from loom.core.di.container import LoomContainer
+from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 
 UPDATE_VARIABLE = "LOOM_UPDATE_SNAPSHOTS"
@@ -36,20 +36,31 @@ def describe_key(key: object) -> str:
     return _ADDRESS.sub("", repr(key))
 
 
-def describe_container(container: LoomContainer) -> dict[str, Any]:
-    """Every bound key with its scope and provider; an ``APPLICATION`` one with its resolved type.
+def application_singletons(container: LoomContainer) -> dict[BindingKey, object]:
+    """Each ``APPLICATION`` key with the instance the container serves for it.
 
-    Resolves each ``APPLICATION`` binding, as ``validate()`` does: bindings
-    registered after the kernel's ``validate()`` are instantiated here.
+    Resolves each one, as ``validate()`` does: bindings registered after the
+    kernel's ``validate()`` are instantiated here.
     """
+    bindings = container._bindings  # noqa: SLF001 - the scope is not public yet
+    return {
+        key: container.resolve(key)
+        for key, binding in bindings.items()
+        if binding.scope is Scope.APPLICATION
+    }
+
+
+def describe_container(container: LoomContainer) -> dict[str, Any]:
+    """Every bound key with its scope and provider; an ``APPLICATION`` one with its type."""
+    singletons = application_singletons(container)
     bindings: dict[str, Any] = {}
     for key, binding in container._bindings.items():  # noqa: SLF001
         record: dict[str, Any] = {
             "scope": binding.scope.name,
             "provider": binding.provider.__qualname__,
         }
-        if binding.scope is Scope.APPLICATION:
-            record["resolved"] = type(container.resolve(key)).__qualname__
+        if key in singletons:
+            record["resolved"] = type(singletons[key]).__qualname__
         bindings[describe_key(key)] = record
     repositories = {
         describe_key(model): describe_key(key)
@@ -111,6 +122,7 @@ def _stable(message: str, tmp_path: Path) -> str:
 __all__ = [
     "SNAPSHOTS",
     "UPDATE_VARIABLE",
+    "application_singletons",
     "describe_container",
     "describe_key",
     "describe_refusal",

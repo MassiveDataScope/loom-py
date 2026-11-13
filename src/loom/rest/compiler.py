@@ -632,8 +632,8 @@ class RestInterfaceCompiler:
     """Compiles RestInterface declarations into CompiledRoute records.
 
     Validates structure, resolves policies, and caches the result.  Designed
-    to run once at startup, driven by :func:`~loom.core.bootstrap.bootstrap.bootstrap_app`
-    or the FastAPI composition root.
+    to run once at startup, driven by :func:`~loom.composition.create_app` or
+    :func:`~loom.rest.fastapi.app.create_fastapi_app`.
 
     Args:
         use_case_compiler: Compiler that holds the cached
@@ -853,7 +853,7 @@ class RestInterfaceCompiler:
             raise InterfaceCompilationError(
                 f"{iface_name}: route ({route.method.upper()}, {route.path!r}) "
                 f"references {route.use_case.__qualname__!r} which has not been "
-                "compiled.  Pass it to bootstrap_app(use_cases=[...]) first."
+                "compiled.  Pass it to create_kernel(use_cases=[...]) first."
             )
         result_type, created_type = _split_created(route.use_case)
         if created_type is not None and route.status_code == HTTPStatus.CREATED:

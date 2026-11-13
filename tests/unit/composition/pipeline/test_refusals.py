@@ -85,7 +85,7 @@ _NEEDS_SERVICE = paths.Composition(
 )
 
 
-_REFUSALS: dict[str, _Refusal] = {
+REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
     "reserved-binding": _Refusal(
         paths.Composition(modules=(binds_sql_service,)), ReservedBindingError
     ),
@@ -183,7 +183,7 @@ _REFUSALS: dict[str, _Refusal] = {
 
 _CASES = [
     pytest.param(refusal, path, id=f"{refusal}-{path}")
-    for refusal, spec in _REFUSALS.items()
+    for refusal, spec in REFUSALS.items()
     for path in spec.paths
 ]
 
@@ -192,7 +192,7 @@ _CASES = [
 def test_each_refusal_reaches_the_caller_as_before(
     refusal: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    spec = _REFUSALS[refusal]
+    spec = REFUSALS[refusal]
     if spec.prepare is not None:
         spec.prepare(monkeypatch)
     try:

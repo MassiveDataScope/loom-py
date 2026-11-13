@@ -6,7 +6,7 @@
       "scope": "APPLICATION"
     },
     "Environment": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "Environment",
       "scope": "APPLICATION"
     },
@@ -16,12 +16,12 @@
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "install_use_cases.<locals>.<lambda>",
       "resolved": "UseCaseFactory",
       "scope": "APPLICATION"
     },
     "_NullConfig": {
-      "provider": "bootstrap_app.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "_NullConfig",
       "scope": "APPLICATION"
     }

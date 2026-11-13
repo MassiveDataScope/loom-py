@@ -9,15 +9,16 @@ It is intentionally kept thin — all validation happens during
 startup) and all request handling is delegated to
 :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
 
-Usage::
+An application normally gets it through :func:`~loom.composition.create_app`,
+which composes the kernel from configuration. Directly::
 
-    result = bootstrap_app(
+    kernel = create_kernel(
         config=cfg,
         use_cases=[CreateOrderUseCase, GetOrderUseCase],
         modules=[register_repositories],
     )
     app = create_fastapi_app(
-        result,
+        kernel,
         RouteSources(python=[OrderRestInterface]),
         observability_runtime=ObservabilityRuntime.noop(),
         title="Orders API",
@@ -51,7 +52,7 @@ def _resolve_executor(result: BootstrapResult) -> RuntimeExecutor:
     if not result.container.is_registered(RuntimeExecutor):
         raise RuntimeError(
             "RuntimeExecutor is not registered in the container. "
-            "Use bootstrap_app(...) or create_kernel(...) to build BootstrapResult."
+            "Use create_kernel(...) to build BootstrapResult."
         )
     return cast(RuntimeExecutor, result.container.resolve(RuntimeExecutor))
 
@@ -132,7 +133,7 @@ def create_fastapi_app(
 
     Args:
         result: Fully initialised :class:`~loom.core.bootstrap.bootstrap.BootstrapResult`
-            from :func:`~loom.core.bootstrap.bootstrap.bootstrap_app`.
+            from :func:`~loom.core.bootstrap.kernel.create_kernel`.
         routes: Which interfaces to mount and from which origin — see
             :class:`~loom.rest.compiler.RouteSources`. ``routes.config``
             compiles after ``routes.python``, deterministically; a

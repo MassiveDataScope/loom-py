@@ -21,10 +21,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Persisted:
-    """The planned composition with its job settings and one wiring and resource per store."""
+    """The planned composition with its job settings and one wiring and resource per store.
+
+    ``backends`` names the backend each store's wiring was built by.
+    """
 
     planned: Planned
     job_settings: JobSettings
+    backends: dict[StoreKey, str]
     wirings: dict[StoreKey, PersistenceWiring]
     store_resources: tuple[Resource, ...]
 
@@ -74,6 +78,7 @@ def persist(planned: Planned) -> Persisted:
     return Persisted(
         planned=planned,
         job_settings=job_settings,
+        backends={key: backends[key].name for key in stores},
         wirings=wirings,
         store_resources=tuple(store_resources),
     )

@@ -11,12 +11,12 @@
       "scope": "APPLICATION"
     },
     "AppConfig": {
-      "provider": "_bind_application.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AppConfig",
       "scope": "APPLICATION"
     },
     "ApplicationInvoker": {
-      "provider": "create_kernel.<locals>.<lambda>",
+      "provider": "install_kernel.<locals>.<lambda>",
       "resolved": "AppInvoker",
       "scope": "APPLICATION"
     },
@@ -41,7 +41,7 @@
       "scope": "APPLICATION"
     },
     "Environment": {
-      "provider": "_bind_application.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "Environment",
       "scope": "APPLICATION"
     },
@@ -51,7 +51,7 @@
       "scope": "APPLICATION"
     },
     "ObservabilityRuntime": {
-      "provider": "_bind_application.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "ObservabilityRuntime",
       "scope": "APPLICATION"
     },
@@ -71,7 +71,7 @@
       "scope": "APPLICATION"
     },
     "RuntimeExecutor": {
-      "provider": "create_kernel.<locals>.<lambda>",
+      "provider": "install_kernel.<locals>.<lambda>",
       "resolved": "RuntimeExecutor",
       "scope": "APPLICATION"
     },
@@ -86,17 +86,17 @@
       "scope": "APPLICATION"
     },
     "StoreCatalog": {
-      "provider": "_bind_application.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "StoreCatalog",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {
-      "provider": "_compiled.<locals>.<lambda>",
+      "provider": "install_use_cases.<locals>.<lambda>",
       "resolved": "UseCaseFactory",
       "scope": "APPLICATION"
     },
     "UseCaseRegistry": {
-      "provider": "create_kernel.<locals>.<lambda>",
+      "provider": "install_kernel.<locals>.<lambda>",
       "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
     },

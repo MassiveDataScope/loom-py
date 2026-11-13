@@ -12,13 +12,16 @@ Usage::
 
     adapter = PrometheusMetricsAdapter()
 
-    result = bootstrap_app(
+    kernel = create_kernel(
         config=cfg,
         use_cases=[CreateOrderUseCase],
         modules=[register_repositories],
         metrics=adapter,
     )
-    app = create_fastapi_app(result, RouteSources(python=[OrderInterface]))
+    app = create_fastapi_app(kernel, RouteSources(python=[OrderInterface]))
+
+:func:`~loom.composition.create_app` builds and passes one itself when
+``observability.prometheus.enabled`` is set.
 """
 
 from __future__ import annotations
@@ -84,7 +87,7 @@ class PrometheusMetricsAdapter:
         from loom.prometheus import PrometheusMetricsAdapter
 
         adapter = PrometheusMetricsAdapter()
-        result  = bootstrap_app(config=cfg, use_cases=[...], metrics=adapter)
+        kernel = create_kernel(config=cfg, use_cases=[...], metrics=adapter)
     """
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:

@@ -81,11 +81,18 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "    from loom.celery.service import CeleryJobService\n"
         "from ..rest import errors\n"
         "from . import sibling\n"
+        "from loom import composition\n"
     )
 
     assert imported_modules(sample, package="loom.core.engine") == {
         "typing",
+        "typing.TYPE_CHECKING",
         "loom.celery.service",
+        "loom.celery.service.CeleryJobService",
         "loom.core.rest",
+        "loom.core.rest.errors",
         "loom.core.engine",
+        "loom.core.engine.sibling",
+        "loom",
+        "loom.composition",
     }

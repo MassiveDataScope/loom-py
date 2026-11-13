@@ -18,12 +18,13 @@ from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve
 from loom.composition.pipeline.persistence import Persisted
 from loom.composition.resources import Resource
 from loom.core.authz.elevation import ElevationSink
-from loom.core.bootstrap import BootstrapError, KernelRuntime, create_kernel
+from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap.kernel import bootstrapping, install_kernel
 from loom.core.cache.wiring import cache_module_for
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
 from loom.core.environment import Environment
+from loom.core.logger import LoggerPort
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.elevation import ScopedElevationSink
@@ -42,7 +43,10 @@ class Registered:
 
 
 def register(
-    persisted: Persisted, *, modules: Sequence[Callable[[LoomContainer], None]]
+    persisted: Persisted,
+    *,
+    modules: Sequence[Callable[[LoomContainer], None]],
+    logger: LoggerPort,
 ) -> Registered:
     """Register every binding and build the kernel; the job service, SQL and the rest follow it.
 
@@ -53,15 +57,14 @@ def register(
         ReservedBindingError: When a caller module or an override binds or
             replaces a framework-owned key.
         BootstrapError: Wrapping any other failure of a module, an override,
-            a repository or cache module, a use case's compilation or an
-            ``APPLICATION`` binding's instantiation.
+            a repository or cache module or a use case's compilation.
         JobBackendError: When the job backend is unknown or its extra is
             missing. Raised as is.
         SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
     """
     source = persisted.planned.source
     ctx, observability = source.config, source.observability
-    kernel = _bind_application(persisted, modules)
+    kernel = _bind_application(persisted, modules, logger)
     job_resources = configure_job_service(
         ctx,
         kernel,
@@ -78,13 +81,14 @@ def register(
 
 
 def _bind_application(
-    persisted: Persisted, modules: Sequence[Callable[[LoomContainer], None]]
+    persisted: Persisted, modules: Sequence[Callable[[LoomContainer], None]], logger: LoggerPort
 ) -> KernelRuntime:
-    """Seed a container, run every module into it, build the kernel on it and validate it.
+    """Seed a container, run every module into it and build the kernel on it.
 
     The caller's modules and the overrides run first, so the framework's
     defaults leave what they bound alone; either one binding a key the
-    framework owns fails right after it runs.
+    framework owns fails right after it runs. The container is validated
+    when the application is sealed.
 
     Raises:
         ConfigError: When the ``cache`` section, an elevation or
@@ -92,12 +96,11 @@ def _bind_application(
             module runs.
         ReservedBindingError: When a caller module or an override binds or
             replaces a framework-owned key.
-        BootstrapError: Wrapping any other failure of a module, of a use
-            case's compilation or of an ``APPLICATION`` binding.
+        BootstrapError: Wrapping any other failure of a module or of a use
+            case's compilation.
     """
     source, recipe = persisted.planned.source, persisted.planned.recipe
-    ctx, config, environment = source.config, source.app, source.environment
-    observability, catalog = source.observability, source.catalog
+    ctx, observability, catalog = source.config, source.observability, source.catalog
     stores = tuple(catalog.specs)
     cache = cache_module_for(ctx)
     sink = _elevation_sink(persisted.wirings)
@@ -105,36 +108,33 @@ def _bind_application(
     coordinator = (
         OrderedCommits(factories, rollback_timeout=_rollback_timeout(ctx)) if factories else None
     )
-    container = LoomContainer()
-    try:
-        container.register(type(config), lambda: config, scope=Scope.APPLICATION)
-        container.register(Environment, lambda: environment, scope=Scope.APPLICATION)
-        # Registered, not merely passed: capability spans resolve it from the
-        # container, and an unregistered runtime makes every Scope.TOOL span a
-        # silent no-op in production while passing every test that injects one.
-        container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
-        container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
-        for module in (
-            *refusing_reserved(modules, stores),
-            *refusing_reserved(recipe.overrides, stores),
-            *(wiring.repo_registration_module for wiring in persisted.wirings.values()),
-            cache,
-        ):
-            module(container)
+
+    ordered = (
+        *refusing_reserved(modules, stores),
+        *refusing_reserved(recipe.overrides, stores),
+        *(wiring.repo_registration_module for wiring in persisted.wirings.values()),
+        cache,
+    )
+    seeds = {
+        type(source.app): source.app,
+        Environment: source.environment,
+        # Bound, not merely passed: capability spans resolve the observability
+        # runtime from the container, and an unregistered runtime makes every
+        # Scope.TOOL span a silent no-op in production while passing every test
+        # that injects one.
+        ObservabilityRuntime: observability,
+        StoreCatalog: catalog,
+    }
+    with bootstrapping(seeds, modules=ordered, logger=logger) as container:
         if sink is not None:
             container.register_instance(ElevationSink, sink)
-        kernel = create_kernel(
-            container=container,
+        return install_kernel(
+            container,
             use_cases=recipe.discovered.use_cases,
+            logger=logger,
             coordinator=coordinator,
             metrics=recipe.metrics,
         )
-        container.validate()
-    except BootstrapError:
-        raise
-    except Exception as exc:
-        raise BootstrapError(f"Bootstrap failed: {exc}") from exc
-    return kernel
 
 
 def _elevation_sink(wirings: Mapping[StoreKey, PersistenceWiring]) -> ElevationSink | None:

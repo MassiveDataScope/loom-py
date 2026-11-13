@@ -18,6 +18,7 @@ Usage::
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -191,11 +192,15 @@ class HttpTestHarness:
         use_cases: list[type[UseCase[Any, Any]]] = list(
             dict.fromkeys(route.use_case for iface in all_interfaces for route in iface.routes)
         )
-        result = bootstrap_app(
-            config=_NullConfig(),
-            use_cases=use_cases,
-            modules=[self._build_module()],
-        )
+        with warnings.catch_warnings():  # removed in T01e
+            # The harness itself still builds through bootstrap_app: its
+            # deprecation is for the harness's callers to never see.
+            warnings.filterwarnings("ignore", "bootstrap_app is deprecated", DeprecationWarning)
+            result = bootstrap_app(
+                config=_NullConfig(),
+                use_cases=use_cases,
+                modules=[self._build_module()],
+            )
         app = create_fastapi_app(
             result,
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),

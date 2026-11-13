@@ -35,21 +35,23 @@ def imported_roots(tree: ast.AST) -> set[str]:
 
 
 def imported_modules(tree: ast.AST, *, package: str) -> set[str]:
-    """Dotted name of every import that runs, relative ones resolved against *package*."""
+    """Dotted name of every import that runs, relative ones resolved against *package*.
+
+    A ``from`` import also yields each imported name under its module, so
+    ``from loom import composition`` yields ``loom.composition``.
+    """
     modules: set[str] = set()
     for node in runtime_nodes(tree):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0:
-                if node.module:
-                    modules.add(node.module)
-                continue
-            if not package:
-                continue
-            base = package.rsplit(".", node.level - 1)[0]
-            if node.module:
-                modules.add(f"{base}.{node.module}")
+                base = node.module or ""
+            elif package:
+                parent = package.rsplit(".", node.level - 1)[0]
+                base = f"{parent}.{node.module}" if node.module else parent
             else:
-                modules.add(base)
+                continue
+            modules.add(base)
+            modules.update(f"{base}.{alias.name}" for alias in node.names)
     return modules

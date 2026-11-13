@@ -7,15 +7,21 @@ first request.
 
 No reflection occurs after :meth:`LoomContainer.validate` - all providers are
 resolved eagerly for ``APPLICATION`` scope during validation.
+
+An application seals its container once it has started
+(:meth:`LoomContainer.seal`); registering into it afterwards still works but
+warns with :class:`~loom.core.di.errors.ContainerSealedWarning`.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeVar
 
+from loom.core.di.errors import ContainerSealedWarning
 from loom.core.di.scope import Scope
 
 T = TypeVar("T")
@@ -71,6 +77,7 @@ class LoomContainer:
     def __init__(self) -> None:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
+        self._sealed = False
 
     def register(
         self,
@@ -92,16 +99,7 @@ class LoomContainer:
             container.register(UserRepository, SQLAlchemyUserRepository)
             container.register(AppConfig, lambda: load_config(MyCfg), scope=Scope.APPLICATION)
         """
-        if isinstance(provider, type):
-
-            def _factory() -> Any:
-                return provider()
-
-            self._bindings[interface] = _Binding(provider=_factory, scope=scope)
-            return
-
-        factory = provider
-        self._bindings[interface] = _Binding(provider=factory, scope=scope)
+        self._bind(interface, provider, scope)
 
     def register_default(
         self,
@@ -115,6 +113,7 @@ class LoomContainer:
         registered after the caller's modules uses this instead, so the
         caller's own binding — through :meth:`register` or
         :meth:`register_instance` — is kept and *provider* is never called.
+        After :meth:`seal` it warns only when it binds.
 
         Args:
             interface: A hashable DI key used as the resolution key.
@@ -130,14 +129,14 @@ class LoomContainer:
         """
         if interface in self._bindings:
             return
-        self.register(interface, provider, scope=scope)
+        self._bind(interface, provider, scope)
 
     def register_instance(self, interface: BindingKey, instance: Any) -> None:
         """Register an already-constructed singleton instance.
 
         Equivalent to ``register(interface, lambda: instance,
-        scope=Scope.APPLICATION)`` but skips the factory indirection — the
-        instance is stored directly and returned on every :meth:`resolve` call.
+        scope=Scope.APPLICATION)``: the container never constructs it, and
+        returns it on every :meth:`resolve` call.
 
         Use this when the caller owns the lifecycle of the object (e.g. a
         ``SessionManager`` created by the bootstrap) and the container should
@@ -152,11 +151,7 @@ class LoomContainer:
             container.register_instance(SessionManager, session_manager)
             assert container.resolve(SessionManager) is session_manager
         """
-        self._bindings[interface] = _Binding(
-            provider=lambda: instance,
-            scope=Scope.APPLICATION,
-            _instance=instance,
-        )
+        self._bind(interface, lambda: instance, Scope.APPLICATION)
 
     def resolve(self, interface: BindingKey) -> Any:
         """Return an instance bound to ``interface``.
@@ -206,6 +201,40 @@ class LoomContainer:
                         f"for {_describe_key(interface)}: {exc}"
                     ) from exc
 
+    def seal(self) -> None:
+        """Mark the container as complete: the application has started on it.
+
+        Every ``register*`` afterwards warns with
+        :class:`~loom.core.di.errors.ContainerSealedWarning` naming the key,
+        then replaces only that key's binding, dropping only that key's built
+        instance: every other built instance, and whatever already holds one,
+        is kept.
+        """
+        self._sealed = True
+
+    def _bind(
+        self, interface: BindingKey, provider: Callable[[], Any] | type[Any], scope: Scope
+    ) -> None:
+        """Bind *provider* under *interface*, replacing its binding and its built instance.
+
+        Every ``register*`` but :meth:`register_repo` binds through here, so
+        the sealed-container warning names the caller of that ``register*``.
+        """
+        self._warn_if_sealed(interface, stacklevel=4)
+        self._bindings[interface] = _Binding(provider=provider, scope=scope)
+
+    def _warn_if_sealed(self, interface: BindingKey, *, stacklevel: int) -> None:
+        """Warn that *interface* is registered into a sealed container, *stacklevel* frames up."""
+        if self._sealed:
+            warnings.warn(
+                ContainerSealedWarning(
+                    f"{_describe_key(interface)} registered into a sealed container: only "
+                    "that key changes, and this becomes an error in the next major "
+                    "version; bind it in a module passed to the application instead"
+                ),
+                stacklevel=stacklevel,
+            )
+
     def bindings(self) -> Mapping[BindingKey, object]:
         """Every bound key, as a read-only view that follows later registrations.
 
@@ -231,6 +260,7 @@ class LoomContainer:
             model: Domain/struct model type.
             interface: DI key previously bound via :meth:`register`.
         """
+        self._warn_if_sealed(model, stacklevel=3)
         self._repo_bindings[model] = interface
 
     def resolve_repo(self, model: type[Any]) -> Any:
