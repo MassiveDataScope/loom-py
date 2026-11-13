@@ -415,6 +415,28 @@
   latter's error (`JobBackendError`, `ConfigError`, `SQSQueueConfigError`,
   `AgentCompilationError`) now reaches the caller first; the provider's failure
   is still a `BootstrapError` wrapping the `ResolutionError`.
+- **composition:** a composed application analyses its dependency graph at the
+  end of registration, from its use cases, jobs and job callbacks
+  (`Recipe.callbacks`), and refuses it with the path from the root:
+  a key with no binding, a cycle, an `APPLICATION` binding holding a
+  `REQUEST` one or a `Caller()`, an input marker (`Input()`, `Query()`,
+  `LoadById()`, `Load()`, `Exists()`) as a constructor default, or a required
+  constructor parameter of a use case, job or callback that names nothing the
+  container serves. Each is a `BootstrapError` wrapping
+  `loom.core.di.graph.DependencyGraphError` (a `ResolutionError`). A use case
+  injecting an unbound key was refused by the factory's verification, as a
+  bare `ResolutionError` reading `X injects p: K, which is not registered`,
+  after the AI phase; it is now that `BootstrapError`, reading
+  `X -> p: K: no binding is registered for it`, ahead of an agent or MCP
+  marker refusal. A job callback injecting an unbound key, or `RepoFor[M]` for
+  a model with no repository mapping, now fails start-up instead of its first
+  run. `HttpTestHarness` still accepts both. A cycle of constructor parameters
+  is refused; a loop through a call to another use case is not.
+  A singleton holding `Caller()`, or a class with an input marker as a
+  constructor default, used to start with the raw marker stored and only
+  misbehaved when used; it now fails at start-up.
+  A required parameter of a binding's class that names nothing servable warns
+  with `loom.core.di.errors.DependencyUnresolvable`.
 - **composition:** a composed application's container is sealed once it has
   started. Registering into it afterwards (`register`, `register_default`,
   `register_instance`, `register_repo`, through `Application.kernel.container`

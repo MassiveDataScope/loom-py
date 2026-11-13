@@ -24,6 +24,7 @@ from loom.composition.errors import ReservedBindingError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
 from loom.core.di.container import ResolutionError
+from loom.core.di.graph import DependencyGraphError
 from loom.core.engine.compiler import CompilationError
 from loom.core.environment import Environment
 from loom.core.use_case import UnservedModelError
@@ -34,6 +35,7 @@ from tests.unit.composition.pipeline import paths
 from tests.unit.composition.pipeline.components import (
     AcmeAgentUser,
     AcmeBesideModel,
+    AcmeInputInConstructor,
     AcmeInterface,
     AcmeJob,
     AcmeJoinedLedger,
@@ -41,6 +43,9 @@ from tests.unit.composition.pipeline.components import (
     AcmeLedgerWriter,
     AcmeMcpUser,
     AcmeMissingStore,
+    AcmeNeedsCallerCache,
+    AcmeNeedsCycle,
+    AcmeNeedsLedger,
     AcmeNeedsService,
     AcmeNeedsServiceInterface,
     AcmePing,
@@ -48,6 +53,10 @@ from tests.unit.composition.pipeline.components import (
     AcmeRecord,
     AcmeUncompilable,
     AcmeUncompilableJob,
+    AcmeUnresolvable,
+    binds_caller_cache,
+    binds_captive,
+    binds_cycle,
     binds_sql_service,
     binds_unbuildable,
     raises_at_registration,
@@ -63,6 +72,10 @@ _EVERY = (*_COMPOSED, *paths.STANDALONE)
 _PATHS = {**paths.COMPOSED, **paths.STANDALONE}
 _LEDGER = {"stores": {"ledger": paths.SQLITE}}
 _CLICKHOUSE = "clickhouse://acme:8123/acme"
+_ANALYSED = ("fastapi",)
+"""Every path analyses the same graph at the same point: one path records a graph refusal.
+
+``dependency-cycle`` and ``unbound-dependency`` keep every composed path."""
 
 
 @dataclass(frozen=True)
@@ -157,6 +170,32 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         JobBackendError,
     ),
     "unbound-dependency": _Refusal(_NEEDS_SERVICE, ResolutionError),
+    "dependency-cycle": _Refusal(
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsCycle), modules=(binds_cycle,)),
+        DependencyGraphError,
+    ),
+    "captive-dependency": _Refusal(
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsLedger), modules=(binds_captive,)),
+        DependencyGraphError,
+        _ANALYSED,
+    ),
+    "caller-in-singleton": _Refusal(
+        paths.Composition(
+            use_cases=(AcmePing, AcmeNeedsCallerCache), modules=(binds_caller_cache,)
+        ),
+        DependencyGraphError,
+        _ANALYSED,
+    ),
+    "input-marker-in-constructor": _Refusal(
+        paths.Composition(use_cases=(AcmePing, AcmeInputInConstructor)),
+        DependencyGraphError,
+        _ANALYSED,
+    ),
+    "unresolvable-parameter": _Refusal(
+        paths.Composition(use_cases=(AcmePing, AcmeUnresolvable)),
+        DependencyGraphError,
+        _ANALYSED,
+    ),
     "sqs-queue": _Refusal(
         paths.Composition(
             config={

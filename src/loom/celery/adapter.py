@@ -393,6 +393,7 @@ class CeleryAdapter:
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,
+            callbacks=resolved.callbacks,
             # Without models the worker serves only a unit of work: no cursor
             # codec is built, and the shared metadata the caller compiled into
             # stays as it is.

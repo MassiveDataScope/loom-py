@@ -8,23 +8,20 @@ zero per-request reflection.
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, NamedTuple, TypeVar, get_args, get_origin
+from typing import Any, NamedTuple, TypeVar
 
-from loom.core.di.container import LoomContainer, ResolutionError
-from loom.core.model.introspection import generic_type_arg, resolve_type_hints
+from loom.core.di.container import LoomContainer, ResolutionError, _describe_key
+from loom.core.di.introspection import KeyDependency, RepoDependency, constructor_dependencies
 from loom.core.repository.abc import RepoFor
-from loom.core.repository.registration import is_direct_protocol, is_standard_capability
+from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
 from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")
 _T = TypeVar("_T")
-
-# Sentinel params that are never treated as injectable dependencies.
-_SKIP_PARAMS: frozenset[str] = frozenset({"self", "return"})
 
 
 class ModelRead(NamedTuple):
@@ -60,7 +57,8 @@ class _MainRepoDep:
         return self.contract if is_standard_capability(self.contract) else None
 
 
-DepToken = type[Any] | _MainRepoDep
+DepToken = object
+"""A container key, or a :class:`_MainRepoDep` resolved through the repository mapping."""
 
 
 class UseCaseFactory:
@@ -190,10 +188,10 @@ class UseCaseFactory:
     def _get_deps(self, use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
         """Return the cached (or freshly computed) dependency list for a UseCase.
 
-        Inspection resolves annotations, so ``from __future__ import
-        annotations`` is handled transparently; when they cannot be resolved the
-        raw ``inspect`` signature is used instead.  Parameters with a default
-        value are never dependencies.
+        The constructor is read by
+        :func:`~loom.core.di.introspection.constructor_dependencies` with
+        :func:`~loom.core.repository.dependency.classify_key`; only its keys
+        and repositories are injected.
 
         Args:
             use_case_type: UseCase subclass to inspect.
@@ -207,12 +205,21 @@ class UseCaseFactory:
         init = use_case_type.__init__
         if init is UseCase.__init__:
             deps = _default_init_deps(use_case_type)
-        elif init is object.__init__:
-            # UseCase subclasses that don't declare __init__ inherit object.__init__
-            deps = []
         else:
-            deps = _explicit_init_deps(init)
+            deps = self._explicit_init_deps(use_case_type)
         self._dep_cache[use_case_type] = deps
+        return deps
+
+    def _explicit_init_deps(self, use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
+        """Return the keys and repositories a user-defined ``__init__`` injects."""
+        deps: list[tuple[str, DepToken]] = []
+        kinds = self._container.kinds
+        for name, dependency in constructor_dependencies(use_case_type, kinds, classify_key):
+            match dependency:
+                case RepoDependency(model):
+                    deps.append((name, _MainRepoDep(model)))
+                case KeyDependency(key):
+                    deps.append((name, key))
         return deps
 
 
@@ -223,58 +230,3 @@ def _default_init_deps(use_case_type: type[Any]) -> list[tuple[str, DepToken]]:
         return []
     contract = getattr(use_case_type, "__loom_main_repo_contract__", RepoFor[Any])
     return [("main_repo", _MainRepoDep(main_model, contract))]
-
-
-def _explicit_init_deps(init: Any) -> list[tuple[str, DepToken]]:
-    """Return the injectable dependencies of a user-defined ``__init__``."""
-    deps: list[tuple[str, DepToken]] = []
-    for name, typ in _required_hints(init).items():
-        repo_model = generic_type_arg(typ, RepoFor)
-        if repo_model is not None:
-            deps.append((name, _MainRepoDep(repo_model)))
-            continue
-        if isinstance(typ, type) or _is_injectable_alias(typ):
-            deps.append((name, typ))
-    return deps
-
-
-def _required_hints(init: Any) -> dict[str, Any]:
-    """Return the annotations of ``init`` parameters that carry no default value."""
-    hints = resolve_type_hints(init)
-    parameters = inspect.signature(init).parameters
-    if not hints:
-        # Fallback: use inspect for non-resolvable annotations
-        hints = {
-            name: param.annotation
-            for name, param in parameters.items()
-            if param.annotation is not inspect.Parameter.empty
-        }
-    return {
-        name: typ
-        for name, typ in hints.items()
-        if name not in _SKIP_PARAMS
-        and name in parameters
-        and parameters[name].default is inspect.Parameter.empty
-    }
-
-
-def _is_injectable_alias(annotation: object) -> bool:
-    """True for ``Origin[Arg]`` whose origin is a standard capability or a Protocol.
-
-    Plain generic containers (``tuple[str, ...]``, ``dict[str, Any]``) are
-    values, not dependencies.
-    """
-    if is_standard_capability(annotation):
-        return True
-    origin = get_origin(annotation)
-    return isinstance(origin, type) and is_direct_protocol(origin)
-
-
-def _describe_key(key: object) -> str:
-    if isinstance(key, type):
-        return key.__qualname__
-    origin = get_origin(key)
-    if isinstance(origin, type):
-        args = ", ".join(_describe_key(arg) for arg in get_args(key))
-        return f"{origin.__qualname__}[{args}]"
-    return repr(key)

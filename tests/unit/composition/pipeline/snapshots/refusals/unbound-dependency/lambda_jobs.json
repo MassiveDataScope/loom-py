@@ -1,6 +1,9 @@
 {
-  "cause": null,
-  "message": "AcmeNeedsService injects service: AcmeUnregistered, which is not registered in the container.",
-  "type": "loom.core.di.container.ResolutionError",
-  "wrapped": false
+  "cause": {
+    "message": "AcmeNeedsService -> service: AcmeUnregistered: no binding is registered for it",
+    "type": "loom.core.di.graph.DependencyGraphError"
+  },
+  "message": "Bootstrap failed: AcmeNeedsService -> service: AcmeUnregistered: no binding is registered for it",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
 }

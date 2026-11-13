@@ -19,9 +19,10 @@ import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, get_args, get_origin
 
 from loom.core.di.errors import ContainerSealedWarning
+from loom.core.di.introspection import KeyClassifier, plain_key
 from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionKinds
 
@@ -51,9 +52,13 @@ class _Binding:
 
 
 def _describe_key(interface: BindingKey) -> str:
-    """Return a stable human-readable name for a DI binding key."""
+    """Return a stable human-readable name for a DI binding key, ``Origin[Arg]`` for an alias."""
     if isinstance(interface, type):
         return interface.__qualname__
+    origin = get_origin(interface)
+    if isinstance(origin, type):
+        args = ", ".join(_describe_key(arg) for arg in get_args(interface))
+        return f"{origin.__qualname__}[{args}]"
     return repr(interface)
 
 
@@ -64,6 +69,11 @@ class LoomContainer:
     dynamic reflection per request. Application-scope instances are
     singletons; request-scope instances are created fresh per
     :meth:`resolve` call.
+
+    Args:
+        classify_key: The :data:`~loom.core.di.introspection.KeyClassifier`
+            the dependency graph reads constructors with; defaults to
+            :func:`~loom.core.di.introspection.plain_key`.
 
     Attributes:
         kinds: The execution kinds of this application, shared with its
@@ -79,10 +89,11 @@ class LoomContainer:
         repo = container.resolve(UserRepository)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, classify_key: KeyClassifier = plain_key) -> None:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
         self._sealed = False
+        self._classify_key = classify_key
         self.kinds = ExecutionKinds()
 
     def register(

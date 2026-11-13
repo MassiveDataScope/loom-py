@@ -12,13 +12,14 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.identity import Identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.abc import RepoFor
 from loom.core.repository.registry import RepositoryToken
 from loom.core.sql import SqlQueryService
-from loom.core.use_case import Agent, Input, Joined, LoadById, Mcp, UseCase
+from loom.core.use_case import Agent, Caller, Input, Joined, LoadById, Mcp, UseCase
 from loom.rest.model import RestInterface, RestRoute
 from loom.testing.in_memory import InMemoryRepository
 
@@ -174,6 +175,115 @@ class AcmeNeedsService(UseCase[AcmeRecord, None]):
 class AcmeNeedsServiceInterface(RestInterface[None]):
     prefix = "/needs-service"
     routes = (RestRoute(use_case=AcmeNeedsService, method="GET", path="/"),)
+
+
+# ---------------------------------------------------------------------------
+# Graph refusals (T04): each fails at its first build before the analysis
+# ---------------------------------------------------------------------------
+
+
+class AcmeCycleSecond:
+    """Bound by :func:`binds_cycle`; needs :class:`AcmeCycleFirst` back."""
+
+    def __init__(self, first: AcmeCycleFirst) -> None:
+        self.first = first
+
+
+class AcmeCycleFirst:
+    """Bound by :func:`binds_cycle`; needs :class:`AcmeCycleSecond`."""
+
+    def __init__(self, second: AcmeCycleSecond) -> None:
+        self.second = second
+
+
+class AcmeNeedsCycle(UseCase[AcmeRecord, None]):
+    """Injects the head of a dependency cycle."""
+
+    def __init__(self, first: AcmeCycleFirst) -> None:
+        super().__init__()
+        self.first = first
+
+    async def execute(self) -> None:
+        return None
+
+
+class AcmeAuditTrail:
+    """Bound per execution by :func:`binds_captive`."""
+
+
+class AcmeAuditLedger:
+    """An ``APPLICATION`` binding of :func:`binds_captive` holding a per-execution one."""
+
+    def __init__(self, trail: AcmeAuditTrail) -> None:
+        self.trail = trail
+
+
+class AcmeNeedsLedger(UseCase[AcmeRecord, None]):
+    """Injects :class:`AcmeAuditLedger`."""
+
+    def __init__(self, ledger: AcmeAuditLedger) -> None:
+        super().__init__()
+        self.ledger = ledger
+
+    async def execute(self) -> None:
+        return None
+
+
+class AcmeCallerCache:
+    """An ``APPLICATION`` binding of :func:`binds_caller_cache` declaring ``Caller()``."""
+
+    def __init__(self, caller: Identity = Caller()) -> None:
+        self.caller = caller
+
+
+class AcmeNeedsCallerCache(UseCase[AcmeRecord, None]):
+    """Injects :class:`AcmeCallerCache`."""
+
+    def __init__(self, cache: AcmeCallerCache) -> None:
+        super().__init__()
+        self.cache = cache
+
+    async def execute(self) -> None:
+        return None
+
+
+class AcmeInputInConstructor(UseCase[AcmeRecord, None]):
+    """Declares ``Input()`` in its constructor, where only ``execute()`` may."""
+
+    def __init__(self, payload: AcmeNamed = Input()) -> None:
+        super().__init__()
+        self.payload = payload
+
+    async def execute(self) -> None:
+        return None
+
+
+class AcmeUnresolvable(UseCase[AcmeRecord, None]):
+    """Requires a value no binding serves."""
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        super().__init__()
+        self.names = names
+
+    async def execute(self) -> None:
+        return None
+
+
+def binds_cycle(container: LoomContainer) -> None:
+    """Binds two classes that need each other."""
+    container.register(AcmeCycleFirst, AcmeCycleFirst)
+    container.register(AcmeCycleSecond, AcmeCycleSecond)
+
+
+def binds_captive(container: LoomContainer) -> None:
+    """Binds a singleton needing a per-execution binding."""
+    container.register(AcmeAuditTrail, AcmeAuditTrail)
+    container.register(AcmeAuditLedger, AcmeAuditLedger, scope=Scope.APPLICATION)
+
+
+def binds_caller_cache(container: LoomContainer) -> None:
+    """Binds a singleton declaring ``Caller()``."""
+    container.register(AcmeCallerCache, AcmeCallerCache, scope=Scope.APPLICATION)
 
 
 # ---------------------------------------------------------------------------

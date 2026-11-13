@@ -1,8 +1,9 @@
 """The start-up error contract (plan 3.4): what reaches the caller wrapped, and what as is.
 
 ``BootstrapError`` wraps, cause chained, a failing caller module, override,
-repository or cache module, a use case's compilation and the ``validate()``
-seal runs; a ``BootstrapError`` subclass passes through. Everything else keeps
+repository or cache module, a use case's compilation, a structural refusal
+of the dependency graph and the ``validate()`` seal runs; a
+``BootstrapError`` subclass passes through. Everything else keeps
 its own type. The recordings of ``snapshots/refusals`` hold what each path
 raises, and are checked against the contract here; the failures no recording
 provokes are provoked below.
@@ -40,6 +41,13 @@ _WRAPPED = {
     "use-case-compilation": "CompilationError",
     "store-beside-main-model": "CompilationError",
     "failing-application-provider": "ResolutionError",
+    # Refusal 1 of the dependency graph, raised by factory.verify as is before T04.
+    "unbound-dependency": "DependencyGraphError",
+    "dependency-cycle": "DependencyGraphError",
+    "captive-dependency": "DependencyGraphError",
+    "caller-in-singleton": "DependencyGraphError",
+    "input-marker-in-constructor": "DependencyGraphError",
+    "unresolvable-parameter": "DependencyGraphError",
 }
 """Refusals wrapped on every path, with the type of their cause."""
 
@@ -55,7 +63,6 @@ _RAW = {
     "uncomposed-write-store": "UncomposedWriteStore",
     "joined-autocommit-store": "JoinedAutocommitStore",
     "unserved-model": "UnservedModelError",
-    "unbound-dependency": "ResolutionError",
     "deploy-check": "DeployCheckError",
     "agent-marker": "AgentCompilationError",
     "mcp-marker": "AgentCompilationError",

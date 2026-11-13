@@ -1,7 +1,8 @@
 """``Recipe.lenient``, which the HTTP harness sets: the checks it skips (D15).
 
-It skips the deploy checks, the use-case factory's verification, the store
-refusal and the AI marker refusal. Each is skipped only under a lenient
+It skips the deploy checks, the use-case factory's verification, the
+dependency graph's missing-binding refusal, the store refusal and the AI
+marker refusal. Each is skipped only under a lenient
 recipe: a strict one still refuses the same composition. A failing
 ``APPLICATION`` binding is refused either way.
 """
@@ -22,13 +23,14 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import ResolutionError
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
-from loom.core.use_case.errors import UncomposedWriteStore
+from loom.core.use_case.errors import UncomposedWriteStore, UnservedModelError
 from tests.helpers.composition import Serving, composition_source
 from tests.unit.composition.pipeline.components import (
     AcmeAgentUser,
     AcmeLedgerWriter,
     AcmeNeedsService,
     AcmePing,
+    AcmeReadsUnserved,
     AcmeRecord,
     binds_unbuildable,
 )
@@ -46,7 +48,8 @@ _EPHEMERAL_KEYS: dict[str, Any] = {
     "persistence": {"cursors": {"signing": "ephemeral"}},
 }
 _SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
-    "factory-verify": ({"use_cases": (AcmePing, AcmeNeedsService)}, ResolutionError),
+    "missing-binding": ({"use_cases": (AcmePing, AcmeNeedsService)}, BootstrapError),
+    "factory-verify": ({"use_cases": (AcmePing, AcmeReadsUnserved)}, UnservedModelError),
     "unservable-store": ({"jobs": (AcmeLedgerWriter,)}, UncomposedWriteStore),
     "ai-marker": ({"use_cases": (AcmePing, AcmeAgentUser)}, AgentCompilationError),
 }

@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "AcmeNeedsCycle -> first: AcmeCycleFirst -> second: AcmeCycleSecond -> first: AcmeCycleFirst: dependency cycle",
+    "type": "loom.core.di.graph.DependencyGraphError"
+  },
+  "message": "Bootstrap failed: AcmeNeedsCycle -> first: AcmeCycleFirst -> second: AcmeCycleSecond -> first: AcmeCycleFirst: dependency cycle",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

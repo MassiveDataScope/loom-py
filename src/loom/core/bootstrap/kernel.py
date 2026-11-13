@@ -27,6 +27,7 @@ from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger import LoggerPort, get_logger
+from loom.core.repository.dependency import classify_key
 from loom.core.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
@@ -125,8 +126,10 @@ def bootstrapping(
     Internal to loom, shared by :func:`create_kernel` and ``loom.composition``: not
     public API, and it may change without deprecation.
 
-    The seeds are bound at ``APPLICATION`` scope before any module runs, so a
-    module can resolve them. The caller finishes the container inside the
+    The container reads constructor annotations with
+    :func:`~loom.core.repository.dependency.classify_key`. The seeds are bound
+    at ``APPLICATION`` scope before any module runs, so a module can resolve
+    them. The caller finishes the container inside the
     ``with`` block.
 
     Raises:
@@ -135,7 +138,7 @@ def bootstrapping(
     """
     try:
         logger.info("[BOOT] Initialising DI container")
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         for module in modules:
@@ -201,11 +204,12 @@ def install_kernel(
     Raises:
         CompilationError: When a use case does not compile.
     """
-    base = install_use_cases(container, use_cases, logger=logger, metrics=metrics)
     kinds = container.kinds
+    # Declared first: the factory reads each constructor against the kinds.
     use_case_kinds(kinds)
     declare_ai_kinds(kinds)
     kinds.bind(CALLER, CallerResolver())
+    base = install_use_cases(container, use_cases, logger=logger, metrics=metrics)
     executor = RuntimeExecutor(
         base.compiler,
         coordinator=coordinator,

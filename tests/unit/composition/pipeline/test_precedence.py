@@ -7,7 +7,9 @@ snapshot ``precedence/<scenario>/<path>.json`` records the caught refusal as
 ``refusals/`` does.
 
 The scenarios of ``_SCENARIOS`` keep the order of the code before the
-pipeline. The ``validated-at-seal-after-<family>`` ones pin an intended T01d
+pipeline, but ``agent-marker-and-unbound-dependency``: since T04 the
+dependency graph is analysed at the end of registration, ahead of the AI
+phase. The ``validated-at-seal-after-<family>`` ones pin an intended T01d
 change: the container is validated when it is sealed, so a failing
 ``APPLICATION`` provider now surfaces after the refusals registration and the
 AI phase raise, where before T01d it surfaced ahead of them.
@@ -26,6 +28,7 @@ from loom.composition import JobBackendError
 from loom.composition.errors import ReservedBindingError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
+from loom.core.di.graph import DependencyGraphError
 from loom.core.environment import Environment
 from tests.unit.composition.pipeline import paths
 from tests.unit.composition.pipeline.components import (
@@ -80,13 +83,15 @@ _SCENARIOS: dict[str, _Precedence] = {
         ),
         AgentCompilationError,
     ),
-    # wire_ai's AgentCompilationError before factory.verify's ResolutionError.
+    # T04 change: registration's graph analysis (refusal 1, a DependencyGraphError wrapped
+    # in BootstrapError) before wire_ai's AgentCompilationError. Before T04 the unbound
+    # dependency surfaced in seal, through factory.verify, after the AI phase.
     "agent-marker-and-unbound-dependency": _Precedence(
         paths.Composition(
             use_cases=(AcmePing, AcmeNeedsService, AcmeAgentUser),
             interfaces=(AcmeInterface, AcmeNeedsServiceInterface),
         ),
-        AgentCompilationError,
+        DependencyGraphError,
     ),
     # configure_job_service's JobBackendError before resolve_sql's ConfigError.
     "job-backend-and-sql-section": _Precedence(

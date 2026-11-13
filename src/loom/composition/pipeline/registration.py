@@ -4,7 +4,7 @@ The order: the seed keys (the application's ``AppConfig``, ``Environment``,
 ``ObservabilityRuntime`` and ``StoreCatalog``); the caller's modules; the
 recipe's overrides; each store's repositories; the framework's keys, among
 them the kernel, whose construction compiles the discovered use cases.
-Nothing registers after this phase.
+Nothing registers after this phase, which ends by analysing the dependency graph.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from loom.composition._jobs import configure_job_service
 from loom.composition._reserved import refusing_reserved
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
+from loom.composition.pipeline.analysis import analysed
 from loom.composition.pipeline.persistence import Persisted
 from loom.composition.resources import Resource
 from loom.core.authz.elevation import ElevationSink
@@ -23,6 +24,7 @@ from loom.core.bootstrap.kernel import bootstrapping, install_kernel
 from loom.core.cache.wiring import cache_module_for
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.di.graph import GraphAnalysis
 from loom.core.environment import Environment
 from loom.core.logger import LoggerPort
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -34,10 +36,11 @@ from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Registered:
-    """The persisted composition with its kernel and the collaborators registered around it."""
+    """The persisted composition, its kernel, its analysed graph and the collaborators around it."""
 
     persisted: Persisted
     kernel: KernelRuntime
+    analysis: GraphAnalysis
     job_resources: tuple[Resource, ...]
     sql: SqlWiring
 
@@ -61,6 +64,8 @@ def register(
         JobBackendError: When the job backend is unknown or its extra is
             missing. Raised as is.
         SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
+        BootstrapError: Wrapping the first structural refusal of the
+            dependency graph (:func:`~loom.composition.pipeline.analysis.analysed`).
     """
     source = persisted.planned.source
     ctx, observability = source.config, source.observability
@@ -76,7 +81,11 @@ def register(
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
     return Registered(
-        persisted=persisted, kernel=kernel, job_resources=tuple(job_resources), sql=sql
+        persisted=persisted,
+        kernel=kernel,
+        analysis=analysed(kernel.container, persisted.planned.recipe),
+        job_resources=tuple(job_resources),
+        sql=sql,
     )
 
 

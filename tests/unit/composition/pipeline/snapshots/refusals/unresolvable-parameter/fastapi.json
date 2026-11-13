@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "AcmeUnresolvable: names: tuple[str, ...] names nothing the container can serve",
+    "type": "loom.core.di.graph.DependencyGraphError"
+  },
+  "message": "Bootstrap failed: AcmeUnresolvable: names: tuple[str, ...] names nothing the container can serve",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

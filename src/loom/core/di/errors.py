@@ -10,3 +10,10 @@ class ContainerSealedWarning(DeprecationWarning):
     key's built instance; it becomes an error in the next major version.
     Register through a module passed to the application instead.
     """
+
+
+class DependencyUnresolvable(UserWarning):
+    """A binding a root reaches declares a required parameter the container cannot serve.
+
+    Only a warning: the binding fails when it is built, and it may never be.
+    """

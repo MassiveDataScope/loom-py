@@ -40,6 +40,8 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("loom.core.di", "loom.core.engine", "loom.core.use_case", "loom.ai"),
         (),
     ),
+    # The container reads keys through an injected classifier, never the packages above it.
+    "loom.core.di": (("loom.core.repository", "loom.core.use_case", "loom.ai"), ()),
     "loom.rest": (("loom.serverless",), ()),
     # A job backend raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),

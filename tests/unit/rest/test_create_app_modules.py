@@ -17,6 +17,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.scope import Scope
 from loom.rest.fastapi.auto import create_app
@@ -134,5 +135,7 @@ def test_modules_run_in_the_given_order(config_path: str) -> None:
 
 
 def test_startup_fails_without_the_module(config_path: str) -> None:
-    with pytest.raises(ResolutionError, match=r"NowUseCase injects clock: .*Clock"):
+    with pytest.raises(BootstrapError, match=r"NowUseCase -> clock: .*Clock") as caught:
         create_app(config_path)
+
+    assert isinstance(caught.value.__cause__, ResolutionError)

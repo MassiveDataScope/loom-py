@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 import loom.core.repository as repository_package
 from loom.composition import AppConfig
+from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
@@ -305,13 +306,11 @@ class TestHandWrittenCapabilityDependency:
         discover(_CountInterface)
         config_path = write_project(tmp_path, store=_DYNAMODB_STORE)
 
-        with pytest.raises(ResolutionError, match="_CountRecords") as exc_info:
+        with pytest.raises(BootstrapError, match="_CountRecords") as exc_info:
             create_app(config_path)
 
-        message = str(exc_info.value)
-        assert "records" in message
-        assert "Listable" in message
-        assert "CapabilityRecord" in message
+        assert isinstance(exc_info.value.__cause__, ResolutionError)
+        assert "records: Listable[CapabilityRecord]" in str(exc_info.value)
 
     def test_boots_on_a_backend_that_binds_it(self, tmp_path: Path, discover: Any) -> None:
         discover(_CountInterface)
