@@ -109,124 +109,106 @@ def _is_credentials_reference(value: str) -> bool:
 _logger = logging.getLogger(__name__)
 
 
-def _is_loopback(hostname: str | None) -> bool:
-    """Whether *hostname* names this machine and nothing else.
-
-    Args:
-        hostname: Host component of a URL, or ``None`` when it declares none.
-
-    Returns:
-        ``True`` for ``localhost`` and for any address in a loopback range.
-    """
-    if hostname is None:
-        return False
-    if hostname == "localhost":
-        return True
-    try:
-        return ip_address(hostname.strip("[]")).is_loopback
-    except ValueError:
-        return False
-
-
 _PRIVATE_SUFFIXES = (".internal", ".local", ".localdomain", ".lan", ".home.arpa")
 """DNS suffixes that never resolve on the public internet (RFC 6762, RFC 8375, ICANN's
 reserved ``.internal``): a name under them can only be a private network's."""
 
 
-def _is_private(hostname: str | None) -> bool:
-    """Whether *hostname* can only be reached inside a private network.
+class _RemoteUrl:
+    """A remote address and loom's rule for it: ``https``, or plaintext only where no one
+    can listen.
 
-    Args:
-        hostname: Host component of a URL, or ``None`` when it declares none.
+    Plaintext ``http`` is admitted to a loopback host always (the traffic cannot leave the
+    machine, and TLS to a developer's own server buys nothing) and to a private host when
+    the configuration opts in with ``allow_private_plaintext``. Every other ``http`` URL is
+    refused. Both exceptions are deliberate, so neither is silent: ``warn_plaintext``
+    announces them at start-up.
 
-    Returns:
-        ``True`` for a private, loopback or link-local address and for a name
-        under a suffix that public DNS never answers.
+    The URL is parsed once; ``fault`` and ``warn_plaintext`` read the same parts.
     """
-    if hostname is None:
-        return False
-    host = hostname.strip("[]").lower().rstrip(".")
-    if host.endswith(_PRIVATE_SUFFIXES):
-        return True
-    try:
-        address = ip_address(host)
-    except ValueError:
-        return False
-    return address.is_private or address.is_loopback or address.is_link_local
 
+    __slots__ = ("_parts", "_private_plaintext")
 
-def _warn_plaintext_loopback(component: str, url: str) -> None:
-    """Announce a plaintext loopback URL, which is allowed only because it is one.
+    def __init__(self, url: str, *, private_plaintext: bool = False) -> None:
+        """Parse *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
+        self._private_plaintext = private_plaintext
+        try:
+            self._parts: SplitResult | None = urlsplit(url)
+        except ValueError:
+            self._parts = None
 
-    The exception is deliberate and narrow, so it must not be silent: a
-    configuration that works on a laptop and is refused in staging is worth
-    hearing about at start-up rather than at deploy time.
+    def fault(self) -> str | None:
+        """Why the URL is unsafe, or ``None`` when it is acceptable."""
+        parts = self._parts
+        if parts is None:
+            return "the URL is malformed"
+        if parts.scheme != "https":
+            return self._plaintext_fault(parts)
+        if not parts.hostname:
+            return "the URL declares no host"
+        if parts.username is not None or parts.password is not None:
+            return "the URL carries credentials in its userinfo"
+        if parts.query:
+            return "the URL carries a query string, which may embed credentials"
+        return None
 
-    Args:
-        component: Configuration path the URL came from.
-        url: The accepted URL, already redacted.
-    """
-    parts = urlsplit(url)
-    if parts.scheme != "http" or not _is_loopback(parts.hostname):
-        return
-    _logger.warning(
-        "%s uses plaintext http at %s. Allowed because the traffic cannot leave "
-        "this machine; the same URL on any other host is refused, so this "
-        "configuration is local-only.",
-        component,
-        parts.hostname,
-    )
+    def warn_plaintext(self, component: str) -> None:
+        """Announce an accepted plaintext URL and why it was let through.
 
+        Args:
+            component: Configuration path the URL came from.
+        """
+        parts = self._parts
+        if parts is None or parts.scheme != "http" or self.fault() is not None:
+            return
+        if _RemoteUrl._is_loopback(parts.hostname):
+            why = (
+                "Allowed because the traffic cannot leave this machine; the same URL on "
+                "any other host is refused, so this configuration is local-only."
+            )
+        else:
+            why = (
+                "Allowed by allow_private_plaintext: the host is only reachable inside a "
+                "private network, which must be trusted."
+            )
+        _logger.warning("%s uses plaintext http at %s. %s", component, parts.hostname, why)
 
-def _warn_plaintext_private(component: str, url: str) -> None:
-    """Announce a plaintext URL to a private host, admitted by an explicit opt-in.
-
-    Args:
-        component: Configuration path the URL came from.
-        url: The accepted URL, already redacted.
-    """
-    parts = urlsplit(url)
-    if parts.scheme != "http" or _is_loopback(parts.hostname):
-        return
-    _logger.warning(
-        "%s uses plaintext http at %s. Allowed by allow_private_plaintext: the host "
-        "is only reachable inside a private network, which must be trusted.",
-        component,
-        parts.hostname,
-    )
-
-
-def _url_fault(url: str, *, private_plaintext: bool = False) -> str | None:
-    """Return why a remote URL is unsafe, or ``None`` when it is acceptable.
-
-    *private_plaintext* is a server's explicit ``allow_private_plaintext``:
-    it admits ``http`` to a host that only a private network reaches.
-    """
-    try:
-        parts: SplitResult = urlsplit(url)
-    except ValueError:
-        return "the URL is malformed"
-    if parts.scheme != "https":
-        if parts.scheme == "http" and _is_loopback(parts.hostname):
-            # Plaintext is acceptable only when the traffic cannot leave the
-            # machine. Requiring TLS from a developer's own MCP server buys
-            # nothing — there is no network to intercept — and costs a
-            # self-signed certificate before anything can be tried locally.
-            # Anywhere else the refusal stands: see _warn_plaintext_loopback,
-            # which makes the exception audible rather than silent.
+    def _plaintext_fault(self, parts: SplitResult) -> str | None:
+        if parts.scheme != "http":
+            return "the scheme must be https"
+        if _RemoteUrl._is_loopback(parts.hostname):
             return None
-        if parts.scheme == "http" and private_plaintext:
-            if _is_private(parts.hostname):
-                return None
-            return "allow_private_plaintext admits only a private host"
-        return "the scheme must be https"
-    if not parts.hostname:
-        return "the URL declares no host"
-    if parts.username is not None or parts.password is not None:
-        return "the URL carries credentials in its userinfo"
-    if parts.query:
-        return "the URL carries a query string, which may embed credentials"
-    return None
+        if not self._private_plaintext:
+            return "the scheme must be https"
+        if _RemoteUrl._is_private(parts.hostname):
+            return None
+        return "allow_private_plaintext admits only a private host"
+
+    @staticmethod
+    def _is_loopback(hostname: str | None) -> bool:
+        """``localhost`` or an address in a loopback range."""
+        if hostname is None:
+            return False
+        if hostname == "localhost":
+            return True
+        try:
+            return ip_address(hostname.strip("[]")).is_loopback
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _is_private(hostname: str | None) -> bool:
+        """A private, loopback or link-local address, or a name public DNS never answers."""
+        if hostname is None:
+            return False
+        host = hostname.strip("[]").lower().rstrip(".")
+        if host.endswith(_PRIVATE_SUFFIXES):
+            return True
+        try:
+            address = ip_address(host)
+        except ValueError:
+            return False
+        return address.is_private or address.is_loopback or address.is_link_local
 
 
 def _redact_url(url: str) -> str:
@@ -380,9 +362,10 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         # one actually lives (FR-038). The check reads the address; the card
         # and the error publish only the redacted form.
         address = self.base_url.reveal()
-        fault = _url_fault(address)
+        remote = _RemoteUrl(address)
+        fault = remote.fault()
         if fault is None:
-            _warn_plaintext_loopback("ai.a2a.base_url", address)
+            remote.warn_plaintext("ai.a2a.base_url")
         if fault is not None:
             raise AgentCompilationError(
                 [AgentErrorCode.A2A_BASE_URL_INVALID.issue(url=_redact_url(address), reason=fault)]
@@ -519,10 +502,10 @@ def _validate_remote_url(
     The *invalid* code takes ``component, url, reason``.
     """
     address = url.reveal() if isinstance(url, Dsn) else url
-    fault = _url_fault(address, private_plaintext=private_plaintext)
+    remote = _RemoteUrl(address, private_plaintext=private_plaintext)
+    fault = remote.fault()
     if fault is None:
-        _warn_plaintext_loopback(component, address)
-        _warn_plaintext_private(component, address)
+        remote.warn_plaintext(component)
         return []
     return [invalid.issue(component=component, url=_redact_url(address), reason=fault)]
 

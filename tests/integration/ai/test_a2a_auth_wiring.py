@@ -12,7 +12,7 @@ the **first** request of the session, so an agent that authenticates its card
 endpoint fails at start-up before any skill is ever called.
 
 The server speaks plaintext on the loopback interface, which is the one place
-loom allows it (``_warn_plaintext_loopback``): the traffic cannot leave the
+loom allows it (``_RemoteUrl.warn_plaintext``): the traffic cannot leave the
 machine, so no certificate is needed to prove that a header travelled.
 """
 
