@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import secrets
 from pathlib import Path
+from typing import Literal
 
 import msgspec
 import pytest
@@ -181,14 +182,17 @@ class TestKeySources:
 
 
 class TestOptOuts:
-    def test_ephemeral_needs_no_key_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
-        codec = CursorCodec.from_config(CursorConfig(signing="ephemeral"))
-
-        assert _round_trip(codec, codec) == _POSITION
-        assert any(record.levelname == "WARNING" for record in caplog.records)
-
-    def test_unsigned_needs_no_key_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
-        codec = CursorCodec.from_config(CursorConfig(signing="unsigned"))
+    @pytest.mark.parametrize(
+        "signing",
+        [
+            pytest.param("ephemeral", id="ephemeral_needs_no_key_and_warns"),
+            pytest.param("unsigned", id="unsigned_needs_no_key_and_warns"),
+        ],
+    )
+    def test_an_opt_out_needs_no_key_and_warns(
+        self, signing: Literal["ephemeral", "unsigned"], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        codec = CursorCodec.from_config(CursorConfig(signing=signing))
 
         assert _round_trip(codec, codec) == _POSITION
         assert any(record.levelname == "WARNING" for record in caplog.records)

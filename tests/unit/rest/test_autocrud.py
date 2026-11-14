@@ -337,15 +337,17 @@ class TestDeriveUpdateStruct:
                 f"Field {sf.name!r} does not include UnsetType"
             )
 
-    def test_pk_excluded_from_update(self) -> None:
+    @pytest.mark.parametrize(
+        "expected",
+        [
+            pytest.param("id", id="pk_excluded_from_update"),
+            pytest.param("created_at", id="server_default_excluded_from_update"),
+        ],
+    )
+    def test_server_generated_field_excluded_from_update(self, expected: str) -> None:
         update_input = _derive_update_struct(_RichModel)
         field_names = {f.name for f in msgspec.structs.fields(update_input)}
-        assert "id" not in field_names
-
-    def test_server_default_excluded_from_update(self) -> None:
-        update_input = _derive_update_struct(_RichModel)
-        field_names = {f.name for f in msgspec.structs.fields(update_input)}
-        assert "created_at" not in field_names
+        assert expected not in field_names
 
     def test_fk_column_in_update(self) -> None:
         update_input = _derive_update_struct(_RichModel)
@@ -363,13 +365,16 @@ class TestDeriveUpdateStruct:
 
 
 class TestServerGeneratedNames:
-    def test_pk_autoincrement_excluded(self) -> None:
+    @pytest.mark.parametrize(
+        "expected",
+        [
+            pytest.param("id", id="pk_autoincrement_excluded"),
+            pytest.param("created_at", id="server_default_excluded"),
+        ],
+    )
+    def test_server_generated_field_excluded(self, expected: str) -> None:
         excluded = _server_generated_names(_RichModel)
-        assert "id" in excluded
-
-    def test_server_default_excluded(self) -> None:
-        excluded = _server_generated_names(_RichModel)
-        assert "created_at" in excluded
+        assert expected in excluded
 
     def test_writable_column_not_excluded(self) -> None:
         excluded = _server_generated_names(_RichModel)

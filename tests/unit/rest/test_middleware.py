@@ -60,13 +60,16 @@ class _AppCapture:
 
 
 class TestExtractHeader:
-    def test_returns_value_when_present(self) -> None:
-        headers = [(b"x-request-id", b"abc123")]
-        assert _extract_header(headers, b"x-request-id") == "abc123"
-
-    def test_case_insensitive_key(self) -> None:
-        headers = [(b"X-Request-ID", b"tid")]
-        assert _extract_header(headers, b"x-request-id") == "tid"
+    @pytest.mark.parametrize(
+        ("key", "header", "expected"),
+        [
+            pytest.param(b"x-request-id", b"abc123", "abc123", id="returns_value_when_present"),
+            pytest.param(b"X-Request-ID", b"tid", "tid", id="case_insensitive_key"),
+        ],
+    )
+    def test_returns_value_when_present(self, key: bytes, header: bytes, expected: str) -> None:
+        headers = [(key, header)]
+        assert _extract_header(headers, b"x-request-id") == expected
 
     def test_returns_none_when_absent(self) -> None:
         assert _extract_header([], b"x-request-id") is None

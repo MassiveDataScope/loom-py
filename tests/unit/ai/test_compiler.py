@@ -336,17 +336,23 @@ class TestTypeRefOutput:
     ``tests/unit/core/model/test_loom_type.py``.
     """
 
-    def test_compile_returns_plan_when_type_ref_resolves_to_msgspec_struct(
-        self, compiler: AgentCompiler
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            pytest.param(
+                "myapp.domain.invoices:InvoiceSummary",
+                id="compile_returns_plan_when_type_ref_resolves_to_msgspec_struct",
+            ),
+            pytest.param(
+                "myapp.domain.pydantic_invoices:InvoiceSummaryModel",
+                id="compile_returns_plan_when_type_ref_resolves_to_pydantic_model",
+            ),
+        ],
+    )
+    def test_compile_returns_plan_when_type_ref_resolves_to_a_model(
+        self, ref: str, compiler: AgentCompiler
     ) -> None:
-        spec = _spec(output=TypeRefOutput(ref="myapp.domain.invoices:InvoiceSummary"))
-        plan = compiler.compile(spec)
-        assert isinstance(plan, AgentPlan)
-
-    def test_compile_returns_plan_when_type_ref_resolves_to_pydantic_model(
-        self, compiler: AgentCompiler
-    ) -> None:
-        spec = _spec(output=TypeRefOutput(ref="myapp.domain.pydantic_invoices:InvoiceSummaryModel"))
+        spec = _spec(output=TypeRefOutput(ref=ref))
         plan = compiler.compile(spec)
         assert isinstance(plan, AgentPlan)
 

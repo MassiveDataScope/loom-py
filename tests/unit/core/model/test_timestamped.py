@@ -24,12 +24,15 @@ class TestTimestampedModelFields:
     def test_has_updated_at_column_spec(self) -> None:
         assert "updated_at" in TimestampedModel.__loom_columns__
 
-    def test_created_at_server_default_is_now(self) -> None:
-        spec = TimestampedModel.__loom_columns__["created_at"]
-        assert spec.field.server_default == ServerDefault.NOW
-
-    def test_updated_at_server_default_is_now(self) -> None:
-        spec = TimestampedModel.__loom_columns__["updated_at"]
+    @pytest.mark.parametrize(
+        "column",
+        [
+            pytest.param("created_at", id="created_at_server_default_is_now"),
+            pytest.param("updated_at", id="updated_at_server_default_is_now"),
+        ],
+    )
+    def test_timestamp_server_default_is_now(self, column: str) -> None:
+        spec = TimestampedModel.__loom_columns__[column]
         assert spec.field.server_default == ServerDefault.NOW
 
     def test_updated_at_server_onupdate_is_now(self) -> None:

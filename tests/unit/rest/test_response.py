@@ -56,14 +56,16 @@ def test_render_list() -> None:
     assert json.loads(bytes(r.body)) == [1, 2, 3]
 
 
-def test_render_string() -> None:
-    r = MsgspecJSONResponse(content="hello")
-    assert json.loads(bytes(r.body)) == "hello"
-
-
-def test_render_int() -> None:
-    r = MsgspecJSONResponse(content=42)
-    assert json.loads(bytes(r.body)) == 42
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param("hello", id="render_string"),
+        pytest.param(42, id="render_int"),
+    ],
+)
+def test_render_value(content: object) -> None:
+    r = MsgspecJSONResponse(content=content)
+    assert json.loads(bytes(r.body)) == content
 
 
 def test_render_none() -> None:

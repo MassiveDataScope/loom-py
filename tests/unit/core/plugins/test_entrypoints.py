@@ -16,6 +16,7 @@ from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
     ApiVersionRequirement,
     DuplicateEntryPointError,
+    DuplicatePolicy,
     EntryPointError,
     EntryPointNotFoundError,
     check_api_version,
@@ -184,23 +185,24 @@ class TestDuplicatePolicyWarnFirst:
 
 
 class TestWithoutDuplicates:
-    def test_returns_the_sole_entry_point_when_the_policy_is_error(
+    @pytest.mark.parametrize(
+        "on_duplicate",
+        [
+            pytest.param("error", id="returns_the_sole_entry_point_when_the_policy_is_error"),
+            pytest.param(
+                "warn_first", id="returns_the_sole_entry_point_when_the_policy_is_warn_first"
+            ),
+        ],
+    )
+    def test_returns_the_sole_entry_point_whatever_the_policy(
         self,
+        on_duplicate: DuplicatePolicy,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         entry = _FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("alpha"))
         _install(monkeypatch, (entry,))
 
-        assert select_entry_point(_GROUP, _NAME, on_duplicate="error") is entry
-
-    def test_returns_the_sole_entry_point_when_the_policy_is_warn_first(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        entry = _FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("alpha"))
-        _install(monkeypatch, (entry,))
-
-        assert select_entry_point(_GROUP, _NAME, on_duplicate="warn_first") is entry
+        assert select_entry_point(_GROUP, _NAME, on_duplicate=on_duplicate) is entry
 
     def test_emits_no_warning_when_there_are_no_duplicates(
         self,

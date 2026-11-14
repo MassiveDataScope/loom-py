@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.checks import EMBEDDED_PASSWORD_CHECK
@@ -18,10 +20,15 @@ def _report(raw: dict[str, Any]) -> tuple[list[str], tuple[str, ...]]:
     return messages, report.silenced
 
 
-def test_a_url_without_a_password_passes() -> None:
-    messages, _silenced = _report(
-        {"stores": {"default": {"backend": "sqlalchemy", "url": "postgresql://db.internal/app"}}}
-    )
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("postgresql://db.internal/app", id="a_url_without_a_password_passes"),
+        pytest.param("${oc.env:DATABASE_URL}", id="a_placeholder_is_not_judged"),
+    ],
+)
+def test_a_url_without_a_judged_password_passes(url: str) -> None:
+    messages, _silenced = _report({"stores": {"default": {"backend": "sqlalchemy", "url": url}}})
 
     assert messages == []
 
@@ -40,14 +47,6 @@ def test_an_embedded_password_names_the_key_and_hides_the_value() -> None:
 
     assert messages == ["stores.default.url embeds a password in a URL."]
     assert _PASSWORD not in messages[0]
-
-
-def test_a_placeholder_is_not_judged() -> None:
-    messages, _silenced = _report(
-        {"stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}}}
-    )
-
-    assert messages == []
 
 
 def test_a_silenced_id_does_not_report() -> None:

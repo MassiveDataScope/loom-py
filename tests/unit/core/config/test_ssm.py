@@ -46,22 +46,22 @@ class TestSsmResolverResolve:
             result = SsmResolver().resolve("/prod/token")
         assert result == "secret123"
 
-    def test_calls_ssm_with_literal_key(self, mock_client: MagicMock) -> None:
+    @pytest.mark.parametrize(
+        "key",
+        [
+            pytest.param("/prod/token", id="calls_ssm_with_literal_key"),
+            pytest.param("/prod/plain/key", id="no_braces_passes_key_unchanged"),
+        ],
+    )
+    def test_passes_the_key_unchanged(self, key: str, mock_client: MagicMock) -> None:
         with patched_aws_clients(mock_client):
-            SsmResolver().resolve("/prod/token")
-        mock_client.get_parameter.assert_called_once_with(Name="/prod/token", WithDecryption=True)
+            SsmResolver().resolve(key)
+        mock_client.get_parameter.assert_called_once_with(Name=key, WithDecryption=True)
 
     def test_with_decryption_false(self, mock_client: MagicMock) -> None:
         with patched_aws_clients(mock_client):
             SsmResolver(with_decryption=False).resolve("/prod/token")
         mock_client.get_parameter.assert_called_once_with(Name="/prod/token", WithDecryption=False)
-
-    def test_no_braces_passes_key_unchanged(self, mock_client: MagicMock) -> None:
-        with patched_aws_clients(mock_client):
-            SsmResolver().resolve("/prod/plain/key")
-        mock_client.get_parameter.assert_called_once_with(
-            Name="/prod/plain/key", WithDecryption=True
-        )
 
 
 class TestSsmResolverEnvVarExpansion:
@@ -162,17 +162,24 @@ class TestSsmResolverDotNotation:
             result = SsmResolver().resolve("/prod/db.connection.host")
         assert result == "db.internal"
 
-    def test_raises_config_error_on_invalid_json(self, mock_client: MagicMock) -> None:
-        mock_client.get_parameter.return_value = {"Parameter": {"Value": "not-json-at-all"}}
+    @pytest.mark.parametrize(
+        ("value", "key"),
+        [
+            pytest.param(
+                "not-json-at-all", "/prod/db.host", id="raises_config_error_on_invalid_json"
+            ),
+            pytest.param(
+                '{"host": "db"}', "/prod/db.missing_key", id="raises_config_error_on_missing_key"
+            ),
+        ],
+    )
+    def test_raises_config_error_on_unusable_json(
+        self, value: str, key: str, mock_client: MagicMock
+    ) -> None:
+        mock_client.get_parameter.return_value = {"Parameter": {"Value": value}}
         resolver = SsmResolver()
         with patched_aws_clients(mock_client), pytest.raises(ConfigError):
-            resolver.resolve("/prod/db.host")
-
-    def test_raises_config_error_on_missing_key(self, mock_client: MagicMock) -> None:
-        mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db"}'}}
-        resolver = SsmResolver()
-        with patched_aws_clients(mock_client), pytest.raises(ConfigError):
-            resolver.resolve("/prod/db.missing_key")
+            resolver.resolve(key)
 
     def test_env_var_expansion_then_dot_navigation(
         self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch

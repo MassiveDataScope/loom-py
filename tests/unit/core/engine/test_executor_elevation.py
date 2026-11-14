@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
@@ -91,13 +93,20 @@ async def _elevate_then_finish() -> _SeesElevation:
     return store
 
 
-async def test_the_elevated_scopes_are_still_visible_when_the_coordinator_flushes() -> None:
+@pytest.mark.parametrize(
+    "phase",
+    [
+        pytest.param(
+            "flush", id="the_elevated_scopes_are_still_visible_when_the_coordinator_flushes"
+        ),
+        pytest.param(
+            "commit", id="the_elevated_scopes_are_still_visible_when_the_coordinator_commits"
+        ),
+    ],
+)
+async def test_the_elevated_scopes_are_still_visible_when_the_coordinator_finishes(
+    phase: str,
+) -> None:
     store = await _elevate_then_finish()
 
-    assert store.seen["flush"] == ["editor"]
-
-
-async def test_the_elevated_scopes_are_still_visible_when_the_coordinator_commits() -> None:
-    store = await _elevate_then_finish()
-
-    assert store.seen["commit"] == ["editor"]
+    assert store.seen[phase] == ["editor"]

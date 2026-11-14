@@ -16,93 +16,98 @@ def _make_obs(registry: CollectorRegistry) -> tuple[ObservabilityRuntime, KafkaP
 
 
 class TestKafkaPrometheusMetrics:
-    def test_produce_end_increments_produced_total(self, kafka_registry: CollectorRegistry) -> None:
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            pytest.param(
+                "kafka_produce",
+                'streaming_kafka_produced_total{status="success",topic="orders"}',
+                id="produce_end_increments_produced_total",
+            ),
+            pytest.param(
+                "kafka_consume",
+                'streaming_kafka_consumed_total{status="success",topic="orders"}',
+                id="consume_end_increments_consumed_total",
+            ),
+        ],
+    )
+    def test_end_increments_its_total(
+        self, name: str, expected: str, kafka_registry: CollectorRegistry
+    ) -> None:
         obs, _ = _make_obs(kafka_registry)
 
-        obs.emit(
-            LifecycleEvent.end(
-                scope=Scope.TRANSPORT, name="kafka_produce", meta={"topic": "orders"}
-            )
-        )
+        obs.emit(LifecycleEvent.end(scope=Scope.TRANSPORT, name=name, meta={"topic": "orders"}))
 
         text = generate_latest(kafka_registry).decode()
-        assert 'streaming_kafka_produced_total{status="success",topic="orders"}' in text
+        assert expected in text
 
-    def test_produce_error_increments_produced_total_with_delivery_error(
-        self, kafka_registry: CollectorRegistry
+    @pytest.mark.parametrize(
+        ("name", "error", "expected"),
+        [
+            pytest.param(
+                "kafka_produce",
+                "timeout",
+                'streaming_kafka_produced_total{status="delivery_error",topic="orders"}',
+                id="produce_error_increments_produced_total_with_delivery_error",
+            ),
+            pytest.param(
+                "kafka_decode",
+                "bad bytes",
+                'streaming_kafka_consumed_total{status="decode_error",topic="orders"}',
+                id="decode_error_increments_consumed_total_with_decode_error",
+            ),
+        ],
+    )
+    def test_error_increments_its_total_with_the_error_status(
+        self, name: str, error: str, expected: str, kafka_registry: CollectorRegistry
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 
         obs.emit(
             LifecycleEvent.exception(
                 scope=Scope.TRANSPORT,
-                name="kafka_produce",
-                error="timeout",
+                name=name,
+                error=error,
                 meta={"topic": "orders"},
             )
         )
 
         text = generate_latest(kafka_registry).decode()
-        assert 'streaming_kafka_produced_total{status="delivery_error",topic="orders"}' in text
+        assert expected in text
 
-    def test_consume_end_increments_consumed_total(self, kafka_registry: CollectorRegistry) -> None:
-        obs, _ = _make_obs(kafka_registry)
-
-        obs.emit(
-            LifecycleEvent.end(
-                scope=Scope.TRANSPORT, name="kafka_consume", meta={"topic": "orders"}
-            )
-        )
-
-        text = generate_latest(kafka_registry).decode()
-        assert 'streaming_kafka_consumed_total{status="success",topic="orders"}' in text
-
-    def test_decode_error_increments_consumed_total_with_decode_error(
-        self, kafka_registry: CollectorRegistry
+    @pytest.mark.parametrize(
+        ("name", "duration_ms", "expected"),
+        [
+            pytest.param(
+                "kafka_encode",
+                10.0,
+                "streaming_kafka_encode_duration_seconds",
+                id="encode_end_observes_encode_duration",
+            ),
+            pytest.param(
+                "kafka_decode",
+                20.0,
+                "streaming_kafka_decode_duration_seconds",
+                id="decode_end_observes_decode_duration",
+            ),
+        ],
+    )
+    def test_end_observes_its_duration(
+        self, name: str, duration_ms: float, expected: str, kafka_registry: CollectorRegistry
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 
         obs.emit(
-            LifecycleEvent.exception(
-                scope=Scope.TRANSPORT,
-                name="kafka_decode",
-                error="bad bytes",
-                meta={"topic": "orders"},
-            )
-        )
-
-        text = generate_latest(kafka_registry).decode()
-        assert 'streaming_kafka_consumed_total{status="decode_error",topic="orders"}' in text
-
-    def test_encode_end_observes_encode_duration(self, kafka_registry: CollectorRegistry) -> None:
-        obs, _ = _make_obs(kafka_registry)
-
-        obs.emit(
             LifecycleEvent.end(
                 scope=Scope.TRANSPORT,
-                name="kafka_encode",
-                duration_ms=10.0,
+                name=name,
+                duration_ms=duration_ms,
                 meta={"content_type": "application/x-loom-msgpack"},
             )
         )
 
         text = generate_latest(kafka_registry).decode()
-        assert "streaming_kafka_encode_duration_seconds" in text
-
-    def test_decode_end_observes_decode_duration(self, kafka_registry: CollectorRegistry) -> None:
-        obs, _ = _make_obs(kafka_registry)
-
-        obs.emit(
-            LifecycleEvent.end(
-                scope=Scope.TRANSPORT,
-                name="kafka_decode",
-                duration_ms=20.0,
-                meta={"content_type": "application/x-loom-msgpack"},
-            )
-        )
-
-        text = generate_latest(kafka_registry).decode()
-        assert "streaming_kafka_decode_duration_seconds" in text
+        assert expected in text
 
     def test_non_transport_events_are_ignored(self, kafka_registry: CollectorRegistry) -> None:
         obs, _ = _make_obs(kafka_registry)

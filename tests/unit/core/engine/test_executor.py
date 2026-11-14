@@ -599,23 +599,21 @@ class TestExecutorLogging:
         )
         assert not any("[STEP]" in m for m in log.messages)
 
-    async def test_debug_true_emits_step_logs(self) -> None:
+    @pytest.mark.parametrize(
+        "expected",
+        [
+            pytest.param("[STEP]", id="debug_true_emits_step_logs"),
+            pytest.param("Bind Input", id="debug_true_emits_bind_input"),
+        ],
+    )
+    async def test_debug_true_emits_each_log(self, expected: str) -> None:
         log = _RecordingLogger()
         ex = _make_executor(debug=True, logger=log)
         await ex.execute(
             _InputOnlyUseCase(),
             payload={"email": "a@b.com", "name": "X"},
         )
-        assert any("[STEP]" in m for m in log.messages)
-
-    async def test_debug_true_emits_bind_input(self) -> None:
-        log = _RecordingLogger()
-        ex = _make_executor(debug=True, logger=log)
-        await ex.execute(
-            _InputOnlyUseCase(),
-            payload={"email": "a@b.com", "name": "X"},
-        )
-        assert any("Bind Input" in m for m in log.messages)
+        assert any(expected in m for m in log.messages)
 
     async def test_debug_true_emits_load_step(self) -> None:
         log = _RecordingLogger()

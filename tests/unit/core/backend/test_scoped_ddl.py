@@ -181,27 +181,27 @@ def test_bad_table_names_are_rejected(bad: str) -> None:
         table_parameters("s1", bad)
 
 
-def test_a_scope_column_that_is_not_an_identifier_is_rejected() -> None:
+@pytest.mark.parametrize(
+    ("column", "on", "match"),
+    [
+        pytest.param(
+            "Bad-Col",
+            "both",
+            "identifier",
+            id="a_scope_column_that_is_not_an_identifier_is_rejected",
+        ),
+        pytest.param("key", "never", "reach", id="a_scope_with_an_unknown_reach_is_rejected"),
+    ],
+)
+def test_an_invalid_scope_is_rejected(column: str, on: str, match: str) -> None:
     scoped = ScopedTable(
         schema=None,
         name="notes",
-        scopes=(ScopeColumn(column="Bad-Col", scope="holder", on="both", elevable=False),),
+        scopes=(ScopeColumn(column=column, scope="holder", on=on, elevable=False),),
         privileges=frozenset({Privilege.SELECT}),
     )
 
-    with pytest.raises(ValueError, match="identifier"):
-        scope_documents(scoped)
-
-
-def test_a_scope_with_an_unknown_reach_is_rejected() -> None:
-    scoped = ScopedTable(
-        schema=None,
-        name="notes",
-        scopes=(ScopeColumn(column="key", scope="holder", on="never", elevable=False),),
-        privileges=frozenset({Privilege.SELECT}),
-    )
-
-    with pytest.raises(ValueError, match="reach"):
+    with pytest.raises(ValueError, match=match):
         scope_documents(scoped)
 
 

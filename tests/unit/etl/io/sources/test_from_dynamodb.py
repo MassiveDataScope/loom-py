@@ -41,13 +41,16 @@ class TestConstruction:
         spec = FromDynamoDb("events")._to_spec("events")
         assert spec.kind == SourceKind.DYNAMODB
 
-    def test_invalid_table_name_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "table",
+        [
+            pytest.param("bad name!", id="invalid_table_name_raises"),
+            pytest.param("ab", id="too_short_table_name_raises"),
+        ],
+    )
+    def test_invalid_table_name_raises(self, table: str) -> None:
         with pytest.raises(ValueError, match="Invalid DynamoDB table"):
-            FromDynamoDb("bad name!")
-
-    def test_too_short_table_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid DynamoDB table"):
-            FromDynamoDb("ab")
+            FromDynamoDb(table)
 
     def test_too_long_table_name_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid DynamoDB table"):
@@ -170,15 +173,17 @@ class TestBatchSize:
         spec = FromDynamoDb("orders").batch_size(500)._to_spec("orders")
         assert spec.batch_size == 500
 
-    def test_batch_size_zero_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "batch_size",
+        [
+            pytest.param(0, id="batch_size_zero_raises"),
+            pytest.param(10001, id="batch_size_too_high_raises"),
+        ],
+    )
+    def test_batch_size_out_of_range_raises(self, batch_size: int) -> None:
         source = FromDynamoDb("orders")
         with pytest.raises(ValueError, match="between 1 and 10000"):
-            source.batch_size(0)
-
-    def test_batch_size_too_high_raises(self) -> None:
-        source = FromDynamoDb("orders")
-        with pytest.raises(ValueError, match="between 1 and 10000"):
-            source.batch_size(10_001)
+            source.batch_size(batch_size)
 
     def test_batch_size_boundary_values(self) -> None:
         assert FromDynamoDb("orders").batch_size(1)._batch_size == 1
@@ -231,15 +236,17 @@ class TestParallelScan:
         spec = FromDynamoDb("orders").parallel_scan(8)._to_spec("orders")
         assert spec.total_segments == 8
 
-    def test_below_minimum_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "segments",
+        [
+            pytest.param(1, id="below_minimum_raises"),
+            pytest.param(65, id="above_maximum_raises"),
+        ],
+    )
+    def test_parallel_scan_out_of_range_raises(self, segments: int) -> None:
         source = FromDynamoDb("orders")
         with pytest.raises(ValueError, match="between 2 and 64"):
-            source.parallel_scan(1)
-
-    def test_above_maximum_raises(self) -> None:
-        source = FromDynamoDb("orders")
-        with pytest.raises(ValueError, match="between 2 and 64"):
-            source.parallel_scan(65)
+            source.parallel_scan(segments)
 
     def test_boundary_values(self) -> None:
         assert FromDynamoDb("orders").parallel_scan(2)._total_segments == 2

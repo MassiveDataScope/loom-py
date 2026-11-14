@@ -370,37 +370,47 @@ def test_start_from_resolves_a_placeholder_in_the_past(tmp_path: Path, runner: M
     ]
 
 
-def test_start_from_resolves_a_placeholder_in_the_future(tmp_path: Path, runner: MagicMock) -> None:
+@pytest.mark.parametrize(
+    "start_from",
+    [
+        pytest.param("${now+100000d}", id="start_from_resolves_a_placeholder_in_the_future"),
+        pytest.param("${today+100000d}", id="start_from_resolves_a_today_placeholder"),
+    ],
+)
+def test_start_from_resolves_a_placeholder(
+    start_from: str, tmp_path: Path, runner: MagicMock
+) -> None:
     flow = _build_flow(tmp_path)
     flow.fn(
         updated_at_from=datetime(2024, 1, 1, tzinfo=UTC),
         updated_at_to=datetime(2024, 1, 3, tzinfo=UTC),
-        start_from="${now+100000d}",
+        start_from=start_from,
     )
     assert _windows(runner) == []
 
 
-def test_start_from_rejects_a_value_that_is_not_a_datetime(
-    tmp_path: Path, runner: MagicMock
+@pytest.mark.parametrize(
+    ("match", "start_from"),
+    [
+        pytest.param(
+            "start_from", "yesterday", id="start_from_rejects_a_value_that_is_not_a_datetime"
+        ),
+        pytest.param(
+            "start_from: invalid placeholder",
+            "${nope}",
+            id="start_from_rejects_an_invalid_placeholder_naming_the_parameter",
+        ),
+    ],
+)
+def test_start_from_rejects_an_invalid_value_naming_the_parameter(
+    match: str, start_from: str, tmp_path: Path, runner: MagicMock
 ) -> None:
     flow = _build_flow(tmp_path)
-    with pytest.raises(ValueError, match="start_from"):
+    with pytest.raises(ValueError, match=match):
         flow.fn(
             updated_at_from=datetime(2024, 1, 1, tzinfo=UTC),
             updated_at_to=datetime(2024, 1, 3, tzinfo=UTC),
-            start_from="yesterday",
-        )
-
-
-def test_start_from_rejects_an_invalid_placeholder_naming_the_parameter(
-    tmp_path: Path, runner: MagicMock
-) -> None:
-    flow = _build_flow(tmp_path)
-    with pytest.raises(ValueError, match="start_from: invalid placeholder"):
-        flow.fn(
-            updated_at_from=datetime(2024, 1, 1, tzinfo=UTC),
-            updated_at_to=datetime(2024, 1, 3, tzinfo=UTC),
-            start_from="${nope}",
+            start_from=start_from,
         )
 
 
@@ -418,16 +428,6 @@ def test_start_from_as_a_date_resumes_at_the_first_hour_of_that_day(
         datetime(2024, 1, 3, 1, tzinfo=UTC),
         datetime(2024, 1, 3, 2, tzinfo=UTC),
     ]
-
-
-def test_start_from_resolves_a_today_placeholder(tmp_path: Path, runner: MagicMock) -> None:
-    flow = _build_flow(tmp_path)
-    flow.fn(
-        updated_at_from=datetime(2024, 1, 1, tzinfo=UTC),
-        updated_at_to=datetime(2024, 1, 3, tzinfo=UTC),
-        start_from="${today+100000d}",
-    )
-    assert _windows(runner) == []
 
 
 def test_start_from_floors_a_year_chunk_after_converting_to_utc(

@@ -203,14 +203,21 @@ def test_load_declaration_finds_by_attribute() -> None:
     assert declaration.config_uri == path
 
 
-def test_load_declaration_unknown_attribute_lists_known_ones() -> None:
-    with pytest.raises(ConfigError, match="invoice_sync.*monthly_close"):
-        load_declaration(str(FIXTURES / "billing.yaml"), "nope")
-
-
-def test_load_declaration_rejects_a_glob() -> None:
-    with pytest.raises(ConfigError, match="glob"):
-        load_declaration(str(FIXTURES / "*.yaml"), "daily_orders")
+@pytest.mark.parametrize(
+    ("name", "match", "config"),
+    [
+        pytest.param(
+            "nope",
+            "invoice_sync.*monthly_close",
+            "billing.yaml",
+            id="load_declaration_unknown_attribute_lists_known_ones",
+        ),
+        pytest.param("daily_orders", "glob", "*.yaml", id="load_declaration_rejects_a_glob"),
+    ],
+)
+def test_load_declaration_rejects_an_unknown_name(name: str, match: str, config: str) -> None:
+    with pytest.raises(ConfigError, match=match):
+        load_declaration(str(FIXTURES / config), name)
 
 
 def _write_valid_and_broken_siblings(tmp_path: Path) -> Path:

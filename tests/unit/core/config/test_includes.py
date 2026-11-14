@@ -208,23 +208,28 @@ def test_local_plain_include_missing_keeps_not_found_and_names_declaring(
     assert f"(included from {str(main)!r})" in message
 
 
-def test_cloud_glob_with_no_match_raises(memfs: Any) -> None:
-    memfs.pipe("cfg/a.yaml", b"includes:\n  - parts/*.yaml\n")
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        pytest.param(
+            b"includes:\n  - parts/*.yaml\n",
+            "memory://cfg/parts/*.yaml",
+            id="cloud_glob_with_no_match_raises",
+        ),
+        pytest.param(
+            b"includes:\n  - missing.yaml\n",
+            "memory://cfg/missing.yaml",
+            id="cloud_plain_include_missing_names_declaring",
+        ),
+    ],
+)
+def test_cloud_missing_include_raises_naming_it(document: bytes, expected: str, memfs: Any) -> None:
+    memfs.pipe("cfg/a.yaml", document)
 
     with pytest.raises(ConfigError) as info:
         load_config("memory://cfg/a.yaml")
 
-    assert "memory://cfg/parts/*.yaml" in str(info.value)
-    assert "included from 'memory://cfg/a.yaml'" in str(info.value)
-
-
-def test_cloud_plain_include_missing_names_declaring(memfs: Any) -> None:
-    memfs.pipe("cfg/a.yaml", b"includes:\n  - missing.yaml\n")
-
-    with pytest.raises(ConfigError) as info:
-        load_config("memory://cfg/a.yaml")
-
-    assert "memory://cfg/missing.yaml" in str(info.value)
+    assert expected in str(info.value)
     assert "included from 'memory://cfg/a.yaml'" in str(info.value)
 
 

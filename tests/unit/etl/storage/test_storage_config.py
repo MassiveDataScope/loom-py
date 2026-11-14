@@ -104,9 +104,20 @@ class TestStorageConfig:
         with pytest.raises(ValueError, match="exactly one destination"):
             config.validate()
 
-    def test_validate_rejects_invalid_ref_shape(self) -> None:
-        config = StorageConfig(tables=(TableRoute(name="raw.orders", ref="orders"),))
-        with pytest.raises(ValueError, match="schema.table"):
+    @pytest.mark.parametrize(
+        ("ref", "match"),
+        [
+            pytest.param("orders", "schema.table", id="validate_rejects_invalid_ref_shape"),
+            pytest.param(
+                "main.raw.orders",
+                "Polars UC routes require credentials",
+                id="validate_rejects_polars_three_part_ref_without_catalog_credentials",
+            ),
+        ],
+    )
+    def test_validate_rejects_an_unroutable_ref(self, ref: str, match: str) -> None:
+        config = StorageConfig(tables=(TableRoute(name="raw.orders", ref=ref),))
+        with pytest.raises(ValueError, match=match):
             config.validate()
 
     def test_validate_rejects_unknown_catalog_key(self) -> None:
@@ -116,15 +127,28 @@ class TestStorageConfig:
         with pytest.raises(ValueError, match="not defined in storage.catalogs"):
             config.validate()
 
-    def test_validate_accepts_two_part_ref_with_catalog_key(self) -> None:
+    @pytest.mark.parametrize(
+        ("catalog", "ref"),
+        [
+            pytest.param(
+                "default", "raw.orders", id="validate_accepts_two_part_ref_with_catalog_key"
+            ),
+            pytest.param(
+                "unity",
+                "main.raw.orders",
+                id="validate_accepts_polars_three_part_ref_with_catalog_alias",
+            ),
+        ],
+    )
+    def test_validate_accepts_a_ref_with_its_catalog(self, catalog: str, ref: str) -> None:
         config = StorageConfig(
             catalogs={
-                "default": CatalogConnection(
+                catalog: CatalogConnection(
                     workspace=Dsn("https://dbc.example"),
                     token=Secret("token-123"),
                 )
             },
-            tables=(TableRoute(name="raw.orders", ref="raw.orders", catalog="default"),),
+            tables=(TableRoute(name="raw.orders", ref=ref, catalog=catalog),),
         )
         config.validate()
 
@@ -135,11 +159,6 @@ class TestStorageConfig:
         )
         config.validate()
 
-    def test_validate_rejects_polars_three_part_ref_without_catalog_credentials(self) -> None:
-        config = StorageConfig(tables=(TableRoute(name="raw.orders", ref="main.raw.orders"),))
-        with pytest.raises(ValueError, match="Polars UC routes require credentials"):
-            config.validate()
-
     def test_validate_rejects_polars_uc_catalog_with_empty_credentials(self) -> None:
         config = StorageConfig(
             catalogs={"main": CatalogConnection()},
@@ -147,18 +166,6 @@ class TestStorageConfig:
         )
         with pytest.raises(ValueError, match="non-empty workspace and token"):
             config.validate()
-
-    def test_validate_accepts_polars_three_part_ref_with_catalog_alias(self) -> None:
-        config = StorageConfig(
-            catalogs={
-                "unity": CatalogConnection(
-                    workspace=Dsn("https://dbc.example"),
-                    token=Secret("token-123"),
-                )
-            },
-            tables=(TableRoute(name="raw.orders", ref="main.raw.orders", catalog="unity"),),
-        )
-        config.validate()
 
     @pytest.mark.parametrize(
         "config,error",

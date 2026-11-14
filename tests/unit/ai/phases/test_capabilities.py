@@ -591,28 +591,26 @@ class TestPythonFactory:
             "capabilities.factory",
         )
 
-    def test_reports_not_callable_when_factory_resolves_to_a_non_callable(
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(
+                "myapp.tools.broken:NOT_CALLABLE",
+                id="reports_not_callable_when_factory_resolves_to_a_non_callable",
+            ),
+            pytest.param(
+                "myapp.tools.params:build_keyword_only",
+                id="reports_not_callable_when_factory_leaves_no_slot_for_the_context",
+            ),
+        ],
+    )
+    def test_reports_not_callable_when_the_factory_cannot_build_a_tool(
         self,
+        factory: str,
         spec_factory: Callable[..., AgentSpecV1],
         single_issue_for: Callable[..., AgentCompilationIssue],
     ) -> None:
-        spec = spec_factory(
-            capabilities=(PythonCapability(factory="myapp.tools.broken:NOT_CALLABLE"),)
-        )
-        issue = single_issue_for(spec)
-        assert (issue.code, issue.field) == (
-            AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE,
-            "capabilities.factory",
-        )
-
-    def test_reports_not_callable_when_factory_leaves_no_slot_for_the_context(
-        self,
-        spec_factory: Callable[..., AgentSpecV1],
-        single_issue_for: Callable[..., AgentCompilationIssue],
-    ) -> None:
-        spec = spec_factory(
-            capabilities=(PythonCapability(factory="myapp.tools.params:build_keyword_only"),)
-        )
+        spec = spec_factory(capabilities=(PythonCapability(factory=factory),))
         issue = single_issue_for(spec)
         assert (issue.code, issue.field) == (
             AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE,

@@ -1025,16 +1025,21 @@ class TestBindPublishesStaticAndClassMethods:
 
         assert _StaticTools.class_calls == 1
 
-    async def test_an_unmarked_static_method_is_bound_and_unchanged(self) -> None:
-        bound = _calls(CountingCacheBackend()).bind(_StaticTools())[2]
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            pytest.param(2, "HI", id="an_unmarked_static_method_is_bound_and_unchanged"),
+            pytest.param(
+                3, "_StaticTools:hi", id="an_unmarked_class_method_is_bound_and_unchanged"
+            ),
+        ],
+    )
+    async def test_an_unmarked_static_or_class_method_is_bound_and_unchanged(
+        self, result: int, expected: str
+    ) -> None:
+        bound = _calls(CountingCacheBackend()).bind(_StaticTools())[result]
 
-        assert await bound("hi") == "HI"
-        assert not getattr(bound, "__cache_call_wrapped__", False)
-
-    async def test_an_unmarked_class_method_is_bound_and_unchanged(self) -> None:
-        bound = _calls(CountingCacheBackend()).bind(_StaticTools())[3]
-
-        assert await bound("hi") == "_StaticTools:hi"
+        assert await bound("hi") == expected
         assert not getattr(bound, "__cache_call_wrapped__", False)
 
     def test_a_static_property_is_still_never_evaluated(self) -> None:

@@ -39,13 +39,16 @@ NO_PARAMS: Any = None
 
 
 class TestEqExpr:
-    def test_eq_string_literal(self) -> None:
-        node = col("status") == "active"
-        assert predicate_to_mongo(node, NO_PARAMS) == {"status": "active"}
-
-    def test_eq_integer_literal(self) -> None:
-        node = col("year") == 2024
-        assert predicate_to_mongo(node, NO_PARAMS) == {"year": 2024}
+    @pytest.mark.parametrize(
+        ("value", "column"),
+        [
+            pytest.param("active", "status", id="eq_string_literal"),
+            pytest.param(2024, "year", id="eq_integer_literal"),
+        ],
+    )
+    def test_eq_literal(self, value: object, column: str) -> None:
+        node = col(column) == value
+        assert predicate_to_mongo(node, NO_PARAMS) == {column: value}
 
 
 class TestNeExpr:

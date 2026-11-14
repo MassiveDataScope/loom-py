@@ -128,12 +128,15 @@ class TestBuildNotifiers:
         with pytest.raises(ValueError, match="kind"):
             build_notifiers([{"webhook_url": "x"}])
 
-    def test_skips_slack_when_webhook_url_empty(self) -> None:
-        block = [{"kind": "slack", "webhook_url": "", "on_failure": True}]
-        assert build_notifiers(block) == ()
-
-    def test_skips_slack_when_webhook_url_whitespace(self) -> None:
-        block = [{"kind": "slack", "webhook_url": "   ", "on_failure": True}]
+    @pytest.mark.parametrize(
+        "webhook_url",
+        [
+            pytest.param("", id="skips_slack_when_webhook_url_empty"),
+            pytest.param("   ", id="skips_slack_when_webhook_url_whitespace"),
+        ],
+    )
+    def test_skips_slack_when_webhook_url_blank(self, webhook_url: str) -> None:
+        block = [{"kind": "slack", "webhook_url": webhook_url, "on_failure": True}]
         assert build_notifiers(block) == ()
 
     def test_supports_multiple_notifiers(self) -> None:

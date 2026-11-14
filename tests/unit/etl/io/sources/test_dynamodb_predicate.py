@@ -84,15 +84,17 @@ class TestComparisonExprs:
 
 
 class TestAliasing:
-    def test_reserved_word_status_is_aliased(self) -> None:
-        result = predicate_to_dynamo(col("status") == "x", NO_PARAMS)
-        assert "status" not in result.expression
-        assert result.attribute_names["#n0"] == "status"
-
-    def test_reserved_word_name_is_aliased(self) -> None:
-        result = predicate_to_dynamo(col("name") == "x", NO_PARAMS)
-        assert "name" not in result.expression
-        assert result.attribute_names["#n0"] == "name"
+    @pytest.mark.parametrize(
+        "column",
+        [
+            pytest.param("status", id="reserved_word_status_is_aliased"),
+            pytest.param("name", id="reserved_word_name_is_aliased"),
+        ],
+    )
+    def test_reserved_word_is_aliased(self, column: str) -> None:
+        result = predicate_to_dynamo(col(column) == "x", NO_PARAMS)
+        assert column not in result.expression
+        assert result.attribute_names["#n0"] == column
 
     def test_counters_are_monotonic_across_nodes(self) -> None:
         node = (col("status") == "active") & (col("year") > 2020)

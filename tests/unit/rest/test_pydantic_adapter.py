@@ -27,17 +27,18 @@ class TestCompileSchema:
 
         assert issubclass(schema, pydantic.BaseModel)
 
-    def test_excludes_internal_fields(self) -> None:
+    @pytest.mark.parametrize(
+        "expected",
+        [
+            pytest.param("tenant_id", id="excludes_internal_fields"),
+            pytest.param("slug", id="excludes_calculated_fields"),
+        ],
+    )
+    def test_excludes_hidden_fields(self, expected: str) -> None:
         adapter = PydanticAdapter()
         schema = adapter.compile_schema(CreateUser)
 
-        assert "tenant_id" not in schema.model_fields
-
-    def test_excludes_calculated_fields(self) -> None:
-        adapter = PydanticAdapter()
-        schema = adapter.compile_schema(CreateUser)
-
-        assert "slug" not in schema.model_fields
+        assert expected not in schema.model_fields
 
     def test_includes_input_fields(self) -> None:
         adapter = PydanticAdapter()

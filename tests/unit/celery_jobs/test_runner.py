@@ -216,23 +216,21 @@ class TestMakeJobTaskRegistration:
         )
         assert registered_kwargs["name"] == f"{TASK_JOB_PREFIX}.{_AsyncJob.__qualname__}"
 
-    def test_acks_late_is_true(self) -> None:
+    @pytest.mark.parametrize(
+        "option",
+        [
+            pytest.param("acks_late", id="acks_late_is_true"),
+            pytest.param("reject_on_worker_lost", id="reject_on_worker_lost_is_true"),
+        ],
+    )
+    def test_task_option_is_true(self, option: str) -> None:
         app = MagicMock()
         registered_kwargs: dict[str, object] = {}
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
         _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs["acks_late"] is True
-
-    def test_reject_on_worker_lost_is_true(self) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
-        )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs["reject_on_worker_lost"] is True
+        assert registered_kwargs[option] is True
 
     def test_max_retries_uses_job_classvar(self) -> None:
         app = MagicMock()

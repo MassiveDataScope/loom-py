@@ -149,15 +149,17 @@ class TestBatchSize:
         spec = FromMongo("orders").batch_size(500)._to_spec("orders")
         assert spec.batch_size == 500
 
-    def test_batch_size_zero_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "batch_size",
+        [
+            pytest.param(0, id="batch_size_zero_raises"),
+            pytest.param(50001, id="batch_size_too_high_raises"),
+        ],
+    )
+    def test_batch_size_out_of_range_raises(self, batch_size: int) -> None:
         source = FromMongo("orders")
         with pytest.raises(ValueError, match="between 1 and 50000"):
-            source.batch_size(0)
-
-    def test_batch_size_too_high_raises(self) -> None:
-        source = FromMongo("orders")
-        with pytest.raises(ValueError, match="between 1 and 50000"):
-            source.batch_size(50_001)
+            source.batch_size(batch_size)
 
     def test_batch_size_boundary_values(self) -> None:
         assert FromMongo("orders").batch_size(1)._batch_size == 1

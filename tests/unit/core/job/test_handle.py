@@ -27,19 +27,21 @@ def _inline_handle(result: Any, job_id: str = "test-id") -> JobHandle[Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_wait_inline_returns_result() -> None:
-    handle = _inline_handle(42)
-    assert handle.wait() == 42
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(42, id="wait_inline_returns_result"),
+        pytest.param("hello", id="wait_inline_returns_string_result"),
+    ],
+)
+def test_wait_inline_returns_result(result: object) -> None:
+    handle = _inline_handle(result)
+    assert handle.wait() == result
 
 
 def test_wait_inline_returns_none_result() -> None:
     handle = _inline_handle(None)
     assert handle.wait() is None
-
-
-def test_wait_inline_returns_string_result() -> None:
-    handle = _inline_handle("hello")
-    assert handle.wait() == "hello"
 
 
 # ---------------------------------------------------------------------------

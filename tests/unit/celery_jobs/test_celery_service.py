@@ -181,11 +181,19 @@ class TestDispatchHandleIdentity:
 
 
 class TestDispatchRoutingDefaults:
-    async def test_countdown_uses_job_classvar(self) -> None:
+    @pytest.mark.parametrize(
+        ("expected", "option"),
+        [
+            pytest.param(10, "countdown", id="countdown_uses_job_classvar"),
+            pytest.param(5, "priority", id="priority_uses_job_classvar"),
+            pytest.param(300, "soft_time_limit", id="soft_time_limit_uses_job_classvar"),
+        ],
+    )
+    async def test_routing_option_uses_job_classvar(self, expected: int, option: str) -> None:
         service, mock_app = _make_service()
         service.dispatch(_HeavyJob)
         await flush_pending_dispatches()
-        assert mock_app.send_task.call_args.kwargs["countdown"] == 10
+        assert mock_app.send_task.call_args.kwargs[option] == expected
 
     async def test_countdown_override_takes_precedence(self) -> None:
         service, mock_app = _make_service()
@@ -193,23 +201,11 @@ class TestDispatchRoutingDefaults:
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["countdown"] == 0
 
-    async def test_priority_uses_job_classvar(self) -> None:
-        service, mock_app = _make_service()
-        service.dispatch(_HeavyJob)
-        await flush_pending_dispatches()
-        assert mock_app.send_task.call_args.kwargs["priority"] == 5
-
     async def test_priority_override_takes_precedence(self) -> None:
         service, mock_app = _make_service()
         service.dispatch(_HeavyJob, priority=1)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["priority"] == 1
-
-    async def test_soft_time_limit_uses_job_classvar(self) -> None:
-        service, mock_app = _make_service()
-        service.dispatch(_HeavyJob)
-        await flush_pending_dispatches()
-        assert mock_app.send_task.call_args.kwargs["soft_time_limit"] == 300
 
     async def test_soft_time_limit_none_when_no_timeout(self) -> None:
         service, mock_app = _make_service()

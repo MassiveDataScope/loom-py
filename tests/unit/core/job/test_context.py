@@ -61,9 +61,16 @@ async def test_flush_async_callable_is_awaited() -> None:
     assert calls == ["async"]
 
 
-async def test_clear_discards_without_executing() -> None:
+@pytest.mark.parametrize(
+    "job",
+    [
+        pytest.param("should-not-run", id="clear_discards_without_executing"),
+        pytest.param("must-not-run", id="clear_outside_an_execution_still_discards_the_fallback"),
+    ],
+)
+async def test_clear_discards_the_job(job: str) -> None:
     calls: list[str] = []
-    add_pending_dispatch(lambda: calls.append("should-not-run"))
+    add_pending_dispatch(lambda: calls.append(job))
     clear_pending_dispatches()
     await flush_pending_dispatches()
     assert calls == []
@@ -131,16 +138,6 @@ async def test_clear_inside_an_execution_discards_the_bound_channel(
     clear_pending_dispatches()
 
     await bound_channel.drain(committed=False)
-    assert calls == []
-
-
-async def test_clear_outside_an_execution_still_discards_the_fallback() -> None:
-    calls: list[str] = []
-    add_pending_dispatch(lambda: calls.append("must-not-run"))
-
-    clear_pending_dispatches()
-    await flush_pending_dispatches()
-
     assert calls == []
 
 

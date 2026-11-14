@@ -73,17 +73,27 @@ def test_an_at_sign_in_the_path_does_not_hide_the_host() -> None:
     assert mask_dsn("http://user:s3cr3t@host/a@b") == "http://user:***@host/a@b"
 
 
-def test_a_slash_in_the_password_stays_out_of_the_display() -> None:
-    shown = mask_dsn("clickhouse://user:p/ss@host:8123/db")
+@pytest.mark.parametrize(
+    ("dsn", "password"),
+    [
+        pytest.param(
+            "clickhouse://user:p/ss@host:8123/db",
+            "p/ss",
+            id="a_slash_in_the_password_stays_out_of_the_display",
+        ),
+        pytest.param(
+            "clickhouse://user:p@ss@host:8123/db",
+            "p@ss",
+            id="a_raw_at_sign_in_the_password_stays_out_of_the_display",
+        ),
+    ],
+)
+def test_a_special_character_in_the_password_stays_out_of_the_display(
+    dsn: str, password: str
+) -> None:
+    shown = mask_dsn(dsn)
 
-    assert "p/ss" not in shown
-    assert shown == "clickhouse://user:***@host:8123/db"
-
-
-def test_a_raw_at_sign_in_the_password_stays_out_of_the_display() -> None:
-    shown = mask_dsn("clickhouse://user:p@ss@host:8123/db")
-
-    assert "p@ss" not in shown
+    assert password not in shown
     assert shown == "clickhouse://user:***@host:8123/db"
 
 

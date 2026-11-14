@@ -29,20 +29,25 @@ class TestSplitResolverKey:
     def test_plain_path_no_dot_returns_path_and_empty_keys(self) -> None:
         assert _split_resolver_key("/prod/token") == ("/prod/token", [])
 
-    def test_single_dot_notation(self) -> None:
-        path, keys = _split_resolver_key("/prod/db_config.host")
-        assert path == "/prod/db_config"
-        assert keys == ["host"]
+    @pytest.mark.parametrize(
+        ("key", "expected", "field"),
+        [
+            pytest.param(
+                "/prod/db_config.host", "/prod/db_config", "host", id="single_dot_notation"
+            ),
+            pytest.param("param.key", "param", "key", id="no_slash_with_dot"),
+            pytest.param("/prod/db..host", "/prod/db", "host", id="consecutive_dots_filtered"),
+        ],
+    )
+    def test_splits_the_key_at_its_last_dot(self, key: str, expected: str, field: str) -> None:
+        path, keys = _split_resolver_key(key)
+        assert path == expected
+        assert keys == [field]
 
     def test_nested_dot_notation(self) -> None:
         path, keys = _split_resolver_key("/prod/db.connection.host")
         assert path == "/prod/db"
         assert keys == ["connection", "host"]
-
-    def test_no_slash_with_dot(self) -> None:
-        path, keys = _split_resolver_key("param.key")
-        assert path == "param"
-        assert keys == ["key"]
 
     def test_no_slash_no_dot(self) -> None:
         assert _split_resolver_key("simple") == ("simple", [])
@@ -58,11 +63,6 @@ class TestSplitResolverKey:
         path, keys = _split_resolver_key("/prod/db.")
         assert path == "/prod/db"
         assert keys == []
-
-    def test_consecutive_dots_filtered(self) -> None:
-        path, keys = _split_resolver_key("/prod/db..host")
-        assert path == "/prod/db"
-        assert keys == ["host"]
 
     def test_env_token_in_last_segment_is_not_split(self) -> None:
         """Keys are split unexpanded, so a ``%VAR%`` token stays in the base."""
@@ -116,13 +116,20 @@ class TestNavigateJson:
         result = _navigate_json('{"conn": {"host": "db"}}', ["conn", "host"], "/path")
         assert result == "db"
 
-    def test_missing_key_raises_config_error(self) -> None:
-        with pytest.raises(ConfigError, match="absent"):
-            _navigate_json('{"host": "db"}', ["absent"], "/path")
-
-    def test_invalid_json_raises_config_error(self) -> None:
-        with pytest.raises(ConfigError, match="not valid JSON"):
-            _navigate_json("not-json", ["key"], "/path")
+    @pytest.mark.parametrize(
+        ("document", "match", "key"),
+        [
+            pytest.param(
+                '{"host": "db"}', "absent", "absent", id="missing_key_raises_config_error"
+            ),
+            pytest.param(
+                "not-json", "not valid JSON", "key", id="invalid_json_raises_config_error"
+            ),
+        ],
+    )
+    def test_unusable_json_raises_config_error(self, document: str, match: str, key: str) -> None:
+        with pytest.raises(ConfigError, match=match):
+            _navigate_json(document, [key], "/path")
 
     def test_invalid_json_error_does_not_expose_raw_value(self) -> None:
         """Security: JSONDecodeError.__cause__ must not hold the raw secret."""

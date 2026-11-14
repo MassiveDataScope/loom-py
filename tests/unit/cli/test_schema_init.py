@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -104,26 +105,30 @@ def test_init_fills_a_null_database_section(tmp_path: Path) -> None:
     }
 
 
-def test_init_refuses_a_configuration_that_is_not_a_mapping(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        pytest.param(
+            "- notes\n", "mapping", id="init_refuses_a_configuration_that_is_not_a_mapping"
+        ),
+        pytest.param(
+            "stores: postgres\n",
+            "stores",
+            id="init_refuses_a_database_section_that_is_not_a_mapping",
+        ),
+    ],
+)
+def test_init_refuses_a_section_that_is_not_a_mapping(
+    document: str, expected: str, tmp_path: Path
+) -> None:
     config = tmp_path / "loom.yaml"
-    config.write_text("- notes\n")
+    config.write_text(document)
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 1
-    assert "mapping" in result.output
-    assert config.read_text() == "- notes\n"
-
-
-def test_init_refuses_a_database_section_that_is_not_a_mapping(tmp_path: Path) -> None:
-    config = tmp_path / "loom.yaml"
-    config.write_text("stores: postgres\n")
-
-    result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
-
-    assert result.exit_code == 1
-    assert "stores" in result.output
-    assert config.read_text() == "stores: postgres\n"
+    assert expected in result.output
+    assert config.read_text() == document
 
 
 def test_init_reports_a_section_the_product_replaced_by_a_value(tmp_path: Path) -> None:
