@@ -104,7 +104,7 @@ class _AgentHandle:
                 declares no state shape; or with whatever code the run itself
                 failed with.
         """
-        caller = require_authenticated(execution_identity(), self._who)
+        caller = require_authenticated(self._who)
         if expect is not None:
             self._require_shape_allowed()
         span = self._open_span(caller)
@@ -154,7 +154,7 @@ class _AgentHandle:
         return await self.run(prompt, expect=str, conversation_id=conversation_id, state=state)
 
     def native(self, *, state: object | None = None) -> object:
-        """Return the engine's own objects for this agent, bound to the caller of the moment.
+        """Return the engine's own objects for this agent, refused for no authenticated caller.
 
         Opens no span and takes no admission slot. See
         :meth:`~loom.ai.abc.AgentHandle.native`.
@@ -177,7 +177,7 @@ class _AgentHandle:
             NotImplementedError: When the engine serving this agent declares
                 no native form.
         """
-        caller = require_authenticated(execution_identity(), self._who)
+        caller = require_authenticated(self._who)
         return self._runtime.native(self._name, identity=caller, state=state)
 
     def mcp(self, server: str) -> McpHandle:
@@ -401,7 +401,7 @@ class _McpHandle:
                 subject; with ``MCP_SERVER_NOT_GRANTED`` when no use case was
                 granted the server at startup.
         """
-        require_authenticated(execution_identity(), self._who)
+        require_authenticated(self._who)
         view = self._current_view()
         return () if view is None else view.tools()
 
@@ -414,13 +414,13 @@ class _McpHandle:
             AgentRunError: With ``UNAUTHORIZED`` when the caller has no
                 subject; with ``MCP_SERVER_NOT_GRANTED`` when no use case was
                 granted the server at startup; with ``TOOL_UNAVAILABLE`` when
-                it never connected; or as :meth:`McpGrantView.call_as`.
+                it never connected; or as :meth:`McpGrantView.call`.
         """
-        caller = require_authenticated(execution_identity(), self._who)
+        require_authenticated(self._who)
         view = self._current_view()
         if view is None:
             raise self._unavailable(tool)
-        return await view.call_as(caller, tool, arguments, expect=expect)
+        return await view.call(tool, arguments, expect=expect)
 
     async def call_untyped(self, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
         """Call *tool* as the caller of the moment and return its structured content.
@@ -428,11 +428,11 @@ class _McpHandle:
         Raises:
             AgentRunError: As :meth:`call`.
         """
-        caller = require_authenticated(execution_identity(), self._who)
+        require_authenticated(self._who)
         view = self._current_view()
         if view is None:
             raise self._unavailable(tool)
-        return await view.call_untyped_as(caller, tool, arguments)
+        return await view.call_untyped(tool, arguments)
 
     def _current_view(self) -> McpGrantView | None:
         """Look the server's grant up and return this declaration's view of it, or ``None``."""

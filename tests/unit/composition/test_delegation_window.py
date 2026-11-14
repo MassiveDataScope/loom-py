@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, Identity, delegation
+from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, Identity, captured_delegation
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.unit.rest._fixture_app import write_project
@@ -33,7 +33,7 @@ class TestAComposedApplication:
 
         before = time.time()
         with acting_as(_ALICE):
-            _, deadline = delegation()
+            _, deadline = captured_delegation()
 
         assert_new_delegation(deadline, before, seconds)
         assert DEFAULT_MAX_DELEGATION_SECONDS == 3600.0

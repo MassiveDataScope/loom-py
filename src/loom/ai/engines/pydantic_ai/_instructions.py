@@ -183,10 +183,10 @@ def _handlebars_instruction(
     closure is ``async def``.
 
     The closure renders against ``ctx.deps.state``, never against ``ctx.deps``
-    itself. ``ctx.deps`` is the bundle carrying the caller's verified
-    ``Identity``, the application container and a caller-bound invoker
-    (``loom.composition._ai``); ``state`` — the normalised mapping the
-    artifact declared a shape for — is the boundary a template cannot cross.
+    itself. ``ctx.deps`` is the bundle carrying the application container
+    and the application invoker (``loom.composition._ai``); ``state`` — the
+    normalised mapping the artifact declared a shape for — is the boundary a
+    template cannot cross.
 
     The returned closure carries no name the engine can address.
 

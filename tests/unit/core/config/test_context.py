@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from omegaconf import OmegaConf
 
@@ -135,3 +137,30 @@ class TestConfigContextRaw:
             None,
             "absent",
         )
+
+
+class TestConfigContextPositiveSeconds:
+    @pytest.mark.parametrize(
+        ("config", "seconds"),
+        [({"acme": {"timeout": 5}}, 5.0), ({}, 30.0)],
+        ids=["configured", "default-when-absent"],
+    )
+    def test_reads_the_seconds_or_the_default(
+        self, config: dict[str, object], seconds: float
+    ) -> None:
+        assert ConfigContext.from_dict(config).positive_seconds("acme.timeout", 30.0) == seconds
+
+    @pytest.mark.parametrize(
+        "seconds", [0, -1, math.inf, math.nan], ids=["zero", "negative", "infinite", "nan"]
+    )
+    @pytest.mark.parametrize(
+        "key", ["identity.max_delegation_seconds", "persistence.rollback_timeout"]
+    )
+    def test_refuses_anything_but_a_finite_number_above_zero(
+        self, key: str, seconds: float
+    ) -> None:
+        section, name = key.split(".")
+        ctx = ConfigContext.from_dict({section: {name: seconds}})
+
+        with pytest.raises(ConfigError, match=rf"{key} must be a finite number above zero"):
+            ctx.positive_seconds(key, 30.0)

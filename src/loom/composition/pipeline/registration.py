@@ -9,7 +9,6 @@ Nothing registers after this phase, which ends by analysing the dependency graph
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -23,7 +22,6 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import KernelRuntime
 from loom.core.bootstrap.kernel import bootstrapping, install_kernel
 from loom.core.cache.wiring import cache_module_for
-from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import GraphAnalysis
 from loom.core.environment import Environment
@@ -117,16 +115,16 @@ def _bind_application(
     stores = tuple(catalog.specs)
     cache = cache_module_for(ctx)
     configure_delegation(
-        ctx.section_or_default(
-            "identity.max_delegation_seconds", float, DEFAULT_MAX_DELEGATION_SECONDS
-        )
+        ctx.positive_seconds("identity.max_delegation_seconds", DEFAULT_MAX_DELEGATION_SECONDS)
     )
     sink = _elevation_sink(persisted.wirings)
     factories = persisted.factories
     coordinator = (
         OrderedCommits(
             factories,
-            rollback_timeout=_rollback_timeout(ctx),
+            rollback_timeout=ctx.positive_seconds(
+                "persistence.rollback_timeout", ROLLBACK_TIMEOUT_S
+            ),
         )
         if factories
         else None
@@ -168,17 +166,3 @@ def _elevation_sink(wirings: Mapping[StoreKey, PersistenceWiring]) -> ElevationS
     """
     stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
     return ScopedElevationSink(stores) if stores else None
-
-
-def _rollback_timeout(ctx: ConfigContext) -> float:
-    """``persistence.rollback_timeout``: seconds the rollbacks of one invocation may take together.
-
-    Raises:
-        ConfigError: When it is not a finite number above zero.
-    """
-    timeout = ctx.section_or_default("persistence.rollback_timeout", float, ROLLBACK_TIMEOUT_S)
-    if not (timeout > 0 and math.isfinite(timeout)):
-        raise ConfigError(
-            f"persistence.rollback_timeout must be a finite number above zero, got {timeout}"
-        )
-    return timeout

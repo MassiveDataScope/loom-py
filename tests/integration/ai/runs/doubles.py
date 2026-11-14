@@ -21,6 +21,7 @@ TOOL = "find_orders"
 PREFIX = "/agents"
 
 ALICE = Identity(subject="acme-alice", roles=("analyst",), mechanism="test")
+BOB = Identity(subject="acme-bob", roles=("analyst",), mechanism="test")
 
 
 class AcmeActingEngine(ScriptedEngine):

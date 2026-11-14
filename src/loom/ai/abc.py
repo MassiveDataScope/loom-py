@@ -548,10 +548,11 @@ class AgentHandle(Protocol[AnswerT]):
         one place the full what-holds/what-is-lost list is written; every
         other mention of it points back here.
 
-        **What still holds.** The identity bound to this handle and the
-        artefact's grants: already built into what is returned, so a run
-        driven this way still reaches exactly what the artefact granted, as
-        this caller. ``policies.tool_timeout_ms`` still bounds every
+        **What still holds.** The artefact's grants: already built into what
+        is returned, so a run driven this way still reaches exactly what the
+        artefact granted, as the identity acting where the accessor's block
+        is entered, refused outside any execution, past that caller's
+        deadline or with no authenticated caller. ``policies.tool_timeout_ms`` still bounds every
         capability call, because it is compiled into the tools the returned
         agent already carries. The artefact's ``output_check`` validator
         still runs, for the same reason. So do loom's chain-cycle and
@@ -801,10 +802,11 @@ class NativeCapableEngine(Protocol):
         state: object | None = None,
         guard: Callable[[], AbstractAsyncContextManager[None]],
     ) -> object:
-        """Return this engine's own objects, bound to *identity*.
+        """Return this engine's own objects, with a dependency bundle built for *identity*.
 
         Args:
-            identity: Verified caller the returned objects are built for.
+            identity: Verified caller the dependency bundle is built for;
+                informational.
             state: This run's state, already resolved against the plan's
                 declared shape.
             guard: Zero-argument factory of the async context manager a
@@ -984,11 +986,10 @@ reject every factory that names them.
 class DepsFactory(Protocol):
     """Builds per-invocation dependencies for capability calls.
 
-    Singleton services are captured once at build; :class:`Identity` is
-    supplied per invocation so every capability call runs as the caller. The bundle also
-    carries the invocation's ``state``, alongside the verified caller and the container,
-    never instead of them: a capability call reads ``identity`` and ``container`` off
-    the bundle the same way regardless of whether ``state`` is present.
+    Singleton services are captured once at build. A capability call reads
+    ``container`` off the bundle and acts as the identity of the execution in
+    progress. The bundle also carries the invocation's ``state``, beside the
+    container.
     """
 
     def build(
@@ -1000,7 +1001,8 @@ class DepsFactory(Protocol):
         """Build the dependency bundle for one invocation.
 
         Args:
-            identity: Verified caller of this invocation.
+            identity: Verified caller of this invocation; informational, no
+                capability call reads it.
             container: Application container holding the singleton services.
             state: The invocation's state, a mapping normalised against the
                 artefact's declared shape, or ``None`` for an artefact that

@@ -2,10 +2,11 @@
 
 Two of the four invariants of a capability call hold here (US5):
 
-* **The call runs as the caller, or it does not run.** The dependency bundle
-  must carry a verified :class:`~loom.core.identity.Identity` *and* the
-  application container. A bundle carrying neither fails closed with
-  ``UNAUTHORIZED``; it is never degraded to ``ANONYMOUS``.
+* **The call runs as the acting identity, or it does not run.** Every tool
+  acts as the identity of the execution in progress, refused past its
+  deadline and when anonymous (:func:`~loom.ai.errors.require_authenticated`).
+  The bundle must carry the application container, or the call fails closed
+  with ``UNAUTHORIZED``.
 * **No raw application failure escapes a tool.** An authorisation denial is
   re-raised as ``UNAUTHORIZED`` — an ``AUTHORIZATION`` code the retry policy
   never replays — and every other failure is logged server-side and answered
@@ -43,12 +44,10 @@ from loom.ai.engines.pydantic_ai._returns import foreign_return, refusal
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden, Unauthenticated
-from loom.core.execution import execution_identity
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
-from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)
 
@@ -83,25 +82,14 @@ _T = TypeVar("_T")
 class CapabilityDeps(Protocol):
     """Dependency bundle every capability call requires.
 
-    Structural on purpose: the deployment owns its bundle type and only has to
-    carry these attributes. A bundle that does not is refused inside the tool
-    body rather than silently replaced by an anonymous caller.
-
-    ``identity`` and ``container`` gate every capability; ``invoker`` is read
-    by ``usecase`` grants alone, and is already bound to ``identity`` by the
-    composition root that built the bundle — so a granted use case declaring
-    ``Caller()`` receives the agent's caller instead of failing as
-    unauthenticated.
+    Structural: the deployment owns its bundle type and carries at least this
+    attribute. A bundle that does not is refused inside the tool body.
 
     Attributes:
-        identity: Verified caller this invocation runs as.
         container: Application container the capability resolves services from.
-        invoker: Application invoker already bound to ``identity``.
     """
 
-    identity: Identity
     container: LoomContainer
-    invoker: ApplicationInvoker
 
 
 @dataclass(frozen=True)
@@ -155,36 +143,14 @@ class BuildContext:
 
 
 def capability_deps(run: RunContext[Any]) -> CapabilityDeps:
-    """Read the dependency bundle, fail-closed on an incomplete one."""
+    """Read the dependency bundle, fail-closed on one exposing no container."""
     bundle = run.deps
-    identity = getattr(bundle, "identity", None)
-    container = getattr(bundle, "container", None)
-    if not isinstance(identity, Identity) or not isinstance(container, LoomContainer):
+    if not isinstance(getattr(bundle, "container", None), LoomContainer):
         raise AgentRunError(
             AgentRunErrorCode.UNAUTHORIZED,
-            "the invocation carries no verified caller: a capability call requires a "
-            "dependency bundle exposing 'identity' and 'container'",
+            "a capability call requires a dependency bundle exposing 'container'",
         )
     return cast(CapabilityDeps, bundle)
-
-
-def authenticated_caller(run: RunContext[Any], tool: str) -> Identity:
-    """Identity strategy of a capability that must not run as nobody: the acting identity.
-
-    Args:
-        run: The engine's run context; not read.
-        tool: Published tool name, named in a refusal.
-
-    Returns:
-        The identity the execution in progress acts as.
-
-    Raises:
-        ExecutionRequired: Outside any execution.
-        Unauthenticated: Past the caller's delegation.
-        AgentRunError: With ``UNAUTHORIZED`` when that identity is anonymous.
-    """
-    del run
-    return require_authenticated(execution_identity(), f"tool '{tool}'")
 
 
 def _observability(container: LoomContainer) -> ObservabilityRuntime | None:
@@ -282,22 +248,17 @@ async def guarded(
 class _GuardedToolset(WrapperToolset[Any]):
     """Applies loom's call boundary to a toolset loom did not author.
 
-    ``mcp`` and ``python`` publish their own tools, so their calls would
-    otherwise bypass the dependency bundle, the identity guard and the plan's
-    ``tool_timeout_ms`` entirely. Wrapping the toolset puts every one of their
-    tools behind the same boundary a ``usecase`` tool passes through.
+    Every tool of the wrapped toolset acts as the authenticated identity
+    acting (:func:`~loom.ai.errors.require_authenticated`), within the plan's
+    ``tool_timeout_ms``, inside a ``Scope.TOOL`` span.
 
     Attributes:
         context: Build facts of the plan, carrying the tool timeout.
         kind: Capability kind, reported on the span.
-        caller: Identity strategy; ``authenticated_caller`` for every
-            capability wrapped here, all of which can reach data or a remote
-            server.
     """
 
     context: BuildContext
     kind: str
-    caller: Callable[[RunContext[Any], str], Identity]
 
     async def call_tool(
         self,
@@ -306,15 +267,8 @@ class _GuardedToolset(WrapperToolset[Any]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        """Guard, then bound, one call to a tool of the wrapped toolset.
-
-        The wrapped call goes through :func:`guarded` for the same reason a
-        ``usecase`` call does: a raw exception from an MCP transport or from a
-        first-party python toolset is classified ``PROVIDER_UNAVAILABLE`` and
-        replayed by the retry policy, which would re-invoke any mutating
-        operation the model already completed in that attempt.
-        """
-        identity = self.caller(ctx, name)
+        """Guard, then bound, one call to a tool of the wrapped toolset, through :func:`guarded`."""
+        identity = require_authenticated(f"tool '{name}'")
         async with capability_call(self.context, self.kind, name, identity):
             return await guarded(
                 name,
@@ -324,10 +278,7 @@ class _GuardedToolset(WrapperToolset[Any]):
 
 
 def guarded_toolset(
-    toolset: AbstractToolset[Any],
-    context: BuildContext,
-    kind: str,
-    caller: Callable[[RunContext[Any], str], Identity],
+    toolset: AbstractToolset[Any], context: BuildContext, kind: str
 ) -> AbstractToolset[Any]:
     """Put a foreign toolset behind loom's capability call boundary."""
-    return _GuardedToolset(wrapped=toolset, context=context, kind=kind, caller=caller)
+    return _GuardedToolset(wrapped=toolset, context=context, kind=kind)

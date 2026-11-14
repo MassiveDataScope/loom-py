@@ -551,7 +551,7 @@ class TestRejectionByOutputHook:
             plans=[plan],
             config=make_ai_config(),
             engine_provider=provider,  # type: ignore[arg-type]
-            deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
+            deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
         handle = _AgentHandle(
@@ -584,7 +584,7 @@ class TestRejectionByOutputHook:
             plans=[plan],
             config=make_ai_config(),
             engine_provider=provider,  # type: ignore[arg-type]
-            deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
+            deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
         handle = _AgentHandle(
@@ -614,7 +614,7 @@ class TestRejectionByOutputHook:
             plans=[plan],
             config=make_ai_config(),
             engine_provider=provider,  # type: ignore[arg-type]
-            deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
+            deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
         handle = _AgentHandle(
@@ -641,7 +641,7 @@ class TestRejectionByOutputHook:
             plans=[plan],
             config=make_ai_config(),
             engine_provider=provider,  # type: ignore[arg-type]
-            deps=RecordingDepsFactory((_RecordMessageOnly,)),  # type: ignore[arg-type]
+            deps=RecordingDepsFactory((_RecordMessageOnly,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
         handle = _AgentHandle(
@@ -670,7 +670,7 @@ class TestRejectionByOutputHook:
             plans=[plan],
             config=make_ai_config(),
             engine_provider=provider,  # type: ignore[arg-type]
-            deps=RecordingDepsFactory((_RecordMessageOnly,)),  # type: ignore[arg-type]
+            deps=RecordingDepsFactory((_RecordMessageOnly,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
         handle = _AgentHandle(

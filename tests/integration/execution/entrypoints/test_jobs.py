@@ -18,7 +18,7 @@ from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import PostCommitError, Unauthenticated
 from loom.core.execution import ExecutionScope
-from loom.core.identity import ANONYMOUS, IdentityFixed, delegation
+from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
 from loom.core.identity.wire import encode_identity
 from loom.core.job import service
 from loom.core.job.context import flush_pending_dispatches
@@ -102,7 +102,7 @@ class TestJobRunner:
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
         envelope = JobEnvelope(
-            job="AcmeProbeJob", identity=encode_identity(ALICE, time.time() + 60)
+            job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
         )
 
         job = await run_envelope(envelope, factory, executor)
@@ -130,15 +130,15 @@ class TestJobContext:
     def test_a_caller_with_no_deadline_gets_a_delegation_of_the_window(self, window: float) -> None:
         before = time.time()
         with job_context(None, encode_identity(ALICE)):
-            caller, deadline = delegation()
+            caller, deadline = captured_delegation()
 
         assert caller == ALICE
         assert_new_delegation(deadline, before, window)
 
     def test_resumes_the_deadline_the_envelope_carries(self) -> None:
         later = time.time() + 30
-        with job_context(None, encode_identity(ALICE, later)):
-            assert delegation() == (ALICE, later)
+        with job_context(None, Delegation(ALICE, later).encoded()):
+            assert captured_delegation() == Delegation(ALICE, later)
 
 
 class TestAQueuedDispatch:

@@ -81,7 +81,7 @@ class _Bundle:
     """A dependency bundle exposing every attribute name :class:`TestHostileTemplate` tries.
 
     Shaped like ``AgentDeps`` (``loom.composition._ai``): a verified
-    caller, a container and a bound invoker, plus the caller's declared
+    caller, a container and an invoker, plus the caller's declared
     state. ``subject`` and ``mechanism`` are added on top of that shape so
     the hostile template has a marker for every plausible name an author
     might guess, not only the three the composition root actually carries.

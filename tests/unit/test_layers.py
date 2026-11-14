@@ -133,7 +133,7 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         "loom.core.job.envelope",
         "loom.core.job.service",
     ),
-    "fix_identity": (_IDENTITY, _IDENTITY_CONTEXT, _EXECUTION),
+    "pinned_for": (_IDENTITY_CONTEXT, _EXECUTION),
     "enter": (
         "loom.core.execution",
         _EXECUTION,

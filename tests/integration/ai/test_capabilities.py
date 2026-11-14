@@ -14,7 +14,6 @@ FR-046b, and the capability kinds the adapter announces.
 
 from __future__ import annotations
 
-import copy
 import importlib.util
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -66,7 +65,7 @@ from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.errors import Forbidden
 from loom.core.execution import ExecutionScope
-from loom.core.identity import ANONYMOUS, Identity
+from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.model.redaction import Dsn
 from loom.core.sql.abc import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
@@ -227,8 +226,8 @@ class RecordedInvocation:
         use_case: Type the capability asked the invoker to run.
         params: Primitive parameters handed over.
         payload: Command payload handed over, if any.
-        identity: Caller the invoker was bound to (FR-043): the real
-            ``AppInvoker.for_identity`` makes the executor act as it.
+        identity: The identity acting when the invoker was called, the one
+            the real ``AppInvoker``'s executor acts as.
     """
 
     use_case: type[Compilable]
@@ -250,13 +249,6 @@ class RecordingInvoker:
         self.result = result
         self.failure = failure
         self.calls: list[RecordedInvocation] = []
-        self.identity: Identity | None = None
-
-    def for_identity(self, identity: Identity) -> RecordingInvoker:
-        """A copy bound to *identity*, recording into the same ``calls``, as ``AppInvoker``'s."""
-        bound = copy.copy(self)
-        bound.identity = identity
-        return bound
 
     async def invoke(
         self,
@@ -265,13 +257,13 @@ class RecordingInvoker:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> str:
-        """Record the call, the caller it is bound to, and return the fixed result."""
+        """Record the call and the identity acting, and return the fixed result."""
         self.calls.append(
             RecordedInvocation(
                 use_case=use_case,
                 params=dict(params or {}),
                 payload=dict(payload) if payload is not None else None,
-                identity=self.identity,
+                identity=current_identity(),
             )
         )
         if self.failure is not None:
@@ -373,15 +365,10 @@ class CapabilityDeps:
     """Dependency bundle satisfying the capability boundary contract (D1).
 
     Attributes:
-        identity: Verified caller of this invocation.
         container: Application container the capability resolves from.
-        invoker: Application invoker bound to ``identity``, or ``None`` for a
-            plan whose capabilities never invoke a use case.
     """
 
-    identity: Identity
     container: LoomContainer
-    invoker: ApplicationInvoker | None = None
 
 
 class CapabilityDepsFactory:
@@ -393,19 +380,15 @@ class CapabilityDepsFactory:
         container: LoomContainer,
         state: Mapping[str, Any] | None = None,
     ) -> object:
-        """Return the bundle carrying the caller, the container and the invoker bound to it."""
-        registered = container.is_registered(ApplicationInvoker)
-        invoker = container.resolve(ApplicationInvoker) if registered else None
-        if isinstance(invoker, RecordingInvoker):
-            invoker = invoker.for_identity(identity)  # as AgentDeps binds AppInvoker
-        return CapabilityDeps(identity=identity, container=container, invoker=invoker)
+        """Return the bundle carrying the container."""
+        return CapabilityDeps(container=container)
 
 
-class IdentitylessDepsFactory:
-    """Factory producing a bundle that carries no identity at all.
+class ContainerlessDepsFactory:
+    """Factory producing a bundle that exposes none of the contract's attributes.
 
     Models the deployment that wires a dependency bundle of its own: the
-    capability boundary must fail closed rather than substitute ``ANONYMOUS``.
+    capability boundary must fail closed.
     """
 
     def build(
@@ -609,8 +592,8 @@ class TestIdentity:
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert invoker.calls == []
 
-    async def test_the_run_is_refused_when_the_deps_bundle_carries_no_identity(
-        self, app_container: LoomContainer
+    async def test_a_bundle_exposing_no_container_is_refused_before_any_operation(
+        self, app_container: LoomContainer, invoker: RecordingInvoker
     ) -> None:
         """A bundle without the contract's attributes fails closed (design D1)."""
         model = ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),))
@@ -618,24 +601,7 @@ class TestIdentity:
             capabilities=(usecase_capability(),),
             model=model,
             container=app_container,
-            deps=IdentitylessDepsFactory(),
-        )
-
-        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
-            await engine.run("hello", identity=ANALYST)
-
-        assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
-
-    async def test_no_operation_is_invoked_when_the_deps_bundle_carries_no_identity(
-        self, app_container: LoomContainer, invoker: RecordingInvoker
-    ) -> None:
-        """The refusal happens before the application is ever touched."""
-        model = ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),))
-        engine = build_engine(
-            capabilities=(usecase_capability(),),
-            model=model,
-            container=app_container,
-            deps=IdentitylessDepsFactory(),
+            deps=ContainerlessDepsFactory(),
         )
 
         with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
@@ -645,7 +611,7 @@ class TestIdentity:
 
 
 class TestInvocation:
-    async def test_the_parameters_and_the_payload_reach_the_bound_invoker(
+    async def test_the_parameters_and_the_payload_reach_the_invoker_as_the_identity_acting(
         self, app_container: LoomContainer, invoker: RecordingInvoker
     ) -> None:
         """What the model sends is what the use case receives, as the caller."""

@@ -93,6 +93,29 @@ class InsufficientAuthentication(Unauthenticated):
         self.acr_values: tuple[str, ...] = values
 
 
+class DelegationExpired(Unauthenticated):
+    """Raised when work acts as a caller past the deadline of its delegation.
+
+    Work a request causes acts as its caller for at most
+    ``identity.max_delegation_seconds`` after the request started. The caller
+    fixes it by sending a new request; long background work runs as a system
+    identity instead.
+
+    Args:
+        message: Description of the refusal, with the supported paths.
+    """
+
+    default_message: ClassVar[str] = (
+        "Authentication required: the delegation of this caller has expired. Work a request "
+        "causes acts as its caller for at most identity.max_delegation_seconds after the "
+        "request started; run later work as a system identity, switching explicitly with "
+        "executor.run(UseCase, identity=...)."
+    )
+
+    def __init__(self, message: str = default_message) -> None:
+        super().__init__(message)
+
+
 class Forbidden(DomainError):
     """Raised when an action is not permitted for the caller.
 
@@ -142,6 +165,17 @@ class IdentityFixed(SystemError):
     explicit switch, which opens work of its own and is logged:
     ``executor.run(UseCase, identity=...)``, ``invoker.for_identity(...)``
     or ``ExecutionScope(...)``.
+
+    Args:
+        message: Description of the refusal, with the supported switches.
     """
 
     retryable = False
+    default_message: ClassVar[str] = (
+        "The identity is fixed for the work in progress and every task it started: only an "
+        "explicit switch changes it, executor.run(UseCase, identity=...), "
+        "invoker.for_identity(...) or ExecutionScope(...), which is logged."
+    )
+
+    def __init__(self, message: str = default_message) -> None:
+        super().__init__(message)

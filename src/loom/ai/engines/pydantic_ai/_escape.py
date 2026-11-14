@@ -38,10 +38,10 @@ class NativeAgent:
             validator registered, for a run overriding the plan's declared
             output shape. Identical to :attr:`agent` — the very same object —
             whenever the plan declares no ``output_check``.
-        deps: The dependency bundle of one caller, carrying their verified
-            identity and this run's state. Every capability call made with it
-            runs as that caller, which is what keeps a run driven from here
-            inside the artefact's own grants.
+        deps: The dependency bundle of this run: the application container
+            and the run's state. Every capability call made with it acts as
+            the identity acting where it is made, inside the artefact's own
+            grants.
         usage_limits: The artefact's spend caps, projected onto the engine's
             own type and copied for this call: mutating the returned value
             never changes what the engine enforces on its own, loom-supervised
@@ -74,8 +74,8 @@ async def native_agent(
     """Drive one agent handle's engine-native objects inside loom's chain and admission bounds.
 
     Args:
-        handle: Handle an ``Agent()`` marker filled, already bound to the
-            caller of the use case holding it.
+        handle: Handle an ``Agent()`` marker filled; the run acts as the
+            identity of the execution in progress.
         state: This run's state, resolved against the artefact's declared
             shape exactly as :meth:`~loom.ai.abc.AgentHandle.run` resolves it.
 
@@ -86,8 +86,11 @@ async def native_agent(
         TypeError: When the agent behind *handle* is served by an engine
             other than pydantic-ai.
         NotImplementedError: When that engine publishes no native form at all.
-        AgentRunError: With ``UNAUTHORIZED`` when *handle*'s identity is
-            anonymous; with ``STATE_UNDECLARED`` or ``STATE_REQUIRED`` when
+        ExecutionRequired: Outside any execution.
+        Unauthenticated: With no caller, or past the caller's deadline
+            (``DelegationExpired``).
+        AgentRunError: With ``UNAUTHORIZED`` when the identity acting is not
+            authenticated; with ``STATE_UNDECLARED`` or ``STATE_REQUIRED`` when
             *state* does not match the artefact's declared shape; with
             ``AGENT_CALL_CYCLE`` or ``AGENT_CALL_TOO_DEEP`` when entering the
             guard refuses this run; with ``TOO_MANY_RUNS`` when no admission

@@ -29,9 +29,12 @@ from loom.ai.errors import (
     run_error_class,
 )
 from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.ai.runtime._bounded import RunContext
+from loom.ai.runtime._conversation import load_conversation
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.use_case import Caller, Input, UseCase
 from loom.core.use_case.keys import use_case_key
@@ -305,9 +308,10 @@ def hooks(container: LoomContainer) -> HookRecorder:
 
 
 @pytest.fixture
-def conversation_deps() -> RecordingDepsFactory:
+def conversation_deps(container: LoomContainer) -> RecordingDepsFactory:
     """Deps factory serving the loader and hook use cases through a real executor."""
-    return RecordingDepsFactory((LoadConversation, LoadStrict, RecordTurn, RecordStrictTurn))
+    use_cases = (LoadConversation, LoadStrict, RecordTurn, RecordStrictTurn)
+    return RecordingDepsFactory(use_cases).registered_in(container)
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +346,28 @@ class TestLoaderExecution:
         assert loader.calls[0].caller == identity
         assert engine.conversations == [Conversation(conversation_id="c-42", history=_HISTORY)]
         assert conversation_deps.uow.log == ["begin", "commit"]
+
+    async def test_runs_the_loader_as_the_identity_acting_not_the_run_s_caller(
+        self,
+        identity: Identity,
+        loader: LoaderRecorder,
+        conversation_deps: RecordingDepsFactory,
+        container: LoomContainer,
+    ) -> None:
+        """A run context retained for one caller loads its conversation as whoever acts."""
+        other = Identity(subject="acme-other", roles=("analyst",), mechanism="test")
+        run = RunContext(
+            plan=_plan(),
+            identity=identity,
+            interaction_id="acme-interaction",
+            conversation_id="c-42",
+        )
+
+        with ExecutionScope(other):
+            conversation = await load_conversation(run, container)
+
+        assert conversation == Conversation(conversation_id="c-42", history=_HISTORY)
+        assert [call.caller for call in loader.calls] == [other]
 
     async def test_delivers_a_none_history_when_the_loader_returns_none(
         self,
@@ -765,7 +791,7 @@ class TestMessagesInTheHook:
 
 
 class TestStartupProbe:
-    async def test_refuses_startup_when_there_is_a_loader_and_the_bundle_carries_no_invoker(
+    async def test_refuses_startup_when_there_is_a_loader_and_the_container_holds_no_invoker(
         self,
         deps: StubDepsFactory,
         container: LoomContainer,
@@ -811,14 +837,14 @@ class TestStartupProbe:
         ]
         assert all(_AGENT in issue.message for issue in issues)
 
-    async def test_starts_normally_when_the_bundle_carries_a_bound_invoker(
+    async def test_starts_normally_when_the_container_holds_an_invoker(
         self,
         identity: Identity,
         loader: LoaderRecorder,
         conversation_deps: RecordingDepsFactory,
         container: LoomContainer,
     ) -> None:
-        """A bound invoker satisfies the probe for a conversational plan."""
+        """An invoker satisfies the probe for a conversational plan."""
         engine = ScriptedEngine()
         runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
 

@@ -473,9 +473,13 @@
     `asyncio.to_thread`) is unaffected.
   - Delegation window: work a request causes acts as its caller for at most
     `identity.max_delegation_seconds` (default 3600) from the request's
-    start. The composition reads it and sets it for the process with
-    `loom.core.identity.configure_delegation(seconds)`, the one validation
-    point: a value that is not a finite number above zero is a `ConfigError`.
+    start. The composition reads it with `ConfigContext.positive_seconds`
+    (new; `persistence.rollback_timeout` is read the same way, both checked
+    against `loom.core.model.types.PositiveSeconds`): a value that is not a
+    finite number above zero is a `ConfigError`. It sets it for the process
+    with `loom.core.identity.configure_delegation(seconds)`, which refuses
+    the same values (`inf`, `nan`, zero, negative) with a `ConfigError`
+    naming `identity.max_delegation_seconds`.
     No constructor takes it, two kernels in one process share it, and a kernel
     built with `create_kernel` outside the composition uses the default. A caller always has a
     deadline: `set_identity(identity)` starts one (`now + window`, the HTTP
@@ -483,7 +487,8 @@
     envelope, a queued dispatch), clamped to `now + window`, so a tampered or
     skewed deadline never extends past one window. Expiry is checked where work starts (an
     execution, a job, a callback, `ExecutionScope`, a queued dispatch's job:
-    `Unauthenticated`, `delegation_expired` warning), once at the start of
+    `loom.core.errors.DelegationExpired`, an `Unauthenticated`;
+    `delegation_expired` warning), once at the start of
     every SQLAlchemy transaction (any store, row-level security or not), and
     by `execution_identity()` read from a task whose execution ended (an
     Agent or MCP handle); never by `current_identity()`, so work started
@@ -495,9 +500,9 @@
     `set_identity(identity)`, which starts the delegation.
   - Wire: the encoded identity in a job envelope gains `until`, the deadline
     of the caller's delegation (a Unix time), so a deadline never travels
-    without a caller (`encode_identity(identity, until=None)`; the new
-    `loom.core.identity.wire.decode_delegation(payload)` returns the caller
-    and its deadline). Celery callback links carry `identity` too. A caller
+    without a caller (the new `loom.core.identity.Delegation(caller, until)`
+    value: `.encoded()` writes it, `Delegation.decoded(payload)` reads it;
+    `encode_identity(identity)` keeps its shape and writes no `until`). Celery callback links carry `identity` too. A caller
     without `until` (a message queued by an earlier version, or built with
     `LambdaEvent.jobs`) gets `now + window` at the worker, so in-flight
     messages keep running after a deploy; an infinite, `nan`, `null`,
@@ -511,13 +516,15 @@
     keep their signatures: the callback acts as the caller acting where it
     runs, which the inline dispatch and the Celery link install.
     `loom.core.identity` adds `Acting` (the value behind the tokens of
-    `set_identity` and `enter`), `current_caller`, `configure_delegation`,
-    `delegation`, `fix_identity` (for `enter` only),
-    `refuse_expired_delegation`, `IdentityFixed` (also in
+    `set_identity` and `enter`; `Acting.current().refuse_expired()` refuses
+    a caller past its deadline), `Delegation` (`Delegation.of(caller,
+    until)` keeps only an authenticated caller), `NO_DELEGATION`,
+    `current_caller`,
+    `configure_delegation`, `captured_delegation`, `IdentityFixed` (also in
     `loom.core.errors`) and `DEFAULT_MAX_DELEGATION_SECONDS`;
-    `loom.core.identity.wire` adds `decode_delegation` and `EXPIRED`.
+    `loom.core.identity.wire` adds `Delegation` and `EXPIRED`.
   - A dispatched job captures the authenticated caller acting and its
-    deadline (`loom.core.identity.delegation()`) in every backend (inline,
+    deadline (`loom.core.identity.captured_delegation()`) in every backend (inline,
     Celery, SQS); an anonymous caller is captured as no caller, as the wire
     always carried it. `RecordingJobService` records the same capture:
     `DispatchedJob.identity` is `Identity | None`, `None` for an anonymous
@@ -561,12 +568,16 @@
     no subject keeps `UNAUTHORIZED`, on the `Mcp()` handle too (its
     `tools()` included), before the grant is looked up, so it never learns
     whether a server is granted or reachable, and no call is made.
-  - An agent run (`run`, `run_stream`, and the guard of a hand-driven
-    `native()` run) is an execution acting as the run's caller: tools,
-    hooks, marker handles and native tools inside it read that caller from
-    `execution_identity()`. A run for another subject than the one acting
-    is logged as an `identity_switched`, like `ExecutionScope`. The agent
-    HTTP and A2A endpoints open no execution of their own. The A2A
+  - An agent run (`run`, `run_stream`) is an execution acting as the run's
+    caller: tools, hooks and marker handles inside it read that caller from
+    `execution_identity()`. The guard of a hand-driven `native()` run opens
+    no execution: it acts as the identity acting where it is entered, no
+    longer the caller of `native()`. Entered outside any execution it raises
+    `ExecutionRequired`; entered past the caller's deadline it raises
+    `DelegationExpired`, so a retained carrier never re-pins its builder.
+    A run for another subject than the one acting is logged as an
+    `identity_switched`, like `ExecutionScope`. The agent HTTP and A2A
+    endpoints open no execution of their own. The A2A
     `message/stream` response sends heartbeats from when the run starts, as
     the HTTP stream does, so none is sent while the run loads its
     conversation (admission refuses at once and never waits).
@@ -576,10 +587,20 @@
     `Unauthenticated` at the first tool call and runs no tool. Driven
     outside any execution it raises `ExecutionRequired`, and driven by an
     execution acting as no one it is refused with `UNAUTHORIZED`. The
-    `mcp`, `python` and `a2a` tools of a carrier driven inside another
-    caller's execution act as that caller; its `usecase` and `sql` tools
-    still act as the bundle's caller once the check passes. The check is
-    `loom.ai.errors.require_authenticated(identity, who)`.
+    tools of a carrier driven inside another caller's execution act as that
+    caller: the tool span's subject, the `sql` roles and the use case a
+    `usecase` tool invokes. The check is
+    `loom.ai.errors.require_authenticated(who)`: the identity of the
+    execution in progress, refused outside one (`ExecutionRequired`), past
+    its deadline (`DelegationExpired`) or unauthenticated (`UNAUTHORIZED`).
+  - The AI dependency bundle needs only `container`. `usecase` tools, the
+    output hook and the conversation loader resolve the container's
+    `ApplicationInvoker` and act as the identity acting in the run's
+    execution. `AgentDeps` drops `identity`; an `identity` or `invoker` on a
+    custom bundle is not read. Start-up refuses an agent declaring a hook
+    (`ON_OUTPUT_INVOKER_MISSING`) or a loader
+    (`CONVERSATION_INVOKER_MISSING`) when the container holds no
+    `ApplicationInvoker`.
   - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
     `bind_mcp_resolver`, and the `agent_resolver=` and `mcp_resolver=`
     arguments of `RuntimeExecutor`, `create_kernel` and `install_kernel` also

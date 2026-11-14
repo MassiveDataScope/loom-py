@@ -1,6 +1,7 @@
 """The errors loom raises at run time, by area; every class is importable from here."""
 
 from loom.core.errors.auth import (
+    DelegationExpired,
     Forbidden,
     IdentityFixed,
     InsufficientAuthentication,
@@ -40,6 +41,7 @@ __all__ = [
     "BODY_FIELD",
     "BoundaryValidationError",
     "Conflict",
+    "DelegationExpired",
     "DomainError",
     "Forbidden",
     "IdentityFixed",

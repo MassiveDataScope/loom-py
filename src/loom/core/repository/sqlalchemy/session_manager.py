@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.backend.sqlalchemy import get_metadata
-from loom.core.identity import refuse_expired_delegation
+from loom.core.identity import Acting
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
@@ -412,4 +412,4 @@ def _refuse_an_expired_caller(_session: Session, transaction: Any, _connection: 
     columns written in it act as that caller.
     """
     if not transaction.nested:
-        refuse_expired_delegation()
+        Acting.current().refuse_expired()

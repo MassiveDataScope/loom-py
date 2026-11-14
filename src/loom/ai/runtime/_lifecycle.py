@@ -60,6 +60,7 @@ from loom.ai.errors import (
     AgentErrorCode,
     AgentRunError,
     AgentRunErrorCode,
+    require_authenticated,
 )
 from loom.ai.runtime._bounded import RunContext
 from loom.ai.runtime._chain import enter_agent_call, exit_agent_call
@@ -81,7 +82,7 @@ from loom.ai.runtime._mcp import (
 from loom.core.di import LoomContainer
 from loom.core.errors import BoundaryValidationError
 from loom.core.execution import ExecutionScope
-from loom.core.identity import ANONYMOUS, Identity
+from loom.core.identity import Identity
 from loom.core.model import LoomType
 from loom.core.sql.config import SqlConfig
 from loom.core.use_case.invoker import ApplicationInvoker
@@ -98,9 +99,6 @@ _PROBE_FAILED = "the health probe failed; the detail is recorded server-side"
 """Detail of an agent whose engine probe raised. No exception text: the probe
 reaches a model provider, so its failures carry endpoints and credential
 references that an anonymous ``/health`` scrape must never receive."""
-
-_INVOKER_UNBOUND = "the use-case invoker is not bound to a caller"
-"""Probe reason when the bundle's invoker was never bound to a caller."""
 
 _OPTIONAL_REMOTE_CLIENTS = "optional"
 """Value of ``ai.remote_clients`` under which a connection failure is tolerated."""
@@ -533,43 +531,6 @@ class AgentRuntime:
         self._require_plan(name)
         return self._health.get(name, _PROBING)
 
-    def _verify_invoker(self) -> None:
-        """Abort start-up when a hook or a loader is declared but no bundle carries an invoker.
-
-        Probed once, before any client opens: without it a misconfigured
-        deployment would fail only after every paid run.
-        """
-        hooked = [name for name, plan in self._plans.items() if plan.on_output is not None]
-        conversational = [
-            name for name, plan in self._plans.items() if plan.conversation is not None
-        ]
-        if not hooked and not conversational:
-            return
-        reason = self._invoker_reason()
-        if reason is None:
-            return
-        issues: list[AgentCompilationIssue] = []
-        if hooked:
-            issues.append(
-                AgentErrorCode.ON_OUTPUT_INVOKER_MISSING.issue(agents=hooked, reason=reason)
-            )
-        if conversational:
-            issues.append(
-                AgentErrorCode.CONVERSATION_INVOKER_MISSING.issue(
-                    agents=conversational, reason=reason
-                )
-            )
-        raise AgentCompilationError(issues)
-
-    def _invoker_reason(self) -> str | None:
-        """Return why the probed bundle's invoker is unusable, or ``None`` when it is fine."""
-        invoker = getattr(self._deps.build(ANONYMOUS, self._container), "invoker", None)
-        if not isinstance(invoker, ApplicationInvoker):
-            return INVOKER_MISSING_REASON
-        if getattr(invoker, "identity", ANONYMOUS) is None:
-            return _INVOKER_UNBOUND
-        return None
-
     def _verify_sql_readonly(self) -> None:
         """Abort start-up when a SQL grant's read-only state drifted."""
         issues = [
@@ -635,6 +596,36 @@ class AgentRuntime:
         if unwired or unreachable:
             raise AgentCompilationError([*unwired, *unreachable])
         return tolerated
+
+    def _verify_invoker(self) -> None:
+        """Abort start-up when a hook or a loader is declared but the container holds no invoker.
+
+        Raises:
+            AgentCompilationError: ``ON_OUTPUT_INVOKER_MISSING`` and
+                ``CONVERSATION_INVOKER_MISSING``, naming the agents that
+                declare each.
+        """
+        if self._container.is_registered(ApplicationInvoker):
+            return
+        hooked = [name for name, plan in self._plans.items() if plan.on_output is not None]
+        conversational = [
+            name for name, plan in self._plans.items() if plan.conversation is not None
+        ]
+        issues: list[AgentCompilationIssue] = []
+        if hooked:
+            issues.append(
+                AgentErrorCode.ON_OUTPUT_INVOKER_MISSING.issue(
+                    agents=hooked, reason=INVOKER_MISSING_REASON
+                )
+            )
+        if conversational:
+            issues.append(
+                AgentErrorCode.CONVERSATION_INVOKER_MISSING.issue(
+                    agents=conversational, reason=INVOKER_MISSING_REASON
+                )
+            )
+        if issues:
+            raise AgentCompilationError(issues)
 
     def _verify_mcp_connections(self) -> None:
         """Refuse two grants of one server name that describe different connections.
@@ -916,7 +907,7 @@ class AgentRuntime:
                     interaction_id=uuid4().hex,
                     conversation_id=conversation_id,
                 )
-                conversation = await load_conversation(run, self._deps, self._container)
+                conversation = await load_conversation(run, self._container)
                 engine_stream = _open_engine_stream(
                     slot.engine,
                     prompt,
@@ -927,7 +918,7 @@ class AgentRuntime:
                 )
                 async with engine_stream as events:
                     supervised = supervised_events(events, slot.plan.policies)
-                    hooked = hooked_events(supervised, run, self._deps, self._container)
+                    hooked = hooked_events(supervised, run, self._container)
                     try:
                         yield hooked
                     finally:
@@ -1035,7 +1026,8 @@ class AgentRuntime:
 
         Args:
             name: Agent whose engine is asked for its native form.
-            identity: Verified caller the returned objects are bound to.
+            identity: Verified caller the dependency bundle is built for;
+                informational.
             state: This run's state, resolved against *name*'s declared shape
                 exactly as :meth:`run` resolves it.
 
@@ -1057,31 +1049,35 @@ class AgentRuntime:
                 f"{type(slot.engine).__name__} publishes no native form: it declares no 'native'"
             )
         return slot.engine.native(
-            identity=identity, state=resolved_state, guard=self._native_guard(name, identity)
+            identity=identity, state=resolved_state, guard=self._native_guard(name)
         )
 
-    def _native_guard(
-        self, name: str, identity: Identity
-    ) -> Callable[[], AbstractAsyncContextManager[None]]:
+    def _native_guard(self, name: str) -> Callable[[], AbstractAsyncContextManager[None]]:
         """Build the guard a hand-driven run of *name* enters to rejoin this runtime's bounds.
 
         The guard enters the call chain and takes an admission slot in
-        :meth:`_run_stream`'s order, and runs its body as an execution acting
-        as *identity*.
+        :meth:`_run_stream`'s order, then runs its body as the identity of the
+        execution in progress where it is entered.
 
         Args:
             name: Agent the hand-driven run belongs to.
-            identity: Caller the run acts as.
 
         Returns:
             A zero-argument factory of the guard.
+
+        Raises:
+            ExecutionRequired: When the guard is entered outside any execution.
+            Unauthenticated: When it is entered with no caller.
+            DelegationExpired: When it is entered past the caller's deadline.
+            AgentRunError: With ``UNAUTHORIZED`` when the identity acting is
+                not authenticated.
         """
 
         @asynccontextmanager
         async def _guard() -> AsyncIterator[None]:
+            require_authenticated(f"agent {name!r}")
             async with self._chain_bound(name), self._admitted(name):
-                with ExecutionScope(identity):
-                    yield
+                yield
 
         return _guard
 

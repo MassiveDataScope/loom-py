@@ -1,8 +1,8 @@
 """The ``conversation`` loader: one use case before a run that continues a thread.
 
-Runs in the runtime's single path, before any engine stream opens, as the
-caller — through the deps bundle's bound invoker, exactly as the output hook
-— and hands the engine a neutral :class:`~loom.ai.abc.Conversation`.  The
+Runs in the runtime's single path, before any engine stream opens, inside the
+run's execution — through the application's invoker, exactly as the output
+hook — and hands the engine a neutral :class:`~loom.ai.abc.Conversation`.  The
 history is opaque bytes the loader returned: nothing here decodes, inspects
 or retains it, and nothing here imports an engine or an optional extra.
 """
@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from loom.ai._usecase import require_invoker
-from loom.ai.abc import Conversation, DepsFactory
+from loom.ai.abc import Conversation
 from loom.ai.compiler._plan import CompiledConversation
 from loom.ai.errors import (
     CONVERSATION_LOAD_FAILED_MESSAGE,
@@ -21,6 +20,7 @@ from loom.ai.errors import (
 )
 from loom.ai.runtime._bounded import RunContext, bounded, failure_error
 from loom.core.di import LoomContainer
+from loom.core.use_case.invoker import ApplicationInvoker
 
 _LOADER: Final[str] = "conversation loader"
 """Name of the loader step in log lines and errors."""
@@ -50,11 +50,10 @@ def loader_command(run: RunContext, accepted: frozenset[str]) -> dict[str, Any]:
 
 
 async def _invoke_loader(
-    loader: CompiledConversation, run: RunContext, deps: DepsFactory, container: LoomContainer
+    loader: CompiledConversation, run: RunContext, container: LoomContainer
 ) -> object:
-    """Run the loader use case as the caller through the bundle's bound invoker."""
-    bundle = deps.build(run.identity, container)
-    invoker = require_invoker(bundle, f"{_LOADER} '{loader.usecase}'")
+    """Run the loader use case through the application's invoker, as the identity acting."""
+    invoker: ApplicationInvoker = container.resolve(ApplicationInvoker)
     command = loader_command(run, loader.accepted)
     return await invoker.invoke(loader.use_case, params=None, payload=command)
 
@@ -84,9 +83,7 @@ def _as_history(value: object, bound: int) -> bytes | None:
     return value
 
 
-async def load_conversation(
-    run: RunContext, deps: DepsFactory, container: LoomContainer
-) -> Conversation | None:
+async def load_conversation(run: RunContext, container: LoomContainer) -> Conversation | None:
     """Load the conversation a run continues, or ``None`` when it is single-shot.
 
     The loader runs only when the plan declares one and the run carries a
@@ -96,8 +93,7 @@ async def load_conversation(
 
     Args:
         run: Context of the admitted run.
-        deps: Per-invocation dependency factory.
-        container: Application container.
+        container: Application container, holding the application's invoker.
 
     Returns:
         The conversation the engine receives, or ``None``.
@@ -114,7 +110,7 @@ async def load_conversation(
     if loader is None or run.conversation_id is None:
         return None
     try:
-        raw = await bounded(_invoke_loader(loader, run, deps, container), run, what=_LOADER)
+        raw = await bounded(_invoke_loader(loader, run, container), run, what=_LOADER)
         history = _as_history(raw, run.plan.policies.max_history_bytes)
     except TimeoutError as exc:
         raise failure_error(

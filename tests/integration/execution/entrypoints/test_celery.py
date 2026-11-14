@@ -27,8 +27,7 @@ from loom.celery.runner import (
 from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
-from loom.core.identity import Identity
-from loom.core.identity.wire import encode_identity
+from loom.core.identity import Delegation, Identity
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import wire_job_name
 from loom.core.use_case.factory import UseCaseFactory
@@ -50,7 +49,7 @@ AN_HOUR = 3600.0
 
 def link_from(identity: Identity, *, until: float) -> dict[str, Any]:
     """The caller part of a link envelope a dispatch acting as *identity* builds."""
-    return {"identity": encode_identity(identity, until)}
+    return {"identity": Delegation(identity, until).encoded()}
 
 
 @pytest.fixture
@@ -144,7 +143,7 @@ class TestCeleryJobTask:
         sent = app.send_task.call_args.kwargs["kwargs"]["identity"]
         links = [call.kwargs["kwargs"]["identity"] for call in app.signature.call_args_list]
         assert_new_delegation(sent["until"], before, window)
-        assert sent == encode_identity(BOB, sent["until"])
+        assert sent == Delegation(BOB, sent["until"]).encoded()
         assert links == [sent, sent]
 
 

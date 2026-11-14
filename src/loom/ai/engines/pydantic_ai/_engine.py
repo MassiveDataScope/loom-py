@@ -196,7 +196,9 @@ class PydanticAIEngine:
 
         Args:
             prompt: Caller prompt.
-            identity: Verified caller; every capability call runs as them.
+            identity: Verified caller the dependency bundle is built for;
+                capability calls act as the identity of the execution in
+                progress.
             conversation: The conversation this run continues, or ``None``
                 for a single shot.
             state: This run's state, already resolved against the plan's
@@ -250,7 +252,9 @@ class PydanticAIEngine:
 
         Args:
             prompt: Caller prompt.
-            identity: Verified caller; every capability call runs as them.
+            identity: Verified caller the dependency bundle is built for;
+                capability calls act as the identity of the execution in
+                progress.
             conversation: The conversation this run continues, or ``None``
                 for a single shot.
             state: This run's state; see :meth:`run`'s own ``state``.
@@ -298,7 +302,9 @@ class PydanticAIEngine:
 
         Args:
             prompt: Caller prompt.
-            identity: Verified caller; every capability call runs as them.
+            identity: Verified caller the dependency bundle is built for;
+                capability calls act as the identity of the execution in
+                progress.
             conversation: The conversation this run continues, or ``None``.
             output_type: Type this run's answer is decoded into, overriding
                 the plan's own declared output for this call only.

@@ -50,7 +50,6 @@ from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
 from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
-from loom.core.execution import execution_identity
 from loom.core.identity import Identity
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
@@ -193,18 +192,9 @@ class McpGrantView:
         return tuple(self._tools)
 
     async def call(self, tool: str, arguments: Mapping[str, Any], *, expect: type[_T]) -> _T:
-        """Call *tool* as the caller of the moment; decode its structured result into *expect*."""
-        return await self.call_as(
-            require_authenticated(execution_identity(), self._who), tool, arguments, expect=expect
-        )
-
-    async def call_as(
-        self, caller: Identity, tool: str, arguments: Mapping[str, Any], *, expect: type[_T]
-    ) -> _T:
-        """Call *tool* as *caller*, already read, and decode its structured result into *expect*.
+        """Call *tool* as the identity acting and decode its structured result into *expect*.
 
         Args:
-            caller: The execution identity, read by :func:`~loom.core.execution.execution_identity`.
             tool: Tool name.
             arguments: Tool arguments.
             expect: Type the structured result decodes into.
@@ -213,10 +203,14 @@ class McpGrantView:
             The decoded result.
 
         Raises:
-            AgentRunError: With ``TOOL_UNKNOWN``, ``TOOL_UNTYPED``,
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject; with ``TOOL_UNKNOWN``, ``TOOL_UNTYPED``,
                 ``TOOL_RESULT_UNSTRUCTURED``, ``TOOL_DECODE_FAILED``,
                 ``TOOL_TIMEOUT`` or the call's own failure code.
         """
+        caller = require_authenticated(self._who)
         info = self._require_tool(tool)
         if not info.has_output_schema:
             raise AgentRunError(
@@ -241,27 +235,12 @@ class McpGrantView:
             ) from exc
 
     async def call_untyped(self, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Call *tool* and return the server's own structured content, undecoded.
+        """Call *tool* as the identity acting and return its structured content, undecoded.
 
-        ``None`` — a server that returned no structured content at all — is
-        the one shape folded into ``{}`` here: an absence, not a
-        contradiction. Any other non-mapping content (a list, a scalar) is a
-        server publishing a result its own protocol does not allow, and is
-        refused rather than silently discarded — the same "a server that
-        contradicts itself fails" rule :meth:`call` applies through
-        ``TOOL_DECODE_FAILED``.
-        """
-        return await self.call_untyped_as(
-            require_authenticated(execution_identity(), self._who), tool, arguments
-        )
-
-    async def call_untyped_as(
-        self, caller: Identity, tool: str, arguments: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        """Call *tool* as *caller*, already read, and return its structured content, undecoded.
+        No structured content at all is returned as ``{}``; any other
+        non-mapping content is refused.
 
         Args:
-            caller: The execution identity, read by :func:`~loom.core.execution.execution_identity`.
             tool: Tool name.
             arguments: Tool arguments.
 
@@ -269,9 +248,13 @@ class McpGrantView:
             The structured content, ``{}`` for none.
 
         Raises:
-            AgentRunError: With ``TOOL_UNKNOWN``, ``TOOL_RESULT_UNSTRUCTURED``,
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject; with ``TOOL_UNKNOWN``, ``TOOL_RESULT_UNSTRUCTURED``,
                 ``TOOL_TIMEOUT`` or the call's own failure code.
         """
+        caller = require_authenticated(self._who)
         self._require_tool(tool)
         structured = await self._call(tool, arguments, caller)
         if structured is None:
@@ -383,10 +366,10 @@ class SqlGrantView:
         Raises:
             ExecutionRequired: Outside any execution.
             Unauthenticated: With no caller, or past the caller's delegation.
-            AgentRunError: With ``UNAUTHORIZED`` when the caller holds no role
-                this grant allows.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller is anonymous
+                or holds no role this grant allows.
         """
-        caller = execution_identity()
+        caller = require_authenticated(f"sql grant {self._capability.connection!r}")
         roles = bound_query_roles(self._capability, caller)
         with self._span(roles, caller):
             result = await self._sql_query_service.execute(

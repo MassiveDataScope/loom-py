@@ -53,7 +53,7 @@ from loom.core.job.run import run_job
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.tracing import reset_trace_id, set_trace_id
+from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
@@ -315,8 +315,7 @@ def _make_job_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
     ) -> Any:
-        trace_token = set_trace_id(trace_id) if trace_id else None
-        try:
+        with active_trace_id(trace_id or None):
             _emit(metrics, _job_event(EventKind.JOB_STARTED, name, trace_id))
             t0 = time.monotonic()
             try:
@@ -340,9 +339,6 @@ def _make_job_task(
                 ),
             )
             return result
-        finally:
-            if trace_token is not None:
-                reset_trace_id(trace_token)
 
     return _job_task
 

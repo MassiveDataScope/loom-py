@@ -34,15 +34,15 @@ class AgentDeps:
     """Per-invocation dependency bundle handed to an agent capability call.
 
     Args:
-        identity: Verified caller of the invocation.
         container: Application container holding the singleton services.
-        invoker: Application invoker already bound to ``identity``.
+        invoker: The application's invoker, for the deployment's own tools;
+            each use case it invokes acts as the identity acting where it is
+            called.
         state: The invocation's state, a mapping normalised against the
             artefact's declared shape, or ``None`` for an artefact that
             declares no state or a call that supplies none.
     """
 
-    identity: Identity
     container: LoomContainer
     invoker: AppInvoker
     state: Mapping[str, Any] | None = None
@@ -51,17 +51,11 @@ class AgentDeps:
 class AgentDepsFactory:
     """Builds the per-invocation dependencies of every agent capability call.
 
-    Structural implementation of ``loom.ai.abc.DepsFactory``: it lives in the
-    composition root, and depends only on ``loom.core``, so an application with
-    no ``ai:`` section never imports the AI pillar to obtain it.
-
-    Binding the invoker to the caller happens here, at the one point that knows
-    both: a granted use case declaring ``Caller()`` is executed as the identity
-    that invoked the agent, and the capability never has to discover the caller
-    from ambient state.
+    Structural implementation of ``loom.ai.abc.DepsFactory``, depending only on
+    ``loom.core``. Every bundle carries the application's invoker.
 
     Args:
-        invoker: Unbound application invoker of this application.
+        invoker: The application's invoker.
     """
 
     def __init__(self, invoker: AppInvoker) -> None:
@@ -76,7 +70,8 @@ class AgentDepsFactory:
         """Return the dependency bundle for one invocation.
 
         Args:
-            identity: Verified caller of this invocation.
+            identity: Verified caller of this invocation; informational, the
+                bundle does not carry it.
             container: Application container holding the singleton services.
             state: The invocation's state, a mapping normalised against the
                 artefact's declared shape, or ``None`` for an artefact that
@@ -85,12 +80,8 @@ class AgentDepsFactory:
         Returns:
             The bundle the engine passes to its capability calls.
         """
-        return AgentDeps(
-            identity=identity,
-            container=container,
-            invoker=self._invoker.for_identity(identity),
-            state=state,
-        )
+        del identity
+        return AgentDeps(container=container, invoker=self._invoker, state=state)
 
 
 @dataclass(frozen=True)

@@ -34,8 +34,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.identity import delegation
-from loom.core.identity.wire import encode_identity
+from loom.core.identity import captured_delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
@@ -351,7 +350,7 @@ class CeleryJobService:
         """
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
-        identity = encode_identity(*delegation())
+        identity = captured_delegation().encoded()
         options = self._settings.of(job_type)
         eff_queue = queue or options.queue
         eff_countdown = countdown if countdown is not None else options.countdown

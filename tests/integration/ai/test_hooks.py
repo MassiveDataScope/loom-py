@@ -8,8 +8,8 @@ recording unit of work.  No network, no database, no model.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 
 import msgspec
@@ -26,17 +26,18 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan, CompiledOutputHook
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
 from loom.ai.runtime import AgentRunError, AgentRuntime
-from loom.ai.runtime._hooks import HOOK_FAILED_MESSAGE
+from loom.ai.runtime._bounded import RunContext
+from loom.ai.runtime._hooks import HOOK_FAILED_MESSAGE, hooked_events
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Caller, Input, UseCase
 from loom.core.use_case.keys import use_case_key
 from tests.integration.ai.conftest import (
     DEFAULT_USAGE,
     CountingEngineProvider,
-    RecordingDeps,
     RecordingDepsFactory,
     RecordingMcpSession,
     ScriptedEngine,
@@ -53,6 +54,7 @@ from tests.integration.ai.conftest import (
 )
 
 _AGENT = "incident-triage"
+_ACME_OTHER = Identity(subject="acme-other", roles=("analyst",), mechanism="test")
 _DENIED_MESSAGE = "the caller is not allowed to perform this operation"
 
 
@@ -257,24 +259,6 @@ async def _collect(runtime: AgentRuntime, identity: Identity, **kwargs: Any) -> 
     return events
 
 
-@dataclass(frozen=True)
-class _UnboundDepsFactory:
-    """Deps factory whose bundle carries an invoker never bound to a caller."""
-
-    inner: RecordingDepsFactory
-
-    def build(
-        self,
-        identity: Identity,
-        container: LoomContainer,
-        state: Mapping[str, Any] | None = None,
-    ) -> object:
-        """Return the inner bundle with its invoker's identity stripped."""
-        bundle = self.inner.build(identity, container)
-        assert isinstance(bundle, RecordingDeps)
-        return replace(bundle, invoker=replace(bundle.invoker, identity=None))
-
-
 @pytest.fixture
 def recorder(container: LoomContainer) -> Recorder:
     """Recorder the hook use cases resolve from the container."""
@@ -284,9 +268,9 @@ def recorder(container: LoomContainer) -> Recorder:
 
 
 @pytest.fixture
-def hook_deps() -> RecordingDepsFactory:
+def hook_deps(container: LoomContainer) -> RecordingDepsFactory:
     """Deps factory serving the three hook use cases through a real executor."""
-    return RecordingDepsFactory((RecordTriage, RecordAnswer, RecordStrict))
+    return RecordingDepsFactory((RecordTriage, RecordAnswer, RecordStrict)).registered_in(container)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +405,30 @@ class TestHookExecution:
             await runtime.run(_AGENT, "prompt", identity=identity)
 
         assert recorder.calls[0].caller == identity
+
+    async def test_runs_the_hook_as_the_identity_acting_not_the_run_s_caller(
+        self,
+        identity: Identity,
+        recorder: Recorder,
+        hook_deps: RecordingDepsFactory,
+        container: LoomContainer,
+    ) -> None:
+        """A run context retained for one caller runs its hook as whoever acts."""
+        run = RunContext(
+            plan=_hooked_plan(RecordAnswer),
+            identity=identity,
+            interaction_id="acme-interaction",
+            conversation_id=None,
+        )
+
+        async def final() -> AsyncIterator[AgentEvent]:
+            yield FinalEvent(output={"answer": "42"}, usage=DEFAULT_USAGE)
+
+        with ExecutionScope(_ACME_OTHER):
+            events = [event async for event in hooked_events(final(), run, container)]
+
+        assert [type(event) for event in events] == [FinalEvent]
+        assert [call.caller for call in recorder.calls] == [_ACME_OTHER]
 
     async def test_runs_the_hook_as_anonymous_when_the_caller_is_anonymous(
         self,
@@ -899,7 +907,7 @@ class TestConversationId:
 
 
 class TestStartupProbe:
-    async def test_refuses_startup_when_there_is_a_hook_and_the_bundle_carries_no_invoker(
+    async def test_refuses_startup_when_there_is_a_hook_and_the_container_holds_no_invoker(
         self,
         deps: StubDepsFactory,
         container: LoomContainer,
@@ -927,28 +935,6 @@ class TestStartupProbe:
         assert [issue.code for issue in issues] == [AgentErrorCode.ON_OUTPUT_INVOKER_MISSING]
         assert _AGENT in issues[0].message
         assert lifecycle_log == []
-
-    async def test_refuses_startup_when_the_bundles_invoker_is_not_bound_to_a_caller(
-        self,
-        hook_deps: RecordingDepsFactory,
-        container: LoomContainer,
-    ) -> None:
-        """An invoker carrying no identity would run every hook as nobody."""
-        runtime = _runtime(
-            ScriptedEngine(),
-            _hooked_plan(RecordAnswer),
-            deps=_UnboundDepsFactory(hook_deps),
-            container=container,
-        )
-
-        with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
-                pass
-
-        issues = failure.value.issues
-        assert [issue.code for issue in issues] == [AgentErrorCode.ON_OUTPUT_INVOKER_MISSING]
-        assert "not bound" in issues[0].message
-        assert _AGENT in issues[0].message
 
     async def test_starts_normally_when_there_is_no_hook(
         self,

@@ -12,10 +12,10 @@ switch rule in :func:`enter`, closing in :func:`leave`, failing closed in
 :func:`execution_identity`, singleton construction in :class:`NoExecution`.
 
 This module writes the carrier of :mod:`loom.core.identity` (``_acting``)
-itself, not only through :func:`~loom.core.identity.fix_identity`: to leave
-an execution, to act as no one in :class:`NoExecution`, and to close a
-context after a token misuse. The leak is deliberate and fenced by
-``tests/unit/test_layers.py``.
+itself: to enter an execution with
+:meth:`~loom.core.identity.Acting.pinned_for`, to leave it, to act as no one
+in :class:`NoExecution`, and to close a context after a token misuse.
+``tests/unit/test_layers.py`` restricts that write to this module.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
@@ -42,7 +42,6 @@ Lifetime:
 
 from __future__ import annotations
 
-import math
 import threading
 from collections.abc import Callable, Hashable
 from contextvars import Token
@@ -51,13 +50,7 @@ from typing import Any, cast
 
 from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
-from loom.core.identity import (
-    ANONYMOUS,
-    Acting,
-    Identity,
-    fix_identity,
-    refuse_expired_delegation,
-)
+from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
 from loom.core.logger import get_logger
 
@@ -202,11 +195,11 @@ _BUILDING = object()
 
 _OUTSIDE = ExecutionContext()
 """The work of :class:`NoExecution` and of a closed context: no execution, and no caller, fixed."""
-_OUTSIDE_ACTING: Acting = (ANONYMOUS, None, math.inf, _OUTSIDE)
-_CLOSED_ACTING: Acting = (ANONYMOUS, None, math.inf, _OUTSIDE)
+_OUTSIDE_ACTING = Acting.delegated(None, work=_OUTSIDE)
+_CLOSED_ACTING = Acting.delegated(None, work=_OUTSIDE)
 """Installed after a token misuse: no execution, no caller, and never restored.
 
-A tuple of its own, not :data:`_OUTSIDE_ACTING`: no later ``leave`` or
+A value of its own, not :data:`_OUTSIDE_ACTING`: no later ``leave`` or
 :class:`NoExecution` exit can bring back an execution or a caller a misused
 token may have ended.
 """
@@ -222,7 +215,7 @@ def current_execution() -> ExecutionContext | None:
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
-    context: Any = _acting_now()[3]
+    context: Any = _acting_now().work
     if context is None or context is _OUTSIDE or context._cache is _ENDED:
         return None
     return context
@@ -266,7 +259,7 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
     building = (_BUILDING, key)
 
     def value() -> object:
-        context: Any = _acting_now()[3]
+        context: Any = _acting_now().work
         if context is None:
             return make()
         cache = context._cache
@@ -297,7 +290,7 @@ def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
     computed by the caller; ``None`` means no caller. Every call builds a new
     :class:`ExecutionContext`, so a nested execution gets a fresh cache and
     shares no ``REQUEST`` instance with the one around it. The switch
-    rule is :func:`~loom.core.identity.fix_identity`'s: the same subject
+    rule is :meth:`~loom.core.identity.Acting.pinned_for`'s: the same subject
     keeps the delegation and is refused past it; another subject is a logged
     switch with a delegation of its own.
 
@@ -309,7 +302,7 @@ def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
         The token to pass to :func:`leave` in a ``finally`` block.
 
     Raises:
-        Unauthenticated: Acting as the subject acting, past its deadline.
+        DelegationExpired: Acting as the subject acting, past its deadline.
 
     Example::
 
@@ -320,7 +313,7 @@ def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
             leave(token)
     """
     context = ExecutionContext()
-    context._token = token = fix_identity(identity, context, what)  # pyright: ignore[reportPrivateUsage]
+    context._token = token = _acting.set(_acting_now().pinned_for(identity, context, what))  # pyright: ignore[reportPrivateUsage]
     return token
 
 
@@ -346,7 +339,7 @@ def leave(token: Token[Acting]) -> None:
         ValueError: If ``token`` was created in another :mod:`contextvars`
             context (a task that copied it); nothing changes in either.
     """
-    context: Any = _acting_now()[3]
+    context: Any = _acting_now().work
     if context is None or context._token is not token:
         _acting.set(_CLOSED_ACTING)
         raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
@@ -364,7 +357,7 @@ def execution_ended() -> bool:
     Returns:
         ``True`` in a task or thread whose execution ended.
     """
-    context: Any = _acting_now()[3]
+    context: Any = _acting_now().work
     return context is not None and context._cache is _ENDED
 
 
@@ -386,10 +379,11 @@ def execution_identity() -> Identity:
             from a task whose execution ended, past the caller's deadline.
             Refusing ``ANONYMOUS`` is the consumer's rule.
     """
-    _, identity, _, context = _acting_now()
+    acting = _acting_now()
+    identity, context = acting.caller, acting.work
     if identity is not None and context is not None:
         if context._cache is _ENDED:  # pyright: ignore[reportAttributeAccessIssue]
-            refuse_expired_delegation()
+            acting.refuse_expired()
         return identity
     if context is None or context is _OUTSIDE:
         raise ExecutionRequired(_NO_EXECUTION_MESSAGE)

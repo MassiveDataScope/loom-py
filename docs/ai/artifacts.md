@@ -251,8 +251,9 @@ The `state` a caller sends is rendered into the agent's instructions with
 **no escaping**. Declaring a template is an explicit opt-in by the artifact's
 author, and it is prompt-injection surface: whatever the caller puts in
 `state` can shape the prose the model reads. What loom guarantees instead is
-that **`identity`, the application container and the caller-bound invoker are
-unreachable from a template** — a template renders against the state mapping
+that **the application container, the `ApplicationInvoker` it holds and the
+dependency bundle are unreachable from a template** — a template renders
+against the state mapping
 alone, never against the wider dependency bundle a capability call runs
 with, so injected text can shape a prompt and can never reach a credential
 or an application service.
@@ -446,7 +447,7 @@ names above. Four coded issues:
 | `ON_OUTPUT_USECASE_UNKNOWN` | The key is not registered. |
 | `ON_OUTPUT_INPUT_UNSATISFIED` | The use case cannot be fed from a run: it is not compiled, its `execute` declares primitive parameters, declares no `Input()`, or its Input requires a name the run does not offer. `internal` and `calculated` command fields and `Caller()` are never demanded. |
 | `ON_OUTPUT_USECASE_ALSO_GRANTED` | The same key also appears in a `kind: usecase` grant. A hook use case must not be callable by the model. |
-| `ON_OUTPUT_INVOKER_MISSING` | Start-up: an agent declares a hook but the dependency bundle carries no `invoker` bound to the caller. Probed before any client opens, so a misconfigured deployment fails at start-up rather than after every run. |
+| `ON_OUTPUT_INVOKER_MISSING` | Start-up: an agent declares a hook but the container holds no `ApplicationInvoker`. The hook runs through that invoker, as the identity acting. Probed before any client opens, so a misconfigured deployment fails at start-up rather than after every run. |
 
 The offline validator (`python -m loom.ai.validate`) accepts the field but
 does not resolve the key: it runs only the configuration-independent phases,
@@ -725,7 +726,7 @@ Four coded issues:
 | `CONVERSATION_USECASE_UNKNOWN` | The key is not registered. |
 | `CONVERSATION_INPUT_UNSATISFIED` | The use case cannot be fed from a run — the same reasons as `ON_OUTPUT_INPUT_UNSATISFIED` — or its Input does not declare `conversation_id`. The reason is named in the message. |
 | `CONVERSATION_USECASE_ALSO_GRANTED` | The same key also appears in a `kind: usecase` grant. The model would then choose the `conversation_id` argument — a tenancy hole. |
-| `CONVERSATION_INVOKER_MISSING` | Start-up: an agent declares a loader but the dependency bundle carries no `invoker` bound to the caller. Probed once with the hook's check; an agent declaring both reports both codes. |
+| `CONVERSATION_INVOKER_MISSING` | Start-up: an agent declares a loader but the container holds no `ApplicationInvoker`. Probed once with the hook's check; an agent declaring both reports both codes. |
 
 As with `on_output`, the offline validator accepts the field but does not
 resolve the key; the issues surface when the application compiles its agents.

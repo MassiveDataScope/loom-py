@@ -44,11 +44,11 @@ class KernelRuntime(BootstrapResult):
     Attributes:
         executor: Runtime executor shared by transport adapters.
         registry: Read-only use-case registry for name-based resolution.
-        app: App-level invoker facade. Typed as the concrete
-            :class:`~loom.core.use_case.invoker.AppInvoker` because a
-            composition root binds a copy of it to one caller with
-            :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity`, which
-            is a property of this implementation rather than of the protocol.
+        app: App-level invoker facade, bound to no identity: each use case it
+            invokes acts as the identity acting where it is called. Typed as
+            the concrete :class:`~loom.core.use_case.invoker.AppInvoker`, whose
+            :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
+            copy to one caller, a method the protocol does not declare.
     """
 
     executor: RuntimeExecutor

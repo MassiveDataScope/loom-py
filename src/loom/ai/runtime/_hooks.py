@@ -2,8 +2,8 @@
 
 Sits outside the limit supervisor and outside every engine: when the
 supervised stream produces its terminal event, the wrapper here runs the
-plan's hook use case as the caller — through the deps bundle's bound invoker,
-so the executor binds ``Caller()`` to the run's identity — and re-creates the
+plan's hook use case through the application's invoker, inside the run's
+execution, so ``Caller()`` is the identity acting there — and re-creates the
 terminal event with the run's ``interaction_id`` and the hook's result.  An
 engine never sees the hook, so its own retry loop cannot replay it.
 
@@ -17,12 +17,12 @@ from typing import Any, Final
 
 import msgspec
 
-from loom.ai._usecase import require_invoker
-from loom.ai.abc import AgentEvent, DepsFactory, ErrorEvent, FinalEvent
+from loom.ai.abc import AgentEvent, ErrorEvent, FinalEvent
 from loom.ai.compiler._plan import HOOK_MESSAGES_FIELD, HOOK_OUTPUT_FIELD, CompiledOutputHook
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.runtime._bounded import RunContext, bounded, failure_error
 from loom.core.di import LoomContainer
+from loom.core.use_case.invoker import ApplicationInvoker
 
 HOOK_FAILED_MESSAGE: Final[str] = "the output hook failed; the detail is recorded server-side"
 """Fixed text of a ``HOOK_FAILED`` error: the exception never reaches the caller."""
@@ -87,12 +87,10 @@ async def _invoke_hook(
     hook: CompiledOutputHook,
     final: FinalEvent,
     run: RunContext,
-    deps: DepsFactory,
     container: LoomContainer,
 ) -> object:
-    """Run the hook use case as the caller through the bundle's bound invoker."""
-    bundle = deps.build(run.identity, container)
-    invoker = require_invoker(bundle, f"{_HOOK} '{hook.usecase}'")
+    """Run the hook use case through the application's invoker, as the identity acting."""
+    invoker: ApplicationInvoker = container.resolve(ApplicationInvoker)
     command = hook_command(final.output, run, hook.accepted, messages=final.messages)
     return await invoker.invoke(hook.use_case, params=None, payload=command)
 
@@ -100,7 +98,6 @@ async def _invoke_hook(
 async def hooked_events(
     events: AsyncIterator[AgentEvent],
     run: RunContext,
-    deps: DepsFactory,
     container: LoomContainer,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Forward a supervised stream, running the hook at its terminal event.
@@ -115,8 +112,7 @@ async def hooked_events(
     Args:
         events: The supervised event stream of one run.
         run: Context of the admitted run.
-        deps: Per-invocation dependency factory.
-        container: Application container.
+        container: Application container, holding the application's invoker.
 
     Yields:
         The run's events, terminal event re-created.
@@ -126,7 +122,7 @@ async def hooked_events(
             yield msgspec.structs.replace(event, interaction_id=run.interaction_id)
             return
         if type(event) is FinalEvent:
-            yield await _terminal(event, run, deps, container)
+            yield await _terminal(event, run, container)
             return
         yield event
     yield ErrorEvent(
@@ -137,14 +133,14 @@ async def hooked_events(
 
 
 async def _terminal(
-    final: FinalEvent, run: RunContext, deps: DepsFactory, container: LoomContainer
+    final: FinalEvent, run: RunContext, container: LoomContainer
 ) -> FinalEvent | ErrorEvent:
     """Run the hook, if any, and produce the stream's terminal event."""
     hook = run.plan.on_output
     if hook is None:
         return msgspec.structs.replace(final, interaction_id=run.interaction_id)
     try:
-        result = await bounded(_invoke_hook(hook, final, run, deps, container), run, what=_HOOK)
+        result = await bounded(_invoke_hook(hook, final, run, container), run, what=_HOOK)
     except Exception as exc:
         error = failure_error(
             exc, run, code=AgentRunErrorCode.HOOK_FAILED, message=HOOK_FAILED_MESSAGE, what=_HOOK

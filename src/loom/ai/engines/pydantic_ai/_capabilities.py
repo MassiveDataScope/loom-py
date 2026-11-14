@@ -9,7 +9,7 @@ Two of the four invariants of a capability call hold here; the other two hold
 in :mod:`~loom.ai.engines.pydantic_ai._guards` and
 :mod:`~loom.ai.engines.pydantic_ai._returns`:
 
-* **SQL roles are bound to that identity.** ``roles_bound`` is hard-coded
+* **SQL roles are bound to the acting identity.** ``roles_bound`` is hard-coded
   ``True`` at the single :func:`~loom.core.sql.roles.resolve_query_roles` call
   site, and the resolved tuple is re-checked for emptiness: an empty tuple
   reaching ``SqlQueryService.execute`` falls through to the connection's
@@ -35,7 +35,6 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from loom.ai._filters import admits
 from loom.ai._roles import bound_query_roles
-from loom.ai._usecase import require_invoker
 from loom.ai.abc import McpSession, ToolsetContext
 from loom.ai.compiler import (
     AgentPlan,
@@ -52,7 +51,6 @@ from loom.ai.engines.pydantic_ai._a2a import require_a2a_sdk, send_to_remote_age
 from loom.ai.engines.pydantic_ai._guards import (
     BuildContext,
     CapabilityDeps,
-    authenticated_caller,
     capability_call,
     capability_deps,
     guarded,
@@ -84,10 +82,9 @@ from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.execution import execution_identity
-from loom.core.identity import Identity
 from loom.core.sql.abc import SqlQueryResult
 from loom.core.sql.service import SqlQueryService
+from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)
 
@@ -140,8 +137,8 @@ def _usecase_toolset(
 def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
     async def call(run: RunContext[Any], **arguments: Any) -> ToolReturn:
         deps = capability_deps(run)
-        require_authenticated(execution_identity(), f"tool '{grant.tool_name}'")
-        async with capability_call(context, "usecase", grant.tool_name, deps.identity):
+        caller = require_authenticated(f"tool '{grant.tool_name}'")
+        async with capability_call(context, "usecase", grant.tool_name, caller):
             return await guarded(
                 grant.tool_name, lambda: _invoke(grant, deps, arguments), ok_return
             )
@@ -158,8 +155,8 @@ def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
 async def _invoke(
     grant: _UsecaseGrant, deps: CapabilityDeps, arguments: Mapping[str, Any]
 ) -> object:
-    """Invoke the granted use case as the caller, through the invoker bound to it."""
-    invoker = require_invoker(deps, f"tool '{grant.tool_name}'")
+    """Invoke the granted use case through the application's invoker, as the identity acting."""
+    invoker: ApplicationInvoker = deps.container.resolve(ApplicationInvoker)
     params = {name: arguments[name] for name in grant.param_names if name in arguments}
     payload = _payload_of(grant, arguments)
     return await invoker.invoke(grant.use_case, params=params, payload=payload)
@@ -178,12 +175,12 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
 
     async def call(run: RunContext[Any], sql: str) -> ToolReturn:
         deps = capability_deps(run)
-        require_authenticated(execution_identity(), f"tool '{name}'")
+        caller = require_authenticated(f"tool '{name}'")
         oversized = _oversized_statement(capability, sql)
         if oversized is not None:
             return oversized
-        roles = _bound_roles(capability, deps.identity)
-        async with capability_call(context, "sql", name, deps.identity):
+        roles = bound_query_roles(capability, caller)
+        async with capability_call(context, "sql", name, caller):
             return await guarded(
                 name,
                 lambda: _query(capability, deps, sql, roles),
@@ -215,16 +212,6 @@ def _oversized_statement(capability: CompiledSqlCapability, sql: str) -> ToolRet
     )
 
 
-def _bound_roles(capability: CompiledSqlCapability, identity: Identity) -> tuple[str, ...]:
-    """Resolve the caller's roles; the shared ``default_role`` is unreachable.
-
-    Delegates to :func:`loom.ai._roles.bound_query_roles`, the single rule
-    this model-facing tool and the marker-facing
-    :class:`~loom.ai.runtime._grants.SqlGrantView` both apply.
-    """
-    return bound_query_roles(capability, identity)
-
-
 async def _query(
     capability: CompiledSqlCapability,
     deps: CapabilityDeps,
@@ -246,7 +233,7 @@ def _mcp_toolset(capability: CompiledMcpCapability, context: BuildContext) -> Ab
     toolset: AbstractToolset[Any] = _mcp_server(capability, context)
     if capability.include or capability.exclude:
         toolset = toolset.filtered(_tool_predicate(capability.include, capability.exclude))
-    return guarded_toolset(toolset, context, "mcp", authenticated_caller)
+    return guarded_toolset(toolset, context, "mcp")
 
 
 def _mcp_server(capability: CompiledMcpCapability, context: BuildContext) -> AbstractToolset[Any]:
@@ -359,7 +346,7 @@ def _python_toolset(
                 )
             ]
         )
-    return guarded_toolset(toolset, context, "python", authenticated_caller)
+    return guarded_toolset(toolset, context, "python")
 
 
 def _call_factory(capability: CompiledPythonCapability, context: BuildContext) -> object:
@@ -410,7 +397,7 @@ def _a2a_toolset(capability: CompiledA2ACapability, context: BuildContext) -> Ab
     require_a2a_sdk()
     name = tool_name("a2a", capability.agent)
     toolset = FunctionToolset([_a2a_tool(capability, name)])
-    return guarded_toolset(toolset, context, "a2a", authenticated_caller)
+    return guarded_toolset(toolset, context, "a2a")
 
 
 def _a2a_tool(capability: CompiledA2ACapability, name: str) -> Tool[Any]:

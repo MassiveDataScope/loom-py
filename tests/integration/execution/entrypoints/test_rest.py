@@ -20,8 +20,8 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import (
     Identity,
+    captured_delegation,
     current_caller,
-    delegation,
     reset_identity,
     set_identity,
 )
@@ -97,7 +97,7 @@ class TestAuthenticationMiddleware:
         seen: dict[str, Any] = {}
 
         async def app(scope: Any, receive: Any, send: Any) -> None:
-            seen["caller"], seen["deadline"] = delegation()
+            seen["caller"], seen["deadline"] = captured_delegation()
             reset_identity(set_identity(seen["caller"]))  # unfixed: a transport may install
             await send({"type": "http.response.start", "status": 204, "headers": []})
             await send({"type": "http.response.body", "body": b""})

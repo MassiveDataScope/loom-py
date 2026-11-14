@@ -9,18 +9,18 @@ import time
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.errors import Unauthenticated
+from loom.core.errors import DelegationExpired
 from loom.core.execution import ExecutionScope
 from loom.core.identity import (
     ANONYMOUS,
+    Acting,
+    Delegation,
     Identity,
     IdentityFixed,
+    captured_delegation,
     configure_delegation,
     current_caller,
     current_identity,
-    delegation,
-    fix_identity,
-    refuse_expired_delegation,
     reset_identity,
     set_identity,
 )
@@ -50,13 +50,13 @@ class TestTheCarrier:
         """Never ``None`` for ``current_identity``; no caller is ``None``, not ``ANONYMOUS``."""
         assert current_identity() is ANONYMOUS
         assert current_caller() is None
-        assert delegation() == (None, None)
+        assert captured_delegation() == (None, None)
 
     def test_installs_the_caller_with_the_deadline_it_resumes(self) -> None:
         token = set_identity(_ALICE, until=_LATER)
         try:
             assert (current_identity(), current_caller()) == (_ALICE, _ALICE)
-            assert delegation() == (_ALICE, _LATER)
+            assert captured_delegation() == Delegation(_ALICE, _LATER)
         finally:
             reset_identity(token)
 
@@ -66,7 +66,7 @@ class TestTheCarrier:
         before = time.time()
         token = set_identity(_ALICE)
         try:
-            _, deadline = delegation()
+            _, deadline = captured_delegation()
         finally:
             reset_identity(token)
 
@@ -78,7 +78,7 @@ class TestTheCarrier:
     ) -> None:
         """A tampered or skewed deadline is clamped to ``now + window``."""
         with acting_as(_ALICE, until=time.time() + until):
-            _, deadline = delegation()
+            _, deadline = captured_delegation()
 
         assert deadline is not None and deadline <= time.time() + window
 
@@ -86,7 +86,7 @@ class TestTheCarrier:
         token = set_identity(None, until=_LATER)
         try:
             assert (current_identity(), current_caller()) == (ANONYMOUS, None)
-            assert delegation() == (None, None)
+            assert captured_delegation() == (None, None)
         finally:
             reset_identity(token)
 
@@ -180,8 +180,8 @@ class TestAFixedIdentity:
             reset_identity(transport)
 
 
-class TestTheOneRule:
-    """``fix_identity(E, work, what)`` over the acting ``(C, D, work)``: the rule of ``enter``."""
+class TestPinnedFor:
+    """``pinned_for(E, work, what)`` over the acting ``(C, D, work)``: the rule of ``enter``."""
 
     @pytest.mark.parametrize(
         ("given", "logged"),
@@ -191,14 +191,15 @@ class TestTheOneRule:
     def test_the_same_subject_keeps_the_deadline(
         self, switches: RecordingLogger, given: Identity, logged: list[object]
     ) -> None:
-        outer = set_identity(_ALICE, until=_LATER)
-        try:
-            token = fix_identity(given, _WORK, "AcmeUseCase")
-            assert (current_caller(), delegation()[1]) == (given, _LATER)
-            reset_identity(token)
-        finally:
-            reset_identity(outer)
+        with acting_as(_ALICE, until=_LATER):
+            pinned = Acting.current().pinned_for(given, _WORK, "AcmeUseCase")
 
+        assert (pinned.effective, pinned.caller, pinned.deadline, pinned.work) == (
+            given,
+            given,
+            _LATER,
+            _WORK,
+        )
         assert _switched(switches) == logged
 
     @pytest.mark.parametrize("deadline", [_PASSED, math.nan], ids=["passed", "not-a-number"])
@@ -206,29 +207,25 @@ class TestTheOneRule:
         "given", [_ALICE, _PROMOTED_ALICE], ids=["the-caller-acting", "the-same-subject"]
     )
     def test_the_same_subject_past_its_deadline_is_refused(
-        self, given: Identity, deadline: float
+        self, switches: RecordingLogger, given: Identity, deadline: float
     ) -> None:
-        outer = set_identity(_ALICE, until=deadline)
-        try:
-            with pytest.raises(Unauthenticated, match="system identity"):
-                fix_identity(given, _WORK, "AcmeUseCase")
-            assert current_caller() is _ALICE
-        finally:
-            reset_identity(outer)
+        with (
+            acting_as(_ALICE, until=deadline),
+            pytest.raises(DelegationExpired, match="system identity"),
+        ):
+            Acting.current().pinned_for(given, _WORK, "AcmeUseCase")
+
+        assert [event for event, _ in switches.calls] == ["delegation_expired"]
 
     def test_another_subject_is_a_logged_switch_with_a_new_delegation(
         self, switches: RecordingLogger, window: float
     ) -> None:
-        outer = set_identity(_ALICE, until=_PASSED)
-        try:
+        with acting_as(_ALICE, until=_PASSED):
             before = time.time()
-            token = fix_identity(_BOB, _WORK, "AcmeUseCase")
-            _, deadline = delegation()
-            reset_identity(token)
-        finally:
-            reset_identity(outer)
+            pinned = Acting.current().pinned_for(_BOB, _WORK, "AcmeUseCase")
 
-        assert_new_delegation(deadline, before, window)
+        assert pinned.caller is _BOB
+        assert_new_delegation(pinned.deadline, before, window)
         assert _switched(switches) == [("alice", "bob", "AcmeUseCase")]
 
     def test_no_caller_given_under_one_is_a_logged_switch_with_no_deadline(
@@ -236,67 +233,71 @@ class TestTheOneRule:
     ) -> None:
         """Alice's deadline has passed: none is kept, so the work is not refused."""
         with acting_as(_ALICE, until=_PASSED):
-            token = fix_identity(None, _WORK, "AcmeUseCase")
-            assert (current_identity(), delegation()) == (ANONYMOUS, (None, None))
-            refuse_expired_delegation()
-            reset_identity(token)
+            pinned = Acting.current().pinned_for(None, _WORK, "AcmeUseCase")
 
+        assert (pinned.effective, pinned.caller, pinned.deadline) == (ANONYMOUS, None, math.inf)
+        pinned.refuse_expired()
         assert _switched(switches) == [("alice", None, "AcmeUseCase")]
 
     def test_a_caller_given_with_nothing_acting_is_the_transport_s_and_no_switch(
         self, switches: RecordingLogger
     ) -> None:
-        reset_identity(fix_identity(_ALICE, _WORK, "AcmeUseCase"))
+        Acting.current().pinned_for(_ALICE, _WORK, "AcmeUseCase")
 
         assert switches.calls == []
 
     def test_a_caller_given_inside_work_with_none_is_a_switch_from_no_one(
         self, switches: RecordingLogger
     ) -> None:
-        outer = fix_identity(None, _WORK, "AcmeOuter")
-        try:
-            reset_identity(fix_identity(_ALICE, _WORK, "AcmeUseCase"))
-        finally:
-            reset_identity(outer)
+        outer = Acting.current().pinned_for(None, _WORK, "AcmeOuter")
+
+        outer.pinned_for(_ALICE, _WORK, "AcmeUseCase")
 
         assert _switched(switches) == [(None, "alice", "AcmeUseCase")]
 
 
 @pytest.mark.usefixtures("window")
 class TestConfigureDelegation:
-    """The one validation point of ``identity.max_delegation_seconds``."""
-
-    @pytest.mark.parametrize(
-        "seconds", [0, -1, math.inf, math.nan], ids=["zero", "negative", "infinite", "nan"]
-    )
-    def test_refuses_anything_but_a_finite_number_above_zero(self, seconds: float) -> None:
-        before = time.time()
-        with pytest.raises(ConfigError, match="identity.max_delegation_seconds"):
-            configure_delegation(seconds)
-
-        with acting_as(_ALICE):
-            assert_new_delegation(delegation()[1], before, 60.0)
-
     def test_sets_the_window_a_request_s_delegation_lasts(self) -> None:
         before = time.time()
         configure_delegation(42.0)
 
         with acting_as(_ALICE):
-            assert_new_delegation(delegation()[1], before, 42.0)
+            assert_new_delegation(captured_delegation().until, before, 42.0)
+
+    @pytest.mark.parametrize(
+        "seconds",
+        [math.inf, 1e400, math.nan, 0, -1.0],
+        ids=["infinite", "overflowing", "nan", "zero", "negative"],
+    )
+    def test_refuses_anything_but_a_finite_number_above_zero(self, seconds: float) -> None:
+        with pytest.raises(ConfigError, match="identity.max_delegation_seconds"):
+            configure_delegation(seconds)
+
+        assert identity_context._window == 60.0  # pyright: ignore[reportPrivateUsage]
+
+    def test_accepts_a_fraction_of_a_second(self) -> None:
+        configure_delegation(1.5)
+
+        assert identity_context._window == 1.5  # pyright: ignore[reportPrivateUsage]
 
 
-class TestDelegation:
+class TestCapturedDelegation:
     """What a dispatch captures: the authenticated caller and its deadline, a plain read."""
 
-    def test_an_anonymous_caller_is_captured_as_no_caller(self) -> None:
-        token = set_identity(ANONYMOUS)
-        try:
-            assert delegation() == (None, None)
-        finally:
-            reset_identity(token)
+    @pytest.mark.parametrize("caller", [None, ANONYMOUS], ids=["no-caller", "anonymous"])
+    def test_no_authenticated_caller_is_captured_as_no_caller(
+        self, caller: Identity | None
+    ) -> None:
+        with acting_as(caller, until=_LATER):
+            assert captured_delegation() == Delegation(None, None)
+
+    def test_an_authenticated_caller_is_captured_with_its_deadline(self) -> None:
+        with acting_as(_ALICE, until=_LATER):
+            assert captured_delegation() == Delegation(_ALICE, _LATER)
 
 
-class TestRefuseExpiredDelegation:
+class TestRefuseExpired:
     """The check of code acting for the caller outside an execution: RLS and audit."""
 
     @pytest.mark.parametrize(
@@ -305,17 +306,19 @@ class TestRefuseExpiredDelegation:
     def test_passes_with_no_caller_and_within_the_deadline(
         self, caller: Identity | None, deadline: float | None
     ) -> None:
-        token = set_identity(caller, until=deadline)
-        try:
-            refuse_expired_delegation()
-        finally:
-            reset_identity(token)
+        with acting_as(caller, until=deadline):
+            Acting.current().refuse_expired()
 
     @pytest.mark.parametrize("deadline", [_PASSED, math.nan], ids=["passed", "not-a-number"])
-    def test_refuses_past_the_deadline(self, deadline: float) -> None:
-        token = set_identity(_ALICE, until=deadline)
-        try:
-            with pytest.raises(Unauthenticated, match="system identity"):
-                refuse_expired_delegation()
-        finally:
-            reset_identity(token)
+    def test_refuses_past_the_deadline_logging_the_guidance(
+        self, switches: RecordingLogger, deadline: float
+    ) -> None:
+        with (
+            acting_as(_ALICE, until=deadline),
+            pytest.raises(DelegationExpired, match="system identity"),
+        ):
+            Acting.current().refuse_expired()
+
+        assert switches.calls == [
+            ("delegation_expired", {"guidance": DelegationExpired.default_message})
+        ]

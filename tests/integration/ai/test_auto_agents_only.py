@@ -5,7 +5,7 @@ declares one keyed use case and one agent — no models, no interfaces, no
 ``stores`` section but ``stores.default.backend: none``. The engine provider is
 defined here and does what a real engine does with a ``usecase`` grant: it
 builds the per-invocation bundle through the ``DepsFactory`` it was handed and
-runs the granted use case through the bound invoker, so the call travels the
+runs the granted use case through the bundle's invoker, so the call travels the
 kernel executor exactly as in production.
 
 ``ScriptedEngine`` (conftest) discards ``deps``/``container`` and the
@@ -85,7 +85,7 @@ class PingUseCase(UseCase[Any, str]):
 
 
 class _PingEngine:
-    """Engine that runs the granted use case through the bound invoker.
+    """Engine that runs the granted use case through the bundle's invoker.
 
     Attributes:
         executor: The kernel executor observed through the invoker of the last

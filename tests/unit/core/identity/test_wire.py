@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from loom.core.identity import Identity
-from loom.core.identity.wire import EXPIRED, decode_delegation, decode_identity, encode_identity
+from loom.core.identity import ANONYMOUS, NO_DELEGATION, Delegation, Identity
+from loom.core.identity.wire import EXPIRED, decode_identity, encode_identity
 
 _SUBJECT = "user-1"
 _ROLES = ("role_a", "role_b")
@@ -106,14 +106,27 @@ class TestIdentityOnTheWire:
         assert identity.mechanism == ""
 
 
-class TestTheDelegationOnTheWire:
+class TestDelegation:
     """The deadline travels inside the identity, under ``until``."""
 
     def test_a_finite_deadline_survives_the_round_trip(self) -> None:
-        assert decode_delegation(encode_identity(_identity(), 1234.5)) == (_identity(), 1234.5)
+        encoded = Delegation(_identity(), 1234.5).encoded()
+
+        assert Delegation.decoded(encoded) == Delegation(_identity(), 1234.5)
 
     def test_a_caller_without_one_decodes_with_none_for_the_worker_to_start(self) -> None:
-        assert decode_delegation(encode_identity(_identity())) == (_identity(), None)
+        assert Delegation.decoded(encode_identity(_identity())) == Delegation(_identity(), None)
+
+    @pytest.mark.parametrize("payload", [None, {}, "acme"], ids=["absent", "empty", "string"])
+    def test_no_readable_caller_decodes_to_no_caller_and_no_deadline(self, payload: Any) -> None:
+        assert Delegation.decoded(payload) is NO_DELEGATION
+
+    @pytest.mark.parametrize("caller", [None, ANONYMOUS], ids=["no-caller", "anonymous"])
+    def test_of_no_authenticated_caller_is_no_delegation(self, caller: Identity | None) -> None:
+        assert Delegation.of(caller, 1234.5) is NO_DELEGATION
+
+    def test_of_an_authenticated_caller_keeps_its_deadline(self) -> None:
+        assert Delegation.of(_identity(), 1234.5) == Delegation(_identity(), 1234.5)
 
     @pytest.mark.parametrize(
         "until",
@@ -124,8 +137,12 @@ class TestTheDelegationOnTheWire:
         """``null`` included: msgspec writes ``inf`` as ``null``, never a fresh window."""
         payload = {**(encode_identity(_identity()) or {}), "until": until}
 
-        assert decode_delegation(payload) == (_identity(), EXPIRED)
+        assert Delegation.decoded(payload) == Delegation(_identity(), EXPIRED)
 
     @pytest.mark.parametrize("until", [math.inf, math.nan], ids=["infinite", "nan"])
     def test_a_non_finite_deadline_is_encoded_as_expired(self, until: float) -> None:
-        assert (encode_identity(_identity(), until) or {})["until"] == EXPIRED
+        assert (Delegation(_identity(), until).encoded() or {})["until"] == EXPIRED
+
+    @pytest.mark.parametrize("caller", [None, Identity(subject="")], ids=["none", "anonymous"])
+    def test_no_authenticated_caller_encodes_to_none(self, caller: Identity | None) -> None:
+        assert Delegation(caller, 1234.5).encoded() is None

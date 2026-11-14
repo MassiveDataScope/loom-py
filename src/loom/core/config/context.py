@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+import msgspec
+
 from loom.core.config.binder import StructBinder
 from loom.core.config.configurable import ConfigBinding
+from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.config.loader import load_config
 from loom.core.config.loader import section as _section
+from loom.core.model.types import PositiveSeconds
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -185,6 +189,25 @@ class ConfigContext:
         """
         resolved = self.section_optional(key, target)
         return default if resolved is None else resolved
+
+    def positive_seconds(self, key: str, default: float) -> float:
+        """Read *key* as a finite number of seconds above zero, or *default* when absent.
+
+        Args:
+            key: Dot-separated path to the value.
+            default: Seconds when the key is absent.
+
+        Returns:
+            The seconds.
+
+        Raises:
+            ConfigError: When the value is not a finite number above zero.
+        """
+        seconds = self.section_or_default(key, float, default)
+        try:
+            return msgspec.convert(seconds, PositiveSeconds)
+        except msgspec.ValidationError as error:
+            raise ConfigError(f"{key} must be a finite number above zero, got {seconds}") from error
 
     def section(self, key: str | ConfigKey, target: type[T]) -> T:
         """Extract and validate a typed config section by dot-path.

@@ -31,6 +31,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, TypeAlias
 
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
+from loom.core.execution import execution_identity
+from loom.core.identity import Acting
 
 if TYPE_CHECKING:
     from loom.ai.abc import AgentUsage
@@ -942,21 +944,25 @@ def is_retriable(code: AgentRunErrorCode) -> bool:
     return run_error_class(code) is AgentRunErrorClass.INFRASTRUCTURE
 
 
-def require_authenticated(identity: Identity, who: str) -> Identity:
-    """Return *identity*, refusing one that carries no subject.
+def require_authenticated(who: str) -> Identity:
+    """Return the identity of the execution in progress, refused past its deadline or anonymous.
 
     Args:
-        identity: The identity acting, read with
-            :func:`~loom.core.execution.execution_identity`.
         who: What refuses it, as the refusal names it (``"tool 'x'"``).
 
     Returns:
-        *identity*.
+        The authenticated identity acting.
 
     Raises:
-        AgentRunError: With ``UNAUTHORIZED`` when *identity* is not
+        ExecutionRequired: Outside any execution.
+        Unauthenticated: When the execution acts with no caller.
+        DelegationExpired: Past the caller's deadline, inside a live execution
+            or from a task whose execution ended.
+        AgentRunError: With ``UNAUTHORIZED`` when the identity acting is not
             authenticated.
     """
+    identity = execution_identity()
+    Acting.current().refuse_expired()
     if not identity.is_authenticated:
         raise AgentRunError(
             AgentRunErrorCode.UNAUTHORIZED, f"{who} requires an authenticated caller"

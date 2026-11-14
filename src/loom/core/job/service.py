@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from loom.core.identity import Identity, delegation, reset_identity, set_identity
+from loom.core.identity import (
+    NO_DELEGATION,
+    Delegation,
+    captured_delegation,
+    reset_identity,
+    set_identity,
+)
 from loom.core.job.callback import JobCallback, run_on_failure, run_on_success
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
@@ -38,8 +44,8 @@ class _PendingDispatch:
     result_holder: list[Any]
     factory: UseCaseFactory
     executor: RuntimeExecutor = field(repr=False)
-    captured: tuple[Identity | None, float | None] = (None, None)
-    """The dispatcher's caller and deadline (:func:`~loom.core.identity.delegation`)."""
+    captured: Delegation = NO_DELEGATION
+    """The dispatcher's caller and deadline (:func:`~loom.core.identity.captured_delegation`)."""
 
     async def run(self) -> None:
         """Run the job, then its callback, as the dispatcher, within the captured delegation.
@@ -50,9 +56,13 @@ class _PendingDispatch:
         as anyone else, resuming it raises
         :class:`~loom.core.identity.IdentityFixed`: it fails closed.
         """
-        caller, until = self.captured
-        acting = delegation()[0]
-        token = None if acting is caller or acting == caller else set_identity(caller, until=until)
+        caller = self.captured.caller
+        acting = captured_delegation().caller
+        token = (
+            None
+            if acting is caller or acting == caller
+            else set_identity(caller, until=self.captured.until)
+        )
         try:
             result: Any = await self.executor.run(
                 self.job_type,
@@ -183,7 +193,7 @@ class InlineJobService:
     A dispatched job, and its callbacks, act as
     :func:`~loom.core.identity.current_caller` at the time of the dispatch:
     the authenticated caller acting there, else no caller, with the deadline
-    of its delegation (:func:`~loom.core.identity.delegation`), exactly as
+    of its delegation (:func:`~loom.core.identity.captured_delegation`), exactly as
     the Celery and SQS services capture it. :meth:`run` acts as the identity
     acting, as any execution given none.
 
@@ -282,7 +292,7 @@ class InlineJobService:
             result_holder=result_holder,
             factory=self._factory,
             executor=self._executor,
-            captured=delegation(),
+            captured=captured_delegation(),
         )
         add_pending_dispatch(pending.run)
         return JobHandle(
