@@ -43,37 +43,36 @@ def _end(name: str, step_run_id: str) -> LifecycleEvent:
     )
 
 
-def test_step_start_binds_contextvar_step_end_resets() -> None:
-    observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
-    fake_task_run = uuid.uuid4()
+class TestPrefectTaskRunObserver:
+    def test_step_start_binds_contextvar_step_end_resets(self) -> None:
+        observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
+        fake_task_run = uuid.uuid4()
 
-    with (
-        patch.object(observer, "_create_task_run", return_value=fake_task_run),
-        patch.object(observer, "_set_state"),
-    ):
-        assert current_task_run_id() is None
-        observer.on_event(_start("MyStep", "step-1"))
-        assert current_task_run_id() == fake_task_run
-        observer.on_event(_end("MyStep", "step-1"))
-        assert current_task_run_id() is None
+        with (
+            patch.object(observer, "_create_task_run", return_value=fake_task_run),
+            patch.object(observer, "_set_state"),
+        ):
+            assert current_task_run_id() is None
+            observer.on_event(_start("MyStep", "step-1"))
+            assert current_task_run_id() == fake_task_run
+            observer.on_event(_end("MyStep", "step-1"))
+            assert current_task_run_id() is None
 
+    def test_step_marker_is_cached_per_name(self) -> None:
+        observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
 
-def test_step_marker_is_cached_per_name() -> None:
-    observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
+        first = observer._step_marker("StepA")
+        second = observer._step_marker("StepA")
+        third = observer._step_marker("StepB")
 
-    first = observer._step_marker("StepA")
-    second = observer._step_marker("StepA")
-    third = observer._step_marker("StepB")
+        assert first is second
+        assert first is not third
 
-    assert first is second
-    assert first is not third
-
-
-def test_process_scope_events_are_ignored() -> None:
-    observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
-    event = LifecycleEvent.start(scope=Scope.PROCESS, name="MyProcess")
-    observer.on_event(event)
-    assert not observer._task_runs
+    def test_process_scope_events_are_ignored(self) -> None:
+        observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
+        event = LifecycleEvent.start(scope=Scope.PROCESS, name="MyProcess")
+        observer.on_event(event)
+        assert not observer._task_runs
 
 
 class TestActiveFlowRunId:

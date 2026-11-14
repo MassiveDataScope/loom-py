@@ -18,7 +18,6 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
 
-import msgspec
 import prefect
 import pytest
 import yaml
@@ -26,45 +25,20 @@ import yaml
 from loom.core.checks import DeployCheckError
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.etl.maintenance import MaintenanceStep
 from loom.prefect import backfill_flow, deploy_flow, etl_flow, maintenance_flow
 from loom.prefect._flow_yaml import extract_pool_config
 from loom.prefect.flow import _backfill_body, _body, _maintenance
 from loom.prefect.flow._hooks import _env_from_params
 from loom.prefect.flow._signature import synthesise_flow_signature
 from tests.helpers.deploy_checks import write_failing_check_module
+from tests.unit.prefect.doubles import (
+    AcmeMaintenance,
+    AcmeMaintenanceParams,
+    AcmeSampleParams,
+    AcmeWindowPipeline,
+)
 
 _SOURCE_FILE = "/app/src/flows/env_orders.py"
-
-
-class _Params(ETLParams, frozen=True):  # type: ignore[misc]
-    updated_at_from: datetime
-    updated_at_to: datetime
-
-
-class _Step(ETLStep[_Params]):
-    src = FromTable("raw.events")
-    target = IntoTable("staging.events").replace()
-
-    def execute(self, params: _Params, *, src: Any = None, **frames: Any) -> Any:
-        return src
-
-
-class _Process(ETLProcess[_Params]):
-    steps = [_Step]
-
-
-class _Pipeline(ETLPipeline[_Params]):
-    processes = [_Process]
-
-
-class _MaintenanceParams(msgspec.Struct, frozen=True):
-    dry_run: bool = False
-
-
-class _Maintenance(MaintenanceStep[_MaintenanceParams]):
-    operations = []
 
 
 _FLOW_YAML = textwrap.dedent(
@@ -92,8 +66,8 @@ def _flow_yaml(tmp_path: Path, text: str = _FLOW_YAML) -> str:
 def _etl(tmp_path: Path) -> Any:
     return etl_flow(
         name="env-orders",
-        pipeline=_Pipeline,
-        params_type=_Params,
+        pipeline=AcmeWindowPipeline,
+        params_type=AcmeSampleParams,
         config_path=_flow_yaml(tmp_path),
         source_file=_SOURCE_FILE,
     )
@@ -101,7 +75,7 @@ def _etl(tmp_path: Path) -> Any:
 
 class TestFlowParameter:
     def test_env_defaults_to_none_so_the_resolver_decides(self) -> None:
-        signature = synthesise_flow_signature(_Params)
+        signature = synthesise_flow_signature(AcmeSampleParams)
 
         assert signature.parameters["env"].default is None
 
@@ -132,8 +106,8 @@ class TestEnvironmentsBlock:
         with pytest.raises(ConfigError, match="'dev'"):
             etl_flow(
                 name="env-orders",
-                pipeline=_Pipeline,
-                params_type=_Params,
+                pipeline=AcmeWindowPipeline,
+                params_type=AcmeSampleParams,
                 config_path=path,
                 source_file=_SOURCE_FILE,
             )
@@ -194,12 +168,12 @@ class TestRuns:
     ) -> None:
         flow = backfill_flow(
             name="env-backfill",
-            pipeline=_Pipeline,
-            params_type=_Params,
+            pipeline=AcmeWindowPipeline,
+            params_type=AcmeSampleParams,
             config_path=_flow_yaml(tmp_path),
             source_file=_SOURCE_FILE,
-            per_chunk_processes=["_Process"],
-            finalize_processes=["_Process"],
+            per_chunk_processes=["AcmeWindowStagingProcess"],
+            finalize_processes=["AcmeWindowStagingProcess"],
             window_start_field="updated_at_from",
             window_end_field="updated_at_to",
             chunk="day",
@@ -218,12 +192,12 @@ class TestRuns:
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
         flow = backfill_flow(
             name="env-backfill-mismatch",
-            pipeline=_Pipeline,
-            params_type=_Params,
+            pipeline=AcmeWindowPipeline,
+            params_type=AcmeSampleParams,
             config_path=_flow_yaml(tmp_path),
             source_file=_SOURCE_FILE,
-            per_chunk_processes=["_Process"],
-            finalize_processes=["_Process"],
+            per_chunk_processes=["AcmeWindowStagingProcess"],
+            finalize_processes=["AcmeWindowStagingProcess"],
             window_start_field="updated_at_from",
             window_end_field="updated_at_to",
             chunk="day",
@@ -245,8 +219,8 @@ class TestRuns:
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
         flow = maintenance_flow(
             name="env-maintenance-mismatch",
-            step=_Maintenance,
-            params_type=_MaintenanceParams,
+            step=AcmeMaintenance,
+            params_type=AcmeMaintenanceParams,
             config_path=_flow_yaml(tmp_path),
             source_file=_SOURCE_FILE,
         )
@@ -277,8 +251,8 @@ class TestRuns:
         monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: None)
         flow = maintenance_flow(
             name="env-maintenance",
-            step=_Maintenance,
-            params_type=_MaintenanceParams,
+            step=AcmeMaintenance,
+            params_type=AcmeMaintenanceParams,
             config_path=_flow_yaml(tmp_path),
             source_file=_SOURCE_FILE,
             storage_config_path=str(storage),
