@@ -276,8 +276,7 @@ def _report_switch(previous: Identity | None, identity: Identity | None, what: s
         what: What runs as *identity*: the use case, ``ExecutionScope`` or
             ``transport``.
     """
-    from opentelemetry import trace
-
+    from loom.core.observability.span import annotate_current_span
     from loom.core.tracing import get_trace_id
 
     from_subject = None if previous is None else previous.subject
@@ -296,9 +295,12 @@ def _report_switch(previous: Identity | None, identity: Identity | None, what: s
         use_case=what,
         trace_id=get_trace_id(),
     )
-    span = trace.get_current_span()
-    span.set_attribute("loom.identity.switched_from", from_subject or "")
-    span.set_attribute("loom.identity.switched_to", to_subject or "")
+    annotate_current_span(
+        {
+            "loom.identity.switched_from": from_subject or "",
+            "loom.identity.switched_to": to_subject or "",
+        }
+    )
 
 
 def _delegation_expired() -> Unauthenticated:

@@ -45,6 +45,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.core.di",
             "loom.core.use_case",
             "loom.core.uow",
+            "opentelemetry",
         ),
         (),
     ),
