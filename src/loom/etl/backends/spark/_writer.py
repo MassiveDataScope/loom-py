@@ -107,10 +107,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         rows = [record.to_row() for record in records]
         return self._spark.createDataFrame(rows, schema=_spark_record_schema(first))
 
-    # ====================================================================
-    # Schema Hooks
-    # ====================================================================
-
     def _physical_schema(self, target: ResolvedTarget) -> SparkPhysicalSchema | None:
         """Read physical schema from Spark/Delta."""
         if isinstance(target, CatalogTarget):
@@ -119,7 +115,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             fields = self._spark.table(target.catalog_ref.ref).schema.fields
             return SparkPhysicalSchema(schema=T.StructType(list(fields)))
 
-        # Path target
         try:
             dt = DeltaTable.forPath(self._spark, target.location.uri)
             return SparkPhysicalSchema(schema=dt.toDF().schema)
@@ -165,16 +160,12 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
                 "but the frame to write is a streaming DataFrame. Read the source as a "
                 "batch DataFrame or declare replace() without allow_empty=False."
             )
-        # A pyspark 3.5 Spark Connect DataFrame is not a pyspark.sql.DataFrame
-        # and raises NOT_IMPLEMENTED on localCheckpoint().
         classic = isinstance(frame, DataFrame)
         if classic:
             pinned = frame.localCheckpoint(eager=True)
         else:
             pinned = frame.persist(StorageLevel.MEMORY_AND_DISK)
         try:
-            # A persisted frame is counted, which computes and caches every
-            # partition for the write; isEmpty() would stop at the first row.
             return pinned, bool(pinned.isEmpty()) if classic else int(pinned.count()) == 0
         except BaseException:
             self._release_pinned(pinned)
@@ -189,8 +180,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         """
         try:
             if isinstance(frame, DataFrame):
-                # unpersist() does not free a local checkpoint's blocks: they
-                # belong to the RDD under the checkpointed frame's logical plan.
                 java_frame: Any = frame._jdf
                 java_frame.queryExecution().logical().rdd().unpersist(False)
             else:
@@ -201,10 +190,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""
         return predicate_to_sql(predicate, params)
-
-    # ====================================================================
-    # Write Hooks
-    # ====================================================================
 
     def _create(
         self,
@@ -438,10 +423,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             write_options=spec.write_options,
         )
 
-    # ====================================================================
-    # Helpers
-    # ====================================================================
-
     def _sink(self, writer: Any, target: ResolvedTarget) -> None:
         """Finalize write based on target type."""
         if isinstance(target, CatalogTarget):
@@ -451,11 +432,6 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
 
 
 __all__ = ["SparkTargetWriter", "_collect_partition_combos"]
-
-
-# ========================================================================
-# File writers — one per format Spark can write
-# ========================================================================
 
 
 def _write_delta_file(frame: DataFrame, spec: FileSpec) -> None:

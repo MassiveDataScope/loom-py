@@ -130,7 +130,6 @@ class AppInvoker:
             bound = invoker.for_identity(caller)
             await bound.invoke(ReadInvoice, params={"id": 7})
         """
-        # ``replace`` copies fields added later.
         return replace(self, identity=identity)
 
     async def invoke(

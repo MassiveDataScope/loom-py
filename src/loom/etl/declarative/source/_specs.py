@@ -288,7 +288,6 @@ class DynamoDbSourceSpec:
         return SourceKind.DYNAMODB
 
 
-# Type alias — the union of all typed source spec variants.
 SourceSpec = (
     TableSourceSpec
     | FileSourceSpec

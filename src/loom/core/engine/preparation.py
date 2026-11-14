@@ -25,7 +25,6 @@ from loom.core.execution import ExecutionKinds, Kind
 from loom.core.identity import Identity
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 
-# The marker, the resolver and the binding method each execution kind's errors name.
 _KIND_WORDING = {
     AGENT: ("Agent()", "agent", "bind_agent_resolver"),
     MCP: ("Mcp()", "MCP", "bind_mcp_resolver"),
@@ -58,7 +57,6 @@ class _Call:
 
 Bind: TypeAlias = Callable[[_Call], None]
 FetchOne: TypeAlias = Callable[[Any, ExecutionPlan, _Call], Awaitable[Any]]
-# One repository fetch: how, the plan step it reads, and its ``[STEP]`` label.
 Fetch: TypeAlias = tuple[FetchOne, LoadStep | ExistsStep, str]
 
 
@@ -99,8 +97,6 @@ class Preparation:
         self._kinds = kinds
         self._repo_resolver = repo_resolver
         self._observer = observer
-        # Keeps every use-case class this executor ran alive for the executor's lifetime: fine
-        # for classes defined statically, a leak for classes created per request.
         self._tables: dict[type[Any], _Steps] = {}
 
     async def call(

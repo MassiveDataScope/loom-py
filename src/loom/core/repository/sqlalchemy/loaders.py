@@ -41,11 +41,6 @@ class ProjectionLoader(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Internal SQL-path loaders — synthesized at compile_all() time
-# ---------------------------------------------------------------------------
-
-
 class _SqlCountLoader:
     """SQL loader that counts related rows per parent id."""
 

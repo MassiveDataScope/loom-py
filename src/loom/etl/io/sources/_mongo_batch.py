@@ -23,19 +23,11 @@ _SHAPE_SUMMARY_DEPTH = 8
 _SHAPE_SUMMARY_LIMIT = 24
 
 
-# ---------------------------------------------------------------------------
-# JSON serialization
-# ---------------------------------------------------------------------------
-
-
 def _json_default(obj: object) -> object:
-    # datetime/bytes pass through _normalize unchanged; handled at JSON-encode time.
     if isinstance(obj, (datetime.datetime, datetime.date)):
         return obj.isoformat()
     if isinstance(obj, bytes):
         return obj.hex()
-    # Delegate bson-origin objects to _normalize (single source of truth in _mongo_bson.py).
-    # Covers build_frame() callers that skip the cursor loop and normalize_bson_doc().
     if _is_bson_type(obj):
         return deep_normalize_for_json(obj)
     _log.warning(
@@ -54,14 +46,9 @@ def _safe_dumps(v: Any) -> str | None:
         return None
     try:
         return _json_dumps(v)
-    except Exception as exc:  # noqa: BLE001 — a bad document must never abort a scan
+    except Exception as exc:  # noqa: BLE001
         _record_serialization_failure(exc, v)
         return None
-
-
-# ---------------------------------------------------------------------------
-# Type classification
-# ---------------------------------------------------------------------------
 
 
 def _classify_value(v: Any) -> str:
@@ -82,7 +69,7 @@ def _classify_value(v: Any) -> str:
     if isinstance(v, dict):
         return "dict"
     if isinstance(v, list):
-        return "null" if not v else _classify_list(v)  # P5: empty list = no type info
+        return "null" if not v else _classify_list(v)
     return f"other:{type(v).__name__}"
 
 
@@ -99,11 +86,6 @@ def _classify_list(v: list[Any]) -> str:
     if not seen:
         return "list"
     return f"list[{next(iter(seen))}]" if len(seen) == 1 else "list[mixed]"
-
-
-# ---------------------------------------------------------------------------
-# Conflict detection
-# ---------------------------------------------------------------------------
 
 
 def _effective_type_set(ts: set[str]) -> set[str]:
@@ -170,22 +152,14 @@ def _classify_batch_keys(
     return conflicted, complex_root
 
 
-# ---------------------------------------------------------------------------
-# Batch transformation helpers
-# ---------------------------------------------------------------------------
-
-
 def _pre_serialize_value(v: Any) -> Any:
     if v is None:
         return None
     if isinstance(v, str):
         return v
-    # Contract: normalize_bson_doc() already ran in _mongo.py's cursor loop, converting
-    # all BSON types to Python builtins. deep_normalize_for_json() is a defensive guard
-    # for callers that invoke build_frame() directly without going through the cursor.
     try:
         return _json_dumps(deep_normalize_for_json(v))
-    except Exception as exc:  # noqa: BLE001 — a bad document must never abort a scan
+    except Exception as exc:  # noqa: BLE001
         _record_serialization_failure(exc, v)
         return None
 
@@ -364,11 +338,6 @@ def _log_risky_rows(
             break
 
 
-# ---------------------------------------------------------------------------
-# Schema canonicalization
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class _CanonicalFieldPlan:
     name: str
@@ -524,7 +493,6 @@ def _canonicalize_batch(
     batch: list[dict[str, Any]],
     plan: dict[str, _CanonicalValuePlan],
 ) -> None:
-    # Mutates in place; the dicts come from normalize_bson_doc which already produced fresh copies.
     if not batch or not plan:
         return
     for doc in batch:
@@ -533,18 +501,12 @@ def _canonicalize_batch(
                 doc[field_name] = _canonicalize_value(doc[field_name], field_plan)
 
 
-# ---------------------------------------------------------------------------
-# DataFrame construction
-# ---------------------------------------------------------------------------
-
-
 def _apply_series_override(
     s: pl.Series, k: str, values: list[Any], override: pl.DataType
 ) -> pl.Series:
     if s.dtype == override:
         return s
     if override == pl.String and isinstance(s.dtype, (pl.Struct, pl.List, pl.Array)):
-        # polars .cast(String) on Struct emits "{10}" not JSON — use safe_dumps
         return pl.Series(name=k, values=[_safe_dumps(v) for v in values], dtype=pl.String)
     try:
         return s.cast(override, strict=False)
@@ -579,11 +541,6 @@ def _build_frame_fallback(
     return pl.DataFrame(series_list)
 
 
-# ---------------------------------------------------------------------------
-# Schema alignment
-# ---------------------------------------------------------------------------
-
-
 def align_to_schema(
     df: pl.DataFrame,
     schema: dict[str, pl.DataType],
@@ -609,7 +566,7 @@ def align_to_schema(
         if target_dtype == pl.String and isinstance(col_dtype, (pl.Struct, pl.List, pl.Array)):
             exprs.append(_series_to_json_string(df[col_name]).alias(col_name))
         elif col_dtype == pl.String and target_dtype != pl.String:
-            pass  # preserve conflict-serialized strings
+            pass
         else:
             exprs.append(pl.col(col_name).cast(target_dtype, strict=False).alias(col_name))
     if exprs:
@@ -684,11 +641,6 @@ def apply_declared_schema(
     return df if df.columns == output_cols else df.select(output_cols)
 
 
-# ---------------------------------------------------------------------------
-# Main processor
-# ---------------------------------------------------------------------------
-
-
 class MongoBatchProcessor:
     """Transform a list[dict] batch into a pl.DataFrame.
 
@@ -717,10 +669,7 @@ class MongoBatchProcessor:
         self._declared_schema = declared_schema
         self._source_label = source_label
         self._str_coercion_warned = False
-        # Lazily built on first batch; safe as a singleton because schema_overrides
-        # is the same dict object across all build_frame() calls within a single scan.
         self._canonical_plan: dict[str, _CanonicalValuePlan] | None = None
-        # None until the first batch is seen; updated as new fields appear.
         self._observed_fields: frozenset[str] | None = None
 
     def _check_schema_drift(self, batch: list[dict[str, Any]]) -> None:
@@ -744,7 +693,6 @@ class MongoBatchProcessor:
                 self._source_label,
                 sorted(dropped_fields),
             )
-            # Do not update _observed_fields for dropped fields so the warning persists.
 
     def build_frame(
         self,
@@ -754,7 +702,6 @@ class MongoBatchProcessor:
         if not batch:
             return pl.DataFrame()
         self._check_schema_drift(batch)
-        # Single classification + str pre-serialise pass before any mutation.
         str_complex, root_types, sub_tags, is_complex, undeclared_complex = self._scan_batch(
             batch, schema_overrides
         )

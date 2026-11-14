@@ -231,7 +231,6 @@ class ETLRunner:
         observability = ObservabilityRuntime.from_config(
             obs_config, environment=resolved_environment
         )
-        # Before the agent runner: no work starts on a configuration that fails.
         enforce_deploy_checks(context, resolved_environment, skip=(REST_CHECKS,))
         return cls._assemble(
             storage_config,

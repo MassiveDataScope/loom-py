@@ -1,9 +1,9 @@
 """Agent compiler: validated artifact in, immutable plan out.
 
-Offline by construction (FR-010): nothing in this package touches the
+Offline by construction: nothing in this package touches the
 network, reads credentials or loads entry points — ``supported_kinds``
 arrives as a plain value resolved by the bootstrap.  Every phase accumulates
-its issues and one :class:`AgentCompilationError` reports them all (FR-011).
+its issues and one :class:`AgentCompilationError` reports them all.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class AgentCompiler:
 
     Runs every validation phase over every spec, accumulates all the issues
     found and raises a single :class:`AgentCompilationError`, so a generator
-    sees the whole picture at once (FR-011, SC-003).
+    sees the whole picture at once.
 
     Args:
         config: Deployment configuration of the AI pillar.

@@ -17,10 +17,7 @@ from uuid import UUID
 import msgspec
 
 StructT = TypeVar("StructT", bound=msgspec.Struct)
-# Values kept as they are, because SQLAlchemy binds them to typed columns and
-# encoding them to strings breaks those columns.
 _NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
-# What a Postgres driver returns for ``inet``; a model field holds its text form.
 _NETWORK_VALUES = (
     ipaddress.IPv4Address,
     ipaddress.IPv6Address,

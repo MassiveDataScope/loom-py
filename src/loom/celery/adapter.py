@@ -98,11 +98,6 @@ _SIGNAL_UIDS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Celery worker lifecycle signals
-# ---------------------------------------------------------------------------
-
-
 class _AsyncRuntimeProtocol(Protocol):
     backend: str
 
@@ -172,7 +167,6 @@ class _WorkerLifecycle:
         """
         try:
             if _is_prefork(worker):
-                # No bridge in the parent: a thread must not cross the fork.
                 asyncio.run(self._application.check())
             else:
                 self._open(check=True)
@@ -259,11 +253,6 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
         signal.connect(handler, weak=False, dispatch_uid=uid)
 
 
-# ---------------------------------------------------------------------------
-# Task registration
-# ---------------------------------------------------------------------------
-
-
 def _register_tasks(
     celery_app: Celery,
     declared: _Declared,
@@ -299,11 +288,6 @@ def _register_tasks(
             async_runtime,
             observability_runtime=observability,
         )
-
-
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -385,7 +369,6 @@ class CeleryAdapter:
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
                 models=resolved.models,
-                # Jobs compile and register like any use case.
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
                 jobs=resolved.jobs,
@@ -394,9 +377,6 @@ class CeleryAdapter:
             agents=False,
             metrics=self._metrics,
             callbacks=resolved.callbacks,
-            # Without models the worker serves only a unit of work: no cursor
-            # codec is built, and the shared metadata the caller compiled into
-            # stays as it is.
             connection_only=not resolved.models,
         )
 

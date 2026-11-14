@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-INTERPOLATION = "${"  # opens a placeholder
+INTERPOLATION = "${"
 
 
 class ConfigKey(StrEnum):

@@ -189,10 +189,6 @@ class ETLCompiler:
     def _validates_agents(self) -> bool:
         return self._agents is not None or self._config_context is not None
 
-    # ------------------------------------------------------------------
-    # Pipeline assembly
-    # ------------------------------------------------------------------
-
     def _compile_pipeline_item(
         self,
         item: Any,
@@ -222,10 +218,6 @@ class ETLCompiler:
         plan = self._get_or_build_process(item)
         validate_params_compat(item, plan.params_type, pipeline_params_type)
         return plan
-
-    # ------------------------------------------------------------------
-    # Process assembly
-    # ------------------------------------------------------------------
 
     def _build_process_plan(self, process_type: type[ETLProcess[Any]]) -> ProcessPlan:
         params_type = _require_params_type(process_type, "ETLProcess")
@@ -263,10 +255,6 @@ class ETLCompiler:
         validate_params_compat(item, plan.params_type, process_params_type)
         return plan
 
-    # ------------------------------------------------------------------
-    # Step assembly
-    # ------------------------------------------------------------------
-
     def _build_step_plan(self, step_type: type[ETLStep[Any]]) -> StepPlan:
         params_type = _require_params_type(step_type, "ETLStep")
         source_bindings = resolve_source_bindings(step_type)
@@ -299,10 +287,6 @@ class ETLCompiler:
             agent_bindings=agent_bindings,
         )
 
-    # ------------------------------------------------------------------
-    # Cache helpers
-    # ------------------------------------------------------------------
-
     def _get_or_build_process(self, process_type: type[ETLProcess[Any]]) -> ProcessPlan:
         if process_type in self._process_cache:
             _log.debug("compile cache hit process=%s", process_type.__name__)
@@ -318,11 +302,6 @@ class ETLCompiler:
         plan = self._build_step_plan(step_type)
         self._step_cache[step_type] = plan
         return plan
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
 
 
 def _require_params_type(cls: type[Any], kind: str) -> type[Any]:

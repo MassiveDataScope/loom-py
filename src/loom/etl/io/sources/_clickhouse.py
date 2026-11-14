@@ -258,11 +258,6 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 "read_streaming requires 'pyarrow'. "
                 "Install it with: pip install 'loom-py[clickhouse]'"
             )
-        # Spool the streaming Arrow result to a temp IPC file so downstream
-        # ``collect(engine="streaming")`` can consume it lazily. Caps peak
-        # RAM at one batch instead of the full result set.
-        # clickhouse-connect StreamContext yields _pa.Table per block — peek
-        # the first chunk to obtain schema before opening the IPC writer.
         with client.query_arrow_stream(query) as stream:
             iterator = iter(stream)
             try:

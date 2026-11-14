@@ -90,8 +90,6 @@ class LoomRestAdapter:
                 factory=self._factory,
                 params=request.params,
                 payload=request.payload,
-                # The request's caller, read once here and passed explicitly: an
-                # unauthenticated request runs as an explicit ANONYMOUS caller.
                 identity=current_identity(),
             )
         except LoomError as exc:

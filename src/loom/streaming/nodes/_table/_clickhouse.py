@@ -53,7 +53,6 @@ def _bounded(settings: ClickHouseSinkConfig) -> ClickHouseConnection:
     declares = connection.connect_timeout is not None or connection.read_timeout is not None
     if settings.insert_timeout is None or declares:
         return connection
-    # The driver takes whole seconds above zero; round a fraction up, never to 0.
     seconds = max(1, math.ceil(settings.insert_timeout))
     return msgspec.structs.replace(connection, connect_timeout=seconds, read_timeout=seconds)
 
@@ -102,7 +101,6 @@ class _ClickHouseTablePartition:
         self._target = f"ClickHouse table {settings.table!r}"
         self._column_names = _column_names(payload_type)
         self._buffer_policy = settings.buffer_policy
-        # Column-oriented: one inner list per column, grows with each row.
         self._buffer: list[list[Any]] = [[] for _ in self._column_names]
         self._buffer_records = 0
         self._buffer_bytes = 0

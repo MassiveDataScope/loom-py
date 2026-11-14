@@ -18,8 +18,6 @@ from loom.ai.abc import ConcurrentMcpSession as ConcurrentMcpSession
 from loom.ai.abc import HealthState as HealthState
 from loom.ai.abc import McpSession as McpSession
 from loom.ai.errors import (
-    # Re-exported: ``AgentRunError`` lives with its code in 'loom.ai.errors',
-    # so an engine adapter reaches it without importing this whole runtime.
     AgentRunError as AgentRunError,
 )
 from loom.ai.runtime._health import AgentHealth

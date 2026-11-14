@@ -1,4 +1,4 @@
-"""Ordered commits across the stores of one invocation (ADR 0008).
+"""Ordered commits across the stores of one invocation.
 
 The coordinator turns the units of work of one invocation into a typed
 outcome per store. It has two seams: :meth:`OrderedCommits.enlist` creates
@@ -231,7 +231,6 @@ class _PhasedDriver:
         try:
             await self._uow.begin()
         except BaseException:
-            # ``begin`` may have opened a session before it failed.
             await self._close_logging_failure()
             raise
 
@@ -582,7 +581,6 @@ class _Settlement:
         self._enlisted = enlisted
         self._rollback_timeout = rollback_timeout
         self._rollback_deadline: float | None = None
-        # A poisoned participant fails a clean invocation, as its business error would.
         self._failure = error or next(
             (p.poisoned for p in enlisted if p.poisoned is not None), None
         )
@@ -667,7 +665,7 @@ class _Settlement:
             if log_failure_as is not None:
                 _log.exception(log_failure_as, store=participant.key)
             return exc
-        except BaseException as exc:  # NOSONAR S5754 - re-raised by raise_interrupt()
+        except BaseException as exc:  # NOSONAR S5754
             self._interrupt = self._interrupt or exc
             self._failure = self._failure or exc
             return exc

@@ -23,12 +23,12 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 
 CLIENT_MADE_CODES: Final[frozenset[int]] = frozenset(
     {
-        -32000,  # CONNECTION_CLOSED
-        -32001,  # REQUEST_TIMEOUT
-        -32600,  # INVALID_REQUEST
-        -32601,  # METHOD_NOT_FOUND
-        -32603,  # INTERNAL_ERROR
-        -32700,  # PARSE_ERROR
+        -32000,
+        -32001,
+        -32600,
+        -32601,
+        -32603,
+        -32700,
     }
 )
 """JSON-RPC codes the mcp 2.3.0 client makes on a ``tools/call``; an mcp upgrade rechecks them."""
@@ -94,11 +94,10 @@ def classify(exc: BaseException) -> Outcome:
         return Outcome.COMPLETED if cause is None else classify(cause)
     try:
         from mcp import MCPError
-    except ImportError:  # without the client no error can be a server's answer
+    except ImportError:
         return Outcome.UNSAFE
     if not isinstance(exc, MCPError):
         return Outcome.UNSAFE
-    # Read by name: a checker without the client cannot narrow to MCPError.
     code, message = getattr(exc, "code", None), getattr(exc, "message", None)
     if code not in CLIENT_MADE_CODES:
         return Outcome.COMPLETED

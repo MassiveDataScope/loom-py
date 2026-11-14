@@ -1,15 +1,13 @@
 """Pure projection of the agent event union onto A2A streaming events.
 
-Implements the ``AgentEvent`` -> A2A table of
-``specs/001-ai-agent-layer/contracts/a2a.md``: both HTTP/SSE and A2A streaming
-are projections of the same five-member union, so there is no second event set
-to keep in sync (FR-039a).
+Maps each ``AgentEvent`` to its A2A event: both HTTP/SSE and A2A streaming
+are projections of the same five-member union.
 
 Two properties are load-bearing:
 
 * The projection is pure — no A2A SDK and no web framework is imported — which
-  is what makes the redaction guarantee a unit test (R-005).
-* A tool call publishes an opaque ordinal and nothing else (FR-030a). Redacting
+  is what makes the redaction guarantee a unit test.
+* A tool call publishes an opaque ordinal and nothing else. Redacting
   the capability wiring from the card and then publishing it event by event
   would be a leak standing next to a guarantee, so neither the capability key,
   its arguments, its correlation id nor the outcome summary is projected.
@@ -155,9 +153,6 @@ class A2AEventProjector:
         return (self._status_update(status, final=True),)
 
 
-# The event class is the key: one mapping lookup per event, no reflection.
-# ``Any`` in the callable signature is the price of a heterogeneous table; each
-# entry pairs a class with the projector written for exactly that class.
 _DISPATCH: Final[
     Mapping[type[Any], Callable[[A2AEventProjector, Any], tuple[Mapping[str, object], ...]]]
 ] = {

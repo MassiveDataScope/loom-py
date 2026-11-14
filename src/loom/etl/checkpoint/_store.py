@@ -55,11 +55,6 @@ from loom.etl.checkpoint._scope import CheckpointScope
 _log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Backend Protocol — domain contract
-# ---------------------------------------------------------------------------
-
-
 @runtime_checkable
 class _CheckpointBackend(Protocol):
     """Physical I/O contract for one DataFrame backend.
@@ -77,11 +72,6 @@ class _CheckpointBackend(Protocol):
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
         """Materialise *data* at (*name*, *base*)."""
         ...
-
-
-# ---------------------------------------------------------------------------
-# CheckpointStore
-# ---------------------------------------------------------------------------
 
 
 class CheckpointStore:
@@ -126,10 +116,6 @@ class CheckpointStore:
         self._root = root.rstrip("/")
         self._cleaner = cleaner if cleaner is not None else FsspecTempCleaner()
         self._backend = backend if backend is not None else _PolarsCheckpointBackend({})
-
-    # ------------------------------------------------------------------
-    # Public write / read
-    # ------------------------------------------------------------------
 
     def put(
         self,
@@ -213,10 +199,6 @@ class CheckpointStore:
             f"Intermediate {name!r} not found. "
             f"Check that IntoTemp({name!r}) ran before FromTemp({name!r})."
         )
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
 
     def cleanup_run(self, run_id: str) -> None:
         """Remove all RUN-scope intermediates for *run_id*.

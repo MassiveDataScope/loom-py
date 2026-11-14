@@ -27,8 +27,6 @@ _RESERVED: tuple[BindingKey, ...] = (
     ApplicationInvoker,
 )
 
-# Looked up, not imported: importing them would load SQLAlchemy and PyMongo
-# into every composition. A module cannot bind a class whose module was never imported.
 _STORE_SESSIONS = (
     ("loom.core.repository.sqlalchemy.session_manager", "SessionManager"),
     ("loom.core.repository.mongo.uow", "MongoSessions"),
@@ -68,7 +66,6 @@ def _refusing(
         view = container.bindings()
         before = dict(view)
         module(container)
-        # Listed after the module ran: it may have imported a store's sessions class.
         for key in reserved_keys(stores):
             if view.get(key) is not before.get(key):
                 raise ReservedBindingError.for_key(module, key)

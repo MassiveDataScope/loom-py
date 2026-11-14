@@ -36,11 +36,6 @@ def _is_source_ref(value: object) -> bool:
     return isinstance(value, SourceRef)
 
 
-# ---------------------------------------------------------------------------
-# materialize_filter
-# ---------------------------------------------------------------------------
-
-
 def materialize_filter(
     node: Any,
     resolved_frames: dict[str, Any],
@@ -71,19 +66,16 @@ def _(node: InExpr, frames: dict[str, Any]) -> InExpr:
     if not _is_source_ref(node.values):
         return node
     ref = node.values
-    # Resolve the source to a DataFrame
     source = ref.source
     alias = getattr(source, "alias", None) or getattr(
         getattr(source, "_to_spec", lambda a: None)("__mongo_ref__"),
         "temp_name",
         None,
     )
-    # Try direct alias lookup first, then temp_name from TempSourceSpec
     df = None
     if alias and alias in frames:
         df = frames[alias]
     else:
-        # Walk all frames looking for a match by temp name or collection
         for frame_df in frames.values():
             df = frame_df
             break
@@ -115,11 +107,6 @@ def _(node: OrExpr, frames: dict[str, Any]) -> OrExpr:
 @_materialize.register(NotExpr)
 def _(node: NotExpr, frames: dict[str, Any]) -> NotExpr:
     return NotExpr(operand=_materialize(node.operand, frames))
-
-
-# ---------------------------------------------------------------------------
-# predicate_to_mongo
-# ---------------------------------------------------------------------------
 
 
 def predicate_to_mongo(node: Any, params_instance: Any) -> dict[str, Any]:

@@ -104,15 +104,12 @@ def bootstrap_app(
         DeprecationWarning,
         stacklevel=2,
     )
-    # Imported here: kernel.py builds on this module's BootstrapError and
-    # BootstrapResult, and this deprecated shim builds on kernel.py's steps.
     from loom.core.bootstrap.kernel import bootstrapping, install_use_cases
 
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
     with bootstrapping(seeds, modules=modules, logger=log) as container:
         result = install_use_cases(container, use_cases, logger=log, metrics=metrics)
-        # Transport adapters consume this singleton.
         executor = RuntimeExecutor(
             result.compiler, metrics=metrics, repo_resolver=container.resolve_repo
         )

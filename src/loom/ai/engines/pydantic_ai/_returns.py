@@ -4,12 +4,12 @@ One of the four invariants of a capability call holds here (US5):
 
 * **Result bounds are applied before the model's context.** ``max_rows`` and
   ``max_result_bytes`` are checked on the way back; a tripped bound returns a
-  refusal that names the bound and carries no row data (FR-046b). It returns
+  refusal that names the bound and carries no row data. It returns
   rather than raises, so the model can narrow its own query.
 
 The reserved ``loom`` metadata key is what
 :mod:`~loom.ai.engines.pydantic_ai._events` builds an event summary from, so
-it is stripped from every return loom did not author (FR-030b).
+it is stripped from every return loom did not author.
 """
 
 from __future__ import annotations
@@ -41,8 +41,8 @@ def foreign_return(value: object) -> ToolReturn:
     and its own metadata are kept, but the reserved ``loom`` key is stripped:
     that key is what :mod:`~loom.ai.engines.pydantic_ai._events` builds the
     event summary from, so leaving it writable would let an MCP server or a
-    third-party toolset dictate the summary of its own call — the one thing
-    FR-030b says the tool never produces. Anything else is described with the
+    third-party toolset dictate the summary of its own call. Anything else is
+    described with the
     neutral ``ok`` shape.
     """
     if isinstance(value, ToolReturn):
@@ -64,7 +64,7 @@ def _without_loom_metadata(value: ToolReturn) -> ToolReturn:
 
 
 def refusal(reason: str) -> ToolReturn:
-    """Refuse by value: the model sees the bound, never a row (design R4).
+    """Refuse by value: the model sees the bound, never a row.
 
     The ``refused`` shape is what keeps a refusal from reading as a normal call
     in the event stream: it is the event an operator most needs to see.

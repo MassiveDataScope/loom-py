@@ -175,8 +175,6 @@ def effective_agent_specs(
         AgentCompilationError: When both sources declare artifacts, or when
             neither does and no use case declares ``Mcp()``.
     """
-    # Local import: same containment rule as 'resolve_ai'; this helper only
-    # ever runs from the branch that already decided to load the AI pillar.
     from loom.ai.errors import AgentCompilationError, AgentErrorCode
 
     if config_specs and manifest_specs:
@@ -214,10 +212,6 @@ def resolve_ai(
     """
     if not ctx.has(ConfigKey.AI):
         return AiWiring(config=None, runtime=None)
-    # Local imports: the AI pillar is optional, and importing it from an
-    # application without an 'ai:' section would pull the whole agent layer
-    # into every Loom app — the same rule 'build_sql_registry'
-    # follows for the ClickHouse extra.
     from loom.ai.bootstrap import build_agent_runtime
     from loom.ai.config import AiConfig
     from loom.ai.registry import resolve_engine_provider
@@ -268,9 +262,6 @@ def compile_use_case_mcp(
         AgentCompilationError: Only if ``verify_mcp_markers``'s ordering were
             ever broken and an unknown server reached this call unverified.
     """
-    # Local imports: same containment rule as 'resolve_ai' — this helper
-    # only ever runs from the branch that already decided to load the AI
-    # pillar.
     from loom.ai.compiler.phases import compile_mcp_capability
     from loom.ai.errors import AgentCompilationError
     from loom.ai.runtime import UseCaseMcpGrant
@@ -337,13 +328,10 @@ def bind_agent_resolver(result: KernelRuntime, ai: AiWiring) -> None:
     ``SqlQueryService`` is resolved here, once, and handed to the resolver
     rather than left for a handle to reach into the container for later:
     it is always registered by this point (``_register_sql_service`` runs
-    before this function, spec M5), so there is nothing optional about the
-    resolution itself.
+    before this function).
     """
     if ai.runtime is None:
         return
-    # Local import: same containment rule as 'resolve_ai' — the AI pillar
-    # is optional, and this branch only runs once that section is present.
     from loom.ai.runtime._handle import agent_marker_resolver
 
     observability = (
@@ -371,7 +359,6 @@ def bind_mcp_resolver(result: KernelRuntime, ai: AiWiring) -> None:
     """
     if ai.runtime is None:
         return
-    # Local import: same containment rule as 'bind_agent_resolver'.
     from loom.ai.runtime._handle import mcp_marker_resolver
 
     observability = (
@@ -390,10 +377,9 @@ def verify_agent_markers(agents: Sequence[tuple[str, Reached]], ai: AiWiring) ->
     every compiled agent plan already exists here, whether or not an ``ai:``
     section is present — an absent section means ``ai.plans`` is simply
     empty, so every declared agent is reported unknown the same way a typo
-    would be. The check itself is shared with :func:`reject_ai_markers`
-    (T402), which calls the same :func:`~loom.ai._startup.verify_agent_markers`
-    with an always-empty ``plans_by_name`` for an entry point that never
-    builds an AI runtime at all.
+    would be. The check itself is shared with :func:`reject_ai_markers`, which calls the
+    same :func:`~loom.ai._startup.verify_agent_markers` with an always-empty
+    ``plans_by_name`` for an entry point that never builds an AI runtime at all.
 
     Args:
         agents: Every ``Agent()`` declaration reached, see :class:`MarkerDeclarations`.

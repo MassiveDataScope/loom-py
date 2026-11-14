@@ -149,7 +149,7 @@ class McpHandleDouble:
             AssertionError: If no result was scheduled for *tool* through
                 :meth:`on_call`.
         """
-        del expect  # the double trusts the scripted value; it decodes nothing
+        del expect
         self.calls.append(RecordedToolCall(tool=tool, arguments=arguments, typed=True))
         if tool not in self._typed_results:
             raise AssertionError(
@@ -539,7 +539,7 @@ class AgentHandleDouble:
         return (*self._mcp, *self._sql)
 
 
-if TYPE_CHECKING:  # the doubles stand in for the published protocols
+if TYPE_CHECKING:
 
     def _mcp_contract(double: McpHandleDouble) -> McpHandle:
         return double
@@ -586,10 +586,6 @@ class UseCaseTest(Generic[ResultT]):
         self._identity: Identity | None = None
         self._agent_doubles: dict[str, AgentHandleDouble] = {}
         self._mcp_doubles: dict[str, McpHandleDouble] = {}
-
-    # ------------------------------------------------------------------
-    # Builder methods
-    # ------------------------------------------------------------------
 
     def with_params(self, **kwargs: Any) -> UseCaseTest[ResultT]:
         """Set primitive parameter values bound by name.
@@ -751,10 +747,6 @@ class UseCaseTest(Generic[ResultT]):
         self._use_case.main_repo = repo
         return self
 
-    # ------------------------------------------------------------------
-    # Execution
-    # ------------------------------------------------------------------
-
     async def run(self) -> ResultT:
         """Compile and execute the UseCase through the full pipeline.
 
@@ -776,11 +768,6 @@ class UseCaseTest(Generic[ResultT]):
         """
         compiler = UseCaseCompiler()
         executor = RuntimeExecutor(compiler)
-        # Both always bound, even with no doubles registered: a plan
-        # declaring no Agent() or Mcp() marker never calls the matching
-        # resolver, and one that does must fail closed exactly like an
-        # unregistered Caller() does — see '_resolve_agent_double' and
-        # '_resolve_mcp_double'.
         executor.bind_agent_resolver(self._resolve_agent_double)
         executor.bind_mcp_resolver(self._resolve_mcp_double)
         return await executor.execute(  # type: ignore[no-any-return]
@@ -845,10 +832,6 @@ class UseCaseTest(Generic[ResultT]):
                 "before .run()."
             )
         return _FilteredMcpDouble(double, server=server, include=include)
-
-    # ------------------------------------------------------------------
-    # Inspection
-    # ------------------------------------------------------------------
 
     @property
     def plan(self) -> ExecutionPlan:

@@ -77,7 +77,6 @@ def register_error_handlers(app: Starlette) -> None:
     """
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(HTTPException, _handle_http_exception)
-    # Registered per type: Starlette calls it with that type only.
     app.add_exception_handler(
         StarletteHTTPException, cast(ExceptionHandler, http_exception_handler)
     )
@@ -103,7 +102,7 @@ async def _handle_validation_error(request: Request, exc: Exception) -> Response
 async def _handle_http_exception(request: Request, exc: Exception) -> Response:
     """Answer an ``HTTPException`` with the framework error body."""
     del request
-    if not isinstance(exc, HTTPException):  # pragma: no cover - registered per type
+    if not isinstance(exc, HTTPException):  # pragma: no cover
         raise exc
     return MsgspecJSONResponse(
         status_code=exc.status_code,

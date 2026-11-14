@@ -121,15 +121,8 @@ class CacheGateway:
         Args:
             alias: Registered aiocache alias to retrieve the backend from.
         """
-        # aiocache ships no stubs: its backend is ``Any`` to both type checkers.
         self._cache: Any = caches.get(alias)
-        # Raw backends store values as they are: no encoding on write, and
-        # native atomic increment.
         self._raw_backend: bool = _is_raw_backend(self._cache)
-
-    # ------------------------------------------------------------------
-    # Configuration helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def configure(raw_config: Mapping[str, Any]) -> None:
@@ -176,18 +169,12 @@ class CacheGateway:
             raw[_DEFAULT_ALIAS] = dict(raw.get(config.aiocache_alias) or _MEMORY_FALLBACK)
         cls.configure(raw)
 
-    # ------------------------------------------------------------------
-    # Read
-    # ------------------------------------------------------------------
-
     @overload
     async def get_value(self, key: str, *, type: type[T]) -> T | None: ...
 
     @overload
     async def get_value(self, key: str, *, type: None = ...) -> Any: ...
 
-    # Kept for structural typing: without it ``CacheGateway`` no longer
-    # satisfies the ``CacheBackend`` protocol ``CachedRepository`` asks for.
     @overload
     async def get_value(self, key: str, *, type: type[T] | None = None) -> T | Any | None: ...
 
@@ -249,10 +236,6 @@ class CacheGateway:
             ``True`` if the key is present.
         """
         return bool(await self._cache.exists(key))
-
-    # ------------------------------------------------------------------
-    # Write
-    # ------------------------------------------------------------------
 
     def _encode(self, key: str, value: Any) -> Any:
         """Serialise *value* with the backend serializer, naming the key on failure."""
@@ -345,10 +328,6 @@ class CacheGateway:
         next_value = (0 if current is None else int(current)) + delta
         await self.set_value(key, next_value)
         return next_value
-
-    # ------------------------------------------------------------------
-    # Delete / maintenance
-    # ------------------------------------------------------------------
 
     async def delete(self, key: str) -> int:
         """Delete a single key from the cache.

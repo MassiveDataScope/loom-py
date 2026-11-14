@@ -38,8 +38,6 @@ _log = logging.getLogger(__name__)
 
 _MAX_DEPTH = 64
 
-# Tracks bson type names already warned about — prevents WARNING flood when an unknown
-# type appears in every document of a large batch (log each type name once per process).
 _warned_bson_types: set[str] = set()
 
 
@@ -72,11 +70,6 @@ def normalize_bson_doc(
             f"normalize_bson_doc: document exceeds maximum nesting depth of {_MAX_DEPTH}."
         )
     return {str(k): _normalize(v, _depth + 1, extended_json) for k, v in doc.items()}
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 def _normalize_bson_type(value: object, depth: int, extjson: bool) -> object:
@@ -205,7 +198,7 @@ def _normalize_unknown(value: object) -> object:
     )
     try:
         return str(value)
-    except Exception as exc:  # noqa: BLE001 — a bad document must never abort a scan
+    except Exception as exc:  # noqa: BLE001
         _record_serialization_failure(exc, value)
         return None
 
@@ -213,23 +206,17 @@ def _normalize_unknown(value: object) -> object:
 def _normalize(value: object, depth: int, extjson: bool = False) -> object:
     if depth > _MAX_DEPTH:
         raise ValueError(f"normalize_bson_doc: nested value exceeds maximum depth of {_MAX_DEPTH}.")
-    # Native Python types Polars handles directly
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
         return value
     if isinstance(value, datetime):
-        # Normalize all ETL datetimes to UTC so downstream filters and Delta
-        # pushdown compare consistent tz-aware values.
         return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    # Recursive containers
     if isinstance(value, Mapping):
         return _normalize_mapping(value, depth, extjson)
     if isinstance(value, Sequence) and not isinstance(value, (bytearray, memoryview)):
         return [_normalize(item, depth + 1, extjson) for item in value]
-    # BSON types dispatched by class name — avoids a hard bson import at module level
     normalizer = _NORMALIZERS.get(type(value).__name__)
     if normalizer is not None:
         return normalizer(value)
-    # bson-origin types: handle separately to avoid str() producing Object({...}) strings
     if _is_bson_type(value):
         return _normalize_bson_type(value, depth, extjson)
     return _normalize_unknown(value)
@@ -240,8 +227,6 @@ def _normalize_objectid(value: object) -> str:
 
 
 def _normalize_decimal128(value: object) -> float:
-    # Decimal128.to_decimal() returns a Python decimal.Decimal (full precision).
-    # We convert to float for Polars Float64 compatibility.
     to_decimal = getattr(value, "to_decimal", None)
     if callable(to_decimal):
         return float(str(to_decimal()))
@@ -249,15 +234,12 @@ def _normalize_decimal128(value: object) -> float:
 
 
 def _normalize_binary(value: object) -> bytes:
-    # pymongo Binary is a bytes subclass — materialise to plain bytes for Polars Binary.
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
     raise TypeError(f"Expected bytes-like BSON Binary, got {type(value)!r}")
 
 
 def _normalize_timestamp(value: object) -> int:
-    # BSON Timestamp is used internally by MongoDB for the oplog.
-    # Expose only the seconds component as an int.
     t = getattr(value, "time", None)
     return int(t) if isinstance(t, (int, float)) else 0
 

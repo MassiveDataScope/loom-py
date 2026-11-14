@@ -31,9 +31,6 @@ from loom.ai.declarative._v1 import (
 )
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
-# Every policy field whose value is an ``int``. ``max_usd`` is deliberately
-# absent: it is a ``Decimal`` on ``PolicySpec`` and gets its own check below
-# instead of widening this table's value type for one entry out of nine.
 _POLICY_RANGES: Final[Mapping[str, tuple[int, int]]] = MappingProxyType(
     {
         "retries": (RETRIES_MIN, RETRIES_MAX),
@@ -55,9 +52,8 @@ _POLICY_RANGES: Final[Mapping[str, tuple[int, int]]] = MappingProxyType(
 def validate_policies(policies: PolicySpec, component: str) -> list[AgentCompilationIssue]:
     """Check every policy value against its published inclusive range.
 
-    An absent optional cap (``None``) is never out of range: FR-042 documents
-    ``None`` as "disable that limit", so the guard clause below skips it
-    rather than reporting a fault.
+    An absent optional cap (``None``) means "disable that limit" and is never
+    out of range.
 
     Args:
         policies: Declared execution limits.

@@ -68,7 +68,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         self._session_manager = session_manager
         self._store = session_manager.store
         self._session: AsyncSession | None = None
-        self._session_cm: Any = None  # context manager from session_manager.session()
+        self._session_cm: Any = None
 
     async def begin(self) -> None:
         """Open a new ``AsyncSession``.

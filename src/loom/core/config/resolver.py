@@ -107,7 +107,6 @@ def default_resolvers() -> tuple[ConfigResolver, ...]:
         :class:`~loom.core.config.ssm.SsmResolver` and a
         :class:`~loom.core.config.file.FileResolver`, freshly built.
     """
-    # Local imports keep this protocol module free of the implementations.
     from loom.core.config.file import FileResolver
     from loom.core.config.secrets import SecretsManagerResolver
     from loom.core.config.ssm import SsmResolver
@@ -133,7 +132,6 @@ def merge_resolvers(
     Returns:
         ``explicit`` in order, followed by the kept ``defaults`` in order.
     """
-    # Local import keeps omegaconf out of the import of ``loom.core.config``.
     from omegaconf import OmegaConf
 
     taken = {resolver.name for resolver in explicit}

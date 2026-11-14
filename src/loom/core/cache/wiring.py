@@ -124,13 +124,7 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
         container.register_instance(CacheGateway, data)
         container.register_instance(GenerationalDependencyResolver, resolver)
         container.register_instance(CacheGateways, CacheGateways(data=data, counters=counters))
-        # The single flight reports a load abandoned by its last caller: the
-        # body of a cached call is application code, and a failure nobody is
-        # left to await would otherwise be lost, as it is for a repository.
         flight = SingleFlight(_log_abandoned_call)
-        # Before the decorator block, which returns early when its slot is
-        # taken: registering after it would leave a deployment that supplies
-        # its own decorator with no binder at all.
         _register_calls(container, _ConfiguredCalls(config, data, flight, random.Random()))
         if container.is_registered(RepositoryDecorator):
             existing = container.resolve(RepositoryDecorator)

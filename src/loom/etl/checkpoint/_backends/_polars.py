@@ -52,7 +52,6 @@ class _PolarsCheckpointBackend:
             _log.info("checkpoint READ MISS name=%s base=%s", name, base)
             return None
         kwargs: dict[str, Any] = {"memory_map": not is_cloud_path(base)}
-        # The read declares no encryption: decryption is server-side.
         read_opts = self._options.object_store_read
         if read_opts:
             kwargs["storage_options"] = read_opts

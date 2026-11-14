@@ -56,9 +56,6 @@ def resolve_query_roles(
             not hold.
     """
     if not roles_bound:
-        # No binding for this connection: its allowlist is empty — the binder
-        # guard refuses to mount a non-empty one without a binding — so the
-        # service rejects every caller-supplied role and applies default_role.
         return tuple(requested_roles or ())
 
     authorized = _authorized_roles(identity, connection=connection, allowed_roles=allowed_roles)

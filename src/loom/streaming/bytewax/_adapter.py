@@ -352,9 +352,6 @@ class _BuildContext:
             self._bind_terminal_tracing(sink)
             bw_output(_qualified_step_id(step_id, path), stream, sink)
             return
-        # A live branch end with no sink still owes each record a completion;
-        # discarding it would leave the offset, or its fork share, outstanding
-        # and freeze the partition's watermark.
         bw_output(
             _qualified_step_id(f"{step_id}_dropped", path),
             stream,

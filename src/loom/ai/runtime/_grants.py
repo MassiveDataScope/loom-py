@@ -1,4 +1,4 @@
-"""The grant views an :class:`~loom.ai.abc.AgentHandle` exposes (T301–T303).
+"""The grant views an :class:`~loom.ai.abc.AgentHandle` exposes.
 
 ``McpGrantView`` and ``SqlGrantView`` reach exactly what the artefact already
 grants and what the runtime already opened — never a second connection and
@@ -21,7 +21,7 @@ never a second filter:
   caller-supplied role.
 
 Both bound one call by a deadline, inside a span — the agent path by the
-plan's own ``tool_timeout_ms``, the ``Mcp()`` marker path (T302) by the
+plan's own ``tool_timeout_ms``, the ``Mcp()`` marker path by the
 server's own ``timeout_ms``, since a marker-driven call has no plan for
 ``tool_timeout_ms`` to belong to. The span carries ``agent`` or
 ``mcp_server`` depending on which path resolved the view
@@ -90,9 +90,7 @@ class McpGrant:
 class AgentGrants:
     """Every ``mcp``/``sql`` grant one agent was compiled with, resolved once.
 
-    Built once per plan when the runtime is entered, so a marker-driven run
-    never repeats the linear scan over ``plan.capabilities`` that finding
-    one grant, or one policy, would otherwise cost on every call.
+    Built once per plan when the runtime is entered.
 
     Attributes:
         mcp: Live ``mcp`` grants by server name; a server declared under
@@ -104,8 +102,7 @@ class AgentGrants:
             "unknown grant" refusal can still name it.
         tool_timeout_s: The plan's own ``tool_timeout_ms``, in seconds.
         output_shape_bound: Whether the plan's output hook declares the
-            ``output`` field, so a per-run shape override must be refused
-            (T304).
+            ``output`` field, so a per-run shape override must be refused.
     """
 
     mcp: Mapping[str, McpGrant]
@@ -138,14 +135,11 @@ class McpGrantView:
     agent path's capability *is* the filter: it was compiled from the
     artefact's own declaration. The use-case path's capability is the
     shared, server-keyed substrate every ``Mcp()`` binding on that server
-    reads its session and catalogue from (FR-15); its own ``include`` is
+    reads its session and catalogue from; its own ``include`` is
     explicitly empty, and the caller's actual filter lives on its own
     binding instead. Reading ``capability.include`` here would silently
-    admit the full catalogue for a use case that declared a narrower one —
-    the authorization gap hostile verification measured during this
-    feature's own planning (``plan.md``'s "Where the caller's include comes
-    from") — so there is no shorter way to build this view that does not
-    also state the filter.
+    admit the full catalogue for a use case that declared a narrower one,
+    so this view always states the filter.
 
     Args:
         span_attributes: The one caller-identifying attribute this view's
@@ -399,7 +393,7 @@ def _bounded_rows(
     return tuple(kept)
 
 
-if TYPE_CHECKING:  # each view satisfies the public Protocol it stands in for (A3)
+if TYPE_CHECKING:
 
     def _mcp_grant_view_satisfies_mcp_handle(view: McpGrantView) -> McpHandle:
         return view

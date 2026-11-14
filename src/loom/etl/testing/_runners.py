@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 SeedSchema = Mapping[str, LoomType]
 """Loom types of some or all seeded columns."""
 
-# A string alias: the docs build mocks polars, so the union must not run at import.
 TempData: TypeAlias = "Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame"
 """Data ``seed_temp`` accepts with a temp name: row tuples or a Polars frame."""
 
@@ -71,7 +70,6 @@ class _CapturingWriter:
         self.spec = spec
         self._last_params = params_instance
         if self._target is not None:
-            # Forward the type the step returned, so the real writer accepts or rejects it.
             forwarded = captured.lazy() if isinstance(frame, pl.LazyFrame) else frame
             self._target.write(
                 forwarded, spec, params_instance, streaming=streaming, write_ctx=write_ctx

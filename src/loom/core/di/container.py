@@ -140,7 +140,7 @@ class LoomContainer:
         reading = (classify_key, implicit)
         with COLD_PATH:
             if self._reading is None:
-                self._refuse_if_sealed(DependencyGraph)  # how it reads constructors
+                self._refuse_if_sealed(DependencyGraph)
                 self._reading = reading
                 self._graph = DependencyGraph(self, classify_key=classify_key, implicit=implicit)
                 self._drop_compiled()
@@ -380,7 +380,7 @@ class LoomContainer:
         reached_rules = (refuse_unbound(self.kinds),)
         buildable: list[BindingKey] = []
         unbuilt: list[str] = []
-        for key in sorted(singletons, key=lambda k: KeyNode(k) not in reached):  # reached first
+        for key in sorted(singletons, key=lambda k: KeyNode(k) not in reached):
             is_reached = KeyNode(key) in reached
             refused = self._refusal(key, reached_rules if is_reached else UNREACHED_REFUSALS)
             if refused is None:
@@ -392,7 +392,7 @@ class LoomContainer:
             )
             if not is_reached:
                 self._bindings[key].refused = refused
-                self._drop_compiled()  # a closure compiled before may hold it
+                self._drop_compiled()
         return buildable, unbuilt
 
     def _refusal(self, key: BindingKey, rules: tuple[Rule, ...]) -> str | None:

@@ -3,7 +3,7 @@
 A compiled grant is the **only** source of a tool. Every toolset built here
 comes from the tuples the compiler already resolved — never from a registry
 lookup, never from reflection at run time — so an operation the artifact did
-not grant has no tool at all and is unreachable by construction (FR-042).
+not grant has no tool at all and is unreachable by construction.
 
 Two of the four invariants of a capability call hold here; the other two hold
 in :mod:`~loom.ai.engines.pydantic_ai._guards` and
@@ -13,10 +13,10 @@ in :mod:`~loom.ai.engines.pydantic_ai._guards` and
   ``True`` at the single :func:`~loom.core.sql.roles.resolve_query_roles` call
   site, and the resolved tuple is re-checked for emptiness: an empty tuple
   reaching ``SqlQueryService.execute`` falls through to the connection's
-  *shared* ``default_role``, which is exactly the regression FR-043a forbids.
+  *shared* ``default_role``, which is refused.
 * **Result bounds are applied before the model's context.** ``max_sql_bytes``
   is checked on the way in, and the bounds on the way back are applied by
-  :func:`~loom.ai.engines.pydantic_ai._returns.bounded_return` (FR-046b).
+  :func:`~loom.ai.engines.pydantic_ai._returns.bounded_return`.
 """
 
 from __future__ import annotations
@@ -107,11 +107,6 @@ class _UsecaseGrant:
         self.schema = usecase_schema(execution)
 
 
-# ---------------------------------------------------------------------------
-# usecase (T121, T124)
-# ---------------------------------------------------------------------------
-
-
 def _grant(key: str, use_case: type[Compilable]) -> _UsecaseGrant:
     execution = use_case.__execution_plan__
     if execution is None:
@@ -169,11 +164,6 @@ def _payload_of(grant: _UsecaseGrant, arguments: Mapping[str, Any]) -> dict[str,
         return None
     supplied = arguments.get(grant.payload_name)
     return dict(supplied) if isinstance(supplied, Mapping) else None
-
-
-# ---------------------------------------------------------------------------
-# sql (T122, T123)
-# ---------------------------------------------------------------------------
 
 
 def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> AbstractToolset[Any]:
@@ -241,11 +231,6 @@ async def _query(
     )
 
 
-# ---------------------------------------------------------------------------
-# mcp (T127)
-# ---------------------------------------------------------------------------
-
-
 def _mcp_toolset(capability: CompiledMcpCapability, context: BuildContext) -> AbstractToolset[Any]:
     """Filter the engine's MCP toolset, then put it behind the call boundary.
 
@@ -263,9 +248,9 @@ def _mcp_server(capability: CompiledMcpCapability, context: BuildContext) -> Abs
 
     The same object serves the runtime's start-up client, so a run can never
     reach a server start-up validated under different connection rules, and a
-    worker holds one connection per server however many agents were granted it
-    (FR-026). A deployment that wired some other MCP client factory is refused
-    here rather than silently given a second, unvalidated connection.
+    worker holds one connection per server however many agents were granted it. A
+    deployment that wired some other MCP client factory is refused here rather than
+    silently given a second, unvalidated connection.
 
     The filter and the call boundary the caller wraps around it are
     ``WrapperToolset`` composition: each holds a reference and mutates nothing,
@@ -289,11 +274,6 @@ def _tool_predicate(
         return admits(definition.name, include=include, exclude=exclude)
 
     return allowed
-
-
-# ---------------------------------------------------------------------------
-# skills (T128) and python (T129)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,18 +381,13 @@ def _call_factory(capability: CompiledPythonCapability, context: BuildContext) -
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# a2a (T147, T148)
-# ---------------------------------------------------------------------------
-
-
 def _a2a_toolset(capability: CompiledA2ACapability, context: BuildContext) -> AbstractToolset[Any]:
     """One delegation tool per remote agent, behind the call boundary.
 
-    **Why one tool and not one per skill.** A2A ``SendMessage`` carries no
-    skill selector — the remote agent routes the message itself — so a tool per
-    skill would publish names that differ only in their description while
-    sending byte-identical requests, promising the model a routing guarantee
+    A2A ``SendMessage`` carries no skill selector — the remote agent routes
+    the message itself — so a tool per skill would publish names that differ
+    only in their description while sending byte-identical requests, promising
+    the model a routing guarantee
     the protocol does not give. The card, which is the only authority on what
     the remote really exposes, is not available here either: this build is
     synchronous and start-up is where the network is allowed. The granted
@@ -424,7 +399,7 @@ def _a2a_toolset(capability: CompiledA2ACapability, context: BuildContext) -> Ab
 
     Delegation is a remote call on the caller's behalf, so it sits behind the
     same authenticated boundary, the same ``tool_timeout_ms`` and the same
-    ``Scope.TOOL`` span as ``mcp`` (FR-040).
+    ``Scope.TOOL`` span as ``mcp``.
     """
     require_a2a_sdk()
     name = tool_name("a2a", capability.agent)
@@ -466,7 +441,7 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
     """Delegate one prompt, mapping any transport failure to ``TOOL_UNAVAILABLE``.
 
     Every failure of a remote agent is infrastructure to *this* agent, and the
-    contract fixes the code (FR-040): ``TOOL_UNAVAILABLE`` is retriable, where
+    contract fixes the code: ``TOOL_UNAVAILABLE`` is retriable, where
     the generic refusal :func:`guarded` would otherwise produce is not, and a
     time-out is left to propagate so the enclosing bound reports
     ``TOOL_TIMEOUT``. The cause is logged server-side only: a remote agent is
@@ -482,11 +457,6 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
             AgentRunErrorCode.TOOL_UNAVAILABLE,
             f"tool '{tool}': the remote agent is unavailable",
         ) from exc
-
-
-# ---------------------------------------------------------------------------
-# The kinds this engine serves
-# ---------------------------------------------------------------------------
 
 
 class _Destination(Enum):
@@ -618,9 +588,6 @@ def build_capabilities(
         AgentCompilationError: When an optional dependency the kind needs is not
             installed.
     """
-    # ``mcp`` is bound to ``_Destination.TOOLSET``, so no capability built here
-    # can reach a server: the store handed over is a fresh, empty one rather
-    # than the worker's.
     context = BuildContext.of(plan, container, SharedMcpToolsets())
     return tuple(_build(plan, _Destination.CAPABILITY, context))
 

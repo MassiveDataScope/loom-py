@@ -422,7 +422,7 @@ def analyse(
             if reason is not None:
                 raise DependencyGraphError(f"{path}: {reason}")
         if state in entered and path.edges[-1].call_edge:
-            return  # a loop through this call: its target's frame, still open, checks what follows
+            return
         entered.add(state)
         reachable[node] = None
         for edge in graph.edges(node):

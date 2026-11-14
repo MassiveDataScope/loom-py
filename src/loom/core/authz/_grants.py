@@ -123,7 +123,7 @@ class InMemoryGrantSource:
         """
         self._grants = tuple(dict.fromkeys(grants))
 
-    async def grants_for(self, subject: str) -> Collection[Grant]:  # NOSONAR S7503 - protocol
+    async def grants_for(self, subject: str) -> Collection[Grant]:  # NOSONAR S7503
         """Return the grants of *subject*, in the order they were given.
 
         Args:

@@ -43,7 +43,6 @@ from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults
 
-# Type alias for ASGI middleware classes accepted by FastAPI.add_middleware.
 _MiddlewareClass = Any
 
 

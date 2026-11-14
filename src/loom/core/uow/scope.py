@@ -1,4 +1,4 @@
-"""The invocation scope: the stores one invocation enlisted, and who may touch them (ADR 0008).
+"""The invocation scope: the stores one invocation enlisted, and who may touch them.
 
 One :class:`InvocationScope` lives as long as one top-level invocation (an
 HTTP request, a job, a message). It is published in a single ``ContextVar``
@@ -57,7 +57,6 @@ from loom.core.uow.coordinator import (
 )
 
 if TYPE_CHECKING:
-    # Only typed here: ``loom.core.engine`` and ``loom.core.repository`` import this module.
     from loom.core.engine.post_commit import PostCommitChannel
     from loom.core.repository.mutation import MutationEvent
 
@@ -142,7 +141,6 @@ class InvocationScope:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # ``current_task()`` itself raises without a running loop.
             return "the invocation scope was used from a thread without its event loop"
         if self.closed:
             return "the invocation scope is already closed"
@@ -159,7 +157,7 @@ class InvocationScope:
         A read of a store whose participant holds no session (the store is
         not enlisted, or its unit of work is single-phase, such as Mongo with
         ``transactions: false``) returns ``None`` from any task, and the
-        repository reads with a session per call (D3). Anything else checks
+        repository reads with a session per call. Anything else checks
         ownership. A write must target a store of the innermost frame: a
         write to any other store is refused, because the execution did not
         declare it, and so is any write while no frame is pushed.
@@ -352,7 +350,7 @@ def _described(owner: object) -> str:
     passwords included.
     """
     if isinstance(inspect.getattr_static(type(owner), "target", None), property):
-        target = getattr(owner, "target")  # noqa: B009 - the property is not typed on object
+        target = getattr(owner, "target")  # noqa: B009
         if isinstance(target, str):
             return target
     return f"another {type(owner).__qualname__}"

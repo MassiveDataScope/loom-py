@@ -63,11 +63,6 @@ class SparkHistorifyBackend:
 
     @staticmethod
     def _null_safe_condition(left: DataFrame, right: DataFrame, on: list[str]) -> Any:
-        # eqNullSafe: a null in a tracked column must compare equal to itself,
-        # not act as SQL NULL (never matches). Otherwise a null-valued row is
-        # forever "changed" and reopened on every run. left_semi/left_anti only
-        # project the left side, so an explicit condition (vs. `on=list`) does
-        # not introduce duplicate key columns here.
         condition = left[on[0]].eqNullSafe(right[on[0]])
         for col in on[1:]:
             condition = condition & left[col].eqNullSafe(right[col])
@@ -100,10 +95,6 @@ class SparkHistorifyBackend:
         return frame.drop(*cols)
 
     def dedup_priority(self, frame: DataFrame, subset: list[str], priority_col: str) -> DataFrame:
-        # Whole partition, stated explicitly: the max must be taken over every row
-        # of the key group. Spark only defaults to that frame while the window
-        # stays unordered — adding an orderBy later would silently turn it into a
-        # running max and keep the wrong row.
         window = Window.partitionBy(subset).rowsBetween(
             Window.unboundedPreceding, Window.unboundedFollowing
         )
@@ -120,10 +111,6 @@ class SparkHistorifyBackend:
         join_key: list[str],
         overwrite: tuple[str, ...],
     ) -> DataFrame:
-        # eqNullSafe join_key: same null-safety as anti_join/semi_join, so an
-        # entity whose join_key includes a null track column still matches its
-        # own overwrite row. An explicit condition (vs. `on=list`) does not
-        # dedupe the key columns, so rename incoming's copy and drop it after.
         key_rename = {k: f"__ov_key_{k}__" for k in join_key}
         overwrite_vals = incoming.select(join_key + list(overwrite))
         for old, new in key_rename.items():
@@ -147,7 +134,6 @@ class SparkHistorifyBackend:
         null_boundary = F.lit(None).cast(boundary_dtype)
 
         kept = frame.filter(F.col(spec.valid_from) < F.lit(eff_date).cast(boundary_dtype))
-        # Flag before mutating valid_to so deleted_at sees the original values.
         flagged = kept.withColumn(
             "__reopen__", F.col(spec.valid_to) >= F.lit(prev).cast(boundary_dtype)
         )
@@ -187,7 +173,6 @@ class SparkHistorifyBackend:
 
         collapsed = self._collapse_same_track_runs(frame, spec, entity_key, eff_col)
 
-        # Lead/Lag in Spark do not accept any explicit window frame.
         window = Window.partitionBy(entity_key).orderBy(eff_col)
         next_date = F.lead(eff_col).over(window)
 
@@ -196,12 +181,6 @@ class SparkHistorifyBackend:
         else:
             valid_to_expr = next_date - F.expr("INTERVAL 1 MICROSECOND")
 
-        # Clamp so valid_to is never below valid_from: two events sharing an
-        # effective instant (e.g. task created and flipped in the same snapshot ms)
-        # yield next_eff - offset < valid_from, an inverted interval. Collapse those
-        # to a zero-width [T, T] vector instead of a negative one. The last event has
-        # a null next_date -> keep valid_to null (open row); greatest alone would skip
-        # that null and wrongly close it.
         clamped_valid_to = F.when(next_date.isNull(), F.lit(None)).otherwise(
             F.greatest(F.col(eff_col), valid_to_expr)
         )
@@ -214,7 +193,6 @@ class SparkHistorifyBackend:
 
     def closure_events(self, history: DataFrame, spec: HistorifySpec) -> DataFrame:
         entity_key = list(spec.keys)
-        # Nulls last: a zero-width vector sorts before the vector sharing its valid_from.
         window = Window.partitionBy(entity_key).orderBy(
             F.col(spec.valid_from), F.col(spec.valid_to).asc_nulls_last()
         )

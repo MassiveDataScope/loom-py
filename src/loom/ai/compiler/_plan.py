@@ -1,11 +1,11 @@
 """Compiled agent plan structs (Tier 3 of the data model).
 
-The plan is the only artifact-derived input to every downstream stage
-(FR-014): every string reference whose resolution is possible offline dies at
-compile, so the plan carries resolved handles — the registered use-case types,
-the SQL connection config, the imported toolset factory — never names.
+The plan is the only artifact-derived input to every downstream stage: every string
+reference whose resolution is possible offline dies at compile, so the plan carries
+resolved handles — the registered use-case types, the SQL connection config, the
+imported toolset factory — never names.
 
-Secret containment (invariant 4): the plan carries no literal secret.  The
+Secret containment: the plan carries no literal secret.  The
 one secret-bearing struct it embeds, :class:`~loom.ai.inference.InferenceTarget`,
 redacts its references in ``repr`` and refuses msgspec encoding; the built
 :class:`~loom.core.model.LoomType` in :class:`CompiledOutput` is likewise not
@@ -37,12 +37,10 @@ from loom.core.sql.config import SqlConnectionConfig
 class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
     """Structured-output contract with a :class:`~loom.core.model.LoomType` built at compile time.
 
-    Interpreting the schema per response would be per-item reflection, so the
-    boundary type is constructed exactly once, at compile (research R-004,
-    invariant 5).  For a ``msgspec.Struct`` output the decode is strict —
-    unknown fields are rejected, which is what makes returning the validated
-    bytes unchanged safe. For a pydantic output invariant 5 is satisfied
-    differently (D7, FR-012): ``.type`` is handed to pydantic-ai itself as the
+    The boundary type is constructed exactly once, at compile.  For a
+    ``msgspec.Struct`` output the decode is strict — unknown fields are
+    rejected, so the validated bytes are returned unchanged. For a pydantic
+    output ``.type`` is handed to pydantic-ai itself as the
     run's ``output_type``, so pydantic-ai — not loom — validates, retries and
     builds the instance; loom never decodes that answer a second time.
 
@@ -128,7 +126,7 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     deadline — so nothing downstream re-reads configuration.  The URL or the
     command resolves in ``__aenter__``, over the network or by spawning a
     subprocess: it is one of the declared exceptions to "strings die at
-    compile" (invariant 3), and so is the filter, which is applied against the
+    compile", and so is the filter, which is applied against the
     server's real tool list.
 
     Configuration already proved the fields coherent with the transport, so
@@ -243,7 +241,7 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
 
     The card is fetched in ``__aenter__`` and the filter applied against the
     skills it really advertises — one of the declared exceptions to "strings
-    die at compile" (invariant 3).
+    die at compile".
 
     Attributes:
         agent: Configured agent name, carried for the self-description.
@@ -370,7 +368,7 @@ class CompiledInstruction(LoomFrozenStruct, frozen=True, kw_only=True):
 
     A bare-string artifact and a one-block artifact compile to the same
     single-element tuple, so nothing downstream branches on which of the two
-    forms an artifact declared (FR-003's instruction-side counterpart).
+    forms an artifact declared.
 
     Attributes:
         text: Instruction text. Literal unless ``template`` names a template
@@ -397,7 +395,7 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         state: Shape of the artifact's declared state, or ``None`` when the
             artifact declares neither ``deps_type`` nor ``deps_schema``.
         spec_version: Artifact format version, retained for self-description.
-        inference: Resolved model binding; one binding, no fallback (FR-019a).
+        inference: Resolved model binding; one binding, no fallback.
         price: Configured price of the bound model, from ``ai.prices``, or
             ``None`` when the deployment declares none for it.
         output: Structured-output contract with its compiled boundary type.

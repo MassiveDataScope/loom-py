@@ -1,9 +1,8 @@
 """Generic per-connection SQL endpoint mounting and envelope encoding.
 
-Implements the optional REST surface of the SQL subsystem
-(``specs/sql_api_clickhouse_spec.md`` §3/§4): one ``POST`` route per
-connection that opted in with ``sql_endpoint.enabled`` **and** an explicit
-``sql_endpoint.auth`` value (double opt-in, B2). The request body only admits
+Implements the optional REST surface of the SQL subsystem: one ``POST``
+route per connection that opted in with ``sql_endpoint.enabled`` **and** an
+explicit ``sql_endpoint.auth`` value. The request body only admits
 ``{sql, roles?, parameters?, limit?, offset?}`` — backend settings are rejected
 by schema — and the response is the single :class:`SqlQueryResult` envelope
 encoded in one pass by a module-level ``msgspec`` encoder.
@@ -51,15 +50,11 @@ from loom.rest.fastapi.response import MsgspecJSONResponse
 _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
-# Fixed headroom on top of ``max_sql_bytes`` for the JSON envelope around the
-# ``sql`` field (``parameters``, ``role``, key names, quoting). The total body
-# cap for a connection is ``max_sql_bytes + _BODY_OVERHEAD_BYTES``; anything
-# larger is rejected with 413 before buffering beyond the cap.
 _BODY_OVERHEAD_BYTES = 64 * 1024
 
 
 class _SqlQueryRequest(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """Body accepted by the SQL endpoint — never backend settings (spec §3).
+    """Body accepted by the SQL endpoint — never backend settings.
 
     ``roles`` may only narrow the roles the verified identity already holds;
     it never selects a role on its own.
@@ -113,7 +108,7 @@ def _connection_mechanism(connection: SqlConnectionConfig, mechanism: str | None
 
 
 def _encode_exotic(obj: Any) -> str:
-    """Encode backend types msgspec does not handle natively (spec §3 matrix).
+    """Encode backend types msgspec does not handle natively.
 
     msgspec natively covers datetime/date/UUID/Decimal; this hook adds
     IPv4/IPv6 → str, bytes → base64, and a documented ``str()`` fallback so an
@@ -230,8 +225,6 @@ def _make_sql_handler(
             body = await _read_body_capped(request, max_bytes=max_body_bytes)
             query = _decode_request(body, max_sql_bytes=connection.max_sql_bytes)
             identity = current_identity()
-            # Resolved before the span so it can label who runs the query with
-            # which privileges — the audit trail the endpoint is judged on.
             roles = resolve_query_roles(
                 identity,
                 connection=name,
@@ -314,7 +307,7 @@ def _mount_endpoint(
     mechanism: str | None,
     observability_runtime: ObservabilityRuntime,
 ) -> None:
-    """Register the POST route for *name* and emit the startup WARNING (§4).
+    """Register the POST route for *name* and emit the startup WARNING.
 
     Raises:
         ConfigError: When the connection allows several roles but no mechanism
@@ -370,7 +363,7 @@ def bind_sql_endpoints(
     """Mount one generic SQL endpoint per opted-in connection.
 
     Only connections with ``sql_endpoint.enabled`` and an explicit
-    ``sql_endpoint.auth`` mount a route (double opt-in, B2 resolved); every
+    ``sql_endpoint.auth`` mount a route (double opt-in); every
     mounted endpoint is announced with a WARNING carrying its
     security-relevant state. Connections without endpoint expose no HTTP
     surface at all.

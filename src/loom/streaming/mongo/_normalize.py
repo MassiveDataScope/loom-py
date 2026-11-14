@@ -33,8 +33,6 @@ def normalize_bson_value(value: object, _depth: int = 0) -> object:
     """Normalize one MongoDB/BSON runtime value into Loom-safe builtins."""
     if _depth > _MAX_BSON_DEPTH:
         raise ValueError(f"BSON document exceeds maximum nesting depth of {_MAX_BSON_DEPTH}.")
-    # Exact type, not isinstance: bson.Int64 subclasses int and msgspec refuses to encode
-    # builtin subclasses, so it must reach its normalizer below.
     if value is None or type(value) in _JSON_SCALARS:
         return value
     if isinstance(value, datetime):
@@ -163,7 +161,6 @@ def _build_wall_time_ms(
     if isinstance(value, datetime):
         return _datetime_to_epoch_ms(value)
     if type(value).__name__ == "DatetimeMS":
-        # DatetimeMS.__int__() returns milliseconds since Unix epoch; safe for out-of-range years.
         return int(cast(Any, value))
     normalized = normalize_bson_value(value)
     if isinstance(normalized, int):
@@ -276,7 +273,6 @@ _BSON_NORMALIZERS: dict[str, Callable[[Any], object]] = {
     "Binary": _normalize_binary,
     "DBRef": _normalize_dbref,
     "DatetimeMS": int,
-    # NumberLong fields and the txnNumber of every multi-document transaction event.
     "Int64": int,
 }
 

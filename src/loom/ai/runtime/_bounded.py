@@ -87,8 +87,6 @@ async def bounded(coro: Coroutine[Any, Any, object], run: RunContext, *, what: s
     task = asyncio.ensure_future(coro)
     try:
         async with asyncio.timeout_at(deadline):
-            # ``wait`` never cancels the task and returns once it is done,
-            # cancelled included: a ``CancelledError`` here is the consumer's.
             await asyncio.wait({task})
     except asyncio.CancelledError:
         try:
@@ -116,8 +114,6 @@ async def _settle(task: asyncio.Future[object], bound: float, run: RunContext, w
             pass
     if not task.done():
         task.cancel()
-        # The task runs detached from here on: retrieve a late outcome so an
-        # exception raised after this point is never "never retrieved".
         task.add_done_callback(discard_outcome)
         _logger.warning(
             "%s of agent %r still running at its bound after the consumer "

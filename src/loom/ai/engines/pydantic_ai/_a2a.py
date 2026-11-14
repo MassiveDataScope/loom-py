@@ -1,4 +1,4 @@
-"""Outbound A2A transport: this agent calling a remote one (T147).
+"""Outbound A2A transport: this agent calling a remote one.
 
 Two entry points, one connection recipe, both served by the
 :mod:`~loom.ai.engines.pydantic_ai.extras.a2a` island, the one module of the

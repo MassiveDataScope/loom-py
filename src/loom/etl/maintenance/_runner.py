@@ -91,10 +91,6 @@ class MaintenanceRunner:
         self._config = config
         self._missing_table_policy: Literal["skip", "error"] = missing_table_policy
 
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_config(
         cls,
@@ -113,9 +109,6 @@ class MaintenanceRunner:
             ValueError: If *config* has no path routes configured
                 (only catalog/UC refs, which delta-rs cannot resolve directly).
         """
-        # DeltaRsMaintainer is imported lazily here so that importing
-        # MaintenanceRunner does not force the [delta] extra for users who only
-        # use type annotations or subclass MaintenanceStep without running it.
         from loom.etl.maintenance.backends._delta_rs import DeltaRsMaintainer  # noqa: PLC0415
 
         locator = config.to_path_locator()
@@ -125,10 +118,6 @@ class MaintenanceRunner:
             config,
             missing_table_policy=missing_table_policy,
         )
-
-    # ------------------------------------------------------------------
-    # Run from a MaintenanceStep subclass
-    # ------------------------------------------------------------------
 
     def run(
         self,
@@ -150,10 +139,6 @@ class MaintenanceRunner:
         specs = self._resolve_specs(step_cls, params)
         results = [self._run_one(spec) for spec in specs]
         return MaintenanceReport(results=results)
-
-    # ------------------------------------------------------------------
-    # Run from config (no Python class needed)
-    # ------------------------------------------------------------------
 
     def run_from_config(self) -> MaintenanceReport:
         """Execute maintenance using the ``maintenance`` block in StorageConfig.
@@ -194,10 +179,6 @@ class MaintenanceRunner:
         )
         specs = _expand_for_schemas(self._config.tables, mc.schemas, ops)
         return MaintenanceReport(results=[self._run_one(spec) for spec in specs])
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _resolve_specs(
         self, step_cls: type[MaintenanceStep[Any]], params: Any

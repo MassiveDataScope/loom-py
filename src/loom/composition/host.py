@@ -70,8 +70,6 @@ class ApplicationHost:
         owner.add_done_callback(self._record_close_failure)
         self._owner = owner
         try:
-            # Shielded: a cancelled caller must not cancel the future the owner
-            # reports to, only the owner itself.
             await asyncio.shield(opened)
         except BaseException as error:
             self._owner = None
@@ -101,13 +99,10 @@ class ApplicationHost:
             await asyncio.wait({owner})
         except asyncio.CancelledError:
             if first:
-                # No one is left to raise it: log it once the owner finishes.
                 owner.add_done_callback(lambda _: self._log_failure())
             raise
         if not first:
             return
-        # Recorded already: the owner's done-callbacks run in the order they
-        # were added, so _record_close_failure ran before this wait returned.
         failure = self._take_close_failure()
         if isinstance(failure, asyncio.CancelledError):
             _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
@@ -125,7 +120,6 @@ class ApplicationHost:
                     await self._stopping.wait()
         except BaseException as error:
             if not opened.done():
-                # Not open yet: start() awaits the future and raises the failure.
                 if isinstance(error, asyncio.CancelledError):
                     opened.cancel()
                 elif entered:

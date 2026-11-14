@@ -134,8 +134,6 @@ class HttpTestHarness:
                     method: err for (m, method), err in error_overrides.items() if m is model
                 }
                 effective = _ErrorProxy(fake, overrides) if overrides else fake
-                # Use an explicit per-model token to avoid DI key collisions
-                # when multiple models share the same fake repository type.
                 token = ("repo", model)
                 provider = _make_provider(effective)
                 for key in (token, *capability_keys(type(fake), model)):

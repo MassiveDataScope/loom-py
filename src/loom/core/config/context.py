@@ -52,10 +52,6 @@ class ConfigContext:
         self._config = config
         self._binder = binder or StructBinder()
 
-    # ------------------------------------------------------------------
-    # Factory methods
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_yaml(
         cls,
@@ -115,10 +111,6 @@ class ConfigContext:
         if not isinstance(cfg, DictConfig):
             raise TypeError(f"Config must be a mapping, got {type(cfg).__name__}")
         return cls(cfg, binder=binder)
-
-    # ------------------------------------------------------------------
-    # Accessors
-    # ------------------------------------------------------------------
 
     def has(self, key: str | ConfigKey) -> bool:
         """Return ``True`` if the dot-separated *key* exists in the config.

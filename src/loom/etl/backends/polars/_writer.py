@@ -253,10 +253,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         rows = [record.to_row() for record in records]
         return pl.from_dicts(rows, schema=_polars_lineage_schema(first)).lazy()
 
-    # ====================================================================
-    # Schema Hooks
-    # ====================================================================
-
     def _physical_schema(self, target: ResolvedTarget) -> PolarsPhysicalSchema | None:
         """Read physical schema from Delta log."""
         path_target = self._as_path_target(target)
@@ -364,10 +360,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         """Convert predicate to SQL (Polars uses internal SQL representation)."""
         return predicate_to_sql(predicate, params)
 
-    # ====================================================================
-    # Write Hooks
-    # ====================================================================
-
     def _create(
         self,
         frame: pl.DataFrame,
@@ -383,10 +375,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         if partition_cols:
             missing = tuple(c for c in partition_cols if c not in frame.columns)
             if missing:
-                # Empty frame with no partition cols is a legitimate no-op
-                # (e.g. decomposition fallback when the source field is absent
-                # from the input schema). Mirrors _replace_partitions on the
-                # update path.
                 if frame.is_empty():
                     _log.warning(
                         "create skipped: empty frame missing partition columns",
@@ -435,7 +423,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             return "overwrite"
         if schema_mode is SchemaMode.EVOLVE:
             return "merge"
-        return None  # STRICT — let delta-rs reject schema changes
+        return None
 
     def _append(
         self,
@@ -656,7 +644,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         path_target = self._as_path_target(target)
         location = path_target.location
 
-        # Collect partition combinations for pre-filter
         combos = self._collect_partition_combos(
             frame,
             spec.partition_cols,
@@ -766,10 +753,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             write_options=spec.write_options,
         )
 
-    # ====================================================================
-    # Audit Hook
-    # ====================================================================
-
     def _apply_audit_columns(
         self,
         frame: pl.LazyFrame,
@@ -805,10 +788,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         for col_def in audit.custom:
             cols.append(_resolve_custom_column(col_def, params_instance))
         return frame.with_columns(cols)
-
-    # ====================================================================
-    # Helpers
-    # ====================================================================
 
     @staticmethod
     def _warn_uc_first_create(target: PathTarget) -> None:

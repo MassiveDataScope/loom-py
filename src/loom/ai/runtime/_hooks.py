@@ -145,12 +145,10 @@ async def _terminal(
         return msgspec.structs.replace(final, interaction_id=run.interaction_id)
     try:
         result = await bounded(_invoke_hook(hook, final, run, deps, container), run, what=_HOOK)
-    except Exception as exc:  # recovery: the run fails closed with a coded, detail-free error
+    except Exception as exc:
         error = failure_error(
             exc, run, code=AgentRunErrorCode.HOOK_FAILED, message=HOOK_FAILED_MESSAGE, what=_HOOK
         )
-        # The model run itself succeeded, so its usage is known and travels
-        # with the failure: a hook that fails does not make the run free.
         return ErrorEvent(
             code=error.code,
             message=str(error),

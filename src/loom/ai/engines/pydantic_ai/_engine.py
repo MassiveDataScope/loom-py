@@ -4,7 +4,7 @@ One :class:`~pydantic_ai.Agent` is built per plan at start-up and reused by
 every run; per-invocation state is exactly the caller's dependency bundle, so
 nothing is rebuilt, reflected over or re-parsed per request.
 
-Retries follow FR-028: only the ``INFRASTRUCTURE`` class is retried, and only
+Only the ``INFRASTRUCTURE`` class is retried, and only
 ``policies.retries`` times, each after an exponential wait — retrying a rate
 limit immediately spends the quota of the very provider that is throttling.
 ``OUTPUT_SCHEMA_VIOLATION`` is model behaviour, not an outage, so it is final
@@ -19,7 +19,7 @@ replay would execute it again. Only a pure-language agent — which has no side
 effect to duplicate — keeps its retries.
 
 One resolved provider serves the agent, always: a failure is never re-routed to
-another vendor (FR-019a).
+another vendor.
 
 ``policies.max_usd`` is an *elastic* cap (see :class:`~loom.ai.declarative.PolicySpec`
 and "Spend caps" in ``docs/ai/artifacts.md``): a run whose cost this engine
@@ -92,9 +92,6 @@ MAX_LOGGED_CAUSE_CHARS = 500
 
 _HEALTHY = HealthStatus(status="ok")
 
-# Counters :class:`~loom.ai.abc.AgentUsage` names itself, plus the engine's own
-# ``details`` bag. Everything else the engine reports is copied into
-# ``AgentUsage.details`` unchanged, so this set is the whole curation loom does.
 _NAMED_COUNTERS: frozenset[str] = frozenset(
     {
         "input_tokens",
@@ -108,8 +105,6 @@ _NAMED_COUNTERS: frozenset[str] = frozenset(
     }
 )
 
-# Built once, at import: an engine reports health on every probe tick, and the
-# answer is one of three fixed values.
 _HEALTH_BY_CODE: Mapping[AgentRunErrorCode, HealthStatus] = MappingProxyType(
     {
         AgentRunErrorCode.PROVIDER_UNAVAILABLE: HealthStatus(
@@ -150,23 +145,21 @@ class PydanticAIEngine:
             builds only one and passes it for both.
         deps: Per-invocation dependency factory; singleton services are
             captured here, at build, and the caller's identity is supplied per
-            invocation (FR-043).
+            invocation.
         container: Application container the dependency factory resolves from.
         usage_limits: The plan's spend caps, projected once at construction
             (:func:`~loom.ai.engines.pydantic_ai._limits.usage_limits`) and
             passed on every run and every streamed attempt.
 
-    Two more flags are resolved once here, from the plan's output library
-    (D7, FR-012), and reused by every run and every streamed attempt alike:
-    ``self._native_output`` is true for a pydantic output, whose answer
-    pydantic-ai already validated and retried as ``result.output`` — a
-    ``msgspec.Struct`` output still decodes the model's own bytes through
-    :func:`~loom.ai.engines.pydantic_ai._output.decode_output` — and
-    ``self._withhold`` decides whether a stream buffers its deltas until the
-    attempt's result is known, true whenever the plan declares
-    ``output_check`` or the output is pydantic: both can replay the model
-    request inside one attempt, so a delta already relayed could not be
-    un-sent.
+    Two more flags are resolved once here, from the plan's output library, and reused by
+    every run and every streamed attempt alike: ``self._native_output`` is true for a
+    pydantic output, whose answer pydantic-ai already validated and retried as
+    ``result.output`` — a ``msgspec.Struct`` output still decodes the model's own bytes
+    through :func:`~loom.ai.engines.pydantic_ai._output.decode_output` — and
+    ``self._withhold`` decides whether a stream buffers its deltas until the attempt's
+    result is known, true whenever the plan declares ``output_check`` or the output is
+    pydantic: both can replay the model request inside one attempt, so a delta already
+    relayed could not be un-sent.
     """
 
     def __init__(
@@ -281,7 +274,7 @@ class PydanticAIEngine:
 
         The counterpart of :meth:`run_stream` that
         :class:`~loom.ai.runtime._handle._BoundAgentHandle` reaches for
-        ``AgentHandle.run(expect=...)`` and ``AgentHandle.run_text`` (T304).
+        ``AgentHandle.run(expect=...)`` and ``AgentHandle.run_text``.
         ``output_type`` is deliberately not a parameter of :meth:`run_stream`
         itself: that signature is pinned to exactly ``prompt``, ``identity``,
         ``conversation`` and ``state`` by the shared engine contract, so a
@@ -292,7 +285,7 @@ class PydanticAIEngine:
 
         pydantic-ai validates the run's answer against *output_type* on its
         own, exactly as it already does against a pydantic ``type_ref`` plan's
-        own declared shape (D7, FR-012); what this method skips is loom's
+        own declared shape; what this method skips is loom's
         *own* output check for a ``msgspec.Struct`` plan
         (:func:`~loom.ai.engines.pydantic_ai._output.decode_output`), because
         that check is compiled against the plan's declared schema and *this*
@@ -376,14 +369,12 @@ class PydanticAIEngine:
             guard=guard,
         )
 
-    # -- internals ---------------------------------------------------------
-
     def _build_deps(self, identity: Identity, state: object | None) -> object:
         """Build one invocation's dependency bundle for *identity*.
 
         *state* arrives already resolved against the plan's declared shape; it
         is cast, never re-validated, into the mapping
-        :class:`~loom.ai.abc.DepsFactory` declares (FR-009).
+        :class:`~loom.ai.abc.DepsFactory` declares.
         """
         return self._deps.build(
             identity, self._container, state=cast("Mapping[str, Any] | None", state)
@@ -601,9 +592,6 @@ class PydanticAIEngine:
                     code=error.code, message=str(error), usage=self._usage(spend, started)
                 )
                 return
-            # Deliberately outside both ``try`` blocks: this checks the engine's
-            # own contract with pydantic-ai, not a provider or policy failure,
-            # so it must never be classified as one (FR-028 correction).
             if not outcome:
                 raise AssertionError(
                     "unreachable: the engine's own event stream always ends with a "
@@ -705,9 +693,6 @@ class PydanticAIEngine:
                         if mapped is not None:
                             yield mapped
                 node = await run.next(node)
-            # pydantic-ai leaves ``result`` typed optional though the ``End`` node just
-            # reached guarantees it; appended unconditionally, so a violated guarantee
-            # surfaces through ``_conclude``'s own classified failure, not a skipped outcome.
             outcome.append(cast("AgentRunResult[Any]", run.result))
         for held in pending:
             yield held
@@ -763,12 +748,12 @@ class PydanticAIEngine:
     ) -> FinalEvent:
         """Build this attempt's terminal event, resolving the answer once.
 
-        An overridden shape skips the plan's own output resolution on purpose
-        (T304): pydantic-ai has already validated ``result.output`` against
+        An overridden shape skips the plan's own output resolution on purpose: pydantic-ai has
+        already validated ``result.output`` against
         *output_type* itself, whatever the plan's own output library, so the
         raw result is the answer. Otherwise the plan's library decides —
         ``result.output`` for a pydantic plan, already validated and retried
-        by pydantic-ai (D7, FR-012), or :func:`~loom.ai.engines.pydantic_ai._output.decode_output`
+        by pydantic-ai, or :func:`~loom.ai.engines.pydantic_ai._output.decode_output`
         for a ``msgspec.Struct`` plan, compiled against its declared schema.
         """
         output = (

@@ -45,9 +45,6 @@ if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _logger = logging.getLogger(__name__)
-# Its own level, so a parent at CRITICAL (the top-level level, or a named
-# level on ``loom``) cannot hide a check's warning or the silenced ids; a
-# named level on this logger itself is the explicit way to quiet it.
 _logger.setLevel(logging.WARNING)
 
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
@@ -315,8 +312,6 @@ def _import_modules(modules: tuple[str, ...]) -> None:
         try:
             importlib.import_module(module)
         except Exception as exc:
-            # Any failure at import, not only ImportError, means the checks of
-            # the module cannot run: it stops the run as a configuration error.
             raise ConfigError(f"{MODULES_KEY} entry {module!r} cannot be imported: {exc}") from exc
 
 
@@ -333,8 +328,6 @@ def _skipped(check_id: str, skip: Collection[str]) -> bool:
     return any(check_id == entry or check_id.startswith(f"{entry}.") for entry in skip)
 
 
-# The configuration package is loaded above, while this module is still
-# starting, so its check cannot be imported from that package's ``__init__``.
 import loom.core.config.checks as _config_checks  # noqa: E402
 
 _ = _config_checks

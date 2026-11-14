@@ -55,10 +55,6 @@ if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
 
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class WorkerBootstrapResult:
@@ -78,11 +74,6 @@ class WorkerBootstrapResult:
     container: LoomContainer
     factory: UseCaseFactory
     celery_app: Celery
-
-
-# ---------------------------------------------------------------------------
-# bootstrap_worker
-# ---------------------------------------------------------------------------
 
 
 def bootstrap_worker(

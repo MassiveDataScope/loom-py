@@ -56,24 +56,15 @@ from loom.etl.schema._schema import (
     StructType,
 )
 
-# ---------------------------------------------------------------------------
-# Public TypeAliases — used in FromTable / FromFile signatures
-# ---------------------------------------------------------------------------
-
 #: Contract accepted by ``with_schema``: either an explicit column-schema tuple
 #: or an annotated class whose fields are mapped to :class:`ColumnSchema` entries.
 SchemaContract: TypeAlias = tuple[ColumnSchema, ...] | type[Any]
 
 #: Contract accepted by ``parse_json``: a :data:`LoomType` (passthrough), an
 #: annotated class (→ :class:`StructType`), or a ``list[X]`` generic alias
-#: (→ :class:`ListType`).  ``list[X]`` is a ``types.GenericAlias`` at runtime,
-#: not a plain ``type``, so the union includes ``Any`` to capture it without
-#: widening the documented intent.
+#: (→ :class:`ListType`).
 JsonContract: TypeAlias = LoomType | type[Any]
 
-# ---------------------------------------------------------------------------
-# Primitive Python type → LoomDtype
-# ---------------------------------------------------------------------------
 
 _PY_TO_LOOM: dict[type, LoomDtype] = {
     int: LoomDtype.INT64,
@@ -85,7 +76,6 @@ _PY_TO_LOOM: dict[type, LoomDtype] = {
     datetime.date: LoomDtype.DATE,
 }
 
-# All concrete LoomType classes for isinstance checks
 _LOOM_INSTANCES = (
     LoomDtype,
     ListType,
@@ -97,10 +87,6 @@ _LOOM_INSTANCES = (
     CategoricalType,
     EnumType,
 )
-
-# ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
 
 
 def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[ColumnSchema, ...]:
@@ -130,9 +116,9 @@ def resolve_json_type(contract: Any) -> LoomType:
 
     Args:
         contract: A :data:`~loom.etl._schema.LoomType` (returned as-is),
-                  an annotated class (converted to :class:`~loom.etl._schema.StructType`),
-                  or a ``list[X]`` generic alias (converted to
-                  :class:`~loom.etl._schema.ListType`).
+                  an annotated class (converted to
+                  :class:`~loom.etl._schema.StructType`), or a ``list[X]`` generic alias
+                  (converted to :class:`~loom.etl._schema.ListType`).
 
     Returns:
         :data:`~loom.etl._schema.LoomType` for use with Polars
@@ -200,11 +186,6 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
 
 #: Alias of :func:`annotation_to_loom_type`.
 _annotation_to_loom_type = annotation_to_loom_type
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 def _class_to_schema(cls: type[Any]) -> tuple[ColumnSchema, ...]:

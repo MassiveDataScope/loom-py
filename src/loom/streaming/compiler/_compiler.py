@@ -61,7 +61,6 @@ class _Compiler:
         if errors:
             raise CompilationError(errors)
 
-        # Once per compilation: both phases and every sink read this catalog.
         catalog = load_catalog(ctx)
         errors.extend(validate_kafka(resolved_flow, ctx))
         errors.extend(validate_delivery(resolved_flow, ctx))

@@ -127,8 +127,6 @@ class MongoBackend:
             mongo_cfg,
             pool=MongoRepositoryPool(size=pool.size + pool.max_overflow, timeout=pool.timeout_s),
         )
-        # tz_aware: datetimes read back as aware UTC, the form the repository writes.
-        # PyMongo has no equivalent of pre_ping or max connection lifetime.
         client = build_async_mongo_client(
             client_cfg,
             tz_aware=True,

@@ -34,7 +34,7 @@ class AuditedTable:
     excluded: frozenset[str]
 
 
-AuditedTables = Mapping[tuple[str | None, str], AuditedTable]  # by schema and name
+AuditedTables = Mapping[tuple[str | None, str], AuditedTable]
 
 
 def is_audited(model: type) -> bool:

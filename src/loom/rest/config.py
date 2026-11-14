@@ -236,12 +236,6 @@ def _declared_fields(value: tuple[str, ...] | Literal["all"] | None) -> Declared
 
 def _class_name(interface_name: str) -> str:
     """Build a readable class name from *interface_name*, always distinct."""
-    # Embeds the config key verbatim instead of sanitising it into an
-    # identifier-safe form: sanitising would fold 'my_widgets' and
-    # 'my-widgets' to the same identifier, and a collision between them
-    # would then name the same class twice in the compiler's error, hiding
-    # which config entry each side came from. A Python class name has no
-    # source-level identifier constraint, so the verbatim key is safe here.
     return f"{interface_name}RestInterface"
 
 
@@ -327,12 +321,6 @@ def _build_interface_class(
         "requires_roles": cfg.requires_roles,
         "filterable": _declared_fields(cfg.filterable),
         "sortable": _declared_fields(cfg.sortable),
-        # types.new_class defaults __module__ to this function's caller frame
-        # (typically "types" itself, via __set_name__ machinery), which would
-        # make every traceback, repr, and log line naming this class point at
-        # the standard library instead of the config entry it was built from.
-        # Setting it explicitly here is what keeps the "a generated class is
-        # a subclass like any other" claim true under introspection too.
         "__module__": __name__,
         "__qualname__": class_name,
         "__doc__": (
@@ -341,11 +329,6 @@ def _build_interface_class(
         ),
     }
     base = _interface_base(interface_name, cfg)
-    # types.new_class (not type()) resolves a parameterised generic base
-    # (RestInterface[Model]) through __mro_entries__, exactly as
-    # 'class X(RestInterface[Model])' does. Runs the same __init_subclass__ a
-    # Python subclass runs, including the 'auto' CRUD generation hook — no
-    # second compiler, no second code path.
     return types.new_class(class_name, (base,), exec_body=lambda ns: ns.update(namespace))
 
 

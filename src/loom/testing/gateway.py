@@ -38,7 +38,6 @@ def api_gateway_event(
     multi: dict[str, list[str]] = {}
     for name, value in parse_qsl(query, keep_blank_values=True):
         multi.setdefault(name, []).append(value)
-    # A REST event has "resource" and no "version" key: that is how Mangum tells them apart.
     return event | {
         "resource": "/{proxy+}",
         "path": path,

@@ -1,9 +1,9 @@
 """Pure A2A projection of a compiled agent.
 
 Holds the card projection and the event projection, both derived from the
-compiled :class:`~loom.ai.compiler.AgentPlan` alone (R-005). Neither imports an
+compiled :class:`~loom.ai.compiler.AgentPlan` alone. Neither imports an
 A2A SDK nor a web framework, so importing this package on a base installation
-succeeds and the redaction guarantee (FR-038, SC-009) is unit-testable. The
+succeeds and the redaction guarantee is unit-testable. The
 transport server lives behind the ``ai-a2a`` extra and is not re-exported here.
 """
 

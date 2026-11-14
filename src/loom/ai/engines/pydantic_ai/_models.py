@@ -1,4 +1,4 @@
-"""``InferenceTarget`` → pydantic-ai model and provider objects (R-002).
+"""``InferenceTarget`` → pydantic-ai model and provider objects.
 
 One model object is built per plan, at start-up, and reused by every run: the
 provider client it carries owns the connection pool, so rebuilding it per
@@ -14,7 +14,7 @@ lets the island do the rest. Adding a vendor is one island and one row here;
 an unknown vendor fails at start-up naming the ones this release binds, and a
 missing SDK fails naming the extra to install.
 
-Credential conventions, deliberately explicit (FR-018), are each island's to
+Credential conventions, deliberately explicit, are each island's to
 document: ``bedrock`` reads ``credentials_ref`` as an AWS profile name; the
 API-key providers read it as the name of the environment variable holding the
 key. ``options`` is handed to the model as pydantic-ai ``ModelSettings`` — the
@@ -44,8 +44,8 @@ class ModelResolver(Protocol):
 
     The provider takes one as an optional argument so a deployment can supply
     a preconfigured client — and so the shared engine contract suite can run
-    this adapter against a scripted model with no network and no credentials
-    (FR-048). Production never passes one: the default resolver below is used.
+    this adapter against a scripted model with no network and no credentials. Production
+    never passes one: the default resolver below is used.
     """
 
     def __call__(self, target: InferenceTarget) -> Model:
@@ -104,9 +104,6 @@ def _island_for(provider: str) -> ProviderIsland:
             ]
         )
     module = require_provider_sdk(provider, f"{_ISLANDS}.{binding.island}", binding.extra)
-    # Every island publishes the protocol's two names; the cast records that
-    # contract for the type checker, as ``resolve_engine_provider`` does for
-    # an engine loaded by entry point.
     return cast(ProviderIsland, module)
 
 

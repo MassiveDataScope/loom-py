@@ -140,7 +140,7 @@ class LambdaEvent(dict[str, Any]):
         message: dict[str, Any] | None = None,
         *,
         notification_id: str | None = None,
-        type: str = "Notification",  # noqa: A002 - SNS's own field name
+        type: str = "Notification",  # noqa: A002
     ) -> QueueableEvent:
         """The event of a Lambda subscription; queued, the SNS envelope SQS stores."""
         envelope = {

@@ -10,7 +10,7 @@ Two disjoint catalogues, mirroring :mod:`loom.streaming.compiler._errors`:
 
 ``AgentRunErrorCode``
     Execution outcomes.  Each code belongs to an :class:`AgentRunErrorClass`
-    and the retry policy reads the *class*, never the message (FR-028).
+    and the retry policy reads the *class*, never the message.
 
 Compile issues
     Each ``AgentErrorCode`` member carries the template of its issue, and
@@ -33,13 +33,8 @@ from typing import TYPE_CHECKING, Final, TypeAlias
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
 if TYPE_CHECKING:
-    # Type-only: ``loom.ai.abc`` imports this module for the code enum, so a
-    # run-time import here would close the cycle. Nothing below needs the
-    # class at run time — the error only carries the value it is handed.
     from loom.ai.abc import AgentUsage
 
-# Repeated ``field`` values of the issues that report on the same artifact
-# path from more than one code.
 _FIELD_SPEC_VERSION: Final = "spec_version"
 _FIELD_CAPABILITIES: Final = "capabilities"
 _FIELD_CAPABILITIES_KEYS: Final = "capabilities.keys"
@@ -64,7 +59,6 @@ INVOKER_MISSING_REASON: Final[str] = "no use-case invoker is configured"
 class AgentErrorCode(IssueCode):
     """Catalogue of every agent compile-time failure and the issue it renders."""
 
-    # Envelope and structure
     SPEC_VERSION_MISSING = (
         "SPEC_VERSION_MISSING",
         Template(
@@ -86,7 +80,6 @@ class AgentErrorCode(IssueCode):
             field=_FIELD_FROM_PARAM,
         ),
     )
-    # No field in the template: the decoder sets it on the issue when it knows the path.
     SPEC_MALFORMED = ("SPEC_MALFORMED", Template("{component}: malformed artifact: {reason}"))
     AGENT_NAME_INVALID = (
         "AGENT_NAME_INVALID",
@@ -97,7 +90,6 @@ class AgentErrorCode(IssueCode):
         Template("agent '{component}' is declared more than once: {sources}", field="name"),
     )
 
-    # Output
     OUTPUT_SCHEMA_INVALID = (
         "OUTPUT_SCHEMA_INVALID",
         Template(
@@ -152,7 +144,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Conversation
     CONVERSATION_USECASE_UNKNOWN = (
         "CONVERSATION_USECASE_UNKNOWN",
         Template(
@@ -184,7 +175,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # State
     STATE_DECLARATION_CONFLICT = (
         "STATE_DECLARATION_CONFLICT",
         Template(
@@ -220,13 +210,10 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Instructions
     INSTRUCTION_BLOCK_INVALID = (
         "INSTRUCTION_BLOCK_INVALID",
         Template("{component}: instruction block is invalid: {reason}", field=_FIELD_INSTRUCTIONS),
     )
-    # ``reason`` is the template checker's own message and can carry a fragment of the
-    # source template; redacting it, when needed, is the caller's responsibility.
     TEMPLATE_COMPILATION_FAILED = (
         "TEMPLATE_COMPILATION_FAILED",
         Template(
@@ -243,7 +230,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Capabilities
     CAPABILITY_KIND_UNSUPPORTED = (
         "CAPABILITY_KIND_UNSUPPORTED",
         Template(
@@ -380,7 +366,6 @@ class AgentErrorCode(IssueCode):
             field="auth.kind",
         ),
     )
-    # ``field`` is ``transport``, or the nested key to blame, such as one ``env`` name.
     MCP_TRANSPORT_INVALID = (
         "MCP_TRANSPORT_INVALID",
         Template("{component}: invalid mcp transport: {reason}", field=_FIELD_FROM_PARAM),
@@ -444,7 +429,6 @@ class AgentErrorCode(IssueCode):
             field=_FIELD_CAPABILITIES_FACTORY,
         ),
     )
-    # ``error`` is only the exception class: its message could carry a ``params`` value.
     PYTHON_FACTORY_FAILED = (
         "PYTHON_FACTORY_FAILED",
         Template(
@@ -471,7 +455,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Model and policy
     MODEL_ROLE_UNBOUND = (
         "MODEL_ROLE_UNBOUND",
         Template("{component}: model role '{role}' is not bound in ai.models", field="model_role"),
@@ -492,7 +475,6 @@ class AgentErrorCode(IssueCode):
             field="output_mode",
         ),
     )
-    # Not OUTPUT_MODE_UNKNOWN: loom offers the mode, but this provider refuses it.
     OUTPUT_MODE_UNSUPPORTED = (
         "OUTPUT_MODE_UNSUPPORTED",
         Template(
@@ -501,7 +483,6 @@ class AgentErrorCode(IssueCode):
             field="output_mode",
         ),
     )
-    # Values are ``int`` counts, except ``max_usd``, a ``Decimal`` (FR-043).
     POLICY_OUT_OF_RANGE = (
         "POLICY_OUT_OF_RANGE",
         Template(
@@ -511,7 +492,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Deployment resolution
     ENGINE_NOT_FOUND = (
         "ENGINE_NOT_FOUND",
         Template(
@@ -540,7 +520,6 @@ class AgentErrorCode(IssueCode):
             "provider '{component}' is not installed; install the '{extra}' extra",
         ),
     )
-    # Not PROVIDER_NOT_INSTALLED: no such provider exists, so there is no extra to install.
     PROVIDER_UNKNOWN = (
         "PROVIDER_UNKNOWN",
         Template(
@@ -555,13 +534,10 @@ class AgentErrorCode(IssueCode):
             field="{setting}",
         ),
     )
-    # ``server`` (and ``agent`` below) is the registered name, never the URL: a URL
-    # carries credentials and hosts the redaction guarantee keeps out (FR-030a/FR-038).
     MCP_SERVER_UNREACHABLE = (
         "MCP_SERVER_UNREACHABLE",
         Template("mcp server '{server}' is unreachable: {reason}", component="{server}"),
     )
-    # ``server`` is the registered name, never the URL (FR-030a/FR-038).
     MCP_CONNECTION_CONFLICT = (
         "MCP_CONNECTION_CONFLICT",
         Template(
@@ -590,7 +566,6 @@ class AgentErrorCode(IssueCode):
         "ENDPOINT_AUTH_MISSING",
         Template("{component}: HTTP exposure requires a named authentication", field="auth"),
     )
-    # ``url`` arrives redacted of userinfo and query.
     A2A_BASE_URL_INVALID = (
         "A2A_BASE_URL_INVALID",
         Template(
@@ -671,7 +646,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Use-case agent markers (model-as-actor)
     AGENT_MARKER_UNKNOWN = (
         "AGENT_MARKER_UNKNOWN",
         Template(
@@ -689,7 +663,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Use-case MCP markers
     USECASE_TOOL_FILTER_MATCHES_NOTHING = (
         "USECASE_TOOL_FILTER_MATCHES_NOTHING",
         Template(
@@ -707,7 +680,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Engine build
     TOOL_NAME_COLLISION = (
         "TOOL_NAME_COLLISION",
         Template(
@@ -747,7 +719,6 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
-    # Compatibility
     SPEC_VERSION_DEPRECATED = (
         "SPEC_VERSION_DEPRECATED",
         Template(
@@ -779,11 +750,6 @@ class AgentCompilationError(Exception):
         super().__init__(
             f"Agent compilation failed with {len(messages)} error(s): {'; '.join(messages)}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Run-time catalogue
-# ---------------------------------------------------------------------------
 
 
 class AgentRunErrorClass(StrEnum):
@@ -818,7 +784,6 @@ class AgentRunErrorCode(StrEnum):
     STATE_UNDECLARED = "STATE_UNDECLARED"
     STATE_REQUIRED = "STATE_REQUIRED"
 
-    # Agent-handle grants and calls (model-as-actor)
     MCP_GRANT_UNKNOWN = "MCP_GRANT_UNKNOWN"
     SQL_GRANT_UNKNOWN = "SQL_GRANT_UNKNOWN"
     TOOL_UNKNOWN = "TOOL_UNKNOWN"
@@ -882,10 +847,6 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
         AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION: AgentRunErrorClass.MODEL_BEHAVIOUR,
         AgentRunErrorCode.MAX_ITERATIONS_EXCEEDED: AgentRunErrorClass.LIMIT,
         AgentRunErrorCode.USAGE_LIMIT_EXCEEDED: AgentRunErrorClass.LIMIT,
-        # The cap was never evaluated here, unlike USAGE_LIMIT_EXCEEDED: a
-        # gap in the price catalogue, not a run that spent too much. Classed
-        # INFRASTRUCTURE — the artifact is not at fault — but carved out of
-        # 'is_retriable' below; see that function and _NEVER_RETRIED.
         AgentRunErrorCode.COST_NOT_MEASURABLE: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.RUN_TIMEOUT: AgentRunErrorClass.LIMIT,
         AgentRunErrorCode.TOO_MANY_RUNS: AgentRunErrorClass.LIMIT,
@@ -894,20 +855,8 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
         AgentRunErrorCode.HOOK_FAILED: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.CONVERSATION_LOAD_FAILED: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT: AgentRunErrorClass.INFRASTRUCTURE,
-        # A caller-supplied 'state' against an artefact declaring none is a
-        # calling-code mistake, not a transient condition (FR-010).
         AgentRunErrorCode.STATE_UNDECLARED: AgentRunErrorClass.APPLICATION,
-        # An omitted 'state' against a shape with a field that has no
-        # declared default cannot be filled in with defaults that do not
-        # exist; this is a calling-code mistake, not a transient condition.
         AgentRunErrorCode.STATE_REQUIRED: AgentRunErrorClass.APPLICATION,
-        # An unknown grant or tool name is a caller-code mistake, not a
-        # transient condition; a per-run type mismatch is not the model
-        # misbehaving, it is the calling code's own bug (AUTHORIZATION and
-        # APPLICATION never retry). A server that contradicts its own
-        # published schema, or a tool call that fails outright, sits beside
-        # the existing TOOL_* infrastructure codes rather than inventing a
-        # new class for one failure family.
         AgentRunErrorCode.MCP_GRANT_UNKNOWN: AgentRunErrorClass.AUTHORIZATION,
         AgentRunErrorCode.SQL_GRANT_UNKNOWN: AgentRunErrorClass.AUTHORIZATION,
         AgentRunErrorCode.TOOL_UNKNOWN: AgentRunErrorClass.APPLICATION,
@@ -915,9 +864,6 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
         AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.TOOL_DECODE_FAILED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.TOOL_CALL_FAILED: AgentRunErrorClass.INFRASTRUCTURE,
-        # An MCP call that failed after it may have run on the server: the
-        # infrastructure failed, but repeating the run could run the call
-        # twice, so it is carved out of 'is_retriable' (_NEVER_RETRIED).
         AgentRunErrorCode.MCP_CALL_INTERRUPTED: AgentRunErrorClass.INFRASTRUCTURE,
         AgentRunErrorCode.AGENT_CALL_CYCLE: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.AGENT_CALL_TOO_DEEP: AgentRunErrorClass.LIMIT,

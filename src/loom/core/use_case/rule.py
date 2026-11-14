@@ -52,7 +52,6 @@ class _RuleSpec:
 
     def from_command(self, *sources: FieldRef) -> _RuleSpec:
         if not sources:
-            # Full command mode: provide both command and fields_set.
             return replace(self, command_sources=(), include_command=True, include_fields_set=True)
         return replace(
             self,
@@ -172,7 +171,6 @@ class Rule:
         message: str,
     ) -> RuleBuilderFn:
         def _violation(*args: Any) -> str | None:
-            # Only boolean True signals failure, not any truthy value.
             return message if condition(*args) is True else None
 
         return _RuleSpec(

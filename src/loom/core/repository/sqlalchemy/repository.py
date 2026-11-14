@@ -75,7 +75,7 @@ def with_session_scope(
     return decorate
 
 
-class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve same-named methods across Mixin+Protocol bases; runtime behaviour is correct
+class RepositorySQLAlchemy(  # type: ignore[misc]
     SQLAlchemyCreateMixin[OutputT, IdT],
     SQLAlchemyBulkCreateMixin[OutputT, IdT],
     SQLAlchemyReadMixin[OutputT, IdT],

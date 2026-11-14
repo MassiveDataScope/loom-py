@@ -124,7 +124,7 @@ async def load_conversation(
             message=CONVERSATION_LOAD_TIMEOUT_MESSAGE,
             what=_LOADER,
         ) from exc
-    except Exception as exc:  # recovery: the run fails closed with a coded, detail-free error
+    except Exception as exc:
         raise failure_error(
             exc,
             run,

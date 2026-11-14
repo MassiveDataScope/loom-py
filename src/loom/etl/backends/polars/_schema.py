@@ -92,10 +92,6 @@ def _is_lossy(source: pl.DataType | DataTypeClass, target: pl.DataType | DataTyp
     )
 
 
-# ---------------------------------------------------------------------------
-# Delta schema reading (private helpers)
-# ---------------------------------------------------------------------------
-
 _DECIMAL_TYPE_RE = re.compile(r"^decimal\((?P<precision>\d+),(?P<scale>\d+)\)$")
 _PRIMITIVE_TYPES: dict[str, Callable[[], pl.DataType]] = {
     "byte": pl.Int8,

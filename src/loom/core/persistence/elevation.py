@@ -1,4 +1,4 @@
-"""Elevation across stores: each elevable scope belongs to one store (ADR 0008, D2).
+"""Elevation across stores: each elevable scope belongs to one store.
 
 An elevation flag is set on the transaction of the store whose tables declare
 its scope, and on no other. :func:`validate_elevations` refuses at startup a
@@ -102,8 +102,6 @@ class ScopedElevationSink:
             self._stores[k].in_transaction() for k, e in self._elevable.items() if scopes & e
         )
 
-    # Each store's call is made here, in the calling task, where the checkpoint
-    # passes: only the awaiting may happen in another task.
     def set_flag(self, scope: str) -> Awaitable[object]:
         return _together(self._stores[k].set_flag(scope) for k in self._open(frozenset({scope})))
 
@@ -113,7 +111,7 @@ class ScopedElevationSink:
     def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
         open_stores = self._open(scopes)
         invocation = current_scope()
-        if invocation is not None:  # each store poisoned before any session is touched
+        if invocation is not None:
             invocation.poison(open_stores, cause)
         return _together(self._stores[key].invalidate() for key in open_stores)
 
@@ -152,7 +150,7 @@ async def _in_turn(steps: list[Awaitable[object]]) -> None:
             except Exception as exc:
                 failure = failure or exc
     finally:
-        _close(pending)  # what an interruption left unawaited
+        _close(pending)
     if failure is not None:
         raise failure
 

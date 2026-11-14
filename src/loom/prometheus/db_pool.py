@@ -42,8 +42,6 @@ class _PoolGauges(Collector):
     """One collector per registry, reading every registered engine's pool on scrape."""
 
     def __init__(self) -> None:
-        # Keyed by labels: a later engine with the same labels (a rebuilt app)
-        # replaces the earlier one instead of exporting a duplicate series.
         self._engines: dict[tuple[str, str, str], weakref.ref[Any]] = {}
         self._lock = Lock()
 

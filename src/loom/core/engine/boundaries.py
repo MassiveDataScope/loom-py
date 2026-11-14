@@ -116,7 +116,6 @@ class Boundaries:
 
     def __init__(self, coordinator: Coordinator | None, elevation_sink: ElevationSink | None):
         self._coordinator = coordinator
-        # Preallocated: the common top-level writer allocates no boundary.
         self._top_level: Owned | Unmanaged = (
             _UNMANAGED if coordinator is None else Owned(coordinator)
         )
@@ -143,9 +142,6 @@ class Boundaries:
         channel = _Channel(boundary.owns_transaction or active_channel() is None)
         try:
             _refuse_nesting(attempt.use_case_name)
-            # The elevation frame wraps the coordinator's flush and commit too:
-            # the session-settings provider reads ``elevated_scopes()`` when a
-            # transaction begins, which may be at that flush.
             async with elevation_scope(
                 owns_transaction=boundary.owns_transaction,
                 sink=self._sink,
@@ -153,8 +149,6 @@ class Boundaries:
             ):
                 result = await self._enter(boundary, plan, attempt, channel, work)
         except BaseException as exc:
-            # ``BaseException``: a cancellation is a terminal outcome too,
-            # accounted for and re-raised.
             await channel.after_failure()
             attempt.failed(exc)
             raise
@@ -240,11 +234,6 @@ class _Channel:
             self._token = None
 
     async def after_failure(self) -> None:
-        # Unbound first: a drain must never run with its own channel still
-        # bound (post_commit module docstring) — a nested execution started
-        # from an action would otherwise see this channel as
-        # ``active_channel()``, get no channel of its own, and enqueue onto one
-        # already mid-drain, silently lost.
         self.unbind()
         if self.settled is not None:
             await drain_after_failure(self.settled)
@@ -275,13 +264,11 @@ async def _commit(
         scope.post_commit = active_channel()
         try:
             result = await _in_frame(scope, plan, work)
-        except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
+        except BaseException as exc:  # NOSONAR S5754
             error = exc
         try:
             outcome = await _finish(scope, error, attempt)
         finally:
-            # ``finish`` records the outcome before it raises an
-            # interruption caught while ending a store (a cancelled close).
             channel.settled = PostCommitChannel()
             scope.settle_post_commit(channel.settled, error)
     failure = invocation_error(outcome, error or scope.poisoned)

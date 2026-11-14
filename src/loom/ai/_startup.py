@@ -3,7 +3,7 @@
 :mod:`loom.composition._ai` walks the dependency graph once per start-up
 (:func:`~loom.composition._ai.marker_declarations`) and calls these checks
 only when at least one declaration of their marker is reached, so a
-deployment that declares none never imports this module (FR-050). A
+deployment that declares none never imports this module. A
 declaration may sit in a use case's ``execute()`` or constructor, or on an
 adapter, factory or called use case it reaches; every message names where,
 as the declaration's ``Reached.where``.
@@ -65,9 +65,6 @@ def _agent_issues(
             continue
         expected_args = get_args(found.binding.annotation)
         if not expected_args:
-            # No type argument to check against — e.g. a bare 'AgentHandle'
-            # annotation with no subscript. Nothing this pass can compare,
-            # so it is not reported as a mismatch.
             continue
         expected = expected_args[0]
         declared = agent_plan.output.loom_type.type

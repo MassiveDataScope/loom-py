@@ -94,17 +94,12 @@ from loom.rest.model import RestInterface
 _logger = logging.getLogger(__name__)
 
 
-# Written as data, never imported here: an application without an 'ai:'
-# section must not gain a single AI import.  The reference resolves
-# inside 'describe_app', and only when a description is asked for.
 _AGENTS_SECTION = "agents"
 _AGENTS_CONTRIBUTOR = "loom.ai.describe:describe_agents"
 
 
 class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     jwt: JwtAuthConfig | None = None
-    # True when the composition root passes create_app(authenticator=...):
-    # the configuration then says authentication is supplied in code.
     custom: bool = False
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
 
@@ -124,16 +119,7 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     auth: _RestAuthConfig = msgspec.field(default_factory=_RestAuthConfig)
     cors: CorsConfig | None = None
-    # Endpoints declared without Python (loom.rest.config); converted into
-    # the same RestInterface objects a Python subclass produces and handed to
-    # the same compiler — see _fold_config_interfaces and create_fastapi_app.
-    # Kept as written: _route_config validates the raw entries first, so a
-    # typo is reported by interface name, which msgspec cannot recover once a
-    # typed decode has failed; served_routes is their one decoder.
     interfaces: dict[str, Any] = msgspec.field(default_factory=dict)
-    # Subtractive per-environment overlay: every entry must match a route
-    # declared in Python, or startup aborts (see
-    # RestInterfaceCompiler.compile_sources).
     disable_routes: tuple[Any, ...] = ()
 
 
@@ -440,7 +426,6 @@ def _mount_metrics(
         )
 
     def _scrape_trailing_slash() -> Response:
-        # Return 404 for trailing-slash variant to avoid ambiguous scrape targets.
         return Response(status_code=404)
 
     app.add_api_route(path, _scrape, methods=["GET"], include_in_schema=False)
@@ -560,9 +545,6 @@ def served_routes(
         RuntimeError: When discovery finds nothing to serve, or a CRUD
             route cannot be served by the backend.
     """
-    # Built ahead of discovery's pruning so their use cases join CRUD
-    # gating, model registration and compilation exactly like a
-    # Python-discovered interface's, in Python-then-config order.
     interfaces, disabled = _route_config(source.config)
     config_interfaces = build_interfaces_from_config(interfaces)
     discovered = _discover_components(source)
@@ -576,7 +558,6 @@ def served_routes(
         config_interfaces = tuple(i for i in config_interfaces if i in served)
         discovered = discovered.with_changes(interfaces=python_interfaces)
     discovered = _fold_config_interfaces(discovered, config_interfaces)
-    # Runs before the backend allocates resources: building it creates them.
     _reject_autocrud_without_model(discovered)
     discovered = _gate_autocrud_capabilities(discovered, source)
     routes = RouteSources(
@@ -755,8 +736,6 @@ class FastAPIAdapter:
             INTROSPECTION_STATE_ATTR,
             _build_introspection(declared.name, rest_cfg, application.ai),
         )
-        # Last: every route the application will ever serve is registered by now,
-        # which is what makes the exclusion and collision checks meaningful.
         reject_health_collision(app)
         verify_exclusion_paths(app, auth.exclude_paths)
         _warn_anonymous_schema(rest_cfg, auth)

@@ -29,11 +29,6 @@ _WORKER_MODES: Final = ("modules", "manifest")
 """The ``app.discovery.mode`` values a worker scans; the first is its default."""
 
 
-# ---------------------------------------------------------------------------
-# Worker manifest — public typed contract for manifest-mode discovery
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class WorkerManifest:
     """The components a worker serves, as discovery resolves them.
@@ -114,11 +109,6 @@ def use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Com
     )
 
 
-# ---------------------------------------------------------------------------
-# Sequence utilities
-# ---------------------------------------------------------------------------
-
-
 def merge_unique(first: Sequence[_T], second: Sequence[_T]) -> tuple[_T, ...]:
     """Merge two sequences preserving declaration order and uniqueness."""
     seen: set[Any] = set()
@@ -128,11 +118,6 @@ def merge_unique(first: Sequence[_T], second: Sequence[_T]) -> tuple[_T, ...]:
             result.append(item)
             seen.add(item)
     return tuple(result)
-
-
-# ---------------------------------------------------------------------------
-# Callback discovery
-# ---------------------------------------------------------------------------
 
 
 def _is_callback_class(value: type[Any]) -> bool:
@@ -155,17 +140,11 @@ def _discover_callbacks_from_modules(modules: list[Any]) -> tuple[type[Any], ...
     return tuple(dict.fromkeys(flat))
 
 
-# ---------------------------------------------------------------------------
-# Manifest reading
-# ---------------------------------------------------------------------------
-
-
 def _reject_private_manifest(module: Any, module_path: str) -> None:
     """Raise if the module exposes a private MANIFEST struct.
 
-    The old ``MANIFEST = WorkerManifest(...)`` pattern is no longer part
-    of the public API.  Components must be declared via the public list
-    attributes (MODELS / USE_CASES / INTERFACES / JOBS / CALLBACKS).
+    Components must be declared via the public list attributes
+    (MODELS / USE_CASES / INTERFACES / JOBS / CALLBACKS).
     """
     if getattr(module, WorkerManifestAttr.MANIFEST, None) is None:
         return
@@ -220,11 +199,6 @@ def _read_worker_manifest(module_path: str) -> WorkerManifest:
     return _read_manifest_lists(module, module_path)
 
 
-# ---------------------------------------------------------------------------
-# AutoCRUD and compilables helpers
-# ---------------------------------------------------------------------------
-
-
 def _build_worker_compilables(
     manifest: WorkerManifest,
     autocrud_use_cases: AutoCRUDUseCases | None = None,
@@ -245,11 +219,6 @@ def _build_worker_compilables(
         autocrud_use_cases(manifest.models) if autocrud_use_cases else (),
     )
     return merge_unique(use_cases, manifest.jobs)
-
-
-# ---------------------------------------------------------------------------
-# Worker graph construction
-# ---------------------------------------------------------------------------
 
 
 class DuplicateJobName(ConfigError):
@@ -352,7 +321,6 @@ def _discover_compilables_from_config(
 ) -> WorkerComponents:
     if discovery_cfg.mode == "modules":
         return _discover_from_modules(discovery_cfg, autocrud_use_cases)
-    # worker_discovery admits no mode but modules and manifest.
     return _discover_from_manifest(discovery_cfg, autocrud_use_cases)
 
 

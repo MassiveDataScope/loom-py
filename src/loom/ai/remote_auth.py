@@ -93,9 +93,7 @@ from loom.core.plugins.entrypoints import (
     select_entry_point,
 )
 
-if TYPE_CHECKING:  # annotations only: importing the plan at runtime would
-    # close a cycle, since the configuration this module validates is what the
-    # compiler reads to build that plan.
+if TYPE_CHECKING:
     from typing import TypeAlias
 
     import httpx
@@ -260,10 +258,6 @@ def shared_a2a_auth(agent: str, auth: CompiledRemoteAuth | None) -> AuthObject |
         return None
     built = _STRATEGIES.get(f"{_A2A_SCOPE}:{agent}", auth)
     if isinstance(built, str):
-        # ``oauth`` delegates to the MCP client's own flow, which the A2A
-        # transport does not have. Refusing by name is the point: connecting
-        # without the credential the deployment declared is the failure this
-        # module exists to prevent.
         raise AgentCompilationError(
             [
                 AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
@@ -394,16 +388,9 @@ def _coerce_settings(strategy: Any, settings: dict[str, str]) -> dict[str, objec
     """
     try:
         params = inspect.signature(strategy).parameters
-        # signature() reads a class through its __init__, but get_type_hints()
-        # on a class reads its *attribute* annotations, so the two must be
-        # pointed at different objects to describe the same parameters.
         annotated: Any = getattr(strategy, "__init__") if isinstance(strategy, type) else strategy  # noqa: B009
         hints = get_type_hints(annotated)
     except Exception:  # noqa: BLE001
-        # A callable whose signature or annotations cannot be resolved -- a
-        # C builtin, a partial, an annotation naming a TYPE_CHECKING-only
-        # import -- behaves exactly as it did before this function existed.
-        # Introspection must never be the thing that breaks a working strategy.
         return dict(settings)
     coerced: dict[str, object] = {}
     for name, raw in settings.items():
@@ -450,9 +437,6 @@ def _load_strategy(kind: str) -> Any:
     try:
         return load_entry_point(REMOTE_AUTH_ENTRY_POINT_GROUP, kind, on_duplicate="error")
     except EntryPointNotFoundError as exc:
-        # Unreachable through configuration, which refuses an unregistered
-        # strategy at decode; reached only if a distribution is uninstalled
-        # between decode and start-up.
         available = ", ".join(exc.available) if exc.available else "none"
         raise AgentCompilationError(
             [

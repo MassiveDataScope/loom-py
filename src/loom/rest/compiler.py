@@ -229,7 +229,7 @@ class RouteSources:
             after *python*.
         disabled: ``(method, full_path)`` pairs to drop from the routes
             declared by *python* — see
-            :meth:`RestInterfaceCompiler.compile_sources` for why this never
+            :meth:`RestInterfaceCompiler.compile_sources`; this never
             targets *config*.
         unserved: Python interfaces this transport does not serve (another
             Lambda function does). Compiled only so a *disabled* entry naming
@@ -242,11 +242,6 @@ class RouteSources:
     unserved: Sequence[type[RestInterface[Any]]] = ()
 
     def __post_init__(self) -> None:
-        # A frozen dataclass only stops rebinding the field itself; a caller
-        # passing a plain list still owns that list and can mutate it after
-        # construction, silently changing what this "frozen" value compiles.
-        # object.__setattr__ is the documented way to write to a frozen
-        # instance's own __init__/__post_init__.
         object.__setattr__(self, "python", tuple(self.python))
         object.__setattr__(self, "config", tuple(self.config))
         object.__setattr__(self, "disabled", tuple(self.disabled))
@@ -569,8 +564,6 @@ class _ColumnPolicy:
         """Refuse a cursor-capable route whose tokens would carry a hidden or uncarriable key."""
         if self.model is None:
             return
-        # The columns a SQL keyset can order, as the SQLAlchemy repository
-        # checks them at run time: a JSON or array key fails here instead.
         annotations = scalar_column_annotations(self.model)
         shown = _response_fields(self.response)
         for name in key:
@@ -687,8 +680,8 @@ class RestInterfaceCompiler:
         """Compile interfaces from both origins into one deterministic route set.
 
         Python-declared interfaces compile first. ``sources.disabled`` is
-        then applied to that Python-only set — see :func:`_apply_disablement`
-        for why it never targets config-declared routes. Only after
+        then applied to that Python-only set; it never targets config-declared
+        routes. Only after
         disablement do ``app.rest.interfaces`` entries compile and join the
         result. A ``(method, path)`` collision between what remains aborts
         naming both origins involved — order only decides which origin the
@@ -755,10 +748,6 @@ class RestInterfaceCompiler:
                     _collision_message(key, seen[key], origin, new_label)
                 )
             seen[key] = _SeenRoute(origin, new_label)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _compile_fresh(self, interface: type[RestInterface[Any]]) -> list[CompiledRoute]:
         iface_name = interface.__qualname__

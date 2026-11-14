@@ -144,9 +144,7 @@ class SQLAlchemyBackend:
         prepare: Callable[[Sequence[type[BaseModel]]], None]
         check: Callable[[_Store], Awaitable[None]]
         elevation: SQLAlchemyStoreElevation | None = None
-        if runtime.connection_only:  # no repository is served
-            # metadata=None: the manager serves the shared metadata, where the
-            # caller's own compile_all() put its models.
+        if runtime.connection_only:
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, None)
             module = functools.partial(register_session_manager, session_manager=session_manager)
             prepare = no_model_preparation
@@ -157,7 +155,6 @@ class SQLAlchemyBackend:
                     db_cfg.schema.naming_convention, path=spec.path
                 )
             )
-            # Before the engine: an invalid persistence.cursors fails with none built.
             cursor_codec = runtime.cursor_codec or CursorCodec.from_context(ctx)
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
             module = build_sqlalchemy_repository_registration_module(

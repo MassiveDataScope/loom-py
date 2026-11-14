@@ -116,8 +116,6 @@ def check_api_version(obj: object, requirement: ApiVersionRequirement) -> None:
             integer, or names an unsupported version.
     """
     declared = getattr(obj, requirement.attribute, None)
-    # ``type is int`` rather than isinstance: a bool would be a mistake, not a
-    # version.
     if type(declared) is int and declared in requirement.supported:
         return
     raise ApiVersionMismatchError(obj, declared, requirement)

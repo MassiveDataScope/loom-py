@@ -69,7 +69,7 @@ class _DeltaTablePartition:
         self._writer_properties = settings.writer_properties
         self._mini_batch_size = settings.mini_batch_size
         self._mini_batch: list[dict[str, Any]] = []
-        self._ipc_writer: Any = None  # pa.ipc.RecordBatchStreamWriter | None
+        self._ipc_writer: Any = None
         self._spool: Any = self._new_spool()
         self._staged_records = 0
         self._staged_bytes = 0
@@ -82,7 +82,7 @@ class _DeltaTablePartition:
     def _ipc_compression(self) -> Any:
         if self._staging_compression == "uncompressed":
             return None
-        return self._staging_compression  # "lz4" | "zstd"
+        return self._staging_compression
 
     def write_batch(self, items: Sequence[Any]) -> int:
         """Accumulate items into mini-batches and flush when a threshold is reached.

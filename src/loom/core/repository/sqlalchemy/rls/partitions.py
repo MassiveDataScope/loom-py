@@ -151,7 +151,7 @@ async def _guarded(
         try:
             yield target, bootstrap.schema
         except DBAPIError:
-            aborted = True  # the rollback of the aborted transaction undoes the local path
+            aborted = True
             raise
         finally:
             if not aborted:

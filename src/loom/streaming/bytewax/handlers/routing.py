@@ -237,8 +237,6 @@ def _apply_expand_routes(
     node = raw
     expand_path = ctx.current_path
 
-    # Step 1: expand once — payload becomes dict[type, list[rows]].
-    # Use Message() directly: _replace_payload rejects non-LoomStruct payloads.
     def do_expand(msg: Any) -> Any:
         message = _require_message(msg)
         expanded: Any = node.expander.expand(message.payload)
@@ -252,7 +250,6 @@ def _apply_expand_routes(
 
     expanded_stream = _wire_row_fanout(expanded_stream, node, idx, ctx)
 
-    # Step 3: for each route, flat_map to extract rows of its type, then wire process
     for branch in iter_branches(node):
         branch_path = expand_path + (branch.index,)
         output_type = None if branch.is_default else cast(type, branch.key)

@@ -30,7 +30,6 @@ _FLOW_OUTPUT: Final = "flow.output"
 class StreamingErrorCode(IssueCode):
     """Catalogue of every streaming compiler failure and the issue it renders."""
 
-    # Binding resolution phase
     STEP_INSTANTIATION_FAILED = "STEP_INSTANTIATION_FAILED", Template("step {component}: {exc}")
     BINDING_RESOLUTION_FAILED = "BINDING_RESOLUTION_FAILED", Template("binding {component}: {exc}")
     BINDING_NOT_PROCESS_NODE = (
@@ -42,7 +41,6 @@ class StreamingErrorCode(IssueCode):
         Template("fork selector missing for keyed fork", component=_FORK, field="selector"),
     )
 
-    # Validation phase
     SINK_MISSING_NAME = (
         "SINK_MISSING_NAME",
         Template("storage sink '{component}': missing name", field="name"),
@@ -188,7 +186,6 @@ class StreamingErrorCode(IssueCode):
         ),
     )
 
-    # Plan-building phase
     ERROR_ENVELOPE_UNPARAMETERIZED = (
         "ERROR_ENVELOPE_UNPARAMETERIZED",
         Template(
@@ -212,7 +209,6 @@ class StreamingErrorCode(IssueCode):
         ),
     )
 
-    # Delivery-semantics phase (partitioned source spec)
     DELIVERY_KEYED_MULTIPROCESS = (
         "DELIVERY_KEYED_MULTIPROCESS",
         Template(
@@ -245,7 +241,6 @@ class StreamingErrorCode(IssueCode):
             field="{delivery_field}",
         ),
     )
-    # Under at-least-once delivery no message is discarded unless the flow says so.
     TERMINAL_SINK_MISSING = (
         "TERMINAL_SINK_MISSING",
         Template(

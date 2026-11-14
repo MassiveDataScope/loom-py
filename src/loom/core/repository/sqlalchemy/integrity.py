@@ -37,19 +37,12 @@ from loom.core.errors import Conflict, LoomError, SystemError
 
 R = TypeVar("R")
 
-# ---------------------------------------------------------------------------
-# PostgreSQL SQLSTATE codes
-# ---------------------------------------------------------------------------
 
 _PG_FOREIGN_KEY = "23503"
 _PG_UNIQUE = "23505"
 _PG_NOT_NULL = "23502"
 _PG_CHECK = "23514"
 
-
-# ---------------------------------------------------------------------------
-# SQLite pattern registry
-# ---------------------------------------------------------------------------
 
 _SqliteFactory = Callable[[re.Match[str]], LoomError]
 
@@ -73,11 +66,6 @@ _SQLITE_PATTERNS: list[tuple[re.Pattern[str], _SqliteFactory]] = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Driver helpers
-# ---------------------------------------------------------------------------
-
-
 def _pgcode(exc: IntegrityError) -> str | None:
     """Return the SQLSTATE code from the underlying DBAPI exception.
 
@@ -93,11 +81,6 @@ def _diag(exc: IntegrityError, attr: str) -> str:
     """Safely read a field from the psycopg2/psycopg3 ``diag`` object."""
     diag = getattr(exc.orig, "diag", None)
     return str(getattr(diag, attr, "") or "")
-
-
-# ---------------------------------------------------------------------------
-# Classification
-# ---------------------------------------------------------------------------
 
 
 def _from_pgcode(code: str, exc: IntegrityError) -> LoomError:
@@ -149,11 +132,6 @@ def classify_integrity_error(exc: IntegrityError) -> LoomError:
     if code is not None:
         return _from_pgcode(code, exc)
     return _from_message(str(exc.orig))
-
-
-# ---------------------------------------------------------------------------
-# Decorator
-# ---------------------------------------------------------------------------
 
 
 def handle_integrity_errors(

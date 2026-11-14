@@ -2,12 +2,12 @@
 
 An *execution* is one run of a use case, a job or an agent turn. Each one gets
 an :class:`ExecutionContext` holding what it owns: the per-execution cache
-through which a ``REQUEST`` binding is built once per execution (D4). It is
+through which a ``REQUEST`` binding is built once per execution. It is
 published as the ``work`` of the acting identity of :mod:`loom.core.identity`,
 beside who it acts as: :func:`enter` fixes both, for the execution and every
 task it starts, in one value. Handles read the identity through
-:func:`execution_identity` when they are called, never when they are built
-(spec 011, D2). The rules live where they apply: fresh contexts and the
+:func:`execution_identity` when they are called, never when they are built.
+The rules live where they apply: fresh contexts and the
 switch rule in :func:`enter`, closing in :func:`leave`, failing closed in
 :func:`execution_identity`, singleton construction in :class:`NoExecution`.
 
@@ -63,8 +63,6 @@ from loom.core.logger import get_logger
 
 _log = get_logger(__name__)
 
-# Bound once: CPython 3.14 looks ``.get`` up on a name imported with ``from`` as a
-# plain attribute, building a bound method on every call of the read paths.
 _acting_now = _acting.get
 
 _NO_EXECUTION_MESSAGE = (
@@ -279,7 +277,6 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
         cache = context._allocated()
         lock: Any = cache.get(building)
         if lock is None:
-            # setdefault is atomic: threads racing here all get the one lock stored.
             lock = cache.setdefault(building, threading.RLock())
         with lock:
             if key not in cache:
@@ -299,7 +296,7 @@ def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
     execution and in every task it starts. ``identity`` is the effective one,
     computed by the caller; ``None`` means no caller. Every call builds a new
     :class:`ExecutionContext`, so a nested execution gets a fresh cache and
-    shares no ``REQUEST`` instance with the one around it (L12). The switch
+    shares no ``REQUEST`` instance with the one around it. The switch
     rule is :func:`~loom.core.identity.fix_identity`'s: the same subject
     keeps the delegation and is refused past it; another subject is a logged
     switch with a delegation of its own.
@@ -445,7 +442,7 @@ class NoExecution:
     Singletons are built here, so a constructor that reads the execution
     identity raises :class:`ExecutionRequired`, and one that reads the acting
     identity sees :data:`~loom.core.identity.ANONYMOUS`, instead of freezing
-    whichever caller built it first (D2). The enclosing execution and its
+    whichever caller built it first. The enclosing execution and its
     caller are back after the body, unless the body left an execution open or
     misused a token: then the block closes the context and raises
     :class:`RuntimeError`, since the enclosing execution may be the one a
@@ -465,7 +462,6 @@ class NoExecution:
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("This NoExecution is already open")
-        # No caller, and fixed: a constructor cannot install one either.
         self._token = _acting.set(_OUTSIDE_ACTING)
 
     def __exit__(

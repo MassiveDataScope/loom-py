@@ -53,7 +53,7 @@ def ensure_templating_available(plan: AgentPlan) -> None:
     would only fail on its first request, after already taking the caller's
     prompt. Checking here, at the point
     :meth:`~loom.ai.engines.pydantic_ai.provider.PydanticAIEngineProvider.create_engine`
-    builds the agent, moves that failure to start-up (FR-035).
+    builds the agent, moves that failure to start-up.
 
     An artifact with no templated block never attempts the import, which is
     what keeps the extra optional: this function returns immediately for one.
@@ -117,7 +117,7 @@ def build_instructions(plan: AgentPlan) -> list[AgentInstructionItem]:
     Call :func:`ensure_templating_available` first; this function does not
     check the extra itself. Order is preserved end to end: the returned list
     is handed to ``Agent.from_spec(instructions=...)`` verbatim, and the two
-    builders it dispatches to never reorder or drop a block (FR-023).
+    builders it dispatches to never reorder or drop a block.
 
     Args:
         plan: Compiled agent plan.
@@ -146,7 +146,7 @@ def _literal_instruction(
 
     ``dynamic`` stays at its default ``False``
     (``pydantic_ai.messages.InstructionPart.dynamic``), which is what puts
-    this block's text in the provider's cacheable prefix (FR-025).
+    this block's text in the provider's cacheable prefix.
     The part carries ``block.name`` unchanged, ``None`` when the block
     declares none.
 
@@ -171,48 +171,24 @@ def _handlebars_instruction(
     With a declared schema (``state.schema`` set), ``check_template_compatibility``
     runs first, straight against ``pydantic_handlebars`` — so a marker the
     schema does not declare fails here, at start-up, rather than silently
-    rendering as the empty string (FR-032). Under the ``deps_type: dict``
+    rendering as the empty string. Under the ``deps_type: dict``
     waiver, or when this artifact declares no state at all, there is no
-    schema to check against and the template compiles bare (FR-033).
+    schema to check against and the template compiles bare.
     Compilation happens once, in this function, never inside the returned
     closure — the closure only renders.
 
-    ``pydantic_ai.TemplateStr`` is not used to reach ``pydantic_handlebars``
-    here: its untyped render path, ``TemplateStr.render``, builds a fresh
-    ``pydantic.TypeAdapter(type(deps))`` on every call — the trap that ruled
-    out a typed compilation path for this pillar (spike, T001) — and would
-    pay a ``dump_python`` round trip per block per request. This function
-    calls ``pydantic_handlebars.compile``/``check_template_compatibility``
-    directly and keeps the already-compiled template in the closure.
-
-    The returned closure is ``async def``, not ``def``. On the route this
-    module takes, a callable instruction is resolved by
-    ``pydantic_ai._system_prompt.SystemPromptRunner.run``, whose synchronous
-    branch awaits ``run_in_executor``: a plain ``def`` would pay a
-    thread-pool hop per templated block per request for what is a
-    synchronous string substitution. An ``async def`` closure skips that hop
-    (NFR-002).
+    This function calls
+    ``pydantic_handlebars.compile``/``check_template_compatibility`` directly
+    and keeps the already-compiled template in the closure. The returned
+    closure is ``async def``.
 
     The closure renders against ``ctx.deps.state``, never against ``ctx.deps``
     itself. ``ctx.deps`` is the bundle carrying the caller's verified
     ``Identity``, the application container and a caller-bound invoker
-    (``loom.composition._ai``); rendering against the bundle would put all
-    three within a marker's reach. Rendering against ``state`` — the
-    normalised mapping the artifact declared a shape for — is the security
-    boundary a template cannot cross (FR-036).
+    (``loom.composition._ai``); ``state`` — the normalised mapping the
+    artifact declared a shape for — is the boundary a template cannot cross.
 
-    The returned closure carries no name the engine can address: on this
-    route, a name is read only off an
-    :class:`~pydantic_ai.messages.InstructionPart`
-    (``pydantic_ai._instructions.sourced_instruction``), and
-    ``InstructionPart.content`` is a plain ``str`` that cannot carry a
-    template. The engine's decorator route, ``pydantic_ai.Agent.instructions``,
-    does read a callable's declared name, but it appends every block it
-    registers, which would push every templated block behind every literal
-    one and destroy the authored order :func:`build_instructions` exists to
-    keep. The missing name is the price of keeping that order — it is not a
-    limit of the engine, which can name a callable on its own route
-    (FR-026).
+    The returned closure carries no name the engine can address.
 
     Args:
         block: Compiled block; ``text`` is the Handlebars source.
@@ -220,7 +196,7 @@ def _handlebars_instruction(
             when present, is what a marker is checked against; absent, the
             template compiles unchecked.
         component: Artifact name, for a compilation failure's message.
-        label: This block's own name, or its position (FR-034).
+        label: This block's own name, or its position.
 
     Returns:
         An ``async`` closure rendering the compiled template against the

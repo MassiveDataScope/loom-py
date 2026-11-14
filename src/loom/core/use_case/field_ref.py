@@ -79,5 +79,4 @@ def field_ref(
     return _FieldRefFactory(root)
 
 
-# Public shorthand kept for DSL ergonomics: F(Model).field
 F = field_ref

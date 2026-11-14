@@ -71,7 +71,6 @@ class LoomDtype(StrEnum):
     schema declarations; they accept any inner type during validation.
     """
 
-    # --- integer ---
     INT8 = "Int8"
     INT16 = "Int16"
     INT32 = "Int32"
@@ -81,38 +80,27 @@ class LoomDtype(StrEnum):
     UINT32 = "UInt32"
     UINT64 = "UInt64"
 
-    # --- floating point ---
     FLOAT32 = "Float32"
     FLOAT64 = "Float64"
     DECIMAL = "Decimal"
 
-    # --- string / binary ---
     UTF8 = "Utf8"
     BINARY = "Binary"
 
-    # --- boolean ---
     BOOLEAN = "Boolean"
 
-    # --- temporal ---
     DATE = "Date"
     DATETIME = "Datetime"
     DURATION = "Duration"
     TIME = "Time"
 
-    # --- complex / structural (coarse, unparameterised) ---
     LIST = "List"
     ARRAY = "Array"
     STRUCT = "Struct"
     CATEGORICAL = "Categorical"
     ENUM = "Enum"
 
-    # --- null / unknown ---
     NULL = "Null"
-
-
-# ---------------------------------------------------------------------------
-# Rich structural / parametrised type nodes
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -257,10 +245,6 @@ class EnumType:
     categories: tuple[str, ...]
 
 
-# ---------------------------------------------------------------------------
-# LoomType — the full column-type language
-# ---------------------------------------------------------------------------
-
 #: Union of all valid column type representations.
 #:
 #: Use :class:`LoomDtype` for primitive types.  Use the structural
@@ -276,11 +260,6 @@ LoomType = (
     | CategoricalType
     | EnumType
 )
-
-
-# ---------------------------------------------------------------------------
-# Errors
-# ---------------------------------------------------------------------------
 
 
 class SchemaNotFoundError(Exception):
@@ -300,11 +279,6 @@ class SchemaNotFoundError(Exception):
 
 class SchemaError(Exception):
     """Raised when a frame is incompatible with the registered table schema."""
-
-
-# ---------------------------------------------------------------------------
-# ColumnSchema
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)

@@ -426,8 +426,6 @@ class CachedRepository(
         profile: str = "default",
     ) -> PageResult[OutputT] | CursorResult[OutputT]:
         is_cursor = query.pagination == PaginationMode.CURSOR
-        # For cursor pagination, cache only the first page to avoid
-        # unbounded key growth and low-hit deep-page caches.
         should_cache = not is_cursor or query.cursor is None
         if not should_cache or self.has_caller_scoped_session():
             return await self._repository.list_with_query(query, profile=profile)
@@ -577,10 +575,6 @@ class CachedRepository(
                 metadata,
             )
         return attr
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _build_result_codecs(
         self,
@@ -764,7 +758,6 @@ class CachedRepository(
 
         @wraps(method)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
-            # A session passed by hand runs under settings the cache cannot see.
             if _passes_a_session(signature, args, kwargs) or self.has_caller_scoped_session():
                 return await method(*args, **kwargs)
             scope = self.cache_scope()
@@ -918,8 +911,6 @@ class CachedRepository(
         for position, missing_id in missing:
             loaded = loaded_by_id.get(missing_id)
             if loaded is None:
-                # The index points at an id the backend no longer returns:
-                # let the caller fall back to its own repository query.
                 return []
             restored[position] = loaded
             refill.append((entity_keys[position], loaded))
@@ -982,8 +973,6 @@ class CachedRepository(
     ) -> dict[object, OutputT]:
         loaded: dict[object, OutputT] = {}
         for batch in batched(missing_ids, REFILL_BATCH_SIZE):
-            # Sequential on purpose: the wrapped repository may hold a single
-            # session, which is not safe to drive concurrently.
             page = await self._repository.list_with_query(self._id_in_query(batch), profile=profile)
             for item in page.items:
                 entity_id = self._extract_entity_id(item)

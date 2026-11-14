@@ -30,7 +30,6 @@ from loom.prometheus._instruments import cached_instruments, counter_spec, histo
 if TYPE_CHECKING:
     from prometheus_client import CollectorRegistry
 
-# ASGI type aliases
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]

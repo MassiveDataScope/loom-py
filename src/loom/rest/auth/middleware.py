@@ -26,7 +26,6 @@ from loom.rest.auth.config import JwtAuthConfig
 from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.constants import BEARER_CHALLENGE
 
-# ASGI type aliases
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]

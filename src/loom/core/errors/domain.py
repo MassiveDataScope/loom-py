@@ -87,8 +87,6 @@ class RuleViolation(DomainError):
 
     def __init__(self, field: str, message: str) -> None:
         self.field = field
-        # Override message attr with just the violation message (not field-prefixed)
-        # so adapters can access field and message independently.
         super().__init__(f"{field}: {message}", code=ErrorCode.RULE_VIOLATION)
         self.message = message
 

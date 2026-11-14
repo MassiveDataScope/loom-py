@@ -106,19 +106,14 @@ on any target builder (:class:`IntoTable`, :class:`IntoFile`,
 """
 
 __all__ = [
-    # builders
     "IntoTable",
     "IntoFile",
     "IntoTemp",
     "IntoHistory",
     "IntoClient",
-    # schema
     "SchemaMode",
-    # union
     "TargetSpec",
-    # client sentinel
     "ClientSpec",
-    # table specs
     "AppendSpec",
     "ReplaceSpec",
     "ReplacePartitionsSpec",
@@ -126,22 +121,17 @@ __all__ = [
     "UpsertSpec",
     "UpdateSpec",
     "HistorifySpec",
-    # file / temp specs
     "FileSpec",
     "TempSpec",
     "TempFanInSpec",
-    # SCD2 enums
     "HistorifyInputMode",
     "DeletePolicy",
     "HistoryDateType",
-    # SCD2 report
     "HistorifyRepairReport",
-    # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
-    # write errors
     "EmptyReplaceError",
     "UpsertDeleteFlagError",
     "UnsupportedUpsertDeleteFlagError",

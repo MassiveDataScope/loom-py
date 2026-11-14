@@ -63,14 +63,14 @@ async def single_store(
             async with scope.frame(Frame(key)):
                 try:
                     yield scope
-                except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
+                except BaseException as exc:  # NOSONAR S5754
                     error = exc
             try:
                 outcome = await coordinator.finish(scope, error)
             finally:
                 scope.settle_post_commit(settled, error)
         failure = invocation_error(outcome, error or scope.poisoned)
-    except BaseException as exc:  # NOSONAR S5754 - raised below, once the drain ran
+    except BaseException as exc:  # NOSONAR S5754
         failure = exc
     finally:
         reset_channel(token)

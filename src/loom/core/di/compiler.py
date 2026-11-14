@@ -6,7 +6,7 @@ dependency becomes the closure of the binding it names, and the scope wraps
 the result in one branch. An ``APPLICATION`` binding is built once, outside
 any execution, then served as a constant; a ``REQUEST`` or ``TRANSACTION``
 one is built once per execution and kept in its cache, or built fresh
-outside any execution (D4). A class loom builds itself, such as a use case
+outside any execution. A class loom builds itself, such as a use case
 or a job, compiles the same way into its *plan*, with no scope.
 
 Concurrency:
@@ -183,11 +183,9 @@ def _scoped(
 ) -> Closure:
     if binding.scope is Scope.APPLICATION:
         instance = binding.instance
-        if instance is not UNBUILT:  # compiled again after a registration
+        if instance is not UNBUILT:
             return repeat(instance).__next__
         return _singleton(compiled, key, binding, make)
-    # The binding record keys the execution's cache: a key registered again gets
-    # a new record, so an execution never serves an instance of a replaced binding.
     return per_execution(binding, make)
 
 

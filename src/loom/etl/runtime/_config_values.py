@@ -93,6 +93,5 @@ def _presence_failure(context: ConfigContext, key: str) -> ConfigValueFailure | 
     try:
         present = context.has(key)
     except ValueError:
-        # OmegaConf reports an interpolation it cannot resolve as a ValueError.
         return ConfigValueFailure.UNRESOLVED
     return None if present else ConfigValueFailure.MISSING

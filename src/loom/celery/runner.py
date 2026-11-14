@@ -24,7 +24,7 @@ methods are submitted to the shared :class:`~loom.core.async_bridge.AsyncBridge`
 sync methods are called directly from the task thread. Either way the callback
 is built and called inside a
 :func:`~loom.core.job.callback.callback_execution` acting as the identity its
-link envelope carries, the dispatcher's (D7), opened in the coroutine the
+link envelope carries, the dispatcher's, opened in the coroutine the
 bridge runs or in the task thread; a link without one acts as no one. Every task body first
 calls ``ensure_open``, so a process whose application failed to open refuses
 sync and async work alike.
@@ -100,7 +100,6 @@ class _CeleryAsyncRuntime:
         failure = self._open_failure
         if failure is None:
             return
-        # S5707 false positive: refuse() only ever records an Exception.
         raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707
 
     def run(
@@ -154,11 +153,6 @@ def _close_unrun(coro: Any) -> None:
         close()
 
 
-# ---------------------------------------------------------------------------
-# Metrics helpers
-# ---------------------------------------------------------------------------
-
-
 def _emit(metrics: MetricsAdapter | None, event: RuntimeEvent) -> None:
     """Forward *event* to *metrics* when an adapter is configured."""
     if metrics is not None:
@@ -198,11 +192,6 @@ def _is_eager_request(task_self: Any) -> bool:
     app = getattr(task_self, "app", None)
     conf = getattr(app, "conf", None)
     return bool(getattr(conf, "task_always_eager", False))
-
-
-# ---------------------------------------------------------------------------
-# Job runner factory
-# ---------------------------------------------------------------------------
 
 
 def _log_post_commit_failure(exc: Exception, job: str) -> None:
@@ -274,7 +263,6 @@ def _make_job_task(
         trace_id: str | None,
     ) -> Any:
         """Build the job instance and run it under the job span."""
-        # Inside the task's retry handling: a retry may land on a healthy process.
         async_runtime.ensure_open()
         return async_runtime.run(
             run_job(
@@ -327,7 +315,6 @@ def _make_job_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
     ) -> Any:
-        # The trace only: run_job resumes the envelope's caller, once, where the job runs.
         trace_token = set_trace_id(trace_id) if trace_id else None
         try:
             _emit(metrics, _job_event(EventKind.JOB_STARTED, name, trace_id))
@@ -358,11 +345,6 @@ def _make_job_task(
                 reset_trace_id(trace_token)
 
     return _job_task
-
-
-# ---------------------------------------------------------------------------
-# Callback runner factories
-# ---------------------------------------------------------------------------
 
 
 def _make_callback_task(

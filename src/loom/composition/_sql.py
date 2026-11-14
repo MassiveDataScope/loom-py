@@ -33,7 +33,7 @@ class SqlWiring:
         registry: ClickHouse connection registry entered by the app lifespan,
             or ``None`` when no section is configured.
         service: Query service registered in the container — the null
-            implementation when *config* is ``None`` (spec M5).
+            implementation when *config* is ``None``.
     """
 
     config: SqlConfig | None
@@ -59,8 +59,6 @@ class RegistryExecutors(Mapping[str, SqlExecutor]):
         return self._registry.executor(name)
 
     def __contains__(self, name: object) -> bool:
-        # Membership from config alone: never touches the registry, so the
-        # service policy checks work outside the lifespan as well.
         return name in self._names
 
     def __iter__(self) -> Iterator[str]:
@@ -74,7 +72,7 @@ def resolve_sql(ctx: ConfigContext) -> SqlWiring:
     """Load the optional ``sql:`` section into its registry and service.
 
     Absent section → no registry and the null service, keeping
-    ``SqlQueryService`` always resolvable with an actionable error (spec M5).
+    ``SqlQueryService`` always resolvable with an actionable error.
     Present section → a registry whose connections only open when the
     application opens. Who serves the SQL endpoints checks their
     authentication; this function knows no transport.

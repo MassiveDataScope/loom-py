@@ -83,20 +83,15 @@ __all__ = [
     "IntoTemp",
     "IntoHistory",
     "SchemaMode",
-    # SCD2 enums
     "HistorifyInputMode",
     "DeletePolicy",
     "HistoryDateType",
-    # SCD2 spec
     "HistorifySpec",
-    # SCD2 report
     "HistorifyRepairReport",
-    # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
-    # write errors
     "EmptyReplaceError",
     "UpsertDeleteFlagError",
     "UnsupportedUpsertDeleteFlagError",

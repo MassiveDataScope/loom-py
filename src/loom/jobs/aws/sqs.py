@@ -47,7 +47,6 @@ MAX_MESSAGE_BYTES = 256 * 1024
 MAX_BATCH_ENTRIES = 10
 MAX_BATCH_BYTES = 1024 * 1024
 """What one ``SendMessageBatch`` call carries at most, in entries and in body bytes."""
-# U+FFFE, U+FFFF: what SQS refuses that JSON leaves (control characters escaped, no surrogate).
 _REFUSED_CHARACTERS = (b"\xef\xbf\xbe", b"\xef\xbf\xbf")
 
 _log = get_logger(__name__)
@@ -115,14 +114,13 @@ class _PendingSQSSend:
     task_name: str
     task_id: str
     queue: str
-    size: int  # of the body, in bytes
+    size: int
     request: dict[str, Any] = field(repr=False)
 
     async def __call__(self) -> None:
         try:
             await asyncio.to_thread(self.client.send_message, **self.request)
         except Exception as exc:
-            # botocore's message may echo the body: neither it nor the cause leaves here.
             code = aws_error_code(exc)
             self.log_failure(code)
             raise SQSDispatchError(
@@ -176,7 +174,7 @@ class _PendingSQSBatch:
         try:
             results = await asyncio.gather(*queues)
         except BaseException:
-            await asyncio.wait(queues)  # gather cancelled them; each waits for its running call
+            await asyncio.wait(queues)
             for send in self.sends:
                 if send.task_id not in self.handed:
                     log_never_ran(send)
@@ -221,13 +219,10 @@ class _PendingSQSBatch:
         try:
             response = await asyncio.shield(call)
         except asyncio.CancelledError:
-            # A call still waiting for a thread sends nothing; one running keeps
-            # its max_concurrent_sends slot until it returns.
             self.stopped.set()
             await asyncio.wait([call])
             raise
         except Exception as exc:
-            # botocore already retried the call, and its message may echo a body.
             code = aws_error_code(exc)
             return [(send, code) for send in chunk]
         by_id = {send.task_id: send for send in chunk}
@@ -405,7 +400,6 @@ def _placement(
             "FIFO MessageGroupId",
             code=SQSErrorCode.GROUP_MISSING,
         )
-    # A hash meets SQS's 128-character ASCII limit and keeps the value out of SQS metadata.
     group_id = hashlib.sha256(str(group).encode()).hexdigest()
     return {"MessageGroupId": group_id, "MessageDeduplicationId": task_id}
 

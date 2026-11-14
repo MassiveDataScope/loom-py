@@ -1,10 +1,7 @@
 """Pure projection of a compiled agent into its public A2A agent card.
 
-Implements the projection table of ``specs/001-ai-agent-layer/contracts/a2a.md``
-and the purity decision of R-005: the card is derived from the compiled
-:class:`~loom.ai.compiler.AgentPlan` alone, with no A2A SDK and no web framework
-on the import path, so the redaction guarantee (FR-038, SC-009) is enforced by a
-plain unit test in the base wheel instead of an integration test.
+The card is derived from the compiled :class:`~loom.ai.compiler.AgentPlan`
+alone, with no A2A SDK and no web framework on the import path.
 
 The card says *what* the agent does and never *how it is built*: instructions,
 model binding, execution policies, free-form metadata and every compiled
@@ -35,18 +32,12 @@ references, so deriving tags from it would leak internals into the card.
 _INPUT_MODES: Final[tuple[str, ...]] = ("text/plain",)
 _OUTPUT_MODES: Final[tuple[str, ...]] = ("application/json",)
 
-# Advertised transport capabilities must match what the runtime actually serves
-# (FR-039b): no persisted task state means no push notifications and no state
-# transition history (R-006).
 _TRANSPORT_CAPABILITIES: Final[Mapping[str, bool]] = {
     "streaming": True,
     "pushNotifications": False,
     "stateTransitionHistory": False,
 }
 
-# One entry per authentication mechanism describable as an A2A security scheme.
-# A mechanism absent from this table is published as no scheme at all, never as
-# a bearer guess a client would then act on.
 _SECURITY_SCHEMES: Final[Mapping[str, Mapping[str, Mapping[str, str]]]] = {
     "jwt": {"bearer": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}},
     "api-key": {"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}},
@@ -83,7 +74,7 @@ def card_path(name: str, *, prefix: str = DEFAULT_A2A_PREFIX) -> str:
     """Build the well-known path serving one agent's card.
 
     The path is per agent so the authentication exclusion registered for it
-    matches the card alone and never the invocation surface (FR-041b).
+    matches the card alone and never the invocation surface.
 
     Args:
         name: Agent name.
@@ -115,8 +106,7 @@ def build_agent_card(
 
     Only the agent's identity, its endpoint, the modes actually served and the
     security scheme in use are published. Instructions, model binding, region,
-    credentials, policies, metadata and capability wiring are never projected
-    (FR-038, SC-009).
+    credentials, policies, metadata and capability wiring are never projected.
 
     Args:
         plan: Compiled agent to describe.

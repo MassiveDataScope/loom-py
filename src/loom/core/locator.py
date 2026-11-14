@@ -65,7 +65,6 @@ DEFAULT_CODE_PATH: Final = "src"
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
-    # Decoded by decode_discovery, which ignores the keys it does not declare.
     discovery: dict[str, Any] = msgspec.field(default_factory=dict)
 
 

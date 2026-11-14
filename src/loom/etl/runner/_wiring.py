@@ -207,8 +207,6 @@ def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any
     if spark is not None:
         encryption = encryption_options(storage_options)
         if encryption:
-            # Spark writes checkpoints through Hadoop's S3A, which reads SSE from
-            # its own conf (fs.s3a.server-side-encryption-*); loom cannot inject it.
             _log.warning(
                 "checkpoint encryption options ignored by the Spark backend keys=%s; "
                 "set fs.s3a.server-side-encryption-algorithm / -key on the Spark session",

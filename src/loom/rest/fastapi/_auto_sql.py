@@ -17,7 +17,7 @@ def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
     """Refuse an ``sql:`` section whose endpoints the authentication cannot guard.
 
     Runs before discovery, so a misdeclared endpoint fails first. The registry
-    and services are built later by the composition (spec §4).
+    and services are built later by the composition.
     """
     reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
     sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
@@ -26,7 +26,7 @@ def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
 
 
 def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
-    """Enforce the startup gates of every mounted identity-bound endpoint (§4)."""
+    """Enforce the startup gates of every mounted identity-bound endpoint."""
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
         if not endpoint.enabled or not endpoint.binds_identity:
@@ -39,7 +39,7 @@ def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
 
 
 def _require_authenticator(name: str, auth: _AuthWiring) -> Authenticator:
-    """An identity-bound endpoint without a mechanism has no identity to bind (§4)."""
+    """An identity-bound endpoint without a mechanism has no identity to bind."""
     if auth.authenticator is not None:
         return auth.authenticator
     raise ConfigError(
@@ -54,7 +54,7 @@ def _require_role_binding(
     allowed_roles: tuple[str, ...],
     authenticator: Authenticator,
 ) -> None:
-    """A mounted multi-role endpoint must bind its roles to the identity (§4)."""
+    """A mounted multi-role endpoint must bind its roles to the identity."""
     if not roles_need_identity_binding(
         allowed_roles, mechanism_binds_roles=authenticator.provides_roles
     ):
@@ -70,7 +70,7 @@ def _require_role_binding(
 
 
 def _require_authenticated_path(name: str, path: str, exclude_paths: tuple[str, ...]) -> None:
-    """A mounted SQL path listed in the exclusions would bypass auth (§4)."""
+    """A mounted SQL path listed in the exclusions would bypass auth."""
     if path not in exclude_paths:
         return
     raise ConfigError(
@@ -81,7 +81,7 @@ def _require_authenticated_path(name: str, path: str, exclude_paths: tuple[str, 
 
 
 def _warn_sql_endpoints(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
-    """Emit the spec §4 startup warnings for enabled SQL endpoints."""
+    """Emit the startup warnings for enabled SQL endpoints."""
     mechanism = _roles_mechanism(auth.authenticator)
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
@@ -96,8 +96,6 @@ def _warn_sql_endpoints(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
         if endpoint.auth is None:
             continue
         path = endpoint.path or f"/sql/{name}"
-        # Narrowed per connection: a global mechanism does not bind the roles of
-        # a connection whose allowlist is empty (see _connection_mechanism).
         bound = _connection_mechanism(connection, mechanism)
         warnings.warn(
             f"SQL endpoint mounted at {path} (connection={name!r}, "

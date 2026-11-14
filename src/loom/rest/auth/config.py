@@ -51,9 +51,6 @@ MAX_ISSUER_TTL_SECONDS = 3600
 """Ceiling for a minted token: signing is reading, so a long-lived token is a
 standing grant that stateless verification cannot revoke."""
 
-# RFC 7519 §4.1 registered claims. They describe the token, not the caller, so
-# they never become identity attributes, and a roles claim named after one is
-# silently overwritten when the token is built.
 RESERVED_CLAIMS: frozenset[str] = frozenset({"iss", "sub", "aud", "exp", "nbf", "iat", "jti"})
 
 ATTRIBUTE_CLAIM_PREFIX = "attr_"
@@ -104,7 +101,7 @@ class _SharedSecret:
         require_hmac_strength(self.secret.reveal(), algorithm, setting="JWT auth 'secret'")
 
     def load(self, algorithms: tuple[str, ...]) -> Keyring:
-        self.check(algorithms)  # the keyring holds the secret as it was checked
+        self.check(algorithms)
         return FixedKey(Key(self.secret.reveal(), algorithms))
 
 
@@ -118,8 +115,6 @@ class _SecretFile:
         _one_algorithm(algorithms, case="'secret_path'")
 
     def load(self, algorithms: tuple[str, ...]) -> Keyring:
-        # A deferred ``${file:...}``: read by the one file reader, then held to
-        # the same rules as a ``secret`` given in memory.
         self.check(algorithms)
         material = read_file(self.path, setting="JWT auth 'secret_path'")
         if not material.strip():
@@ -318,8 +313,6 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             raise ConfigError(f"JWT auth 'leeway_seconds' must be in 0..{MAX_LEEWAY_SECONDS}.")
         if any(not kind.strip() for kind in self.accepted_types):
             raise ConfigError("JWT auth 'accepted_types' entries must not be blank.")
-        # A blank audience or issuer is never what was meant: a placeholder
-        # resolved to nothing. Refusing it keeps it from reaching PyJWT unnoticed.
         _require_not_blank(
             "JWT auth", roles_claim=self.roles_claim, audience=self.audience, issuer=self.issuer
         )
@@ -425,17 +418,13 @@ class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
     typ: str | None = None
 
     def __post_init__(self) -> None:
-        # The algorithm first: a key that does not fit an unknown one says nothing useful.
         require_supported(self.algorithm, setting="JWT issuer 'algorithm'")
-        # A plain value never gets here: the struct refuses it before this runs.
         require_signing_key(self.signing_key.reveal(), self.algorithm)
         self._validate_claims()
 
     def _validate_claims(self) -> None:
         if not self.audience.strip() or not self.issuer.strip():
             raise ConfigError("JWT issuer requires a non-blank 'audience' and 'issuer'.")
-        # Optional here is what let an attribute impersonate the verifier's roles
-        # claim: the issuer must always own that name.
         _require_usable_roles_claim(self.roles_claim)
         _require_not_blank("JWT issuer", kid=self.kid, typ=self.typ)
         if not 0 < self.ttl_seconds <= MAX_ISSUER_TTL_SECONDS:

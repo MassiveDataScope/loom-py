@@ -1,4 +1,4 @@
-"""Every execution declaration a root reaches through the dependency graph (S5).
+"""Every execution declaration a root reaches through the dependency graph.
 
 A use case may declare a marker in its ``execute()`` or reach one through
 what it is built with: a port whose adapter or factory declares

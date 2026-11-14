@@ -34,8 +34,6 @@ def analysed(graph: DependencyGraph, recipe: Recipe) -> GraphAnalysis:
     discovered = recipe.discovered
     roots = tuple(map(ClassNode, (*discovered.use_cases, *discovered.jobs, *recipe.callbacks)))
     callbacks = frozenset(map(ClassNode, recipe.callbacks))
-    # A lenient recipe leaves a missing binding to the first build, as it skips factory.verify.
-    # factory.verify reports a use case's or a job's unmapped repository; nothing does a callback's.
     rules = (
         LENIENT_REFUSALS if recipe.lenient else (*REFUSALS, refuse_unmapped_repository(callbacks))
     )

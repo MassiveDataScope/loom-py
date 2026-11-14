@@ -239,14 +239,12 @@ class SessionManager:
         if joined is not None:
             yield joined
             return
-        # Closing the session without a commit rolls its transaction back.
         async with self.session() as session:
             try:
                 yield session
                 if write:
                     await session.commit()
             except Exception as exc:
-                # The type only: a driver error's text holds bound parameters.
                 self._log.error(
                     "OperationSessionRollback", store=self.store, error=type(exc).__name__
                 )
@@ -363,7 +361,6 @@ def _engine_url(config: DatabaseConfig) -> str:
 
 def _default_pool_class(url: str) -> type[Pool]:
     parsed = make_url(url)
-    # Every concrete dialect derives from DefaultDialect, which owns get_pool_class.
     dialect = cast("type[DefaultDialect]", parsed.get_dialect())
     return dialect.get_pool_class(parsed)
 
@@ -408,7 +405,7 @@ def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
 
 
 def _refuse_an_expired_caller(_session: Session, transaction: Any, _connection: Any) -> None:
-    """Open no transaction as a caller past its delegation (spec 011, T09a).
+    """Open no transaction as a caller past its delegation.
 
     One check per outer transaction, for every store, before its settings
     and its first statement: the row-level security settings and the audit

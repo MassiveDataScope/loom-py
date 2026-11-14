@@ -11,7 +11,7 @@ The plan's output schema reaches the engine through the spec; a pinned
 and that keyword is absent when no mode is pinned. A pydantic output is the
 one case where the keyword is never absent: :func:`build_output_type` hands
 ``Agent.from_spec`` the model class itself, wrapped or bare, so pydantic-ai
-owns validation and retries for that answer (D7, FR-012).
+owns validation and retries for that answer.
 """
 
 from __future__ import annotations
@@ -64,11 +64,11 @@ class PydanticAIEngineProvider:
             :mod:`~loom.ai.engines.pydantic_ai._models`; a deployment supplies
             one to inject a preconfigured vendor client, and the shared engine
             contract suite supplies one to exercise this adapter with no
-            network and no credentials (FR-048).
+            network and no credentials.
 
     Every MCP toolset this provider builds starts at
     :data:`~loom.ai.engines.pydantic_ai._mcp.DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS`
-    for its connection and ``initialize`` handshake (FR-051), because
+    for its connection and ``initialize`` handshake, because
     :func:`~loom.ai.registry.resolve_engine_provider` constructs this class
     with no arguments. The composition root instead calls
     :meth:`configure_mcp_connect_timeout` once it has read
@@ -102,7 +102,7 @@ class PydanticAIEngineProvider:
     def configure_mcp_connect_timeout(self, seconds: float) -> None:
         """Replace the MCP handshake deadline every toolset built from now on waits for.
 
-        Read structurally, with ``getattr``, by the composition root (FR-051),
+        Read structurally, with ``getattr``, by the composition root,
         so a third-party engine that declares no such method is simply left
         at its own default. Has no effect on a connection whose toolset was
         already built: call this before the runtime opens its clients.
@@ -118,11 +118,11 @@ class PydanticAIEngineProvider:
         """Open the worker's shared session for one ``mcp`` grant.
 
         Read off the provider by the composition root the same way
-        ``a2a_client_factory`` is (FR-016, FR-051). It is an instance method,
+        ``a2a_client_factory`` is. It is an instance method,
         not a free function, because the session it opens is the very toolset
         :meth:`create_engine` puts behind the capability boundary: one
         connection per server for the whole worker, not one for start-up plus
-        one per agent (FR-026).
+        one per agent.
 
         Args:
             capability: Compiled grant naming the server to reach.
@@ -173,9 +173,6 @@ class PydanticAIEngineProvider:
                 [AgentErrorCode.STREAMING_REQUIRED_BY_CAPABILITY.issue(component=plan.name)]
             )
         output_type = build_output_type(plan)
-        # The keyword is absent, not ``None``, when no mode is pinned: the
-        # engine's default for ``output_type`` is ``str``, and passing ``None``
-        # would override the resolution ``output_schema`` alone triggers.
         pinned: dict[str, Any] = {} if output_type is None else {"output_type": output_type}
         spec = build_agent_spec(plan)
         agent_kwargs: dict[str, Any] = {
@@ -191,16 +188,6 @@ class PydanticAIEngineProvider:
         shaped_agent = agent
         if plan.output_check is not None:
             _register_output_check(agent, plan.output.loom_type, plan.output_check)
-            # A run overriding the plan's shape (``AgentHandle.run(expect=...)``,
-            # ``run_text``) must not carry the check above: pydantic-ai refuses
-            # a custom ``output_type`` on a run whenever the agent holds an
-            # output validator (``UserError``), and the check was compiled
-            # against the plan's own declared schema, not the override's. A
-            # second agent, built from the same spec and kwargs but with no
-            # validator registered, serves that path instead
-            # (:meth:`PydanticAIEngine.run_stream_shaped`); built here, at
-            # start-up, alongside the checked one — never lazily or cached
-            # per call.
             shaped_agent = Agent.from_spec(spec, **agent_kwargs)
         return PydanticAIEngine(
             plan=plan,

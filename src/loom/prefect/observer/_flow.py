@@ -60,7 +60,6 @@ class PrefectObserver:
 def _publish_summary_artifact(event: LifecycleEvent) -> None:
     from prefect.runtime import flow_run  # noqa: PLC0415
 
-    # Only publish when inside an active Prefect flow run context.
     if flow_run.id is None:
         return
 

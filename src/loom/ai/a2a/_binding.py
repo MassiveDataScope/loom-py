@@ -7,9 +7,9 @@ rather than inline in the transport.
 
 **Only the card is anonymous.** Binding reads the exclusions mounted on the
 application's authentication middleware and refuses to start when any of them
-covers a path under the A2A or the agents prefix other than a card path
-(FR-041b); it then registers the card paths as the sole exclusion. Publishing
-an agent no caller could ever authenticate against is refused too.
+covers a path under the A2A or the agents prefix other than a card path; it then
+registers the card paths as the sole exclusion. Publishing an agent no caller could ever
+authenticate against is refused too.
 """
 
 from __future__ import annotations
@@ -34,10 +34,6 @@ from loom.rest.auth.middleware import AuthenticationMiddleware
 
 _logger = logging.getLogger(__name__)
 
-# Default prefix :func:`loom.ai.fastapi.endpoints.bind_agent_endpoints` mounts
-# under. Guarded here because an exclusion written against it would open the
-# HTTP invocation surface just as widely as one written against the A2A prefix.
-# A deployment mounting the agents elsewhere passes its own ``agents_prefix``.
 DEFAULT_AGENTS_PREFIX: Final[str] = "/agents"
 
 
@@ -63,18 +59,14 @@ def published_agents(
     """Select the exposed agents that really exist, warning about the ones that do not.
 
     ``expose`` is authoritative and never empty (``A2A_EXPOSE_EMPTY``): an empty
-    list means no agent, never all of them (FR-041a).
+    list means no agent, never all of them.
 
     A plan declaring ``deps_type`` or ``deps_schema`` (``plan.state is not
     None``) is refused rather than published: the A2A handler runs an agent
     with no state (``a2a/_handlers.py:235``), and the message shape it reads
     carries a prompt and a ``contextId``, with no field for one
     (``a2a/_handlers.py:175-186``). Rendering a declared state that never
-    arrives degrades silently rather than failing — measured,
-    ``render({})`` returns a sentence with its placeholders empty. Choosing a
-    place in the A2A envelope to carry state would publish a protocol
-    convention, which is a decision for whoever owns loom's A2A surface, not
-    one this pass makes on its behalf.
+    arrives would degrade silently rather than fail.
 
     Raises:
         AgentCompilationError: With ``STATE_SURFACE_UNSUPPORTED``, naming the
@@ -82,7 +74,7 @@ def published_agents(
             it conflicts with.
     """
     a2a = config.a2a
-    assert a2a is not None  # noqa: S101 - guarded by the caller's early return
+    assert a2a is not None  # noqa: S101
     published: list[PublishedAgent] = []
     for name in a2a.expose:
         plan = plans.get(name)
@@ -114,7 +106,7 @@ def _active_endpoint(endpoint: AgentEndpointConfig | None) -> AgentEndpointConfi
     """Return the HTTP opt-in only when it is actually in force.
 
     ``allow_anonymous`` lives in the HTTP stanza, whose mount is a double
-    opt-in — ``enabled`` **and** a named ``auth`` (FR-029a). A stanza failing
+    opt-in — ``enabled`` **and** a named ``auth``. A stanza failing
     either grants nothing, so A2A must not inherit its anonymity opt-out:
     otherwise switching the HTTP surface off while leaving
     ``allow_anonymous: true`` behind would keep anonymous invocation alive on
@@ -157,7 +149,7 @@ def require_usable_authenticator(
 def verify_exclusions(
     exclude_paths: Sequence[str], card_paths: frozenset[str], *, prefix: str, agents_prefix: str
 ) -> None:
-    """Refuse to start when an exclusion opens an invocation path (FR-041b).
+    """Refuse to start when an exclusion opens an invocation path.
 
     Exclusions are matched as exact strings by
     :class:`~loom.rest.auth.middleware.AuthenticationMiddleware`, so a
@@ -171,8 +163,6 @@ def verify_exclusions(
     guarded = (prefix, agents_prefix)
     offending = [
         path
-        # Deduplicated in order: the mounted list and the argument usually
-        # repeat each other, and the failure must name each path once.
         for path in dict.fromkeys(exclude_paths)
         if path not in card_paths
         and any(path == root or path.startswith(f"{root}/") for root in guarded)
@@ -219,7 +209,7 @@ def mounted_exclusions(app: FastAPI) -> tuple[str, ...]:
 
     The authoritative list is the one mounted on the middleware, not the one
     the caller of :func:`bind_a2a_endpoints` chose to repeat in its argument —
-    which defaults to empty. Reading it here is what makes the FR-041b guard
+    which defaults to empty. Reading it here makes the exclusion guard
     fail closed.
     """
     return tuple(

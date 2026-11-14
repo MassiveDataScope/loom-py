@@ -7,7 +7,7 @@ endpoint would otherwise fail start-up before a skill was ever called. The
 credential is resolved by :mod:`loom.ai.remote_auth`, the same registry the
 MCP transport uses; this module only carries the result to the client.
 
-**The remote agent's reply is untrusted input (FR-044a).** It is returned as a
+**The remote agent's reply is untrusted input.** It is returned as a
 tool *value*, never merged into instructions; it is never logged; and no byte
 of it reaches an error message, so a remote agent cannot dictate what the
 calling model or the caller is told about a failure.
@@ -140,7 +140,7 @@ def _reject_ungranted_card(capability: CompiledA2ACapability, card: AgentCard) -
     that matches no advertised skill — the artifact asked for something this
     remote does not have — and, failing that, a filter whose ``exclude`` leaves
     nothing selected. Only patterns the artifact already carries are reported:
-    the card is untrusted input (FR-044a), so no text of it reaches the
+    the card is untrusted input, so no text of it reaches the
     start-up issue.
     """
     if not capability.include and not capability.exclude:

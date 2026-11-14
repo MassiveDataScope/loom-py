@@ -5,7 +5,7 @@ Two of the four invariants of a capability call hold here (US5):
 * **The call runs as the caller, or it does not run.** The dependency bundle
   must carry a verified :class:`~loom.core.identity.Identity` *and* the
   application container. A bundle carrying neither fails closed with
-  ``UNAUTHORIZED``; it is never degraded to ``ANONYMOUS`` (FR-043, FR-045).
+  ``UNAUTHORIZED``; it is never degraded to ``ANONYMOUS``.
 * **No raw application failure escapes a tool.** An authorisation denial is
   re-raised as ``UNAUTHORIZED`` — an ``AUTHORIZATION`` code the retry policy
   never replays — and every other failure is logged server-side and answered
@@ -90,7 +90,7 @@ class CapabilityDeps(Protocol):
     by ``usecase`` grants alone, and is already bound to ``identity`` by the
     composition root that built the bundle — so a granted use case declaring
     ``Caller()`` receives the agent's caller instead of failing as
-    unauthenticated (FR-043).
+    unauthenticated.
 
     Attributes:
         identity: Verified caller this invocation runs as.
@@ -168,7 +168,7 @@ def capability_deps(run: RunContext[Any]) -> CapabilityDeps:
 
 
 def require_authenticated(identity: Identity, tool: str) -> None:
-    """Refuse an unauthenticated caller before any side effect (design R3)."""
+    """Refuse an unauthenticated caller before any side effect."""
     if not identity.is_authenticated:
         raise AgentRunError(
             AgentRunErrorCode.UNAUTHORIZED,

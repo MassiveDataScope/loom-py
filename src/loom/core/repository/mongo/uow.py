@@ -187,7 +187,7 @@ class MongoUnitOfWork(EntersAlone):
         self._session = session
         _log.debug("UoWBegin")
 
-    async def flush(self) -> None:  # NOSONAR S7503 - the PhasedUnitOfWork protocol awaits it
+    async def flush(self) -> None:  # NOSONAR S7503
         """Nothing to flush: every write already reached the server inside the transaction.
 
         Raises:

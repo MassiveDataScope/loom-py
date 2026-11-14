@@ -1,6 +1,6 @@
 """Pending job dispatches, delegated to the post-commit channel.
 
-The public names are kept for existing callers; the queue itself is the
+The queue itself is the
 :class:`~loom.core.engine.post_commit.PostCommitChannel` that
 :func:`~loom.core.engine.post_commit.store_channel` returns for the store the
 running execution writes to.  When no channel is bound, a per-context fallback
@@ -25,8 +25,6 @@ from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_chan
 from loom.core.execution import execution_ended
 from loom.core.uow.scope import current_scope
 
-# default=None, never a channel instance: a shared default would leak
-# dispatches across contexts.  Each context creates its own on first use.
 _fallback: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_pending_dispatches", default=None
 )

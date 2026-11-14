@@ -73,7 +73,6 @@ class _Seed:
         if self.kind == "temp":
             runner.seed_temp(self.name, data, columns, schema=self.schema)
         elif self.schema is None:
-            # Positional call without schema= keeps runners written for the old protocol working.
             runner.seed(self.name, data, columns)
         else:
             runner.seed(self.name, data, columns, schema=self.schema)

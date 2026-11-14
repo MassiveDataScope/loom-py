@@ -94,8 +94,6 @@ _YAML_MISSING_HINT: Final[str] = (
 
 
 def _decode_yaml_payload(buf: bytes, *, type: type[_T]) -> _T:
-    # Lazy import: PyYAML is not a base dependency, and importing it at module
-    # level would break ``import loom.ai.declarative`` on a bare install.
     from msgspec import yaml as msgspec_yaml
 
     return msgspec_yaml.decode(buf, type=type)

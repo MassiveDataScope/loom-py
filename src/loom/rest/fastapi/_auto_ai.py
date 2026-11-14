@@ -25,10 +25,8 @@ def _bind_agent_surface(
 ) -> None:
     """Mount the agent surfaces: HTTP for every opt-in, A2A for every exposure.
 
-    Both mounts read the same ``_AGENTS_PREFIX``. That single source is what
-    makes the FR-041b exclusion guard meaningful: it measures the agents prefix
-    an exclusion could open, so a prefix nobody mounts would leave the real one
-    unguarded.
+    Both mounts read the same ``_AGENTS_PREFIX``, the prefix the exclusion
+    guard measures.
 
     Raises:
         ConfigError: When an agent opts in without a usable authenticator, or
@@ -37,7 +35,6 @@ def _bind_agent_surface(
     if ai.config is None or ai.runtime is None:
         return
     _validate_agent_endpoint_auth(ai.config, auth)
-    # Local import: same containment rule as 'resolve_ai'.
     from loom.ai.fastapi.endpoints import bind_agent_endpoints
 
     bind_agent_endpoints(
@@ -57,7 +54,7 @@ def _bind_a2a_surface(
     auth: _AuthWiring,
     observability_runtime: ObservabilityRuntime,
 ) -> None:
-    """Publish the agents named in ``ai.a2a.expose`` over inbound A2A (FR-041).
+    """Publish the agents named in ``ai.a2a.expose`` over inbound A2A.
 
     Guarded on the section rather than delegated to ``bind_a2a_endpoints``'s own
     early return: the import below pulls the ``ai-a2a`` extra, which a
@@ -65,7 +62,6 @@ def _bind_a2a_surface(
     """
     if ai.config is None or ai.runtime is None or ai.config.a2a is None:
         return
-    # Local import: the A2A transport lives behind the 'ai-a2a' extra.
     from loom.ai.a2a.server import bind_a2a_endpoints
 
     bind_a2a_endpoints(
@@ -81,7 +77,7 @@ def _bind_a2a_surface(
 
 
 def _validate_agent_endpoint_auth(ai_cfg: AiConfig, auth: _AuthWiring) -> None:
-    """Apply the JWT start-up gates to every agent bound to a verified caller (§4).
+    """Apply the JWT start-up gates to every agent bound to a verified caller.
 
     An agent surface is at least as privileged as a SQL one: the verified
     caller drives every capability the agent holds, as that caller. So it must
@@ -102,7 +98,6 @@ def _agents_bound_to_a_verified_caller(ai_cfg: AiConfig) -> tuple[str, ...]:
     for another service as the caller driving every capability the agent holds.
     """
     http = {
-        # The double opt-in 'bind_agent_endpoints' mounts on.
         name
         for name, endpoint in ai_cfg.endpoints.items()
         if endpoint.enabled and endpoint.auth.strip() and not endpoint.allow_anonymous

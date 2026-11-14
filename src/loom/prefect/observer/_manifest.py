@@ -39,7 +39,6 @@ class ManifestObserver:
         Args:
             event: Immutable lifecycle event.
         """
-        # Lazy import to keep the module importable without loom.core changes.
         from loom.core.observability.event import EventKind, Scope  # noqa: PLC0415
 
         if event.scope is not Scope.STEP:
@@ -49,7 +48,7 @@ class ManifestObserver:
         elif event.kind is EventKind.ERROR:
             status = RunStatus.FAILED
         else:
-            return  # START events have no manifest transition
+            return
 
         self._manifest = mark_step(self._manifest, event.name, status)
         try:

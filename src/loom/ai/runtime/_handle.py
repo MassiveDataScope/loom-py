@@ -10,20 +10,20 @@ Two markers, two resolvers, never one constructed by application code:
   the same concurrency admission and the same policies a transport-driven
   run goes through apply here too; nothing in this module opens a parallel
   path around them.
-* ``Mcp()`` resolves through :func:`mcp_marker_resolver` (T302), handed to
+* ``Mcp()`` resolves through :func:`mcp_marker_resolver`, handed to
   the executor via
   :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver` — a
-  second, differently-typed resolver, not an overload of the first (S7).
+  second, differently-typed resolver, not an overload of the first.
   It builds a caller-bound :class:`~loom.ai.runtime._grants.McpGrantView`
   over the server's shared substrate grant
   (:meth:`AgentRuntime.use_case_mcp_grant`), filtered by the *resolving
   binding's own* ``include`` — never by the shared grant's, which carries
-  none (see :mod:`~loom.ai.runtime._grants`'s module docstring and
-  ``plan.md``'s "Where the caller's include comes from"). A server tolerated
+  none (see :mod:`~loom.ai.runtime._grants`'s module docstring). A server
+  tolerated
   unreachable under ``ai.remote_clients: optional`` resolves to
-  :class:`_UnavailableMcpHandle` instead (T303).
+  :class:`_UnavailableMcpHandle` instead.
 
-Three run modes (T304, ``Agent()`` path only): ``run(prompt)`` decodes into
+Three run modes (``Agent()`` path only): ``run(prompt)`` decodes into
 the artefact's own declared output; ``run(prompt, expect=X)`` decodes this
 call only into ``X``, skipping the artefact's own output check, which is
 compiled against the declared schema and cannot be asked to validate another
@@ -34,7 +34,7 @@ hook's command is compiled against the declared shape and cannot be handed
 another one. A hook declaring only conversation-bookkeeping fields is
 unaffected and keeps running with every mode.
 
-``mcp()`` and ``sql()`` (T301/T303) on the ``Agent()`` path return the
+``mcp()`` and ``sql()`` on the ``Agent()`` path return the
 artefact's own granted views, built by :mod:`~loom.ai.runtime._grants`: the
 same filtered session and the same bounded connection the model's own
 capabilities run over, never a second one.
@@ -275,7 +275,7 @@ class _BoundAgentHandle:
         )
 
     def _require_authenticated(self) -> None:
-        """Refuse an anonymous caller before any network call (design R3).
+        """Refuse an anonymous caller before any network call.
 
         Mirrors :func:`loom.ai.engines.pydantic_ai._guards.require_authenticated`:
         the same refusal, for the same reason, on the path a use case opens
@@ -288,7 +288,7 @@ class _BoundAgentHandle:
             )
 
     def _require_shape_allowed(self) -> None:
-        """Refuse a per-run shape when the output hook's command needs the declared one (T304)."""
+        """Refuse a per-run shape when the output hook's command needs the declared one."""
         if self._runtime.grants(self._name).output_shape_bound:
             raise AgentRunError(
                 AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK,
@@ -348,7 +348,7 @@ def agent_marker_resolver(
     runtime, the application's single query service and the observability
     runtime the handle's span opens on. ``sql_query_service`` is resolved by
     the caller, once, the same way the composition root resolves it for
-    every other consumer (M5): a handle never reaches into a container for
+    every other consumer: a handle never reaches into a container for
     it, and ``AgentRuntime`` holds no container to reach into.
 
     Args:
@@ -379,7 +379,7 @@ def agent_marker_resolver(
 class _UnavailableMcpHandle:
     """The handle an ``Mcp()`` marker resolves to when its server never connected.
 
-    Reachable only under ``ai.remote_clients: optional`` (FR-07): a server
+    Reachable only under ``ai.remote_clients: optional``: a server
     the marker granted but whose connection start-up tolerated as
     unreachable (:meth:`AgentRuntime.use_case_mcp_grant` returning ``None``).
     This is a different failure from a call naming a tool outside the
@@ -440,7 +440,7 @@ def mcp_marker_resolver(
 
     A server tolerated unreachable resolves to :class:`_UnavailableMcpHandle`
     instead of raising: the marker is granted, the connection simply never
-    opened, and that is a call-time failure (FR-07), not a bind-time one.
+    opened, and that is a call-time failure, not a bind-time one.
 
     Args:
         runtime: Live agent runtime serving this deployment.
@@ -462,7 +462,7 @@ def mcp_marker_resolver(
         The resolved view's ``span_attributes`` carry ``{"mcp_server": ...}``,
         named for what the value actually is. The design sketched
         ``{"use_case": ...}``, but this resolver is typed to receive only the
-        marker's server, its ``include`` and the caller (S7): the executor
+        marker's server, its ``include`` and the caller: the executor
         never crosses the declaring use case's own name over that boundary,
         so that key could only have carried the server under a name that
         denies it. Attributing a tool span to the use case that asked for it
@@ -480,7 +480,7 @@ def mcp_marker_resolver(
         if grant is None:
             return _UnavailableMcpHandle(server)
         return McpGrantView(
-            span_attributes={"mcp_server": server},  # see the Note above
+            span_attributes={"mcp_server": server},
             capability=grant.capability,
             include=include,
             exclude=(),
@@ -494,7 +494,7 @@ def mcp_marker_resolver(
     return _resolve
 
 
-if TYPE_CHECKING:  # the handle satisfies the public Protocol it stands in for (A3)
+if TYPE_CHECKING:
 
     def _bound_handle_satisfies_agent_handle(handle: _BoundAgentHandle) -> AgentHandle[Any]:
         return handle

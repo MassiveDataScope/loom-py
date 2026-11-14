@@ -166,9 +166,6 @@ class StreamingTestRunner:
             error_sinks=error_sinks,
         )
         try:
-            # A real span, like the production runner: a harness that emitted a
-            # different event shape than the runtime it stands in for would let
-            # tracing regressions pass their own tests.
             with self._observability_runtime.span(
                 Scope.POLL_CYCLE,
                 self._plan.name,

@@ -78,11 +78,6 @@ class _MergePlan:
     not_matched_insert_predicate: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Predicate construction
-# ---------------------------------------------------------------------------
-
-
 def _build_join_clause(
     upsert_keys: tuple[str, ...],
     partition_cols: tuple[str, ...],
@@ -132,11 +127,6 @@ def _build_upsert_predicate(
         return join_clause
     partition_filter = _build_partition_predicate(combos, spec.partition_cols, alias=target_alias)
     return f"({partition_filter}) AND ({join_clause})"
-
-
-# ---------------------------------------------------------------------------
-# Column-set construction
-# ---------------------------------------------------------------------------
 
 
 def _build_upsert_update_cols(
@@ -246,11 +236,6 @@ def _build_merge_plan(
         matched_update_predicate=keep_predicate,
         not_matched_insert_predicate=keep_predicate,
     )
-
-
-# ---------------------------------------------------------------------------
-# Observability helpers
-# ---------------------------------------------------------------------------
 
 
 def _warn_no_partition_cols(table_ref: str) -> None:

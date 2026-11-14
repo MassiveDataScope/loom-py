@@ -46,11 +46,6 @@ from ._predicate import predicate_to_polars
 _log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Polymorphic JSON normalization
-# ---------------------------------------------------------------------------
-
-
 def _normalize_utf8_value(value: object) -> object:
     if isinstance(value, str):
         return value
@@ -122,7 +117,7 @@ def _normalize_json_string(json_str: str | None, *, loom_type: LoomType) -> str 
     if result is None:
         return None
     if result is parsed:
-        return json_str  # no structural change — skip re-serialization
+        return json_str
     return json.dumps(result, ensure_ascii=False)
 
 

@@ -44,7 +44,7 @@ def read_text(uri: str) -> str:
         The decoded text.
     """
     if is_cloud_uri(uri):
-        import fsspec  # noqa: PLC0415 - the config extra; local files load without it
+        import fsspec  # noqa: PLC0415
 
         with fsspec.open(uri, mode="r", encoding="utf-8") as fh:
             return str(fh.read())  # pyright: ignore[reportAttributeAccessIssue]

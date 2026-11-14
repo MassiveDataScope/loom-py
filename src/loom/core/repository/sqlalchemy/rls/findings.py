@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
-# A relation's grants as the catalogue holds them: relation, grantee, privileges.
 Acl = dict[str, dict[str, set[str]]]
 
 

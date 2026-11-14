@@ -105,9 +105,6 @@ def make_run_name_callback(
         if cid:
             return f"{cid}-{ts}"
         if correlation_field and params.get(correlation_field) is not None:
-            # The callable runs BEFORE the flow body that resolves
-            # ``${now}`` etc. — resolve here too so the displayed name
-            # reflects the real bound value.
             value = resolve_placeholder(params[correlation_field], anchor=anchor)
             return f"{_sanitize(value)}-{ts}"
         return datetime.now(tz=UTC).strftime(_COMPACT_TIMESTAMP_FMT)

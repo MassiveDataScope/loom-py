@@ -132,8 +132,6 @@ def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observabili
     method = compiled.route.method.upper()
     endpoint = _RouteEndpoint(compiled, api, observability)
     route = Route(compiled.full_path, endpoint.handle, methods=[method])
-    # Starlette adds HEAD to a GET route; FastAPI does not, so neither its 405
-    # nor its Allow header would match.
     route.methods = {method}
     return route
 
@@ -205,7 +203,6 @@ class LambdaHTTPHandler:
 
     def __init__(self, app: Starlette, application: Application) -> None:
         host = LoopHost(application)
-        # Built on the host's loop: without a current loop Mangum makes one of its own.
         self._mangum = Mangum(app, lifespan="off")
         host.start()
         self._host = host

@@ -38,7 +38,7 @@ class JwtTestAuth:
     @property
     def secret(self) -> str:
         """The 32-byte key, hex-encoded: ``config.secret`` is the one copy."""
-        assert self.config.secret is not None  # noqa: S101 - jwt_test_auth always sets it
+        assert self.config.secret is not None  # noqa: S101
         return self.config.secret.reveal()
 
     def token(self, subject: str, *, ttl_seconds: int = 300, **claims: Any) -> str:
@@ -52,7 +52,7 @@ class JwtTestAuth:
         Returns:
             The encoded token, for an ``Authorization: Bearer`` header.
         """
-        import jwt  # noqa: PLC0415 - the ``rest`` extra; loaded only when a test mints
+        import jwt  # noqa: PLC0415
 
         now = int(time.time())
         payload = {

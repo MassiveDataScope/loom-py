@@ -60,5 +60,4 @@ def _options(connection: MongoConnection, extra: dict[str, Any]) -> dict[str, An
     built = reveal_for_driver(connection.client_options())
     if connection.server_api_version is not None:
         built["server_api"] = ServerApi(connection.server_api_version)
-    # pymongo reads option names case-insensitively: maxpoolsize is maxPoolSize.
     return merge_extra(built, extra, connection, case_insensitive=True)

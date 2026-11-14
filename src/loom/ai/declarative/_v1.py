@@ -5,8 +5,7 @@ an ``.agent.yaml`` file. They are engine-agnostic and vendor-agnostic — no
 engine, provider, model identifier or credential is representable here.
 
 Every struct is frozen, keyword-only and rejects unknown fields, so an
-unrecognised key is a decoding failure rather than a silently dropped value
-(FR-005).
+unrecognised key is a decoding failure rather than a silently dropped value.
 
 The module-level constants are the single source of truth for the published
 JSON Schema: :mod:`loom.ai.declarative._schema` derives every pattern, default,
@@ -265,8 +264,7 @@ class SqlCapability(
 ):
     """Read-only access to a named SQL connection.
 
-    Result bounds are mandatory: an unbounded query is not representable
-    (FR-046b).
+    Result bounds are mandatory: an unbounded query is not representable.
 
     Args:
         connection:       Named connection; compilation fails unless it is read-only.
@@ -424,20 +422,18 @@ class InstructionBlock(
 
     ``dynamic`` is not authored here: it is not cosmetic, it decides what a
     provider may cache, and it follows from whether ``template`` is declared
-    — an author who could set it independently could only get it wrong
-    (FR-025).
+    — an author who could set it independently could only get it wrong.
 
     Args:
         text:     Instruction text. Literal unless ``template`` names a
             template engine; with no ``template``, any ``{{`` it contains
-            reaches the model unchanged (FR-022).
+            reaches the model unchanged.
         name:     Optional name identifying the block in compilation issues
             and start-up diagnostics; matches :data:`INSTRUCTION_NAME_PATTERN`.
-            It never becomes an addressable id on the engine's own side
-            (FR-026).
+            It never becomes an addressable id on the engine's own side.
         template: Names the template engine ``text`` is written for, one of
             :data:`TEMPLATE_ENGINES`. ``None`` when ``text`` is a literal
-            string (FR-022).
+            string.
     """
 
     text: _NonEmptyStr
@@ -456,8 +452,7 @@ class PolicySpec(
     Ranges are published as module constants and enforced by a later
     compilation phase, so an out-of-range value is reported as a coded issue
     rather than as a decoding failure. See "Spend caps" and "``max_iterations``
-    versus ``max_tool_calls``" in ``docs/ai/artifacts.md`` for the rationale
-    behind the fields below.
+    versus ``max_tool_calls``" in ``docs/ai/artifacts.md``.
 
     Args:
         retries:         Retries a failed tool call, and an answer
@@ -531,12 +526,12 @@ class AgentSpecV1(
         description:   What the agent does. Published in the A2A card.
         deps_type:     Declares the shape of the artifact's state: the
             literal ``dict``, or a ``module:Symbol`` reference matching
-            :data:`DEPS_TYPE_PATTERN`. Sugar over ``deps_schema`` (FR-003).
+            :data:`DEPS_TYPE_PATTERN`. Sugar over ``deps_schema``.
             ``dict`` contains no colon, so the two forms cannot collide.
             ``None`` when the artifact declares no state.
         deps_schema:   Declares the shape of the artifact's state directly,
             as a JSON Schema object — the canonical form of the one
-            mechanism ``deps_type`` is sugar over (FR-003). ``None`` when the
+            mechanism ``deps_type`` is sugar over. ``None`` when the
             artifact declares no state, or declares it through ``deps_type``.
         instructions:  Instructions the agent follows: a literal string, or a
             non-empty sequence of :class:`InstructionBlock` in authored

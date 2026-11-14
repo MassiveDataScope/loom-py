@@ -14,10 +14,8 @@ from typing import Any
 from loom.core.environment import Environment
 from loom.core.model import LoomFrozenStruct
 
-# Attribute name used to attach discovery metadata to each flow.
 LOOM_ETL_META_ATTR = "__loom_etl_meta__"
 
-# Storage YAML path baked into the worker image, read at flow-run time.
 DEFAULT_STORAGE_CONFIG_PATH = "/app/config.yaml"
 
 

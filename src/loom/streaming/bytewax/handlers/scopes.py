@@ -195,9 +195,6 @@ async def _execute_inner_process(
         current = _replace_payload(current, result)
     if sink_partition is not None:
         sink_partition.write_batch([current])
-    # No offset completes here: an inline partition is built without the commit
-    # tracker. The message is returned into the stream and completes where its
-    # path ends, after this write.
     return current
 
 

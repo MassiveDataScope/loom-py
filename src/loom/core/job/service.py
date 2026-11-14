@@ -4,9 +4,6 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-
-# RuntimeExecutor imported at runtime to avoid circular imports at module load.
-# The type annotation is kept in TYPE_CHECKING only.
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from loom.core.identity import Identity, delegation, reset_identity, set_identity
@@ -21,11 +18,6 @@ if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
 
 ResultT = TypeVar("ResultT")
-
-
-# ---------------------------------------------------------------------------
-# Pending dispatch — replaces closures with a typed, testable object
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -59,7 +51,6 @@ class _PendingDispatch:
         :class:`~loom.core.identity.IdentityFixed`: it fails closed.
         """
         caller, until = self.captured
-        # Compared in the captured form: delegation() maps ANONYMOUS to None.
         acting = delegation()[0]
         token = None if acting is caller or acting == caller else set_identity(caller, until=until)
         try:
@@ -87,11 +78,6 @@ class _PendingDispatch:
         finally:
             if token is not None:
                 reset_identity(token)
-
-
-# ---------------------------------------------------------------------------
-# JobService protocol
-# ---------------------------------------------------------------------------
 
 
 class JobService(Protocol):
@@ -182,11 +168,6 @@ class JobService(Protocol):
             A :class:`~loom.core.job.handle.JobGroup` for collective result retrieval.
         """
         ...
-
-
-# ---------------------------------------------------------------------------
-# InlineJobService — synchronous execution for tests and local mode
-# ---------------------------------------------------------------------------
 
 
 class InlineJobService:
@@ -288,7 +269,7 @@ class InlineJobService:
             A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
             returns the result once the queue is flushed.
         """
-        _ = (countdown, priority, eta)  # accepted for API compat; inline ignores scheduling hints
+        _ = (countdown, priority, eta)
         task_id = str(uuid.uuid4())
         result_holder: list[Any] = []
         pending = _PendingDispatch(
@@ -301,8 +282,6 @@ class InlineJobService:
             result_holder=result_holder,
             factory=self._factory,
             executor=self._executor,
-            # Captured now, not at flush time: the dispatch belongs to the
-            # caller that requested it, whatever runs the queue afterwards.
             captured=delegation(),
         )
         add_pending_dispatch(pending.run)
@@ -336,6 +315,6 @@ class InlineJobService:
         _ = (
             on_all_success,
             on_any_failure,
-        )  # accepted for API compat; chord semantics require Celery
+        )
         handles = tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
         return JobGroup(handles=handles)

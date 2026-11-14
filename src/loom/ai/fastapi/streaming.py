@@ -1,7 +1,6 @@
 """Server-sent-events encoding of the agent event stream.
 
-Implements the wire contract in ``specs/001-ai-agent-layer/contracts/http-sse.md``:
-five event names, fixed payload field names, exactly one terminal frame,
+The wire contract: five event names, fixed payload field names, exactly one terminal frame,
 ``usage`` only on ``final``, and comment frames during long silences.
 
 Two properties are deliberate and load-bearing:
@@ -58,9 +57,6 @@ def _error_payload(event: ErrorEvent) -> Mapping[str, object]:
     return {"code": event.code, "message": event.message, "interaction_id": event.interaction_id}
 
 
-# The event class is the key: one mapping lookup per event, no reflection.
-# ``Any`` in the callable signature is the price of a heterogeneous table; each
-# entry pairs a class with the builder written for exactly that class.
 _DISPATCH: Mapping[type[Any], tuple[bytes, Callable[[Any], Mapping[str, object]]]] = {
     TextDeltaEvent: (b"text_delta", _text_delta_payload),
     ToolCallEvent: (b"tool_call", _tool_call_payload),
@@ -101,7 +97,7 @@ async def _encoded_events(events: AsyncIterator[AgentEvent]) -> AsyncIterator[by
     """Encode an agent event stream as SSE frames, terminal frame last.
 
     A failure raised once the status line is long gone can only travel in-band,
-    so it becomes this stream's single terminal frame (FR-032).
+    so it becomes this stream's single terminal frame.
     """
     try:
         async for event in events:

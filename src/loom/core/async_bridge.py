@@ -51,7 +51,7 @@ def build_backend_options(backend: str, use_uvloop: bool) -> dict[str, Any]:
         A backend-options mapping suitable for :class:`AsyncBridge`.
     """
     if backend == "asyncio" and use_uvloop and sys.platform != "win32":
-        import uvloop  # guarded by sys_platform marker in pyproject.toml
+        import uvloop
 
         return {"loop_factory": uvloop.new_event_loop}
     return {}

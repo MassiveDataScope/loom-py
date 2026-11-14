@@ -245,7 +245,7 @@ class RestInterface(Generic[T]):
         model_type = _extract_model_type(cls)
         if model_type is None:
             return
-        from loom.rest.autocrud import build_auto_routes  # lazy — avoids circular import
+        from loom.rest.autocrud import build_auto_routes
 
         cls.routes = build_auto_routes(model_type, cls.include)
         cls.auto_crud_model = model_type
@@ -263,8 +263,7 @@ class RestApiDefaults:
         allowed_profiles: Globally allowed profiles.  Defaults to empty
             (no restriction imposed at global level).
         allow_pagination_override: Whether query parameters may override the
-            configured pagination mode.  Defaults to ``True`` for backwards
-            compatibility.
+            configured pagination mode.  Defaults to ``True``.
         max_limit: Ceiling applied to ``?limit=``.  A larger request is clamped
             to this value, so no single call can turn into a full scan.
 

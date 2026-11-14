@@ -1,13 +1,13 @@
 """Engine stream events → loom's closed :data:`~loom.ai.abc.AgentEvent` union.
 
 The union has five members and gains a sixth only when two independent
-consumers need it (FR-035), so this translation **projects onto what exists
+consumers need it, so this translation **projects onto what exists
 and invents nothing**. pydantic-ai publishes twenty-odd event kinds; four
 carry information a loom consumer can act on, and the rest are structural
 (part boundaries, availability deltas, realtime-session signals).
 
 Structural kinds are dropped rather than turned into an ``error``: an
-``error`` terminates the stream (SC-011), so reporting one for a
+``error`` terminates the stream, so reporting one for a
 ``part_end`` would fail a healthy run. Drift is caught instead by a coverage
 test that fails when pydantic-ai adds a kind this module has not been taught
 — explicit, and at test time rather than in production.
@@ -16,15 +16,14 @@ Two translations carry a contract of their own.
 
 ``tool_result.summary`` is built by loom from the structured facts a loom
 toolset publishes in ``metadata["loom"]``, and only from a closed list of
-shapes (FR-030b). A tool result is model-influenced content: were the summary
+shapes. A tool result is model-influenced content: were the summary
 read from the payload — or from a free-form string a tool supplied — a tool
 could dictate what every SSE consumer displays, and a large payload would be
 copied into every event. An unknown or absent shape degrades to ``"ok"``.
 
 The ``refused`` shape is the one that also flips ``ok``: a tripped bound or a
 contained failure must not read as a normal call in the stream. Its summary is
-the fixed word ``"refused"`` — carrying the reason would put tool-authored text
-back into the summary, which is exactly what FR-030b forbids.
+the fixed word ``"refused"``, so no tool-authored text reaches the summary.
 
 ``tool_call.arguments`` is a decoded mapping, decoded exactly once here. The
 engine hands the raw argument string through unparsed when the model emits
@@ -80,9 +79,6 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
         "realtime_input_transcription_error",
         "realtime_session_reconnect",
         "realtime_session_error",
-        # An application's own event and a capability's typed event, emitted into
-        # the engine's stream by code loom never runs; the closed loom union has
-        # no member for either (FR-035).
         "custom",
         "capability",
     }
@@ -160,7 +156,7 @@ def _facts(part: object) -> Mapping[str, Any]:
 
 
 def _summary(part: object) -> str:
-    """Build the summary from the facts alone; never from the payload (FR-030b)."""
+    """Build the summary from the facts alone; never from the payload."""
     facts = _facts(part)
     shape = facts.get("shape")
     count = facts.get("n")

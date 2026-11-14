@@ -53,7 +53,6 @@ def encode_identity(identity: Identity | None, until: float | None = None) -> di
         _MECHANISM: identity.mechanism,
     }
     if until is not None:
-        # inf would cross msgspec's JSON as null; a deadline that is not one has expired.
         encoded[_UNTIL] = until if math.isfinite(until) else EXPIRED
     return encoded
 
@@ -109,7 +108,7 @@ def decode_delegation(payload: Any) -> tuple[Identity | None, float | None]:
         return caller, EXPIRED
     try:
         deadline = float(until)
-    except OverflowError:  # an int too large for a float
+    except OverflowError:
         return caller, EXPIRED
     return caller, deadline if math.isfinite(deadline) else EXPIRED
 

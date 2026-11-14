@@ -1,4 +1,4 @@
-from loom.core.repository.abc import checks as checks  # registers loom.cursors.E001
+from loom.core.repository.abc import checks as checks
 from loom.core.repository.abc.cursor import (
     CURSOR_SIGNING_CHECK,
     Cursor,

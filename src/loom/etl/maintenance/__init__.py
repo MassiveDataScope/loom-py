@@ -100,23 +100,18 @@ from loom.etl.maintenance._runner import MaintenanceError, MaintenanceReport, Ma
 from loom.etl.maintenance._step import MaintenanceStep
 
 __all__ = [
-    # authoring
     "MaintenanceStep",
     "MaintainTable",
     "MaintainSchema",
-    # runner
     "MaintenanceRunner",
     "MaintenanceReport",
     "MaintenanceError",
-    # result types
     "VacuumResult",
     "OptimizeResult",
     "TableMaintenanceResult",
-    # protocols
     "DeltaTableMaintainer",
     "OperationDeclaration",
     "OpSpec",
-    # operation specs
     "MaintenanceSpec",
     "VacuumSpec",
     "CompactSpec",

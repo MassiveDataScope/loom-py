@@ -17,15 +17,14 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-try:  # boto3 is an optional dependency — loom-kernel[dynamodb]
+try:
     from boto3.dynamodb import types as _ddb_types  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover - exercised only without boto3 installed
+except ImportError:  # pragma: no cover
     _ddb_types = None
 
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
 
-# Stateless — safe as a module-level singleton, avoids per-item construction cost.
 _DESERIALIZER = _ddb_types.TypeDeserializer() if _ddb_types is not None else None
 
 
@@ -70,7 +69,7 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
     if _ddb_types is not None and isinstance(value, _ddb_types.Binary):
-        return bytes(value.value)  # boto3 Binary wrapper — unwrap to plain bytes
+        return bytes(value.value)
     return value
 
 

@@ -92,8 +92,8 @@ def create_kernel(
             :class:`~loom.core.environment.Environment`.
         agent_resolver: Bound on the executor as by
             :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
-            Until T12 its handles are built at call time, inside an
-            execution, so a singleton holding ``Agent()`` cannot be built.
+            Its handles are built at call time, inside an execution, so a
+            singleton holding ``Agent()`` cannot be built.
         mcp_resolver: Bound as by
             :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`;
             the same holds for a singleton holding ``Mcp()``.
@@ -221,7 +221,6 @@ def install_kernel(
         CompilationError: When a use case does not compile.
     """
     kinds = container.kinds
-    # Declared first: the factory reads each constructor against the kinds.
     use_case_kinds(kinds)
     declare_ai_kinds(kinds)
     kinds.bind(CALLER, CallerResolver())

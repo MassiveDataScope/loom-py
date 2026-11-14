@@ -7,13 +7,13 @@ One ``MCPToolset`` per connection serves the whole worker, and
   :data:`~loom.ai.runtime.McpClientFactory` the runtime opens at start-up.
   Entering it connects the server and hands back a session, so an unreachable
   server fails start-up as ``MCP_SERVER_UNREACHABLE`` and the declared tool
-  filters are validated against the tools the server really exposes (FR-025)
+  filters are validated against the tools the server really exposes
   instead of being taken on trust.
 * :meth:`SharedMcpToolsets.for_build` is what the engine puts behind the
   capability boundary for the run itself — the session :meth:`open` made, as a
   toolset (:class:`_SessionToolset`) — so the start-up connection is the run's
   connection and a worker holds one channel per server rather than one per
-  agent (FR-026).
+  agent.
 
 What is shared is the session. :class:`_ToolsetSession` — what a grant view
 (:meth:`~loom.ai.abc.AgentHandle.mcp`, a use case's ``Mcp()``), a ``python``
@@ -439,9 +439,6 @@ class _SessionToolset(AbstractToolset[Any]):
         del visitor
         return self
 
-    # get_instructions is not forwarded: build_mcp_toolset leaves include_instructions
-    # off; turning it on would need forwarding to the session's live toolset.
-
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """List the live toolset's tools, never renewing it (:meth:`_ToolsetSession.tools`)."""
         return await self._session.tools(ctx)
@@ -493,7 +490,7 @@ async def _shut(held: _OpenToolset) -> None:
     try:
         try:
             if held.in_flight:
-                await held.toolset.client.close()  # type: ignore[no-untyped-call]  # fastmcp
+                await held.toolset.client.close()  # type: ignore[no-untyped-call]
         finally:
             if held.held:
                 await held.toolset.__aexit__(None, None, None)
@@ -553,8 +550,6 @@ def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float)
     auth = _client_auth(sdk, shared_mcp_auth(capability.server, capability.auth))
     _refuse_per_run(capability.server, headers, auth)
     client = _http_transport(_mcp_client(component, capability), headers=headers, auth=auth)
-    # A transport built here carries the credentials itself; MCPToolset refuses
-    # them twice. Only an SSE URL still hands them to MCPToolset.
     credentials: dict[str, Any] = (
         {"headers": headers, "auth": auth} if isinstance(client, str) else {}
     )
@@ -730,7 +725,7 @@ class SharedMcpToolsets:
     and left the wiring unverified. The engine build runs strictly after the
     runtime opened its clients, so a grant missing from that record can only
     mean the runtime was handed some other factory — and the run would then
-    hold a second connection whose tool filters nothing validated (FR-025).
+    hold a second connection whose tool filters nothing validated.
 
     State is per instance and owned by the engine provider; nothing here is
     module-level. One instance serves one runtime lifecycle: the toolsets are
@@ -904,7 +899,7 @@ async def create_mcp_client(
 ) -> AsyncIterator[_ToolsetSession]:
     """Open one throw-away session against an MCP server, outside any sharing.
 
-    Kept for a caller that needs a session of its own — a diagnostic, a probe,
+    For a caller that needs a session of its own — a diagnostic, a probe,
     a test. A composition root must **not** wire this as the runtime's
     ``mcp_client_factory``: it builds a toolset the engine's run path does not
     know about, so the worker would hold that connection plus one per agent.

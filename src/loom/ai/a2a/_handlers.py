@@ -64,9 +64,6 @@ _OUTPUT_ARTIFACT_ID: Final[str] = "output"
 _SEND: Final[str] = "message/send"
 _STREAM: Final[str] = "message/stream"
 
-# Methods the card explicitly advertises as absent (R-006): no persisted task
-# state means no retrieval, no cancellation, no resubscription and no push
-# notification configuration. Each answers a named JSON-RPC error, never a 500.
 _UNSUPPORTED_METHODS: Final[tuple[str, ...]] = (
     "tasks/get",
     "tasks/list",
@@ -266,16 +263,11 @@ def _make_send_handler(
             mechanism=call.identity.mechanism,
         )
         try:
-            # Opened rather than entered lexically for the reason the HTTP
-            # surface does it: what the run spent is only known once it ends,
-            # and both surfaces must answer the same query about the same span.
             with always_closed(span), span.as_current():
                 result = await _annotated_run(
                     runtime, span, name, prompt, call.identity, conversation_id=context_id
                 )
         except AgentRunError as exc:
-            # The failure text stays server-side: only the code and its fixed
-            # catalogue detail travel outward.
             _logger.warning("a2a run of agent %r failed: %s", name, exc)
             return error_response(call.request_id, internal_error(exc.code))
         result = project_output(result, runtime.output_type(name))
@@ -304,8 +296,6 @@ def _run_frames(
                     for projected in projector.project(event):
                         yield _sse_frame(call.request_id, projected)
         except Exception as exc:
-            # The status line is long gone, so this failure can only travel
-            # in-band, as the stream's terminal event (FR-032).
             _logger.warning("a2a stream failed after the first byte", exc_info=exc)
             for projected in projector.project(failure_event(exc)):
                 yield _sse_frame(call.request_id, projected)

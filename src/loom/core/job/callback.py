@@ -81,13 +81,13 @@ class NullJobCallback:
 
 @contextmanager
 def callback_execution() -> Iterator[None]:
-    """Run a job callback's construction and call in an execution acting as its dispatcher (D7).
+    """Run a job callback's construction and call in an execution acting as its dispatcher.
 
     A callback is work its job's dispatch caused, so it acts as the caller
     acting where it runs: the inline dispatch installs the identity captured
     at dispatch, and the Celery callback worker the one its link envelope
     carries. A constructor ``Caller()``, a handle (which reads the execution
-    identity at call time, D2), row-level security and a job the callback
+    identity at call time), row-level security and a job the callback
     dispatches all see it; with no caller captured they fail closed. It is
     refused once that caller's delegation has expired.
 

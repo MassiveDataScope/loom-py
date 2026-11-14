@@ -97,7 +97,7 @@ class EvictableTransport(httpx2.AsyncBaseTransport):
         except BaseException:
             self._finished()
             raise
-        if response.is_closed:  # a body read already, as a mock or ASGI pool may hand over
+        if response.is_closed:
             self._finished()
         else:
             response.stream = _Tracked(

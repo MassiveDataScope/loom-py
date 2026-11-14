@@ -54,11 +54,6 @@ if TYPE_CHECKING:
 ResultT = TypeVar("ResultT")
 
 
-# ---------------------------------------------------------------------------
-# Pending send — replaces closures with a callable dataclass
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _PendingCeleryDispatch:
     """Deferred ``send_task`` call executed after UoW commits.
@@ -115,11 +110,6 @@ class _PendingCeleryDispatch:
 
     def log_fields(self) -> tuple[dict[str, object]]:
         return ({"job_name": self.task_name, "task_id": self.task_id},)
-
-
-# ---------------------------------------------------------------------------
-# Link builders — module-level, single responsibility each
-# ---------------------------------------------------------------------------
 
 
 def _build_link(
@@ -215,11 +205,6 @@ def _build_failure_link(
     )
 
 
-# ---------------------------------------------------------------------------
-# CeleryJobService
-# ---------------------------------------------------------------------------
-
-
 class CeleryJobService:
     """Celery-backed implementation of the ``JobService`` protocol.
 
@@ -279,10 +264,6 @@ class CeleryJobService:
     def close(self) -> None:
         """Close the Celery application owned by this service."""
         self._app.close()
-
-    # ------------------------------------------------------------------
-    # JobService protocol
-    # ------------------------------------------------------------------
 
     async def run(
         self,

@@ -1,7 +1,7 @@
 """State phase: resolve ``deps_type``/``deps_schema`` into one :class:`StateShape`.
 
 ``deps_schema``, ``deps_type: <symbol>`` and ``deps_type: dict`` are three
-authored spellings of one thing: an optional JSON Schema (FR-003).
+authored spellings of one thing: an optional JSON Schema.
 :func:`compile_state` resolves all three to one small frozen value, built by
 three branches of one factory function.
 
@@ -12,13 +12,13 @@ not reimplemented here: both come from :mod:`loom.ai.compiler.phases._output`
 by this module's own issue codes.
 
 A resolved ``deps_type`` symbol that is a class is compiled the same way the
-output side compiles a ``type_ref`` (D3): :func:`~loom.core.model.loom_type`
+output side compiles a ``type_ref``: :func:`~loom.core.model.loom_type`
 decides the library and checks strictness once. A symbol that is not a class
 — a container or alias a hand-authored ``deps_type`` may still resolve to,
 such as ``dict[str, int]`` — falls back to ``msgspec.json.schema()`` plus
 :func:`~loom.core.model.msgspec_type`, exactly as before this train, so no
-``deps_type`` that compiled before it stops compiling (FR-007). Either way
-state forbids unknown fields exactly as the output side does (FR-017):
+``deps_type`` that compiled before it stops compiling. Either way
+state forbids unknown fields exactly as the output side does:
 :func:`_schema_admits_unknown_fields` checks the derived schema's own
 ``additionalProperties`` verdict for the fallback path, and ``loom_type``
 checks strictness directly for the class path.
@@ -111,9 +111,8 @@ def _compile_type_ref(ref: str, component: str) -> _CompileResult:
 def _schema_admits_unknown_fields(schema: Mapping[str, Any]) -> bool:
     """Return whether *schema* lacks ``additionalProperties: false`` on its root ``$defs`` entry.
 
-    Reads msgspec's own verdict rather than inspecting the resolved symbol
-    (FR-004): a struct schema built with ``forbid_unknown_fields=True``
-    carries the key (measured); a schema msgspec did not wrap in ``$defs`` —
+    A struct schema built with ``forbid_unknown_fields=True`` carries the
+    key; a schema msgspec did not wrap in ``$defs`` —
     a scalar, a list, a bare ``dict`` — carries no such notion and answers
     ``False``.
     """

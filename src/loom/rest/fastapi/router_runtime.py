@@ -81,8 +81,6 @@ _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
-# The largest signed 64-bit integer: Postgres takes OFFSET as a bigint and
-# SQLite binds no larger integer, so a page beyond it cannot be queried.
 _MAX_OFFSET = 2**63 - 1
 _PAGE_TOO_FAR_MESSAGE = "Page is beyond the largest offset a query can skip."
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
@@ -231,8 +229,6 @@ class _FilterValues:
 
 _RELATION_OPS = frozenset((FilterOp.EXISTS, FilterOp.NOT_EXISTS))
 _PATTERN_OPS = frozenset((FilterOp.LIKE, FilterOp.ILIKE))
-# Operators whose value, or each IN item, is a value of the column's type;
-# LIKE and ILIKE take a text pattern and IS_NULL ignores its value.
 _TYPED_OPS = frozenset(
     (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
 )
@@ -354,8 +350,7 @@ def _parse_filter_specs(
 def _positive_int(query_params: QueryParams, name: str, default: int) -> int:
     """Read a positive integer query parameter, refusing anything else.
 
-    A non-numeric value used to raise inside the handler and surface as a 500;
-    it is a client error and must read as one.
+    A non-numeric value is a client error.
     """
     raw = query_params.get(name)
     if raw is None:
@@ -386,8 +381,6 @@ def _build_query_spec(
 ) -> QuerySpec:
     query_params = request.query_params
     page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
-    # Clamped rather than refused: a caller asking for more rows than the API
-    # serves gets the maximum, but never turns one request into a full scan.
     limit = min(_positive_int(query_params, QueryParam.LIMIT, LIMIT_DEFAULT), max_limit)
     if (page - 1) * limit > _MAX_OFFSET:
         raise BoundaryValidationError(
@@ -395,8 +388,6 @@ def _build_query_spec(
             ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
             code=ErrorCode.QUERY_VALIDATION,
         )
-    # ``after`` wins when both are sent; an empty value is a token too, which
-    # the repository refuses like any invalid one.
     after = query_params.get(QueryParam.AFTER)
     cursor = after if after is not None else query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
@@ -615,8 +606,6 @@ async def _execute_route(
 ) -> Response:
     compiled_route = runtime.compiled_route
     status_code = compiled_route.route.status_code
-    # The only ambient identity read of the REST layer: from here on
-    # the caller travels as an explicit argument, never as a global.
     identity = current_identity()
     with observability_runtime.span(
         Scope.USE_CASE,
@@ -661,16 +650,11 @@ async def _dispatch_route(
     except HTTPException:
         raise
     except BodyTooLarge:
-        # Answered as 413 by BodySizeLimitMiddleware: swallowing it here
-        # would report a 500 for a perfectly diagnosable client error.
         raise
     except LoomError as exc:
         raise _error_mapper.to_http(exc) from exc
     except Exception:
         trace_id = get_trace_id() or ""
-        # Without this the caller holds a trace id with no counterpart in
-        # the logs: an untraceable 500, and an attacker who triggers one
-        # leaves no record at all.
         _logger.exception(
             "Unhandled error in %s (route=%s trace_id=%s)",
             runtime.use_case_type.__name__,

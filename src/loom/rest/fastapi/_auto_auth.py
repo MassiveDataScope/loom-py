@@ -114,7 +114,7 @@ def _effective_exclusions(
 
 
 def _require_jwt_audience(subject: str, jwt_cfg: JwtAuthConfig) -> None:
-    """Binding an endpoint to a token is void without a validated ``aud`` (§4).
+    """Binding an endpoint to a token is void without a validated ``aud``.
 
     Args:
         subject: What is being gated, already formatted for the message — for

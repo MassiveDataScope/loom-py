@@ -52,8 +52,6 @@ class SqlQueryService:
     def __init__(self, executors: Mapping[str, SqlExecutor], config: SqlConfig) -> None:
         self._executors = executors
         self._config = config
-        # The config is frozen, so the allowlists can be precomputed once for
-        # O(1) role membership checks per request (spec §5).
         self._allowed_roles: dict[str, frozenset[str]] = {
             name: frozenset(connection.allowed_roles)
             for name, connection in config.connections.items()

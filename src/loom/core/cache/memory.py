@@ -82,7 +82,6 @@ class _Ledger(OrderedDict[str, Any]):
         self.bytes = 0
 
 
-# aiocache ships no stubs, so its class is ``Any`` to mypy.
 class BoundedMemoryCache(SimpleMemoryCache):  # type: ignore[misc]
     """``SimpleMemoryCache`` with a ceiling on entries and bytes, evicting LRU.
 
@@ -114,9 +113,6 @@ class BoundedMemoryCache(SimpleMemoryCache):  # type: ignore[misc]
         self.max_size = max_size
         self.max_bytes = max_bytes
         self.evictions = 0
-        # The parent declares ``_cache`` as a plain dict; the ledger is kept under
-        # its own name so its extra attributes stay typed, and handed to the
-        # parent's slot for every path the parent runs.
         self._ledger = _Ledger()
         self._cache = self._ledger
         self._handlers: dict[str, asyncio.TimerHandle] = {}
@@ -145,8 +141,6 @@ class BoundedMemoryCache(SimpleMemoryCache):  # type: ignore[misc]
         return result
 
     async def _clear(self, namespace: Any = None, _conn: Any = None) -> Any:
-        # The parent's no-namespace path replaces self._cache with a plain dict,
-        # which would drop the ledger for good; it is emptied here instead.
         if namespace:
             return await super()._clear(namespace, _conn=_conn)
         self._ledger.clear()

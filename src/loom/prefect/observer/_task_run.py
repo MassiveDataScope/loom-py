@@ -146,7 +146,7 @@ class PrefectTaskRunObserver:
         from prefect import task  # noqa: PLC0415
 
         @task(name=name)
-        def _step_marker() -> None:  # pragma: no cover - never called
+        def _step_marker() -> None:  # pragma: no cover
             return None
 
         self._task_markers[name] = _step_marker

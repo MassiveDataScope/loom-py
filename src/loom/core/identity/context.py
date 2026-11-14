@@ -5,7 +5,7 @@ thread started with ``asyncio.to_thread`` and anything else that copies the
 context inherits it, for its whole life: the identity of a request governs
 everything that request causes, including work that outlives it.
 
-Rules (spec 011, T09a):
+Rules:
     - A caller always has a deadline: the end of its delegation, ``now +
       identity.max_delegation_seconds`` from where it started. The window is
       configured once (:func:`configure_delegation`).
@@ -93,7 +93,7 @@ def configure_delegation(seconds: float) -> None:
         ConfigError: When *seconds* is not a finite number above zero.
     """
     if not (seconds > 0 and math.isfinite(seconds)):
-        from loom.core.config import ConfigError  # the refusal only: config is heavy to import
+        from loom.core.config import ConfigError
 
         raise ConfigError(
             f"identity.max_delegation_seconds must be a finite number above zero, got {seconds}"
@@ -160,10 +160,9 @@ def set_identity(identity: Identity | None, *, until: float | None = None) -> To
         deadline = math.inf
     elif until is None:
         deadline = time.time() + _window
-    else:  # never past one window, whatever a message claims (nan stays expired)
+    else:
         deadline = min(until, time.time() + _window)
     token = _acting.set((identity or ANONYMOUS, identity, deadline, None))
-    # The value replaced, read off the token: no extra read on the request path.
     previous = token.old_value
     if previous is Token.MISSING:
         return token
@@ -175,7 +174,7 @@ def set_identity(identity: Identity | None, *, until: float | None = None) -> To
         try:
             _report_switch(caller, identity, "transport")
         except BaseException:
-            _acting.reset(token)  # no switch half done: the replaced caller still acts
+            _acting.reset(token)
             raise
     return token
 
@@ -218,7 +217,7 @@ def fix_identity(identity: Identity | None, work: object, what: str) -> Token[Ac
         deadline = math.inf
     elif caller is None or identity.subject != caller.subject:
         deadline = time.time() + _window
-    elif not time.time() <= deadline:  # nan has expired too
+    elif not time.time() <= deadline:
         raise _delegation_expired()
     if identity is not caller and identity != caller and (caller is not None or outer is not None):
         _report_switch(caller, identity, what)
@@ -248,7 +247,7 @@ def refuse_expired_delegation() -> None:
     Raises:
         Unauthenticated: When a caller acts past its deadline.
     """
-    if not time.time() <= _acting.get()[2]:  # nan has expired too
+    if not time.time() <= _acting.get()[2]:
         raise _delegation_expired()
 
 

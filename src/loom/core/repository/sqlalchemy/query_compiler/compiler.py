@@ -227,10 +227,6 @@ class QuerySpecCompiler:
             return await self._execute_cursor(session, query, profile_options)
         return await self._execute_offset(session, query, profile_options)
 
-    # ------------------------------------------------------------------
-    # Offset pagination
-    # ------------------------------------------------------------------
-
     async def _execute_offset(
         self,
         session: AsyncSession,
@@ -251,10 +247,6 @@ class QuerySpecCompiler:
         has_next = (offset + len(items)) < total_count
 
         return items, total_count, None, has_next
-
-    # ------------------------------------------------------------------
-    # Cursor pagination
-    # ------------------------------------------------------------------
 
     async def _execute_cursor(
         self,

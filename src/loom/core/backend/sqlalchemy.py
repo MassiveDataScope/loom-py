@@ -954,11 +954,6 @@ def reset_registry(
     )
 
 
-# ---------------------------------------------------------------------------
-# Core model compilation
-# ---------------------------------------------------------------------------
-
-
 def _compile_core_model(struct_cls: type, comp: _Compilation) -> None:
     sa_cls = comp.compiled.get(struct_cls)
     if sa_cls is None:

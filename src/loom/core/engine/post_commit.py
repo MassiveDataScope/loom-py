@@ -7,7 +7,7 @@ failed transaction discards them.  The owner unbinds the channel before
 draining, so an execution started from an action opens its own lifecycle.
 Inside an invocation scope the executor owns, :func:`store_channel` holds
 each action on the channel of the store that owns it until that store has
-ended (ADR 0008).
+ended.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ ActionT = TypeVar("ActionT", bound=PostCommitAction)
 class LoggedAction(Protocol):
     """A post-commit action naming what it sends, for the logs: never its payload."""
 
-    def log_fields(self) -> Iterable[Mapping[str, object]]: ...  # job_name, task_id per send
+    def log_fields(self) -> Iterable[Mapping[str, object]]: ...
 
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
@@ -266,7 +266,7 @@ async def _run_all(pending: collections.deque[PostCommitAction], failures: list[
         action = pending.popleft()
         try:
             await _run_one(action)
-        except Exception as exc:  # collected and re-raised together by drain
+        except Exception as exc:
             failures.append((action, exc))
 
 

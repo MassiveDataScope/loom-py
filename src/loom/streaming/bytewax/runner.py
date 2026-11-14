@@ -377,9 +377,6 @@ class StreamingRunner:
             )
         resolved_runtime = runtime or self._runtime
         try:
-            # One span, not an unpaired START/END pair: the run is a unit of
-            # work with two ends, so it belongs in a span that also opens the
-            # matching OTEL span and drains the exporter when it closes.
             with self._observability_runtime.span(
                 Scope.POLL_CYCLE,
                 self._plan.name,

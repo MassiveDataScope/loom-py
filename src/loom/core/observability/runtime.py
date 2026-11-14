@@ -75,8 +75,6 @@ def _configure_structlog_logging(config: ObservabilityConfig, environment: Envir
         return
     extra_processors: tuple[object, ...] = ()
     if config.otel.enabled and config.otel.export_logs:
-        # Imported lazily: the OTEL observer module reaches the OpenTelemetry
-        # SDK, which is an extras-only dependency (see module docstring).
         from loom.core.observability.observer.otel import build_log_correlation_processor
 
         extra_processors = (build_log_correlation_processor(),)
@@ -111,8 +109,6 @@ def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlushe
     """
     if not config.enabled or config.config is None:
         return NoOpTracer(), None
-    # Imported lazily: the tracer factory reaches the OpenTelemetry SDK and
-    # OTLP exporters, which are extras-only (see module docstring).
     from loom.core.observability.observer.otel import build_tracer
 
     return build_tracer(config.config)
@@ -288,9 +284,6 @@ class ObservabilityRuntime:
         start_event = identity.start_event()
         started = perf_counter()
         try:
-            # Both exception flags default to True: leaving them implicit would
-            # record the exception and set the status twice, once here and once
-            # in the SDK's own exit handler.
             with (
                 active_trace_id(trace_id),
                 self._tracer.start_as_current_span(
@@ -310,8 +303,6 @@ class ObservabilityRuntime:
                 else:
                     self._close_span(otel_span, identity.end_event(elapsed_ms(started)))
         finally:
-            # Outside the ``with``: the span of this run is already ended by
-            # the time its exporter is drained.
             self._flush_root(scope)
 
     def open_span(

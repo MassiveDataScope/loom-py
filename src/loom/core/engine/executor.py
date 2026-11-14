@@ -55,8 +55,8 @@ class RuntimeExecutor:
       ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
       structured logs (``usecase``, ``duration_ms``, ``status``).
 
-    One acting identity governs everything a request causes (spec 011,
-    T09a): row-level security, the jobs it dispatches, its nested executions
+    One acting identity governs everything a request causes: row-level
+    security, the jobs it dispatches, its nested executions
     and the tasks it starts, even those that outlive it, all act as the
     identity ``Caller()`` receives. Only an explicit switch changes it: given
     an identity other than the one acting, an execution logs
@@ -120,7 +120,6 @@ class RuntimeExecutor:
     ) -> None:
         self._compiler = compiler
         self._builder = builder
-        # Kept as given, for introspection by the composition root's tests.
         self._coordinator = coordinator
         self._elevation_sink = elevation_sink
         self._metrics = metrics
@@ -161,7 +160,7 @@ class RuntimeExecutor:
         """
         if self._agent_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_agent_resolver() called more than once")
-        given = resolver  # its declared type; pyright narrows `resolver` below
+        given = resolver
         shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyAgent(resolver)
         self._kinds.bind(AGENT, shim)
         self._agent_resolver = given
@@ -190,7 +189,7 @@ class RuntimeExecutor:
         """
         if self._mcp_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_mcp_resolver() called more than once")
-        given = resolver  # its declared type; pyright narrows `resolver` below
+        given = resolver
         shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyMcp(resolver)
         self._kinds.bind(MCP, shim)
         self._mcp_resolver = given

@@ -141,10 +141,6 @@ def _bind_application(
     seeds = {
         type(source.app): source.app,
         Environment: source.environment,
-        # Bound, not merely passed: capability spans resolve the observability
-        # runtime from the container, and an unregistered runtime makes every
-        # Scope.TOOL span a silent no-op in production while passing every test
-        # that injects one.
         ObservabilityRuntime: observability,
         StoreCatalog: catalog,
     }

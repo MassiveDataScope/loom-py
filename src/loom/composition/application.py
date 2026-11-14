@@ -121,8 +121,6 @@ class Application:
         """
         if self._open:
             raise ApplicationAlreadyOpenError
-        # Set before opening: a concurrent second running() fails instead of
-        # opening twice.
         self._open = True
         failures: list[BaseException] = []
         opened = False
@@ -136,20 +134,17 @@ class Application:
                     stack.push_async_exit(_recorded(manager.__aexit__, resource, failures))
                 opened = True
                 yield self
-        # Every BaseException (a trio/anyio cancellation included) must close what
-        # opened; the handler always re-raises.
-        except BaseException as error:  # NOSONAR S5754 - re-raised below
+        except BaseException as error:  # NOSONAR S5754
             if not opened:
                 for failure in failures:
                     error.add_note(f"also failed to close: {failure!r}")
             elif failures:
-                # The resources' own failures, re-raised; not a generic exception.
-                raise _close_error(failures) from error  # NOSONAR S112 - re-raises them
+                raise _close_error(failures) from error  # NOSONAR S112
             raise
         finally:
             self._open = False
         if failures:
-            raise _close_error(failures)  # NOSONAR S112 - re-raises the failures to close
+            raise _close_error(failures)  # NOSONAR S112
 
 
 def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -> _Exit:
@@ -162,8 +157,7 @@ def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -
     ) -> bool:
         try:
             await exit_(exc_type, exc, traceback)
-        # Recorded, then raised with the others once every resource has closed.
-        except BaseException as failure:  # NOSONAR S5754 - re-raised by running()
+        except BaseException as failure:  # NOSONAR S5754
             failure.add_note(f"while closing {resource.label}")
             failures.append(failure)
         return False

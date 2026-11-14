@@ -131,9 +131,6 @@ def emit_batch_spans(
         runtime.open_span(
             batch.scope,
             batch.name,
-            # A trace of its own: the batch belongs to no single message, and
-            # borrowing one message's trace would tell that message a story
-            # about N-1 others.
             trace_id=batch_id,
             root=True,
             links=links,

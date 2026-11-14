@@ -17,9 +17,6 @@ class ResolutionError(Exception):
     """
 
 
-# Defined here so the graph and the compiler raise it without importing the
-# container, which imports them; it keeps its public home's qualified name,
-# which error reports and pickles carry.
 ResolutionError.__module__ = "loom.core.di.container"
 
 

@@ -85,8 +85,6 @@ def _compare(operator: str) -> Callable[[Any, StorageConverter], MongoFilter]:
     return lambda value, convert: {operator: convert(value)}
 
 
-# Each builder receives the column's storage converter; IS_NULL, LIKE and
-# ILIKE ignore it (IS_NULL also ignores the value, like the SQLAlchemy compiler).
 _VALUE_OPS: dict[FilterOp, Callable[[Any, StorageConverter], Any]] = {
     FilterOp.EQ: lambda value, convert: {"$eq": convert(value)},
     FilterOp.IN: lambda value, convert: {"$in": [convert(item) for item in value]},

@@ -5,14 +5,12 @@
 embeds it in the plan and the engine consumes it, so it is not a
 config-parsing detail.
 
-Secret containment (data-model invariant 4, FR-018): ``credentials_ref`` and
+Secret containment: ``credentials_ref`` and
 ``options`` never leave the process in clear text.  The mechanism is
 fail-closed — on construction both values are rewrapped into types msgspec
 refuses to encode, so ``msgspec.json.encode`` (and ``msgspec.to_builtins``,
 ``msgspec.msgpack.encode``) raise ``TypeError`` instead of leaking them, and
-``repr``/``str`` redact them.  Rejecting the encode was chosen over silent
-redaction because a plan that reaches a wire encoder with a secret reference
-aboard is a bug worth surfacing, not smoothing over.  Decoding through the
+``repr``/``str`` redact them.  Decoding through the
 config loader is unaffected: ``msgspec.convert`` builds the struct from plain
 values and ``__post_init__`` wraps them afterwards.
 """
@@ -51,8 +49,8 @@ class _RedactedRef(str):
     """Secret reference that redacts itself and refuses msgspec encoding.
 
     A ``str`` subclass behaves as the reference everywhere in Python, while
-    msgspec rejects encoding non-exact ``str`` types, which is exactly the
-    fail-closed behaviour invariant 4 requires.
+    msgspec rejects encoding non-exact ``str`` types, so encoding fails
+    closed.
     """
 
     __slots__ = ()
@@ -102,7 +100,7 @@ class InferenceTarget(LoomFrozenStruct, frozen=True, kw_only=True):
     ``credentials_ref`` or ``options`` — the plan
     carries this struct, so an unredacted repr in a start-up traceback is the
     concrete leak path.  Encoding the struct with msgspec raises when either
-    secret-bearing field is set (see the module docstring for the rationale).
+    secret-bearing field is set.
 
     Attributes:
         provider: Provider identifier (``bedrock``, ``openai``, ...).
@@ -124,7 +122,7 @@ class InferenceTarget(LoomFrozenStruct, frozen=True, kw_only=True):
             rather than many. ``AgentEngine.run`` has always been served
             whole; only its streamed entry points change with this flag.
         credentials_ref: Reference resolved by the existing secrets resolver.
-            Never a literal secret (FR-018).
+            Never a literal secret.
         options: Vendor-specific settings.  Confined here; never reaches the
             artifact.
     """

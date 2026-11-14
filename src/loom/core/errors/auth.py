@@ -144,4 +144,4 @@ class IdentityFixed(SystemError):
     or ``ExecutionScope(...)``.
     """
 
-    retryable = False  # a programming error: a retry meets it again
+    retryable = False

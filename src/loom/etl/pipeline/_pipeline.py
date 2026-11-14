@@ -22,7 +22,7 @@ from loom.etl.pipeline._generics import _extract_generic_arg
 
 ParamsT = TypeVar("ParamsT")
 
-_ProcessItem = Any  # type[ETLProcess[ParamsT]] | list[type[ETLProcess[ParamsT]]]
+_ProcessItem = Any
 
 
 class ETLPipeline(Generic[ParamsT]):

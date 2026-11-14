@@ -190,8 +190,6 @@ class ETLErrorCode(IssueCode):
             "receive {marker} values"
         ),
     )
-    # ``reason`` must never carry the value: callers pass the message of a
-    # ``loom.etl.runtime.ConfigValueError``.
     UNRESOLVED_CONFIG_VALUE = "UNRESOLVED_CONFIG_VALUE", _ALIAS_REASON
     AGENT_NOT_FOUND = "AGENT_NOT_FOUND", _ALIAS_REASON
     AGENT_RUNNER_NOT_CONFIGURED = (
@@ -209,8 +207,6 @@ class ETLErrorCode(IssueCode):
     AGENT_UNSUPPORTED_ENGINE = "AGENT_UNSUPPORTED_ENGINE", _ALIAS_REASON
     AGENT_COLUMN_COLLISION = "AGENT_COLUMN_COLLISION", _ALIAS_REASON
 
-    # IntoHistory rules, checked again at compile time for a HistorifySpec
-    # built without the IntoHistory builder.
     HISTORIFY_KEYS_EMPTY = (
         "HISTORIFY_KEYS_EMPTY",
         Template(

@@ -55,9 +55,6 @@ class Identity:
 
     subject: str
     roles: tuple[str, ...] = ()
-    # default_factory, not default: on Python 3.11 dataclasses reject an
-    # unhashable default, and a mappingproxy is unhashable. The factory hands
-    # back the same frozen empty mapping, so nothing is allocated per instance.
     attributes: Mapping[str, str] = field(default_factory=lambda: _EMPTY_ATTRIBUTES)
     mechanism: str = ""
 

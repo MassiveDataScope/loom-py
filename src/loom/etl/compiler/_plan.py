@@ -109,7 +109,6 @@ class ParallelStepGroup:
     plans: tuple[StepPlan, ...]
 
 
-# A process node is either one step or a parallel group of steps.
 ProcessStepNode = StepPlan | ParallelStepGroup
 
 
@@ -139,7 +138,6 @@ class ParallelProcessGroup:
     plans: tuple[ProcessPlan, ...]
 
 
-# A pipeline node is either one process or a parallel group of processes.
 PipelineProcessNode = ProcessPlan | ParallelProcessGroup
 
 

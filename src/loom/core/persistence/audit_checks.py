@@ -2,7 +2,7 @@
 
 ``stores.<name>.schema.audit.enabled: false`` keeps the history but stops
 recording; every table marked ``Audited`` in that store writes no row until
-the switch is back on (FR-008). The check reads the switch as written, so it
+the switch is back on. The check reads the switch as written, so it
 runs in CI without the models; the compiled models already refuse an excluded
 or secret column in a primary key at startup and in ``create_schema``.
 """

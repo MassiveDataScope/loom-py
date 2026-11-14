@@ -127,8 +127,6 @@ class KeySet:
 
     def pick(self, key_id: str | None, /) -> Key | None:
         if key_id is not None:
-            # A list or object ``kid`` is unhashable: refuse it here rather
-            # than rely on the JWT library to have rejected it first.
             return self.keys.get(key_id) if isinstance(key_id, str) else None
         return next(iter(self.keys.values())) if len(self.keys) == 1 else None
 
@@ -151,8 +149,6 @@ class JwtPublicKey(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     def __post_init__(self) -> None:
         require_supported(self.alg, setting="JWT public key 'alg'")
         require_family(self.alg, symmetric=False, case="a public key", instead="a 'secret'")
-        # Refused here too, not only by the config holding it: ``pem`` is plain
-        # text, so this object must never exist with private material in it.
         if _PRIVATE_PEM.search(self.pem):
             raise ConfigError("A JWT public key holds a private key; publish only its public half.")
 
@@ -289,8 +285,6 @@ def require_hmac_strength(secret: str, algorithm: str, *, setting: str) -> None:
     if not secret.strip():
         raise ConfigError(f"{setting} is blank.")
     if _is_key_material(secret):
-        # A key used as an HMAC secret is algorithm confusion: whoever holds
-        # the public half could sign. The key fits an asymmetric algorithm.
         raise ConfigError(
             f"{setting} is a key (PEM, OpenSSH, DER or JWK), not a shared secret; "
             f"{algorithm} needs the raw secret."
@@ -328,7 +322,7 @@ def _base64_bytes(text: str) -> bytes | None:
     padded = text + "=" * (-len(text) % 4)
     try:
         return base64.b64decode(padded, validate=True)
-    except ValueError:  # binascii.Error is a ValueError
+    except ValueError:
         pass
     if not _URLSAFE_BASE64.fullmatch(padded):
         return None
@@ -355,7 +349,7 @@ def _load_der_private(der: bytes) -> object:
 
     try:
         return serialization.load_der_private_key(der, password=None)
-    except TypeError:  # encrypted: a key all the same, only the password is missing
+    except TypeError:
         return der
 
 
@@ -367,9 +361,6 @@ def require_signing_key(material: str, algorithm: str) -> None:
         return
     if not _PRIVATE_PEM.search(material):
         raise ConfigError(f"{algorithm} needs a PEM private key as {setting}.")
-    # The verifiers' rule, applied to the public half: key type, EC curve and
-    # RSA size all fit the one algorithm, so the issuer cannot mint tokens
-    # that loom's own verifier (or any RFC 7518 one) would refuse.
     _fitting(_private_key(material, setting=setting).public_key(), (algorithm,), setting)
 
 

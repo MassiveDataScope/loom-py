@@ -24,7 +24,6 @@ from loom.core.tracing import get_trace_id
 
 ResultT = TypeVar("ResultT")
 
-# The phases an execution's failure is reported with, as ``error_kind``.
 BEGIN = "begin"
 BUSINESS = "business"
 COMMIT = "commit"
@@ -55,7 +54,7 @@ class Observer:
 
     def start(self, use_case: str) -> Attempt:
         """Report *use_case*'s execution started, and return the attempt that reports its end."""
-        start = time.perf_counter()  # first: the duration includes the start's own reporting
+        start = time.perf_counter()
         trace_id = get_trace_id()
         logger = self._logger.bind(trace_id=trace_id) if trace_id else self._logger
         logger.info(f"[EXEC] {use_case}", usecase=use_case)
@@ -160,8 +159,6 @@ class Attempt:
         if isinstance(error, asyncio.CancelledError):
             return _CANCELLED
         if isinstance(error, PostCommitError):
-            # Raised by the drain of an inner execution that owned its own
-            # unit of work: the failure is not this execution's business logic.
             return _POST_COMMIT
         return self.phase
 

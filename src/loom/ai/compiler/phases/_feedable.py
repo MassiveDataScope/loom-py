@@ -78,8 +78,6 @@ def _binding_reason(execution: ExecutionPlan) -> str | None:
         return f"execute declares primitive parameters the run cannot bind: {names}"
     if execution.input_binding is None:
         return "execute declares no Input()"
-    # Defensive: ``UseCaseCompiler`` already refuses an Input type without
-    # ``from_payload``, but a plan built through another path must not pass.
     if not callable(getattr(execution.input_binding.command_type, "from_payload", None)):
         return "the Input type does not implement from_payload(payload)"
     return None

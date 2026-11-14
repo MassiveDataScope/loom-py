@@ -38,5 +38,4 @@ class RequestHookAuth(httpx2.Auth):
         yield self._hook(request)
 
     def __repr__(self) -> str:
-        # The credentials live inside the hook's closure; the repr names none of them.
         return f"{type(self).__name__}()"

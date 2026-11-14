@@ -16,15 +16,11 @@ from typing import Any
 from loom.core.logger import log_context
 from loom.core.tracing import generate_trace_id, reset_trace_id, set_trace_id
 
-# ASGI type aliases
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]
 _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
 
-# The trace id is echoed back and lands in every structured log line, so its
-# charset is an allowlist: ``re.ASCII`` keeps ``\w`` from also accepting Unicode
-# word characters, which would let a caller forge look-alike identifiers.
 _TRACE_ID_RE = re.compile(r"^[\w.-]{1,128}$", re.ASCII)
 
 

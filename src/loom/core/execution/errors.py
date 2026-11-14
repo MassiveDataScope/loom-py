@@ -12,7 +12,7 @@ class ExecutionRequired(SystemError):
     singleton constructor or an uncopied thread fails closed.
     """
 
-    retryable = False  # a programming error: a retry meets it again
+    retryable = False
 
 
 class ExecutionClosed(ExecutionRequired):

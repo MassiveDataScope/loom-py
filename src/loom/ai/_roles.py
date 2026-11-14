@@ -1,14 +1,13 @@
-"""Shared SQL role-binding rule for every ``sql`` capability caller (T204/T303).
+"""Shared SQL role-binding rule for every ``sql`` capability caller.
 
 The model-facing ``sql`` tool
 (:mod:`loom.ai.engines.pydantic_ai._capabilities`) and the marker-facing
 ``sql`` grant view (:mod:`loom.ai.runtime._grants`) resolve the caller's
 roles through the exact same rule: roles are bound to the verified identity
 — never to a caller-supplied argument — and an empty result is refused
-rather than silently falling back to the connection's shared ``default_role``
-(FR-043a). The rule lives here once, the way :mod:`loom.ai._filters` holds
-the include/exclude rule both paths also share, so the two callers cannot
-drift apart.
+rather than silently falling back to the connection's shared ``default_role``. The rule
+lives here once, the way :mod:`loom.ai._filters` holds the include/exclude rule both
+paths also share, so the two callers cannot drift apart.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ def bound_query_roles(capability: CompiledSqlCapability, identity: Identity) -> 
 
     ``roles_bound`` is hard-coded ``True`` and the result is re-checked for
     emptiness: an empty tuple reaching ``SqlQueryService.execute`` would fall
-    through to the connection's shared ``default_role`` (FR-043a), which this
+    through to the connection's shared ``default_role``, which this
     function refuses instead.
 
     Args:

@@ -33,7 +33,6 @@ def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
     """
     if "${" not in text:
         return {}
-    # Local imports keep omegaconf out of the import of ``loom.core.config``.
     from omegaconf.grammar.gen.OmegaConfGrammarParser import OmegaConfGrammarParser as Grammar
     from omegaconf.grammar_parser import parse
     from omegaconf.grammar_visitor import GrammarVisitor
@@ -43,7 +42,7 @@ def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
     for node in _parse_nodes(parse(text, parser_rule="configValue")):
         if not isinstance(node, Grammar.InterpolationResolverContext):
             continue
-        call: Any = node  # the generated parser carries no useful types
+        call: Any = node
         name = call.resolverName().getText()
         if name not in names:
             continue

@@ -3,12 +3,12 @@
 A ``json_schema`` output compiles to a concrete type via
 ``msgspec.defstruct()`` and the plan stores a :class:`~loom.core.model.LoomType`
 built once over it (:func:`~loom.core.model.msgspec_type`), so nothing
-reflects per invocation (research R-004, invariant 5).  A ``type_ref`` output
+reflects per invocation.  A ``type_ref`` output
 accepts a strict ``msgspec.Struct`` or ``pydantic.BaseModel`` subclass,
 resolved through :func:`~loom.core.model.loom_type`, which checks strictness
 for both libraries and rejects anything else with
-``UnsupportedBoundaryType``: both satisfy invariant 5 with a strict decode,
-so both may own the pass-through of the validated bytes.
+``UnsupportedBoundaryType``: both decode strictly, so both may own the
+pass-through of the validated bytes.
 
 :func:`_resolve_symbol` and :func:`_schema_to_annotation` are shared with the
 state phase (:mod:`loom.ai.compiler.phases._state`), which compiles the same
@@ -18,7 +18,7 @@ and, for the schema path, its own generated-struct name; nothing about the
 issue codes, the messages, or the exceptions caught changes between the two
 callers. What differs between the two ``type_ref``/``deps_type`` paths stays
 local to each phase: the output side requires every resolved symbol to
-compile through :func:`~loom.core.model.loom_type` (invariant 5); the state
+compile through :func:`~loom.core.model.loom_type`; the state
 side only requires that of a resolved symbol that is a class, and falls back
 to ``msgspec.json.schema()`` for a container or alias, so a ``deps_type``
 that never named a class keeps compiling.
@@ -42,8 +42,6 @@ from loom.core.symbols import import_symbol
 
 _CompileResult = tuple[CompiledOutput | None, list[AgentCompilationIssue]]
 
-# ``Any`` in the values: the mapped Python annotations are runtime objects
-# (``str``, ``list[...]``, generated structs) that a static alias cannot name.
 _SCALAR_TYPES: Mapping[str, Any] = {
     "string": str,
     "integer": int,
@@ -205,15 +203,6 @@ def _annotation_for(schema: Mapping[str, Any], name: str) -> Any:
     if type_value == "array":
         items = schema.get("items")
         item = _annotation_for(items, f"{name}Item") if items is not None else Any
-        # Runtime subscription with a computed annotation. The explicit
-        # __class_getitem__ call this used to make is correct but trips
-        # Sonar S930, which miscounts cls on a builtin classmethod; the
-        # subscript is the same object and reads better.
-        # Subscript a value typed Any: mypy rejects ``list[item]`` in type
-        # position with a computed argument, and the explicit
-        # __class_getitem__ call trips Sonar S930, which miscounts cls on a
-        # builtin classmethod. Going through a value satisfies both and is
-        # the same object at runtime.
         list_type: Any = list
         return list_type[item]
     if isinstance(type_value, str):

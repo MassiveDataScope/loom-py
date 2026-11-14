@@ -15,8 +15,6 @@ from loom.core.model import LoomFrozenStruct
 
 """Aggregate health vocabulary shared with the HTTP contract."""
 
-# Worst-first ordering: the aggregate of several dependencies is the worst of
-# them, so a single unavailable server is never hidden by healthy neighbours.
 _STATE_ORDER: Mapping[str, int] = MappingProxyType({"ok": 0, "degraded": 1, "unavailable": 2})
 _STATE_BY_RANK: Mapping[int, HealthState] = MappingProxyType(
     {0: "ok", 1: "degraded", 2: "unavailable"}
@@ -33,7 +31,7 @@ class AgentHealth(LoomFrozenStruct, frozen=True, kw_only=True):
         checks: Per-dependency state, keyed ``"model"``, ``"mcp:<server>"``,
             ``"a2a:<agent>"`` or ``"sql:<connection>"``, always by the name the
             deployment registered rather than by URL. Internal topology: only
-            an authenticated caller ever sees it (FR-029c).
+            an authenticated caller ever sees it.
         detail: Optional explanation, ``"probing"`` until the first probe of
             the background refresher completes.
     """
