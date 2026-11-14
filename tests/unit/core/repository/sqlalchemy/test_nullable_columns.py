@@ -48,18 +48,20 @@ async def session_manager() -> AsyncIterator[SessionManager]:
     await manager.dispose()
 
 
-async def test_an_optional_field_left_as_none_is_stored_and_read_back(
-    session_manager: SessionManager,
-) -> None:
-    repo: RepositorySQLAlchemy[_Gauge, int] = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_Gauge,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
+class TestNullableColumns:
+    async def test_an_optional_field_left_as_none_is_stored_and_read_back(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Gauge, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Gauge,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
-    created = await repo.create(_CreateGauge(label="idle"))
-    stored = await repo.get_by_id(created.id)
+        created = await repo.create(_CreateGauge(label="idle"))
+        stored = await repo.get_by_id(created.id)
 
-    assert created.level is None
-    assert stored is not None
-    assert (stored.label, stored.level) == ("idle", None)
+        assert created.level is None
+        assert stored is not None
+        assert (stored.label, stored.level) == ("idle", None)

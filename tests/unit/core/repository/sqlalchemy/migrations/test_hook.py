@@ -117,30 +117,6 @@ def _sql(operations: list[ops.MigrateOperation]) -> list[tuple[object, ...] | st
     return [_describe(op) for op in operations]
 
 
-def test_creating_a_scoped_table_runs_under_the_hatch_and_protects_it() -> None:
-    application = _application()
-    table = application.metadata.tables["notes"]
-    script = _script([ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)])
-
-    _rewrite(application, script)
-
-    assert _sql(script.upgrade_ops.ops) == [HATCH, "CreateTableOp", PROTECT]
-    assert _sql(script.downgrade_ops.ops) == [HATCH, UNPROTECT, "DropTableOp"]
-
-
-def test_creating_a_global_table_with_privileges_emits_its_grants() -> None:
-    application = _application()
-    table = application.metadata.tables["kinds"]
-    script = _script([ops.CreateTableOp.from_table(table)])
-
-    _rewrite(application, script)
-
-    assert _sql(script.upgrade_ops.ops) == [
-        "CreateTableOp",
-        ("grant_table", "kinds", ["SELECT"], []),
-    ]
-
-
 def _scope_change() -> ops.MigrationScript:
     column = Column("editor", Text(), nullable=False)
     upgrade = ops.ModifyTableOps("notes", [ops.AddColumnOp("notes", column)])
@@ -148,121 +124,138 @@ def _scope_change() -> ops.MigrationScript:
     return _script([upgrade], [downgrade])
 
 
-def test_changing_a_scope_column_reprotects_the_table_with_the_head_scopes() -> None:
-    script = _rewrite(_application(), _scope_change())
+class TestMigrationHook:
+    def test_creating_a_scoped_table_runs_under_the_hatch_and_protects_it(self) -> None:
+        application = _application()
+        table = application.metadata.tables["notes"]
+        script = _script([ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)])
 
-    assert _sql(script.upgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", PROTECT]
+        _rewrite(application, script)
 
+        assert _sql(script.upgrade_ops.ops) == [HATCH, "CreateTableOp", PROTECT]
+        assert _sql(script.downgrade_ops.ops) == [HATCH, UNPROTECT, "DropTableOp"]
 
-def test_a_downgrade_changing_a_scope_column_never_reprotects_with_the_head_scopes() -> None:
-    script = _rewrite(_application(), _scope_change())
+    def test_creating_a_global_table_with_privileges_emits_its_grants(self) -> None:
+        application = _application()
+        table = application.metadata.tables["kinds"]
+        script = _script([ops.CreateTableOp.from_table(table)])
 
-    assert _sql(script.downgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", HAND_WRITTEN]
+        _rewrite(application, script)
 
+        assert _sql(script.upgrade_ops.ops) == [
+            "CreateTableOp",
+            ("grant_table", "kinds", ["SELECT"], []),
+        ]
 
-def test_a_downgrade_recreating_a_scoped_table_never_protects_it_with_the_head_scopes() -> None:
-    application = _application()
-    table = application.metadata.tables["notes"]
-    script = _script([ops.DropTableOp.from_table(table)], [ops.CreateTableOp.from_table(table)])
+    def test_changing_a_scope_column_reprotects_the_table_with_the_head_scopes(self) -> None:
+        script = _rewrite(_application(), _scope_change())
 
-    _rewrite(application, script)
+        assert _sql(script.upgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", PROTECT]
 
-    assert _sql(script.downgrade_ops.ops) == [HATCH, "CreateTableOp", HAND_WRITTEN]
+    def test_a_downgrade_changing_a_scope_column_never_reprotects_with_the_head_scopes(
+        self,
+    ) -> None:
+        script = _rewrite(_application(), _scope_change())
 
+        assert _sql(script.downgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", HAND_WRITTEN]
 
-def test_the_downgrade_renders_a_not_implemented_error_asking_for_the_protect() -> None:
-    script = _rewrite(_application(), _scope_change())
+    def test_a_downgrade_recreating_a_scoped_table_never_protects_it_with_the_head_scopes(
+        self,
+    ) -> None:
+        application = _application()
+        table = application.metadata.tables["notes"]
+        script = _script([ops.DropTableOp.from_table(table)], [ops.CreateTableOp.from_table(table)])
 
-    code = render_python_code(script.downgrade_ops)
+        _rewrite(application, script)
 
-    assert "op.unprotect_scoped_table('notes')" in code
-    assert "raise NotImplementedError(" in code
-    assert "op.protect_scoped_table('notes'" in code
-    assert "protect_scoped_table('notes', [" not in code
+        assert _sql(script.downgrade_ops.ops) == [HATCH, "CreateTableOp", HAND_WRITTEN]
 
+    def test_the_downgrade_renders_a_not_implemented_error_asking_for_the_protect(self) -> None:
+        script = _rewrite(_application(), _scope_change())
 
-def test_running_the_rendered_downgrade_unprotects_then_stops_for_the_hand_written_protect() -> (
-    None
-):
-    script = _rewrite(_application(), _scope_change())
-    calls: list[str] = []
+        code = render_python_code(script.downgrade_ops)
 
-    class Recorder:
-        def __getattr__(self, name: str) -> Callable[..., None]:
-            return lambda *_args, **_kwargs: calls.append(name)
+        assert "op.unprotect_scoped_table('notes')" in code
+        assert "raise NotImplementedError(" in code
+        assert "op.protect_scoped_table('notes'" in code
+        assert "protect_scoped_table('notes', [" not in code
 
-    namespace: dict[str, object] = {"op": Recorder(), "sa": sqlalchemy}
-    exec(f"def downgrade():\n    {render_python_code(script.downgrade_ops)}\n", namespace)
-    downgrade = namespace["downgrade"]
-    assert callable(downgrade)
+    def test_running_the_rendered_downgrade_unprotects_then_stops_for_the_hand_written_protect(
+        self,
+    ) -> None:
+        script = _rewrite(_application(), _scope_change())
+        calls: list[str] = []
 
-    with pytest.raises(NotImplementedError, match="notes"):
-        downgrade()
-    assert calls == ["open_hatch", "unprotect_scoped_table", "drop_column"]
+        class Recorder:
+            def __getattr__(self, name: str) -> Callable[..., None]:
+                return lambda *_args, **_kwargs: calls.append(name)
 
+        namespace: dict[str, object] = {"op": Recorder(), "sa": sqlalchemy}
+        exec(f"def downgrade():\n    {render_python_code(script.downgrade_ops)}\n", namespace)
+        downgrade = namespace["downgrade"]
+        assert callable(downgrade)
 
-def test_changing_an_ordinary_column_of_a_scoped_table_is_left_alone() -> None:
-    application = _application()
-    modify = ops.ModifyTableOps("notes", [ops.AddColumnOp("notes", Column("extra", Integer()))])
-    script = _script([modify])
+        with pytest.raises(NotImplementedError, match="notes"):
+            downgrade()
+        assert calls == ["open_hatch", "unprotect_scoped_table", "drop_column"]
 
-    _rewrite(application, script)
+    def test_changing_an_ordinary_column_of_a_scoped_table_is_left_alone(self) -> None:
+        application = _application()
+        modify = ops.ModifyTableOps("notes", [ops.AddColumnOp("notes", Column("extra", Integer()))])
+        script = _script([modify])
 
-    assert _sql(script.upgrade_ops.ops) == ["ModifyTableOps"]
+        _rewrite(application, script)
 
+        assert _sql(script.upgrade_ops.ops) == ["ModifyTableOps"]
 
-def test_dropping_a_scoped_table_unprotects_it_first() -> None:
-    application = _application()
-    script = _script([ops.DropTableOp.from_table(application.metadata.tables["notes"])])
+    def test_dropping_a_scoped_table_unprotects_it_first(self) -> None:
+        application = _application()
+        script = _script([ops.DropTableOp.from_table(application.metadata.tables["notes"])])
 
-    _rewrite(application, script)
+        _rewrite(application, script)
 
-    assert _sql(script.upgrade_ops.ops) == [HATCH, UNPROTECT, "DropTableOp"]
+        assert _sql(script.upgrade_ops.ops) == [HATCH, UNPROTECT, "DropTableOp"]
 
+    def test_an_unscoped_table_without_privileges_is_untouched(self) -> None:
+        application = _application()
+        plain = Table("plain", MetaData(), Column("id", Integer(), primary_key=True))
+        script = _script([ops.CreateTableOp.from_table(plain)])
 
-def test_an_unscoped_table_without_privileges_is_untouched() -> None:
-    application = _application()
-    plain = Table("plain", MetaData(), Column("id", Integer(), primary_key=True))
-    script = _script([ops.CreateTableOp.from_table(plain)])
+        _rewrite(application, script)
 
-    _rewrite(application, script)
+        assert _sql(script.upgrade_ops.ops) == ["CreateTableOp"]
 
-    assert _sql(script.upgrade_ops.ops) == ["CreateTableOp"]
+    def test_the_hook_never_opens_a_database_connection(self) -> None:
+        application = _application()
+        script = _script([ops.CreateTableOp.from_table(application.metadata.tables["notes"])])
 
+        class Context:
+            @property
+            def connection(self):
+                raise AssertionError("the hook must not reach the database")
 
-def test_the_hook_never_opens_a_database_connection() -> None:
-    application = _application()
-    script = _script([ops.CreateTableOp.from_table(application.metadata.tables["notes"])])
+        scope_protection_hook(application)(Context(), ("head",), [script])
 
-    class Context:
-        @property
-        def connection(self):
-            raise AssertionError("the hook must not reach the database")
+    def test_the_generated_revision_carries_loom_operations_and_no_sql(self) -> None:
+        application = _application()
+        notes = application.metadata.tables["notes"]
+        kinds = application.metadata.tables["kinds"]
+        script = _script([ops.CreateTableOp.from_table(notes), ops.CreateTableOp.from_table(kinds)])
+        _rewrite(application, script)
 
-    scope_protection_hook(application)(Context(), ("head",), [script])
+        code = render_python_code(script.upgrade_ops)
 
+        assert "op.open_hatch()" in code
+        assert f"op.protect_scoped_table('notes', {SCOPES!r}, {PRIVILEGES!r})" in code
+        assert "op.grant_table('kinds', ['SELECT'], [])" in code
+        assert "op.execute" not in code
+        assert "SELECT " not in code
 
-def test_the_generated_revision_carries_loom_operations_and_no_sql() -> None:
-    application = _application()
-    notes = application.metadata.tables["notes"]
-    kinds = application.metadata.tables["kinds"]
-    script = _script([ops.CreateTableOp.from_table(notes), ops.CreateTableOp.from_table(kinds)])
-    _rewrite(application, script)
+    def test_unprotect_renders_as_a_loom_operation(self) -> None:
+        application = _application()
+        script = _script([ops.DropTableOp.from_table(application.metadata.tables["notes"])])
+        _rewrite(application, script)
 
-    code = render_python_code(script.upgrade_ops)
+        code = render_python_code(script.upgrade_ops)
 
-    assert "op.open_hatch()" in code
-    assert f"op.protect_scoped_table('notes', {SCOPES!r}, {PRIVILEGES!r})" in code
-    assert "op.grant_table('kinds', ['SELECT'], [])" in code
-    assert "op.execute" not in code
-    assert "SELECT " not in code
-
-
-def test_unprotect_renders_as_a_loom_operation() -> None:
-    application = _application()
-    script = _script([ops.DropTableOp.from_table(application.metadata.tables["notes"])])
-    _rewrite(application, script)
-
-    code = render_python_code(script.upgrade_ops)
-
-    assert "op.unprotect_scoped_table('notes')" in code
+        assert "op.unprotect_scoped_table('notes')" in code

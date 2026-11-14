@@ -29,43 +29,41 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> PersistenceWirin
     return build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
 
 
-def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out() -> None:
-    with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
-        _wiring("sqlite+aiosqlite:///", cursors={})
+class TestSqlAlchemyBackend:
+    def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(self) -> None:
+        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+            _wiring("sqlite+aiosqlite:///", cursors={})
 
+    def test_an_unsigned_build_warns_at_startup(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            _wiring("sqlite+aiosqlite:///", cursors={"signing": "unsigned"})
 
-def test_an_unsigned_build_warns_at_startup(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING):
-        _wiring("sqlite+aiosqlite:///", cursors={"signing": "unsigned"})
+        assert "unsigned" in caplog.text
 
-    assert "unsigned" in caplog.text
+    def test_the_wiring_registers_its_cursor_codec_for_direct_users(self) -> None:
+        container = LoomContainer()
 
+        _wiring("sqlite+aiosqlite:///").repo_registration_module(container)
 
-def test_the_wiring_registers_its_cursor_codec_for_direct_users() -> None:
-    container = LoomContainer()
+        assert isinstance(container.resolve(CursorCodec), CursorCodec)
 
-    _wiring("sqlite+aiosqlite:///").repo_registration_module(container)
+    @pytest.mark.asyncio
+    async def test_readiness_is_true_when_the_database_answers(self) -> None:
+        wiring = _wiring("sqlite+aiosqlite:///")
 
-    assert isinstance(container.resolve(CursorCodec), CursorCodec)
+        assert wiring.readiness is not None
+        async with wiring.lifespan_init():
+            assert await wiring.readiness() is True
 
+    @pytest.mark.asyncio
+    async def test_readiness_is_false_when_the_database_is_unreachable(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        wiring = _wiring(_UNREACHABLE_URL)
 
-@pytest.mark.asyncio
-async def test_readiness_is_true_when_the_database_answers() -> None:
-    wiring = _wiring("sqlite+aiosqlite:///")
+        assert wiring.readiness is not None
+        with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
+            assert await wiring.readiness() is False
 
-    assert wiring.readiness is not None
-    async with wiring.lifespan_init():
-        assert await wiring.readiness() is True
-
-
-@pytest.mark.asyncio
-async def test_readiness_is_false_when_the_database_is_unreachable(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    wiring = _wiring(_UNREACHABLE_URL)
-
-    assert wiring.readiness is not None
-    with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
-        assert await wiring.readiness() is False
-
-    assert "readiness" in caplog.text
+        assert "readiness" in caplog.text

@@ -25,110 +25,6 @@ from loom.core.repository.sqlalchemy.session_settings import (
 )
 
 
-def test_keys_and_values_are_bound_parameters_and_never_inlined_in_the_sql() -> None:
-    result = settings_statement({"app.tenant_id": "acme", "app.subject": "u-1"})
-
-    assert result is not None
-    clause, params = result
-    assert str(clause) == SET_SETTINGS
-    assert json.loads(params["settings"]) == {"app.tenant_id": "acme", "app.subject": "u-1"}
-    assert "acme" not in str(clause)
-    assert "app.tenant_id" not in str(clause)
-
-
-@pytest.mark.parametrize("values", [None, {}])
-def test_none_or_empty_values_give_no_statement(values: Mapping[str, str] | None) -> None:
-    assert settings_statement(values) is None
-
-
-@pytest.mark.parametrize(
-    "key",
-    [
-        "tenant_id",
-        "app.",
-        ".tenant_id",
-        "app.tenant-id",
-        "app.tenant id",
-        "1app.tenant_id",
-        "app.1tenant",
-        "app.tenant_id; DROP TABLE t",
-        "",
-    ],
-)
-def test_an_invalid_key_raises_value_error(key: str) -> None:
-    with pytest.raises(ValueError, match="session setting key"):
-        settings_statement({key: "acme"})
-
-
-def test_a_non_str_key_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="session setting key"):
-        settings_statement({1: "acme"})  # type: ignore[dict-item]
-
-
-@pytest.mark.parametrize("value", [1, None, b"acme", ["acme"]])
-def test_a_non_str_value_raises_type_error(value: object) -> None:
-    with pytest.raises(TypeError, match="session setting value"):
-        settings_statement({"app.tenant_id": value})  # type: ignore[dict-item]
-
-
-def test_session_settings_on_a_non_postgres_url_is_rejected_at_construction() -> None:
-    with pytest.raises(ValueError, match="postgresql"):
-        SessionManager(
-            "sqlite+aiosqlite:///:memory:",
-            session_settings=lambda: {"app.tenant_id": "acme"},
-            store=DEFAULT_STORE,
-        )
-
-
-def test_the_configured_constructor_rejects_session_settings_on_a_non_postgres_url() -> None:
-    with pytest.raises(ValueError, match="postgresql"):
-        build_session_manager(
-            DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")),
-            SERVER_PROFILE,
-            session_settings=lambda: None,
-            database=DEFAULT_STORE,
-        )
-
-
-@pytest.mark.parametrize(
-    "engine_kwargs",
-    [
-        {"isolation_level": "AUTOCOMMIT"},
-        {"isolation_level": "autocommit"},
-        {"execution_options": {"isolation_level": "AUTOCOMMIT"}},
-    ],
-)
-def test_session_settings_with_autocommit_is_rejected_at_construction(
-    engine_kwargs: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError, match="AUTOCOMMIT"):
-        SessionManager(
-            "postgresql+asyncpg://user:secret@localhost/db",
-            session_settings=lambda: None,
-            store=DEFAULT_STORE,
-            **engine_kwargs,
-        )
-
-
-async def test_without_session_settings_sessions_carry_only_the_delegation_check() -> None:
-    """Every store's session class refuses an expired caller (T09a); none applies settings."""
-    manager = SessionManager(
-        "sqlite+aiosqlite:///:memory:",
-        pool_size=None,
-        max_overflow=None,
-        pool_timeout=None,
-        pool_recycle=None,
-        store=DEFAULT_STORE,
-    )
-    try:
-        async with manager.session() as session:
-            assert type(session.sync_session).__name__ == "LoomSession"
-            assert isinstance(session.sync_session, Session)
-        assert not manager.has_session_settings
-    finally:
-        await manager.dispose()
-
-
 def _sqlite_session_class(provider: SessionSettings) -> tuple[Engine, type[Session]]:
     engine = create_engine("sqlite://")
     session_class = type("SettingsSession", (Session,), {})
@@ -136,79 +32,172 @@ def _sqlite_session_class(provider: SessionSettings) -> tuple[Engine, type[Sessi
     return engine, session_class
 
 
-def test_a_provider_returning_none_lets_the_transaction_run_untouched() -> None:
-    engine, session_class = _sqlite_session_class(lambda: None)
-    with session_class(engine) as session:
-        assert session.execute(text("SELECT 1")).scalar_one() == 1
-        assert not session.connection().invalidated
+class TestSessionSettings:
+    def test_keys_and_values_are_bound_parameters_and_never_inlined_in_the_sql(self) -> None:
+        result = settings_statement({"app.tenant_id": "acme", "app.subject": "u-1"})
 
+        assert result is not None
+        clause, params = result
+        assert str(clause) == SET_SETTINGS
+        assert json.loads(params["settings"]) == {"app.tenant_id": "acme", "app.subject": "u-1"}
+        assert "acme" not in str(clause)
+        assert "app.tenant_id" not in str(clause)
 
-def test_a_savepoint_does_not_call_the_provider_again() -> None:
-    calls: list[int] = []
+    @pytest.mark.parametrize("values", [None, {}])
+    def test_none_or_empty_values_give_no_statement(self, values: Mapping[str, str] | None) -> None:
+        assert settings_statement(values) is None
 
-    def counting() -> Mapping[str, str] | None:
-        calls.append(1)
-        return None
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "tenant_id",
+            "app.",
+            ".tenant_id",
+            "app.tenant-id",
+            "app.tenant id",
+            "1app.tenant_id",
+            "app.1tenant",
+            "app.tenant_id; DROP TABLE t",
+            "",
+        ],
+    )
+    def test_an_invalid_key_raises_value_error(self, key: str) -> None:
+        with pytest.raises(ValueError, match="session setting key"):
+            settings_statement({key: "acme"})
 
-    engine, session_class = _sqlite_session_class(counting)
-    with session_class(engine) as session:
-        session.execute(text("SELECT 1"))
-        with session.begin_nested():
+    def test_a_non_str_key_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="session setting key"):
+            settings_statement({1: "acme"})  # type: ignore[dict-item]
+
+    @pytest.mark.parametrize("value", [1, None, b"acme", ["acme"]])
+    def test_a_non_str_value_raises_type_error(self, value: object) -> None:
+        with pytest.raises(TypeError, match="session setting value"):
+            settings_statement({"app.tenant_id": value})  # type: ignore[dict-item]
+
+    def test_session_settings_on_a_non_postgres_url_is_rejected_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="postgresql"):
+            SessionManager(
+                "sqlite+aiosqlite:///:memory:",
+                session_settings=lambda: {"app.tenant_id": "acme"},
+                store=DEFAULT_STORE,
+            )
+
+    def test_the_configured_constructor_rejects_session_settings_on_a_non_postgres_url(
+        self,
+    ) -> None:
+        with pytest.raises(ValueError, match="postgresql"):
+            build_session_manager(
+                DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")),
+                SERVER_PROFILE,
+                session_settings=lambda: None,
+                database=DEFAULT_STORE,
+            )
+
+    @pytest.mark.parametrize(
+        "engine_kwargs",
+        [
+            {"isolation_level": "AUTOCOMMIT"},
+            {"isolation_level": "autocommit"},
+            {"execution_options": {"isolation_level": "AUTOCOMMIT"}},
+        ],
+    )
+    def test_session_settings_with_autocommit_is_rejected_at_construction(
+        self,
+        engine_kwargs: dict[str, Any],
+    ) -> None:
+        with pytest.raises(ValueError, match="AUTOCOMMIT"):
+            SessionManager(
+                "postgresql+asyncpg://user:secret@localhost/db",
+                session_settings=lambda: None,
+                store=DEFAULT_STORE,
+                **engine_kwargs,
+            )
+
+    async def test_without_session_settings_sessions_carry_only_the_delegation_check(self) -> None:
+        """Every store's session class refuses an expired caller (T09a); none applies settings."""
+        manager = SessionManager(
+            "sqlite+aiosqlite:///:memory:",
+            pool_size=None,
+            max_overflow=None,
+            pool_timeout=None,
+            pool_recycle=None,
+            store=DEFAULT_STORE,
+        )
+        try:
+            async with manager.session() as session:
+                assert type(session.sync_session).__name__ == "LoomSession"
+                assert isinstance(session.sync_session, Session)
+            assert not manager.has_session_settings
+        finally:
+            await manager.dispose()
+
+    def test_a_provider_returning_none_lets_the_transaction_run_untouched(self) -> None:
+        engine, session_class = _sqlite_session_class(lambda: None)
+        with session_class(engine) as session:
+            assert session.execute(text("SELECT 1")).scalar_one() == 1
+            assert not session.connection().invalidated
+
+    def test_a_savepoint_does_not_call_the_provider_again(self) -> None:
+        calls: list[int] = []
+
+        def counting() -> Mapping[str, str] | None:
+            calls.append(1)
+            return None
+
+        engine, session_class = _sqlite_session_class(counting)
+        with session_class(engine) as session:
             session.execute(text("SELECT 1"))
-    assert len(calls) == 1
+            with session.begin_nested():
+                session.execute(text("SELECT 1"))
+        assert len(calls) == 1
 
+    def test_a_raising_provider_invalidates_the_connection(self) -> None:
+        class ProviderError(RuntimeError):
+            pass
 
-def test_a_raising_provider_invalidates_the_connection() -> None:
-    class ProviderError(RuntimeError):
-        pass
+        def raising() -> Mapping[str, str] | None:
+            raise ProviderError("no context")
 
-    def raising() -> Mapping[str, str] | None:
-        raise ProviderError("no context")
+        engine, session_class = _sqlite_session_class(raising)
+        statement = text("SELECT 1")
+        with session_class(engine) as session:
+            with pytest.raises(ProviderError):
+                session.execute(statement)
+            assert session.connection().invalidated
 
-    engine, session_class = _sqlite_session_class(raising)
-    statement = text("SELECT 1")
-    with session_class(engine) as session:
-        with pytest.raises(ProviderError):
-            session.execute(statement)
-        assert session.connection().invalidated
+    def test_a_failing_settings_statement_invalidates_the_connection(self) -> None:
+        engine, session_class = _sqlite_session_class(lambda: {"app.tenant_id": "acme"})
+        statement = text("SELECT 1")
+        with session_class(engine) as session:
+            with pytest.raises(OperationalError):
+                session.execute(statement)
+            assert session.connection().invalidated
 
+    async def test_a_provider_on_a_postgres_url_installs_on_the_store_s_session_class(self) -> None:
+        manager = SessionManager(
+            "postgresql+asyncpg://user:secret@localhost/db",
+            session_settings=lambda: None,
+            store=DEFAULT_STORE,
+        )
+        try:
+            assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
+        finally:
+            await manager.dispose()
 
-def test_a_failing_settings_statement_invalidates_the_connection() -> None:
-    engine, session_class = _sqlite_session_class(lambda: {"app.tenant_id": "acme"})
-    statement = text("SELECT 1")
-    with session_class(engine) as session:
-        with pytest.raises(OperationalError):
-            session.execute(statement)
-        assert session.connection().invalidated
+    async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url(self) -> None:
+        manager = build_session_manager(
+            DatabaseConfig(url=Dsn("postgresql+asyncpg://user:secret@localhost/db")),
+            SERVER_PROFILE,
+            session_settings=lambda: None,
+            database=DEFAULT_STORE,
+        )
+        try:
+            assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
+        finally:
+            await manager.dispose()
 
+    def test_keys_with_more_than_two_parts_are_accepted(self) -> None:
+        clause, params = settings_statement({"app.scope.extra": "x"})
 
-async def test_a_provider_on_a_postgres_url_installs_on_the_store_s_session_class() -> None:
-    manager = SessionManager(
-        "postgresql+asyncpg://user:secret@localhost/db",
-        session_settings=lambda: None,
-        store=DEFAULT_STORE,
-    )
-    try:
-        assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
-    finally:
-        await manager.dispose()
-
-
-async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url() -> None:
-    manager = build_session_manager(
-        DatabaseConfig(url=Dsn("postgresql+asyncpg://user:secret@localhost/db")),
-        SERVER_PROFILE,
-        session_settings=lambda: None,
-        database=DEFAULT_STORE,
-    )
-    try:
-        assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
-    finally:
-        await manager.dispose()
-
-
-def test_keys_with_more_than_two_parts_are_accepted() -> None:
-    clause, params = settings_statement({"app.scope.extra": "x"})
-
-    assert str(clause) == SET_SETTINGS
-    assert json.loads(params["settings"]) == {"app.scope.extra": "x"}
+        assert str(clause) == SET_SETTINGS
+        assert json.loads(params["settings"]) == {"app.scope.extra": "x"}

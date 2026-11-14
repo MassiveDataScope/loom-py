@@ -29,20 +29,18 @@ def _application(*, enabled: bool) -> Application:
     )
 
 
-def test_marked_tables_record_while_the_switch_is_on() -> None:
-    assert _application(enabled=True).active_audited == {(None, "ledger"): _LEDGER}
+class TestActiveAudited:
+    def test_marked_tables_record_while_the_switch_is_on(self) -> None:
+        assert _application(enabled=True).active_audited == {(None, "ledger"): _LEDGER}
 
+    def test_no_table_records_while_the_switch_is_off(self) -> None:
+        application = _application(enabled=False)
 
-def test_no_table_records_while_the_switch_is_off() -> None:
-    application = _application(enabled=False)
+        assert application.active_audited == {}
+        assert application.audited  # the marks stay; only recording stops
 
-    assert application.active_audited == {}
-    assert application.audited  # the marks stay; only recording stops
+    def test_an_auditing_store_needs_the_audit_revision(self) -> None:
+        assert required_guard_revision(True) == AUDIT_GUARD_REVISION
 
-
-def test_an_auditing_store_needs_the_audit_revision() -> None:
-    assert required_guard_revision(True) == AUDIT_GUARD_REVISION
-
-
-def test_a_store_without_audit_takes_any_revision() -> None:
-    assert required_guard_revision(False) is None
+    def test_a_store_without_audit_takes_any_revision(self) -> None:
+        assert required_guard_revision(False) is None

@@ -79,57 +79,67 @@ def _kinds(operations: list[ops.MigrateOperation]) -> list[type]:
     return [type(op) for op in operations]
 
 
-def test_creating_a_partitioned_table_renders_its_partitioning_under_the_hatch() -> None:
-    table = _application().metadata.tables["events"]
+class TestPartitionOperations:
+    def test_creating_a_partitioned_table_renders_its_partitioning_under_the_hatch(self) -> None:
+        table = _application().metadata.tables["events"]
 
-    script = _rewritten([ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)])
+        script = _rewritten(
+            [ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)]
+        )
 
-    assert _kinds(script.upgrade_ops.ops) == [OpenHatchOp, ops.CreateTableOp, ProtectScopedTableOp]
-    assert "postgresql_partition_by='RANGE (at)'" in render_python_code(script.upgrade_ops)
-
-
-def test_dropping_a_partitioned_table_drops_its_partitions_through_the_guard_first() -> None:
-    table = _application().metadata.tables["events"]
-
-    script = _rewritten([ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)])
-
-    assert _kinds(script.downgrade_ops.ops) == [
-        OpenHatchOp,
-        DropPartitionsOp,
-        UnprotectScopedTableOp,
-        ops.DropTableOp,
-    ]
-    code = render_python_code(script.downgrade_ops)
-    assert "op.drop_partitions('events')" in code
-
-
-def test_partition_operations_render_as_loom_operations() -> None:
-    upgrade = ops.UpgradeOps(
-        [
-            EnsureRangePartitionsOp("events", dt.date(2026, 1, 1), "2027-01-01"),
-            DetachRangePartitionsOp("events", "2025-01-01", "2025-02-01", "month", drop=True),
+        assert _kinds(script.upgrade_ops.ops) == [
+            OpenHatchOp,
+            ops.CreateTableOp,
+            ProtectScopedTableOp,
         ]
-    )
+        assert "postgresql_partition_by='RANGE (at)'" in render_python_code(script.upgrade_ops)
 
-    code = render_python_code(upgrade)
+    def test_dropping_a_partitioned_table_drops_its_partitions_through_the_guard_first(
+        self,
+    ) -> None:
+        table = _application().metadata.tables["events"]
 
-    assert (
-        "op.ensure_range_partitions('events', '2026-01-01', '2027-01-01', interval='month')" in code
-    )
-    assert (
-        "op.detach_range_partitions('events', '2025-01-01', '2025-02-01', interval='month', "
-        "drop=True)" in code
-    )
-    assert "op.execute" not in code
+        script = _rewritten(
+            [ops.CreateTableOp.from_table(table)], [ops.DropTableOp.from_table(table)]
+        )
 
+        assert _kinds(script.downgrade_ops.ops) == [
+            OpenHatchOp,
+            DropPartitionsOp,
+            UnprotectScopedTableOp,
+            ops.DropTableOp,
+        ]
+        code = render_python_code(script.downgrade_ops)
+        assert "op.drop_partitions('events')" in code
 
-def test_ensuring_partitions_has_no_reverse_because_it_cannot_tell_which_it_created() -> None:
-    ensure = EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "day")
+    def test_partition_operations_render_as_loom_operations(self) -> None:
+        upgrade = ops.UpgradeOps(
+            [
+                EnsureRangePartitionsOp("events", dt.date(2026, 1, 1), "2027-01-01"),
+                DetachRangePartitionsOp("events", "2025-01-01", "2025-02-01", "month", drop=True),
+            ]
+        )
 
-    with pytest.raises(ConfigError, match=r"op\.detach_range_partitions\('events'"):
-        ensure.reverse()
+        code = render_python_code(upgrade)
 
+        assert (
+            "op.ensure_range_partitions('events', '2026-01-01', '2027-01-01', interval='month')"
+            in code
+        )
+        assert (
+            "op.detach_range_partitions('events', '2025-01-01', '2025-02-01', interval='month', "
+            "drop=True)" in code
+        )
+        assert "op.execute" not in code
 
-def test_an_unknown_interval_is_refused_when_the_operation_is_built() -> None:
-    with pytest.raises(ValueError, match="interval 'week'"):
-        EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "week")  # type: ignore[arg-type]
+    def test_ensuring_partitions_has_no_reverse_because_it_cannot_tell_which_it_created(
+        self,
+    ) -> None:
+        ensure = EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "day")
+
+        with pytest.raises(ConfigError, match=r"op\.detach_range_partitions\('events'"):
+            ensure.reverse()
+
+    def test_an_unknown_interval_is_refused_when_the_operation_is_built(self) -> None:
+        with pytest.raises(ValueError, match="interval 'week'"):
+            EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "week")  # type: ignore[arg-type]

@@ -56,96 +56,91 @@ def _wiring(url: str, *models: type[BaseModel], **schema: object):
     )
 
 
-async def test_startup_checks_keep_the_memory_database() -> None:
-    """SQLite's one connection is the database: checking must not dispose it."""
-    wiring = _wiring("sqlite+aiosqlite://", Plain)
-    wiring.prepare_models((Plain,))
+class TestBackendPhases:
+    async def test_startup_checks_keep_the_memory_database(self) -> None:
+        """SQLite's one connection is the database: checking must not dispose it."""
+        wiring = _wiring("sqlite+aiosqlite://", Plain)
+        wiring.prepare_models((Plain,))
 
-    await wiring.startup_checks()
-    manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
-    async with manager.session() as session:
-        names = (await session.execute(text("SELECT name FROM sqlite_master"))).scalars()
-
-    assert "phase_items" in set(names)
-
-
-async def test_opening_does_not_verify_an_external_schema() -> None:
-    wiring = _wiring("sqlite+aiosqlite://", Plain, mode="external")
-    wiring.prepare_models((Plain,))
-
-    async with wiring.lifespan_init():
-        pass
-    with pytest.raises(ConfigError, match="phase_items"):
         await wiring.startup_checks()
-
-
-async def test_closing_leaves_the_compiled_model() -> None:
-    wiring = _wiring("sqlite+aiosqlite://", Plain)
-    wiring.prepare_models((Plain,))
-    metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
-
-    async with wiring.lifespan_init():
-        pass
-
-    assert get_compiled(Plain, metadata=metadata) is not None
-
-
-def test_prepare_compiles_into_the_store_and_leaves_the_shared_registry_alone() -> None:
-    wiring = _wiring("sqlite+aiosqlite://", Plain)
-
-    wiring.prepare_models((Plain,))
-
-    metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
-    assert set(metadata.tables) == {"phase_items"}
-    assert get_compiled(Plain) is None
-
-
-def test_prepare_binds_scoped_settings_before_any_check() -> None:
-    wiring = _wiring(
-        "postgresql+asyncpg://app:secret@localhost/app",
-        Scoped,
-        mode="external",
-        scopes={"holder": "identity.subject"},
-    )
-    manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
-    with pytest.raises(RuntimeError, match="before startup"):
-        manager.current_settings()
-
-    wiring.prepare_models((Scoped,))
-
-    assert manager.current_settings()
-
-
-async def test_startup_checks_empty_a_queued_pool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A queued pool gives its connection back, and a file database keeps the tables."""
-    wiring = _queued(monkeypatch, tmp_path / "phase.db", Plain)
-    manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
-    try:
-        await wiring.startup_checks()
-        pool = manager.engine.sync_engine.pool
-        assert isinstance(pool, QueuePool)
-        assert pool.checkedin() == 0
-        assert pool.checkedout() == 0
+        manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
         async with manager.session() as session:
             names = (await session.execute(text("SELECT name FROM sqlite_master"))).scalars()
+
         assert "phase_items" in set(names)
-    finally:
-        await manager.dispose()
 
+    async def test_opening_does_not_verify_an_external_schema(self) -> None:
+        wiring = _wiring("sqlite+aiosqlite://", Plain, mode="external")
+        wiring.prepare_models((Plain,))
 
-async def test_a_failed_check_empties_the_queued_pool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    wiring = _queued(monkeypatch, tmp_path / "missing.db", Plain, mode="external")
-    manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
-    try:
+        async with wiring.lifespan_init():
+            pass
         with pytest.raises(ConfigError, match="phase_items"):
             await wiring.startup_checks()
-        pool = manager.engine.sync_engine.pool
-        assert isinstance(pool, QueuePool)
-        assert pool.checkedin() == 0
-        assert pool.checkedout() == 0
-    finally:
-        await manager.dispose()
+
+    async def test_closing_leaves_the_compiled_model(self) -> None:
+        wiring = _wiring("sqlite+aiosqlite://", Plain)
+        wiring.prepare_models((Plain,))
+        metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
+
+        async with wiring.lifespan_init():
+            pass
+
+        assert get_compiled(Plain, metadata=metadata) is not None
+
+    def test_prepare_compiles_into_the_store_and_leaves_the_shared_registry_alone(self) -> None:
+        wiring = _wiring("sqlite+aiosqlite://", Plain)
+
+        wiring.prepare_models((Plain,))
+
+        metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
+        assert set(metadata.tables) == {"phase_items"}
+        assert get_compiled(Plain) is None
+
+    def test_prepare_binds_scoped_settings_before_any_check(self) -> None:
+        wiring = _wiring(
+            "postgresql+asyncpg://app:secret@localhost/app",
+            Scoped,
+            mode="external",
+            scopes={"holder": "identity.subject"},
+        )
+        manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError, match="before startup"):
+            manager.current_settings()
+
+        wiring.prepare_models((Scoped,))
+
+        assert manager.current_settings()
+
+    async def test_startup_checks_empty_a_queued_pool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A queued pool gives its connection back, and a file database keeps the tables."""
+        wiring = _queued(monkeypatch, tmp_path / "phase.db", Plain)
+        manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
+        try:
+            await wiring.startup_checks()
+            pool = manager.engine.sync_engine.pool
+            assert isinstance(pool, QueuePool)
+            assert pool.checkedin() == 0
+            assert pool.checkedout() == 0
+            async with manager.session() as session:
+                names = (await session.execute(text("SELECT name FROM sqlite_master"))).scalars()
+            assert "phase_items" in set(names)
+        finally:
+            await manager.dispose()
+
+    async def test_a_failed_check_empties_the_queued_pool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wiring = _queued(monkeypatch, tmp_path / "missing.db", Plain, mode="external")
+        manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
+        try:
+            with pytest.raises(ConfigError, match="phase_items"):
+                await wiring.startup_checks()
+            pool = manager.engine.sync_engine.pool
+            assert isinstance(pool, QueuePool)
+            assert pool.checkedin() == 0
+            assert pool.checkedout() == 0
+        finally:
+            await manager.dispose()

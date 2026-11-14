@@ -190,50 +190,51 @@ class TestById:
             await repository.delete(2)  # type: ignore[arg-type]
 
 
-async def test_create_many_reselects_rows_by_every_key_column(
-    session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(session_manager.engine.dialect, "insert_returning", False)
-    repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_Entry,
-        cursor_codec=_CODEC,
-    )
+class TestEveryKeyColumn:
+    async def test_create_many_reselects_rows_by_every_key_column(
+        self, session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(session_manager.engine.dialect, "insert_returning", False)
+        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Entry,
+            cursor_codec=_CODEC,
+        )
 
-    created = await repository.create_many(
-        [_CreateEntry(account_id=9, id=2, rank=5), _CreateEntry(account_id=9, id=1, rank=6)]
-    )
+        created = await repository.create_many(
+            [_CreateEntry(account_id=9, id=2, rank=5), _CreateEntry(account_id=9, id=1, rank=6)]
+        )
 
-    assert [(item.account_id, item.id, item.rank) for item in created] == [(9, 2, 5), (9, 1, 6)]
+        assert [(item.account_id, item.id, item.rank) for item in created] == [(9, 2, 5), (9, 1, 6)]
 
+    async def test_list_paginated_orders_by_every_key_column(
+        self, session_manager: SessionManager
+    ) -> None:
+        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Entry,
+            cursor_codec=_CODEC,
+        )
+        keys = [(7, 3), (7, 1), (7, 2)]
+        await repository.create_many(
+            [_CreateEntry(account_id=account, id=ident, rank=0) for account, ident in keys]
+        )
 
-async def test_list_paginated_orders_by_every_key_column(session_manager: SessionManager) -> None:
-    repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_Entry,
-        cursor_codec=_CODEC,
-    )
-    keys = [(7, 3), (7, 1), (7, 2)]
-    await repository.create_many(
-        [_CreateEntry(account_id=account, id=ident, rank=0) for account, ident in keys]
-    )
+        page = await repository.list_paginated(PageParams(page=1, limit=10))
 
-    page = await repository.list_paginated(PageParams(page=1, limit=10))
+        assert [(item.account_id, item.id) for item in page.items] == sorted(keys)
 
-    assert [(item.account_id, item.id) for item in page.items] == sorted(keys)
+    async def test_create_records_the_full_key_in_ids_and_tags(
+        self, session_manager: SessionManager, mutations: list[MutationEvent]
+    ) -> None:
+        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Entry,
+            cursor_codec=_CODEC,
+        )
 
+        await repository.create(_CreateEntry(account_id=8, id=4, rank=1))
 
-async def test_create_records_the_full_key_in_ids_and_tags(
-    session_manager: SessionManager, mutations: list[MutationEvent]
-) -> None:
-    repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_Entry,
-        cursor_codec=_CODEC,
-    )
-
-    await repository.create(_CreateEntry(account_id=8, id=4, rank=1))
-
-    (created,) = mutations
-    assert created.ids == ((8, 4),)
-    assert "composite_entries:id:(8, 4)" in created.tags
+        (created,) = mutations
+        assert created.ids == ((8, 4),)
+        assert "composite_entries:id:(8, 4)" in created.tags

@@ -29,37 +29,38 @@ def _as(subject: str) -> object:
     return set_identity(Identity(subject=subject))
 
 
-def test_insert_records_the_caller_and_update_records_who_changed_it(session: Session) -> None:
-    token = _as("ana")
-    try:
+class TestAuditActor:
+    def test_insert_records_the_caller_and_update_records_who_changed_it(
+        self, session: Session
+    ) -> None:
+        token = _as("ana")
+        try:
+            session.add(Ticket(title="a"))
+            session.commit()
+        finally:
+            reset_identity(token)  # type: ignore[arg-type]
+        token = _as("bob")
+        try:
+            ticket = session.scalars(select(Ticket)).one()
+            ticket.title = "b"
+            session.commit()
+        finally:
+            reset_identity(token)  # type: ignore[arg-type]
+
+        assert (ticket.created_by, ticket.updated_by) == ("ana", "bob")
+
+    def test_an_anonymous_caller_leaves_the_actor_empty(self, session: Session) -> None:
         session.add(Ticket(title="a"))
         session.commit()
-    finally:
-        reset_identity(token)  # type: ignore[arg-type]
-    token = _as("bob")
-    try:
-        ticket = session.scalars(select(Ticket)).one()
-        ticket.title = "b"
-        session.commit()
-    finally:
-        reset_identity(token)  # type: ignore[arg-type]
 
-    assert (ticket.created_by, ticket.updated_by) == ("ana", "bob")
+        assert session.scalars(select(Ticket)).one().created_by is None
 
+    def test_a_value_the_code_sets_is_kept(self, session: Session) -> None:
+        token = _as("ana")
+        try:
+            session.add(Ticket(title="a", created_by="import"))
+            session.commit()
+        finally:
+            reset_identity(token)  # type: ignore[arg-type]
 
-def test_an_anonymous_caller_leaves_the_actor_empty(session: Session) -> None:
-    session.add(Ticket(title="a"))
-    session.commit()
-
-    assert session.scalars(select(Ticket)).one().created_by is None
-
-
-def test_a_value_the_code_sets_is_kept(session: Session) -> None:
-    token = _as("ana")
-    try:
-        session.add(Ticket(title="a", created_by="import"))
-        session.commit()
-    finally:
-        reset_identity(token)  # type: ignore[arg-type]
-
-    assert session.scalars(select(Ticket)).one().created_by == "import"
+        assert session.scalars(select(Ticket)).one().created_by == "import"

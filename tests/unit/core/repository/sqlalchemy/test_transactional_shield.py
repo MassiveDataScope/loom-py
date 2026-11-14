@@ -63,53 +63,57 @@ class _SlowDispatchOwner:
         return "ok"
 
 
-@pytest.mark.asyncio
-async def test_a_cancellation_after_commit_does_not_abort_the_shielded_priority_lane(
-    mock_session_manager: MockSessionManager,
-) -> None:
-    gate = asyncio.Event()
-    owner = _SlowPriorityOwner(mock_session_manager, gate)
+class TestTransactionalShield:
+    @pytest.mark.asyncio
+    async def test_a_cancellation_after_commit_does_not_abort_the_shielded_priority_lane(
+        self,
+        mock_session_manager: MockSessionManager,
+    ) -> None:
+        gate = asyncio.Event()
+        owner = _SlowPriorityOwner(mock_session_manager, gate)
 
-    async def _run() -> str:
-        return await owner.execute()
+        async def _run() -> str:
+            return await owner.execute()
 
-    task: asyncio.Task[Any] = asyncio.create_task(_run())
-    while "priority.started" not in owner.log:
-        await asyncio.sleep(0)
+        task: asyncio.Task[Any] = asyncio.create_task(_run())
+        while "priority.started" not in owner.log:
+            await asyncio.sleep(0)
 
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    # The caller gave up, but the shielded priority lane kept running in
-    # the background: releasing the gate lets it finish.
-    gate.set()
-    await asyncio.sleep(0.01)
+        # The caller gave up, but the shielded priority lane kept running in
+        # the background: releasing the gate lets it finish.
+        gate.set()
+        await asyncio.sleep(0.01)
 
-    assert "priority.finished" in owner.log
+        assert "priority.finished" in owner.log
 
+    @pytest.mark.asyncio
+    async def test_a_cancellation_after_commit_still_aborts_a_plain_action_in_flight(
+        self,
+        mock_session_manager: MockSessionManager,
+    ) -> None:
+        """The property the priority lane's shield must not widen: the plain lane stays
+        cancellable.
+        """
+        gate = asyncio.Event()
+        owner = _SlowDispatchOwner(mock_session_manager, gate)
 
-@pytest.mark.asyncio
-async def test_a_cancellation_after_commit_still_aborts_a_plain_action_in_flight(
-    mock_session_manager: MockSessionManager,
-) -> None:
-    """The property the priority lane's shield must not widen: the plain lane stays cancellable."""
-    gate = asyncio.Event()
-    owner = _SlowDispatchOwner(mock_session_manager, gate)
+        async def _run() -> str:
+            return await owner.execute()
 
-    async def _run() -> str:
-        return await owner.execute()
+        task: asyncio.Task[Any] = asyncio.create_task(_run())
+        while "dispatch.started" not in owner.log:
+            await asyncio.sleep(0)
 
-    task: asyncio.Task[Any] = asyncio.create_task(_run())
-    while "dispatch.started" not in owner.log:
-        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+        # Unlike the priority lane, the plain lane really was interrupted.
+        gate.set()
+        await asyncio.sleep(0.01)
 
-    # Unlike the priority lane, the plain lane really was interrupted.
-    gate.set()
-    await asyncio.sleep(0.01)
-
-    assert "dispatch.finished" not in owner.log
+        assert "dispatch.finished" not in owner.log

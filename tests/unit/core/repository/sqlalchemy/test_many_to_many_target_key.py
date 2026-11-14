@@ -57,31 +57,38 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
     return await sqlite_manager_for(_Tag)
 
 
-async def test_a_composite_key_target_is_joined_on_the_referenced_column(
-    session_manager: SessionManager,
-) -> None:
-    devices = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_Device,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
-    tags = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Tag, cursor_codec=CursorCodec(signing="ephemeral")
-    )
-    links = RepositorySQLAlchemy(
-        session_manager=session_manager,
-        model=_TagDevice,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
-    # Device "A" is (account 1, id 7) and "B" is (account 7, id 1): joining on the
-    # first key column, account_id, would pick "B" for the link to device id 7.
-    await devices.create_many(
-        [_CreateDevice(account_id=1, id=7, name="A"), _CreateDevice(account_id=7, id=1, name="B")]
-    )
-    await tags.create_many([_CreateTag(id=10)])
-    await links.create_many([_CreateLink(id=1, tag_id=10, device_id=7)])
+class TestManyToManyTargetKey:
+    async def test_a_composite_key_target_is_joined_on_the_referenced_column(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        devices = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Device,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        tags = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Tag,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        links = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_TagDevice,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        # Device "A" is (account 1, id 7) and "B" is (account 7, id 1): joining on the
+        # first key column, account_id, would pick "B" for the link to device id 7.
+        await devices.create_many(
+            [
+                _CreateDevice(account_id=1, id=7, name="A"),
+                _CreateDevice(account_id=7, id=1, name="B"),
+            ]
+        )
+        await tags.create_many([_CreateTag(id=10)])
+        await links.create_many([_CreateLink(id=1, tag_id=10, device_id=7)])
 
-    tag = await tags.get_by_id(10)
+        tag = await tags.get_by_id(10)
 
-    assert tag is not None
-    assert [device["name"] for device in tag.devices] == ["A"]
+        assert tag is not None
+        assert [device["name"] for device in tag.devices] == ["A"]

@@ -53,143 +53,139 @@ def _application(**sources: str) -> Application:
     )
 
 
-def test_three_part_keys_are_accepted_by_the_settings_statement() -> None:
-    clause, params = settings_statement({"loom.scope.holder": "x", "loom.scope.editor.any": "on"})
+class TestScopeSources:
+    def test_three_part_keys_are_accepted_by_the_settings_statement(self) -> None:
+        clause, params = settings_statement(
+            {"loom.scope.holder": "x", "loom.scope.editor.any": "on"}
+        )
 
-    assert str(clause) == SET_SETTINGS
-    assert json.loads(params["settings"]) == {
-        "loom.scope.holder": "x",
-        "loom.scope.editor.any": "on",
-    }
+        assert str(clause) == SET_SETTINGS
+        assert json.loads(params["settings"]) == {
+            "loom.scope.holder": "x",
+            "loom.scope.editor.any": "on",
+        }
 
+    def test_a_registered_request_source_is_published_under_request_and_cannot_repeat(self) -> None:
+        register_scope_source("editor", lambda: "ana")
 
-def test_a_registered_request_source_is_published_under_request_and_cannot_repeat() -> None:
-    register_scope_source("editor", lambda: "ana")
+        assert bind_sources({"editor": "request.editor"}, path="p")["editor"]() == "ana"
+        with pytest.raises(ValueError, match="editor"):
+            register_scope_source("editor", lambda: "bob")
 
-    assert bind_sources({"editor": "request.editor"}, path="p")["editor"]() == "ana"
-    with pytest.raises(ValueError, match="editor"):
+    def test_identity_bindings_read_the_subject_and_the_verified_attributes(self) -> None:
+        sources = bind_sources(
+            {"holder": "identity.subject", "region": "identity.region", "lost": "identity.missing"},
+            path="p",
+        )
+        token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
+        try:
+            assert {scope: source() for scope, source in sources.items()} == {
+                "holder": "sub-1",
+                "region": "7",
+                "lost": None,
+            }
+        finally:
+            reset_identity(token)
+
+    def test_a_provider_keeps_the_sources_registered_when_it_was_built(self) -> None:
+        register_scope_source("editor", lambda: "ana")
+        provider = rls_session_settings(_application())
+        clear_scope_sources()
         register_scope_source("editor", lambda: "bob")
 
+        assert provider()["loom.scope.editor"] == "ana"
 
-def test_identity_bindings_read_the_subject_and_the_verified_attributes() -> None:
-    sources = bind_sources(
-        {"holder": "identity.subject", "region": "identity.region", "lost": "identity.missing"},
-        path="p",
-    )
-    token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
-    try:
-        assert {scope: source() for scope, source in sources.items()} == {
-            "holder": "sub-1",
-            "region": "7",
-            "lost": None,
-        }
-    finally:
-        reset_identity(token)
+    def test_an_unregistered_request_source_is_a_configuration_error(self) -> None:
+        application = _application()
 
+        with pytest.raises(ConfigError, match=r"request\.editor"):
+            rls_session_settings(application)
 
-def test_a_provider_keeps_the_sources_registered_when_it_was_built() -> None:
-    register_scope_source("editor", lambda: "ana")
-    provider = rls_session_settings(_application())
-    clear_scope_sources()
-    register_scope_source("editor", lambda: "bob")
+    @pytest.mark.parametrize("binding", ["env.spare", "request.spare"])
+    def test_a_binding_no_model_declares_is_validated_too(self, binding: str) -> None:
+        register_scope_source("editor", lambda: "ana")
+        application = _application(
+            holder="identity.subject",
+            editor="request.editor",
+            region="identity.region",
+            spare=binding,
+        )
 
-    assert provider()["loom.scope.editor"] == "ana"
+        with pytest.raises(ConfigError, match=r"scopes\.spare"):
+            rls_session_settings(application)
 
+    def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated(self) -> None:
+        register_scope_source("editor", lambda: None)
+        provider = rls_session_settings(_application())
 
-def test_an_unregistered_request_source_is_a_configuration_error() -> None:
-    application = _application()
-
-    with pytest.raises(ConfigError, match=r"request\.editor"):
-        rls_session_settings(application)
-
-
-@pytest.mark.parametrize("binding", ["env.spare", "request.spare"])
-def test_a_binding_no_model_declares_is_validated_too(binding: str) -> None:
-    register_scope_source("editor", lambda: "ana")
-    application = _application(
-        holder="identity.subject", editor="request.editor", region="identity.region", spare=binding
-    )
-
-    with pytest.raises(ConfigError, match=r"scopes\.spare"):
-        rls_session_settings(application)
-
-
-def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated() -> None:
-    register_scope_source("editor", lambda: None)
-    provider = rls_session_settings(_application())
-
-    assert provider() == {
-        "loom.scope.holder": "",
-        "loom.scope.editor": "",
-        "loom.scope.editor.any": "",
-        "loom.scope.region": "",
-        "loom.actor.subject": "",
-        "loom.actor.mechanism": "",
-        "loom.actor.on_behalf_of": "",
-        "loom.trace_id": "",
-    }
-
-
-def test_the_provider_emits_the_resolved_values_and_the_elevation_flags(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from loom.core.repository.sqlalchemy.rls import provider as provider_module
-
-    monkeypatch.setattr(provider_module, "elevated_scopes", lambda: frozenset({"editor"}))
-    register_scope_source("editor", lambda: "ana")
-    provider = rls_session_settings(_application())
-    token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
-    try:
         assert provider() == {
-            "loom.scope.holder": "sub-1",
-            "loom.scope.editor": "ana",
-            "loom.scope.editor.any": "on",
-            "loom.scope.region": "7",
-            "loom.actor.subject": "sub-1",
+            "loom.scope.holder": "",
+            "loom.scope.editor": "",
+            "loom.scope.editor.any": "",
+            "loom.scope.region": "",
+            "loom.actor.subject": "",
             "loom.actor.mechanism": "",
             "loom.actor.on_behalf_of": "",
             "loom.trace_id": "",
         }
-    finally:
-        reset_identity(token)
 
+    def test_the_provider_emits_the_resolved_values_and_the_elevation_flags(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from loom.core.repository.sqlalchemy.rls import provider as provider_module
 
-def test_non_string_source_values_are_rendered_as_text() -> None:
-    register_scope_source("editor", lambda: 42)
-    provider = rls_session_settings(_application())
+        monkeypatch.setattr(provider_module, "elevated_scopes", lambda: frozenset({"editor"}))
+        register_scope_source("editor", lambda: "ana")
+        provider = rls_session_settings(_application())
+        token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
+        try:
+            assert provider() == {
+                "loom.scope.holder": "sub-1",
+                "loom.scope.editor": "ana",
+                "loom.scope.editor.any": "on",
+                "loom.scope.region": "7",
+                "loom.actor.subject": "sub-1",
+                "loom.actor.mechanism": "",
+                "loom.actor.on_behalf_of": "",
+                "loom.trace_id": "",
+            }
+        finally:
+            reset_identity(token)
 
-    assert provider()["loom.scope.editor"] == "42"
+    def test_non_string_source_values_are_rendered_as_text(self) -> None:
+        register_scope_source("editor", lambda: 42)
+        provider = rls_session_settings(_application())
 
+        assert provider()["loom.scope.editor"] == "42"
 
-def test_only_elevable_scopes_get_a_flag() -> None:
-    register_scope_source("editor", lambda: "ana")
-    provider = rls_session_settings(_application())
+    def test_only_elevable_scopes_get_a_flag(self) -> None:
+        register_scope_source("editor", lambda: "ana")
+        provider = rls_session_settings(_application())
 
-    assert "loom.scope.holder.any" not in provider()
-    assert "loom.scope.region.any" not in provider()
+        assert "loom.scope.holder.any" not in provider()
+        assert "loom.scope.region.any" not in provider()
 
+    def test_product_settings_are_merged_but_may_not_touch_the_loom_namespace(self) -> None:
+        register_scope_source("editor", lambda: "ana")
+        merged = rls_session_settings(_application(), product=lambda: {"shop.locale": "es"})
+        assert merged()["shop.locale"] == "es"
 
-def test_product_settings_are_merged_but_may_not_touch_the_loom_namespace() -> None:
-    register_scope_source("editor", lambda: "ana")
-    merged = rls_session_settings(_application(), product=lambda: {"shop.locale": "es"})
-    assert merged()["shop.locale"] == "es"
+        intruding = rls_session_settings(_application(), product=lambda: {"loom.scope.holder": "x"})
+        with pytest.raises(ValueError, match=r"loom\."):
+            intruding()
 
-    intruding = rls_session_settings(_application(), product=lambda: {"loom.scope.holder": "x"})
-    with pytest.raises(ValueError, match=r"loom\."):
-        intruding()
+    def test_a_product_provider_returning_none_still_yields_every_scope_key(self) -> None:
+        register_scope_source("editor", lambda: "ana")
+        provider = rls_session_settings(_application(), product=lambda: None)
 
-
-def test_a_product_provider_returning_none_still_yields_every_scope_key() -> None:
-    register_scope_source("editor", lambda: "ana")
-    provider = rls_session_settings(_application(), product=lambda: None)
-
-    assert set(provider()) == {
-        "loom.scope.holder",
-        "loom.scope.editor",
-        "loom.scope.editor.any",
-        "loom.scope.region",
-        "loom.actor.subject",
-        "loom.actor.mechanism",
-        "loom.actor.on_behalf_of",
-        "loom.trace_id",
-    }
+        assert set(provider()) == {
+            "loom.scope.holder",
+            "loom.scope.editor",
+            "loom.scope.editor.any",
+            "loom.scope.region",
+            "loom.actor.subject",
+            "loom.actor.mechanism",
+            "loom.actor.on_behalf_of",
+            "loom.trace_id",
+        }
