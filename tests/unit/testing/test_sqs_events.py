@@ -68,60 +68,62 @@ def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
     return record
 
 
-def test_a_batch_that_succeeds_retries_nothing(
-    handler: LambdaHandler, seen: list[tuple[str, str]]
-) -> None:
-    result = handler({"Records": [_marked("a", "1"), _marked("b", "2")]}, None)
+class TestSqsEvents:
+    def test_a_batch_that_succeeds_retries_nothing(
+        self, handler: LambdaHandler, seen: list[tuple[str, str]]
+    ) -> None:
+        result = handler({"Records": [_marked("a", "1"), _marked("b", "2")]}, None)
 
-    assert (_failed(result), seen) == ([], [("a", ""), ("b", "")])
+        assert (_failed(result), seen) == ([], [("a", ""), ("b", "")])
 
+    @pytest.mark.parametrize(
+        ("group_id", "failed", "ran"),
+        [(None, ["2"], ["a", "fail", "c"]), ("customer-7", ["2", "3"], ["a", "fail"])],
+        ids=["standard", "fifo"],
+    )
+    def test_a_failed_record_is_retried_and_a_fifo_group_stops_at_it(
+        self,
+        handler: LambdaHandler,
+        seen: list[tuple[str, str]],
+        group_id: str | None,
+        failed: list[str],
+        ran: list[str],
+    ) -> None:
+        records = [
+            _marked(m, str(i), group_id=group_id) for i, m in enumerate(["a", "fail", "c"], 1)
+        ]
 
-@pytest.mark.parametrize(
-    ("group_id", "failed", "ran"),
-    [(None, ["2"], ["a", "fail", "c"]), ("customer-7", ["2", "3"], ["a", "fail"])],
-    ids=["standard", "fifo"],
-)
-def test_a_failed_record_is_retried_and_a_fifo_group_stops_at_it(
-    handler: LambdaHandler,
-    seen: list[tuple[str, str]],
-    group_id: str | None,
-    failed: list[str],
-    ran: list[str],
-) -> None:
-    records = [_marked(m, str(i), group_id=group_id) for i, m in enumerate(["a", "fail", "c"], 1)]
+        result = handler({"Records": records}, None)
 
-    result = handler({"Records": records}, None)
+        assert (_failed(result), [marker for marker, _ in seen]) == (failed, ran)
 
-    assert (_failed(result), [marker for marker, _ in seen]) == (failed, ran)
+    def test_the_identity_reaches_the_job(
+        self, handler: LambdaHandler, seen: list[tuple[str, str]]
+    ) -> None:
+        handler({"Records": [_marked("a", "1", identity=_ALICE)]}, None)
 
+        assert seen == [("a", "alice")]
 
-def test_the_identity_reaches_the_job(handler: LambdaHandler, seen: list[tuple[str, str]]) -> None:
-    handler({"Records": [_marked("a", "1", identity=_ALICE)]}, None)
+    def test_a_raw_body_loom_cannot_read_is_retried(
+        self, handler: LambdaHandler, seen: list[tuple[str, str]]
+    ) -> None:
+        result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
 
-    assert seen == [("a", "alice")]
+        assert (_failed(result), seen) == (["poison"], [])
 
+    async def test_the_body_is_the_one_sqs_job_service_sends(self) -> None:
+        """All but the caller's deadline: an event's caller gets one at the worker."""
+        client = SQSClient()
+        service = sqs_service(client)
+        deadline = time.time() + 60
+        try:
+            with acting_as(_ALICE, until=deadline):
+                service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
+                await flush_pending_dispatches()
+        finally:
+            clear_pending_dispatches()
 
-def test_a_raw_body_loom_cannot_read_is_retried(
-    handler: LambdaHandler, seen: list[tuple[str, str]]
-) -> None:
-    result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
-
-    assert (_failed(result), seen) == (["poison"], [])
-
-
-async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
-    """All but the caller's deadline: an event's caller gets one at the worker."""
-    client = SQSClient()
-    service = sqs_service(client)
-    deadline = time.time() + 60
-    try:
-        with acting_as(_ALICE, until=deadline):
-            service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
-            await flush_pending_dispatches()
-    finally:
-        clear_pending_dispatches()
-
-    event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
-    expected = json.loads(event["Records"][0]["body"])
-    expected["identity"]["until"] = deadline
-    assert [json.loads(request["MessageBody"]) for request in client.requests] == [expected]
+        event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
+        expected = json.loads(event["Records"][0]["body"])
+        expected["identity"]["until"] = deadline
+        assert [json.loads(request["MessageBody"]) for request in client.requests] == [expected]

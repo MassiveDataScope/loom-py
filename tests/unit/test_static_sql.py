@@ -247,31 +247,6 @@ def _violations(path: Path, root: Path = SRC) -> list[str]:
     return violations
 
 
-def test_every_scanned_module_exists() -> None:
-    assert [path for path in SCANNED_MODULES if not path.exists()] == []
-
-
-def test_the_scan_reaches_the_bootstrap_driver_calls() -> None:
-    receivers = {
-        ast.unparse(call.func)
-        for _, call in _sink_calls(BOOTSTRAP)
-        if isinstance(call.func, ast.Attribute)
-    }
-
-    assert BOOTSTRAP in _modules()
-    assert {"driver.execute", "driver.fetch"} <= receivers
-
-
-def test_sql_reaching_the_database_is_a_final_constant_or_a_pinned_loader() -> None:
-    violations = [
-        f"{path.relative_to(SRC)}:{violation}"
-        for path in _modules()
-        for violation in _violations(path)
-    ]
-
-    assert violations == []
-
-
 HEADER = """\
 from typing import Final
 
@@ -295,122 +270,145 @@ def _module(tmp_path: Path, body: str) -> Path:
     return module
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        'text(f"SELECT {x}")',
-        'text("SELECT " + x)',
-        'text("".join(parts))',
-        'text("SELECT {}".format(x))',
-        "text(query)",
-        'text("SELECT 1")',
-        "text(text=query)",
-        "raw_text(query)",
-        "run_sql(query)",
-        'sa.DDL(f"CREATE TABLE {x} (id int)")',
-        "sa.text(query)",
-        'connection.exec_driver_sql(f"SET ROLE {owner}")',
-        "op.execute(sql)",
-        "conn.execute(query)",
-        'conn.execute("SELECT 1")',
-        "conn.execute(statement=query)",
-        "conn.execute(QUERY, statement=query)",
-        "conn.execute(*parts)",
-        "conn.execute()",
-        "conn.execute(NOT_FINAL)",
-        "conn.execute(REASSIGNED)",
-        "conn.execute(text(text(QUERY)))",
-        "driver.executemany(query, parts)",
-        "driver.fetch(query)",
-        "driver.fetchrow(query)",
-        "driver.fetchval(query)",
-        "driver.execute(revision.sql(x))",
-        "driver.execute(other.sql())",
-        "sa.CheckConstraint(x)",
-        'sa.CheckConstraint(f"{x} > 0", name="positive")',
-        "sa.CheckConstraint(sqltext=x)",
-    ],
-)
-def test_dynamic_sql_is_rejected(body: str, tmp_path: Path) -> None:
-    assert _violations(_module(tmp_path, body)) != []
+class TestStaticSql:
+    def test_every_scanned_module_exists(self) -> None:
+        assert [path for path in SCANNED_MODULES if not path.exists()] == []
 
+    def test_the_scan_reaches_the_bootstrap_driver_calls(self) -> None:
+        receivers = {
+            ast.unparse(call.func)
+            for _, call in _sink_calls(BOOTSTRAP)
+            if isinstance(call.func, ast.Attribute)
+        }
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "conn.execute(QUERY)",
-        "conn.execute(QUERY, {'a': x})",
-        "conn.execute(statement=QUERY, parameters=x)",
-        "conn.execute(CLAUSE)",
-        "conn.execute(text(QUERY))",
-        "conn.execute(raw_text(QUERY))",
-        "op.execute(sa.DDL(QUERY))",
-        "driver.fetchval(QUERY, x)",
-        "driver.execute(revision.sql())",
-        "driver.execute(preflight_sql())",
-        'sa.CheckConstraint(QUERY, name="positive")',
-    ],
-)
-def test_final_constants_and_pinned_loaders_are_accepted(body: str, tmp_path: Path) -> None:
-    assert _violations(_module(tmp_path, body)) == []
+        assert BOOTSTRAP in _modules()
+        assert {"driver.execute", "driver.fetch"} <= receivers
 
+    def test_sql_reaching_the_database_is_a_final_constant_or_a_pinned_loader(self) -> None:
+        violations = [
+            f"{path.relative_to(SRC)}:{violation}"
+            for path in _modules()
+            for violation in _violations(path)
+        ]
 
-def test_final_constants_imported_from_a_loom_module_are_accepted(tmp_path: Path) -> None:
-    package = tmp_path / "loom"
-    package.mkdir()
-    (package / "statements.py").write_text(
-        'from typing import Final\n\nQUERY: Final = "SELECT 1"\nPLAIN = "SELECT 1"\n',
-        encoding="utf-8",
+        assert violations == []
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            'text(f"SELECT {x}")',
+            'text("SELECT " + x)',
+            'text("".join(parts))',
+            'text("SELECT {}".format(x))',
+            "text(query)",
+            'text("SELECT 1")',
+            "text(text=query)",
+            "raw_text(query)",
+            "run_sql(query)",
+            'sa.DDL(f"CREATE TABLE {x} (id int)")',
+            "sa.text(query)",
+            'connection.exec_driver_sql(f"SET ROLE {owner}")',
+            "op.execute(sql)",
+            "conn.execute(query)",
+            'conn.execute("SELECT 1")',
+            "conn.execute(statement=query)",
+            "conn.execute(QUERY, statement=query)",
+            "conn.execute(*parts)",
+            "conn.execute()",
+            "conn.execute(NOT_FINAL)",
+            "conn.execute(REASSIGNED)",
+            "conn.execute(text(text(QUERY)))",
+            "driver.executemany(query, parts)",
+            "driver.fetch(query)",
+            "driver.fetchrow(query)",
+            "driver.fetchval(query)",
+            "driver.execute(revision.sql(x))",
+            "driver.execute(other.sql())",
+            "sa.CheckConstraint(x)",
+            'sa.CheckConstraint(f"{x} > 0", name="positive")',
+            "sa.CheckConstraint(sqltext=x)",
+        ],
     )
-    module = tmp_path / "module.py"
-    module.write_text(
-        "from loom.statements import PLAIN, QUERY as STATEMENT\n\n"
-        "def run(conn):\n    conn.execute(STATEMENT)\n    conn.execute(PLAIN)\n",
-        encoding="utf-8",
+    def test_dynamic_sql_is_rejected(self, body: str, tmp_path: Path) -> None:
+        assert _violations(_module(tmp_path, body)) != []
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "conn.execute(QUERY)",
+            "conn.execute(QUERY, {'a': x})",
+            "conn.execute(statement=QUERY, parameters=x)",
+            "conn.execute(CLAUSE)",
+            "conn.execute(text(QUERY))",
+            "conn.execute(raw_text(QUERY))",
+            "op.execute(sa.DDL(QUERY))",
+            "driver.fetchval(QUERY, x)",
+            "driver.execute(revision.sql())",
+            "driver.execute(preflight_sql())",
+            'sa.CheckConstraint(QUERY, name="positive")',
+        ],
     )
+    def test_final_constants_and_pinned_loaders_are_accepted(
+        self, body: str, tmp_path: Path
+    ) -> None:
+        assert _violations(_module(tmp_path, body)) == []
 
-    assert _violations(module, root=tmp_path) == ["5: conn.execute(PLAIN)"]
+    def test_final_constants_imported_from_a_loom_module_are_accepted(self, tmp_path: Path) -> None:
+        package = tmp_path / "loom"
+        package.mkdir()
+        (package / "statements.py").write_text(
+            'from typing import Final\n\nQUERY: Final = "SELECT 1"\nPLAIN = "SELECT 1"\n',
+            encoding="utf-8",
+        )
+        module = tmp_path / "module.py"
+        module.write_text(
+            "from loom.statements import PLAIN, QUERY as STATEMENT\n\n"
+            "def run(conn):\n    conn.execute(STATEMENT)\n    conn.execute(PLAIN)\n",
+            encoding="utf-8",
+        )
 
+        assert _violations(module, root=tmp_path) == ["5: conn.execute(PLAIN)"]
 
-def test_packaged_sql_has_no_placeholders() -> None:
-    offenders = [
-        str(path.relative_to(LOOM))
-        for path in sorted(LOOM.rglob("*.sql"))
-        if PLACEHOLDER.search(path.read_text(encoding="utf-8"))
-    ]
+    def test_packaged_sql_has_no_placeholders(self) -> None:
+        offenders = [
+            str(path.relative_to(LOOM))
+            for path in sorted(LOOM.rglob("*.sql"))
+            if PLACEHOLDER.search(path.read_text(encoding="utf-8"))
+        ]
 
-    assert offenders == []
+        assert offenders == []
 
+    def test_every_declared_fragment_exemption_matches_a_call_in_the_source(self) -> None:
+        found: set[tuple[str, str, str]] = set()
+        for path in _modules():
+            functions = _enclosing_functions(path)
+            relative = path.relative_to(SRC).as_posix()
+            for _, call in _sink_calls(path):
+                function = functions.get((call.lineno, call.col_offset), "")
+                found.add((relative, function, ast.unparse(call)))
 
-def test_every_declared_fragment_exemption_matches_a_call_in_the_source() -> None:
-    found: set[tuple[str, str, str]] = set()
-    for path in _modules():
-        functions = _enclosing_functions(path)
-        relative = path.relative_to(SRC).as_posix()
-        for _, call in _sink_calls(path):
-            function = functions.get((call.lineno, call.col_offset), "")
-            found.add((relative, function, ast.unparse(call)))
+        assert DECLARED_DDL_FRAGMENTS - found == set()
 
-    assert DECLARED_DDL_FRAGMENTS - found == set()
-
-
-@pytest.mark.parametrize(
-    ("function", "violations"),
-    [
-        ("_partial_unique_index", ["3: CheckConstraint(expression, name=rule)"]),
-        ("anywhere_else", ["2: text(partial.where)", "3: CheckConstraint(expression, name=rule)"]),
-    ],
-)
-def test_a_declared_fragment_is_exempt_only_in_its_own_function(
-    function: str, violations: list[str], tmp_path: Path
-) -> None:
-    module = tmp_path / "loom" / "core" / "backend" / "sqlalchemy.py"
-    module.parent.mkdir(parents=True)
-    module.write_text(
-        f"def {function}(partial, expression, rule):\n"
-        "    text(partial.where)\n"
-        "    CheckConstraint(expression, name=rule)\n",
-        encoding="utf-8",
+    @pytest.mark.parametrize(
+        ("function", "violations"),
+        [
+            ("_partial_unique_index", ["3: CheckConstraint(expression, name=rule)"]),
+            (
+                "anywhere_else",
+                ["2: text(partial.where)", "3: CheckConstraint(expression, name=rule)"],
+            ),
+        ],
     )
+    def test_a_declared_fragment_is_exempt_only_in_its_own_function(
+        self, function: str, violations: list[str], tmp_path: Path
+    ) -> None:
+        module = tmp_path / "loom" / "core" / "backend" / "sqlalchemy.py"
+        module.parent.mkdir(parents=True)
+        module.write_text(
+            f"def {function}(partial, expression, rule):\n"
+            "    text(partial.where)\n"
+            "    CheckConstraint(expression, name=rule)\n",
+            encoding="utf-8",
+        )
 
-    assert _violations(module, root=tmp_path) == violations
+        assert _violations(module, root=tmp_path) == violations

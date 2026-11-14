@@ -112,27 +112,6 @@ def _environ_violations(tree: ast.AST) -> list[str]:
     return hits
 
 
-def test_the_selector_pattern_catches_the_usual_names() -> None:
-    names = ("LOOM_ENV", "ENVIRONMENT", "ENV", "APP_ENV", "DEPLOY_ENVIRONMENT", "LOOM__")
-
-    assert [name for name in names if not _SELECTOR_NAMES.match(name)] == []
-
-
-def test_the_selector_module_is_the_one_naming_the_variables() -> None:
-    assert _selector_literals(_SELECTOR_MODULE) != []
-
-
-def test_no_other_module_names_a_loom_process_variable() -> None:
-    offenders = [
-        hit
-        for path in sorted(_SRC.rglob("*.py"))
-        if path != _SELECTOR_MODULE
-        for hit in _selector_literals(path)
-    ]
-
-    assert offenders == []
-
-
 _VIOLATIONS = {
     "dynamic key": "import os\nvalue = os.environ.get(name)\n",
     "loom literal": "import os\nvalue = os.getenv('LOOM_CONFIG')\n",
@@ -153,26 +132,6 @@ _ALLOWED = (
 )
 
 
-@pytest.mark.parametrize("source", _VIOLATIONS.values(), ids=list(_VIOLATIONS))
-def test_the_rule_refuses_each_kind_of_access(source: str) -> None:
-    assert _environ_violations(ast.parse(source)) != []
-
-
-def test_the_rule_allows_reading_one_literal_variable() -> None:
-    assert _environ_violations(ast.parse(_ALLOWED)) == []
-
-
-def test_every_access_outside_the_environment_module_reads_one_literal_variable() -> None:
-    offenders = [
-        f"{path.relative_to(_SRC)}:{hit}"
-        for path in sorted(_SRC.rglob("*.py"))
-        if path != _SELECTOR_MODULE and path.relative_to(_SRC).as_posix() not in _DYNAMIC_READERS
-        for hit in _environ_violations(parsed(path))
-    ]
-
-    assert offenders == []
-
-
 def _owned_names() -> frozenset[str]:
     tree = parsed(_SELECTOR_MODULE)
     return frozenset(
@@ -187,14 +146,51 @@ def _owned_names() -> frozenset[str]:
 _LOOM_NAME = re.compile(r"\bLOOM_[A-Z][A-Z0-9_]*\b")
 
 
-def test_no_source_or_document_names_a_loom_variable_loom_does_not_own() -> None:
-    known = _owned_names() | set(_NOT_A_VARIABLE) | set(_OWNED_ELSEWHERE)
-    documents = [*_SRC.rglob("*.py"), *(_ROOT / "docs").rglob("*.md"), _ROOT / "README.md"]
-    offenders = sorted(
-        f"{path.relative_to(_ROOT)}: {name}"
-        for path in documents
-        for name in set(_LOOM_NAME.findall(path.read_text(encoding="utf-8")))
-        if name not in known
-    )
+class TestEnvironmentContainment:
+    def test_the_selector_pattern_catches_the_usual_names(self) -> None:
+        names = ("LOOM_ENV", "ENVIRONMENT", "ENV", "APP_ENV", "DEPLOY_ENVIRONMENT", "LOOM__")
 
-    assert offenders == []
+        assert [name for name in names if not _SELECTOR_NAMES.match(name)] == []
+
+    def test_the_selector_module_is_the_one_naming_the_variables(self) -> None:
+        assert _selector_literals(_SELECTOR_MODULE) != []
+
+    def test_no_other_module_names_a_loom_process_variable(self) -> None:
+        offenders = [
+            hit
+            for path in sorted(_SRC.rglob("*.py"))
+            if path != _SELECTOR_MODULE
+            for hit in _selector_literals(path)
+        ]
+
+        assert offenders == []
+
+    @pytest.mark.parametrize("source", _VIOLATIONS.values(), ids=list(_VIOLATIONS))
+    def test_the_rule_refuses_each_kind_of_access(self, source: str) -> None:
+        assert _environ_violations(ast.parse(source)) != []
+
+    def test_the_rule_allows_reading_one_literal_variable(self) -> None:
+        assert _environ_violations(ast.parse(_ALLOWED)) == []
+
+    def test_every_access_outside_the_environment_module_reads_one_literal_variable(self) -> None:
+        offenders = [
+            f"{path.relative_to(_SRC)}:{hit}"
+            for path in sorted(_SRC.rglob("*.py"))
+            if path != _SELECTOR_MODULE
+            and path.relative_to(_SRC).as_posix() not in _DYNAMIC_READERS
+            for hit in _environ_violations(parsed(path))
+        ]
+
+        assert offenders == []
+
+    def test_no_source_or_document_names_a_loom_variable_loom_does_not_own(self) -> None:
+        known = _owned_names() | set(_NOT_A_VARIABLE) | set(_OWNED_ELSEWHERE)
+        documents = [*_SRC.rglob("*.py"), *(_ROOT / "docs").rglob("*.md"), _ROOT / "README.md"]
+        offenders = sorted(
+            f"{path.relative_to(_ROOT)}: {name}"
+            for path in documents
+            for name in set(_LOOM_NAME.findall(path.read_text(encoding="utf-8")))
+            if name not in known
+        )
+
+        assert offenders == []

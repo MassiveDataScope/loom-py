@@ -127,6 +127,7 @@ def _format_diff(observed: dict[tuple[str, str], int]) -> list[str]:
     return lines
 
 
-def test_boundary_conversion_calls_are_contained() -> None:
-    diff = _format_diff(_observed_calls())
-    assert not diff, "\n".join(["boundary call allow-list is out of date:", *diff])
+class TestBoundaryCallsContainment:
+    def test_boundary_conversion_calls_are_contained(self) -> None:
+        diff = _format_diff(_observed_calls())
+        assert not diff, "\n".join(["boundary call allow-list is out of date:", *diff])

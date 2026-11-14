@@ -85,63 +85,61 @@ _ISLANDS: dict[str, frozenset[str]] = {
 }
 
 
-def test_importing_the_connection_contracts_loads_no_sdk() -> None:
-    result = subprocess.run(
-        # Not -I: it ignores PYTHONPATH, and the check must run against this tree.
-        [sys.executable, "-s", "-c", _SCRIPT],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(_SRC)},
-    )
+class TestConnectionsContainment:
+    def test_importing_the_connection_contracts_loads_no_sdk(self) -> None:
+        result = subprocess.run(
+            # Not -I: it ignores PYTHONPATH, and the check must run against this tree.
+            [sys.executable, "-s", "-c", _SCRIPT],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(_SRC)},
+        )
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == []
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == []
 
+    def test_a_driver_sdk_is_imported_only_by_its_islands(self) -> None:
+        """Static imports only; a dynamic ``importlib`` load is what the island rule forbids."""
+        offenders = []
+        for path in sorted((_SRC / "loom").rglob("*.py")):
+            relative = path.relative_to(_SRC / "loom").as_posix()
+            for sdk in imported_roots(parsed(path)) & set(_ISLANDS):
+                if relative not in _ISLANDS[sdk]:
+                    offenders.append(f"{relative} imports {sdk}")
 
-def test_a_driver_sdk_is_imported_only_by_its_islands() -> None:
-    """Static imports only; a dynamic ``importlib`` load is what the island rule forbids."""
-    offenders = []
-    for path in sorted((_SRC / "loom").rglob("*.py")):
-        relative = path.relative_to(_SRC / "loom").as_posix()
-        for sdk in imported_roots(parsed(path)) & set(_ISLANDS):
-            if relative not in _ISLANDS[sdk]:
-                offenders.append(f"{relative} imports {sdk}")
+        assert offenders == []
 
-    assert offenders == []
+    def test_the_import_check_skips_type_only_imports(self) -> None:
+        sample = ast.parse(
+            "from typing import TYPE_CHECKING\n"
+            "import typing\n"
+            "if TYPE_CHECKING:\n"
+            "    import pymongo\n"
+            "if typing.TYPE_CHECKING:\n"
+            "    import boto3\n"
+            "else:\n"
+            "    import botocore\n"
+            "import clickhouse_connect\n"
+        )
 
+        assert imported_roots(sample) == {"typing", "botocore", "clickhouse_connect"}
 
-def test_the_import_check_skips_type_only_imports() -> None:
-    sample = ast.parse(
-        "from typing import TYPE_CHECKING\n"
-        "import typing\n"
-        "if TYPE_CHECKING:\n"
-        "    import pymongo\n"
-        "if typing.TYPE_CHECKING:\n"
-        "    import boto3\n"
-        "else:\n"
-        "    import botocore\n"
-        "import clickhouse_connect\n"
-    )
+    def test_reading_configuration_loads_no_persistence_layer(self) -> None:
+        """The resolvers name a connection type; that must not pull persistence into config."""
+        script = (
+            "import json, sys\n"
+            "import loom.core.config\n"
+            "print(json.dumps(sorted(m for m in sys.modules if m.startswith("
+            "('loom.core.persistence', 'loom.core.uow', 'loom.core.di')))))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-s", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(_SRC)},
+        )
 
-    assert imported_roots(sample) == {"typing", "botocore", "clickhouse_connect"}
-
-
-def test_reading_configuration_loads_no_persistence_layer() -> None:
-    """The resolvers name a connection type; that must not pull persistence into config."""
-    script = (
-        "import json, sys\n"
-        "import loom.core.config\n"
-        "print(json.dumps(sorted(m for m in sys.modules if m.startswith("
-        "('loom.core.persistence', 'loom.core.uow', 'loom.core.di')))))\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-s", "-c", script],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(_SRC)},
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == []
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == []

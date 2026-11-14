@@ -81,36 +81,6 @@ def _offending_lines(text: str, pattern: re.Pattern[str]) -> list[str]:
     return [line.strip() for line in text.splitlines() if pattern.search(line)]
 
 
-def test_feature_modules_carry_no_domain_vocabulary() -> None:
-    offenders = {
-        str(path.relative_to(_SRC)): hits
-        for path in _sources()
-        if (hits := _offending_lines(path.read_text(), _DOMAIN_WORDS))
-    }
-
-    assert offenders == {}
-
-
-def test_feature_modules_carry_no_retired_names() -> None:
-    offenders = {
-        str(path.relative_to(_SRC)): hits
-        for path in _sources()
-        if (hits := _offending_lines(path.read_text(), _RETIRED_NAMES))
-    }
-
-    assert offenders == {}
-
-
-def test_feature_modules_bake_no_product_name_as_a_literal() -> None:
-    offenders = {
-        str(path.relative_to(_SRC)): hits
-        for path in _sources()
-        if (hits := _offending_lines(path.read_text(), _DEFAULT_LITERALS))
-    }
-
-    assert offenders == {}
-
-
 def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
     tree = ast.parse(path.read_text())
     for node in ast.walk(tree):
@@ -126,77 +96,8 @@ def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
 _RLS_CONFIG = "core/repository/sqlalchemy/rls/config.py"
 
 
-@pytest.mark.parametrize(
-    ("module", "class_name", "fields_without_default"),
-    [
-        (_RLS_CONFIG, "BootstrapConfig", {"schema", "roles", "database_users", "names"}),
-        (
-            "core/schema_names.py",
-            "SchemaNames",
-            {"guard", "readers", "writers", "version_table", "data_version_table"},
-        ),
-        (_RLS_CONFIG, "DatabaseRoles", {"owner", "migrator"}),
-        (_RLS_CONFIG, "DatabaseUser", {"login", "access"}),
-    ],
-)
-def test_bootstrap_types_have_no_name_defaults(
-    module: str, class_name: str, fields_without_default: set[str]
-) -> None:
-    path = _SRC / module
-    if not path.exists():
-        pytest.fail(f"{path} does not exist yet")
-
-    defaults = _dataclass_defaults(path, class_name)
-
-    assert {name for name in fields_without_default if defaults.get(name, True)} == set()
-
-
 def _guard_sql() -> list[Path]:
     return sorted((_SRC / "core/repository/sqlalchemy/rls/guard").glob("*.sql"))
-
-
-def test_the_static_guard_sql_carries_no_domain_vocabulary_or_default_name() -> None:
-    paths = _guard_sql()
-
-    assert paths != []
-    for path in paths:
-        text = path.read_text()
-        assert _offending_lines(text, _DOMAIN_WORDS) == []
-        assert _offending_lines(text, _DEFAULT_LITERALS) == []
-
-
-def test_the_bound_bootstrap_document_contains_only_injected_names() -> None:
-    from loom.core.repository.sqlalchemy.rls import (
-        BootstrapConfig,
-        DatabaseRoles,
-        DatabaseUser,
-        SchemaNames,
-    )
-
-    document = BootstrapConfig(
-        schema="s1",
-        roles=DatabaseRoles(owner="r_owner", migrator="r_migrator"),
-        database_users={
-            "u_read": DatabaseUser(login=True, access="read"),
-            "u_write": DatabaseUser(login=True, access="write"),
-            "u_bypass": DatabaseUser(login=True, access="bypass"),
-        },
-        names=SchemaNames(
-            guard="g_s1",
-            readers="grp_r",
-            writers="grp_w",
-            version_table="v_struct",
-            data_version_table="v_data",
-        ),
-    ).document()
-
-    text = repr(document)
-    assert _offending_lines(text, _DOMAIN_WORDS) == []
-    assert _offending_lines(text, _DEFAULT_LITERALS) == []
-    for injected in ("s1", "r_owner", "r_migrator", "u_read", "u_write", "u_bypass"):
-        assert injected in text
-    for injected in ("grp_r", "grp_w", "v_struct", "v_data"):
-        assert injected in text
 
 
 _CONSUMER_VOCABULARY = re.compile(
@@ -230,22 +131,6 @@ def _consumer_vocabulary_hits(path: Path) -> list[str]:
     ]
 
 
-def test_sources_docs_and_tests_carry_no_consumer_vocabulary() -> None:
-    this_file = Path(__file__).resolve()
-    offenders = {
-        path.relative_to(_ROOT).as_posix(): hits
-        for path in _scanned_files()
-        if path.resolve() != this_file and (hits := _consumer_vocabulary_hits(path))
-    }
-
-    assert offenders == {}
-
-
-def test_the_allowed_provenance_line_appears_exactly_once() -> None:
-    lines = (_ROOT / _PROVENANCE_FILE).read_text(encoding="utf-8").splitlines()
-    assert [line.strip() for line in lines].count(_PROVENANCE_LINE) == 1
-
-
 _ENVIRONMENT_MODULE = "core/environment.py"
 # Literals that spell an environment label without meaning one: (file, literal) -> why.
 _NOT_AN_ENVIRONMENT = {
@@ -267,14 +152,122 @@ def _environment_labels(path: Path) -> list[str]:
     ]
 
 
-def test_only_the_environment_module_names_an_environment() -> None:
-    allowed = _SRC / _ENVIRONMENT_MODULE
-    offenders = [
-        hit
-        for path in sorted(_SRC.rglob("*.py"))
-        if path != allowed
-        for hit in _environment_labels(path)
-    ]
+class TestDomainContainment:
+    def test_feature_modules_carry_no_domain_vocabulary(self) -> None:
+        offenders = {
+            str(path.relative_to(_SRC)): hits
+            for path in _sources()
+            if (hits := _offending_lines(path.read_text(), _DOMAIN_WORDS))
+        }
 
-    assert _environment_labels(allowed) != []
-    assert offenders == []
+        assert offenders == {}
+
+    def test_feature_modules_carry_no_retired_names(self) -> None:
+        offenders = {
+            str(path.relative_to(_SRC)): hits
+            for path in _sources()
+            if (hits := _offending_lines(path.read_text(), _RETIRED_NAMES))
+        }
+
+        assert offenders == {}
+
+    def test_feature_modules_bake_no_product_name_as_a_literal(self) -> None:
+        offenders = {
+            str(path.relative_to(_SRC)): hits
+            for path in _sources()
+            if (hits := _offending_lines(path.read_text(), _DEFAULT_LITERALS))
+        }
+
+        assert offenders == {}
+
+    @pytest.mark.parametrize(
+        ("module", "class_name", "fields_without_default"),
+        [
+            (_RLS_CONFIG, "BootstrapConfig", {"schema", "roles", "database_users", "names"}),
+            (
+                "core/schema_names.py",
+                "SchemaNames",
+                {"guard", "readers", "writers", "version_table", "data_version_table"},
+            ),
+            (_RLS_CONFIG, "DatabaseRoles", {"owner", "migrator"}),
+            (_RLS_CONFIG, "DatabaseUser", {"login", "access"}),
+        ],
+    )
+    def test_bootstrap_types_have_no_name_defaults(
+        self, module: str, class_name: str, fields_without_default: set[str]
+    ) -> None:
+        path = _SRC / module
+        if not path.exists():
+            pytest.fail(f"{path} does not exist yet")
+
+        defaults = _dataclass_defaults(path, class_name)
+
+        assert {name for name in fields_without_default if defaults.get(name, True)} == set()
+
+    def test_the_static_guard_sql_carries_no_domain_vocabulary_or_default_name(self) -> None:
+        paths = _guard_sql()
+
+        assert paths != []
+        for path in paths:
+            text = path.read_text()
+            assert _offending_lines(text, _DOMAIN_WORDS) == []
+            assert _offending_lines(text, _DEFAULT_LITERALS) == []
+
+    def test_the_bound_bootstrap_document_contains_only_injected_names(self) -> None:
+        from loom.core.repository.sqlalchemy.rls import (
+            BootstrapConfig,
+            DatabaseRoles,
+            DatabaseUser,
+            SchemaNames,
+        )
+
+        document = BootstrapConfig(
+            schema="s1",
+            roles=DatabaseRoles(owner="r_owner", migrator="r_migrator"),
+            database_users={
+                "u_read": DatabaseUser(login=True, access="read"),
+                "u_write": DatabaseUser(login=True, access="write"),
+                "u_bypass": DatabaseUser(login=True, access="bypass"),
+            },
+            names=SchemaNames(
+                guard="g_s1",
+                readers="grp_r",
+                writers="grp_w",
+                version_table="v_struct",
+                data_version_table="v_data",
+            ),
+        ).document()
+
+        text = repr(document)
+        assert _offending_lines(text, _DOMAIN_WORDS) == []
+        assert _offending_lines(text, _DEFAULT_LITERALS) == []
+        for injected in ("s1", "r_owner", "r_migrator", "u_read", "u_write", "u_bypass"):
+            assert injected in text
+        for injected in ("grp_r", "grp_w", "v_struct", "v_data"):
+            assert injected in text
+
+    def test_sources_docs_and_tests_carry_no_consumer_vocabulary(self) -> None:
+        this_file = Path(__file__).resolve()
+        offenders = {
+            path.relative_to(_ROOT).as_posix(): hits
+            for path in _scanned_files()
+            if path.resolve() != this_file and (hits := _consumer_vocabulary_hits(path))
+        }
+
+        assert offenders == {}
+
+    def test_the_allowed_provenance_line_appears_exactly_once(self) -> None:
+        lines = (_ROOT / _PROVENANCE_FILE).read_text(encoding="utf-8").splitlines()
+        assert [line.strip() for line in lines].count(_PROVENANCE_LINE) == 1
+
+    def test_only_the_environment_module_names_an_environment(self) -> None:
+        allowed = _SRC / _ENVIRONMENT_MODULE
+        offenders = [
+            hit
+            for path in sorted(_SRC.rglob("*.py"))
+            if path != allowed
+            for hit in _environment_labels(path)
+        ]
+
+        assert _environment_labels(allowed) != []
+        assert offenders == []

@@ -38,14 +38,15 @@ print(json.dumps(sorted(
 """
 
 
-def test_importing_every_core_module_loads_no_rest_stack() -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", _SCRIPT],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(_SRC)},
-    )
+class TestCoreTransportContainment:
+    def test_importing_every_core_module_loads_no_rest_stack(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-c", _SCRIPT],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(_SRC)},
+        )
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == []
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == []
