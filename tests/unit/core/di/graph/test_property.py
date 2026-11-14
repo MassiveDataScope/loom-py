@@ -13,8 +13,6 @@ import inspect
 import random
 import re
 
-import pytest
-
 from loom.core.di.graph import DependencyGraphError
 from loom.core.di.scope import Scope
 from tests.unit.core.di.graph import acme
@@ -103,8 +101,8 @@ def _assert_real_loop(message: str, seed: int, edges: Edges) -> None:
     assert nodes[-1] in nodes[start:-1], message
 
 
-@pytest.mark.parametrize("seed", SEEDS)
-def test_refused_iff_a_root_reaches_a_cycle_of_non_call_edges(seed: int) -> None:
+def _check(seed: int) -> None:
+    """Analyse the graph *seed* draws and compare the verdict with the oracle's."""
     edges = _draw(random.Random(seed))
     classes = _classes(seed, edges)
     container = acme.container()
@@ -117,4 +115,16 @@ def test_refused_iff_a_root_reaches_a_cycle_of_non_call_edges(seed: int) -> None
         assert _reaches_construction_cycle(edges), str(refused)
         _assert_real_loop(str(refused), seed, edges)
     else:
-        assert not _reaches_construction_cycle(edges)
+        assert not _reaches_construction_cycle(edges), "accepted a graph with a cycle"
+
+
+def test_refused_iff_a_root_reaches_a_cycle_of_non_call_edges() -> None:
+    """Every seed is checked; the failure names each failing seed and why."""
+    failures: list[str] = []
+    for seed in SEEDS:
+        try:
+            _check(seed)
+        except Exception as error:  # noqa: BLE001 - every failing seed is reported
+            failures.append(f"seed {seed}: {type(error).__name__}: {error}")
+
+    assert failures == [], "\n".join(failures)

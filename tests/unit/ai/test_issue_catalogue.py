@@ -1,8 +1,8 @@
 """Contracts of the compile-issue catalogue in ``loom.ai.errors``.
 
-The first three tests are the catalogue contract (see
-:mod:`tests.helpers.issue_catalogue`). The rest pin decisions the templates
-alone do not show:
+The catalogue contract every pillar keeps is checked in
+``tests/unit/core/errors/test_issue_catalogues.py``. These tests pin decisions
+the templates alone do not show:
 
 * ``*_unreachable`` receives the *registered name* of a server or a remote
   agent, never its URL (FR-030a/FR-038). The parameter name is the only
@@ -14,32 +14,7 @@ alone do not show:
 
 from __future__ import annotations
 
-import pytest
-
 from loom.ai.errors import INVOKER_MISSING_REASON, AgentErrorCode
-from tests.helpers.issue_catalogue import (
-    INDIRECT_CALLS,
-    IssueCall,
-    check_renders,
-    indirect_calls,
-    issue_calls,
-    missing_covering_tests,
-)
-
-
-@pytest.mark.parametrize("code", list(AgentErrorCode), ids=str)
-def test_every_code_renders_from_exactly_its_declared_params(code: AgentErrorCode) -> None:
-    check_renders(code)
-
-
-@pytest.mark.parametrize("call", issue_calls(AgentErrorCode), ids=lambda call: call.location)
-def test_every_call_site_passes_exactly_the_params_of_its_code(call: IssueCall) -> None:
-    assert call.keywords == AgentErrorCode[call.member].params
-
-
-def test_every_indirect_call_site_is_listed_with_tests_that_exist() -> None:
-    assert indirect_calls("ai") == {site for site in INDIRECT_CALLS if site.startswith("ai/")}
-    assert missing_covering_tests("ai") == []
 
 
 def test_mcp_server_unreachable_names_its_parameter_server_not_url() -> None:

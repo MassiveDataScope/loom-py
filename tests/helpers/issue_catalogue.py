@@ -1,8 +1,9 @@
 """The contract every compile-issue catalogue keeps (ADR 0003 part B).
 
 A catalogue member builds its issue from keyword parameters, so the type
-checker no longer sees a missing or misspelt one. Each pillar's catalogue test
-runs three checks instead:
+checker no longer sees a missing or misspelt one.
+``tests/unit/core/errors/test_issue_catalogues.py`` runs three checks over each
+pillar's catalogue instead:
 
 - every member renders from its declared parameters (:func:`check_renders`);
 - every literal ``<Catalogue>.MEMBER.issue(...)`` call in ``src/loom`` passes
