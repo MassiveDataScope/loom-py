@@ -89,19 +89,21 @@ class _RecordedBedrock:
         )
 
 
-@pytest.mark.parametrize("price", [None, ModelPrice(input=Decimal("3"), output=Decimal("15"))])
-async def test_adaptive_thinking_keeps_the_tool_choice_automatic(
-    price: ModelPrice | None,
-) -> None:
-    bedrock = _RecordedBedrock()
-    plan = msgspec.structs.replace(make_plan(inference=_TARGET), price=price)
-    engine = PydanticAIEngineProvider(model_resolver=bedrock.model).create_engine(
-        plan, deps=NullDeps(), container=LoomContainer()
-    )
+class TestAdaptiveThinking:
+    @pytest.mark.parametrize("price", [None, ModelPrice(input=Decimal("3"), output=Decimal("15"))])
+    async def test_adaptive_thinking_keeps_the_tool_choice_automatic(
+        self,
+        price: ModelPrice | None,
+    ) -> None:
+        bedrock = _RecordedBedrock()
+        plan = msgspec.structs.replace(make_plan(inference=_TARGET), price=price)
+        engine = PydanticAIEngineProvider(model_resolver=bedrock.model).create_engine(
+            plan, deps=NullDeps(), container=LoomContainer()
+        )
 
-    result = await engine.run("go", identity=Identity(subject="bench-runner"))
+        result = await engine.run("go", identity=Identity(subject="bench-runner"))
 
-    assert result.output == {"answer": "42"}
-    request = bedrock.requests[0]
-    assert request["toolConfig"]["toolChoice"] == {"auto": {}}
-    assert request["additionalModelRequestFields"]["thinking"] == {"type": "adaptive"}
+        assert result.output == {"answer": "42"}
+        request = bedrock.requests[0]
+        assert request["toolConfig"]["toolChoice"] == {"auto": {}}
+        assert request["additionalModelRequestFields"]["thinking"] == {"type": "adaptive"}

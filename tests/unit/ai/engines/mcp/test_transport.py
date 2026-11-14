@@ -346,19 +346,20 @@ async def _proxy_that_serves() -> AsyncIterator[tuple[str, list[str]]]:
         await serving
 
 
-def test_loading_the_engine_does_not_load_the_http_pool() -> None:
-    """The pool module and fastmcp load with the first ``http`` toolset, not with the engine.
+class TestLoadingTheEngine:
+    def test_loading_the_engine_does_not_load_the_http_pool(self) -> None:
+        """The pool module and fastmcp load with the first ``http`` toolset, not with the engine.
 
-    httpx2 itself is already loaded by pydantic-ai's own dependencies
-    (``genai_prices``), so the claim is about what this package adds.
-    """
-    script = (
-        "import sys, loom.ai.engines.pydantic_ai\n"
-        "print(sorted(m for m in ('loom.ai.engines.pydantic_ai._transport', 'fastmcp')"
-        " if m in sys.modules))"
-    )
-    loaded = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=True
-    )
+        httpx2 itself is already loaded by pydantic-ai's own dependencies
+        (``genai_prices``), so the claim is about what this package adds.
+        """
+        script = (
+            "import sys, loom.ai.engines.pydantic_ai\n"
+            "print(sorted(m for m in ('loom.ai.engines.pydantic_ai._transport', 'fastmcp')"
+            " if m in sys.modules))"
+        )
+        loaded = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
 
-    assert loaded.stdout.strip() == "[]"
+        assert loaded.stdout.strip() == "[]"

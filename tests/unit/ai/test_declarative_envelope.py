@@ -54,158 +54,145 @@ def _codes(error: AgentCompilationError) -> list[AgentErrorCode]:
     return [issue.code for issue in error.issues]
 
 
-def test_decode_spec_returns_agent_spec_v1_for_a_valid_artifact() -> None:
-    """A well-formed v1 artifact decodes into the v1 struct."""
-    decoded = _decode_valid()
+class TestDecodeSpec:
+    def test_decode_spec_returns_agent_spec_v1_for_a_valid_artifact(self) -> None:
+        """A well-formed v1 artifact decodes into the v1 struct."""
+        decoded = _decode_valid()
 
-    assert isinstance(decoded.spec, AgentSpecV1)
+        assert isinstance(decoded.spec, AgentSpecV1)
 
+    def test_decode_spec_keeps_the_declared_fields_for_a_valid_artifact(self) -> None:
+        """Declared envelope fields survive decoding unchanged."""
+        decoded = _decode_valid()
 
-def test_decode_spec_keeps_the_declared_fields_for_a_valid_artifact() -> None:
-    """Declared envelope fields survive decoding unchanged."""
-    decoded = _decode_valid()
+        assert (decoded.spec.spec_version, decoded.spec.name, decoded.spec.description) == (
+            1,
+            "support-triage",
+            "Clasifica tickets de soporte entrantes.",
+        )
 
-    assert (decoded.spec.spec_version, decoded.spec.name, decoded.spec.description) == (
-        1,
-        "support-triage",
-        "Clasifica tickets de soporte entrantes.",
-    )
+    def test_decode_spec_reports_no_issues_for_a_valid_artifact(self) -> None:
+        """A supported, current spec version produces no non-fatal issues."""
+        decoded = _decode_valid()
 
+        assert decoded.issues == ()
 
-def test_decode_spec_reports_no_issues_for_a_valid_artifact() -> None:
-    """A supported, current spec version produces no non-fatal issues."""
-    decoded = _decode_valid()
+    def test_decode_spec_fails_with_spec_unknown_field_for_an_engine_key(self) -> None:
+        """Deployment vocabulary in a Tier-1 artifact is rejected, never ignored."""
+        payload = _valid_payload()
+        payload["engine"] = "pydantic-ai"
+        encoded = _encode(payload)
 
-    assert decoded.issues == ()
+        with pytest.raises(AgentCompilationError) as exc:
+            decode_spec(encoded)
 
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_UNKNOWN_FIELD]
 
-def test_decode_spec_fails_with_spec_unknown_field_for_an_engine_key() -> None:
-    """Deployment vocabulary in a Tier-1 artifact is rejected, never ignored."""
-    payload = _valid_payload()
-    payload["engine"] = "pydantic-ai"
-    encoded = _encode(payload)
+    def test_decode_spec_fails_with_spec_version_unsupported_for_version_two(self) -> None:
+        """An envelope version outside the registry is fatal."""
+        payload = _valid_payload()
+        payload["spec_version"] = 2
+        encoded = _encode(payload)
 
-    with pytest.raises(AgentCompilationError) as exc:
-        decode_spec(encoded)
+        with pytest.raises(AgentCompilationError) as exc:
+            decode_spec(encoded)
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_UNKNOWN_FIELD]
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_VERSION_UNSUPPORTED]
 
+    def test_decode_spec_fails_with_spec_version_missing_when_the_version_is_absent(self) -> None:
+        """An artifact without ``spec_version`` cannot be routed to any struct."""
+        payload = _valid_payload()
+        del payload["spec_version"]
+        encoded = _encode(payload)
 
-def test_decode_spec_fails_with_spec_version_unsupported_for_version_two() -> None:
-    """An envelope version outside the registry is fatal."""
-    payload = _valid_payload()
-    payload["spec_version"] = 2
-    encoded = _encode(payload)
+        with pytest.raises(AgentCompilationError) as exc:
+            decode_spec(encoded)
 
-    with pytest.raises(AgentCompilationError) as exc:
-        decode_spec(encoded)
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_VERSION_MISSING]
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_VERSION_UNSUPPORTED]
+    def test_decode_spec_fails_with_agent_name_invalid_for_a_name_off_pattern(self) -> None:
+        """The agent name pattern is enforced during payload decoding."""
+        payload = _valid_payload()
+        payload["name"] = "Support Triage!"
+        encoded = _encode(payload)
 
+        with pytest.raises(AgentCompilationError) as exc:
+            decode_spec(encoded)
 
-def test_decode_spec_fails_with_spec_version_missing_when_the_version_is_absent() -> None:
-    """An artifact without ``spec_version`` cannot be routed to any struct."""
-    payload = _valid_payload()
-    del payload["spec_version"]
-    encoded = _encode(payload)
+        assert _codes(exc.value) == [AgentErrorCode.AGENT_NAME_INVALID]
 
-    with pytest.raises(AgentCompilationError) as exc:
-        decode_spec(encoded)
+    def test_decode_spec_returns_spec_version_deprecated_when_a_later_version_exists(self) -> None:
+        """A supported but superseded version is accepted with a deprecation issue."""
+        decoded = decode_spec(
+            _encode(_valid_payload()),
+            versions={1: AgentSpecV1, 2: AgentSpecV1},
+        )
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_VERSION_MISSING]
+        assert [issue.code for issue in decoded.issues] == [AgentErrorCode.SPEC_VERSION_DEPRECATED]
 
+    def test_decode_spec_decodes_the_artifact_when_the_version_is_deprecated(self) -> None:
+        """Deprecation is an issue, not a failure: the spec is still returned."""
+        decoded = decode_spec(
+            _encode(_valid_payload()),
+            versions={1: AgentSpecV1, 2: AgentSpecV1},
+        )
 
-def test_decode_spec_fails_with_agent_name_invalid_for_a_name_off_pattern() -> None:
-    """The agent name pattern is enforced during payload decoding."""
-    payload = _valid_payload()
-    payload["name"] = "Support Triage!"
-    encoded = _encode(payload)
+        assert isinstance(decoded.spec, AgentSpecV1)
 
-    with pytest.raises(AgentCompilationError) as exc:
-        decode_spec(encoded)
+    def test_decode_spec_applies_the_default_model_role_when_not_declared(self) -> None:
+        """An artifact that omits ``model_role`` binds to the default role."""
+        decoded = _decode_valid()
 
-    assert _codes(exc.value) == [AgentErrorCode.AGENT_NAME_INVALID]
+        assert decoded.spec.model_role == "default"
 
+    def test_decode_spec_applies_the_default_run_timeout_when_there_are_no_policies(self) -> None:
+        """Omitted policies materialise with their documented defaults."""
+        decoded = _decode_valid()
 
-def test_decode_spec_returns_spec_version_deprecated_when_a_later_version_exists() -> None:
-    """A supported but superseded version is accepted with a deprecation issue."""
-    decoded = decode_spec(
-        _encode(_valid_payload()),
-        versions={1: AgentSpecV1, 2: AgentSpecV1},
-    )
+        assert decoded.spec.policies.run_timeout_ms == 120000
 
-    assert [issue.code for issue in decoded.issues] == [AgentErrorCode.SPEC_VERSION_DEPRECATED]
+    def test_decode_spec_applies_the_default_max_history_bytes_when_there_are_no_policies(
+        self,
+    ) -> None:
+        """The history ceiling defaults to 1 MiB when the artifact declares no policies."""
+        decoded = _decode_valid()
 
+        assert decoded.spec.policies.max_history_bytes == 1048576
 
-def test_decode_spec_decodes_the_artifact_when_the_version_is_deprecated() -> None:
-    """Deprecation is an issue, not a failure: the spec is still returned."""
-    decoded = decode_spec(
-        _encode(_valid_payload()),
-        versions={1: AgentSpecV1, 2: AgentSpecV1},
-    )
+    def test_decode_spec_keeps_max_history_bytes_when_the_artifact_declares_it(self) -> None:
+        """A declared history ceiling survives decoding unchanged."""
+        payload = _valid_payload()
+        payload["policies"] = {"max_history_bytes": 2048}
 
-    assert isinstance(decoded.spec, AgentSpecV1)
+        decoded = decode_spec(_encode(payload))
 
+        assert decoded.spec.policies.max_history_bytes == 2048
 
-def test_decode_spec_applies_the_default_model_role_when_not_declared() -> None:
-    """An artifact that omits ``model_role`` binds to the default role."""
-    decoded = _decode_valid()
+    def test_decode_spec_leaves_capabilities_empty_when_not_declared(self) -> None:
+        """An artifact without capabilities decodes to an empty tuple, not ``None``."""
+        decoded = _decode_valid()
 
-    assert decoded.spec.model_role == "default"
+        assert decoded.spec.capabilities == ()
 
+    def test_decode_spec_keeps_the_source_path_when_the_origin_is_a_file(self) -> None:
+        """A ``./`` skill library resolves against this path, so it must survive decoding."""
+        decoded = decode_spec(_encode(_valid_payload()), source=_ARTIFACT_PATH)
 
-def test_decode_spec_applies_the_default_run_timeout_when_there_are_no_policies() -> None:
-    """Omitted policies materialise with their documented defaults."""
-    decoded = _decode_valid()
+        assert decoded.source_path == _ARTIFACT_PATH
 
-    assert decoded.spec.policies.run_timeout_ms == 120000
+    def test_decode_spec_leaves_source_path_as_none_when_decoding_from_bytes(self) -> None:
+        """Bytes have no file behind them, so no ``./`` library can be anchored to them."""
+        decoded = _decode_valid()
 
+        assert decoded.source_path is None
 
-def test_decode_spec_applies_the_default_max_history_bytes_when_there_are_no_policies() -> None:
-    """The history ceiling defaults to 1 MiB when the artifact declares no policies."""
-    decoded = _decode_valid()
+    def test_decode_spec_points_issues_at_the_origin_when_a_file_is_declared(self) -> None:
+        """The declared origin is also what every issue points at as its component."""
+        payload = _valid_payload()
+        payload["engine"] = "pydantic-ai"
+        encoded = _encode(payload)
 
-    assert decoded.spec.policies.max_history_bytes == 1048576
+        with pytest.raises(AgentCompilationError) as exc:
+            decode_spec(encoded, source=_ARTIFACT_PATH)
 
-
-def test_decode_spec_keeps_max_history_bytes_when_the_artifact_declares_it() -> None:
-    """A declared history ceiling survives decoding unchanged."""
-    payload = _valid_payload()
-    payload["policies"] = {"max_history_bytes": 2048}
-
-    decoded = decode_spec(_encode(payload))
-
-    assert decoded.spec.policies.max_history_bytes == 2048
-
-
-def test_decode_spec_leaves_capabilities_empty_when_not_declared() -> None:
-    """An artifact without capabilities decodes to an empty tuple, not ``None``."""
-    decoded = _decode_valid()
-
-    assert decoded.spec.capabilities == ()
-
-
-def test_decode_spec_keeps_the_source_path_when_the_origin_is_a_file() -> None:
-    """A ``./`` skill library resolves against this path, so it must survive decoding."""
-    decoded = decode_spec(_encode(_valid_payload()), source=_ARTIFACT_PATH)
-
-    assert decoded.source_path == _ARTIFACT_PATH
-
-
-def test_decode_spec_leaves_source_path_as_none_when_decoding_from_bytes() -> None:
-    """Bytes have no file behind them, so no ``./`` library can be anchored to them."""
-    decoded = _decode_valid()
-
-    assert decoded.source_path is None
-
-
-def test_decode_spec_points_issues_at_the_origin_when_a_file_is_declared() -> None:
-    """The declared origin is also what every issue points at as its component."""
-    payload = _valid_payload()
-    payload["engine"] = "pydantic-ai"
-    encoded = _encode(payload)
-
-    with pytest.raises(AgentCompilationError) as exc:
-        decode_spec(encoded, source=_ARTIFACT_PATH)
-
-    assert [issue.component for issue in exc.value.issues] == [_ARTIFACT_PATH]
+        assert [issue.component for issue in exc.value.issues] == [_ARTIFACT_PATH]

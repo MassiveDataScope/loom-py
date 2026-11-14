@@ -86,34 +86,35 @@ def _failed() -> RowOutcome:
     return RowOutcome(output=None, error="PROVIDER_UNAVAILABLE", usage=None)
 
 
-@pytest.mark.parametrize(
-    "outcomes",
-    [(_answered(), _failed()), (), (_failed(), _failed())],
-    ids=["answered", "empty", "all errors"],
-)
-def test_every_column_has_the_type_the_output_declares(outcomes: tuple[RowOutcome, ...]) -> None:
-    frame = _frame(*outcomes)
+class TestDeclaredColumns:
+    @pytest.mark.parametrize(
+        "outcomes",
+        [(_answered(), _failed()), (), (_failed(), _failed())],
+        ids=["answered", "empty", "all errors"],
+    )
+    def test_every_column_has_the_type_the_output_declares(
+        self, outcomes: tuple[RowOutcome, ...]
+    ) -> None:
+        frame = _frame(*outcomes)
 
-    assert dict(frame.schema) == {"id": pl.Int64(), **_RICH_SCHEMA, **_METADATA_SCHEMA}
+        assert dict(frame.schema) == {"id": pl.Int64(), **_RICH_SCHEMA, **_METADATA_SCHEMA}
 
+    def test_answers_are_read_back_as_their_declared_values(self) -> None:
+        row = _frame(_answered()).row(0, named=True)
 
-def test_answers_are_read_back_as_their_declared_values() -> None:
-    row = _frame(_answered()).row(0, named=True)
+        assert (row["label"], row["mood"], row["priority"]) == ("acepta", "angry", 2)
+        assert row["day"] == date(2026, 10, 9)
+        assert row["seenAt"] == datetime(2026, 10, 9, 10, 30, tzinfo=UTC)
+        assert row["amount"] == Decimal("1500.25")
+        assert row["tags"] == ["precio"]
+        assert row["offer"] == {"amount": Decimal("1400"), "currency": "EUR"}
+        assert row["extra"] == '{"a":1}'
+        assert row["count"] is None
 
-    assert (row["label"], row["mood"], row["priority"]) == ("acepta", "angry", 2)
-    assert row["day"] == date(2026, 10, 9)
-    assert row["seenAt"] == datetime(2026, 10, 9, 10, 30, tzinfo=UTC)
-    assert row["amount"] == Decimal("1500.25")
-    assert row["tags"] == ["precio"]
-    assert row["offer"] == {"amount": Decimal("1400"), "currency": "EUR"}
-    assert row["extra"] == '{"a":1}'
-    assert row["count"] is None
+    def test_an_error_row_leaves_every_answer_column_null(self) -> None:
+        row = _frame(_failed()).row(0, named=True)
 
-
-def test_an_error_row_leaves_every_answer_column_null() -> None:
-    row = _frame(_failed()).row(0, named=True)
-
-    assert all(row[name] is None for name in _RICH_SCHEMA)
+        assert all(row[name] is None for name in _RICH_SCHEMA)
 
 
 _USAGE = AgentUsage(
@@ -121,167 +122,177 @@ _USAGE = AgentUsage(
 )
 
 
-@pytest.mark.parametrize(
-    "field",
-    [{"count": 2**63}, {"amount": "1e40"}, {"offer": {"amount": "1e40", "currency": "EUR"}}],
-    ids=["int past Int64", "Decimal past (38, 9)", "nested Decimal"],
-)
-def test_a_value_its_column_cannot_hold_fails_only_its_row(field: dict[str, object]) -> None:
-    oversized = {**msgspec.to_builtins(_ANSWER), **field}
-    outcome = RowOutcome(output=oversized, error=None, usage=_USAGE)
+class TestUnrepresentableValues:
+    @pytest.mark.parametrize(
+        "field",
+        [{"count": 2**63}, {"amount": "1e40"}, {"offer": {"amount": "1e40", "currency": "EUR"}}],
+        ids=["int past Int64", "Decimal past (38, 9)", "nested Decimal"],
+    )
+    def test_a_value_its_column_cannot_hold_fails_only_its_row(
+        self, field: dict[str, object]
+    ) -> None:
+        oversized = {**msgspec.to_builtins(_ANSWER), **field}
+        outcome = RowOutcome(output=oversized, error=None, usage=_USAGE)
 
-    frame = _frame(_answered(), outcome, _answered())
+        frame = _frame(_answered(), outcome, _answered())
 
-    assert frame["agent_status"].to_list() == ["ok", "error", "ok"]
-    assert frame["agent_error"].to_list() == [None, "OUTPUT_UNREPRESENTABLE", None]
-    assert all(frame.row(1, named=True)[name] is None for name in _RICH_SCHEMA)
-    assert frame["agent_cost_usd"][1] == Decimal("0.5")
-    assert frame["label"].to_list() == ["acepta", None, "acepta"]
+        assert frame["agent_status"].to_list() == ["ok", "error", "ok"]
+        assert frame["agent_error"].to_list() == [None, "OUTPUT_UNREPRESENTABLE", None]
+        assert all(frame.row(1, named=True)[name] is None for name in _RICH_SCHEMA)
+        assert frame["agent_cost_usd"][1] == Decimal("0.5")
+        assert frame["label"].to_list() == ["acepta", None, "acepta"]
 
 
-def test_a_pydantic_output_names_its_columns_by_alias() -> None:
-    assert output_columns(PydanticReply).keys() == {"answer", "day", "howMany"}
-    assert [column.dtype for column in output_columns(PydanticReply).values()] == [
-        pl.String(),
-        pl.Date(),
-        pl.Int64(),
-    ]
+class TestPydanticAliases:
+    def test_a_pydantic_output_names_its_columns_by_alias(self) -> None:
+        assert output_columns(PydanticReply).keys() == {"answer", "day", "howMany"}
+        assert [column.dtype for column in output_columns(PydanticReply).values()] == [
+            pl.String(),
+            pl.Date(),
+            pl.Int64(),
+        ]
 
 
 _PYDANTIC_OFFER = pl.Struct({"amount": pl.Decimal(38, 9), "currencyCode": pl.String()})
 
 
-def test_a_nested_pydantic_model_is_a_struct_of_its_fields() -> None:
-    columns = output_columns(PydanticQuote)
+class TestNestedPydanticValues:
+    def test_a_nested_pydantic_model_is_a_struct_of_its_fields(self) -> None:
+        columns = output_columns(PydanticQuote)
 
-    assert {name: column.dtype for name, column in columns.items()} == {
-        "best": _PYDANTIC_OFFER,
-        "others": pl.List(_PYDANTIC_OFFER),
-    }
+        assert {name: column.dtype for name, column in columns.items()} == {
+            "best": _PYDANTIC_OFFER,
+            "others": pl.List(_PYDANTIC_OFFER),
+        }
 
+    def test_a_nested_pydantic_answer_is_read_back_field_by_field(self) -> None:
+        offer = PydanticOffer(amount=Decimal("1400"), currencyCode="EUR")
+        answer = loom_type(PydanticQuote).to_builtins(PydanticQuote(best=offer, others=[offer]))
+        keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
+        outcome = RowOutcome(output=answer, error=None, usage=None)
 
-def test_a_nested_pydantic_answer_is_read_back_field_by_field() -> None:
-    offer = PydanticOffer(amount=Decimal("1400"), currencyCode="EUR")
-    answer = loom_type(PydanticQuote).to_builtins(PydanticQuote(best=offer, others=[offer]))
-    keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
-    outcome = RowOutcome(output=answer, error=None, usage=None)
+        row = answers_frame(keys, (outcome,), output_columns(PydanticQuote), "v1").row(
+            0, named=True
+        )
 
-    row = answers_frame(keys, (outcome,), output_columns(PydanticQuote), "v1").row(0, named=True)
-
-    assert row["best"] == {"amount": Decimal("1400"), "currencyCode": "EUR"}
-    assert row["others"] == [{"amount": Decimal("1400"), "currencyCode": "EUR"}]
-
-
-@pytest.mark.parametrize("output_type", [PydanticNode, Node], ids=["pydantic", "msgspec"])
-def test_a_self_referencing_type_holds_its_nested_copies_as_json(output_type: type) -> None:
-    columns = output_columns(output_type)
-    keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
-    answer = {"name": "a", "children": [{"name": "b", "children": []}]}
-    outcome = RowOutcome(output=answer, error=None, usage=None)
-
-    row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
-
-    assert {name: column.dtype for name, column in columns.items()} == {
-        "name": pl.String(),
-        "children": pl.List(pl.String()),
-    }
-    assert row["children"] == ['{"name":"b","children":[]}']
+        assert row["best"] == {"amount": Decimal("1400"), "currencyCode": "EUR"}
+        assert row["others"] == [{"amount": Decimal("1400"), "currencyCode": "EUR"}]
 
 
-def test_mutually_referencing_models_stop_at_the_first_repeated_model() -> None:
-    columns = output_columns(PydanticTree)
+class TestRecursiveValues:
+    @pytest.mark.parametrize("output_type", [PydanticNode, Node], ids=["pydantic", "msgspec"])
+    def test_a_self_referencing_type_holds_its_nested_copies_as_json(
+        self, output_type: type
+    ) -> None:
+        columns = output_columns(output_type)
+        keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
+        answer = {"name": "a", "children": [{"name": "b", "children": []}]}
+        outcome = RowOutcome(output=answer, error=None, usage=None)
 
-    assert {name: column.dtype for name, column in columns.items()} == {
-        "root": pl.Struct({"label": pl.String(), "tree": pl.String()}),
-    }
-    assert output_columns(PydanticBranch)["tree"].dtype == pl.Struct({"root": pl.String()})
+        row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
 
+        assert {name: column.dtype for name, column in columns.items()} == {
+            "name": pl.String(),
+            "children": pl.List(pl.String()),
+        }
+        assert row["children"] == ['{"name":"b","children":[]}']
 
-def test_a_union_value_is_held_as_its_json_whatever_its_type() -> None:
-    keys = pl.DataFrame({"id": [0, 1]}, schema={"id": pl.Int64()})
-    outcomes = [RowOutcome(output={"code": code}, error=None, usage=None) for code in ("5", 5)]
+    def test_mutually_referencing_models_stop_at_the_first_repeated_model(self) -> None:
+        columns = output_columns(PydanticTree)
 
-    frame = answers_frame(keys, outcomes, output_columns(Coded), "v1")
-
-    assert frame["code"].to_list() == ['"5"', "5"]
-
-
-def test_the_cost_is_written_without_rounding_through_a_float() -> None:
-    cost = Decimal("0.000000123457")
-    usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
-
-    frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
-
-    assert frame["agent_cost_usd"][0] == cost
-
-
-@pytest.mark.parametrize(
-    ("cost", "written"),
-    [
-        (Decimal("0.0000000000001234"), Decimal("0")),
-        (Decimal("0.0000000000009"), Decimal("0.000000000001")),
-        (Decimal("0.0000000000015"), Decimal("0.000000000002")),
-        (Decimal("0.0000000000025"), Decimal("0.000000000002")),
-        (Decimal("1.2345678901234567"), Decimal("1.234567890123")),
-    ],
-    ids=["below scale", "rounds up", "half to even up", "half to even down", "past scale"],
-)
-def test_a_cost_past_twelve_decimal_places_is_rounded_half_to_even(
-    cost: Decimal, written: Decimal
-) -> None:
-    usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
-
-    frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
-
-    assert frame["agent_status"][0] == "ok"
-    assert frame["agent_cost_usd"][0] == written
+        assert {name: column.dtype for name, column in columns.items()} == {
+            "root": pl.Struct({"label": pl.String(), "tree": pl.String()}),
+        }
+        assert output_columns(PydanticBranch)["tree"].dtype == pl.Struct({"root": pl.String()})
 
 
-@pytest.mark.parametrize(
-    ("output_type", "blob"),
-    [(Plain, "AGhp"), (PydanticPlain, "\x00hi")],
-    ids=["msgspec, bytes as base64", "pydantic, bytes as utf8 by ser_json_bytes"],
-)
-def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text(
-    output_type: type[Plain] | type[PydanticPlain], blob: str
-) -> None:
-    answer = output_type(
-        id=uuid.UUID(int=1), at=time(1, 2, 3), wait=timedelta(days=1, seconds=5), blob=b"\x00hi"
+class TestUnionValues:
+    def test_a_union_value_is_held_as_its_json_whatever_its_type(self) -> None:
+        keys = pl.DataFrame({"id": [0, 1]}, schema={"id": pl.Int64()})
+        outcomes = [RowOutcome(output={"code": code}, error=None, usage=None) for code in ("5", 5)]
+
+        frame = answers_frame(keys, outcomes, output_columns(Coded), "v1")
+
+        assert frame["code"].to_list() == ['"5"', "5"]
+
+
+class TestCostRounding:
+    def test_the_cost_is_written_without_rounding_through_a_float(self) -> None:
+        cost = Decimal("0.000000123457")
+        usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
+
+        frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
+
+        assert frame["agent_cost_usd"][0] == cost
+
+    @pytest.mark.parametrize(
+        ("cost", "written"),
+        [
+            (Decimal("0.0000000000001234"), Decimal("0")),
+            (Decimal("0.0000000000009"), Decimal("0.000000000001")),
+            (Decimal("0.0000000000015"), Decimal("0.000000000002")),
+            (Decimal("0.0000000000025"), Decimal("0.000000000002")),
+            (Decimal("1.2345678901234567"), Decimal("1.234567890123")),
+        ],
+        ids=["below scale", "rounds up", "half to even up", "half to even down", "past scale"],
     )
-    keys = pl.DataFrame({"id_": [0]}, schema={"id_": pl.Int64()})
-    output = loom_type(output_type).to_builtins(answer)
-    outcome = RowOutcome(output=output, error=None, usage=None)
-    columns = output_columns(output_type)
+    def test_a_cost_past_twelve_decimal_places_is_rounded_half_to_even(
+        self, cost: Decimal, written: Decimal
+    ) -> None:
+        usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
 
-    row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
+        frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
 
-    assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
-        ("id", "at", "wait", "blob"), pl.String()
+        assert frame["agent_status"][0] == "ok"
+        assert frame["agent_cost_usd"][0] == written
+
+
+class TestPlainTextScalars:
+    @pytest.mark.parametrize(
+        ("output_type", "blob"),
+        [(Plain, "AGhp"), (PydanticPlain, "\x00hi")],
+        ids=["msgspec, bytes as base64", "pydantic, bytes as utf8 by ser_json_bytes"],
     )
-    assert (row["id"], row["at"], row["wait"], row["blob"]) == (
-        "00000000-0000-0000-0000-000000000001",
-        "01:02:03",
-        "P1DT5S",
-        blob,
-    )
+    def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text(
+        self, output_type: type[Plain] | type[PydanticPlain], blob: str
+    ) -> None:
+        answer = output_type(
+            id=uuid.UUID(int=1), at=time(1, 2, 3), wait=timedelta(days=1, seconds=5), blob=b"\x00hi"
+        )
+        keys = pl.DataFrame({"id_": [0]}, schema={"id_": pl.Int64()})
+        output = loom_type(output_type).to_builtins(answer)
+        outcome = RowOutcome(output=output, error=None, usage=None)
+        columns = output_columns(output_type)
+
+        row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
+
+        assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
+            ("id", "at", "wait", "blob"), pl.String()
+        )
+        assert (row["id"], row["at"], row["wait"], row["blob"]) == (
+            "00000000-0000-0000-0000-000000000001",
+            "01:02:03",
+            "P1DT5S",
+            blob,
+        )
 
 
 _LEAF = pl.Struct({"value": pl.Int64()})
 
 
-def test_a_type_in_two_sibling_fields_is_a_struct_in_both() -> None:
-    columns = output_columns(Siblings)
+class TestReusedStructs:
+    def test_a_type_in_two_sibling_fields_is_a_struct_in_both(self) -> None:
+        columns = output_columns(Siblings)
 
-    assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
-        ("first", "second", "first_record", "second_record", "first_dict", "second_dict"), _LEAF
-    )
+        assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
+            ("first", "second", "first_record", "second_record", "first_dict", "second_dict"), _LEAF
+        )
 
+    def test_a_type_reached_by_two_paths_is_a_struct_on_both(self) -> None:
+        columns = output_columns(Diamond)
 
-def test_a_type_reached_by_two_paths_is_a_struct_on_both() -> None:
-    columns = output_columns(Diamond)
-
-    side = pl.Struct({"leaf": _LEAF, "record": _LEAF, "item": _LEAF})
-    assert {name: column.dtype for name, column in columns.items()} == {
-        "left": side,
-        "right": side,
-    }
+        side = pl.Struct({"leaf": _LEAF, "record": _LEAF, "item": _LEAF})
+        assert {name: column.dtype for name, column in columns.items()} == {
+            "left": side,
+            "right": side,
+        }

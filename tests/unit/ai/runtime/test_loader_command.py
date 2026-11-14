@@ -7,49 +7,28 @@ import logging
 import msgspec
 import pytest
 
-from loom.ai.compiler._plan import (
-    CONVERSATION_CONTEXT_FIELDS,
-    AgentPlan,
-    CompiledInstruction,
-    CompiledOutput,
-)
-from loom.ai.declarative import PolicySpec
+from loom.ai.compiler._plan import CONVERSATION_CONTEXT_FIELDS
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.inference import InferenceTarget
 from loom.ai.runtime._bounded import RunContext, failure_error
 from loom.ai.runtime._conversation import _as_history, loader_command
 from loom.core.command import Command
 from loom.core.errors import Forbidden
 from loom.core.identity import Identity
-from loom.core.model import msgspec_type
+from tests.unit.ai.runtime.doubles import incident_triage_plan
 
 _ALL_NAMES = frozenset(CONVERSATION_CONTEXT_FIELDS)
 _DENIED_MESSAGE = "the caller is not allowed to perform this operation"
 
 
-class _StrictCommand(Command, frozen=True, kw_only=True, forbid_unknown_fields=True):
+class _StrictLoaderCommand(Command, frozen=True, kw_only=True, forbid_unknown_fields=True):
     conversation_id: str
-
-
-def _plan() -> AgentPlan:
-    return AgentPlan(
-        name="incident-triage",
-        description="test agent",
-        instructions=(CompiledInstruction(text="answer"),),
-        spec_version=1,
-        inference=InferenceTarget(provider="fake", model="fake-model"),
-        output=CompiledOutput(schema={"type": "object"}, loom_type=msgspec_type(dict)),
-        capabilities=(),
-        policies=PolicySpec(),
-        metadata={},
-    )
 
 
 @pytest.fixture
 def run() -> RunContext:
     """One admitted run of a verified caller continuing a conversation."""
     return RunContext(
-        plan=_plan(),
+        plan=incident_triage_plan(),
         identity=Identity(subject="user-1", roles=("analyst",), mechanism="test"),
         interaction_id="int-1",
         conversation_id="c-42",
@@ -81,11 +60,11 @@ class TestLoaderCommand:
 
     def test_decodes_a_strict_command_when_filtered_to_its_names(self, run: RunContext) -> None:
         """A ``forbid_unknown_fields`` Command declaring only ``conversation_id`` decodes."""
-        accepted = frozenset(info.name for info in msgspec.structs.fields(_StrictCommand))
+        accepted = frozenset(info.name for info in msgspec.structs.fields(_StrictLoaderCommand))
 
-        instance, seen = _StrictCommand.from_payload(loader_command(run, accepted))
+        instance, seen = _StrictLoaderCommand.from_payload(loader_command(run, accepted))
 
-        assert instance == _StrictCommand(conversation_id="c-42")
+        assert instance == _StrictLoaderCommand(conversation_id="c-42")
         assert seen == frozenset({"conversation_id"})
 
     def test_offers_exactly_the_names_the_compiler_promises(self, run: RunContext) -> None:

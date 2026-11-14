@@ -159,7 +159,7 @@ class TestARunLevelShapeOverrideStillWins:
         assert final.output == _PROSE  # type: ignore[union-attr]
 
 
-class TestNativeModeWithholdsARejectedAttempt:
+class TestNativeOutputModeWithholdsARejectedAttempt:
     async def test_a_rejected_attempt_reaches_no_subscriber(self) -> None:
         inference = InferenceTarget(provider="openai", model="gpt-5.2", output_mode="native")
         plan = _pydantic_plan(mode="native", retries=1)

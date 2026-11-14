@@ -39,49 +39,45 @@ def _decode(**overrides: Any) -> AgentSpecV1:
     return spec
 
 
-def test_no_state_declaration_decodes_to_neither_field() -> None:
-    """An artifact declaring neither field has no state, as every artifact does today."""
-    spec = _decode()
+class TestStateFieldDecoding:
+    def test_no_state_declaration_decodes_to_neither_field(self) -> None:
+        """An artifact declaring neither field has no state, as every artifact does today."""
+        spec = _decode()
 
-    assert spec.deps_type is None
-    assert spec.deps_schema is None
+        assert spec.deps_type is None
+        assert spec.deps_schema is None
 
+    def test_deps_type_dict_decodes_as_the_open_form(self) -> None:
+        """``dict`` is the open form: it decodes to the literal string."""
+        spec = _decode(deps_type="dict")
 
-def test_deps_type_dict_decodes_as_the_open_form() -> None:
-    """``dict`` is the open form: it decodes to the literal string."""
-    spec = _decode(deps_type="dict")
+        assert spec.deps_type == "dict"
 
-    assert spec.deps_type == "dict"
+    def test_deps_type_symbol_reference_decodes(self) -> None:
+        """A ``module:Symbol`` reference decodes unchanged."""
+        spec = _decode(deps_type="myapp.state:GeoState")
 
+        assert spec.deps_type == "myapp.state:GeoState"
 
-def test_deps_type_symbol_reference_decodes() -> None:
-    """A ``module:Symbol`` reference decodes unchanged."""
-    spec = _decode(deps_type="myapp.state:GeoState")
+    def test_deps_schema_decodes_as_a_mapping(self) -> None:
+        """A JSON Schema object declared directly decodes unchanged."""
+        schema = {"type": "object", "properties": {"km": {"type": "integer"}}}
 
-    assert spec.deps_type == "myapp.state:GeoState"
+        spec = _decode(deps_schema=schema)
 
+        assert spec.deps_schema == schema
 
-def test_deps_schema_decodes_as_a_mapping() -> None:
-    """A JSON Schema object declared directly decodes unchanged."""
-    schema = {"type": "object", "properties": {"km": {"type": "integer"}}}
+    def test_deps_type_rejects_a_filesystem_path(self) -> None:
+        """A filesystem path is not representable, exactly as for ``TypeRefOutput.ref``."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode(deps_type="./x.py")
 
-    spec = _decode(deps_schema=schema)
+        assert [issue.code for issue in exc.value.issues] == [AgentErrorCode.SPEC_MALFORMED]
+        assert exc.value.issues[0].field == "deps_type"
 
-    assert spec.deps_schema == schema
+    def test_declaring_both_fields_decodes_successfully(self) -> None:
+        """The conflict is not a decode-time failure: compilation reports it."""
+        spec = _decode(deps_type="dict", deps_schema={"type": "object"})
 
-
-def test_deps_type_rejects_a_filesystem_path() -> None:
-    """A filesystem path is not representable, exactly as for ``TypeRefOutput.ref``."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode(deps_type="./x.py")
-
-    assert [issue.code for issue in exc.value.issues] == [AgentErrorCode.SPEC_MALFORMED]
-    assert exc.value.issues[0].field == "deps_type"
-
-
-def test_declaring_both_fields_decodes_successfully() -> None:
-    """The conflict is not a decode-time failure: compilation reports it."""
-    spec = _decode(deps_type="dict", deps_schema={"type": "object"})
-
-    assert spec.deps_type == "dict"
-    assert spec.deps_schema == {"type": "object"}
+        assert spec.deps_type == "dict"
+        assert spec.deps_schema == {"type": "object"}

@@ -113,104 +113,100 @@ def _declared_output_kinds() -> set[str]:
     return {_read_artifact(path)["output"]["kind"] for path in _corpus_paths()}
 
 
-def test_the_corpus_is_not_empty_once_the_pattern_resolves() -> None:
-    """A silently empty corpus would make every per-file test vacuously green."""
-    assert _corpus_paths() != ()
+class TestCorpusArtifacts:
+    def test_the_corpus_is_not_empty_once_the_pattern_resolves(self) -> None:
+        """A silently empty corpus would make every per-file test vacuously green."""
+        assert _corpus_paths() != ()
+
+    @pytest.mark.parametrize("path", _corpus_paths(), ids=_corpus_ids())
+    def test_the_artifact_decodes(self, path: Path) -> None:
+        """Each corpus entry decodes through ``load_specs`` into the v1 struct."""
+        decoded = load_specs([path.relative_to(_CORPUS_DIR).as_posix()], _CORPUS_DIR)
+
+        assert [type(entry.spec) for entry in decoded] == [AgentSpecV1]
+
+    @pytest.mark.parametrize("path", _corpus_paths(), ids=_corpus_ids())
+    def test_the_artifact_validates_against_the_emitted_schema(
+        self,
+        path: Path,
+    ) -> None:
+        """Each corpus entry validates against the schema Loom publishes for v1."""
+        validator = Draft202012Validator(agent_spec_json_schema(1))
+
+        assert list(validator.iter_errors(_read_artifact(path))) == []
+
+    def test_decoding_reports_no_issues_for_the_current_v1_corpus(self) -> None:
+        """The corpus targets the current spec version, so nothing is deprecated."""
+        assert [entry.issues for entry in _load_corpus()] == [()] * len(_corpus_paths())
 
 
-@pytest.mark.parametrize("path", _corpus_paths(), ids=_corpus_ids())
-def test_the_artifact_decodes(path: Path) -> None:
-    """Each corpus entry decodes through ``load_specs`` into the v1 struct."""
-    decoded = load_specs([path.relative_to(_CORPUS_DIR).as_posix()], _CORPUS_DIR)
+class TestCorpusCoverage:
+    def test_the_corpus_covers_every_capability_kind(self) -> None:
+        """Every capability kind of the format has at least one fixture."""
+        assert _declared_capability_kinds() == set(_CAPABILITY_KINDS)
 
-    assert [type(entry.spec) for entry in decoded] == [AgentSpecV1]
+    def test_the_corpus_covers_every_output_kind(self) -> None:
+        """Every output kind of the format has at least one fixture."""
+        assert _declared_output_kinds() == set(_OUTPUT_KINDS)
 
+    def test_each_artifact_lives_in_a_directory_named_after_it(self) -> None:
+        """The layout is one directory per agent, named after the agent."""
+        mismatched = [
+            path.parent.name
+            for path in _corpus_paths()
+            if _read_artifact(path)["name"] != path.parent.name
+        ]
 
-@pytest.mark.parametrize("path", _corpus_paths(), ids=_corpus_ids())
-def test_the_artifact_validates_against_the_emitted_schema(
-    path: Path,
-) -> None:
-    """Each corpus entry validates against the schema Loom publishes for v1."""
-    validator = Draft202012Validator(agent_spec_json_schema(1))
+        assert mismatched == []
 
-    assert list(validator.iter_errors(_read_artifact(path))) == []
+    def test_the_corpus_covers_both_skill_library_forms(self) -> None:
+        """Both resolution forms are exercised: beside the artifact and shared."""
+        libraries = _declared_skill_libraries()
+        local = {library for library in libraries if library.startswith(_LOCAL_LIBRARY_PREFIX)}
+        shared = libraries - local
 
+        assert (bool(local), bool(shared)) == (True, True)
 
-def test_decoding_reports_no_issues_for_the_current_v1_corpus() -> None:
-    """The corpus targets the current spec version, so nothing is deprecated."""
-    assert [entry.issues for entry in _load_corpus()] == [()] * len(_corpus_paths())
+    def test_no_capability_declares_a_url(self) -> None:
+        """Artifacts name what they reach; addresses are deployment facts."""
+        located = [
+            (path.parent.name, key)
+            for path, capability in _corpus_capabilities()
+            for key, value in capability.items()
+            if isinstance(value, str) and "://" in value
+        ]
 
-
-def test_the_corpus_covers_every_capability_kind() -> None:
-    """Every capability kind of the format has at least one fixture."""
-    assert _declared_capability_kinds() == set(_CAPABILITY_KINDS)
-
-
-def test_the_corpus_covers_every_output_kind() -> None:
-    """Every output kind of the format has at least one fixture."""
-    assert _declared_output_kinds() == set(_OUTPUT_KINDS)
-
-
-def test_each_artifact_lives_in_a_directory_named_after_it() -> None:
-    """The layout is one directory per agent, named after the agent."""
-    mismatched = [
-        path.parent.name
-        for path in _corpus_paths()
-        if _read_artifact(path)["name"] != path.parent.name
-    ]
-
-    assert mismatched == []
+        assert located == []
 
 
-def test_the_corpus_covers_both_skill_library_forms() -> None:
-    """Both resolution forms are exercised: beside the artifact and shared."""
-    libraries = _declared_skill_libraries()
-    local = {library for library in libraries if library.startswith(_LOCAL_LIBRARY_PREFIX)}
-    shared = libraries - local
+class TestSkillLibraries:
+    @pytest.mark.parametrize("library", _skill_libraries(), ids=_skill_library_ids())
+    def test_the_library_contains_only_skill_packages(self, library: Path) -> None:
+        """Only immediate children are discovered, so every child must be one skill."""
+        unusable = [
+            child.name
+            for child in sorted(library.iterdir())
+            if not (child.is_dir() and (child / _SKILL_MANIFEST).is_file())
+        ]
 
-    assert (bool(local), bool(shared)) == (True, True)
+        assert unusable == []
 
+    @_HARNESS_MISSING
+    @pytest.mark.parametrize("library", _skill_libraries(), ids=_skill_library_ids())
+    def test_the_library_loads_with_the_harness(self, library: Path) -> None:
+        """Constructing ``Skills`` is the assertion: it parses and validates every manifest.
 
-def test_no_capability_declares_a_url() -> None:
-    """Artifacts name what they reach; addresses are deployment facts."""
-    located = [
-        (path.parent.name, key)
-        for path, capability in _corpus_capabilities()
-        for key, value in capability.items()
-        if isinstance(value, str) and "://" in value
-    ]
+        A malformed frontmatter, a ``name`` disagreeing with its directory, an empty
+        description or a name the loader does not expose all raise here, and the
+        ``error`` filter turns the over-long-description warning into a failure too.
+        """
+        from pydantic_ai_harness.skills import Skills
 
-    assert located == []
+        expected = sorted(child.name for child in library.iterdir() if child.is_dir())
 
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            Skills(library)
+            selected = Skills(library, include=expected)
 
-@pytest.mark.parametrize("library", _skill_libraries(), ids=_skill_library_ids())
-def test_the_library_contains_only_skill_packages(library: Path) -> None:
-    """Only immediate children are discovered, so every child must be one skill."""
-    unusable = [
-        child.name
-        for child in sorted(library.iterdir())
-        if not (child.is_dir() and (child / _SKILL_MANIFEST).is_file())
-    ]
-
-    assert unusable == []
-
-
-@_HARNESS_MISSING
-@pytest.mark.parametrize("library", _skill_libraries(), ids=_skill_library_ids())
-def test_the_library_loads_with_the_harness(library: Path) -> None:
-    """Constructing ``Skills`` is the assertion: it parses and validates every manifest.
-
-    A malformed frontmatter, a ``name`` disagreeing with its directory, an empty
-    description or a name the loader does not expose all raise here, and the
-    ``error`` filter turns the over-long-description warning into a failure too.
-    """
-    from pydantic_ai_harness.skills import Skills
-
-    expected = sorted(child.name for child in library.iterdir() if child.is_dir())
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        Skills(library)
-        selected = Skills(library, include=expected)
-
-    assert selected.include == frozenset(expected)
+        assert selected.include == frozenset(expected)

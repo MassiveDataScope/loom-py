@@ -45,23 +45,23 @@ def _answer_all(runtime: _Runtime, prompts: list[str | None]) -> list[RowOutcome
     return asyncio.run(batch.answer_all(prompts))
 
 
-def test_no_more_than_limit_tasks_run_besides_the_caller() -> None:
-    runtime = _Runtime()
+class TestConcurrencyLimit:
+    def test_no_more_than_limit_tasks_run_besides_the_caller(self) -> None:
+        runtime = _Runtime()
 
-    _answer_all(runtime, [str(row) for row in range(200)])
+        _answer_all(runtime, [str(row) for row in range(200)])
 
-    assert runtime.peak_tasks <= _LIMIT + 1
+        assert runtime.peak_tasks <= _LIMIT + 1
 
+    def test_outcomes_follow_the_order_of_the_prompts(self) -> None:
+        prompts: list[str | None] = [str(row) for row in range(40)]
+        prompts[7] = None
 
-def test_outcomes_follow_the_order_of_the_prompts() -> None:
-    prompts: list[str | None] = [str(row) for row in range(40)]
-    prompts[7] = None
+        outcomes = _answer_all(_Runtime(), prompts)
 
-    outcomes = _answer_all(_Runtime(), prompts)
-
-    assert [o.output["answer"] if o.output else o.error for o in outcomes] == [
-        PROMPT_MISSING if prompt is None else prompt for prompt in prompts
-    ]
+        assert [o.output["answer"] if o.output else o.error for o in outcomes] == [
+            PROMPT_MISSING if prompt is None else prompt for prompt in prompts
+        ]
 
 
 class _Abort(BaseException):
@@ -80,38 +80,35 @@ class _Failing(_Runtime):
         return await super().run(name, prompt, identity=identity)
 
 
-def test_no_prompt_answers_nothing() -> None:
-    assert _answer_all(_Runtime(), []) == []
+class TestBatchOutcomes:
+    def test_no_prompt_answers_nothing(self) -> None:
+        assert _answer_all(_Runtime(), []) == []
 
+    def test_fewer_prompts_than_the_limit_are_all_answered(self) -> None:
+        outcomes = _answer_all(_Runtime(), ["1", "2"])
 
-def test_fewer_prompts_than_the_limit_are_all_answered() -> None:
-    outcomes = _answer_all(_Runtime(), ["1", "2"])
+        assert [o.output["answer"] if o.output else None for o in outcomes] == ["1", "2"]
 
-    assert [o.output["answer"] if o.output else None for o in outcomes] == ["1", "2"]
+    def test_a_base_exception_in_one_row_reaches_the_caller_in_a_group(self) -> None:
+        runtime = _Failing("5", _Abort())
+        rows = [str(row) for row in range(10)]
 
+        with pytest.raises(BaseExceptionGroup) as excinfo:
+            _answer_all(runtime, rows)
 
-def test_a_base_exception_in_one_row_reaches_the_caller_in_a_group() -> None:
-    runtime = _Failing("5", _Abort())
-    rows = [str(row) for row in range(10)]
+        assert excinfo.group_contains(_Abort)
 
-    with pytest.raises(BaseExceptionGroup) as excinfo:
-        _answer_all(runtime, rows)
+    def test_a_keyboard_interrupt_in_one_row_reaches_the_caller_as_itself(self) -> None:
+        runtime = _Failing("5", KeyboardInterrupt())
+        rows = [str(row) for row in range(10)]
 
-    assert excinfo.group_contains(_Abort)
+        with pytest.raises(KeyboardInterrupt):
+            _answer_all(runtime, rows)
 
+    @pytest.mark.parametrize("rows", [1, 10])
+    def test_a_row_whose_run_is_cancelled_fails_the_batch_naming_it(self, rows: int) -> None:
+        runtime = _Failing("0", asyncio.CancelledError())
+        inputs = [str(row) for row in range(rows)]
 
-def test_a_keyboard_interrupt_in_one_row_reaches_the_caller_as_itself() -> None:
-    runtime = _Failing("5", KeyboardInterrupt())
-    rows = [str(row) for row in range(10)]
-
-    with pytest.raises(KeyboardInterrupt):
-        _answer_all(runtime, rows)
-
-
-@pytest.mark.parametrize("rows", [1, 10])
-def test_a_row_whose_run_is_cancelled_fails_the_batch_naming_it(rows: int) -> None:
-    runtime = _Failing("0", asyncio.CancelledError())
-    inputs = [str(row) for row in range(rows)]
-
-    with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
-        _answer_all(runtime, inputs)
+        with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
+            _answer_all(runtime, inputs)

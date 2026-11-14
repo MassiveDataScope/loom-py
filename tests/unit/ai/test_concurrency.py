@@ -26,23 +26,23 @@ async def _delayed(delay_s: float = 0.05) -> str:
     return "finished"
 
 
-class TestShieldAndDrainCompletaConExito:
-    async def test_devuelve_el_resultado_de_la_llamada(self) -> None:
+class TestShieldAndDrainCompletesSuccessfully:
+    async def test_returns_the_call_result(self) -> None:
         async def _call() -> str:
             return "answer"
 
         assert await shield_and_drain(_call(), label="crm") == "answer"
 
 
-class TestShieldAndDrainDrenaAlCancelar:
-    async def test_relanza_cancelled_error_al_llamante_tras_drenar(self) -> None:
+class TestShieldAndDrainDrainsOnCancel:
+    async def test_reraises_cancelled_error_to_the_caller_after_draining(self) -> None:
         task = asyncio.create_task(shield_and_drain(_delayed(), label="crm"))
         await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    async def test_una_segunda_cancelacion_abandona_una_llamada_colgada(self) -> None:
+    async def test_a_second_cancellation_abandons_a_hung_call(self) -> None:
         """An external call may hang: a second cancellation must escape the
         drain while the call is still running, so the caller can give up."""
         hung = asyncio.Event()
@@ -65,9 +65,7 @@ class TestShieldAndDrainDrenaAlCancelar:
         assert escaped_while_hung
         assert task.cancelled()
 
-    async def test_el_label_llega_al_log_del_drenado(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_the_label_reaches_the_drain_log(self, caplog: pytest.LogCaptureFixture) -> None:
         """``label`` is not decoration: it is what names the session in the
         one log line a drained cancellation produces, which is the only
         place H5 asks it to matter."""
@@ -81,7 +79,7 @@ class TestShieldAndDrainDrenaAlCancelar:
         assert any("inventory-mcp" in record.message for record in caplog.records)
 
 
-class TestElResultadoDrenadoNoQuedaSinRecuperar:
+class TestTheDrainedResultIsNotLeftUnretrieved:
     """O4: mutar ``shield_and_drain`` quitando el descarte del resultado
     drenado deja toda la suite en verde salvo este test -- el unico que
     atraviesa el punto de llamada real en vez de probar el helper privado en
@@ -90,7 +88,7 @@ class TestElResultadoDrenadoNoQuedaSinRecuperar:
     manejador de excepciones del bucle, que es donde el recolector de basura
     la reportaria si nadie la hubiese consumido."""
 
-    async def test_una_llamada_que_lanza_no_se_reporta_como_no_recuperada(self) -> None:
+    async def test_a_raising_call_is_not_reported_as_unretrieved(self) -> None:
         async def _raising() -> None:
             await asyncio.sleep(0.02)
             raise ValueError("boom")

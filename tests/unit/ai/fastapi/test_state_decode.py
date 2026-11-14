@@ -66,7 +66,7 @@ class TestNoStateGiven:
         assert _decode_state(_AGENT, _SCHEMA_SHAPE, _raw(b"null")) is None
 
 
-class TestStateAgainstNoDeclaredShape:
+class TestDecodedStateAgainstNoDeclaredShape:
     def test_refuses_with_422_naming_the_agent(self) -> None:
         payload = _raw(b'{"marca": "civic"}')
         with pytest.raises(TransportError) as excinfo:

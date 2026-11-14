@@ -98,29 +98,29 @@ class TestSseReadTimeoutCoupling:
         assert toolset.client.transport.sse_read_timeout is None
 
 
-def test_the_default_connect_timeout_is_pinned_to_ten_seconds() -> None:
-    """The constant itself, pinned against a literal.
+class TestDefaultConnectTimeout:
+    def test_the_default_connect_timeout_is_pinned_to_ten_seconds(self) -> None:
+        """The constant itself, pinned against a literal.
 
-    Catches a regression in *this* constant alone, including one that also
-    changes ``AiConfig.startup_timeout_ms`` to match: the cross-check below
-    would stay green in that case, because both sides would have moved
-    together. This literal is what catches that day.
-    """
-    assert DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS == 10.0
+        Catches a regression in *this* constant alone, including one that also
+        changes ``AiConfig.startup_timeout_ms`` to match: the cross-check below
+        would stay green in that case, because both sides would have moved
+        together. This literal is what catches that day.
+        """
+        assert DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS == 10.0
 
+    def test_the_default_connect_timeout_still_matches_ai_configs_own_default(self) -> None:
+        """The two defaults are meant to agree; this catches the day only one of them drifts.
 
-def test_the_default_connect_timeout_still_matches_ai_configs_own_default() -> None:
-    """The two defaults are meant to agree; this catches the day only one of them drifts.
+        Kept *beside* the literal pin above, not instead of it: this is exactly
+        the comparison the literal pin cannot make, because it never reads
+        ``AiConfig`` at all — and a regression that moves the two defaults apart
+        (never together) is precisely the case this cross-check exists to catch.
+        """
+        from loom.ai.config import AiConfig
 
-    Kept *beside* the literal pin above, not instead of it: this is exactly
-    the comparison the literal pin cannot make, because it never reads
-    ``AiConfig`` at all — and a regression that moves the two defaults apart
-    (never together) is precisely the case this cross-check exists to catch.
-    """
-    from loom.ai.config import AiConfig
-
-    config = AiConfig(engine="pydantic-ai", specs=(), models={})
-    assert config.startup_timeout_ms / 1000 == DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS
+        config = AiConfig(engine="pydantic-ai", specs=(), models={})
+        assert config.startup_timeout_ms / 1000 == DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS
 
 
 class TestSharedMcpToolsets:

@@ -196,13 +196,14 @@ class TestAgentEngineProtocol:
         assert "AbstractAsyncContextManager" in str(annotations.get("return"))
 
 
-def test_every_name_declared_in_all_is_importable() -> None:
-    """A name in ``__all__`` that does not resolve is worse than an absent one.
+class TestDeclaredNamesAreImportable:
+    def test_every_name_declared_in_all_is_importable(self) -> None:
+        """A name in ``__all__`` that does not resolve is worse than an absent one.
 
-    ``from loom.ai import *`` raises on it, and a reader takes the list as the
-    declared surface.  The list grew by seven names when the error vocabulary
-    was published; this pins that they exist.
-    """
-    import loom.ai as pillar
+        ``from loom.ai import *`` raises on it, and a reader takes the list as the
+        declared surface.  The list grew by seven names when the error vocabulary
+        was published; this pins that they exist.
+        """
+        import loom.ai as pillar
 
-    assert [name for name in pillar.__all__ if not hasattr(pillar, name)] == []
+        assert [name for name in pillar.__all__ if not hasattr(pillar, name)] == []

@@ -127,64 +127,67 @@ _SENSITIVE: dict[str, AgentPlan] = {
 }
 
 
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [
-        (_with(_CRM), _with(msgspec.structs.replace(_CRM, server="erp"))),
-        (
-            _with(CompiledNativeCapability(tool="web_search")),
-            _with(CompiledNativeCapability(tool="code_execution")),
-        ),
-        (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, names=("pricing", "returns")))),
-        (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, library="support"))),
-        (_with(_USECASES), _with(msgspec.structs.replace(_USECASES, keys=("orders.cancel",)))),
-        (_with(_SQL), _with(msgspec.structs.replace(_SQL, connection="billing"))),
-        (_with(_PYTHON), _with(msgspec.structs.replace(_PYTHON, factory_ref="app.tools:other"))),
-        (_with(_PEER), _with(msgspec.structs.replace(_PEER, agent="billing"))),
-    ],
-    ids=[
-        "mcp server",
-        "native tool",
-        "skill names",
-        "skill library",
-        "use case keys",
-        "sql connection",
-        "python factory",
-        "a2a agent",
-    ],
-)
-def test_capabilities_are_told_apart_by_their_declared_facts(
-    first: AgentPlan, second: AgentPlan
-) -> None:
-    assert first.fingerprint != second.fingerprint
+class TestWhatChangesTheDigest:
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            (_with(_CRM), _with(msgspec.structs.replace(_CRM, server="erp"))),
+            (
+                _with(CompiledNativeCapability(tool="web_search")),
+                _with(CompiledNativeCapability(tool="code_execution")),
+            ),
+            (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, names=("pricing", "returns")))),
+            (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, library="support"))),
+            (_with(_USECASES), _with(msgspec.structs.replace(_USECASES, keys=("orders.cancel",)))),
+            (_with(_SQL), _with(msgspec.structs.replace(_SQL, connection="billing"))),
+            (
+                _with(_PYTHON),
+                _with(msgspec.structs.replace(_PYTHON, factory_ref="app.tools:other")),
+            ),
+            (_with(_PEER), _with(msgspec.structs.replace(_PEER, agent="billing"))),
+        ],
+        ids=[
+            "mcp server",
+            "native tool",
+            "skill names",
+            "skill library",
+            "use case keys",
+            "sql connection",
+            "python factory",
+            "a2a agent",
+        ],
+    )
+    def test_capabilities_are_told_apart_by_their_declared_facts(
+        self, first: AgentPlan, second: AgentPlan
+    ) -> None:
+        assert first.fingerprint != second.fingerprint
 
+    @pytest.mark.parametrize(
+        "filtered",
+        [
+            msgspec.structs.replace(_CRM, include=("search_*",)),
+            msgspec.structs.replace(_CRM, exclude=("delete_*",)),
+            msgspec.structs.replace(_PEER, include=("quote",)),
+            msgspec.structs.replace(_PEER, exclude=("refund",)),
+        ],
+        ids=["mcp include", "mcp exclude", "a2a include", "a2a exclude"],
+    )
+    def test_a_tool_filter_changes_it(
+        self, filtered: CompiledMcpCapability | CompiledA2ACapability
+    ) -> None:
+        unfiltered = msgspec.structs.replace(filtered, include=(), exclude=())
 
-@pytest.mark.parametrize(
-    "filtered",
-    [
-        msgspec.structs.replace(_CRM, include=("search_*",)),
-        msgspec.structs.replace(_CRM, exclude=("delete_*",)),
-        msgspec.structs.replace(_PEER, include=("quote",)),
-        msgspec.structs.replace(_PEER, exclude=("refund",)),
-    ],
-    ids=["mcp include", "mcp exclude", "a2a include", "a2a exclude"],
-)
-def test_a_tool_filter_changes_it(filtered: CompiledMcpCapability | CompiledA2ACapability) -> None:
-    unfiltered = msgspec.structs.replace(filtered, include=(), exclude=())
+        assert _with(filtered).fingerprint != _with(unfiltered).fingerprint
 
-    assert _with(filtered).fingerprint != _with(unfiltered).fingerprint
+    @pytest.mark.parametrize("changed", sorted(_SENSITIVE))
+    def test_a_change_that_can_change_the_answer_changes_it(self, changed: str) -> None:
+        assert _SENSITIVE[changed].fingerprint != _BASE.fingerprint
 
+    def test_two_output_checks_are_told_apart_by_name(self) -> None:
+        first = msgspec.structs.replace(_BASE, output_check=reject_nothing)
+        second = msgspec.structs.replace(_BASE, output_check=reject_everything)
 
-@pytest.mark.parametrize("changed", sorted(_SENSITIVE))
-def test_a_change_that_can_change_the_answer_changes_it(changed: str) -> None:
-    assert _SENSITIVE[changed].fingerprint != _BASE.fingerprint
-
-
-def test_two_output_checks_are_told_apart_by_name() -> None:
-    first = msgspec.structs.replace(_BASE, output_check=reject_nothing)
-    second = msgspec.structs.replace(_BASE, output_check=reject_everything)
-
-    assert first.fingerprint != second.fingerprint
+        assert first.fingerprint != second.fingerprint
 
 
 _INSENSITIVE: dict[str, AgentPlan] = {
@@ -216,14 +219,14 @@ _INSENSITIVE: dict[str, AgentPlan] = {
 }
 
 
-def test_where_a_capability_is_served_from_leaves_it_unchanged() -> None:
-    moved = _with(msgspec.structs.replace(_CRM, url="https://crm.example/mcp", timeout_ms=5000))
-    relocated = _with(msgspec.structs.replace(_SKILLS, directory="/opt/skills"))
+class TestWhatLeavesTheDigestUnchanged:
+    def test_where_a_capability_is_served_from_leaves_it_unchanged(self) -> None:
+        moved = _with(msgspec.structs.replace(_CRM, url="https://crm.example/mcp", timeout_ms=5000))
+        relocated = _with(msgspec.structs.replace(_SKILLS, directory="/opt/skills"))
 
-    assert moved.fingerprint == _with(_CRM).fingerprint
-    assert relocated.fingerprint == _with(_SKILLS).fingerprint
+        assert moved.fingerprint == _with(_CRM).fingerprint
+        assert relocated.fingerprint == _with(_SKILLS).fingerprint
 
-
-@pytest.mark.parametrize("changed", sorted(_INSENSITIVE))
-def test_a_deployment_detail_or_a_policy_leaves_it_unchanged(changed: str) -> None:
-    assert _INSENSITIVE[changed].fingerprint == _BASE.fingerprint
+    @pytest.mark.parametrize("changed", sorted(_INSENSITIVE))
+    def test_a_deployment_detail_or_a_policy_leaves_it_unchanged(self, changed: str) -> None:
+        assert _INSENSITIVE[changed].fingerprint == _BASE.fingerprint

@@ -31,46 +31,48 @@ def target() -> InferenceTarget:
     )
 
 
-def test_repr_does_not_contain_credentials_ref_when_defined(
-    target: InferenceTarget,
-) -> None:
-    """``repr`` must redact the credentials reference."""
-    assert _CREDENTIALS_REF not in repr(target)
+class TestSecretContainment:
+    def test_repr_does_not_contain_credentials_ref_when_defined(
+        self,
+        target: InferenceTarget,
+    ) -> None:
+        """``repr`` must redact the credentials reference."""
+        assert _CREDENTIALS_REF not in repr(target)
 
+    def test_repr_does_not_contain_options_values_when_defined(
+        self,
+        target: InferenceTarget,
+    ) -> None:
+        """``repr`` must redact vendor option values."""
+        assert _OPTION_SENTINEL not in repr(target)
 
-def test_repr_does_not_contain_options_values_when_defined(
-    target: InferenceTarget,
-) -> None:
-    """``repr`` must redact vendor option values."""
-    assert _OPTION_SENTINEL not in repr(target)
+    def test_str_does_not_contain_credentials_ref_when_defined(
+        self,
+        target: InferenceTarget,
+    ) -> None:
+        """``str`` must redact the credentials reference."""
+        assert _CREDENTIALS_REF not in str(target)
 
+    def test_str_does_not_contain_options_values_when_defined(
+        self,
+        target: InferenceTarget,
+    ) -> None:
+        """``str`` must redact vendor option values."""
+        assert _OPTION_SENTINEL not in str(target)
 
-def test_str_does_not_contain_credentials_ref_when_defined(
-    target: InferenceTarget,
-) -> None:
-    """``str`` must redact the credentials reference."""
-    assert _CREDENTIALS_REF not in str(target)
+    def test_json_encoding_does_not_expose_secrets(
+        self,
+        target: InferenceTarget,
+    ) -> None:
+        """Encoding the struct either fails or omits the secret-bearing values.
 
-
-def test_str_does_not_contain_options_values_when_defined(
-    target: InferenceTarget,
-) -> None:
-    """``str`` must redact vendor option values."""
-    assert _OPTION_SENTINEL not in str(target)
-
-
-def test_json_encoding_does_not_expose_secrets(
-    target: InferenceTarget,
-) -> None:
-    """Encoding the struct either fails or omits the secret-bearing values.
-
-    Both behaviours satisfy invariant 4: what must never happen is JSON bytes
-    carrying the reference or the option value in clear.
-    """
-    try:
-        encoded = msgspec.json.encode(target)
-    except TypeError:
-        return
-    text = encoded.decode("utf-8")
-    assert _CREDENTIALS_REF not in text
-    assert _OPTION_SENTINEL not in text
+        Both behaviours satisfy invariant 4: what must never happen is JSON bytes
+        carrying the reference or the option value in clear.
+        """
+        try:
+            encoded = msgspec.json.encode(target)
+        except TypeError:
+            return
+        text = encoded.decode("utf-8")
+        assert _CREDENTIALS_REF not in text
+        assert _OPTION_SENTINEL not in text

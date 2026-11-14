@@ -318,13 +318,17 @@ class TestFactoryFailure:
         assert isinstance(raised.value.__cause__, ValueError)
 
 
-def test_abc_imports_on_a_fresh_interpreter() -> None:
-    """AC3: moving ``McpSession`` into ``loom.ai.abc`` opened no import cycle."""
-    completed = subprocess.run(
-        [sys.executable, "-c", "import loom.ai.abc"], capture_output=True, text=True, check=False
-    )
+class TestAbcImports:
+    def test_abc_imports_on_a_fresh_interpreter(self) -> None:
+        """AC3: moving ``McpSession`` into ``loom.ai.abc`` opened no import cycle."""
+        completed = subprocess.run(
+            [sys.executable, "-c", "import loom.ai.abc"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-    assert completed.returncode == 0, completed.stderr
+        assert completed.returncode == 0, completed.stderr
 
 
 @dataclass

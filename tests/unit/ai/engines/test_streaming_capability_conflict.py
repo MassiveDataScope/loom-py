@@ -39,27 +39,29 @@ class _AlwaysStreams(AbstractCapability[Any]):
             yield event
 
 
-def test_a_whole_binding_with_a_streaming_capability_fails_at_build(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        _provider, "build_capabilities", lambda plan, container: (_AlwaysStreams(),)
-    )
-    plan = make_plan(inference=InferenceTarget(provider="openai", model="a-model", streaming=False))
+class TestStreamingCapabilityConflict:
+    @pytest.fixture
+    def streaming_capability(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            _provider, "build_capabilities", lambda plan, container: (_AlwaysStreams(),)
+        )
 
-    with pytest.raises(AgentCompilationError) as failure:
+    def test_a_whole_binding_with_a_streaming_capability_fails_at_build(
+        self, streaming_capability: None
+    ) -> None:
+        plan = make_plan(
+            inference=InferenceTarget(provider="openai", model="a-model", streaming=False)
+        )
+
+        with pytest.raises(AgentCompilationError) as failure:
+            build_engine(plan, prose_model())
+
+        assert failure.value.issues[0].code is AgentErrorCode.STREAMING_REQUIRED_BY_CAPABILITY
+        assert plan.name in failure.value.issues[0].message
+
+    def test_the_same_capability_builds_fine_when_the_binding_still_streams(
+        self, streaming_capability: None
+    ) -> None:
+        plan = make_plan()
+
         build_engine(plan, prose_model())
-
-    assert failure.value.issues[0].code is AgentErrorCode.STREAMING_REQUIRED_BY_CAPABILITY
-    assert plan.name in failure.value.issues[0].message
-
-
-def test_the_same_capability_builds_fine_when_the_binding_still_streams(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        _provider, "build_capabilities", lambda plan, container: (_AlwaysStreams(),)
-    )
-    plan = make_plan()
-
-    build_engine(plan, prose_model())
