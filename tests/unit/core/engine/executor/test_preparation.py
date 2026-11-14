@@ -24,26 +24,26 @@ from loom.core.use_case.use_case import UseCase
 from .conftest import MakeExecutor
 from .doubles import (
     ALICE,
-    CreateUserCommand,
-    DocsSearchUseCase,
-    FullPipelineUseCase,
-    InputOnlyUseCase,
+    AcmeCreateUserCommand,
+    AcmeDocsSearchUseCase,
+    AcmeFullPipelineUseCase,
+    AcmeInputOnlyUseCase,
+    AcmeMcpOnlyUseCase,
+    AcmeMultiExistsUseCase,
+    AcmeMultiLoadUseCase,
+    AcmeNoMarkersUseCase,
+    AcmeNoMcpUseCase,
+    AcmeOrder,
+    AcmeParamsAndInputUseCase,
+    AcmeRenamedInputUseCase,
+    AcmeTwoServersUseCase,
+    AcmeUser,
+    AcmeWithExistsRaiseUseCase,
+    AcmeWithExistsUseCase,
+    AcmeWithLoadByFieldUseCase,
+    AcmeWithLoadFromCommandUseCase,
+    AcmeWithLoadUseCase,
     McpCalls,
-    McpOnlyUseCase,
-    MultiExistsUseCase,
-    MultiLoadUseCase,
-    NoMarkersUseCase,
-    NoMcpUseCase,
-    Order,
-    ParamsAndInputUseCase,
-    RenamedInputUseCase,
-    TwoServersUseCase,
-    User,
-    WithExistsRaiseUseCase,
-    WithExistsUseCase,
-    WithLoadByFieldUseCase,
-    WithLoadFromCommandUseCase,
-    WithLoadUseCase,
     fake_repo,
     mcp_resolver,
 )
@@ -54,18 +54,18 @@ class TestParameters:
 
     async def test_executes_and_returns_result(self, executor: RuntimeExecutor) -> None:
         result = await executor.execute(
-            NoMarkersUseCase(),
+            AcmeNoMarkersUseCase(),
             params={"value": 42},
         )
         assert result == "value=42"
 
     async def test_missing_param_raises(self, executor: RuntimeExecutor) -> None:
-        use_case = NoMarkersUseCase()
+        use_case = AcmeNoMarkersUseCase()
         with pytest.raises(ValueError, match="missing required parameter"):
             await executor.execute(use_case, params={})
 
     async def test_invalid_param_type_raises_binding_error(self, executor: RuntimeExecutor) -> None:
-        use_case = NoMarkersUseCase()
+        use_case = AcmeNoMarkersUseCase()
         with pytest.raises(ParameterBindingError, match="invalid value for parameter 'value'"):
             await executor.execute(use_case, params={"value": "not-an-int"})
 
@@ -75,19 +75,19 @@ class TestCommand:
 
     async def test_command_built_from_payload(self, executor: RuntimeExecutor) -> None:
         result = await executor.execute(
-            InputOnlyUseCase(),
+            AcmeInputOnlyUseCase(),
             payload={"email": "alice@corp.com", "name": "Alice"},
         )
         assert result == "alice@corp.com"
 
     async def test_missing_payload_raises(self, executor: RuntimeExecutor) -> None:
-        use_case = InputOnlyUseCase()
+        use_case = AcmeInputOnlyUseCase()
         with pytest.raises(ValueError, match="payload is required"):
             await executor.execute(use_case)
 
     async def test_params_and_input_together(self, executor: RuntimeExecutor) -> None:
         result = await executor.execute(
-            ParamsAndInputUseCase(),
+            AcmeParamsAndInputUseCase(),
             params={"tenant_id": "t-1"},
             payload={"email": "a@b.com", "name": "A"},
         )
@@ -106,7 +106,7 @@ class TestCommand:
         payload: dict[str, int],
         expected_price: int,
     ) -> None:
-        price, _ = await executor.execute(RenamedInputUseCase(), payload=payload)
+        price, _ = await executor.execute(AcmeRenamedInputUseCase(), payload=payload)
         assert price == expected_price
 
 
@@ -114,53 +114,53 @@ class TestLoads:
     """``LoadById()`` / ``Load()`` fetch an entity before ``execute()``."""
 
     async def test_entity_loaded_via_repo(self, executor: RuntimeExecutor) -> None:
-        user = User(id=1, email="loaded@corp.com")
+        user = AcmeUser(id=1, email="loaded@corp.com")
         repo = fake_repo(user)
 
         result = await executor.execute(
-            WithLoadUseCase(),
+            AcmeWithLoadUseCase(),
             params={"user_id": 1},
-            dependencies={User: repo},
+            dependencies={AcmeUser: repo},
         )
 
         repo.get_by_id.assert_awaited_once_with(1, profile="default")
         assert result == "loaded@corp.com"
 
     async def test_entity_loaded_by_field_via_repo(self, executor: RuntimeExecutor) -> None:
-        user = User(id=1, email="loaded@corp.com")
+        user = AcmeUser(id=1, email="loaded@corp.com")
         repo = fake_repo(user)
 
         result = await executor.execute(
-            WithLoadByFieldUseCase(),
+            AcmeWithLoadByFieldUseCase(),
             params={"email": "loaded@corp.com"},
-            dependencies={User: repo},
+            dependencies={AcmeUser: repo},
         )
 
         repo.get_by.assert_awaited_once_with("email", "loaded@corp.com", profile="default")
         assert result == "loaded@corp.com"
 
     async def test_entity_loaded_by_command_field_via_repo(self, executor: RuntimeExecutor) -> None:
-        user = User(id=1, email="loaded@corp.com")
+        user = AcmeUser(id=1, email="loaded@corp.com")
         repo = fake_repo(user)
 
         result = await executor.execute(
-            WithLoadFromCommandUseCase(),
+            AcmeWithLoadFromCommandUseCase(),
             payload={"email": "loaded@corp.com", "name": "Alice"},
-            dependencies={User: repo},
+            dependencies={AcmeUser: repo},
         )
 
         repo.get_by.assert_awaited_once_with("email", "loaded@corp.com", profile="default")
         assert result == "loaded@corp.com"
 
     async def test_load_override_skips_repo(self, executor: RuntimeExecutor) -> None:
-        user = User(id=7, email="override@corp.com")
+        user = AcmeUser(id=7, email="override@corp.com")
         repo = fake_repo(None)
 
         result = await executor.execute(
-            WithLoadUseCase(),
+            AcmeWithLoadUseCase(),
             params={"user_id": 7},
-            dependencies={User: repo},
-            load_overrides={User: user},
+            dependencies={AcmeUser: repo},
+            load_overrides={AcmeUser: user},
         )
 
         repo.get_by_id.assert_not_awaited()
@@ -169,19 +169,19 @@ class TestLoads:
     async def test_missing_entity_raises_not_found(self, executor: RuntimeExecutor) -> None:
         repo = fake_repo(None)
 
-        use_case = WithLoadUseCase()
+        use_case = AcmeWithLoadUseCase()
         with pytest.raises(NotFound) as exc_info:
             await executor.execute(
                 use_case,
                 params={"user_id": 99},
-                dependencies={User: repo},
+                dependencies={AcmeUser: repo},
             )
 
-        assert exc_info.value.entity == "User"
+        assert exc_info.value.entity == "AcmeUser"
         assert exc_info.value.id == 99
 
     async def test_no_dependencies_raises(self, executor: RuntimeExecutor) -> None:
-        use_case = WithLoadUseCase()
+        use_case = AcmeWithLoadUseCase()
         with pytest.raises(RuntimeError, match="No dependencies provided"):
             await executor.execute(
                 use_case,
@@ -189,7 +189,7 @@ class TestLoads:
             )
 
     async def test_missing_repo_type_raises(self, executor: RuntimeExecutor) -> None:
-        use_case = WithLoadUseCase()
+        use_case = AcmeWithLoadUseCase()
         with pytest.raises(RuntimeError, match="No repository registered"):
             await executor.execute(
                 use_case,
@@ -202,7 +202,7 @@ class TestLoads:
             raise RuntimeError("resolver exploded")
 
         executor = make_executor(repo_resolver=_resolver)
-        use_case = WithLoadUseCase()
+        use_case = AcmeWithLoadUseCase()
         with pytest.raises(RuntimeError, match="resolver exploded"):
             await executor.execute(use_case, params={"user_id": 1})
 
@@ -210,9 +210,11 @@ class TestLoads:
         self, make_executor: MakeExecutor
     ) -> None:
         executor = make_executor(repo_resolver=lambda entity_type: None)
-        use_case = WithLoadUseCase()
+        use_case = AcmeWithLoadUseCase()
 
-        with pytest.raises(RuntimeError, match="No repository registered for entity type 'User'"):
+        with pytest.raises(
+            RuntimeError, match="No repository registered for entity type 'AcmeUser'"
+        ):
             await executor.execute(use_case, params={"user_id": 1})
 
 
@@ -220,12 +222,12 @@ class TestExists:
     """``Exists()`` binds whether an entity is present."""
 
     async def test_exists_true_when_entity_is_present(self, executor: RuntimeExecutor) -> None:
-        repo = fake_repo(User(id=1, email="ok@corp.com"))
+        repo = fake_repo(AcmeUser(id=1, email="ok@corp.com"))
 
         result = await executor.execute(
-            WithExistsUseCase(),
+            AcmeWithExistsUseCase(),
             params={"email": "ok@corp.com"},
-            dependencies={User: repo},
+            dependencies={AcmeUser: repo},
         )
 
         repo.exists_by.assert_awaited_once_with("email", "ok@corp.com")
@@ -235,9 +237,9 @@ class TestExists:
         repo = fake_repo(None)
 
         result = await executor.execute(
-            WithExistsUseCase(),
+            AcmeWithExistsUseCase(),
             params={"email": "missing@corp.com"},
-            dependencies={User: repo},
+            dependencies={AcmeUser: repo},
         )
 
         assert result is False
@@ -245,12 +247,12 @@ class TestExists:
     async def test_exists_raise_on_missing(self, executor: RuntimeExecutor) -> None:
         repo = fake_repo(None)
 
-        use_case = WithExistsRaiseUseCase()
+        use_case = AcmeWithExistsRaiseUseCase()
         with pytest.raises(NotFound):
             await executor.execute(
                 use_case,
                 params={"email": "missing@corp.com"},
-                dependencies={User: repo},
+                dependencies={AcmeUser: repo},
             )
 
 
@@ -259,15 +261,15 @@ class TestSeveralFetches:
 
     async def test_two_independent_loads_both_resolved(self, executor: RuntimeExecutor) -> None:
         """Both LoadById steps resolve their entities regardless of order."""
-        user = User(id=1, email="a@b.com")
-        order = Order(id=99)
+        user = AcmeUser(id=1, email="a@b.com")
+        order = AcmeOrder(id=99)
         user_repo = fake_repo(user)
         order_repo = fake_repo(order)
 
         result = await executor.execute(
-            MultiLoadUseCase(),
+            AcmeMultiLoadUseCase(),
             params={"user_id": 1, "order_id": 99},
-            dependencies={User: user_repo, Order: order_repo},
+            dependencies={AcmeUser: user_repo, AcmeOrder: order_repo},
         )
 
         assert result == ("a@b.com", 99)
@@ -278,74 +280,77 @@ class TestSeveralFetches:
         self, executor: RuntimeExecutor
     ) -> None:
         """NotFound from one load propagates even when other load would succeed."""
-        order = Order(id=5)
+        order = AcmeOrder(id=5)
         user_repo = fake_repo(None)  # user not found
         order_repo = fake_repo(order)
 
-        use_case = MultiLoadUseCase()
+        use_case = AcmeMultiLoadUseCase()
         with pytest.raises(NotFound):
             await executor.execute(
                 use_case,
                 params={"user_id": 1, "order_id": 5},
-                dependencies={User: user_repo, Order: order_repo},
+                dependencies={AcmeUser: user_repo, AcmeOrder: order_repo},
             )
 
     async def test_two_independent_exists_both_resolved(self, executor: RuntimeExecutor) -> None:
         """Both Exists steps resolve and results are bound correctly."""
-        user = User(id=1, email="x@y.com")
-        order = Order(id=7)
+        user = AcmeUser(id=1, email="x@y.com")
+        order = AcmeOrder(id=7)
         user_repo = fake_repo(user)
         order_repo = fake_repo(order)
 
         result = await executor.execute(
-            MultiExistsUseCase(),
+            AcmeMultiExistsUseCase(),
             params={"email": "x@y.com", "order_id": 7},
-            dependencies={User: user_repo, Order: order_repo},
+            dependencies={AcmeUser: user_repo, AcmeOrder: order_repo},
         )
 
         assert result == (True, True)
 
-    async def test_gather_calls_repos_concurrently(self, executor: RuntimeExecutor) -> None:
-        """Verify both repos are called — concurrent or sequential, results correct."""
-
+    async def test_loads_run_one_after_another_in_declared_order(
+        self, executor: RuntimeExecutor
+    ) -> None:
+        """Each load is awaited before the next starts, even when its repository suspends."""
         call_order: list[str] = []
 
-        async def slow_user(obj_id: Any, *, profile: str = "default") -> User:
+        async def slow_user(obj_id: Any, *, profile: str = "default") -> AcmeUser:
+            call_order.append("user starts")
             await asyncio.sleep(0)
-            call_order.append("user")
-            return User(id=obj_id, email="u@u.com")
+            call_order.append("user ends")
+            return AcmeUser(id=obj_id, email="u@u.com")
 
-        async def slow_order(obj_id: Any, *, profile: str = "default") -> Order:
+        async def slow_order(obj_id: Any, *, profile: str = "default") -> AcmeOrder:
+            call_order.append("order starts")
             await asyncio.sleep(0)
-            call_order.append("order")
-            return Order(id=obj_id)
+            call_order.append("order ends")
+            return AcmeOrder(id=obj_id)
 
         user_repo = AsyncMock()
         user_repo.get_by_id = slow_user
         order_repo = AsyncMock()
         order_repo.get_by_id = slow_order
         result = await executor.execute(
-            MultiLoadUseCase(),
+            AcmeMultiLoadUseCase(),
             params={"user_id": 1, "order_id": 2},
-            dependencies={User: user_repo, Order: order_repo},
+            dependencies={AcmeUser: user_repo, AcmeOrder: order_repo},
         )
 
         assert result == ("u@u.com", 2)
-        assert set(call_order) == {"user", "order"}
+        assert call_order == ["user starts", "user ends", "order starts", "order ends"]
 
 
 class TestArguments:
     """Every step's result reaches ``execute()``."""
 
     async def test_kwargs_injected_correctly(self, executor: RuntimeExecutor) -> None:
-        user = User(id=5, email="user@corp.com")
-        uc = FullPipelineUseCase()
+        user = AcmeUser(id=5, email="user@corp.com")
+        uc = AcmeFullPipelineUseCase()
 
         result = await executor.execute(
             uc,
             params={"user_id": 5},
             payload={"email": "new@corp.com", "name": "Alice"},
-            dependencies={User: fake_repo(user)},
+            dependencies={AcmeUser: fake_repo(user)},
         )
 
         assert result.id == 5
@@ -363,7 +368,7 @@ class TestComputesAndRules:
         class TrackedUseCase(UseCase[Any, None]):
             computes = [lambda cmd, fs: type(cmd)(email="computed@corp.com", name=cmd.name)]
 
-            async def execute(self, cmd: CreateUserCommand = Input()) -> None:
+            async def execute(self, cmd: AcmeCreateUserCommand = Input()) -> None:
                 received.append(cmd.email)
 
         await executor.execute(
@@ -381,7 +386,7 @@ class TestComputesAndRules:
         class RuleUseCase(UseCase[Any, None]):
             rules = [bad_rule]
 
-            async def execute(self, cmd: CreateUserCommand = Input()) -> None:
+            async def execute(self, cmd: AcmeCreateUserCommand = Input()) -> None:
                 called.append(True)
 
         use_case = RuleUseCase()
@@ -405,7 +410,7 @@ class TestComputesAndRules:
         class MultiRuleUseCase(UseCase[Any, None]):
             rules = [rule_a, rule_b]
 
-            async def execute(self, cmd: CreateUserCommand = Input()) -> None:
+            async def execute(self, cmd: AcmeCreateUserCommand = Input()) -> None:
                 pass
 
         use_case = MultiRuleUseCase()
@@ -428,7 +433,7 @@ class TestComputesAndRules:
             computes = [lambda cmd, fs: type(cmd)(email="enriched@corp.com", name=cmd.name)]
             rules = [capture_rule]
 
-            async def execute(self, cmd: CreateUserCommand = Input()) -> None:
+            async def execute(self, cmd: AcmeCreateUserCommand = Input()) -> None:
                 pass
 
         await executor.execute(
@@ -452,7 +457,7 @@ class TestMcpMarker:
     async def test_the_resolved_handle_is_bound_to_the_verified_caller(
         self, mcp_executor: RuntimeExecutor, mcp_calls: McpCalls
     ) -> None:
-        subject, server = await mcp_executor.execute(DocsSearchUseCase(), identity=ALICE)
+        subject, server = await mcp_executor.execute(AcmeDocsSearchUseCase(), identity=ALICE)
 
         assert subject == "acme-alice"
         assert server == "docs-server"
@@ -461,7 +466,7 @@ class TestMcpMarker:
     async def test_several_mcp_markers_each_resolve_their_own_server(
         self, mcp_executor: RuntimeExecutor, mcp_calls: McpCalls
     ) -> None:
-        result = await mcp_executor.execute(TwoServersUseCase(), identity=ALICE)
+        result = await mcp_executor.execute(AcmeTwoServersUseCase(), identity=ALICE)
 
         assert result == "docs-server:billing-server"
         assert mcp_calls == [
@@ -473,7 +478,7 @@ class TestMcpMarker:
         self, mcp_executor: RuntimeExecutor, mcp_calls: McpCalls
     ) -> None:
         """Binding succeeds even for ANONYMOUS: the handle itself refuses it, not the executor."""
-        subject, _ = await mcp_executor.execute(DocsSearchUseCase(), identity=ANONYMOUS)
+        subject, _ = await mcp_executor.execute(AcmeDocsSearchUseCase(), identity=ANONYMOUS)
 
         assert subject == ""
         assert mcp_calls == [("docs-server", ("search",), ANONYMOUS)]
@@ -481,9 +486,9 @@ class TestMcpMarker:
     async def test_a_missing_identity_is_refused_instead_of_defaulted(
         self, mcp_executor: RuntimeExecutor
     ) -> None:
-        use_case = DocsSearchUseCase()
+        use_case = AcmeDocsSearchUseCase()
 
-        with pytest.raises(Unauthenticated, match="DocsSearchUseCase"):
+        with pytest.raises(Unauthenticated, match="AcmeDocsSearchUseCase"):
             await mcp_executor.execute(use_case)
 
     async def test_a_missing_identity_is_refused_by_the_mcp_step_itself(
@@ -491,13 +496,13 @@ class TestMcpMarker:
     ) -> None:
         """Pins the ``Mcp()`` step's own guard, unshadowed by the ``Caller()`` step's.
 
-        ``DocsSearchUseCase`` also declares ``Caller()``, so its own missing-identity
+        ``AcmeDocsSearchUseCase`` also declares ``Caller()``, so its own missing-identity
         test above is refused before the ``Mcp()`` step runs at all.
-        ``McpOnlyUseCase`` declares no ``Caller()``, so this is the one that reaches it.
+        ``AcmeMcpOnlyUseCase`` declares no ``Caller()``, so this is the one that reaches it.
         """
-        use_case = McpOnlyUseCase()
+        use_case = AcmeMcpOnlyUseCase()
 
-        with pytest.raises(Unauthenticated, match=r"McpOnlyUseCase.*Mcp\(\) parameter"):
+        with pytest.raises(Unauthenticated, match=r"AcmeMcpOnlyUseCase.*Mcp\(\) parameter"):
             await mcp_executor.execute(use_case)
 
         assert mcp_calls == []
@@ -505,7 +510,7 @@ class TestMcpMarker:
     async def test_no_resolver_bound_fails_with_a_named_error(
         self, executor: RuntimeExecutor
     ) -> None:
-        use_case = DocsSearchUseCase()
+        use_case = AcmeDocsSearchUseCase()
 
         with pytest.raises(RuntimeError, match="bind_mcp_resolver"):
             await executor.execute(use_case, identity=ALICE)
@@ -519,7 +524,7 @@ class TestMcpMarker:
     async def test_a_use_case_with_no_mcp_marker_never_calls_the_resolver(
         self, mcp_executor: RuntimeExecutor, mcp_calls: McpCalls
     ) -> None:
-        result = await mcp_executor.execute(NoMcpUseCase(), identity=ALICE)
+        result = await mcp_executor.execute(AcmeNoMcpUseCase(), identity=ALICE)
 
         assert result == "no servers here"
         assert mcp_calls == []
@@ -528,7 +533,7 @@ class TestMcpMarker:
         self, mcp_executor: RuntimeExecutor
     ) -> None:
         """A plan with no ``Mcp()`` compiles no ``Mcp()`` step, so it demands no identity."""
-        result = await mcp_executor.execute(NoMcpUseCase())
+        result = await mcp_executor.execute(AcmeNoMcpUseCase())
 
         assert result == "no servers here"
 

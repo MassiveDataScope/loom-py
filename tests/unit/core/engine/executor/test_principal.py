@@ -30,11 +30,11 @@ from .doubles import (
     BUILDING,
     TICKET,
     AcmeAnyone,
+    AcmeAsCaller,
     AcmeNests,
+    AcmeStores,
     AcmeTampers,
     AcmeWho,
-    AsCaller,
-    Stores,
     ambient_now,
     channel_now,
     identity_now,
@@ -144,13 +144,13 @@ class TestATaskOutlivingItsExecution:
         return start
 
     async def test_runs_a_use_case_as_the_given_identity_in_its_own_execution(
-        self, outliving: Outliving, stores: Stores, executor: RuntimeExecutor
+        self, outliving: Outliving, stores: AcmeStores, executor: RuntimeExecutor
     ) -> None:
         seen: list[object] = []
 
         task = await outliving(
             executor,
-            lambda: executor.run(AsCaller, factory=BUILDING, identity=ANA),
+            lambda: executor.run(AcmeAsCaller, factory=BUILDING, identity=ANA),
             inside=lambda: (TICKET(), current_scope()),
             seen=seen,
         )

@@ -3,8 +3,8 @@
 :class:`~loom.core.engine.executor.RuntimeExecutor` runs an execution as the
 identity it is given, else as the caller of the execution enclosing it
 (:func:`inherited`, NS2), else as no one. A task that outlived the execution
-it was started in runs as at top level (:func:`top_level`): nothing of the
-departed caller survives into the execution it starts.
+it was started in runs as at top level (:func:`top_level`): the departed
+caller's identity does not survive into the execution it starts.
 """
 
 from __future__ import annotations
@@ -13,11 +13,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from loom.core.engine.post_commit import bind_channel, reset_channel
 from loom.core.errors import NestedIdentityMismatch
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
-from loom.core.uow.scope import unscoped
 
 
 def inherited(use_case: type[Any]) -> Identity | None:
@@ -46,18 +44,16 @@ def inherited(use_case: type[Any]) -> Identity | None:
 
 @contextmanager
 def top_level(identity: Identity | None) -> Iterator[None]:
-    """Hide what a departed execution left in this task, for one execution started from it.
+    """Run one execution started by a task that outlived its own as *identity*, else as no one.
 
-    No invocation scope, no post-commit channel, and the ambient identity
-    *identity*, else :data:`~loom.core.identity.ANONYMOUS`: nothing of the
-    departed caller survives. Its execution context needs no hiding: an
-    ended one is no execution (:func:`~loom.core.execution.current_execution`).
+    The ambient identity becomes *identity*, else
+    :data:`~loom.core.identity.ANONYMOUS`: the departed caller's never
+    survives. Its execution context needs no hiding: an ended one is no
+    execution (:func:`~loom.core.execution.current_execution`). Its scope and
+    channel are hidden by :func:`~loom.core.engine.boundaries.detached`.
     """
     identity_token = set_identity(ANONYMOUS if identity is None else identity)
-    channel_token = bind_channel(None)
     try:
-        with unscoped():
-            yield
+        yield
     finally:
-        reset_channel(channel_token)
         reset_identity(identity_token)

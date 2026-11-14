@@ -99,7 +99,8 @@ class Preparation:
         self._kinds = kinds
         self._repo_resolver = repo_resolver
         self._observer = observer
-        # One entry per use-case class this executor ran, for its lifetime (classes live as long).
+        # Keeps every use-case class this executor ran alive for the executor's lifetime: fine
+        # for classes defined statically, a leak for classes created per request.
         self._tables: dict[type[Any], _Steps] = {}
 
     async def call(

@@ -30,13 +30,13 @@ from .doubles import (
     ALICE,
     JOURNAL,
     AcmeAssistant,
+    AcmeEveryInputUseCase,
+    AcmeOrder,
     AcmeProbe,
+    AcmeRecordingLogger,
     AcmeSession,
     AcmeSettings,
-    EveryInputUseCase,
-    Order,
-    RecordingLogger,
-    User,
+    AcmeUser,
     fake_repo,
     refusing_builder,
     serves_session,
@@ -82,30 +82,30 @@ class TestRun:
     async def test_builds_the_use_case_through_the_factory_and_forwards_every_argument(
         self,
     ) -> None:
-        instance = EveryInputUseCase()
+        instance = AcmeEveryInputUseCase()
         factory = MagicMock()
         factory.build = MagicMock(return_value=instance)
         stores = StubUnitOfWorkFactory(Log())
         executor = RuntimeExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: stores}),
-            logger=RecordingLogger(),
+            logger=AcmeRecordingLogger(),
         )
-        loaded = User(id=1, email="u@u.com")
-        order_repo = fake_repo(Order(id=7))
+        loaded = AcmeUser(id=1, email="u@u.com")
+        order_repo = fake_repo(AcmeOrder(id=7))
 
         result = await executor.run(
-            EveryInputUseCase,
+            AcmeEveryInputUseCase,
             factory=factory,
             params={"user_id": 1, "order_id": 7},
             payload={"email": "a@b.com"},
-            dependencies={Order: order_repo},
-            load_overrides={User: loaded},
+            dependencies={AcmeOrder: order_repo},
+            load_overrides={AcmeUser: loaded},
             read_only=True,
             identity=ANONYMOUS,
         )
 
-        factory.build.assert_called_once_with(EveryInputUseCase)
+        factory.build.assert_called_once_with(AcmeEveryInputUseCase)
         user_id, email, user, order_exists, caller, read_only = result
         assert (user_id, email, user, order_exists, caller) == (
             1,
@@ -196,7 +196,7 @@ class TestExecute:
                 return f"value={value}"
 
         compiler = UseCaseCompiler()
-        ex = RuntimeExecutor(compiler, logger=RecordingLogger())
+        ex = RuntimeExecutor(compiler, logger=AcmeRecordingLogger())
 
         # Execute twice — _build_plan should only be called once
         with patch.object(compiler, "_build_plan", wraps=compiler._build_plan) as mock_build:

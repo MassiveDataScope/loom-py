@@ -52,13 +52,13 @@ BOB = Identity(subject="acme-bob", mechanism="test")
 # ---------------------------------------------------------------------------
 
 
-class RecordingLogger:
+class AcmeRecordingLogger:
     """A logger keeping every message it is given, without fields."""
 
     def __init__(self) -> None:
         self.messages: list[str] = []
 
-    def bind(self, **fields: Any) -> RecordingLogger:
+    def bind(self, **fields: Any) -> AcmeRecordingLogger:
         return self
 
     def debug(self, event: str, **fields: Any) -> None:
@@ -77,13 +77,13 @@ class RecordingLogger:
         self.messages.append(event)
 
 
-class ErrorRecorder:
+class AcmeErrorRecorder:
     """A logger keeping each error line it is given, with its fields."""
 
     def __init__(self) -> None:
         self.errors: list[tuple[str, dict[str, Any]]] = []
 
-    def bind(self, **fields: Any) -> ErrorRecorder:
+    def bind(self, **fields: Any) -> AcmeErrorRecorder:
         return self
 
     def debug(self, event: str, **fields: Any) -> None: ...
@@ -99,7 +99,7 @@ class ErrorRecorder:
         self.errors.append((event, fields))
 
 
-class Journal:
+class AcmeJournal:
     """What happened, in order: constructors, executions and runtime events."""
 
     def __init__(self) -> None:
@@ -109,10 +109,10 @@ class Journal:
         self.entries.append(event.kind.name)
 
 
-JOURNAL = Journal()
+JOURNAL = AcmeJournal()
 
 
-class SlowStart:
+class AcmeSlowStart:
     """A metrics adapter slow on ``EXEC_START``; keeps the ``EXEC_DONE`` duration."""
 
     DELAY_S = 0.02
@@ -185,7 +185,7 @@ class AcmeBrokenJob(Job[None]):
         return None
 
 
-class OnFailure:
+class AcmeOnFailure:
     """A job failure callback recording each message it is given."""
 
     calls: list[str] = []
@@ -211,7 +211,7 @@ def session_factory() -> UseCaseFactory:
     return built
 
 
-class TracedUseCase(UseCase[object, str]):
+class AcmeTracedUseCase(UseCase[object, str]):
     async def execute(self) -> str:
         return "ok"
 
@@ -287,7 +287,7 @@ class AcmeTicket:
 TICKET = per_execution(AcmeTicket, AcmeTicket)
 
 
-class AsCaller(UseCase[Any, Any]):
+class AcmeAsCaller(UseCase[Any, Any]):
     """Reports who it runs as, its per-execution ticket and its scope."""
 
     def __init__(self) -> None:
@@ -297,14 +297,14 @@ class AsCaller(UseCase[Any, Any]):
         return execution_identity(), self._ticket, current_scope()
 
 
-class Building:
+class AcmeBuilding:
     """A factory building a use case with no dependencies."""
 
     def build(self, cls: type[Any]) -> Any:
         return cls()
 
 
-BUILDING = cast(UseCaseFactory, Building())
+BUILDING = cast(UseCaseFactory, AcmeBuilding())
 
 
 async def identity_now() -> Any:
@@ -333,7 +333,7 @@ def done(value: Any = "ok") -> Body:
 AUDIT = StoreKey("audit")
 
 
-class Stores:
+class AcmeStores:
     """A unit-of-work factory handing out a fresh phased store per invocation."""
 
     def __init__(self, ledger: Ledger, fault: Any = None) -> None:
@@ -351,7 +351,7 @@ class Stores:
         return self.created[-1]
 
 
-class NonTransactionalStores:
+class AcmeNonTransactionalStores:
     def create(self) -> UnitOfWork:
         return cast(UnitOfWork, NonTransactionalStore(DEFAULT_STORE, Ledger()))
 
@@ -362,7 +362,7 @@ def scope_now() -> InvocationScope:
     return scope
 
 
-def write(stores: Stores, row: str) -> None:
+def write(stores: AcmeStores, row: str) -> None:
     """Write ``row`` through the default store the way a repository will (PR 3)."""
     scope_now().participant_for(DEFAULT_STORE, stores.last.owner, write=True)
     stores.last.write(row)
@@ -384,17 +384,17 @@ async def write_joined(store: PhasedStore, row: str) -> None:
         store.write(row)
 
 
-class AuditEntry(BaseModel):
+class AcmeAuditEntry(BaseModel):
     __tablename__ = "executor_scope_audit_entries"
     __store__ = "audit"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-class Audited(Run):
+class AcmeAudited(Run):
     """Declares ``Joined`` on ``audit``; compiled on its first execution, not at startup."""
 
-    def __init__(self, body: Body, entries: Joined[RepoFor[AuditEntry]]) -> None:
+    def __init__(self, body: Body, entries: Joined[RepoFor[AcmeAuditEntry]]) -> None:
         super().__init__(body)
         self.entries = entries
 
@@ -409,13 +409,13 @@ BOUNDARY = Scope.of("b1")
 DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=BOUNDARY))
 
 
-class Elevating(UseCase[Any, list[str]]):
+class AcmeElevating(UseCase[Any, list[str]]):
     async def execute(self, value: str) -> list[str]:
         await elevate_scope("editor", DECISION, at=BOUNDARY, permission=WRITE, catalog=CATALOG)
         return sorted(elevated_scopes())
 
 
-class SeesElevation(PhasedStore):
+class AcmeSeesElevation(PhasedStore):
     """Records the elevated scopes visible when the coordinator flushes and commits.
 
     The session-settings provider reads them in ``after_begin``, and a
@@ -440,27 +440,27 @@ class SeesElevation(PhasedStore):
 # ---------------------------------------------------------------------------
 
 
-class CreateUserCommand(Command, frozen=True):
+class AcmeCreateUserCommand(Command, frozen=True):
     email: str
     name: str
 
 
-class UpdateUserCommand(Command, frozen=True):
+class AcmeUpdateUserCommand(Command, frozen=True):
     email: str
 
 
-class User:
+class AcmeUser:
     def __init__(self, id: int, email: str) -> None:
         self.id = id
         self.email = email
 
 
-class Order:
+class AcmeOrder:
     def __init__(self, id: int) -> None:
         self.id = id
 
 
-class UserResult:
+class AcmeUserResult:
     def __init__(self, id: int) -> None:
         self.id = id
 
@@ -473,77 +473,77 @@ def fake_repo(entity: Any | None) -> Any:
     return repo
 
 
-class NoMarkersUseCase(UseCase[Any, str]):
+class AcmeNoMarkersUseCase(UseCase[Any, str]):
     async def execute(self, value: int) -> str:
         return f"value={value}"
 
 
-class InputOnlyUseCase(UseCase[Any, str]):
-    async def execute(self, cmd: CreateUserCommand = Input()) -> str:
+class AcmeInputOnlyUseCase(UseCase[Any, str]):
+    async def execute(self, cmd: AcmeCreateUserCommand = Input()) -> str:
         return cmd.email
 
 
-class RenamedInputStruct(Command, frozen=True, rename="camel"):
+class AcmeRenamedInputStruct(Command, frozen=True, rename="camel"):
     price_cents: int
     stock: int
 
 
-class RenamedInputUseCase(UseCase[Any, tuple[int, frozenset[str]]]):
-    async def execute(self, cmd: RenamedInputStruct = Input()) -> tuple[int, frozenset[str]]:
+class AcmeRenamedInputUseCase(UseCase[Any, tuple[int, frozenset[str]]]):
+    async def execute(self, cmd: AcmeRenamedInputStruct = Input()) -> tuple[int, frozenset[str]]:
         return cmd.price_cents, frozenset({"price_cents", "stock"})
 
 
-class ParamsAndInputUseCase(UseCase[Any, UserResult]):
+class AcmeParamsAndInputUseCase(UseCase[Any, AcmeUserResult]):
     async def execute(
         self,
         tenant_id: str,
-        cmd: CreateUserCommand = Input(),
-    ) -> UserResult:
-        return UserResult(id=99)
+        cmd: AcmeCreateUserCommand = Input(),
+    ) -> AcmeUserResult:
+        return AcmeUserResult(id=99)
 
 
-class WithLoadUseCase(UseCase[Any, str]):
+class AcmeWithLoadUseCase(UseCase[Any, str]):
     async def execute(
         self,
         user_id: int,
-        user: User = LoadById(User, by="user_id"),
+        user: AcmeUser = LoadById(AcmeUser, by="user_id"),
     ) -> str:
         return user.email
 
 
-class WithLoadByFieldUseCase(UseCase[Any, str]):
+class AcmeWithLoadByFieldUseCase(UseCase[Any, str]):
     async def execute(
         self,
         email: str,
-        user: User = Load(User, from_param="email", against="email"),
+        user: AcmeUser = Load(AcmeUser, from_param="email", against="email"),
     ) -> str:
         return user.email
 
 
-class WithLoadFromCommandUseCase(UseCase[Any, str]):
+class AcmeWithLoadFromCommandUseCase(UseCase[Any, str]):
     async def execute(
         self,
-        cmd: CreateUserCommand = Input(),
-        user: User = Load(User, from_command="email", against="email"),
+        cmd: AcmeCreateUserCommand = Input(),
+        user: AcmeUser = Load(AcmeUser, from_command="email", against="email"),
     ) -> str:
         return user.email
 
 
-class WithExistsUseCase(UseCase[Any, bool]):
+class AcmeWithExistsUseCase(UseCase[Any, bool]):
     async def execute(
         self,
         email: str,
-        user_exists: bool = Exists(User, from_param="email", against="email"),
+        user_exists: bool = Exists(AcmeUser, from_param="email", against="email"),
     ) -> bool:
         return user_exists
 
 
-class WithExistsRaiseUseCase(UseCase[Any, bool]):
+class AcmeWithExistsRaiseUseCase(UseCase[Any, bool]):
     async def execute(
         self,
         email: str,
         user_exists: bool = Exists(
-            User,
+            AcmeUser,
             from_param="email",
             against="email",
             on_missing=OnMissing.RAISE,
@@ -552,58 +552,58 @@ class WithExistsRaiseUseCase(UseCase[Any, bool]):
         return user_exists
 
 
-class FullPipelineUseCase(UseCase[Any, UserResult]):
+class AcmeFullPipelineUseCase(UseCase[Any, AcmeUserResult]):
     def __init__(self) -> None:
-        self.received_user: User | None = None
-        self.received_cmd: CreateUserCommand | None = None
+        self.received_user: AcmeUser | None = None
+        self.received_cmd: AcmeCreateUserCommand | None = None
 
     async def execute(
         self,
         user_id: int,
-        cmd: CreateUserCommand = Input(),
-        user: User = LoadById(User, by="user_id"),
-    ) -> UserResult:
+        cmd: AcmeCreateUserCommand = Input(),
+        user: AcmeUser = LoadById(AcmeUser, by="user_id"),
+    ) -> AcmeUserResult:
         self.received_user = user
         self.received_cmd = cmd
-        return UserResult(id=user_id)
+        return AcmeUserResult(id=user_id)
 
 
-class MultiLoadUseCase(UseCase[Any, tuple[str, int]]):
+class AcmeMultiLoadUseCase(UseCase[Any, tuple[str, int]]):
     """Two independent LoadById steps on different entity types."""
 
     async def execute(
         self,
         user_id: int,
         order_id: int,
-        user: User = LoadById(User, by="user_id"),
-        order: Order = LoadById(Order, by="order_id"),
+        user: AcmeUser = LoadById(AcmeUser, by="user_id"),
+        order: AcmeOrder = LoadById(AcmeOrder, by="order_id"),
     ) -> tuple[str, int]:
         return user.email, order.id
 
 
-class MultiExistsUseCase(UseCase[Any, tuple[bool, bool]]):
+class AcmeMultiExistsUseCase(UseCase[Any, tuple[bool, bool]]):
     """Two independent Exists steps on different entity types."""
 
     async def execute(
         self,
         email: str,
         order_id: int,
-        user_exists: bool = Exists(User, from_param="email", against="email"),
-        order_exists: bool = Exists(Order, from_param="order_id", against="id"),
+        user_exists: bool = Exists(AcmeUser, from_param="email", against="email"),
+        order_exists: bool = Exists(AcmeOrder, from_param="order_id", against="id"),
     ) -> tuple[bool, bool]:
         return user_exists, order_exists
 
 
-class EveryInputUseCase(UseCase[Any, tuple[Any, ...]]):
+class AcmeEveryInputUseCase(UseCase[Any, tuple[Any, ...]]):
     """Returns everything it was handed, and whether it runs read-only."""
 
     async def execute(
         self,
         user_id: int,
         order_id: int,
-        cmd: UpdateUserCommand = Input(),
-        user: User = LoadById(User, by="user_id"),
-        order_exists: bool = Exists(Order, from_param="order_id", against="id"),
+        cmd: AcmeUpdateUserCommand = Input(),
+        user: AcmeUser = LoadById(AcmeUser, by="user_id"),
+        order_exists: bool = Exists(AcmeOrder, from_param="order_id", against="id"),
         caller: Identity = Caller(),
     ) -> tuple[Any, ...]:
         scope = current_scope()
@@ -618,7 +618,7 @@ class EveryInputUseCase(UseCase[Any, tuple[Any, ...]]):
 McpCalls = list[tuple[str, tuple[str, ...], Identity]]
 
 
-class FakeMcpHandle:
+class AcmeMcpHandle:
     """Stands in for an ``McpHandle`` without pulling in the AI pillar."""
 
     def __init__(self, server: str, include: tuple[str, ...], identity: Identity) -> None:
@@ -628,14 +628,14 @@ class FakeMcpHandle:
 
 
 def mcp_resolver(calls: McpCalls) -> Any:
-    def resolve(server: str, include: tuple[str, ...], identity: Identity) -> FakeMcpHandle:
+    def resolve(server: str, include: tuple[str, ...], identity: Identity) -> AcmeMcpHandle:
         calls.append((server, include, identity))
-        return FakeMcpHandle(server, include, identity)
+        return AcmeMcpHandle(server, include, identity)
 
     return resolve
 
 
-class DocsSearchUseCase(UseCase[object, tuple[str, str]]):
+class AcmeDocsSearchUseCase(UseCase[object, tuple[str, str]]):
     """Declares one Mcp() marker alongside the caller."""
 
     async def execute(
@@ -646,7 +646,7 @@ class DocsSearchUseCase(UseCase[object, tuple[str, str]]):
         return caller.subject, docs.server
 
 
-class TwoServersUseCase(UseCase[object, str]):
+class AcmeTwoServersUseCase(UseCase[object, str]):
     """Two distinct named MCP servers in one signature."""
 
     async def execute(
@@ -657,14 +657,14 @@ class TwoServersUseCase(UseCase[object, str]):
         return f"{first.server}:{second.server}"
 
 
-class McpOnlyUseCase(UseCase[object, str]):
+class AcmeMcpOnlyUseCase(UseCase[object, str]):
     """Declares Mcp() and no Caller(): its refusal can only come from the Mcp() step."""
 
     async def execute(self, docs: Any = Mcp("docs-server", include=["search"])) -> str:
         return docs.server
 
 
-class NoMcpUseCase(UseCase[object, str]):
+class AcmeNoMcpUseCase(UseCase[object, str]):
     """Declares no Mcp() marker at all."""
 
     async def execute(self) -> str:

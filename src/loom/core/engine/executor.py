@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from loom.core.authz.elevation import ElevationSink
-from loom.core.engine.boundaries import Boundaries
+from loom.core.engine.boundaries import Boundaries, detached
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.kinds import AGENT, MCP
@@ -396,11 +396,12 @@ class RuntimeExecutor:
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level
-        (:func:`~loom.core.engine.principal.top_level`).
+        (:func:`~loom.core.engine.principal.top_level`), out of that
+        execution's scope and channel (:func:`~loom.core.engine.boundaries.detached`).
         """
         scope = current_scope()
         if scope is not None and scope.closed:
-            with top_level(identity):
+            with top_level(identity), detached():
                 return await self._execute(plan, build, target, inputs, identity, read_only)
         if identity is None:
             identity = inherited(plan.use_case_type)

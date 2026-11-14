@@ -17,7 +17,14 @@ from loom.core.use_case.factory import UseCaseFactory
 
 from ...uow._coordinator_fakes import Ledger
 from .._lifecycle_doubles import Metrics
-from .doubles import JOURNAL, McpCalls, RecordingLogger, Stores, mcp_resolver, session_factory
+from .doubles import (
+    JOURNAL,
+    AcmeRecordingLogger,
+    AcmeStores,
+    McpCalls,
+    mcp_resolver,
+    session_factory,
+)
 
 MakeExecutor = Callable[..., RuntimeExecutor]
 
@@ -36,7 +43,7 @@ def make_executor() -> MakeExecutor:
     """An executor reporting its events to ``JOURNAL`` and logging to a recorder, by default."""
 
     def make(**options: Any) -> RuntimeExecutor:
-        defaults: dict[str, Any] = {"logger": RecordingLogger(), "metrics": JOURNAL}
+        defaults: dict[str, Any] = {"logger": AcmeRecordingLogger(), "metrics": JOURNAL}
         return RuntimeExecutor(UseCaseCompiler(), **{**defaults, **options})
 
     return make
@@ -48,8 +55,8 @@ def executor(make_executor: MakeExecutor) -> RuntimeExecutor:
 
 
 @pytest.fixture
-def logger() -> RecordingLogger:
-    return RecordingLogger()
+def logger() -> AcmeRecordingLogger:
+    return AcmeRecordingLogger()
 
 
 @pytest.fixture
@@ -69,12 +76,12 @@ def ledger() -> Ledger:
 
 
 @pytest.fixture
-def stores(ledger: Ledger) -> Stores:
-    return Stores(ledger)
+def stores(ledger: Ledger) -> AcmeStores:
+    return AcmeStores(ledger)
 
 
 @pytest.fixture
-def transactional_executor(stores: Stores, metrics: Metrics) -> RuntimeExecutor:
+def transactional_executor(stores: AcmeStores, metrics: Metrics) -> RuntimeExecutor:
     """An executor whose top-level writers open an invocation scope over ``stores``."""
     return RuntimeExecutor(
         UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics

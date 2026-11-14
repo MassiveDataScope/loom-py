@@ -1,6 +1,6 @@
 """The unit of work one execution runs in, and the post-commit actions it settles.
 
-An execution runs in exactly one of three boundaries, chosen by
+An execution runs in exactly one of four boundaries, chosen by
 :meth:`Boundaries.of` from the invocation scope it finds and whether it
 writes:
 
@@ -8,8 +8,9 @@ writes:
   invocation scope, commits it on success and rolls it back on any
   exception, cancellation included.
 - :class:`Joined`: a writer inside this task's scope pushes its frame on it
-  and never commits; with no scope and no coordinator it runs with no unit
-  of work.
+  and never commits.
+- :class:`Unmanaged`: a writer at top level with no coordinator runs with no
+  unit of work.
 - :class:`ReadOnly`: an execution writing to no store pushes a read-only
   frame on the scope of the task that owns it, else opens a read-only
   invocation of its own.
@@ -19,13 +20,17 @@ store that owns them and, once the scope has closed, run on the
 :class:`~loom.core.engine.post_commit.PostCommitChannel` of the execution
 that owns the scope as that store's outcome allows (or on the outermost
 execution's channel when there is no scope).
+
+A task that outlived the execution it was started in finds that
+execution's scope and channel still set; :func:`detached` hides both from
+the execution it starts.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 
@@ -68,9 +73,17 @@ class Owned:
 
 @dataclass(frozen=True, slots=True)
 class Joined:
-    """A writer that pushes its frame on ``scope``, this task's; no unit of work when ``None``."""
+    """A writer that pushes its frame on ``scope``, this task's, and never commits."""
 
-    scope: InvocationScope | None
+    scope: InvocationScope
+    owns_transaction: ClassVar[bool] = False
+    read_only: ClassVar[bool] = False
+
+
+@dataclass(frozen=True, slots=True)
+class Unmanaged:
+    """A writer at top level with no coordinator: no unit of work."""
+
     owns_transaction: ClassVar[bool] = False
     read_only: ClassVar[bool] = False
 
@@ -84,7 +97,9 @@ class ReadOnly:
     read_only: ClassVar[bool] = True
 
 
-Boundary: TypeAlias = Owned | Joined | ReadOnly
+_UNMANAGED = Unmanaged()
+
+Boundary: TypeAlias = Owned | Joined | Unmanaged | ReadOnly
 
 
 class Boundaries:
@@ -97,19 +112,22 @@ class Boundaries:
             transaction grants.
     """
 
-    __slots__ = ("_coordinator", "_owned", "_sink")
+    __slots__ = ("_coordinator", "_sink", "_top_level")
 
     def __init__(self, coordinator: Coordinator | None, elevation_sink: ElevationSink | None):
         self._coordinator = coordinator
-        self._owned = None if coordinator is None else Owned(coordinator)
+        # Preallocated: the common top-level writer allocates no boundary.
+        self._top_level: Owned | Unmanaged = (
+            _UNMANAGED if coordinator is None else Owned(coordinator)
+        )
         self._sink = elevation_sink
 
     def of(self, scope: InvocationScope | None, read_only: bool) -> Boundary:
         """The boundary of an execution finding *scope* published, writing unless *read_only*."""
         if read_only:
             return ReadOnly(scope)
-        if scope is None and self._owned is not None:
-            return self._owned
+        if scope is None:
+            return self._top_level
         return Joined(scope)
 
     async def run(
@@ -159,9 +177,9 @@ class Boundaries:
         match boundary:
             case Owned(coordinator):
                 return await _commit(coordinator, plan, attempt, channel, work)
-            case Joined(InvocationScope() as scope):
+            case Joined(scope):
                 return await _in_frame(scope, plan, work)
-            case Joined():
+            case Unmanaged():
                 return await work()
             case ReadOnly(scope):
                 async with self._read_only_frame(scope):
@@ -182,6 +200,21 @@ class Boundaries:
         with nullcontext() if scope is None else unscoped():
             async with invocation(coordinator, read_only=True) as own, own.frame(_READ_ONLY):
                 yield
+
+
+@contextmanager
+def detached() -> Iterator[None]:
+    """Hide the invocation scope and post-commit channel a departed execution left in this task.
+
+    For the one execution a task that outlived its execution starts: it
+    joins no scope and drains on no channel of the departed one.
+    """
+    channel_token = bind_channel(None)
+    try:
+        with unscoped():
+            yield
+    finally:
+        reset_channel(channel_token)
 
 
 class _Channel:
