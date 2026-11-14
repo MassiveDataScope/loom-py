@@ -38,7 +38,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
-from tests.unit.rest.doubles import compile_use_cases
+from tests.helpers.ai import declared_markers
 
 
 def _plan(name: str, *, output_type: type[Any] = dict) -> AgentPlan:
@@ -93,19 +93,17 @@ class AcmeAgentUseCaseWithoutMarker(UseCase[object, object]):
 
 class TestUseCaseWithoutAnAgentMarker:
     def test_no_ai_section_and_no_markers_does_not_fail(self) -> None:
-        compiler, registry = compile_use_cases(AcmeAgentUseCaseWithoutMarker)
         ai = AiWiring(config=None, runtime=None)
 
-        verify_agent_markers((AcmeAgentUseCaseWithoutMarker,), compiler, registry, ai)  # no raise
+        verify_agent_markers(declared_markers(AcmeAgentUseCaseWithoutMarker).agents, ai)  # no raise
 
 
 class TestUnknownAgent:
     def test_an_unknown_agent_name_aborts_startup(self) -> None:
-        compiler, registry = compile_use_cases(UnknownAgentUseCase)
         ai = AiWiring(config=None, runtime=None, plans=(_plan("triage"),))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((UnknownAgentUseCase,), compiler, registry, ai)
+            verify_agent_markers(declared_markers(UnknownAgentUseCase).agents, ai)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_UNKNOWN}
@@ -114,41 +112,38 @@ class TestUnknownAgent:
         assert "triage" in message
 
     def test_without_an_ai_section_the_message_says_there_are_no_agents(self) -> None:
-        compiler, registry = compile_use_cases(UnknownAgentUseCase)
         ai = AiWiring(config=None, runtime=None)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((UnknownAgentUseCase,), compiler, registry, ai)
+            verify_agent_markers(declared_markers(UnknownAgentUseCase).agents, ai)
 
         assert "none" in str(excinfo.value)
 
 
 class TestMismatchedAgentOutput:
     def test_an_annotation_that_mismatches_the_declared_output_aborts(self) -> None:
-        compiler, registry = compile_use_cases(MismatchedOutputUseCase)
         ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((MismatchedOutputUseCase,), compiler, registry, ai)
+            verify_agent_markers(declared_markers(MismatchedOutputUseCase).agents, ai)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH}
 
     def test_a_matching_annotation_does_not_fail(self) -> None:
-        compiler, registry = compile_use_cases(KnownAgentUseCase)
         ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
 
-        verify_agent_markers((KnownAgentUseCase,), compiler, registry, ai)  # no raise
+        verify_agent_markers(declared_markers(KnownAgentUseCase).agents, ai)  # no raise
 
 
 class TestAgentMarkerProblemsAreReportedTogether:
     def test_two_distinct_problems_are_reported_together(self) -> None:
-        compiler, registry = compile_use_cases(UnknownAgentUseCase, MismatchedOutputUseCase)
         ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
 
         with pytest.raises(AgentCompilationError) as excinfo:
             verify_agent_markers(
-                (UnknownAgentUseCase, MismatchedOutputUseCase), compiler, registry, ai
+                declared_markers(UnknownAgentUseCase, MismatchedOutputUseCase).agents,
+                ai,
             )
 
         codes = {issue.code for issue in excinfo.value.issues}

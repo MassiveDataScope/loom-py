@@ -3,7 +3,7 @@
 Every test here drives a real :class:`~loom.core.engine.compiler.UseCaseCompiler`,
 a real :class:`~loom.core.engine.executor.RuntimeExecutor` and a real
 :class:`~loom.ai.runtime.AgentRuntime`, wired through the same production glue
-``create_app`` uses — :func:`~loom.core.use_case.mcp_markers.declaring_mcp_bindings`
+``create_app`` uses — ``loom.composition._ai.marker_declarations``
 and ``loom.composition._ai.compile_use_case_mcp`` — rather than hand-built
 ``UseCaseMcpGrant`` instances. The seam faked is the MCP client itself, at the
 edge, exactly as ``test_agent_marker_grants_integration.py`` fakes it for the
@@ -45,10 +45,9 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
 from loom.core.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Mcp, UseCase
-from loom.core.use_case.mcp_markers import declaring_mcp_bindings
-from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.auto import create_app
 from loom.testing.runner import McpHandleDouble, UseCaseTest
+from tests.helpers.ai import declared_markers
 from tests.integration.ai.conftest import (
     AgentPlan,
     CountingEngineProvider,
@@ -141,7 +140,7 @@ def _mcp_wired(
 
     Reuses the same production glue ``auto.py`` calls between compiling and
     constructing ``AgentRuntime`` (``:1453-1458``):
-    :func:`declaring_mcp_bindings` finds the compiled ``Mcp()`` bindings, and
+    ``marker_declarations`` finds the reached ``Mcp()`` declarations, and
     ``compile_use_case_mcp`` turns them into ``UseCaseMcpGrant``s. Building
     that tuple by hand, as ``test_use_case_mcp_runtime.py`` does for its own
     narrower purpose, would skip exercising this glue at all.
@@ -166,10 +165,9 @@ def _mcp_wired(
     compiler = UseCaseCompiler()
     for use_case_type in use_case_types:
         compiler.compile(use_case_type)
-    registry = UseCaseRegistry.build(list(use_case_types))
-    declaring = declaring_mcp_bindings(list(use_case_types), compiler)
+    declared = declared_markers(*use_case_types)
     servers = make_mcp_servers(*clients)
-    use_case_mcp = compile_use_case_mcp(declaring, registry, servers)
+    use_case_mcp = compile_use_case_mcp(declared.mcp, servers)
 
     executor = RuntimeExecutor(compiler)
     runtime = AgentRuntime(

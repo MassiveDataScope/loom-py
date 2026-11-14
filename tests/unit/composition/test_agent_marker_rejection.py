@@ -20,8 +20,9 @@ from loom.composition._ai import reject_ai_markers
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.use_case import Agent
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.ai import declared_markers
 from tests.helpers.composition import ProjectFactory
-from tests.unit.composition.doubles import SendReceiptUseCase, kernel_runtime
+from tests.unit.composition.doubles import SendReceiptUseCase
 
 
 class NotifyIncidentUseCase(UseCase[object, object]):
@@ -33,17 +34,17 @@ class NotifyIncidentUseCase(UseCase[object, object]):
 
 class TestNoUseCaseDeclaresTheMarker:
     def test_no_marker_does_not_raise(self) -> None:
-        kernel = kernel_runtime(SendReceiptUseCase)
+        declared = declared_markers(SendReceiptUseCase)
 
-        reject_ai_markers((SendReceiptUseCase,), kernel.compiler, kernel.registry)  # no raise
+        reject_ai_markers(declared)  # no raise
 
 
 class TestOneUseCaseDeclaresTheMarker:
     def test_worker_startup_is_rejected_naming_use_case_and_parameter(self) -> None:
-        kernel = kernel_runtime(NotifyIncidentUseCase)
+        declared = declared_markers(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            reject_ai_markers((NotifyIncidentUseCase,), kernel.compiler, kernel.registry)
+            reject_ai_markers(declared)
 
         message = str(excinfo.value)
         codes = {issue.code for issue in excinfo.value.issues}
@@ -53,10 +54,10 @@ class TestOneUseCaseDeclaresTheMarker:
 
     def test_no_compiled_plan_ever_reports_every_agent_as_unknown(self) -> None:
         """No plan is ever compiled here (T402): every declared agent is unknown."""
-        kernel = kernel_runtime(NotifyIncidentUseCase)
+        declared = declared_markers(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            reject_ai_markers((NotifyIncidentUseCase,), kernel.compiler, kernel.registry)
+            reject_ai_markers(declared)
 
         assert "none" in str(excinfo.value)
 

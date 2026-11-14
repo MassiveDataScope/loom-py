@@ -844,6 +844,26 @@
 - **ai:** in a use case that declares both `Agent()` and `Mcp()`, the resolvers now
   run in declaration order, and a missing identity or an unbound resolver names the
   first-declared marker; before, agents always came first.
+- **ai:** start-up reads every `Agent()` and `Mcp()` the dependency graph
+  reaches, not only those in a use case's `execute()`: one declared by an
+  adapter, a factory or a constructor counts, from each use case, job and
+  callback that reaches it. Its server is opened and its tool filter checked
+  when the agent runtime starts, sharing the one session per server with
+  every other declaration, and its agent is compiled on a Lambda jobs or
+  event function (which compiles only the agents a declaration names) and
+  reported by that agent's health. An unknown server or agent, an `include`
+  matching no tool, and either marker on an entry point without agents (a
+  Celery worker) fail at start-up as before, and the message names the path:
+  `orders.market: parameter 'Market -> quotes: Quotes: gateway' names unknown
+  mcp server 'pricng'`. A port bound with `register_instance(Port, Fake())`
+  hides its adapter's declarations, so nothing is opened or compiled for
+  them. The graph is walked once per start-up (about 2 ms for 200 use cases)
+  and never during an execution. A server reached only through use cases,
+  in `execute()` or through an adapter, is still not an agent health check.
+  The unexported modules `loom.core.use_case.agent_markers` and
+  `loom.core.use_case.mcp_markers` (`declaring_agent_bindings`,
+  `declaring_mcp_bindings`) are removed; `loom.core.use_case.walk.reached`
+  replaces them.
 - **ai:** an MCP call that may have run on the server and failed (a cut
   connection, the client's own timeout, any client-made JSON-RPC code even
   when a server sent it) raises the new `MCP_CALL_INTERRUPTED`, on every path:

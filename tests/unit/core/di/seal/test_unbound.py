@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import McpHandle
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.composition import compose_application
 from loom.composition.source import CompositionSource
-from loom.core.bootstrap import BootstrapError
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.errors import DependencyWarning
@@ -133,16 +133,17 @@ def _source() -> CompositionSource:
 
 
 class TestUnboundMcpAdapter:
-    def test_composition_refuses_an_adapter_singleton_with_no_mcp_resolver_at_seal(self) -> None:
+    def test_an_agentless_composition_refuses_the_adapter_in_the_ai_phase_before_seal(
+        self,
+    ) -> None:
+        """No MCP resolver is ever bound without agents: the AI phase refuses first (T11)."""
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
 
-        with pytest.raises(BootstrapError) as caught:
+        with pytest.raises(AgentCompilationError) as caught:
             compose_application(_source(), adapter, modules=(_binds_crm,))
 
-        assert isinstance(caught.value.__cause__, DependencyGraphError)
-        assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm: no resolver is bound for 'mcp'" in str(
-            caught.value
-        )
+        assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
+        assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
 
     def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)

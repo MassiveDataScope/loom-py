@@ -1,21 +1,18 @@
-"""Start-up verification of use-case marker bindings, shared by every worker.
+"""Start-up verification of reached ``Agent()`` and ``Mcp()`` declarations.
 
-Both composition roots that admit a marker — the FastAPI auto-bootstrap
-(:mod:`loom.composition._ai`) and the Celery worker bootstrap
-(:mod:`loom.celery.bootstrap`) — call :func:`verify_agent_markers` once every
-compiled use case declaring at least one ``Agent()`` binding is already known
-via :func:`~loom.core.use_case.agent_markers.declaring_agent_bindings`, so
-neither ever imports this module for a deployment that declares no marker at
-all (FR-050). :func:`verify_mcp_markers` follows the same shape for the
-``Mcp()`` marker, driven by
-:func:`~loom.core.use_case.mcp_markers.declaring_mcp_bindings` instead.
+:mod:`loom.composition._ai` walks the dependency graph once per start-up
+(:func:`~loom.composition._ai.marker_declarations`) and calls these checks
+only when at least one declaration of their marker is reached, so a
+deployment that declares none never imports this module (FR-050). A
+declaration may sit in a use case's ``execute()`` or constructor, or on an
+adapter, factory or called use case it reaches; every message names where,
+as the declaration's ``Reached.where``.
 
-The Celery worker never builds an AI runtime (T402: task workers do not serve
-the AI pillar), so it always calls :func:`verify_agent_markers` with an empty
+An entry point that hosts no agents (a task worker) never builds an AI
+runtime, so it calls :func:`verify_agent_markers` with an empty
 ``plans_by_name`` and :func:`verify_mcp_markers` with an empty server
 mapping — each reports every declared name as unknown, the same message a
-typo gets under a real runtime, naming the parameter and the use case that
-could not run.
+typo gets under a real runtime.
 """
 
 from __future__ import annotations
@@ -26,23 +23,18 @@ from typing import get_args
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import McpServerConfig
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
-from loom.core.engine.compilable import Compilable
-from loom.core.engine.plan import AgentBinding, McpBinding
-from loom.core.use_case.registry import UseCaseRegistry
+from loom.core.use_case.walk import Reached
 
 
 def verify_agent_markers(
-    declaring: Sequence[tuple[type[Compilable], tuple[AgentBinding, ...]]],
-    registry: UseCaseRegistry,
+    agents: Sequence[tuple[str, Reached]],
     plans_by_name: Mapping[str, AgentPlan],
 ) -> None:
-    """Abort start-up when an ``Agent()`` marker cannot be satisfied.
+    """Abort start-up when an ``Agent()`` declaration cannot be satisfied.
 
     Args:
-        declaring: Use cases declaring at least one ``Agent()`` binding,
-            paired with those bindings — see
-            :func:`~loom.core.use_case.agent_markers.declaring_agent_bindings`.
-        registry: Resolves a use case's registered key for the error message.
+        agents: Every ``Agent()`` declaration reached, each with the
+            component reaching it.
         plans_by_name: Every compiled agent plan reachable in this
             deployment, by its own name. Empty when no AI runtime was built
             at all, which reports every declared agent as unknown.
@@ -52,38 +44,26 @@ def verify_agent_markers(
             and per mismatched output type, so a single run reports every
             problem at once.
     """
-    issues: list[AgentCompilationIssue] = [
-        issue
-        for uc_type, agent_bindings in declaring
-        for issue in _agent_binding_issues(
-            registry.key_for(uc_type) or uc_type.__qualname__, agent_bindings, plans_by_name
-        )
-    ]
+    issues = list(_agent_issues(agents, plans_by_name))
     if issues:
         raise AgentCompilationError(issues)
 
 
-def _agent_binding_issues(
-    uc_name: str,
-    agent_bindings: Sequence[AgentBinding],
+def _agent_issues(
+    agents: Sequence[tuple[str, Reached]],
     plans_by_name: Mapping[str, AgentPlan],
 ) -> Iterator[AgentCompilationIssue]:
-    """Yield one issue per ``Agent()`` binding that start-up cannot satisfy.
-
-    Args:
-        uc_name: Registered key (or qualname) of the declaring use case.
-        agent_bindings: Every ``Agent()`` parameter that use case declares.
-        plans_by_name: Every compiled agent plan, by its own name.
-    """
+    """Yield one issue per ``Agent()`` declaration that start-up cannot satisfy."""
     available = tuple(plans_by_name)
-    for binding in agent_bindings:
-        agent_plan = plans_by_name.get(binding.agent)
+    for component, found in agents:
+        agent = found.binding.declaration.name
+        agent_plan = plans_by_name.get(agent)
         if agent_plan is None:
             yield AgentErrorCode.AGENT_MARKER_UNKNOWN.issue(
-                component=uc_name, parameter=binding.name, agent=binding.agent, available=available
+                component=component, parameter=found.where, agent=agent, available=available
             )
             continue
-        expected_args = get_args(binding.annotation)
+        expected_args = get_args(found.binding.annotation)
         if not expected_args:
             # No type argument to check against — e.g. a bare 'AgentHandle'
             # annotation with no subscript. Nothing this pass can compare,
@@ -94,20 +74,19 @@ def _agent_binding_issues(
         if expected is declared:
             continue
         yield AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH.issue(
-            component=uc_name,
-            parameter=binding.name,
-            agent=binding.agent,
+            component=component,
+            parameter=found.where,
+            agent=agent,
             expected=getattr(expected, "__name__", str(expected)),
             declared=getattr(declared, "__name__", str(declared)),
         )
 
 
 def verify_mcp_markers(
-    declaring: Sequence[tuple[type[Compilable], tuple[McpBinding, ...]]],
-    registry: UseCaseRegistry,
+    mcp: Sequence[tuple[str, Reached]],
     servers: Mapping[str, McpServerConfig],
 ) -> None:
-    """Abort start-up when an ``Mcp()`` marker names a server not configured.
+    """Abort start-up when an ``Mcp()`` declaration names a server not configured.
 
     Only the name is checked here — whether ``include`` matches a published
     tool needs a live session and is checked later, inside the runtime's own
@@ -115,10 +94,8 @@ def verify_mcp_markers(
     an agent's own filter is checked against.
 
     Args:
-        declaring: Use cases declaring at least one ``Mcp()`` binding, paired
-            with those bindings — see
-            :func:`~loom.core.use_case.mcp_markers.declaring_mcp_bindings`.
-        registry: Resolves a use case's registered key for the error message.
+        mcp: Every ``Mcp()`` declaration reached, each with the component
+            reaching it.
         servers: Every MCP server configured for this deployment, from
             ``ai.mcp_servers``. Empty when no ``ai:`` section is present,
             which reports every declared server as unknown — the same
@@ -129,38 +106,19 @@ def verify_mcp_markers(
         AgentCompilationError: Aggregating one issue per unknown server name,
             so a single run reports every problem at once.
     """
-    issues: list[AgentCompilationIssue] = [
-        issue
-        for uc_type, mcp_bindings in declaring
-        for issue in _mcp_binding_issues(
-            registry.key_for(uc_type) or uc_type.__qualname__, mcp_bindings, servers
+    available = tuple(servers)
+    issues = [
+        AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
+            component=component,
+            parameter=found.where,
+            server=found.binding.declaration.server,
+            available=available,
         )
+        for component, found in mcp
+        if found.binding.declaration.server not in servers
     ]
     if issues:
         raise AgentCompilationError(issues)
-
-
-def _mcp_binding_issues(
-    uc_name: str,
-    mcp_bindings: Sequence[McpBinding],
-    servers: Mapping[str, McpServerConfig],
-) -> Iterator[AgentCompilationIssue]:
-    """Yield one issue per ``Mcp()`` binding naming a server not configured.
-
-    Args:
-        uc_name: Registered key (or qualname) of the declaring use case.
-        mcp_bindings: Every ``Mcp()`` parameter that use case declares.
-        servers: Every configured MCP server, by its own name.
-    """
-    available = tuple(servers)
-    for binding in mcp_bindings:
-        if binding.server not in servers:
-            yield AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
-                component=uc_name,
-                parameter=binding.name,
-                server=binding.server,
-                available=available,
-            )
 
 
 __all__ = ["verify_agent_markers", "verify_mcp_markers"]
