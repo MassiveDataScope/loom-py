@@ -767,23 +767,6 @@ class TestOtherDerEncodingsAreRefused:
             JwtAuthConfig(secret=secret, algorithms=("HS256",))
 
 
-async def test_an_unexpected_backend_error_refuses_the_token(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Fail closed, logging the error type only: the traceback would hold the key."""
-    authenticator = JwtAuthenticator(JwtAuthConfig(secret=Secret("k" * 32), algorithms=("HS256",)))
-    token = pyjwt.encode({"sub": "u", "exp": int(time.time()) + 60}, "k" * 32, algorithm="HS256")
-
-    def broken(*_: object, **__: object) -> dict[str, Any]:
-        raise RuntimeError("backend detail")
-
-    monkeypatch.setattr(authenticator._jwt, "decode", broken)
-    with caplog.at_level("DEBUG"):
-        assert await authenticator.authenticate(_credentials(token)) is None
-    assert all(r.exc_info is None for r in caplog.records)
-    assert "backend detail" not in caplog.text
-
-
 class TestSecretPathErrors:
     """The released contract: a ConfigError naming ``secret_path``, never the path."""
 
@@ -813,3 +796,25 @@ class TestSecretPathErrors:
         config = JwtAuthConfig(secret_path="s3://keys/jwt", algorithms=("HS256",))
         with pytest.raises(ConfigError, match=r"loom-kernel\[config\]"):
             config.keyring()
+
+
+class TestUnexpectedBackendError:
+    async def test_an_unexpected_backend_error_refuses_the_token(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Fail closed, logging the error type only: the traceback would hold the key."""
+        authenticator = JwtAuthenticator(
+            JwtAuthConfig(secret=Secret("k" * 32), algorithms=("HS256",))
+        )
+        token = pyjwt.encode(
+            {"sub": "u", "exp": int(time.time()) + 60}, "k" * 32, algorithm="HS256"
+        )
+
+        def broken(*_: object, **__: object) -> dict[str, Any]:
+            raise RuntimeError("backend detail")
+
+        monkeypatch.setattr(authenticator._jwt, "decode", broken)
+        with caplog.at_level("DEBUG"):
+            assert await authenticator.authenticate(_credentials(token)) is None
+        assert all(r.exc_info is None for r in caplog.records)
+        assert "backend detail" not in caplog.text

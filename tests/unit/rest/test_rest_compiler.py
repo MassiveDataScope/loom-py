@@ -19,19 +19,10 @@ from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
 from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
-
-
-class CreateUserUseCase(UseCase[Any, str]):
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
+from tests.unit.rest.doubles import CreateUserUseCase, ListUsersUseCase
 
 
 class GetUserUseCase(UseCase[Any, str]):
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
-
-
-class ListUsersUseCase(UseCase[Any, str]):
     async def execute(self, **kwargs: Any) -> str:
         return "ok"
 

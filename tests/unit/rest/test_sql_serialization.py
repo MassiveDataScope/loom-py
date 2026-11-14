@@ -59,44 +59,47 @@ def _post(result: SqlQueryResult) -> Any:
     return client.post("/sql/analytics", json={"sql": "SELECT v"})
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        pytest.param(datetime(2024, 1, 2, 3, 4, 5), "2024-01-02T03:04:05", id="datetime-naive"),
-        pytest.param(
-            datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
-            "2024-01-02T03:04:05Z",
-            id="datetime-utc",
-        ),
-        pytest.param(date(2024, 1, 2), "2024-01-02", id="date"),
-        pytest.param(Decimal("123.45"), "123.45", id="decimal"),
-        pytest.param(
-            UUID("12345678-1234-5678-1234-567812345678"),
-            "12345678-1234-5678-1234-567812345678",
-            id="uuid",
-        ),
-        pytest.param(IPv4Address("10.0.0.1"), "10.0.0.1", id="ipv4"),
-        pytest.param(IPv6Address("2001:db8::1"), "2001:db8::1", id="ipv6"),
-        pytest.param(None, None, id="null"),
-        pytest.param([1, 2, 3], [1, 2, 3], id="array"),
-        pytest.param(b"\x01\x02", "AQI=", id="bytes-base64"),
-    ],
-)
-def test_serializes_each_matrix_type_inside_a_row(value: Any, expected: Any) -> None:
-    """Every type of the spec matrix produces the expected JSON in ``rows``."""
-    response = _post(_single_value_result(value))
-    assert response.json()["rows"][0][0] == expected
-
-
-def test_exotic_type_falls_back_to_str_without_a_500() -> None:
-    """An unknown type never breaks the response: the enc_hook falls back to ``str()``."""
-    response = _post(_single_value_result(_ExoticPoint(), column_type="Point"))
-    assert (response.status_code, response.json()["rows"][0][0]) == (200, "point(1,2)")
-
-
-def test_columns_keep_backend_native_name_and_type() -> None:
-    """``columns`` exposes the backend native name and type verbatim (spec §3)."""
-    response = _post(
-        _single_value_result(datetime(2024, 1, 2, 3, 4, 5), column_type="DateTime64(3)")
+class TestSqlResultSerialization:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            pytest.param(datetime(2024, 1, 2, 3, 4, 5), "2024-01-02T03:04:05", id="datetime-naive"),
+            pytest.param(
+                datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
+                "2024-01-02T03:04:05Z",
+                id="datetime-utc",
+            ),
+            pytest.param(date(2024, 1, 2), "2024-01-02", id="date"),
+            pytest.param(Decimal("123.45"), "123.45", id="decimal"),
+            pytest.param(
+                UUID("12345678-1234-5678-1234-567812345678"),
+                "12345678-1234-5678-1234-567812345678",
+                id="uuid",
+            ),
+            pytest.param(IPv4Address("10.0.0.1"), "10.0.0.1", id="ipv4"),
+            pytest.param(IPv6Address("2001:db8::1"), "2001:db8::1", id="ipv6"),
+            pytest.param(None, None, id="null"),
+            pytest.param([1, 2, 3], [1, 2, 3], id="array"),
+            pytest.param(b"\x01\x02", "AQI=", id="bytes-base64"),
+        ],
     )
-    assert response.json()["columns"] == [{"name": "v", "type": "DateTime64(3)"}]
+    def test_serializes_each_matrix_type_inside_a_row(self, value: Any, expected: Any) -> None:
+        """Every type of the spec matrix produces the expected JSON in ``rows``."""
+        response = _post(_single_value_result(value))
+        assert response.json()["rows"][0][0] == expected
+
+    def test_exotic_type_falls_back_to_str_without_a_500(
+        self,
+    ) -> None:
+        """An unknown type never breaks the response: the enc_hook falls back to ``str()``."""
+        response = _post(_single_value_result(_ExoticPoint(), column_type="Point"))
+        assert (response.status_code, response.json()["rows"][0][0]) == (200, "point(1,2)")
+
+    def test_columns_keep_backend_native_name_and_type(
+        self,
+    ) -> None:
+        """``columns`` exposes the backend native name and type verbatim (spec §3)."""
+        response = _post(
+            _single_value_result(datetime(2024, 1, 2, 3, 4, 5), column_type="DateTime64(3)")
+        )
+        assert response.json()["columns"] == [{"name": "v", "type": "DateTime64(3)"}]

@@ -121,12 +121,6 @@ def _ops(interface: type[RestInterface[Any]]) -> set[CrudOp]:
     return {crud_op_of(route.use_case) for route in interface.routes}
 
 
-@pytest.fixture(autouse=True)
-def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-
-
 @pytest.fixture
 def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
     def _install(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> None:
@@ -137,7 +131,9 @@ def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 class TestDefaultInclude:
-    def test_dynamodb_mounts_only_the_key_operations(self, discover: Any) -> None:
+    def test_dynamodb_mounts_only_the_key_operations(
+        self, discover: Any, aws_test_credentials: None
+    ) -> None:
         class RecordsOnDynamo(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -148,7 +144,9 @@ class TestDefaultInclude:
 
         assert _ops(RecordsOnDynamo) == _KEY_OPS
 
-    def test_booting_again_on_sqlalchemy_restores_the_list_route(self, discover: Any) -> None:
+    def test_booting_again_on_sqlalchemy_restores_the_list_route(
+        self, discover: Any, aws_test_credentials: None
+    ) -> None:
         class RecordsOnBoth(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -161,7 +159,9 @@ class TestDefaultInclude:
         _build_bootstrap(AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
-    def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
+    def test_a_pruned_use_case_mounted_elsewhere_survives(
+        self, discover: Any, aws_test_credentials: None
+    ) -> None:
         """Only a use case no interface mounts any more leaves the discovery result."""
         shared_list = next(
             r.use_case
@@ -238,7 +238,9 @@ class TestDefaultInclude:
 
 
 class TestExplicitInclude:
-    def test_absent_operation_names_model_op_and_backend(self, discover: Any) -> None:
+    def test_absent_operation_names_model_op_and_backend(
+        self, discover: Any, aws_test_credentials: None
+    ) -> None:
         class RecordListing(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -256,7 +258,9 @@ class TestExplicitInclude:
         assert "'list'" in message
         assert "'dynamodb'" in message
 
-    def test_supported_operations_are_kept_as_declared(self, discover: Any) -> None:
+    def test_supported_operations_are_kept_as_declared(
+        self, discover: Any, aws_test_credentials: None
+    ) -> None:
         class RecordReads(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -301,7 +305,7 @@ class _CountInterface(RestInterface[int]):
 
 class TestHandWrittenCapabilityDependency:
     def test_fails_at_create_app_on_a_backend_without_it(
-        self, tmp_path: Path, discover: Any
+        self, tmp_path: Path, discover: Any, aws_test_credentials: None
     ) -> None:
         discover(_CountInterface)
         config_path = write_project(tmp_path, store=_DYNAMODB_STORE)
@@ -329,21 +333,6 @@ class _EchoRecord(UseCase[CapabilityRecord, str]):
 class _EchoInterface(RestInterface[str]):
     prefix = "/echo"
     routes = (RestRoute(use_case=_EchoRecord, method="GET", path="/"),)
-
-
-def test_model_bound_use_case_on_backend_none_fails_at_create_app(
-    tmp_path: Path, discover: Any
-) -> None:
-    """The implicit ``main_repo`` has no provider on ``none``; refuse at boot, not per request."""
-    discover(_EchoInterface)
-    config_path = write_project(tmp_path, store={"backend": "none"})
-
-    with pytest.raises(ResolutionError, match="_EchoRecord") as exc_info:
-        create_app(config_path)
-
-    message = str(exc_info.value)
-    assert "main_repo" in message
-    assert "CapabilityRecord" in message
 
 
 class _LookupByName(UseCase[Any, str]):
@@ -377,23 +366,47 @@ def _lookup_client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_unsupported_query_answers_400_with_its_code() -> None:
-    response = _lookup_client().get("/lookups/")
+class TestModelBoundUseCaseWithoutARepository:
+    def test_model_bound_use_case_on_backend_none_fails_at_create_app(
+        self, tmp_path: Path, discover: Any
+    ) -> None:
+        """The implicit ``main_repo`` has no provider on ``none``; refuse at boot, not per
+        request."""
+        discover(_EchoInterface)
+        config_path = write_project(tmp_path, store={"backend": "none"})
 
-    assert response.status_code == 400
-    body = response.json()["detail"]
-    assert body["code"] == "unsupported_query"
-    # Which store serves a model is not the client's business.
-    assert "dynamodb" not in body["message"]
-    assert "CapabilityRecord" in body["message"]
+        with pytest.raises(ResolutionError, match="_EchoRecord") as exc_info:
+            create_app(config_path)
+
+        message = str(exc_info.value)
+        assert "main_repo" in message
+        assert "CapabilityRecord" in message
 
 
-def test_repository_package_never_raises_not_implemented() -> None:
-    """SC-003: argument-shaped gaps raise ``UnsupportedQuery``, never ``NotImplementedError``."""
-    root = Path(cast(str, repository_package.__file__)).parent
+class TestUnsupportedQueryResponse:
+    def test_unsupported_query_answers_400_with_its_code(
+        self,
+    ) -> None:
+        response = _lookup_client().get("/lookups/")
 
-    offenders = [
-        path for path in root.rglob("*.py") if "raise NotImplementedError" in path.read_text()
-    ]
+        assert response.status_code == 400
+        body = response.json()["detail"]
+        assert body["code"] == "unsupported_query"
+        # Which store serves a model is not the client's business.
+        assert "dynamodb" not in body["message"]
+        assert "CapabilityRecord" in body["message"]
 
-    assert offenders == []
+
+class TestRepositoryPackageNeverRaisesNotImplemented:
+    def test_repository_package_never_raises_not_implemented(
+        self,
+    ) -> None:
+        """SC-003: argument-shaped gaps raise ``UnsupportedQuery``, never
+        ``NotImplementedError``."""
+        root = Path(cast(str, repository_package.__file__)).parent
+
+        offenders = [
+            path for path in root.rglob("*.py") if "raise NotImplementedError" in path.read_text()
+        ]
+
+        assert offenders == []

@@ -46,7 +46,7 @@ class ReportUseCase(UseCase[Any, dict[str, str]]):
         return {"status": "ok"}
 
 
-class _IdentityMiddleware:
+class AcmePublishedIdentityMiddleware:
     """Publishes a fixed identity for the wrapped application."""
 
     def __init__(self, app: Any, *, identity: Identity | None) -> None:
@@ -97,7 +97,7 @@ def _client(interface: type[RestInterface[Any]], identity: Identity | None) -> T
         RuntimeExecutor(compiler),
         observability_runtime=ObservabilityRuntime.noop(),
     )
-    app.add_middleware(_IdentityMiddleware, identity=identity)
+    app.add_middleware(AcmePublishedIdentityMiddleware, identity=identity)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -116,89 +116,96 @@ def _caller(*roles: str) -> Identity:
     return Identity(subject="user-1", roles=roles, mechanism="test")
 
 
-# ---------------------------------------------------------------------------
-# Route-level declaration
-# ---------------------------------------------------------------------------
+class TestRouteRoles:
+    def test_a_caller_holding_the_required_role_is_served(
+        self,
+    ) -> None:
+        """The happy path: the declared role is held, the use case runs."""
+        response = _get(_caller(_ADMIN), route_roles=(_ADMIN,))
+        assert (response.status_code, response.json()) == (200, {"status": "ok"})
+
+    def test_a_caller_without_the_required_role_is_refused(
+        self,
+    ) -> None:
+        """A role the caller does not hold is a 403, not a 404 or a 500."""
+        response = _get(_caller(_READER), route_roles=(_ADMIN,))
+        assert response.status_code == 403
+
+    def test_a_refused_caller_never_reaches_the_use_case(
+        self,
+    ) -> None:
+        """Authorization runs before construction: no repository is even resolved."""
+        _get(_caller(_READER), route_roles=(_ADMIN,))
+        assert BUILDS == []
+
+    def test_a_served_caller_does_reach_the_use_case(
+        self,
+    ) -> None:
+        """The negative test above is only meaningful if the positive one builds it."""
+        _get(_caller(_ADMIN), route_roles=(_ADMIN,))
+        assert BUILDS == ["ReportUseCase"]
+
+    def test_an_unauthenticated_caller_is_refused(
+        self,
+    ) -> None:
+        """Fail-closed: no identity cannot mean 'no restriction'."""
+        response = _get(None, route_roles=(_ADMIN,))
+        assert response.status_code == 403
+
+    def test_an_unauthenticated_caller_never_reaches_the_use_case(
+        self,
+    ) -> None:
+        """The absence of an identity stops the request just as a wrong role does."""
+        _get(None, route_roles=(_ADMIN,))
+        assert BUILDS == []
+
+    def test_holding_any_of_the_declared_roles_is_enough(
+        self,
+    ) -> None:
+        """``requires_roles`` is a set of alternatives, not a conjunction."""
+        response = _get(_caller(_READER), route_roles=(_ADMIN, _READER))
+        assert response.status_code == 200
+
+    def test_a_route_without_declared_roles_stays_open(
+        self,
+    ) -> None:
+        """RBAC is opt-in: routes that declare nothing keep their current behaviour."""
+        response = _get(None)
+        assert response.status_code == 200
+
+    def test_the_denial_uses_the_standard_error_body(
+        self,
+    ) -> None:
+        """Denials carry code and trace_id like every other framework error."""
+        detail = _get(_caller(_READER), route_roles=(_ADMIN,)).json()["detail"]
+        assert (detail["code"], "trace_id" in detail) == ("forbidden", True)
+
+    def test_the_denial_does_not_disclose_the_required_roles(
+        self,
+    ) -> None:
+        """The response must not become an oracle about the route's policy."""
+        detail = _get(_caller(_READER), route_roles=(_ADMIN,)).json()["detail"]
+        assert _ADMIN not in detail["message"]
 
 
-def test_a_caller_holding_the_required_role_is_served() -> None:
-    """The happy path: the declared role is held, the use case runs."""
-    response = _get(_caller(_ADMIN), route_roles=(_ADMIN,))
-    assert (response.status_code, response.json()) == (200, {"status": "ok"})
+class TestInterfaceDefaultRoles:
+    def test_the_interface_default_applies_to_its_routes(
+        self,
+    ) -> None:
+        """Declaring once on the interface protects every route it exposes."""
+        response = _get(_caller(_READER), interface_roles=(_ADMIN,))
+        assert response.status_code == 403
 
+    def test_the_interface_default_serves_a_holder(
+        self,
+    ) -> None:
+        """The inherited declaration is a real check, not a blanket denial."""
+        response = _get(_caller(_ADMIN), interface_roles=(_ADMIN,))
+        assert response.status_code == 200
 
-def test_a_caller_without_the_required_role_is_refused() -> None:
-    """A role the caller does not hold is a 403, not a 404 or a 500."""
-    response = _get(_caller(_READER), route_roles=(_ADMIN,))
-    assert response.status_code == 403
-
-
-def test_a_refused_caller_never_reaches_the_use_case() -> None:
-    """Authorization runs before construction: no repository is even resolved."""
-    _get(_caller(_READER), route_roles=(_ADMIN,))
-    assert BUILDS == []
-
-
-def test_a_served_caller_does_reach_the_use_case() -> None:
-    """The negative test above is only meaningful if the positive one builds it."""
-    _get(_caller(_ADMIN), route_roles=(_ADMIN,))
-    assert BUILDS == ["ReportUseCase"]
-
-
-def test_an_unauthenticated_caller_is_refused() -> None:
-    """Fail-closed: no identity cannot mean 'no restriction'."""
-    response = _get(None, route_roles=(_ADMIN,))
-    assert response.status_code == 403
-
-
-def test_an_unauthenticated_caller_never_reaches_the_use_case() -> None:
-    """The absence of an identity stops the request just as a wrong role does."""
-    _get(None, route_roles=(_ADMIN,))
-    assert BUILDS == []
-
-
-def test_holding_any_of_the_declared_roles_is_enough() -> None:
-    """``requires_roles`` is a set of alternatives, not a conjunction."""
-    response = _get(_caller(_READER), route_roles=(_ADMIN, _READER))
-    assert response.status_code == 200
-
-
-def test_a_route_without_declared_roles_stays_open() -> None:
-    """RBAC is opt-in: routes that declare nothing keep their current behaviour."""
-    response = _get(None)
-    assert response.status_code == 200
-
-
-def test_the_denial_uses_the_standard_error_body() -> None:
-    """Denials carry code and trace_id like every other framework error."""
-    detail = _get(_caller(_READER), route_roles=(_ADMIN,)).json()["detail"]
-    assert (detail["code"], "trace_id" in detail) == ("forbidden", True)
-
-
-def test_the_denial_does_not_disclose_the_required_roles() -> None:
-    """The response must not become an oracle about the route's policy."""
-    detail = _get(_caller(_READER), route_roles=(_ADMIN,)).json()["detail"]
-    assert _ADMIN not in detail["message"]
-
-
-# ---------------------------------------------------------------------------
-# Interface-level default and route override
-# ---------------------------------------------------------------------------
-
-
-def test_the_interface_default_applies_to_its_routes() -> None:
-    """Declaring once on the interface protects every route it exposes."""
-    response = _get(_caller(_READER), interface_roles=(_ADMIN,))
-    assert response.status_code == 403
-
-
-def test_the_interface_default_serves_a_holder() -> None:
-    """The inherited declaration is a real check, not a blanket denial."""
-    response = _get(_caller(_ADMIN), interface_roles=(_ADMIN,))
-    assert response.status_code == 200
-
-
-def test_a_route_declaration_overrides_the_interface_default() -> None:
-    """Route level wins, exactly like pagination and profile defaults."""
-    response = _get(_caller(_READER), route_roles=(_READER,), interface_roles=(_ADMIN,))
-    assert response.status_code == 200
+    def test_a_route_declaration_overrides_the_interface_default(
+        self,
+    ) -> None:
+        """Route level wins, exactly like pagination and profile defaults."""
+        response = _get(_caller(_READER), route_roles=(_READER,), interface_roles=(_ADMIN,))
+        assert response.status_code == 200

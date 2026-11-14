@@ -168,23 +168,25 @@ _OPERATIONS = pytest.mark.parametrize(
 )
 
 
-@_OPERATIONS
-@pytest.mark.parametrize("field", ["method", "fallback"])
-def test_each_tag_of_a_union_maps_to_an_existing_component(
-    operation: tuple[str, str], field: str
-) -> None:
-    document = _openapi()
+class TestOpenApiDocumentReferences:
+    @_OPERATIONS
+    @pytest.mark.parametrize("field", ["method", "fallback"])
+    def test_each_tag_of_a_union_maps_to_an_existing_component(
+        self, operation: tuple[str, str], field: str
+    ) -> None:
+        document = _openapi()
 
-    mapping = _mapping(document, operation, field)
+        mapping = _mapping(document, operation, field)
 
-    assert set(mapping) == {"card", "transfer"}
-    assert all(_resolves(document, target) for target in mapping.values())
+        assert set(mapping) == {"card", "transfer"}
+        assert all(_resolves(document, target) for target in mapping.values())
 
+    def test_every_reference_in_the_document_resolves(
+        self,
+    ) -> None:
+        document = _openapi()
 
-def test_every_reference_in_the_document_resolves() -> None:
-    document = _openapi()
+        references = list(_references(document))
 
-    references = list(_references(document))
-
-    assert references
-    assert [ref for ref in references if not _resolves(document, ref)] == []
+        assert references
+        assert [ref for ref in references if not _resolves(document, ref)] == []

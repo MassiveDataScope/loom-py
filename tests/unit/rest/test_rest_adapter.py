@@ -618,35 +618,39 @@ def _app_without_database() -> FastAPI:
     return app
 
 
-def test_a_rule_violation_answers_its_field_without_any_database() -> None:
-    response = TestClient(_app_without_database()).get("/tenant")
+class TestRuleViolationWithoutADatabase:
+    def test_a_rule_violation_answers_its_field_without_any_database(
+        self,
+    ) -> None:
+        response = TestClient(_app_without_database()).get("/tenant")
 
-    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    detail = response.json()["detail"]
-    assert detail[ErrorField.CODE] == ErrorCode.RULE_VIOLATION
-    assert detail[ErrorField.MESSAGE] == "no tenant is selectable"
-    assert detail[ErrorField.FIELD] == "tenant"
-    assert ErrorField.TRACE_ID in detail
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        detail = response.json()["detail"]
+        assert detail[ErrorField.CODE] == ErrorCode.RULE_VIOLATION
+        assert detail[ErrorField.MESSAGE] == "no tenant is selectable"
+        assert detail[ErrorField.FIELD] == "tenant"
+        assert ErrorField.TRACE_ID in detail
 
 
-@pytest.mark.parametrize(
-    ("status", "message"),
-    [(500, "An unexpected error occurred"), (503, "The service is temporarily unavailable")],
-)
-def test_a_5xx_http_exception_answers_the_fixed_message_and_logs_its_detail(
-    status: int, message: str, caplog: pytest.LogCaptureFixture
-) -> None:
-    app = FastAPI()
-    register_error_handlers(app)
-
-    @app.get("/raw")
-    async def raw() -> None:
-        raise HTTPException(status_code=status, detail=_LEAKY)
-
-    response = TestClient(app).get("/raw")
-
-    assert (response.status_code, response.json()["detail"][ErrorField.MESSAGE]) == (
-        status,
-        message,
+class TestHttpExceptionFixedMessage:
+    @pytest.mark.parametrize(
+        ("status", "message"),
+        [(500, "An unexpected error occurred"), (503, "The service is temporarily unavailable")],
     )
-    assert _LEAKY in caplog.text
+    def test_a_5xx_http_exception_answers_the_fixed_message_and_logs_its_detail(
+        self, status: int, message: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        app = FastAPI()
+        register_error_handlers(app)
+
+        @app.get("/raw")
+        async def raw() -> None:
+            raise HTTPException(status_code=status, detail=_LEAKY)
+
+        response = TestClient(app).get("/raw")
+
+        assert (response.status_code, response.json()["detail"][ErrorField.MESSAGE]) == (
+            status,
+            message,
+        )
+        assert _LEAKY in caplog.text

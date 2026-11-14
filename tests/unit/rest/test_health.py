@@ -55,7 +55,7 @@ def _get(app: FastAPI, path: str) -> tuple[int, Any]:
         return response.status_code, response.json()
 
 
-class _AlwaysRefuses:
+class AcmeHealthRefusingAuthenticator:
     """Authenticator that never accepts anyone: a served route is an excluded one."""
 
     name = "never"
@@ -152,7 +152,9 @@ class TestHealthAuthentication:
         self, tmp_path: Path
     ) -> None:
         rest = {**_NO_DOCS, "auth": {"custom": True}}
-        app = create_app(write_project(tmp_path, rest=rest), authenticator=_AlwaysRefuses())
+        app = create_app(
+            write_project(tmp_path, rest=rest), authenticator=AcmeHealthRefusingAuthenticator()
+        )
 
         with TestClient(app) as client:
             assert client.get(_HEALTH).status_code == 200

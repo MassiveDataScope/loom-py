@@ -64,13 +64,6 @@ def _agents_only() -> DiscoveryResult:
 
 
 @pytest.fixture
-def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Dummy credentials satisfy boto3's default chain against a local endpoint."""
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-
-
-@pytest.fixture
 def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
     """Serve the Mongo backend an in-memory client so no connection is attempted."""
     client = FakeMongoClient()
@@ -241,133 +234,142 @@ class _RecordingEntryPoints:
         return (_RecordingEntryPoint(),) if group == _RecordingEntryPoint.group else ()
 
 
-def test_injected_backend_boots_and_prepares_models_after_build(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A backend registered by another package boots through ``create_app`` unchanged."""
-    monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
-    monkeypatch.setattr(_RecordingBackend, "events", [])
-    config_path = write_project(tmp_path, store={"backend": "recording"})
+class TestInjectedPersistenceBackend:
+    def test_injected_backend_boots_and_prepares_models_after_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A backend registered by another package boots through ``create_app`` unchanged."""
+        monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
+        monkeypatch.setattr(_RecordingBackend, "events", [])
+        config_path = write_project(tmp_path, store={"backend": "recording"})
 
-    assert create_app(config_path) is not None
+        assert create_app(config_path) is not None
 
-    steps = [step for step, _models in _RecordingBackend.events]
-    assert steps == ["build", "prepare_models"]
-    built, prepared = (models for _step, models in _RecordingBackend.events)
-    assert built == prepared
-    assert [model.__name__ for model in built] == ["ConfigRecord"]
+        steps = [step for step, _models in _RecordingBackend.events]
+        assert steps == ["build", "prepare_models"]
+        built, prepared = (models for _step, models in _RecordingBackend.events)
+        assert built == prepared
+        assert [model.__name__ for model in built] == ["ConfigRecord"]
 
+    def test_create_app_builds_the_backend_with_the_server_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
+        monkeypatch.setattr(_RecordingBackend, "events", [])
+        monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+        config_path = write_project(tmp_path, store={"backend": "recording"})
 
-def test_create_app_builds_the_backend_with_the_server_profile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
-    monkeypatch.setattr(_RecordingBackend, "events", [])
-    monkeypatch.setattr(_RecordingBackend, "runtimes", [])
-    config_path = write_project(tmp_path, store={"backend": "recording"})
+        create_app(config_path)
 
-    create_app(config_path)
-
-    assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
-    assert _RecordingBackend.runtimes[0].pool_metrics is None
-
-
-def test_discover_components_accepts_agents_only_result(agents_only_discovery: None) -> None:
-    source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
-    discovered = _discover_components(source)
-
-    assert discovered.agent_specs == ("agents/*.yaml",)
+        assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
+        assert _RecordingBackend.runtimes[0].pool_metrics is None
 
 
-def test_discover_components_rejects_empty_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _no_models())
-    source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
+class TestDiscoverComponents:
+    def test_discover_components_accepts_agents_only_result(
+        self, agents_only_discovery: None
+    ) -> None:
+        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
+        discovered = _discover_components(source)
 
-    with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
-        _discover_components(source)
+        assert discovered.agent_specs == ("agents/*.yaml",)
 
-    message = str(exc_info.value)
-    assert "discovery.mode: manifest" in message
-    assert "AGENTS" in message
+    def test_discover_components_rejects_empty_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _no_models())
+        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
+        with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
+            _discover_components(source)
 
-def test_build_bootstrap_sqlalchemy_without_models_warns_and_starts(
-    agents_only_discovery: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A project whose relational schema is still empty boots, with a warning."""
-    app_cfg = AppConfig(name="demo")
-    ctx = _ctx()
-
-    with caplog.at_level(logging.WARNING, logger=sqlalchemy_backend_module.__name__):
-        runtime, factory, discovered, _python_interfaces = _build_bootstrap(app_cfg, ctx)
-
-    assert discovered.models == ()
-    assert runtime is not None
-    assert factory is not None
-    assert "no BaseModel classes discovered" in caplog.text
-    assert "stores.default.backend: none" in caplog.text
+        message = str(exc_info.value)
+        assert "discovery.mode: manifest" in message
+        assert "AGENTS" in message
 
 
-@pytest.mark.parametrize(
-    "store",
-    [
-        pytest.param(None, id="sqlalchemy"),
-        pytest.param({"backend": "none"}, id="none"),
-        pytest.param(_DYNAMODB_STORE, id="dynamodb"),
-    ],
-)
-def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
-    store: dict[str, object] | None,
-    monkeypatch: pytest.MonkeyPatch,
-    aws_test_credentials: None,
-) -> None:
-    """The coherence of an interface with its model does not depend on the backend."""
+class TestBuildBootstrapModelRules:
+    def test_build_bootstrap_sqlalchemy_without_models_warns_and_starts(
+        self,
+        agents_only_discovery: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A project whose relational schema is still empty boots, with a warning."""
+        app_cfg = AppConfig(name="demo")
+        ctx = _ctx()
 
-    class OrphanOnAnyBackend(RestInterface[PersistenceNoneRecord]):
-        prefix = "/orphans"
-        auto = True
+        with caplog.at_level(logging.WARNING, logger=sqlalchemy_backend_module.__name__):
+            runtime, factory, discovered, _python_interfaces = _build_bootstrap(app_cfg, ctx)
 
-    monkeypatch.setattr(
-        "loom.composition.source.discover",
-        lambda _cfg: DiscoveryResult(
-            models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
-        ),
+        assert discovered.models == ()
+        assert runtime is not None
+        assert factory is not None
+        assert "no BaseModel classes discovered" in caplog.text
+        assert "stores.default.backend: none" in caplog.text
+
+    @pytest.mark.parametrize(
+        "store",
+        [
+            pytest.param(None, id="sqlalchemy"),
+            pytest.param({"backend": "none"}, id="none"),
+            pytest.param(_DYNAMODB_STORE, id="dynamodb"),
+        ],
     )
-    ctx = _ctx(store=store)
-    app_config = AppConfig(name="demo")
+    def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
+        self,
+        store: dict[str, object] | None,
+        monkeypatch: pytest.MonkeyPatch,
+        aws_test_credentials: None,
+    ) -> None:
+        """The coherence of an interface with its model does not depend on the backend."""
 
-    with pytest.raises(RuntimeError, match="OrphanOnAnyBackend") as exc_info:
-        _build_bootstrap(app_config, ctx)
+        class OrphanOnAnyBackend(RestInterface[PersistenceNoneRecord]):
+            prefix = "/orphans"
+            auto = True
 
-    assert "PersistenceNoneRecord" in str(exc_info.value)
-    assert "app.discovery" in str(exc_info.value)
+        monkeypatch.setattr(
+            "loom.composition.source.discover",
+            lambda _cfg: DiscoveryResult(
+                models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
+            ),
+        )
+        ctx = _ctx(store=store)
+        app_config = AppConfig(name="demo")
 
+        with pytest.raises(RuntimeError, match="OrphanOnAnyBackend") as exc_info:
+            _build_bootstrap(app_config, ctx)
 
-def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An interface that declares its own routes generates no CRUD, so it is left alone."""
+        assert "PersistenceNoneRecord" in str(exc_info.value)
+        assert "app.discovery" in str(exc_info.value)
 
-    class _ListRecords(UseCase[PersistenceNoneRecord, None]):
-        async def execute(self) -> None:  # pragma: no cover - never invoked
-            return None
+    def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An interface that declares its own routes generates no CRUD, so it is left alone."""
 
-    class HandWrittenInterface(RestInterface[PersistenceNoneRecord]):
-        prefix = "/hand-written"
-        auto = True
-        routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
+        class _ListRecords(UseCase[PersistenceNoneRecord, None]):
+            async def execute(self) -> None:  # pragma: no cover - never invoked
+                return None
 
-    monkeypatch.setattr(
-        "loom.composition.source.discover",
-        lambda _cfg: DiscoveryResult(
-            models=(), use_cases=(), interfaces=_interfaces(HandWrittenInterface), agent_specs=()
-        ),
-    )
+        class HandWrittenInterface(RestInterface[PersistenceNoneRecord]):
+            prefix = "/hand-written"
+            auto = True
+            routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
 
-    runtime, _wiring, discovered, _python_interfaces = _build_bootstrap(
-        AppConfig(name="demo"), _ctx()
-    )
+        monkeypatch.setattr(
+            "loom.composition.source.discover",
+            lambda _cfg: DiscoveryResult(
+                models=(),
+                use_cases=(),
+                interfaces=_interfaces(HandWrittenInterface),
+                agent_specs=(),
+            ),
+        )
 
-    assert runtime is not None
-    assert discovered.models == ()
+        runtime, _wiring, discovered, _python_interfaces = _build_bootstrap(
+            AppConfig(name="demo"), _ctx()
+        )
+
+        assert runtime is not None
+        assert discovered.models == ()

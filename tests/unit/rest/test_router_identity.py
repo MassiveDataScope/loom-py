@@ -102,33 +102,39 @@ async def _whoami(client: httpx.AsyncClient, subject: str | None) -> dict[str, s
     return dict(response.json())
 
 
-async def test_the_verified_caller_reaches_the_use_case() -> None:
-    """The declared identity parameter is filled from the request context."""
-    async with _async_client(_app()) as client:
-        assert await _whoami(client, "alice") == {"subject": "alice", "mechanism": "header"}
+class TestRouterIdentity:
+    async def test_the_verified_caller_reaches_the_use_case(
+        self,
+    ) -> None:
+        """The declared identity parameter is filled from the request context."""
+        async with _async_client(_app()) as client:
+            assert await _whoami(client, "alice") == {"subject": "alice", "mechanism": "header"}
 
+    async def test_an_unauthenticated_request_yields_the_anonymous_caller(
+        self,
+    ) -> None:
+        """The router always delivers an identity; without one it is explicitly anonymous."""
+        async with _async_client(_app()) as client:
+            assert await _whoami(client, None) == {"subject": "", "mechanism": ""}
 
-async def test_an_unauthenticated_request_yields_the_anonymous_caller() -> None:
-    """The router always delivers an identity; without one it is explicitly anonymous."""
-    async with _async_client(_app()) as client:
-        assert await _whoami(client, None) == {"subject": "", "mechanism": ""}
+    async def test_concurrent_requests_never_cross_callers(
+        self,
+    ) -> None:
+        """Two in-flight requests with different callers must not leak into each other."""
+        async with _async_client(_app()) as client:
+            alice, bob = await asyncio.gather(
+                _whoami(client, "alice"),
+                _whoami(client, "bob"),
+            )
 
+        assert (alice["subject"], bob["subject"]) == ("alice", "bob")
 
-async def test_concurrent_requests_never_cross_callers() -> None:
-    """Two in-flight requests with different callers must not leak into each other."""
-    async with _async_client(_app()) as client:
-        alice, bob = await asyncio.gather(
-            _whoami(client, "alice"),
-            _whoami(client, "bob"),
-        )
+    async def test_the_identity_is_reset_between_requests(
+        self,
+    ) -> None:
+        """A reused context must not inherit the previous caller."""
+        async with _async_client(_app()) as client:
+            await _whoami(client, "alice")
+            anonymous = await _whoami(client, None)
 
-    assert (alice["subject"], bob["subject"]) == ("alice", "bob")
-
-
-async def test_the_identity_is_reset_between_requests() -> None:
-    """A reused context must not inherit the previous caller."""
-    async with _async_client(_app()) as client:
-        await _whoami(client, "alice")
-        anonymous = await _whoami(client, None)
-
-    assert anonymous["subject"] == ""
+        assert anonymous["subject"] == ""

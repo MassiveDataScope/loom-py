@@ -39,7 +39,7 @@ _TOKEN_SCOPE: dict[str, str] = {"audience": "demo-api", "issuer": "demo-idp"}
 _CHECKS_LOGGER = "loom.core.checks"
 
 
-class _HeaderAuthenticator:
+class AcmeCodeHeaderAuthenticator:
     """A mechanism supplied in code, unknown to the configuration."""
 
     name = "header"
@@ -172,7 +172,9 @@ class TestCreateAppInADeployedEnvironment:
     def test_an_authenticator_declared_as_custom_starts_in_production(self, tmp_path: Path) -> None:
         config = write_project(tmp_path, rest=_CUSTOM_AUTH, persistence=_signed_cursors(tmp_path))
 
-        app = create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
+        app = create_app(
+            config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator()
+        )
 
         assert app.title == "Loom API"
 
@@ -184,7 +186,7 @@ class TestCreateAppInADeployedEnvironment:
         )
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
-            create_app(config, environment="staging", authenticator=_HeaderAuthenticator())
+            create_app(config, environment="staging", authenticator=AcmeCodeHeaderAuthenticator())
 
         assert any(SCHEMA_CHECK in r.getMessage() for r in caplog.records)
 
@@ -212,7 +214,7 @@ class TestCursorSigningCheck:
         config = write_project(tmp_path, rest=_CUSTOM_AUTH)
 
         with pytest.raises(DeployCheckError) as caught:
-            create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
+            create_app(config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator())
 
         assert [result.id for result in caught.value.results] == [CURSOR_SIGNING_CHECK]
 
@@ -223,7 +225,7 @@ class TestCursorSigningCheck:
         _merge_yaml(Path(config), {"checks": {"silenced": [CURSOR_SIGNING_CHECK]}})
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
-            create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
+            create_app(config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator())
 
         assert any(
             "silenced" in r.getMessage() and CURSOR_SIGNING_CHECK in r.getMessage()
@@ -234,7 +236,7 @@ class TestCursorSigningCheck:
 class TestAuthenticationSuppliedInCode:
     def test_an_authenticator_without_custom_true_is_refused(self, tmp_path: Path) -> None:
         config = write_project(tmp_path, rest=_NO_DOCS)
-        authenticator = _HeaderAuthenticator()
+        authenticator = AcmeCodeHeaderAuthenticator()
 
         with pytest.raises(ConfigError, match=r"app\.rest\.auth\.custom"):
             create_app(config, environment="development", authenticator=authenticator)
@@ -249,29 +251,10 @@ class TestAuthenticationSuppliedInCode:
         jwt = {"secret_path": "/k", "algorithms": ["HS256"], "audience": "demo"}
         rest = {**_NO_DOCS, "auth": {"custom": True, "jwt": jwt}}
         config = write_project(tmp_path, rest=rest)
-        authenticator = _HeaderAuthenticator()
+        authenticator = AcmeCodeHeaderAuthenticator()
 
         with pytest.raises(ConfigError, match="Exactly one"):
             create_app(config, environment="development", authenticator=authenticator)
-
-
-def test_the_checks_of_the_application_modules_run_from_its_code_path(tmp_path: Path) -> None:
-    check = write_failing_check_module(tmp_path)
-    area, key = check.trigger.split(".")
-    config = write_project(tmp_path, rest=_NO_DOCS)
-    checks = {**check.checks_section(), "silenced": [AUTHENTICATION_CHECK]}
-    _merge_yaml(Path(config), {"checks": checks, area: {key: True}})
-
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        create_app(config, environment=_PRODUCTION)
-
-
-def test_a_removed_logger_key_stops_startup(tmp_path: Path) -> None:
-    observability = {"log": {"config": {"environment": "dev"}}}
-    config = write_project(tmp_path, observability=observability)
-
-    with pytest.raises(ConfigError, match="environment"):
-        create_app(config, environment="development")
 
 
 class TestOverridesFromVariables:
@@ -327,14 +310,6 @@ class TestOverridesFromVariables:
             create_app(config, environment="development")
 
 
-def test_a_misspelt_celery_key_stops_startup(tmp_path: Path) -> None:
-    config = write_project(tmp_path, rest=_NO_DOCS)
-    _merge_yaml(Path(config), {"celery": {"broker_urll": "memory://"}})
-
-    with pytest.raises(ConfigError, match="broker_urll"):
-        create_app(config, environment="development")
-
-
 class TestCreateAppFromAConfigDirectory:
     def test_the_overlay_of_the_environment_overrides_the_base(self, tmp_path: Path) -> None:
         config_dir = _config_dir(tmp_path)
@@ -363,36 +338,6 @@ class TestCreateAppFromAConfigDirectory:
     def test_no_configuration_at_all_is_refused(self) -> None:
         with pytest.raises(ConfigError, match="config_dir"):
             create_app()
-
-
-def test_a_use_case_injects_the_resolved_environment(tmp_path: Path) -> None:
-    module = "loom_environment_fixture_app"
-    (tmp_path / f"{module}.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
-    config = tmp_path / "app.yaml"
-    config.write_text(
-        yaml.safe_dump(
-            {
-                "app": {
-                    "name": "environment-demo",
-                    "code_path": ".",
-                    "discovery": {
-                        "mode": "interfaces",
-                        "interfaces": {"modules": [module], "warn_recommended": False},
-                    },
-                },
-                "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-                # The default "signed" needs a key; in development no deploy
-                # check runs.
-                "persistence": {"cursors": {"signing": "ephemeral"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with TestClient(create_app(str(config), environment="development")) as client:
-        response = client.get("/environment/")
-
-    assert response.json() == "development"
 
 
 _ENVIRONMENT_APP = '''\
@@ -443,3 +388,64 @@ def _config_dir(tmp_path: Path) -> Path:
         yaml.safe_dump({"app": {"rest": {"title": "Local API"}}}), encoding="utf-8"
     )
     return tmp_path
+
+
+class TestApplicationModuleChecks:
+    def test_the_checks_of_the_application_modules_run_from_its_code_path(
+        self, tmp_path: Path
+    ) -> None:
+        check = write_failing_check_module(tmp_path)
+        area, key = check.trigger.split(".")
+        config = write_project(tmp_path, rest=_NO_DOCS)
+        checks = {**check.checks_section(), "silenced": [AUTHENTICATION_CHECK]}
+        _merge_yaml(Path(config), {"checks": checks, area: {key: True}})
+
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            create_app(config, environment=_PRODUCTION)
+
+
+class TestUnknownConfigurationKeys:
+    def test_a_removed_logger_key_stops_startup(self, tmp_path: Path) -> None:
+        observability = {"log": {"config": {"environment": "dev"}}}
+        config = write_project(tmp_path, observability=observability)
+
+        with pytest.raises(ConfigError, match="environment"):
+            create_app(config, environment="development")
+
+    def test_a_misspelt_celery_key_stops_startup(self, tmp_path: Path) -> None:
+        config = write_project(tmp_path, rest=_NO_DOCS)
+        _merge_yaml(Path(config), {"celery": {"broker_urll": "memory://"}})
+
+        with pytest.raises(ConfigError, match="broker_urll"):
+            create_app(config, environment="development")
+
+
+class TestUseCaseReceivesTheResolvedEnvironment:
+    def test_a_use_case_injects_the_resolved_environment(self, tmp_path: Path) -> None:
+        module = "loom_environment_fixture_app"
+        (tmp_path / f"{module}.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
+        config = tmp_path / "app.yaml"
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    "app": {
+                        "name": "environment-demo",
+                        "code_path": ".",
+                        "discovery": {
+                            "mode": "interfaces",
+                            "interfaces": {"modules": [module], "warn_recommended": False},
+                        },
+                    },
+                    "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
+                    # The default "signed" needs a key; in development no deploy
+                    # check runs.
+                    "persistence": {"cursors": {"signing": "ephemeral"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with TestClient(create_app(str(config), environment="development")) as client:
+            response = client.get("/environment/")
+
+        assert response.json() == "development"

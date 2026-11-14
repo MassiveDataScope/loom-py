@@ -27,21 +27,24 @@ assert any("Celery config section is missing" in str(w.message) for w in caught)
 """
 
 
-def test_create_app_without_a_celery_section_leaves_celery_unimported(tmp_path: Path) -> None:
-    config_path, _module = write_project(tmp_path)
-    env = {
-        **os.environ,
-        "LOOM_ENV": "development",
-        "PYTHONPATH": os.pathsep.join([str(tmp_path), str(_REPO_ROOT)]),
-    }
+class TestCeleryStaysUnimported:
+    def test_create_app_without_a_celery_section_leaves_celery_unimported(
+        self, tmp_path: Path
+    ) -> None:
+        config_path, _module = write_project(tmp_path)
+        env = {
+            **os.environ,
+            "LOOM_ENV": "development",
+            "PYTHONPATH": os.pathsep.join([str(tmp_path), str(_REPO_ROOT)]),
+        }
 
-    result = subprocess.run(
-        [sys.executable, "-c", _CHILD, config_path],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+        result = subprocess.run(
+            [sys.executable, "-c", _CHILD, config_path],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-    assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, result.stderr
