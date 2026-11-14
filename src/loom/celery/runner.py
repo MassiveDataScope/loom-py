@@ -21,7 +21,10 @@ tasks.
 
 Callbacks follow the same pattern: async ``on_success`` / ``on_failure``
 methods are submitted to the shared :class:`~loom.core.async_bridge.AsyncBridge`;
-sync methods are called directly from the task thread. Every task body first
+sync methods are called directly from the task thread. Either way the callback
+is built and called inside a
+:func:`~loom.core.job.callback.callback_execution` with no caller (D7), opened
+in the coroutine the bridge runs or in the task thread. Every task body first
 calls ``ensure_open``, so a process whose application failed to open refuses
 sync and async work alike.
 """
@@ -41,6 +44,7 @@ from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREF
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.job.callback import callback_execution, run_on_failure, run_on_success
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
 from loom.core.job.outcome import failure_log_fields, is_retryable
@@ -402,14 +406,14 @@ def _make_callback_task(
                 callback="success",
             ),
         ):
-            cb = factory.build(callback_type)
             if _on_success_is_async:
                 async_runtime.run(
-                    cb.on_success(job_id=job_id, result=result, **context),
+                    run_on_success(factory, callback_type, job_id, result, context),
                     eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
                 )
             else:
-                cb.on_success(job_id=job_id, result=result, **context)
+                with callback_execution():
+                    factory.build(callback_type).on_success(job_id=job_id, result=result, **context)
 
     return _callback_task
 
@@ -483,18 +487,15 @@ def _make_callback_error_task(
             ),
         ):
             exc_type, exc_msg = _resolve_error_info(job_id, celery_app)
-            cb = factory.build(callback_type)
             if _on_failure_is_async:
                 async_runtime.run(
-                    cb.on_failure(
-                        job_id=job_id,
-                        exc_type=exc_type,
-                        exc_msg=exc_msg,
-                        **context,
-                    ),
+                    run_on_failure(factory, callback_type, job_id, exc_type, exc_msg, context),
                     eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
                 )
             else:
-                cb.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
+                with callback_execution():
+                    factory.build(callback_type).on_failure(
+                        job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context
+                    )
 
     return _callback_error_task

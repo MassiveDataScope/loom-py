@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -11,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from loom.core.identity import ANONYMOUS, Identity, current_identity
-from loom.core.job.callback import JobCallback
+from loom.core.job.callback import JobCallback, run_on_failure, run_on_success
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import JobGroup, JobHandle
@@ -22,41 +21,6 @@ if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
 
 ResultT = TypeVar("ResultT")
-
-
-# ---------------------------------------------------------------------------
-# Callback helpers — module-level, single responsibility each
-# ---------------------------------------------------------------------------
-
-
-async def _invoke_success_callback(
-    factory: UseCaseFactory,
-    callback_type: type[Any],
-    job_id: str,
-    result: Any,
-    context: dict[str, Any],
-) -> None:
-    cb = factory.build(callback_type)
-    if inspect.iscoroutinefunction(cb.on_success):
-        await cb.on_success(job_id=job_id, result=result, **context)
-    else:
-        cb.on_success(job_id=job_id, result=result, **context)
-
-
-async def _invoke_failure_callback(
-    factory: UseCaseFactory,
-    callback_type: type[Any],
-    job_id: str,
-    exc: BaseException,
-    context: dict[str, Any],
-) -> None:
-    cb = factory.build(callback_type)
-    exc_type = type(exc).__qualname__
-    exc_msg = str(exc)
-    if inspect.iscoroutinefunction(cb.on_failure):
-        await cb.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
-    else:
-        cb.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +60,18 @@ class _PendingDispatch:
             )
             self.result_holder.append(result)
             if self.on_success is not None:
-                await _invoke_success_callback(
+                await run_on_success(
                     self.factory, self.on_success, self.task_id, result, self.payload
                 )
         except Exception as exc:
             if self.on_failure is not None:
-                await _invoke_failure_callback(
-                    self.factory, self.on_failure, self.task_id, exc, self.payload
+                await run_on_failure(
+                    self.factory,
+                    self.on_failure,
+                    self.task_id,
+                    type(exc).__qualname__,
+                    str(exc),
+                    self.payload,
                 )
 
 

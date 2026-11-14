@@ -29,6 +29,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
 from loom.core.use_case.use_case import UseCase
 
 
@@ -202,6 +203,8 @@ class GoldenHarness:
 
     def _build_container(self) -> LoomContainer:
         container = LoomContainer()
+        use_case_kinds(container.kinds)
+        container.kinds.bind(CALLER, CallerResolver())
 
         def _make_provider(instance: Any) -> Callable[[], Any]:
             def _provider() -> Any:
@@ -228,7 +231,10 @@ class GoldenHarness:
         payload: dict[str, Any] | None = None,
         identity: Identity | None = None,
     ) -> Any:
-        """Execute a use case with injected fake repositories.
+        """Build and execute a use case with injected fake repositories.
+
+        The use case is built inside its execution, so a constructor
+        ``Caller()`` receives *identity*, as on every other entry point.
 
         Args:
             use_case_type: UseCase subclass to execute.
@@ -244,14 +250,16 @@ class GoldenHarness:
 
         Raises:
             loom.core.errors.Unauthenticated: If the use case declares
-                ``Caller()`` and no *identity* is given.
+                ``Caller()``, in ``execute()`` or in its constructor, and no
+                *identity* is given.
         """
         self._compiler.compile(use_case_type)
         container = self._build_container()
         factory = UseCaseFactory(container)
         executor = RuntimeExecutor(self._compiler)
-        uc = factory.build(use_case_type)
-        return await executor.execute(uc, params=params, payload=payload, identity=identity)
+        return await executor.run(
+            use_case_type, factory=factory, params=params, payload=payload, identity=identity
+        )
 
     async def run_with_baseline(
         self,

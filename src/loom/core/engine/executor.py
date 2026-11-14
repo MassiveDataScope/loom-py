@@ -12,7 +12,7 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.observation import Observer
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.engine.preparation import ExecutionInputs, ParameterBindingError, Preparation
-from loom.core.engine.principal import inherited, top_level
+from loom.core.engine.principal import inherited
 from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
@@ -20,7 +20,7 @@ from loom.core.execution import (
     execution_identity,
     leave,
 )
-from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.uow.coordinator import Coordinator
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -57,10 +57,12 @@ class RuntimeExecutor:
       ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
       structured logs (``usecase``, ``duration_ms``, ``status``).
 
-    An execution given an ``identity`` installs it as the ambient
+    An execution installs who it runs as as the ambient
     :func:`~loom.core.identity.current_identity` until it ends, drain
     included, so row-level security and the jobs it dispatches see the
-    identity ``Caller()`` receives.
+    identity ``Caller()`` receives; an execution with no caller installs
+    :data:`~loom.core.identity.ANONYMOUS` (F3), never leaving in place an
+    ambient identity it was not given.
 
     Args:
         compiler: Compiler used to retrieve cached plans.
@@ -335,7 +337,9 @@ class RuntimeExecutor:
                 honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
                 transport.  ``None`` runs as the caller of the execution
-                enclosing this one, if any (NS2), else with no caller.
+                enclosing this one, if any (NS2), else with no caller and
+                the ambient identity ``ANONYMOUS`` (F3): a transport whose
+                caller is the ambient identity passes it explicitly.
                 Required, given or inherited, when the plan declares a
                 ``Caller()``, ``Agent()`` or ``Mcp()`` parameter; pass
                 :data:`~loom.core.identity.identity.ANONYMOUS` explicitly to
@@ -391,21 +395,24 @@ class RuntimeExecutor:
         identity is computed here, once (NS2): the one given, else the
         enclosing execution's (:func:`~loom.core.engine.principal.inherited`),
         else ``None``. That value reaches the arguments, the ambient identity
-        and the execution context, which are installed before the instance is
-        built and reset after the drain.
+        (``ANONYMOUS`` for ``None``, F3) and the execution context, which are
+        installed before the instance is built and reset after the drain.
 
         An execution that ended is no execution: a task that outlived it,
-        seen here by its closed invocation scope, runs as at top level
-        (:func:`~loom.core.engine.principal.top_level`), out of that
-        execution's scope and channel (:func:`~loom.core.engine.boundaries.detached`).
+        seen here by its closed invocation scope, runs as at top level, out
+        of that execution's scope and channel
+        (:func:`~loom.core.engine.boundaries.detached`). Nothing of the
+        departed caller survives: it inherits no identity, so it runs as the
+        one given, else with no caller and the ambient ``ANONYMOUS``.
         """
         scope = current_scope()
         if scope is not None and scope.closed:
-            with top_level(identity), detached():
+            with detached():
                 return await self._execute(plan, build, target, inputs, identity, read_only)
         if identity is None:
             identity = inherited(plan.use_case_type)
-        identity_token = None if identity is None else set_identity(identity)
+        # F3: an execution with no caller runs with the ambient identity ANONYMOUS.
+        identity_token = set_identity(ANONYMOUS if identity is None else identity)
         execution_token = enter(identity)
         try:
             use_case = plan.use_case_type.__qualname__
@@ -428,8 +435,7 @@ class RuntimeExecutor:
             try:
                 leave(execution_token)
             finally:
-                if identity_token is not None:
-                    reset_identity(identity_token)
+                reset_identity(identity_token)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.

@@ -8,6 +8,7 @@ import msgspec
 
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import LoomError
+from loom.core.identity import current_identity
 from loom.core.transport.adapter import AdapterRequest
 from loom.core.use_case.outcome import Created
 from loom.core.use_case.use_case import UseCase
@@ -57,6 +58,10 @@ class LoomRestAdapter:
     ) -> Any:
         """Execute the UseCase and return a serializable result.
 
+        Runs as the request's caller: the ambient
+        :func:`~loom.core.identity.current_identity` the transport installed,
+        read once and passed to the executor.
+
         Converts ``msgspec.Struct`` results to plain dicts/lists via
         ``msgspec.to_builtins``. For a :class:`~loom.core.use_case.Created`
         result it returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`:
@@ -81,6 +86,9 @@ class LoomRestAdapter:
                 params=request.params,
                 payload=request.payload,
                 dependencies=request.dependencies if request.dependencies else None,
+                # The request's caller, read once here and passed explicitly: an
+                # execution given no identity runs as ANONYMOUS.
+                identity=current_identity(),
             )
         except LoomError as exc:
             raise self._error_mapper.to_http(exc) from exc

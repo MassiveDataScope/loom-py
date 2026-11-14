@@ -155,16 +155,6 @@ class AcmeProbe(UseCase[Any, "AcmeProbe"]):
         return self
 
 
-class AcmeProbeJob(Job["AcmeProbeJob"]):
-    """The job counterpart of :class:`AcmeProbe`."""
-
-    def __init__(self, session: AcmeSession) -> None:
-        self.session = session
-
-    async def execute(self) -> AcmeProbeJob:
-        return self
-
-
 class AcmeBroken(UseCase[Any, None]):
     """Its constructor fails."""
 
@@ -206,7 +196,7 @@ def session_factory() -> UseCaseFactory:
     container.kinds.bind(CALLER, CallerResolver())
     serves_session(container)
     built = UseCaseFactory(container)
-    for use_case in (AcmeProbe, AcmeProbeJob, AcmeBroken, AcmeBrokenJob):
+    for use_case in (AcmeProbe, AcmeBroken, AcmeBrokenJob):
         built.register(use_case)
     return built
 

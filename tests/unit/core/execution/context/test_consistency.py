@@ -2,12 +2,13 @@
 
 A seeded generator plays a few hundred random trees of executions, run by a
 helper shaped like the executor's lifecycle (NS2): the effective identity is
-computed once, then installed with ``set_identity`` and ``enter`` and reset in
-``finally``. Trees mix nesting, ``gather`` across tasks, raising bodies and
-cancelled bodies. At every step the test checks:
+computed once, then installed with ``set_identity`` (``ANONYMOUS`` when it is
+``None``, F3) and ``enter`` and reset in ``finally``. Trees mix nesting,
+``gather`` across tasks, raising bodies and cancelled bodies. At every step the test checks:
 
 - the current execution runs as the expected effective identity;
-- whenever that identity is not ``None`` it equals ``current_identity()``;
+- whenever that identity is not ``None`` it equals ``current_identity()``, and
+  whenever it is ``None``, ``current_identity()`` is ``ANONYMOUS`` (F3);
 - after each child (finished, raising or cancelled) the parent's execution is
   current again, and after each tree no execution remains and the ambient
   identity is back;
@@ -79,22 +80,20 @@ async def _execute(run: _Run) -> None:
     enclosing = current_execution()
     explicit = run.identity
     effective = explicit if explicit is not None or enclosing is None else enclosing.identity
-    identity_token = None if effective is None else set_identity(effective)
+    identity_token = set_identity(ANONYMOUS if effective is None else effective)
     token = enter(effective)
     try:
         await _play(run.body, effective)
     finally:
         leave(token)
-        if identity_token is not None:
-            reset_identity(identity_token)
+        reset_identity(identity_token)
 
 
 def _check(expected: Identity | None) -> None:
     context = current_execution()
     assert context is not None
     assert context.identity is expected
-    if expected is not None:
-        assert current_identity() is expected
+    assert current_identity() is (ANONYMOUS if expected is None else expected)
 
 
 async def _play(steps: tuple[_Step, ...], expected: Identity | None) -> None:
@@ -149,19 +148,20 @@ def _tree(rng: random.Random, depth: int, *, in_task: bool) -> tuple[_Step, ...]
     return tuple(steps)
 
 
-async def test_execution_and_ambient_identity_stay_consistent() -> None:
-    """Covers nesting, gather, failure and cancellation; fixed seeds replay a failure."""
-    for seed in range(_TREES):
-        rng = random.Random(seed)
-        root = _Run(rng.choice(_IDENTITIES), _tree(rng, 3, in_task=False))
-        ambient = set_identity(_AMBIENT)
-        try:
-            with suppress(_Boom):
-                await _execute(root)
-            assert current_execution() is None
-            assert current_identity() is _AMBIENT
-        except AssertionError as exc:
-            exc.add_note(f"seed {seed}")
-            raise
-        finally:
-            reset_identity(ambient)
+class TestExecutionAndAmbientIdentity:
+    async def test_stay_consistent(self) -> None:
+        """Covers nesting, gather, failure and cancellation; fixed seeds replay a failure."""
+        for seed in range(_TREES):
+            rng = random.Random(seed)
+            root = _Run(rng.choice(_IDENTITIES), _tree(rng, 3, in_task=False))
+            ambient = set_identity(_AMBIENT)
+            try:
+                with suppress(_Boom):
+                    await _execute(root)
+                assert current_execution() is None
+                assert current_identity() is _AMBIENT
+            except AssertionError as exc:
+                exc.add_note(f"seed {seed}")
+                raise
+            finally:
+                reset_identity(ambient)

@@ -425,7 +425,9 @@
   `identity=...`). Touching the ended execution's closed invocation scope by
   hand is still refused with `ScopeOwnershipError`. The ambient
   `current_identity()` of the outliving task itself, outside such a run, is
-  still the departed caller's (handles never read it). **Migration:** dispatch
+  still the departed caller's (handles and executions never read it: an
+  execution it starts runs as the identity given, else as `ANONYMOUS`).
+  **Migration:** dispatch
   a job from inside the execution (`JobService.dispatch`), or call
   `executor.run(UseCase, identity=...)` from the task, which opens its own
   execution, unit of work, post-commit channel and `REQUEST` instances.
@@ -574,6 +576,33 @@
   `NestedIdentityMismatch`: code changed it during the enclosing execution,
   or opened that execution directly (`ExecutionScope`, `enter`) without
   `set_identity` of the same identity, which code opening one must also do.
+- **engine (behaviour change, security F3):** an execution with no caller
+  (given no `identity`, at top level or nested under an execution with no
+  caller) sets the ambient `current_identity()` to `ANONYMOUS` for its length
+  and restores the previous one after, instead of leaving in place whatever
+  ambient identity it found. Row-level security, `InlineJobService.run` /
+  `dispatch` and `CeleryJobService.run` inside it therefore act as
+  `ANONYMOUS`, never as an identity the execution was not given.
+  **Migration:** a transport whose caller is the ambient identity passes it
+  explicitly (`executor.run(..., identity=current_identity())`), as the REST
+  routes, `LoomRestAdapter` and the job workers do.
+- **rest:** `LoomRestAdapter.handle` runs the use case as the request's caller
+  (the ambient identity the transport installed, passed explicitly), so a
+  `Caller()` in `execute()` now receives it instead of raising
+  `Unauthenticated`.
+- **jobs (behaviour change, D7):** job callbacks (`on_success`, `on_failure`;
+  inline, Celery sync and async) are built and called inside an execution
+  with no caller (`loom.core.job.callback.callback_execution`), opened in the
+  task thread or inside the coroutine the worker's async bridge runs. A
+  constructor `Caller()` or a per-execution adapter declaring it raises
+  `Unauthenticated` naming job callbacks, where it raised `ExecutionRequired`;
+  an inline callback, which runs in the drain of the dispatching execution,
+  no longer sees that execution's caller through a handle or the ambient
+  identity (`ANONYMOUS` inside the callback). `REQUEST` bindings of a
+  callback are built once per callback run.
+- **testing:** `GoldenHarness.run` builds the use case inside its execution,
+  so a constructor `Caller()` receives the `identity` given (and raises
+  `Unauthenticated` without one).
 - **engine (new API):** `RuntimeExecutor(builder=...)` builds the class
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
@@ -581,8 +610,7 @@
 - **engine (internal):** `RuntimeExecutor` is split by its reasons to change;
   its public API, events, metrics, log lines and their order are unchanged.
   `loom.core.engine.principal` computes who an execution runs as (given,
-  inherited from the enclosing execution with the tamper check, or none) and
-  the top-level re-entry of a task that outlived its execution;
+  inherited from the enclosing execution with the tamper check, or none);
   `loom.core.engine.boundaries` runs each execution in one unit of work
   (`Owned`, `Joined` or `ReadOnly`) and settles its post-commit actions;
   `loom.core.engine.preparation` compiles each plan once, on its first

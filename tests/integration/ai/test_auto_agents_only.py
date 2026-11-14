@@ -189,15 +189,15 @@ def manifest(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def executed(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
-    """Spy on ``RuntimeExecutor.execute`` and collect the use-case types it ran."""
+    """Spy on ``RuntimeExecutor.run`` and collect the use-case types it built and ran."""
     seen: list[type[Any]] = []
-    original = RuntimeExecutor.execute
+    original = RuntimeExecutor.run
 
-    async def _spy(self: RuntimeExecutor, compilable: Any, *args: Any, **kwargs: Any) -> Any:
-        seen.append(type(compilable))
-        return await original(self, compilable, *args, **kwargs)
+    async def _spy(self: RuntimeExecutor, use_case_type: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(use_case_type)
+        return await original(self, use_case_type, *args, **kwargs)
 
-    monkeypatch.setattr(RuntimeExecutor, "execute", _spy)
+    monkeypatch.setattr(RuntimeExecutor, "run", _spy)
     return seen
 
 
