@@ -1,9 +1,0 @@
-{
-  "cause": {
-    "message": "AcmeNeedsService -> service: AcmeUnregistered: no binding is registered for it",
-    "type": "loom.core.di.graph.DependencyGraphError"
-  },
-  "message": "Bootstrap failed: AcmeNeedsService -> service: AcmeUnregistered: no binding is registered for it",
-  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
-  "wrapped": true
-}

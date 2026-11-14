@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "AcmeReadsUnserved injects unserved: repository for AcmeUnserved, which is not registered in the container. Add AcmeUnserved to MODELS in your manifest module, or include its module in app.discovery, so its repository is registered.",
-  "type": "loom.core.use_case.errors.UnservedModelError",
-  "wrapped": false
-}

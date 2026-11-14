@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "the __store__ of AcmeMissingStore needs stores.missing, which is not declared",
-  "type": "loom.core.config.errors.ConfigError",
-  "wrapped": false
-}

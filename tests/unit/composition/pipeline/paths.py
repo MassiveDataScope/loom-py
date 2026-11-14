@@ -245,3 +245,26 @@ STANDALONE: dict[str, StartupPath] = {
 
 UNCOMPOSED: dict[str, StartupPath] = {"harness": harness, **STANDALONE}
 """The paths that do not go through ``compose_application``, by name."""
+
+HTTP = ("fastapi", "lambda_http")
+"""The paths serving HTTP, where some refusals read differently: see each variant."""
+
+
+def refusal(
+    paths: Mapping[str, StartupPath],
+    path: str,
+    composition: Composition,
+    tmp_path: Path,
+    prepare: Callable[[pytest.MonkeyPatch], None] | None = None,
+) -> BaseException:
+    """What *path* raises composing *composition*, in ``tmp_path / path`` and its own patches."""
+    directory = tmp_path / path
+    directory.mkdir()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        if prepare is not None:
+            prepare(monkeypatch)
+        try:
+            paths[path](composition, directory, monkeypatch)
+        except Exception as error:  # noqa: BLE001 - the refusal is what the caller records
+            return error
+    pytest.fail(f"{path} composed without refusing")

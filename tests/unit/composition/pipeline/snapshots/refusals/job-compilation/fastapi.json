@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "AcmeUncompilableJob.execute: only one Input() parameter is allowed",
-  "type": "loom.core.engine.compiler.CompilationError",
-  "wrapped": false
-}

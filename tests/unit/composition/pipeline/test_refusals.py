@@ -1,18 +1,20 @@
 """How each start-up refusal reaches the caller on each path, on today's code.
 
-Each snapshot ``refusals/<refusal>/<path>.json`` holds the type and message
-the caller catches, whether it is a plain ``BootstrapError`` wrapping the
-refusal, and the wrapped cause. The test also checks the refusal is the one
-the scenario provokes, raw or as the wrapped cause, so a recording never
-holds an unrelated failure.
+Each snapshot ``refusals/<refusal>.json`` holds the type and message the
+caller catches on every path, whether it is a plain ``BootstrapError``
+wrapping the refusal, and the wrapped cause; a path that records something
+else is a declared variant, ``refusals/<refusal>.<variant>.json``. The test
+also checks the refusal is the one the scenario provokes, raw or as the
+wrapped cause, so a recording never holds an unrelated failure.
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -64,6 +66,7 @@ from tests.unit.composition.pipeline.components import (
 from tests.unit.composition.pipeline.snapshot import (
     describe_container,
     describe_refusal,
+    matches_path_snapshots,
     matches_snapshot,
 )
 
@@ -80,12 +83,13 @@ _ANALYSED = ("fastapi",)
 
 @dataclass(frozen=True)
 class _Refusal:
-    """A composition provoking *refused* on each of *paths*."""
+    """A composition provoking *refused* on each of *paths*; *variants* record their own."""
 
     composition: paths.Composition
     refused: type[BaseException]
     paths: tuple[str, ...] = _COMPOSED
     prepare: Callable[[pytest.MonkeyPatch], None] | None = None
+    variants: Mapping[str, tuple[str, ...]] = MappingProxyType({})
 
 
 def _without_celery_extra(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -112,7 +116,10 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         paths.Composition(use_cases=(AcmePing, AcmeUncompilable)), CompilationError, _EVERY
     ),
     "job-compilation": _Refusal(
-        paths.Composition(jobs=(AcmeJob, AcmeUncompilableJob)), CompilationError
+        paths.Composition(jobs=(AcmeJob, AcmeUncompilableJob)),
+        CompilationError,
+        # The HTTP paths raise the refusal itself, the others a BootstrapError wrapping it.
+        variants={"http": paths.HTTP},
     ),
     "store-beside-main-model": _Refusal(
         paths.Composition(
@@ -147,7 +154,10 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         paths.Composition(use_cases=(AcmePing, AcmeMcpUser)), AgentCompilationError
     ),
     "deploy-check": _Refusal(
-        paths.Composition(environment=Environment.PRODUCTION), DeployCheckError
+        paths.Composition(environment=Environment.PRODUCTION),
+        DeployCheckError,
+        # The HTTP paths also report the REST deploy check.
+        variants={"http": paths.HTTP},
     ),
     "job-backend": _Refusal(
         paths.Composition(config={"app": {"job_service": "rabbit"}}), JobBackendError
@@ -211,6 +221,8 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
             config={"sql": {"connections": {"main": {"url": _CLICKHOUSE, "pool_size": 2}}}}
         ),
         ConfigError,
+        # Lambda HTTP validates the section first and reports the unknown field, not the rename.
+        variants={"lambda_http": ("lambda_http",)},
     ),
     "sql-invalid-section": _Refusal(
         paths.Composition(
@@ -220,29 +232,25 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
     ),
 }
 
-_CASES = [
-    pytest.param(refusal, path, id=f"{refusal}-{path}")
-    for refusal, spec in REFUSALS.items()
-    for path in spec.paths
-]
 
-
-@pytest.mark.parametrize(("refusal", "path"), _CASES)
-def test_each_refusal_reaches_the_caller_as_before(
-    refusal: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.parametrize("refusal", list(REFUSALS))
+def test_each_refusal_reaches_the_caller_as_before(refusal: str, tmp_path: Path) -> None:
     spec = REFUSALS[refusal]
-    if spec.prepare is not None:
-        spec.prepare(monkeypatch)
-    try:
-        _PATHS[path](spec.composition, tmp_path, monkeypatch)
-    except Exception as error:  # noqa: BLE001 - the recording is the assertion
-        caught = error
-    else:
-        pytest.fail(f"{path} composed without refusing")
+    caught = {
+        path: paths.refusal(_PATHS, path, spec.composition, tmp_path, spec.prepare)
+        for path in spec.paths
+    }
 
-    assert isinstance(caught, spec.refused) or isinstance(caught.__cause__, spec.refused)
-    matches_snapshot(f"refusals/{refusal}/{path}", describe_refusal(caught, tmp_path=tmp_path))
+    unrelated = [
+        f"{path}: {error!r}"
+        for path, error in caught.items()
+        if not (isinstance(error, spec.refused) or isinstance(error.__cause__, spec.refused))
+    ]
+    assert unrelated == [], "\n".join(unrelated)
+    recorded = {
+        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
+    }
+    matches_path_snapshots(f"refusals/{refusal}", recorded, spec.variants)
 
 
 @pytest.mark.parametrize("path", list(paths.UNCOMPOSED))
@@ -290,4 +298,4 @@ def test_a_job_discovered_from_modules_reaches_the_api_as_before(
         build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
 
     recorded = describe_refusal(caught.value, tmp_path=tmp_path)
-    matches_snapshot("refusals/job-compilation/fastapi-modules", recorded)
+    matches_snapshot("refusals/job-compilation.http", recorded)

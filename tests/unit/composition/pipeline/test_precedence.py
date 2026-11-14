@@ -3,8 +3,9 @@
 Each scenario provokes two refusals that the phases raise at different
 points, and the comment above it names them in order. The caller catches the
 earlier one; a reordering of the phases would surface the other. Each
-snapshot ``precedence/<scenario>/<path>.json`` records the caught refusal as
-``refusals/`` does.
+snapshot ``precedence/<scenario>.json`` records the refusal every path
+catches as ``refusals/`` does, a declared variant in
+``precedence/<scenario>.<variant>.json``.
 
 The scenarios of ``_SCENARIOS`` keep the order of the code before the
 pipeline, but ``agent-marker-and-unbound-dependency``: since T04 the
@@ -20,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -43,7 +45,7 @@ from tests.unit.composition.pipeline.components import (
     binds_sql_service,
     binds_unbuildable,
 )
-from tests.unit.composition.pipeline.snapshot import describe_refusal, matches_snapshot
+from tests.unit.composition.pipeline.snapshot import describe_refusal, matches_path_snapshots
 from tests.unit.composition.pipeline.test_refusals import REFUSALS
 
 _INVALID_SQL = {
@@ -57,11 +59,15 @@ _UNCOMPOSED_LEDGER = {"stores": {"ledger": {"backend": "none"}}}
 
 @dataclass(frozen=True)
 class _Precedence:
-    """A composition provoking two refusals; the caller catches *winner*, or *on_path*'s."""
+    """A composition provoking two refusals; the caller catches *winner*, or *on_path*'s.
+
+    The paths of *variants* record their own snapshot.
+    """
 
     composition: paths.Composition
     winner: type[BaseException]
     on_path: Mapping[str, type[BaseException]] = field(default_factory=dict)
+    variants: Mapping[str, tuple[str, ...]] = MappingProxyType({})
 
 
 _SCENARIOS: dict[str, _Precedence] = {
@@ -99,6 +105,7 @@ _SCENARIOS: dict[str, _Precedence] = {
         JobBackendError,
         # The HTTP adapters validate the sql section in their recipe, during plan.
         {"fastapi": ConfigError, "lambda_http": ConfigError},
+        {"http": paths.HTTP},
     ),
     # A caller module's ReservedBindingError (create_kernel) before configure_job_service's
     # JobBackendError.
@@ -110,6 +117,8 @@ _SCENARIOS: dict[str, _Precedence] = {
     "deploy-check-and-cursor-codec": _Precedence(
         paths.Composition(environment=Environment.PRODUCTION, config=_INVALID_CURSORS),
         DeployCheckError,
+        # The HTTP paths also report the REST deploy check.
+        variants={"http": paths.HTTP},
     ),
     # JobSettings.from_config's ConfigError before persist's (the cursor codec).
     "job-section-and-cursor-codec": _Precedence(
@@ -118,29 +127,26 @@ _SCENARIOS: dict[str, _Precedence] = {
     ),
 }
 
-_CASES = [
-    pytest.param(scenario, path, id=f"{scenario}-{path}")
-    for scenario in _SCENARIOS
-    for path in paths.COMPOSED
-]
 
-
-@pytest.mark.parametrize(("scenario", "path"), _CASES)
-def test_the_earlier_refusal_reaches_the_caller_as_before(
-    scenario: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.parametrize("scenario", list(_SCENARIOS))
+def test_the_earlier_refusal_reaches_the_caller_as_before(scenario: str, tmp_path: Path) -> None:
     spec = _SCENARIOS[scenario]
-    try:
-        paths.COMPOSED[path](spec.composition, tmp_path, monkeypatch)
-    except Exception as error:  # noqa: BLE001 - the recording is the assertion
-        caught = error
-    else:
-        pytest.fail(f"{path} composed without refusing")
+    caught = {
+        path: paths.refusal(paths.COMPOSED, path, spec.composition, tmp_path)
+        for path in paths.COMPOSED
+    }
 
-    refused = spec.on_path.get(path, spec.winner)
-    assert isinstance(caught, refused) or isinstance(caught.__cause__, refused)
-    recorded = describe_refusal(caught, tmp_path=tmp_path)
-    matches_snapshot(f"precedence/{scenario}/{path}", recorded)
+    unexpected = [
+        f"{path}: {error!r}"
+        for path, error in caught.items()
+        if not isinstance(error, refused := spec.on_path.get(path, spec.winner))
+        and not isinstance(error.__cause__, refused)
+    ]
+    assert unexpected == [], "\n".join(unexpected)
+    recorded = {
+        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
+    }
+    matches_path_snapshots(f"precedence/{scenario}", recorded, spec.variants)
 
 
 _VALIDATED_AT_SEAL_AFTER = (
@@ -172,25 +178,26 @@ def _representatives(family: str) -> tuple[str, ...]:
     return (paths_before_seal[0], *(_AI_MARKERS_ON_CELERY if markers else ()))
 
 
-_SEAL_CASES = [
-    pytest.param(family, path, id=f"{family}-{path}")
-    for family in _VALIDATED_AT_SEAL_AFTER
-    for path in _representatives(family)
-]
-
-
-@pytest.mark.parametrize(("family", "path"), _SEAL_CASES)
+@pytest.mark.parametrize("family", _VALIDATED_AT_SEAL_AFTER)
 def test_a_failing_provider_surfaces_after_the_refusals_before_seal(
-    family: str, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    family: str, tmp_path: Path
 ) -> None:
     refusal = REFUSALS[family]
-    if refusal.prepare is not None:
-        refusal.prepare(monkeypatch)
     composition = replace(
         refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
     )
-    with pytest.raises(refusal.refused) as caught:
-        paths.COMPOSED[path](composition, tmp_path, monkeypatch)
+    caught = {
+        path: paths.refusal(paths.COMPOSED, path, composition, tmp_path, refusal.prepare)
+        for path in _representatives(family)
+    }
 
-    recorded = describe_refusal(caught.value, tmp_path=tmp_path)
-    matches_snapshot(f"precedence/validated-at-seal-after-{family}/{path}", recorded)
+    unexpected = [
+        f"{path}: {error!r}"
+        for path, error in caught.items()
+        if not isinstance(error, refusal.refused)
+    ]
+    assert unexpected == [], "\n".join(unexpected)
+    recorded = {
+        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
+    }
+    matches_path_snapshots(f"precedence/validated-at-seal-after-{family}", recorded)

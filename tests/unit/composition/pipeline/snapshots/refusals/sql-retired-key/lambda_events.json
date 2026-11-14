@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "sql.connections.main.pool_size was removed; use sql.connections.main.pool.size",
-  "type": "loom.core.config.errors.ConfigError",
-  "wrapped": false
-}

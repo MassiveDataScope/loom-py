@@ -5,13 +5,13 @@ repository or cache module, a use case's compilation, a structural refusal
 of the dependency graph and the ``validate()`` seal runs; a
 ``BootstrapError`` subclass passes through. Everything else keeps
 its own type. The recordings of ``snapshots/refusals`` hold what each path
-raises, and are checked against the contract here; the failures no recording
-provokes are provoked below.
+raises (one per refusal, and one per declared variant), and are checked
+against the contract here; the failures no recording provokes are provoked
+below.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -34,7 +34,8 @@ from tests.unit.composition.pipeline.components import (
     binds_unbuildable,
     raises_at_registration,
 )
-from tests.unit.composition.pipeline.snapshot import SNAPSHOTS
+from tests.unit.composition.pipeline.snapshot import SNAPSHOTS, path_recordings
+from tests.unit.composition.pipeline.test_refusals import REFUSALS
 
 _WRAPPED = {
     "failing-module": "RuntimeError",
@@ -74,10 +75,9 @@ _JOB_COMPILATION_WRAPPED = {"celery", "lambda_jobs", "lambda_events"}
 
 
 def _recorded(refusal: str) -> list[tuple[str, dict[str, Any]]]:
-    return [
-        (path.stem, json.loads(path.read_text(encoding="utf-8")))
-        for path in sorted((SNAPSHOTS / "refusals" / refusal).glob("*.json"))
-    ]
+    """What each path of *refusal* records, by path."""
+    spec = REFUSALS[refusal]
+    return path_recordings(f"refusals/{refusal}", spec.paths, spec.variants)
 
 
 def _type(qualified: str) -> str:
@@ -85,7 +85,7 @@ def _type(qualified: str) -> str:
 
 
 def test_the_recordings_cover_every_refusal() -> None:
-    recorded = {path.name for path in (SNAPSHOTS / "refusals").iterdir()}
+    recorded = {path.name.split(".")[0] for path in (SNAPSHOTS / "refusals").iterdir()}
     assert recorded == {*_WRAPPED, *_RAW, "job-compilation"}
 
 

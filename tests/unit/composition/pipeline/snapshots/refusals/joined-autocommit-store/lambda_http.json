@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "AcmeJoinedLedger declares Joined on store ledger, which cannot roll back, so it cannot commit with the invocation. Write to it from a use case whose primary store it is, or after the commit, through the post-commit channel.",
-  "type": "loom.core.use_case.errors.JoinedAutocommitStore",
-  "wrapped": false
-}

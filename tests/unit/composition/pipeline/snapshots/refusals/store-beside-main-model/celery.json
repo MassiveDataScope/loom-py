@@ -1,9 +1,0 @@
-{
-  "cause": {
-    "message": "AcmeBesideModel declares __store__ but writes to the store of its main model AcmeLedgerEntry; remove __store__",
-    "type": "loom.core.engine.compiler.CompilationError"
-  },
-  "message": "Bootstrap failed: AcmeBesideModel declares __store__ but writes to the store of its main model AcmeLedgerEntry; remove __store__",
-  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
-  "wrapped": true
-}

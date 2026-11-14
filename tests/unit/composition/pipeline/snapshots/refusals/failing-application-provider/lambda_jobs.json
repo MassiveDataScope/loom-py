@@ -1,9 +1,0 @@
-{
-  "cause": {
-    "message": "Failed to instantiate APPLICATION-scope binding for AcmeUnbuildable: acme service cannot start",
-    "type": "loom.core.di.container.ResolutionError"
-  },
-  "message": "Bootstrap failed: Failed to instantiate APPLICATION-scope binding for AcmeUnbuildable: acme service cannot start",
-  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
-  "wrapped": true
-}

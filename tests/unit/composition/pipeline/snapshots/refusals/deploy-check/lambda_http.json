@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "deploy checks failed in the 'production' environment:\n  loom.cursors.E001: persistence.cursors.signing is 'ephemeral': cursor tokens are not signed with a key every instance shares. Hint: drop persistence.cursors.signing from the deployed configuration (signed is the default) and set persistence.cursors.current_key_id and persistence.cursors.keys, each key read from a mounted file (path) or an injected secret variable (env).\n  loom.rest.E001: the API authenticates no caller: neither jwt nor 'custom: true' is set in app.rest.auth. Hint: configure app.rest.auth.jwt, or set 'app.rest.auth.custom: true' and pass create_app(authenticator=...); list loom.rest.E001 under checks.silenced only when a gateway in front authenticates every request.\nDeploy checks run in production and staging; LOOM_ENV unset means production. For local work set LOOM_ENV=development. To accept a finding on purpose, list its id under checks.silenced.",
-  "type": "loom.core.checks.DeployCheckError",
-  "wrapped": false
-}

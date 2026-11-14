@@ -1,6 +1,0 @@
-{
-  "cause": null,
-  "message": "AcmeJob uses queue 'default', which sqs.queues does not map to a URL",
-  "type": "loom.jobs.aws.sqs.SQSQueueConfigError",
-  "wrapped": false
-}
