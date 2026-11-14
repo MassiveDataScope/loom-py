@@ -74,20 +74,21 @@ def service(request: pytest.FixtureRequest) -> Iterator[tuple[JobService, _Sent]
     clear_pending_dispatches()
 
 
-@pytest.mark.parametrize("gathered", [False, True], ids=["owner", "gather-child"])
-@pytest.mark.parametrize("read_only", sorted(_READ_ONLY))
-async def test_a_dispatch_from_a_read_only_execution_is_refused_and_never_sent(
-    service: tuple[JobService, _Sent], read_only: str, gathered: bool
-) -> None:
-    jobs, sent = service
+class TestReadOnlyDispatch:
+    @pytest.mark.parametrize("gathered", [False, True], ids=["owner", "gather-child"])
+    @pytest.mark.parametrize("read_only", sorted(_READ_ONLY))
+    async def test_a_dispatch_from_a_read_only_execution_is_refused_and_never_sent(
+        self, service: tuple[JobService, _Sent], read_only: str, gathered: bool
+    ) -> None:
+        jobs, sent = service
 
-    async def dispatch() -> None:
-        jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
+        async def dispatch() -> None:
+            jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
 
-    async with _READ_ONLY[read_only]():
-        attempt = asyncio.gather(dispatch()) if gathered else dispatch()
-        with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
-            await attempt
+        async with _READ_ONLY[read_only]():
+            attempt = asyncio.gather(dispatch()) if gathered else dispatch()
+            with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
+                await attempt
 
-    await flush_pending_dispatches()
-    assert sent() == 0
+        await flush_pending_dispatches()
+        assert sent() == 0

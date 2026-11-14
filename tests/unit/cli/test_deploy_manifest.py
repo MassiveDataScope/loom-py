@@ -273,67 +273,6 @@ def _manifest(config: Path, *options: str) -> Any:
     return runner.invoke(app, ["deploy", "manifest", "--env", "production", *options, str(config)])
 
 
-def test_the_manifest_describes_every_function(project: Project) -> None:
-    result = _manifest(project())
-
-    assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout) == _expected()
-
-
-def test_the_same_configuration_written_in_another_order_gives_the_same_bytes(
-    project: Project,
-) -> None:
-    def reversed_order(node: Any) -> Any:
-        if isinstance(node, dict):
-            return {key: reversed_order(node[key]) for key in reversed(list(node))}
-        return node
-
-    first = _manifest(project())
-    second = _manifest(project(reversed_order))
-
-    assert (first.exit_code, second.exit_code) == (0, 0), first.stderr + second.stderr
-    assert first.stdout == second.stdout
-
-
-def test_one_function_is_described_alone(project: Project) -> None:
-    result = _manifest(project(), "--function", "worker")
-
-    assert result.exit_code == 0, result.stderr
-    manifest = json.loads(result.stdout)
-    assert manifest["functions"] == {"worker": _expected()["functions"]["worker"]}
-
-
-def test_no_secret_or_parameter_is_resolved(
-    project: Project, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    resolved: list[str] = []
-
-    def record(_resolver: object, key: str, _root_: object = None) -> str:
-        resolved.append(key)
-        return _SENTINEL
-
-    monkeypatch.setattr(SecretsManagerResolver, "resolve", record)
-    monkeypatch.setattr(SsmResolver, "resolve", record)
-
-    result = _manifest(project())
-
-    assert result.exit_code == 0, result.stderr
-    assert resolved == []
-    assert _SENTINEL not in result.output
-
-
-def test_a_failing_deploy_check_prints_its_findings_and_no_manifest(project: Project) -> None:
-    def unsilenced(config: dict[str, Any]) -> dict[str, Any]:
-        del config["checks"]
-        return config
-
-    result = _manifest(project(unsilenced))
-
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert "loom.cursors.E001" in result.stderr
-
-
 _DELETE = object()
 
 
@@ -358,128 +297,191 @@ _JWT_SECRET = "app.rest.auth.jwt.secret_path"
 _WORKER_ONLY = ("--function", "worker")
 
 
-@pytest.mark.parametrize(
-    ("edit", "options", "message"),
-    [
-        (_set("lambda.handler", _DELETE), (), "lambda.handler is missing"),
-        (_set("lambda.handler", "${oc.env:HANDLER}"), (), "lambda.handler must be written"),
-        (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
-        (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
-        (_set("lambda.functions", {}), (), "declares no function to deploy"),
-        (
-            _set("lambda.functions.worker.trigger.queue", _DELETE),
-            (),
-            "worker.trigger.queue.name must name the queue",
-        ),
-        (
-            _set("lambda.functions.worker.trigger.queue.name", "unknown"),
-            (),
-            "worker.trigger.queue.name must name the queue",
-        ),
-        (
-            _set("lambda.functions.alerts.trigger.queue.name", "unknown"),
-            (),
-            "alerts.trigger.queue.name must name the queue",
-        ),
-        (
-            _set("lambda.functions.invoices_in.trigger.job", "MissingJob"),
-            (),
-            "'MissingJob', which is no discovered Job",
-        ),
-        (
-            _set("lambda.functions.bad-name", _trigger("schedule", job="ImportInvoice")),
-            (),
-            "lambda.functions.bad-name must be named by a Python identifier",
-        ),
-        (
-            _set("lambda.functions.función", _trigger("schedule", job="ImportInvoice")),
-            (),
-            "lambda.functions.función must be named by a Python identifier",
-        ),
-        (_set(_JWT_SECRET, "${secrets:${oc.env:JWT}}"), (), f"{_JWT_SECRET} nests a placeholder"),
-        (
-            _set(_JWT_SECRET, "${ secrets : /shop/${oc.env:JWT} }"),
-            (),
-            f"{_JWT_SECRET} nests a placeholder",
-        ),
-        (_set(_JWT_SECRET, "${secrets:/shop/*}"), (), "'/shop/*' holds a wildcard"),
-        (_set(_JWT_SECRET, "${ssm:/shop/key?}"), (), "'/shop/key?' holds a wildcard"),
-        (
-            _set("app.rest.disable_routes", [{"method": "GET", "path": "/nowhere"}]),
-            (),
-            "matches no route declared by a Python interface",
-        ),
-        (
-            _set("app.discovery.mode", "interfaces"),
-            _WORKER_ONLY,
-            "'interfaces' is not one a worker scans",
-        ),
-        (lambda config: config, ("--function", "billing"), "declares no function 'billing'"),
-    ],
-    ids=[
-        "no-handler",
-        "handler-placeholder",
-        "handler-malformed",
-        "queue-placeholder",
-        "no-function",
-        "no-queue",
-        "unknown-queue",
-        "unknown-queue-on-event-trigger",
-        "undiscovered-job",
-        "function-name",
-        "non-ascii-function-name",
-        "nested",
-        "nested-spaced",
-        "wildcard-secret",
-        "wildcard-parameter",
-        "unmatched-disabled-route",
-        "non-worker-discovery",
-        "unknown-function",
-    ],
-)
-def test_a_manifest_that_cannot_be_complete_is_refused(
-    project: Project, edit: Edit, options: tuple[str, ...], message: str
-) -> None:
-    result = _manifest(project(edit), *options)
+class TestDeployManifest:
+    def test_the_manifest_describes_every_function(self, project: Project) -> None:
+        result = _manifest(project())
 
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert message in result.stderr
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == _expected()
 
+    def test_the_same_configuration_written_in_another_order_gives_the_same_bytes(
+        self,
+        project: Project,
+    ) -> None:
+        def reversed_order(node: Any) -> Any:
+            if isinstance(node, dict):
+                return {key: reversed_order(node[key]) for key in reversed(list(node))}
+            return node
 
-@pytest.mark.parametrize(
-    ("written", "named"),
-    [
-        ("${ secrets : /shop/spaced }", "/shop/spaced"),
-        ("${secrets: '/shop/quoted' }", "/shop/quoted"),
-        ('${ secrets:"/shop/json.key"}', "/shop/json"),
-    ],
-    ids=["spaces", "single-quotes", "double-quotes-json-tail"],
-)
-def test_a_placeholder_written_with_spaces_or_quotes_is_named(
-    project: Project, written: str, named: str
-) -> None:
-    result = _manifest(project(_set(_JWT_SECRET, written)), "--function", "public")
+        first = _manifest(project())
+        second = _manifest(project(reversed_order))
 
-    assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout)["functions"]["public"]["secrets"] == [named]
+        assert (first.exit_code, second.exit_code) == (0, 0), first.stderr + second.stderr
+        assert first.stdout == second.stdout
 
+    def test_one_function_is_described_alone(self, project: Project) -> None:
+        result = _manifest(project(), "--function", "worker")
 
-def test_no_variable_is_read(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LEAK", _SENTINEL)
-    leaking = _set(_JWT_SECRET, "${secrets:/shop/${oc.env:LEAK}}")
+        assert result.exit_code == 0, result.stderr
+        manifest = json.loads(result.stdout)
+        assert manifest["functions"] == {"worker": _expected()["functions"]["worker"]}
 
-    result = _manifest(project(leaking))
+    def test_no_secret_or_parameter_is_resolved(
+        self, project: Project, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        resolved: list[str] = []
 
-    assert result.exit_code == 1
-    assert _SENTINEL not in result.output
+        def record(_resolver: object, key: str, _root_: object = None) -> str:
+            resolved.append(key)
+            return _SENTINEL
 
+        monkeypatch.setattr(SecretsManagerResolver, "resolve", record)
+        monkeypatch.setattr(SsmResolver, "resolve", record)
 
-def test_the_findings_go_to_stderr_and_the_manifest_alone_to_stdout(project: Project) -> None:
-    result = _manifest(project(_set("app.rest.docs_url", "/docs")))
+        result = _manifest(project())
 
-    assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout)["manifest_version"] == 2
-    assert "environment: production" in result.stderr
-    assert "silenced: loom.cursors.E001" in result.stderr
-    assert "WARNING loom.rest.W001" in result.stderr
+        assert result.exit_code == 0, result.stderr
+        assert resolved == []
+        assert _SENTINEL not in result.output
+
+    def test_a_failing_deploy_check_prints_its_findings_and_no_manifest(
+        self, project: Project
+    ) -> None:
+        def unsilenced(config: dict[str, Any]) -> dict[str, Any]:
+            del config["checks"]
+            return config
+
+        result = _manifest(project(unsilenced))
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "loom.cursors.E001" in result.stderr
+
+    @pytest.mark.parametrize(
+        ("edit", "options", "message"),
+        [
+            (_set("lambda.handler", _DELETE), (), "lambda.handler is missing"),
+            (_set("lambda.handler", "${oc.env:HANDLER}"), (), "lambda.handler must be written"),
+            (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
+            (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
+            (_set("lambda.functions", {}), (), "declares no function to deploy"),
+            (
+                _set("lambda.functions.worker.trigger.queue", _DELETE),
+                (),
+                "worker.trigger.queue.name must name the queue",
+            ),
+            (
+                _set("lambda.functions.worker.trigger.queue.name", "unknown"),
+                (),
+                "worker.trigger.queue.name must name the queue",
+            ),
+            (
+                _set("lambda.functions.alerts.trigger.queue.name", "unknown"),
+                (),
+                "alerts.trigger.queue.name must name the queue",
+            ),
+            (
+                _set("lambda.functions.invoices_in.trigger.job", "MissingJob"),
+                (),
+                "'MissingJob', which is no discovered Job",
+            ),
+            (
+                _set("lambda.functions.bad-name", _trigger("schedule", job="ImportInvoice")),
+                (),
+                "lambda.functions.bad-name must be named by a Python identifier",
+            ),
+            (
+                _set("lambda.functions.función", _trigger("schedule", job="ImportInvoice")),
+                (),
+                "lambda.functions.función must be named by a Python identifier",
+            ),
+            (
+                _set(_JWT_SECRET, "${secrets:${oc.env:JWT}}"),
+                (),
+                f"{_JWT_SECRET} nests a placeholder",
+            ),
+            (
+                _set(_JWT_SECRET, "${ secrets : /shop/${oc.env:JWT} }"),
+                (),
+                f"{_JWT_SECRET} nests a placeholder",
+            ),
+            (_set(_JWT_SECRET, "${secrets:/shop/*}"), (), "'/shop/*' holds a wildcard"),
+            (_set(_JWT_SECRET, "${ssm:/shop/key?}"), (), "'/shop/key?' holds a wildcard"),
+            (
+                _set("app.rest.disable_routes", [{"method": "GET", "path": "/nowhere"}]),
+                (),
+                "matches no route declared by a Python interface",
+            ),
+            (
+                _set("app.discovery.mode", "interfaces"),
+                _WORKER_ONLY,
+                "'interfaces' is not one a worker scans",
+            ),
+            (lambda config: config, ("--function", "billing"), "declares no function 'billing'"),
+        ],
+        ids=[
+            "no-handler",
+            "handler-placeholder",
+            "handler-malformed",
+            "queue-placeholder",
+            "no-function",
+            "no-queue",
+            "unknown-queue",
+            "unknown-queue-on-event-trigger",
+            "undiscovered-job",
+            "function-name",
+            "non-ascii-function-name",
+            "nested",
+            "nested-spaced",
+            "wildcard-secret",
+            "wildcard-parameter",
+            "unmatched-disabled-route",
+            "non-worker-discovery",
+            "unknown-function",
+        ],
+    )
+    def test_a_manifest_that_cannot_be_complete_is_refused(
+        self, project: Project, edit: Edit, options: tuple[str, ...], message: str
+    ) -> None:
+        result = _manifest(project(edit), *options)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert message in result.stderr
+
+    @pytest.mark.parametrize(
+        ("written", "named"),
+        [
+            ("${ secrets : /shop/spaced }", "/shop/spaced"),
+            ("${secrets: '/shop/quoted' }", "/shop/quoted"),
+            ('${ secrets:"/shop/json.key"}', "/shop/json"),
+        ],
+        ids=["spaces", "single-quotes", "double-quotes-json-tail"],
+    )
+    def test_a_placeholder_written_with_spaces_or_quotes_is_named(
+        self, project: Project, written: str, named: str
+    ) -> None:
+        result = _manifest(project(_set(_JWT_SECRET, written)), "--function", "public")
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["functions"]["public"]["secrets"] == [named]
+
+    def test_no_variable_is_read(self, project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LEAK", _SENTINEL)
+        leaking = _set(_JWT_SECRET, "${secrets:/shop/${oc.env:LEAK}}")
+
+        result = _manifest(project(leaking))
+
+        assert result.exit_code == 1
+        assert _SENTINEL not in result.output
+
+    def test_the_findings_go_to_stderr_and_the_manifest_alone_to_stdout(
+        self, project: Project
+    ) -> None:
+        result = _manifest(project(_set("app.rest.docs_url", "/docs")))
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["manifest_version"] == 2
+        assert "environment: production" in result.stderr
+        assert "silenced: loom.cursors.E001" in result.stderr
+        assert "WARNING loom.rest.W001" in result.stderr

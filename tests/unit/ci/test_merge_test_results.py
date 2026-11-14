@@ -30,87 +30,84 @@ def _totals(path: Path) -> tuple[int, int]:
     return tests, failures
 
 
-def test_both_lanes_contribute_their_totals(tmp_path: Path) -> None:
-    fast = _report(tmp_path / "junit-fast.xml", tests=5000, failures=0, name="fast")
-    spark = _report(tmp_path / "junit-spark.xml", tests=112, failures=0, name="spark")
-    output = tmp_path / "junit.xml"
+class TestMergeTestResults:
+    def test_both_lanes_contribute_their_totals(self, tmp_path: Path) -> None:
+        fast = _report(tmp_path / "junit-fast.xml", tests=5000, failures=0, name="fast")
+        spark = _report(tmp_path / "junit-spark.xml", tests=112, failures=0, name="spark")
+        output = tmp_path / "junit.xml"
 
-    assert (
+        assert (
+            merge.main(["--junit", str(fast), "--junit", str(spark), "--junit-output", str(output)])
+            == 0
+        )
+        assert _totals(output) == (5112, 0)
+
+    @pytest.mark.parametrize("failing_lane", ["fast", "spark"])
+    def test_a_failure_in_either_lane_survives_the_merge(
+        self, tmp_path: Path, failing_lane: str
+    ) -> None:
+        fast = _report(
+            tmp_path / "junit-fast.xml",
+            tests=5000,
+            failures=1 if failing_lane == "fast" else 0,
+            name="fast",
+        )
+        spark = _report(
+            tmp_path / "junit-spark.xml",
+            tests=112,
+            failures=1 if failing_lane == "spark" else 0,
+            name="spark",
+        )
+        output = tmp_path / "junit.xml"
+
         merge.main(["--junit", str(fast), "--junit", str(spark), "--junit-output", str(output)])
-        == 0
-    )
-    assert _totals(output) == (5112, 0)
 
+        assert _totals(output) == (5112, 1)
 
-@pytest.mark.parametrize("failing_lane", ["fast", "spark"])
-def test_a_failure_in_either_lane_survives_the_merge(tmp_path: Path, failing_lane: str) -> None:
-    fast = _report(
-        tmp_path / "junit-fast.xml",
-        tests=5000,
-        failures=1 if failing_lane == "fast" else 0,
-        name="fast",
-    )
-    spark = _report(
-        tmp_path / "junit-spark.xml",
-        tests=112,
-        failures=1 if failing_lane == "spark" else 0,
-        name="spark",
-    )
-    output = tmp_path / "junit.xml"
+    def test_every_suite_of_a_multi_suite_lane_is_kept(self, tmp_path: Path) -> None:
+        """A lane splitting its output into several suites must contribute all of them."""
+        lane = tmp_path / "junit-multi.xml"
+        lane.write_text(
+            '<?xml version="1.0"?><testsuites>'
+            '<testsuite name="one" tests="4" failures="0" errors="0" skipped="0"/>'
+            '<testsuite name="two" tests="6" failures="1" errors="0" skipped="0"/>'
+            "</testsuites>",
+            encoding="utf-8",
+        )
+        other = _report(tmp_path / "junit-other.xml", tests=2, failures=0, name="other")
+        output = tmp_path / "junit.xml"
 
-    merge.main(["--junit", str(fast), "--junit", str(spark), "--junit-output", str(output)])
+        merge.main(["--junit", str(lane), "--junit", str(other), "--junit-output", str(output)])
 
-    assert _totals(output) == (5112, 1)
+        assert _totals(output) == (12, 1)
 
+    def test_a_lane_reporting_no_suite_is_refused(self, tmp_path: Path) -> None:
+        empty = tmp_path / "junit-empty.xml"
+        empty.write_text('<?xml version="1.0"?><testsuites></testsuites>', encoding="utf-8")
 
-def test_every_suite_of_a_multi_suite_lane_is_kept(tmp_path: Path) -> None:
-    """A lane splitting its output into several suites must contribute all of them."""
-    lane = tmp_path / "junit-multi.xml"
-    lane.write_text(
-        '<?xml version="1.0"?><testsuites>'
-        '<testsuite name="one" tests="4" failures="0" errors="0" skipped="0"/>'
-        '<testsuite name="two" tests="6" failures="1" errors="0" skipped="0"/>'
-        "</testsuites>",
-        encoding="utf-8",
-    )
-    other = _report(tmp_path / "junit-other.xml", tests=2, failures=0, name="other")
-    output = tmp_path / "junit.xml"
+        with pytest.raises(merge.MergeError, match="reports no test suite"):
+            merge.merge_junit([empty])
 
-    merge.main(["--junit", str(lane), "--junit", str(other), "--junit-output", str(output)])
+    def test_a_document_that_is_not_junit_is_refused(self, tmp_path: Path) -> None:
+        alien = tmp_path / "coverage.xml"
+        alien.write_text('<?xml version="1.0"?><coverage line-rate="1"/>', encoding="utf-8")
 
-    assert _totals(output) == (12, 1)
+        with pytest.raises(merge.MergeError, match="not a JUnit report"):
+            merge.merge_junit([alien])
 
+    def test_a_missing_lane_report_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(merge.MergeError, match="cannot read JUnit report"):
+            merge.merge_junit([tmp_path / "absent.xml"])
 
-def test_a_lane_reporting_no_suite_is_refused(tmp_path: Path) -> None:
-    empty = tmp_path / "junit-empty.xml"
-    empty.write_text('<?xml version="1.0"?><testsuites></testsuites>', encoding="utf-8")
+    def test_a_single_suite_document_is_accepted(self, tmp_path: Path) -> None:
+        solo = tmp_path / "junit-solo.xml"
+        solo.write_text(
+            '<?xml version="1.0"?><testsuite name="solo" tests="3" failures="1" errors="0" '
+            'skipped="0"><testcase classname="solo" name="t"/></testsuite>',
+            encoding="utf-8",
+        )
+        output = tmp_path / "junit.xml"
 
-    with pytest.raises(merge.MergeError, match="reports no test suite"):
-        merge.merge_junit([empty])
+        merge.main(["--junit", str(solo), "--junit-output", str(output)])
 
-
-def test_a_document_that_is_not_junit_is_refused(tmp_path: Path) -> None:
-    alien = tmp_path / "coverage.xml"
-    alien.write_text('<?xml version="1.0"?><coverage line-rate="1"/>', encoding="utf-8")
-
-    with pytest.raises(merge.MergeError, match="not a JUnit report"):
-        merge.merge_junit([alien])
-
-
-def test_a_missing_lane_report_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(merge.MergeError, match="cannot read JUnit report"):
-        merge.merge_junit([tmp_path / "absent.xml"])
-
-
-def test_a_single_suite_document_is_accepted(tmp_path: Path) -> None:
-    solo = tmp_path / "junit-solo.xml"
-    solo.write_text(
-        '<?xml version="1.0"?><testsuite name="solo" tests="3" failures="1" errors="0" '
-        'skipped="0"><testcase classname="solo" name="t"/></testsuite>',
-        encoding="utf-8",
-    )
-    output = tmp_path / "junit.xml"
-
-    merge.main(["--junit", str(solo), "--junit-output", str(output)])
-
-    assert _totals(output) == (3, 1)
+        assert _totals(output) == (3, 1)

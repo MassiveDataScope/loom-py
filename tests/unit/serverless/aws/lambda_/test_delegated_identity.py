@@ -45,54 +45,50 @@ def _attributes(
     return dict(envelope.identity.get("attributes") or {})
 
 
-def test_an_s3_uploader_is_the_person_the_system_identity_acts_for() -> None:
-    trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
-    event = _s3_event(userIdentity={"principalId": PRINCIPAL})
+class TestDelegatedIdentity:
+    def test_an_s3_uploader_is_the_person_the_system_identity_acts_for(self) -> None:
+        trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
+        event = _s3_event(userIdentity={"principalId": PRINCIPAL})
 
-    attributes = _attributes(trigger, {"s3": s3.decode}, event)
+        attributes = _attributes(trigger, {"s3": s3.decode}, event)
 
-    assert attributes[ON_BEHALF_OF_ATTRIBUTE] == PRINCIPAL
+        assert attributes[ON_BEHALF_OF_ATTRIBUTE] == PRINCIPAL
 
+    def test_a_queued_event_names_nobody_whatever_its_body_claims(self) -> None:
+        trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
+        forged = _s3_event(userIdentity={"principalId": PRINCIPAL})
 
-def test_a_queued_event_names_nobody_whatever_its_body_claims() -> None:
-    trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
-    forged = _s3_event(userIdentity={"principalId": PRINCIPAL})
+        attributes = _attributes(trigger, {"s3": s3.decode}, forged, direct=False)
 
-    attributes = _attributes(trigger, {"s3": s3.decode}, forged, direct=False)
+        assert ON_BEHALF_OF_ATTRIBUTE not in attributes
 
-    assert ON_BEHALF_OF_ATTRIBUTE not in attributes
+    def test_an_s3_record_without_uploader_delegates_for_nobody(self) -> None:
+        trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
 
+        attributes = _attributes(trigger, {"s3": s3.decode}, _s3_event())
 
-def test_an_s3_record_without_uploader_delegates_for_nobody() -> None:
-    trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, S3Trigger)
+        assert ON_BEHALF_OF_ATTRIBUTE not in attributes
 
-    attributes = _attributes(trigger, {"s3": s3.decode}, _s3_event())
+    def test_an_aws_service_event_names_the_caller_aws_recorded(self) -> None:
+        trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, EventBridgeTrigger)
+        event = {"id": "e-1", "source": "aws.s3", "detail": {"userIdentity": {"arn": ARN}}}
 
-    assert ON_BEHALF_OF_ATTRIBUTE not in attributes
+        attributes = _attributes(trigger, {"eventbridge": eventbridge.decode}, event)
 
+        assert attributes[ON_BEHALF_OF_ATTRIBUTE] == ARN
 
-def test_an_aws_service_event_names_the_caller_aws_recorded() -> None:
-    trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, EventBridgeTrigger)
-    event = {"id": "e-1", "source": "aws.s3", "detail": {"userIdentity": {"arn": ARN}}}
+    def test_a_custom_event_cannot_claim_a_person(self) -> None:
+        trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, EventBridgeTrigger)
+        event = {"id": "e-1", "source": "orders", "detail": {"userIdentity": {"arn": ARN}}}
 
-    attributes = _attributes(trigger, {"eventbridge": eventbridge.decode}, event)
+        attributes = _attributes(trigger, {"eventbridge": eventbridge.decode}, event)
 
-    assert attributes[ON_BEHALF_OF_ATTRIBUTE] == ARN
+        assert ON_BEHALF_OF_ATTRIBUTE not in attributes
 
+    @pytest.mark.parametrize("name", [ON_BEHALF_OF_ATTRIBUTE, "loom:anything"])
+    def test_configuration_cannot_write_a_reserved_attribute(self, name: str) -> None:
+        identity = {**IDENTITY, "attributes": {name: "ana"}}
+        trigger = msgspec.convert({"job": "Import", "identity": identity}, S3Trigger)
 
-def test_a_custom_event_cannot_claim_a_person() -> None:
-    trigger = msgspec.convert({"job": "Import", "identity": IDENTITY}, EventBridgeTrigger)
-    event = {"id": "e-1", "source": "orders", "detail": {"userIdentity": {"arn": ARN}}}
-
-    attributes = _attributes(trigger, {"eventbridge": eventbridge.decode}, event)
-
-    assert ON_BEHALF_OF_ATTRIBUTE not in attributes
-
-
-@pytest.mark.parametrize("name", [ON_BEHALF_OF_ATTRIBUTE, "loom:anything"])
-def test_configuration_cannot_write_a_reserved_attribute(name: str) -> None:
-    identity = {**IDENTITY, "attributes": {name: "ana"}}
-    trigger = msgspec.convert({"job": "Import", "identity": identity}, S3Trigger)
-
-    with pytest.raises(ConfigError, match="loom:"):
-        _check_event_trigger("lambda.functions.importer.trigger", trigger)
+        with pytest.raises(ConfigError, match="loom:"):
+            _check_event_trigger("lambda.functions.importer.trigger", trigger)

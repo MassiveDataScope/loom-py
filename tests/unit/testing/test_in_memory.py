@@ -60,9 +60,12 @@ class _Line(BaseModel):
     id: int = ColumnField(primary_key=True)
 
 
-def test_a_composite_primary_key_is_refused() -> None:
-    with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
-        InMemoryRepository(_Line)
+class TestCompositePrimaryKey:
+    def test_a_composite_primary_key_is_refused(self) -> None:
+        with pytest.raises(
+            ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"
+        ):
+            InMemoryRepository(_Line)
 
 
 # ---------------------------------------------------------------------------

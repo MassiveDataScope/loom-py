@@ -71,13 +71,17 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
     return bootstrap_worker(str(config_path))
 
 
-def test_the_marked_model_is_served_wrapped_with_the_section(tmp_path: Path) -> None:
-    result = _bootstrap(tmp_path, cache={"aiocache_config": {"default": dict(SERIALIZED_BACKEND)}})
+class TestBootstrapCache:
+    def test_the_marked_model_is_served_wrapped_with_the_section(self, tmp_path: Path) -> None:
+        result = _bootstrap(
+            tmp_path, cache={"aiocache_config": {"default": dict(SERIALIZED_BACKEND)}}
+        )
 
-    assert isinstance(result.container.resolve_repo(_CachedWorkerModel), CachedRepository)
+        assert isinstance(result.container.resolve_repo(_CachedWorkerModel), CachedRepository)
 
+    def test_the_marked_model_is_served_bare_without_the_section(self, tmp_path: Path) -> None:
+        result = _bootstrap(tmp_path, cache=None)
 
-def test_the_marked_model_is_served_bare_without_the_section(tmp_path: Path) -> None:
-    result = _bootstrap(tmp_path, cache=None)
-
-    assert isinstance(result.container.resolve_repo(_CachedWorkerModel), _CachedWorkerRepository)
+        assert isinstance(
+            result.container.resolve_repo(_CachedWorkerModel), _CachedWorkerRepository
+        )

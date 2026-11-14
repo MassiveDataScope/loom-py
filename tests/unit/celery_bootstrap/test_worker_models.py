@@ -108,37 +108,38 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
     return str(path)
 
 
-def test_a_job_loading_an_undeclared_model_fails_the_start_up(tmp_path: Path) -> None:
-    config = _config(tmp_path, discover=False)
-    with pytest.raises(UnservedModelError) as caught:
-        bootstrap_worker(config, jobs=[_LoadOrderJob], environment="test")
+class TestWorkerModels:
+    def test_a_job_loading_an_undeclared_model_fails_the_start_up(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, discover=False)
+        with pytest.raises(UnservedModelError) as caught:
+            bootstrap_worker(config, jobs=[_LoadOrderJob], environment="test")
 
-    issue = caught.value.issue
-    assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
-    assert (issue.component, issue.field) == ("_LoadOrderJob", "order")
-    assert caught.value.model is _Order
-    assert "app.discovery" in issue.message
+        issue = caught.value.issue
+        assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
+        assert (issue.component, issue.field) == ("_LoadOrderJob", "order")
+        assert caught.value.model is _Order
+        assert "app.discovery" in issue.message
 
+    def test_a_main_repository_over_an_undeclared_model_fails_the_start_up(
+        self, tmp_path: Path
+    ) -> None:
+        config = _config(tmp_path, discover=False)
+        with pytest.raises(UnservedModelError) as caught:
+            bootstrap_worker(config, use_cases=[_CountOrders], environment="test")
 
-def test_a_main_repository_over_an_undeclared_model_fails_the_start_up(tmp_path: Path) -> None:
-    config = _config(tmp_path, discover=False)
-    with pytest.raises(UnservedModelError) as caught:
-        bootstrap_worker(config, use_cases=[_CountOrders], environment="test")
+        issue = caught.value.issue
+        assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
+        assert (issue.component, issue.field) == ("_CountOrders", "main_repo")
+        assert caught.value.model is _Order
 
-    issue = caught.value.issue
-    assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
-    assert (issue.component, issue.field) == ("_CountOrders", "main_repo")
-    assert caught.value.model is _Order
+    def test_a_declared_model_serves_cursor_pagination_to_a_job(self, tmp_path: Path) -> None:
+        result = bootstrap_worker(_config(tmp_path, discover=True), environment="test")
+        task = result.celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PageThroughOrdersJob.__qualname__}"]
 
+        worker_init.send(sender=WorkerDouble())
+        try:
+            pages = task.apply().get()
+        finally:
+            worker_shutdown.send(sender=None)
 
-def test_a_declared_model_serves_cursor_pagination_to_a_job(tmp_path: Path) -> None:
-    result = bootstrap_worker(_config(tmp_path, discover=True), environment="test")
-    task = result.celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PageThroughOrdersJob.__qualname__}"]
-
-    worker_init.send(sender=WorkerDouble())
-    try:
-        pages = task.apply().get()
-    finally:
-        worker_shutdown.send(sender=None)
-
-    assert pages == [["a", "b"], ["c"]]
+        assert pages == [["a", "b"], ["c"]]

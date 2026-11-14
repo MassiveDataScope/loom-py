@@ -38,44 +38,39 @@ def _caller() -> Identity:
 # ---------------------------------------------------------------------------
 
 
-async def test_the_runner_executes_as_the_declared_caller() -> None:
-    """``with_caller`` fills the declared identity parameter."""
-    result = await UseCaseTest(WhoAmIUseCase()).with_caller(_caller()).run()
-    assert result == _SUBJECT
+class TestIdentityHarness:
+    async def test_the_runner_executes_as_the_declared_caller(self) -> None:
+        """``with_caller`` fills the declared identity parameter."""
+        result = await UseCaseTest(WhoAmIUseCase()).with_caller(_caller()).run()
+        assert result == _SUBJECT
 
+    async def test_the_runner_can_pin_the_anonymous_path(self) -> None:
+        """Stating ANONYMOUS explicitly is how an unauthenticated test is written."""
+        result = await UseCaseTest(WhoAmIUseCase()).with_caller(ANONYMOUS).run()
+        assert result == ""
 
-async def test_the_runner_can_pin_the_anonymous_path() -> None:
-    """Stating ANONYMOUS explicitly is how an unauthenticated test is written."""
-    result = await UseCaseTest(WhoAmIUseCase()).with_caller(ANONYMOUS).run()
-    assert result == ""
+    async def test_the_runner_fails_closed_without_a_caller(self) -> None:
+        """Forgetting the caller must fail, not silently authorize."""
+        harness = UseCaseTest(WhoAmIUseCase())
+        with pytest.raises(Unauthenticated):
+            await harness.run()
 
+    # ---------------------------------------------------------------------------
+    # GoldenHarness
+    # ---------------------------------------------------------------------------
 
-async def test_the_runner_fails_closed_without_a_caller() -> None:
-    """Forgetting the caller must fail, not silently authorize."""
-    harness = UseCaseTest(WhoAmIUseCase())
-    with pytest.raises(Unauthenticated):
-        await harness.run()
+    async def test_the_golden_harness_executes_as_the_declared_caller(self) -> None:
+        """Golden runs pin behaviour per caller, not per anonymous request."""
+        result = await GoldenHarness().run(WhoAmIUseCase, identity=_caller())
+        assert result == _SUBJECT
 
+    async def test_the_golden_harness_fails_closed_without_a_caller(self) -> None:
+        """The harness inherits the executor rule instead of softening it."""
+        harness = GoldenHarness()
+        with pytest.raises(Unauthenticated):
+            await harness.run(WhoAmIUseCase)
 
-# ---------------------------------------------------------------------------
-# GoldenHarness
-# ---------------------------------------------------------------------------
-
-
-async def test_the_golden_harness_executes_as_the_declared_caller() -> None:
-    """Golden runs pin behaviour per caller, not per anonymous request."""
-    result = await GoldenHarness().run(WhoAmIUseCase, identity=_caller())
-    assert result == _SUBJECT
-
-
-async def test_the_golden_harness_fails_closed_without_a_caller() -> None:
-    """The harness inherits the executor rule instead of softening it."""
-    harness = GoldenHarness()
-    with pytest.raises(Unauthenticated):
-        await harness.run(WhoAmIUseCase)
-
-
-def test_the_plan_snapshot_records_the_caller_binding() -> None:
-    """A golden plan must show that a use case reads its caller."""
-    plan = UseCaseCompiler().compile(WhoAmIUseCase)
-    assert serialize_plan(plan)["caller_binding"] == {"name": "caller"}
+    def test_the_plan_snapshot_records_the_caller_binding(self) -> None:
+        """A golden plan must show that a use case reads its caller."""
+        plan = UseCaseCompiler().compile(WhoAmIUseCase)
+        assert serialize_plan(plan)["caller_binding"] == {"name": "caller"}

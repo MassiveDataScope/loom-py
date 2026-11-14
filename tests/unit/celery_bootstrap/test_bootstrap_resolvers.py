@@ -43,51 +43,49 @@ def _without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
     without_boto3(monkeypatch)
 
 
-def test_user_resolver_reaches_the_celery_app(tmp_path: Path) -> None:
-    config_path = _write_worker_yaml(tmp_path, "${stub:broker}")
+class TestBootstrapResolvers:
+    def test_user_resolver_reaches_the_celery_app(self, tmp_path: Path) -> None:
+        config_path = _write_worker_yaml(tmp_path, "${stub:broker}")
 
-    result = bootstrap_worker(
-        config_path,
-        jobs=[_SyncJob],
-        resolvers=[MappingResolver("stub", {"broker": "memory://"})],
-    )
+        result = bootstrap_worker(
+            config_path,
+            jobs=[_SyncJob],
+            resolvers=[MappingResolver("stub", {"broker": "memory://"})],
+        )
 
-    assert result.celery_app.conf.broker_url == "memory://"
+        assert result.celery_app.conf.broker_url == "memory://"
 
+    def test_secrets_placeholder_without_boto3_names_the_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _without_boto3(monkeypatch)
+        config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
 
-def test_secrets_placeholder_without_boto3_names_the_extra(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _without_boto3(monkeypatch)
-    config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
+        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+            bootstrap_worker(config_path, jobs=[_SyncJob])
 
-    with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
-        bootstrap_worker(config_path, jobs=[_SyncJob])
+    def test_no_aws_client_without_placeholders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boto3 = MagicMock()
+        with_boto3(monkeypatch, boto3)
+        config_path = _write_worker_yaml(tmp_path, "memory://")
 
+        result = bootstrap_worker(config_path, jobs=[_SyncJob])
 
-def test_no_aws_client_without_placeholders(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    boto3 = MagicMock()
-    with_boto3(monkeypatch, boto3)
-    config_path = _write_worker_yaml(tmp_path, "memory://")
+        assert result.celery_app.conf.broker_url == "memory://"
+        boto3.client.assert_not_called()
 
-    result = bootstrap_worker(config_path, jobs=[_SyncJob])
+    def test_user_secrets_resolver_wins_over_the_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _without_boto3(monkeypatch)
+        config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
 
-    assert result.celery_app.conf.broker_url == "memory://"
-    boto3.client.assert_not_called()
+        result = bootstrap_worker(
+            config_path,
+            jobs=[_SyncJob],
+            resolvers=[MappingResolver("secrets", {"/worker/broker": "memory://"})],
+        )
 
-
-def test_user_secrets_resolver_wins_over_the_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _without_boto3(monkeypatch)
-    config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
-
-    result = bootstrap_worker(
-        config_path,
-        jobs=[_SyncJob],
-        resolvers=[MappingResolver("secrets", {"/worker/broker": "memory://"})],
-    )
-
-    assert result.celery_app.conf.broker_url == "memory://"
+        assert result.celery_app.conf.broker_url == "memory://"
