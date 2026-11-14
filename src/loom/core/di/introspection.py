@@ -1,4 +1,4 @@
-"""What a constructor asks for, read from its signature once per class.
+"""What a constructor or a factory asks for, read from its signature once per binding.
 
 Each parameter becomes one dependency: an execution dependency when its
 default or its annotation belongs to an execution kind; a refused declaration
@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import FunctionType
 from typing import Any
 
 from loom.core.execution import ExecutionKinds, Kind
@@ -83,16 +84,18 @@ def plain_key(annotation: object) -> KeyDependency | None:
 
 
 def constructor_dependencies(
-    cls: type[Any], kinds: ExecutionKinds, classify_key: KeyClassifier
+    built: type[Any] | FunctionType, kinds: ExecutionKinds, classify_key: KeyClassifier
 ) -> Constructor:
-    """Return the dependencies of ``cls.__init__``, ``self`` and ``*args``/``**kwargs`` skipped.
+    """Return the dependencies of a class's ``__init__`` or of a factory function.
 
-    Annotations are resolved through their module, falling back to the raw
-    ones when they cannot be; a constructor with no readable signature has
-    no dependencies, and is built as ``cls()``.
+    ``self`` and ``*args``/``**kwargs`` are skipped. Annotations are resolved
+    through their module, falling back to the raw ones when they cannot be;
+    a signature that cannot be read has no dependencies, and is called with
+    no arguments.
     """
-    parameters = _parameters(cls.__init__)
-    hints = _annotations(cls.__init__, parameters)
+    init, first = (built.__init__, 1) if isinstance(built, type) else (built, 0)
+    parameters = _parameters(init, first)
+    hints = _annotations(init, parameters)
     dependencies = (
         (p.name, _dependency(p.default, hints.get(p.name), kinds, classify_key)) for p in parameters
     )
@@ -107,10 +110,13 @@ def _annotations(
     return resolve_type_hints(init) or raw
 
 
-def _parameters(init: Callable[..., object]) -> tuple[inspect.Parameter, ...]:
-    """The parameters of *init* after ``self``, variadic ones dropped; none when unreadable."""
+def _parameters(init: Callable[..., object], first: int) -> tuple[inspect.Parameter, ...]:
+    """The parameters of *init* from *first* on (1 skips ``self``), variadic ones dropped.
+
+    None when the signature cannot be read.
+    """
     try:
-        parameters = tuple(inspect.signature(init).parameters.values())[1:]
+        parameters = tuple(inspect.signature(init).parameters.values())[first:]
     except (TypeError, ValueError):
         return ()
     return tuple(p for p in parameters if p.kind not in _VARIADIC)

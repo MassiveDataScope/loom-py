@@ -64,7 +64,7 @@ class _Binding:
     is raised wherever the binding is compiled.
     """
 
-    provider: Callable[[], Any]
+    provider: Callable[..., Any]
     scope: Scope
     instance: object = field(default=UNBUILT, repr=False)
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
@@ -79,7 +79,7 @@ class LoomContainer:
     singletons, built outside any execution; request-scope instances are
     built once per execution, and fresh on each :meth:`resolve` outside one.
     A class bound as a provider gets its required constructor parameters
-    from the container.
+    from the container, and so does a factory function its own parameters.
 
     Args:
         classify_key: The :data:`~loom.core.di.introspection.KeyClassifier`
@@ -151,7 +151,7 @@ class LoomContainer:
     def register(
         self,
         interface: BindingKey,
-        provider: Callable[[], Any] | type[Any],
+        provider: Callable[..., Any],
         scope: Scope = Scope.REQUEST,
     ) -> None:
         """Register a provider for ``interface``.
@@ -159,8 +159,14 @@ class LoomContainer:
         Args:
             interface: A hashable DI key (typically an abstract type, protocol,
                 or concrete class) used as the resolution key.
-            provider: A zero-argument callable that returns an instance of
-                ``interface``, or a concrete class to instantiate directly.
+            provider: A concrete class to instantiate, or a function
+                returning an instance of ``interface``. The required
+                parameters of either are resolved from the container, so a
+                factory's parameters are dependency-graph edges like a
+                constructor's, refused at start-up with their path. A
+                zero-argument function (``lambda: ...``) and any other
+                callable are called with no arguments and are opaque to the
+                graph.
             scope: Lifetime scope. Defaults to :attr:`~Scope.REQUEST`.
 
         Raises:
@@ -168,7 +174,11 @@ class LoomContainer:
 
         Example::
 
+            def gateway(client: HttpClient) -> Gateway:
+                return Gateway(client, retries=3)
+
             container.register(UserRepository, SQLAlchemyUserRepository)
+            container.register(Gateway, gateway)
             container.register(AppConfig, lambda: load_config(MyCfg), scope=Scope.APPLICATION)
         """
         with COLD_PATH:
@@ -177,7 +187,7 @@ class LoomContainer:
     def register_default(
         self,
         interface: BindingKey,
-        provider: Callable[[], Any] | type[Any],
+        provider: Callable[..., Any],
         scope: Scope = Scope.REQUEST,
     ) -> None:
         """Register a provider for ``interface`` unless one is already bound.
@@ -388,7 +398,7 @@ class LoomContainer:
     def _refusal(self, key: BindingKey, rules: tuple[Rule, ...]) -> str | None:
         """Why one of *rules* refuses building the singleton under *key*; else ``None``.
 
-        A provider declares nothing, so no rule can refuse it: it is not analysed.
+        An opaque provider declares nothing, so no rule can refuse it: it is not analysed.
         """
         node = KeyNode(key)
         if not self._graph.constructor(node):
@@ -411,9 +421,7 @@ class LoomContainer:
                 f"for {describe_key(interface)}: {exc}"
             ) from exc
 
-    def _bind(
-        self, interface: BindingKey, provider: Callable[[], Any] | type[Any], scope: Scope
-    ) -> None:
+    def _bind(self, interface: BindingKey, provider: Callable[..., Any], scope: Scope) -> None:
         """Bind *provider* under *interface*, replacing its binding and its built instance.
 
         Called under :data:`COLD_PATH`. Every compiled closure is stale then,

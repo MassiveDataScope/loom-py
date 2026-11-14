@@ -638,6 +638,26 @@
   `UseCaseFactory.graph` is that same graph, read through
   `loom.core.use_case.factory.main_repository`, which gives a use case built
   through `UseCase.__init__` its main repository.
+- **di:** a factory function bound with `register` or `register_default`
+  gets its required parameters from the container, as a class gets its
+  constructor's: `def gateway(client: HttpClient) -> Gateway: ...` then
+  `container.register(Gateway, gateway)`. Its parameters are edges of the
+  dependency graph, so start-up analysis refuses a missing binding, a
+  singleton factory taking a per-execution binding, a cycle, an execution
+  kind or an unannotated parameter with the path
+  (`Desk -> gateway: Gateway -> client: HttpClient: ...`), and seal leaves
+  unbuilt such a singleton nothing reaches. The `provider` parameter is typed
+  `Callable[..., Any]`. A zero-argument function (`lambda: ...`), a bound
+  method or any other callable is still called with no arguments and is
+  opaque to the graph. A factory function with a required parameter used to
+  fail with `TypeError` at its first resolve.
+- **use_case (new API):** `loom.core.use_case.walk.reached(roots, graph, compiler)`
+  returns, for each root, every execution-kind declaration it reaches through
+  the dependency graph: those of its own and its dependencies' constructor
+  and factory parameters, and of the `execute()` of the root and of the use
+  cases it reaches through call edges, each as a `Reached(binding, where)` naming the path to
+  the parameter. Each root is walked once and each node visited once. It
+  runs at start-up only.
 - **di:** a composed application's seal builds its singletons with no
   execution: those its use cases, jobs and callbacks reach first, then every
   other `APPLICATION` binding, as `validate()` does. A singleton the graph

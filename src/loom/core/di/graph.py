@@ -2,7 +2,8 @@
 
 A node is a container binding (:class:`KeyNode`) or a class loom builds
 itself, such as a use case, a job or a callback (:class:`ClassNode`). An
-edge is one constructor parameter; a *call edge* reaches a class another
+edge is one parameter of the constructor or factory function loom calls for
+a node; a *call edge* reaches a class another
 execution runs, so a singleton above it holds nothing of that execution.
 """
 
@@ -11,6 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
+from types import FunctionType
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from loom.core.di.errors import DependencyUnresolvable, ResolutionError, describe_key
@@ -141,7 +143,10 @@ class DependencyGraph:
         return edges
 
     def constructor(self, node: Node) -> Constructor:
-        """The dependencies of the constructor loom calls for *node*; none for a provider."""
+        """The dependencies of the constructor or factory function loom calls for *node*.
+
+        None for any other provider, such as a ``lambda`` or a bound method.
+        """
         constructor = self._constructors.get(node)
         if constructor is None:
             constructor = self._constructors[node] = self._introspect(node)
@@ -174,7 +179,7 @@ class DependencyGraph:
                 return None
 
     def _introspect(self, node: Node) -> Constructor:
-        """None for a provider, or a class with a custom ``__new__`` or metaclass ``__call__``.
+        """None for an opaque provider: neither a function nor a class built by ``type``.
 
         A class loom builds itself adds what :attr:`_implicit` injects.
         """
@@ -186,7 +191,7 @@ class DependencyGraph:
                 binding = self._binding(node)
                 built = None if binding is None else binding.provider
                 implicit = ()
-        if not _built_by_type(built):
+        if not (isinstance(built, FunctionType) or _built_by_type(built)):
             return implicit
         kinds = self._container.kinds
         return (*constructor_dependencies(built, kinds, self._classify_key), *implicit)

@@ -78,7 +78,11 @@ class CallerBinding:
 
 @dataclass(frozen=True)
 class ExecutionBinding:
-    """One ``execute`` parameter resolved per execution through its kind's resolver.
+    """One parameter of an execution kind, resolved per execution through its kind's resolver.
+
+    A plan holds those of ``execute``; the start-up walk of declarations
+    (:func:`~loom.core.use_case.walk.reached`) also makes them of constructor
+    and factory parameters.
 
     Args:
         name: Parameter name as declared in the signature.
