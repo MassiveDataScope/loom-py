@@ -300,10 +300,14 @@ class CeleryJobService:
                 "CeleryJobService.run() requires factory and executor. "
                 "Pass them at construction or use InlineJobService."
             )
-        instance = self._factory.build(job_type)
-        return await self._executor.execute(
-            instance, params=params, payload=payload, identity=current_identity()
+        result: ResultT = await self._executor.run(
+            job_type,
+            factory=self._factory,
+            params=params,
+            payload=payload,
+            identity=current_identity(),
         )
+        return result
 
     def dispatch(
         self,

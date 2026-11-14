@@ -7,7 +7,11 @@ import pytest
 
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
+from loom.core.engine.executor import (  # pyright: ignore[reportPrivateUsage]
+    ParameterBindingError,
+    RuntimeExecutor,
+    _ExecutionInputs,
+)
 from loom.core.errors import NotFound, RuleViolation, RuleViolations
 from loom.core.identity import ANONYMOUS
 from loom.core.use_case.markers import Exists, Input, Load, LoadById, OnMissing
@@ -786,8 +790,8 @@ class TestRun:
         overrides = {User: User(id=1, email="u@u.com")}
 
         with patch.object(
-            RuntimeExecutor, "execute", new=AsyncMock(return_value="built")
-        ) as execute:
+            RuntimeExecutor, "_run_lifecycle", new=AsyncMock(return_value="built")
+        ) as lifecycle:
             result = await executor.run(
                 _NoMarkersUseCase,
                 factory=factory,
@@ -801,14 +805,19 @@ class TestRun:
 
         assert result == "built"
         factory.build.assert_called_once_with(_NoMarkersUseCase)
-        execute.assert_awaited_once_with(
+        lifecycle.assert_awaited_once_with(
+            _NoMarkersUseCase.__execution_plan__,
             instance,
-            params={"user_id": 1},
-            payload={"email": "a@b.com"},
-            dependencies={User: user_repo},
-            load_overrides=overrides,
+            _ExecutionInputs(
+                params={"user_id": 1},
+                payload={"email": "a@b.com"},
+                dependencies={User: user_repo},
+                load_overrides=overrides,
+                identity=identity,
+            ),
+            None,
+            None,
             read_only=True,
-            identity=identity,
         )
 
     async def test_a_build_failure_surfaces_before_any_execution(self) -> None:
@@ -817,9 +826,9 @@ class TestRun:
         executor = _make_executor()
 
         with (
-            patch.object(RuntimeExecutor, "execute", new=AsyncMock()) as execute,
+            patch.object(RuntimeExecutor, "_run_lifecycle", new=AsyncMock()) as lifecycle,
             pytest.raises(RuntimeError, match="no dependency"),
         ):
             await executor.run(_NoMarkersUseCase, factory=factory)
 
-        execute.assert_not_awaited()
+        lifecycle.assert_not_awaited()

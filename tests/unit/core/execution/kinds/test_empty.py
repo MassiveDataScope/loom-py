@@ -1,13 +1,15 @@
-"""A plan with no execution dependency opens no execution and reads no registry."""
+"""A plan with no execution dependency reads no registry; its one execution is the executor's."""
 
 from __future__ import annotations
+
+from contextvars import Token
 
 import pytest
 
 from loom.core.engine import executor as executor_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.execution import ExecutionKinds, Kind
+from loom.core.execution import ExecutionContext, ExecutionKinds, Kind, enter
 from loom.core.identity import Identity
 from loom.core.use_case.use_case import UseCase
 
@@ -36,11 +38,16 @@ class AcmePingUseCase(UseCase[object, str]):
 
 
 @pytest.mark.parametrize("identity", [None, _ACME], ids=["no-identity", "identity"])
-async def test_no_execution_binding_enters_no_execution_and_reads_no_registry(
+async def test_no_execution_binding_enters_one_execution_and_reads_no_registry(
     identity: Identity | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered: list[Identity | None] = []
-    monkeypatch.setattr(executor_module, "enter", entered.append)
+
+    def counting(given: Identity | None) -> Token[ExecutionContext | None]:
+        entered.append(given)
+        return enter(given)
+
+    monkeypatch.setattr(executor_module, "enter", counting)
     kinds = AcmeCountingKinds()
     compiler = UseCaseCompiler()
     plan = compiler.compile(AcmePingUseCase)
@@ -49,4 +56,4 @@ async def test_no_execution_binding_enters_no_execution_and_reads_no_registry(
     assert await executor.execute(AcmePingUseCase(), identity=identity) == "pong"
     assert plan.execution_bindings == ()
     assert kinds.reads == 0
-    assert entered == []
+    assert entered == [identity]

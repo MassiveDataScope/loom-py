@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.di.graph import ClassNode, DependencyGraphError, KeyNode
+from loom.core.di.graph import (
+    LENIENT_REFUSALS,
+    ClassNode,
+    DependencyGraphError,
+    KeyNode,
+    analyse,
+)
 from loom.core.di.scope import Scope
 from tests.unit.core.di.graph import acme
 from tests.unit.core.di.graph.acme import AcmeCall
@@ -82,5 +88,8 @@ class AcmeClose:
 
 
 def test_a_root_first_reached_as_a_call_target_is_still_checked_as_a_root() -> None:
+    """Under the lenient rules refusal 6 is a root's only, so the root check must still run."""
+    roots = [ClassNode(AcmeClose), ClassNode(AcmeSettle)]
+
     with pytest.raises(DependencyGraphError, match=r"^AcmeSettle: names: tuple\[str, \.\.\.\]"):
-        acme.analysed(acme.container(), AcmeClose, AcmeSettle)
+        analyse(acme.container().graph, roots, LENIENT_REFUSALS)

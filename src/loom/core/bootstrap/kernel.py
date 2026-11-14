@@ -212,8 +212,9 @@ def install_kernel(
     :class:`~loom.core.use_case.registry.UseCaseRegistry` and
     :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Declares the
     use-case and AI kinds on ``container.kinds``, binds the ``Caller()``
-    resolver there and gives the executor that registry, with the agent and
-    MCP resolvers given, if any. Validates nothing:
+    resolver there and gives the executor that registry, the factory's
+    ``build`` as its builder, and the agent and MCP resolvers given, if any.
+    Validates nothing:
     the caller does once the container is complete.
 
     Raises:
@@ -231,6 +232,7 @@ def install_kernel(
         metrics=metrics,
         repo_resolver=repo_resolver or container.resolve_repo,
         resolvers=kinds,
+        builder=base.factory.build,
         elevation_sink=_registered_sink(container),
         agent_resolver=agent_resolver,
         mcp_resolver=mcp_resolver,

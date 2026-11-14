@@ -632,8 +632,9 @@ async def _execute_route(
         )
         params = _build_execution_params(request, path_kwargs, runtime)
         payload = await _decode_payload(request, runtime.has_input_binding)
-        result = await executor.execute(
-            factory.build(runtime.use_case_type),
+        result = await executor.run(
+            runtime.use_case_type,
+            factory=factory,
             params=params,
             payload=payload,
             read_only=compiled_route.read_only,

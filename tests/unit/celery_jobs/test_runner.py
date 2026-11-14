@@ -118,6 +118,16 @@ def _factory_recording_trace(instance: object, sink: list[str | None]) -> MagicM
     return factory
 
 
+def _building_executor() -> MagicMock:
+    """Executor whose ``run`` builds the job through the factory it is given, then returns 0."""
+
+    async def run(job_type: object, *, factory: MagicMock, **_: object) -> int:
+        factory.build(job_type)
+        return 0
+
+    return MagicMock(run=run)
+
+
 def _mock_runtime(return_value: object = None, error: Exception | None = None) -> MagicMock:
     runtime = MagicMock()
 
@@ -275,11 +285,10 @@ class TestMakeJobTaskExecution:
         assert kwargs["timeout"] is None
 
     def test_job_task_hands_the_executor_every_input_of_the_envelope(self) -> None:
-        """A8: the task builds the instance and delegates the lifecycle to the executor."""
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
+        """A8: the task hands the job type and its factory to the executor, which builds it."""
+        factory = _mock_factory(_SyncJob())
         executor = MagicMock()
-        executor.execute = AsyncMock(return_value=7)
+        executor.run = AsyncMock(return_value=7)
         submitted: list[Coroutine[Any, Any, Any]] = []
         runtime = MagicMock()
         runtime.run = MagicMock(side_effect=lambda coro, **_: submitted.append(coro) or 7)
@@ -290,8 +299,8 @@ class TestMakeJobTaskExecution:
         assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
 
         assert asyncio.run(submitted[0]) == 7
-        executor.execute.assert_awaited_once_with(
-            instance, params={"p": 2}, payload={"value": 5}, identity=None
+        executor.run.assert_awaited_once_with(
+            _SyncJob, factory=factory, params={"p": 2}, payload={"value": 5}, identity=None
         )
 
     def test_job_task_emits_observability_span(self) -> None:
@@ -303,7 +312,7 @@ class TestMakeJobTaskExecution:
             _mock_celery_app(),
             _SyncJob,
             factory,
-            MagicMock(execute=AsyncMock(return_value=10)),
+            MagicMock(run=AsyncMock(return_value=10)),
             runtime,
             observability_runtime=observability_runtime,
             settings=_SETTINGS,
@@ -552,7 +561,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(execute=AsyncMock(return_value=0)),
+            MagicMock(run=AsyncMock(return_value=0)),
             _executing_runtime(),
             None,
             recorder.runtime,
@@ -574,7 +583,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(execute=AsyncMock(return_value=0)),
+            MagicMock(run=AsyncMock(return_value=0)),
             _executing_runtime(),
             None,
             recorder.runtime,
@@ -599,7 +608,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _factory_recording_trace(_SyncJob(), seen),
-            MagicMock(execute=AsyncMock(return_value=0)),
+            _building_executor(),
             _executing_runtime(),
             metrics,
             settings=_SETTINGS,
@@ -649,7 +658,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _factory_recording_trace(_SyncJob(), seen),
-            MagicMock(execute=AsyncMock(return_value=0)),
+            _building_executor(),
             _executing_runtime(),
             metrics,
             settings=_SETTINGS,

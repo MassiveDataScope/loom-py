@@ -119,7 +119,7 @@ class _RecordingExecutor:
         self.identity: Identity | None = None
         self.context_identity: Identity | None = None
 
-    async def execute(self, instance: Any, **kwargs: Any) -> str:
+    async def run(self, job_type: Any, **kwargs: Any) -> str:
         self.identity = kwargs.get("identity")
         self.context_identity = current_identity()
         return "done"

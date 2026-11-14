@@ -137,9 +137,8 @@ class AppInvoker:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> Any:
-        instance: Compilable = self.factory.build(use_case)
-        return await self.executor.execute(
-            instance, params=params, payload=payload, identity=self.identity
+        return await self.executor.run(
+            use_case, factory=self.factory, params=params, payload=payload, identity=self.identity
         )
 
     async def invoke_name(

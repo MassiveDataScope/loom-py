@@ -162,12 +162,26 @@ def test_an_unannotated_root_parameter_is_named_as_such() -> None:
         acme.analysed(acme.container(), AcmeUnannotated)
 
 
-def test_an_unresolvable_parameter_off_a_root_is_only_a_warning() -> None:
+def test_refusal_6_an_unresolvable_parameter_of_a_reached_binding() -> None:
     built = acme.container()
     built.register(AcmeNamesLedger, AcmeNamesLedger)
 
-    (warning,) = acme.analysed(built, AcmeNamesReport).warnings
+    with pytest.raises(DependencyGraphError) as refused:
+        acme.analysed(built, AcmeNamesReport)
 
+    assert str(refused.value) == (
+        "AcmeNamesReport -> ledger: AcmeNamesLedger: "
+        "names: tuple[str, ...] names nothing the container can serve"
+    )
+
+
+def test_under_the_lenient_rules_an_unresolvable_parameter_off_a_root_is_a_warning() -> None:
+    built = acme.container()
+    built.register(AcmeNamesLedger, AcmeNamesLedger)
+
+    analysis = analyse(built.graph, [ClassNode(AcmeNamesReport)], LENIENT_REFUSALS)
+
+    (warning,) = analysis.warnings
     assert isinstance(warning, DependencyUnresolvable)
     assert str(warning).startswith("AcmeNamesLedger -> names: tuple[str, ...]")
 

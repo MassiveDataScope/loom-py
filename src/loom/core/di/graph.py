@@ -298,11 +298,14 @@ def _refuse_declaration(node: Node, path: Path, graph: DependencyGraph) -> str |
     return None
 
 
-def _refuse_unresolvable_root(node: Node, path: Path, graph: DependencyGraph) -> str | None:
-    """Refusal 6: a required parameter of a root names nothing the container serves."""
-    if path.edges:
-        return None
+def _refuse_unresolvable(node: Node, path: Path, graph: DependencyGraph) -> str | None:
+    """Refusal 6: a required parameter of a class loom builds names nothing the container serves."""
     return next(graph.unresolvable(node), None)
+
+
+def _refuse_unresolvable_root(node: Node, path: Path, graph: DependencyGraph) -> str | None:
+    """Refusal 6 as a lenient composition keeps it: at a root only, a warning elsewhere."""
+    return None if path.edges else _refuse_unresolvable(node, path, graph)
 
 
 def refuse_unmapped_repository(nodes: Collection[Node]) -> Rule:
@@ -365,7 +368,7 @@ _CONSTRUCTION_REFUSALS: tuple[Rule, ...] = (
 )
 
 LENIENT_REFUSALS: tuple[Rule, ...] = (*_CONSTRUCTION_REFUSALS, _refuse_unresolvable_root)
-"""The refusals a lenient composition keeps: all but the missing binding."""
+"""The refusals a lenient composition keeps: all but the missing binding, refusal 6 at roots."""
 
 UNREACHED_REFUSALS: tuple[Rule, ...] = (*_CONSTRUCTION_REFUSALS, _refuse_ungranted_kind)
 """Why seal leaves unbuilt a singleton no root reaches (C-B2): refusals 2-5, or a kind.
@@ -377,8 +380,12 @@ the singleton fails startup, as ``validate()`` does.
 BINDING_REFUSALS: tuple[Rule, ...] = (_refuse_missing_binding, _refuse_cycle)
 """Refusals 1 and 2: a key with no binding, a main repository's capability included, or a cycle."""
 
-REFUSALS: tuple[Rule, ...] = (_refuse_missing_binding, *LENIENT_REFUSALS)
-"""The structural refusals, in the order they win."""
+REFUSALS: tuple[Rule, ...] = (
+    _refuse_missing_binding,
+    *_CONSTRUCTION_REFUSALS,
+    _refuse_unresolvable,
+)
+"""The structural refusals, in the order they win; refusal 6 on every class reached."""
 
 
 def analyse(
@@ -389,9 +396,9 @@ def analyse(
     A node is checked once per way of being reached: as a root or not, held
     by a singleton or not. What follows a call edge depends on nothing before
     it, so a loop back to a call target still being walked stops there.
-    Bindings no root reaches are not analysed. An
-    unresolvable parameter of a binding (not a root) is a warning, since the
-    binding may never be built.
+    Bindings no root reaches are not analysed. Under rules that refuse an
+    unresolvable parameter at roots only (:data:`LENIENT_REFUSALS`), one of a
+    reached binding is a warning instead.
 
     Raises:
         DependencyGraphError: The first refusal, with its path.

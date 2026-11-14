@@ -31,7 +31,7 @@ class SyncJob(Job[str]):
 def _make_service(return_value: Any = 42) -> InlineJobService:
     factory = MagicMock()
     executor = MagicMock()
-    executor.execute = AsyncMock(return_value=return_value)
+    executor.run = AsyncMock(return_value=return_value)
     factory.build = MagicMock(return_value=MagicMock())
     return InlineJobService(factory=factory, executor=executor)
 
@@ -45,7 +45,7 @@ async def test_run_executes_immediately_and_returns_result() -> None:
     service = _make_service(return_value=10)
     result = await service.run(DoubleJob, params={"value": 5})
     assert result == 10
-    service._executor.execute.assert_awaited_once()  # type: ignore[attr-defined]
+    service._executor.run.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ async def test_run_executes_immediately_and_returns_result() -> None:
 def test_dispatch_does_not_execute_immediately() -> None:
     service = _make_service()
     service.dispatch(DoubleJob, payload={})
-    service._executor.execute.assert_not_awaited()  # type: ignore[attr-defined]
+    service._executor.run.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 def test_dispatch_returns_handle_with_uuid() -> None:
@@ -105,7 +105,7 @@ async def test_dispatch_calls_on_success_callback_after_flush() -> None:
 
     factory = MagicMock()
     executor = MagicMock()
-    executor.execute = AsyncMock(return_value=7)
+    executor.run = AsyncMock(return_value=7)
     factory.build = MagicMock(
         side_effect=lambda cls: RecordCallback() if cls is not DoubleJob else MagicMock()
     )
@@ -131,7 +131,7 @@ async def test_dispatch_calls_on_failure_callback_on_exception() -> None:
 
     factory = MagicMock()
     executor = MagicMock()
-    executor.execute = AsyncMock(side_effect=ValueError("boom"))
+    executor.run = AsyncMock(side_effect=ValueError("boom"))
     factory.build = MagicMock(
         side_effect=lambda cls: ErrCallback() if cls is not DoubleJob else MagicMock()
     )
@@ -160,7 +160,7 @@ def test_dispatch_parallel_returns_job_group() -> None:
 async def test_dispatch_parallel_all_execute_after_flush() -> None:
     results = [10, 20]
     executor = MagicMock()
-    executor.execute = AsyncMock(side_effect=results)
+    executor.run = AsyncMock(side_effect=results)
     factory = MagicMock()
     factory.build = MagicMock(return_value=MagicMock())
 

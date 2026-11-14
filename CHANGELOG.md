@@ -435,8 +435,10 @@
   A singleton holding `Caller()`, or a class with an input marker as a
   constructor default, used to start with the raw marker stored and only
   misbehaved when used; it now fails at start-up.
-  A required parameter of a binding's class that names nothing servable warns
-  with `loom.core.di.errors.DependencyUnresolvable`.
+  A required parameter of a reached binding's class that names nothing
+  servable is refused the same way (it failed at the binding's first build,
+  Python leaving the argument out); `HttpTestHarness` only warns with
+  `loom.core.di.errors.DependencyUnresolvable`.
 - **composition:** a composed application's container is sealed once it has
   started. Registering into it afterwards (`register`, `register_default`,
   `register_instance`, `register_repo`, through `Application.kernel.container`
@@ -451,8 +453,8 @@
   means one instance per execution: everything one execution resolves shares
   it, and so does a task the execution creates, even one that outlives it; a
   nested execution gets its own. Outside any execution each `resolve` still
-  builds a fresh one, so nothing changes until the executor runs builds
-  inside the execution.
+  builds a fresh one. The executor builds the use case inside its execution,
+  so the use case, its adapters and the post-commit drain share them.
 - **di:** a class bound with `register(Port, Impl)` gets its required
   constructor parameters from the container (autowiring): a key, a
   `RepoFor[Model]` through the repository mapping, or an execution kind
@@ -511,6 +513,36 @@
   binding from then on, before or after seal. Every other built instance is
   kept, so a singleton already built on the key keeps what it holds. After
   seal, a `register*` thus recompiles every key once, on the start-up path.
+- **engine (behaviour change):** each execution opens one execution context,
+  and `RuntimeExecutor.run` builds the use case or job inside it, before
+  `EXEC_START`: a constructor's `Caller()`, a per-execution adapter declaring
+  `Caller()`, and the `Agent()` / `Mcp()` resolvers of `execute()` all read
+  the identity of that execution, and a constructor failure raises as is with
+  no runtime event. `ApplicationInvoker.invoke`, REST routes, `InlineJobService.run`
+  and its inline dispatches, `CeleryJobService.run` and the job worker
+  (Celery, Lambda) build through `executor.run`. A build failure is logged as
+  `[FAIL] <UseCase>` with `error_kind="build"` and raised, with no runtime
+  event (the execution never started). An inline dispatch whose job fails to
+  build is therefore reported like a job whose `execute()` fails: logged, its
+  `on_failure` callback run if any, and dropped, as the Celery worker does;
+  it used to raise into the drain as a `PostCommitError`.
+  `run(type)` executes the plan compiled for `type`, so the builder must
+  return an instance of exactly that class. An execution leaves its context
+  when it ends, so a use case that enters an execution (`enter`) and never
+  leaves it now makes that end raise `RuntimeError` (token misuse) and closes
+  the context.
+- **engine (behaviour change, NS2):** an execution given no `identity` runs as
+  the execution enclosing it, if any: a nested use case, an inline job or a
+  bare invoker inside a use case gets its caller for `Caller()`, `Agent()`,
+  `Mcp()` and the ambient `current_identity()`, instead of no identity. If
+  the ambient identity is not that caller, the nested execution raises
+  `NestedIdentityMismatch`: code changed it during the enclosing execution,
+  or opened that execution directly (`ExecutionScope`, `enter`) without
+  `set_identity` of the same identity, which code opening one must also do.
+- **engine (new API):** `RuntimeExecutor(builder=...)` builds the class
+  `run(type)` executes; `create_kernel` passes its factory's `build`.
+  `run(type, factory=...)` still works and overrides it; `factory` is now
+  optional, and `run` raises `TypeError` when neither is given.
 - **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
   on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
   bind them, so a standalone kernel serves a per-execution adapter declaring

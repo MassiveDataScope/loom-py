@@ -52,7 +52,7 @@ def seen() -> list[str]:
 @pytest.fixture
 def executor() -> MagicMock:
     executor = MagicMock()
-    executor.execute = AsyncMock(return_value="in-process")
+    executor.run = AsyncMock(return_value="in-process")
     return executor
 
 
@@ -91,7 +91,7 @@ async def test_run_executes_in_process_through_the_default_whatever_the_queue(
     router = JobRouter({"emails": routed}, default=InlineJobService(MagicMock(), executor))
 
     assert await router.run(EmailJob, payload={"to": "a@b.c"}) == "in-process"
-    executor.execute.assert_awaited_once()
+    executor.run.assert_awaited_once()
     routed.run.assert_not_called()
 
 
@@ -131,7 +131,7 @@ async def test_a_routed_inline_dispatch_runs_after_the_flush(executor: MagicMock
     router = JobRouter({}, default=inline)
 
     handle = router.dispatch(_ReportJob)
-    executor.execute.assert_not_awaited()
+    executor.run.assert_not_awaited()
     await flush_pending_dispatches()
 
     assert handle.wait() == "in-process"

@@ -118,11 +118,14 @@ class UndeclaredStoreWrite(SystemError):
 
 
 class NestedIdentityMismatch(SystemError):
-    """A nested execution joined its parent's unit of work as another identity.
+    """A nested execution would run as an identity its parent does not.
 
-    The shared transaction filters rows as one identity, so it cannot serve
-    the child's as well; when it has not begun yet, the child's identity would
-    be the one it begins with, for the parent too. Build it with :meth:`joining`.
+    Raised when it joins its parent's unit of work as another identity: the
+    shared transaction filters rows as one identity, so it cannot serve the
+    child's as well; when it has not begun yet, the child's identity would be
+    the one it begins with, for the parent too. Built with :meth:`joining`.
+    Also raised, with or without a unit of work, when an execution given no
+    identity would take its parent's while the ambient identity is another.
 
     Args:
         message: Names the nested use case.

@@ -156,8 +156,21 @@ def test_a_lenient_recipe_still_refuses_the_other_structural_refusals(
     assert isinstance(caught.value.__cause__, DependencyGraphError)
 
 
-def test_an_unresolvable_parameter_of_a_binding_warns(source: CompositionSource) -> None:
+def test_an_unresolvable_parameter_of_a_reached_binding_is_refused(
+    source: CompositionSource,
+) -> None:
     adapter = _WithCallbacks(AcmeAuditNames)
+
+    with pytest.raises(BootstrapError, match="AcmeNamedTrail: names: tuple") as caught:
+        compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+
+    assert isinstance(caught.value.__cause__, DependencyGraphError)
+
+
+def test_a_lenient_recipe_only_warns_of_an_unresolvable_parameter_of_a_binding(
+    source: CompositionSource,
+) -> None:
+    adapter = _WithCallbacks(AcmeAuditNames, lenient=True)
 
     with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
         compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))

@@ -36,6 +36,7 @@ from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
     Kind,
+    current_execution,
     enter,
     execution_identity,
     leave,
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")
+_TargetT = TypeVar("_TargetT")
 
 _LOG_EXEC = "[EXEC]"
 _LOG_DONE = "[DONE]"
@@ -71,6 +73,7 @@ _STATUS_FAILURE = "failure"
 _READ_ONLY = Frame(None)
 _STATUS_RULE_FAILURE = "rule_failure"
 _ERROR_KIND_BEGIN = "begin"
+_ERROR_KIND_BUILD = "build"
 _ERROR_KIND_BUSINESS = "business"
 _ERROR_KIND_COMMIT = "commit"
 _ERROR_KIND_CANCELLED = "cancelled"
@@ -191,6 +194,9 @@ class RuntimeExecutor:
         resolvers: The execution kinds whose resolvers build each
             ``Agent()`` / ``Mcp()`` parameter; the kernel passes its
             container's, so both share one registry. A new one by default.
+        builder: Builds the instance :meth:`run` executes from its class,
+            inside that execution; the kernel passes its factory's
+            ``build``. ``None`` leaves :meth:`run` to the ``factory`` it is given.
         agent_resolver: Bound as by :meth:`bind_agent_resolver`, which
             explains why the kernel binds it after construction instead.
         mcp_resolver: Bound as by :meth:`bind_mcp_resolver`.
@@ -219,11 +225,13 @@ class RuntimeExecutor:
         metrics: MetricsAdapter | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
+        builder: Callable[[type[Any]], Any] | None = None,
         agent_resolver: Callable[[str, Identity], Any] | None = None,
         mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
         elevation_sink: ElevationSink | None = None,
     ) -> None:
         self._compiler = compiler
+        self._builder = builder
         self._coordinator = coordinator
         self._elevation_sink = elevation_sink
         self._debug = debug_execution
@@ -302,7 +310,7 @@ class RuntimeExecutor:
         self,
         use_case_type: type[Compilable],
         *,
-        factory: UseCaseFactory,
+        factory: UseCaseFactory | None = None,
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
         dependencies: dict[type[Any], Any] | None = None,
@@ -310,30 +318,48 @@ class RuntimeExecutor:
         read_only: bool = False,
         identity: Identity | None = None,
     ) -> Any:
-        """Build ``use_case_type`` through ``factory`` and execute it.
+        """Build ``use_case_type`` inside a new execution and execute it there.
+
+        The instance is built once the execution has its identity and its
+        context, so a constructor's ``Caller()``, ``Agent()`` or ``Mcp()`` and
+        a per-execution adapter see the same execution as ``execute()``. A
+        constructor failure is logged as the execution failing and raised
+        as is, before ``EXEC_START``, with no runtime event.
+
+        The plan is the one compiled for ``use_case_type``, not for the class
+        of what the builder returns: a builder must return an instance of
+        exactly the requested class.
 
         Args:
             use_case_type: Compiled use case or job class to build and run.
-            factory: Factory that constructs the instance with its dependencies.
+            factory: Factory that constructs the instance with its
+                dependencies; overrides the executor's ``builder``.
             params: Primitive parameter values keyed by name.
             payload: Raw dict for command construction via ``Input()``.
             dependencies: Mapping of entity type to repository for the load steps.
             load_overrides: Pre-loaded entities by type, bypassing repo calls.
             read_only: When ``True``, no unit of work is opened.
-            identity: Verified caller for this execution.
+            identity: Verified caller for this execution, as for :meth:`execute`.
 
         Returns:
             The result produced by ``execute()``.
+
+        Raises:
+            TypeError: When neither ``factory`` nor the executor's ``builder``
+                is given.
         """
-        instance = factory.build(use_case_type)
-        return await self.execute(
-            instance,
-            params=params,
-            payload=payload,
-            dependencies=dependencies,
-            load_overrides=load_overrides,
-            read_only=read_only,
-            identity=identity,
+        build = self._builder if factory is None else factory.build
+        if build is None:
+            raise TypeError(
+                "RuntimeExecutor.run() needs factory=... or an executor constructed "
+                "with builder=..."
+            )
+        return await self._execute(
+            self._plan_for(use_case_type),
+            build,
+            use_case_type,
+            _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
+            read_only,
         )
 
     @overload
@@ -420,8 +446,10 @@ class RuntimeExecutor:
                 set to ``True`` by the HTTP layer for GET routes.  Also
                 honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
-                transport.  Required when the plan declares a ``Caller()``
-                parameter; pass
+                transport.  ``None`` runs as the caller of the execution
+                enclosing this one, if any (NS2), else with no caller.
+                Required, given or inherited, when the plan declares a
+                ``Caller()``, ``Agent()`` or ``Mcp()`` parameter; pass
                 :data:`~loom.core.identity.identity.ANONYMOUS` explicitly to
                 run a declared-identity use case without a caller.
 
@@ -442,23 +470,50 @@ class RuntimeExecutor:
                 of the invocation did not end the same way.
             loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other
-                than the one the scope was opened with.
+                than the one the scope was opened with; or, given no
+                identity inside another execution, the ambient identity is
+                not that execution's, with or without a unit of work.
             loom.core.errors.NestedElevation: If the execution running
                 in this context has elevated a scope.
             loom.core.errors.UndeclaredStoreWrite: If this execution
                 writes and a read-only execution encloses it.
         """
-        plan = self._plan_for(type(compilable))
-        inputs = _ExecutionInputs(
-            params=params,
-            payload=payload,
-            dependencies=dependencies,
-            load_overrides=load_overrides,
-            identity=identity,
+        return await self._execute(
+            self._plan_for(type(compilable)),
+            _given,
+            compilable,
+            _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
+            read_only,
         )
+
+    async def _execute(
+        self,
+        plan: ExecutionPlan,
+        build: Callable[[_TargetT], Compilable],
+        target: _TargetT,
+        inputs: _ExecutionInputs,
+        read_only: bool,
+    ) -> Any:
+        """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
+
+        The effective identity is computed here, once (NS2): the one given,
+        else the enclosing execution's (:func:`_inherited`), else ``None``.
+        That value reaches the inputs, the ambient identity and the execution
+        context, which are installed before the instance is built and reset
+        after the drain.
+        """
+        if inputs.identity is None:
+            inputs = _inherited(inputs, plan)
+        identity = inputs.identity
         scope = current_scope()
-        token = None if identity is None else set_identity(identity)
+        identity_token = None if identity is None else set_identity(identity)
+        execution_token = enter(identity)
         try:
+            try:
+                compilable = build(target)
+            except Exception as exc:
+                self._log_unbuilt(plan, exc)
+                raise
             if read_only or plan.read_only:
                 return await self._run_lifecycle(
                     plan, compilable, inputs, None, scope, read_only=True
@@ -467,8 +522,11 @@ class RuntimeExecutor:
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
-            if token is not None:
-                reset_identity(token)
+            try:
+                leave(execution_token)
+            finally:
+                if identity_token is not None:
+                    reset_identity(identity_token)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -772,6 +830,19 @@ class RuntimeExecutor:
             error=str(error),
         )
 
+    def _log_unbuilt(self, plan: ExecutionPlan, error: Exception) -> None:
+        """Log a failed build as an execution failure; no event: the execution never started."""
+        use_case_name = plan.use_case_type.__qualname__
+        trace_id = get_trace_id()
+        logger = self._logger.bind(trace_id=trace_id) if trace_id else self._logger
+        logger.error(
+            f"{_LOG_FAIL} {use_case_name}",
+            usecase=use_case_name,
+            status=_STATUS_FAILURE,
+            error_kind=_ERROR_KIND_BUILD,
+            error=str(error),
+        )
+
     def _handle_success(self, state: _ExecutionState) -> None:
         elapsed_ms = state.elapsed_ms()
         state.logger.info(
@@ -864,15 +935,15 @@ class RuntimeExecutor:
         identity: Identity | None,
         bound: dict[str, Any],
     ) -> None:
-        """Inject one value per execution binding, resolved as this caller.
+        """Inject one value per execution binding, resolved in this execution.
 
-        Requires an explicit identity for the reason ``_bind_caller`` does.
-        An explicitly anonymous one is accepted: the handle refuses it when
+        Requires an identity for the reason ``_bind_caller`` does. An
+        explicitly anonymous one is accepted: the handle refuses it when
         used, right before the network call, not before it is known whether
         this execution makes one. A kind with no resolver bound fails loud,
         naming the method that binds it, instead of handing the raw marker
-        to the use case. The resolvers run inside an execution entered here
-        for that caller (T08 widens it to the whole lifecycle).
+        to the use case. The resolvers read the execution :meth:`_execute`
+        entered, the one the constructor was built in.
         """
         bindings = plan.execution_bindings
         if identity is None:
@@ -884,17 +955,13 @@ class RuntimeExecutor:
                 "to run without a caller)."
             )
         kinds = self._kinds
-        token = enter(identity)
-        try:
-            for binding in bindings:
-                try:
-                    value = kinds.resolve(binding.kind, binding.declaration, binding.annotation)
-                except KeyError:
-                    _refuse_unbound(kinds, plan, binding.kind)
-                    raise
-                bound[binding.name] = value
-        finally:
-            leave(token)
+        for binding in bindings:
+            try:
+                value = kinds.resolve(binding.kind, binding.declaration, binding.annotation)
+            except KeyError:
+                _refuse_unbound(kinds, plan, binding.kind)
+                raise
+            bound[binding.name] = value
 
     @staticmethod
     def _coerce_param(
@@ -1149,6 +1216,37 @@ class RuntimeExecutor:
     def _log_step(self, label: str) -> None:
         if self._debug:
             self._logger.info(f"[STEP] {label}")
+
+
+def _inherited(inputs: _ExecutionInputs, plan: ExecutionPlan) -> _ExecutionInputs:
+    """``inputs`` given no identity, as the caller of the enclosing execution, if any (NS2).
+
+    The ambient identity must still be that caller, or
+    :class:`~loom.core.errors.NestedIdentityMismatch` is raised: code changed
+    it during the enclosing execution, or opened that execution with
+    ``ExecutionScope`` / ``enter`` without ``set_identity`` of the same
+    identity. The message names no identity, as the other refusals do.
+    """
+    enclosing = current_execution()
+    inherited = None if enclosing is None else enclosing.identity
+    if inherited is None:
+        return inputs
+    ambient = current_identity()
+    if ambient is not inherited and ambient != inherited:  # `is`: the parent installed it
+        raise NestedIdentityMismatch(
+            f"{plan.use_case_type.__qualname__} was given no identity, and the ambient identity "
+            "differs from the enclosing execution's: it was changed during that execution, or "
+            "the execution was opened (ExecutionScope, enter) without set_identity; pass "
+            "identity=... explicitly"
+        )
+    return _ExecutionInputs(
+        inputs.params, inputs.payload, inputs.dependencies, inputs.load_overrides, inherited
+    )
+
+
+def _given(compilable: Compilable) -> Compilable:
+    """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
+    return compilable
 
 
 def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> None:

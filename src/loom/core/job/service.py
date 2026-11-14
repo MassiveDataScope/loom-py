@@ -86,10 +86,10 @@ class _PendingDispatch:
 
     async def run(self) -> None:
         """Build the job, execute it, store the result, and invoke callbacks."""
-        instance = self.factory.build(self.job_type)
         try:
-            result: Any = await self.executor.execute(
-                instance,
+            result: Any = await self.executor.run(
+                self.job_type,
+                factory=self.factory,
                 params=self.params,
                 payload=self.payload,
                 identity=self.identity,
@@ -262,10 +262,14 @@ class InlineJobService:
         Returns:
             The value returned by ``Job.execute()``.
         """
-        instance = self._factory.build(job_type)
-        return await self._executor.execute(
-            instance, params=params, payload=payload, identity=current_identity()
+        result: ResultT = await self._executor.run(
+            job_type,
+            factory=self._factory,
+            params=params,
+            payload=payload,
+            identity=current_identity(),
         )
+        return result
 
     def dispatch(
         self,
