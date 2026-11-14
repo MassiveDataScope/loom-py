@@ -59,58 +59,67 @@ async def _probe(url: str) -> None:
     await wiring.startup_checks()
 
 
-async def test_a_database_without_scoped_tables_lets_the_probe_start(
-    probe_schema: _Schema,
-) -> None:
-    url = await probe_schema("CREATE TABLE {schema}.plain (id int)")
-
-    await _probe(url)
-
-
-async def test_a_table_with_row_level_security_refuses_the_probe(probe_schema: _Schema) -> None:
-    url = await probe_schema(
-        "CREATE TABLE {schema}.guarded (id int)",
-        "ALTER TABLE {schema}.guarded ENABLE ROW LEVEL SECURITY",
-    )
-
-    with pytest.raises(ConfigError, match=r"cannot protect scoped tables guarded.*mode: external"):
-        await _probe(url)
-
-
-async def test_a_table_carrying_loom_s_owner_trigger_refuses_the_probe(
-    probe_schema: _Schema,
-) -> None:
-    url = await probe_schema(
-        "CREATE TABLE {schema}.owned (id int)",
-        "CREATE FUNCTION {schema}.deny() RETURNS trigger LANGUAGE plpgsql "
-        "AS 'BEGIN RETURN NULL; END'",
-        "CREATE TRIGGER loom_deny_owner_dml BEFORE INSERT ON {schema}.owned "
-        "FOR EACH STATEMENT EXECUTE FUNCTION {schema}.deny()",
-    )
-
-    with pytest.raises(ConfigError, match=r"cannot protect scoped tables owned"):
-        await _probe(url)
-
-
 class _Plain(BaseModel):
     __tablename__ = "privileged_create_all_rows"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-async def test_create_all_as_a_superuser_is_refused_before_creating_anything(
-    module_database_uri: str,
-) -> None:
-    store = {"backend": "sqlalchemy", "url": module_database_uri, "schema": {"mode": "create_all"}}
-    cursors = {"cursors": {"signing": "ephemeral"}}
-    ctx = ConfigContext.from_dict({"stores": {"default": store}, "persistence": cursors})
-    wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
-    wiring.prepare_models((_Plain,))
+class TestProbeRefusal:
+    async def test_a_database_without_scoped_tables_lets_the_probe_start(
+        self,
+        probe_schema: _Schema,
+    ) -> None:
+        url = await probe_schema("CREATE TABLE {schema}.plain (id int)")
 
-    with pytest.raises(ConfigError, match=r"stores\.default\.url connects as a superuser"):
-        await wiring.startup_checks()
+        await _probe(url)
 
-    assert (
-        await scalar(module_database_uri, "SELECT to_regclass('privileged_create_all_rows')")
-        is None
-    )
+    async def test_a_table_with_row_level_security_refuses_the_probe(
+        self, probe_schema: _Schema
+    ) -> None:
+        url = await probe_schema(
+            "CREATE TABLE {schema}.guarded (id int)",
+            "ALTER TABLE {schema}.guarded ENABLE ROW LEVEL SECURITY",
+        )
+
+        with pytest.raises(
+            ConfigError, match=r"cannot protect scoped tables guarded.*mode: external"
+        ):
+            await _probe(url)
+
+    async def test_a_table_carrying_loom_s_owner_trigger_refuses_the_probe(
+        self,
+        probe_schema: _Schema,
+    ) -> None:
+        url = await probe_schema(
+            "CREATE TABLE {schema}.owned (id int)",
+            "CREATE FUNCTION {schema}.deny() RETURNS trigger LANGUAGE plpgsql "
+            "AS 'BEGIN RETURN NULL; END'",
+            "CREATE TRIGGER loom_deny_owner_dml BEFORE INSERT ON {schema}.owned "
+            "FOR EACH STATEMENT EXECUTE FUNCTION {schema}.deny()",
+        )
+
+        with pytest.raises(ConfigError, match=r"cannot protect scoped tables owned"):
+            await _probe(url)
+
+    async def test_create_all_as_a_superuser_is_refused_before_creating_anything(
+        self,
+        module_database_uri: str,
+    ) -> None:
+        store = {
+            "backend": "sqlalchemy",
+            "url": module_database_uri,
+            "schema": {"mode": "create_all"},
+        }
+        cursors = {"cursors": {"signing": "ephemeral"}}
+        ctx = ConfigContext.from_dict({"stores": {"default": store}, "persistence": cursors})
+        wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
+        wiring.prepare_models((_Plain,))
+
+        with pytest.raises(ConfigError, match=r"stores\.default\.url connects as a superuser"):
+            await wiring.startup_checks()
+
+        assert (
+            await scalar(module_database_uri, "SELECT to_regclass('privileged_create_all_rows')")
+            is None
+        )

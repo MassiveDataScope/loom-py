@@ -108,110 +108,6 @@ async def _committed_ids(observer: AsyncEngine, table: str) -> list[int]:
         return [row[0] for row in rows]
 
 
-async def test_a_clean_execution_commits_its_write(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    async def body() -> None:
-        await _insert(manager, table, 1)
-
-    await _executor(manager).execute(Run(body))
-
-    assert await _committed_ids(observer, table) == [1]
-
-
-async def test_a_failure_after_writing_persists_nothing(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    async def body() -> None:
-        await _insert(manager, table, 1)
-        raise BusinessError
-
-    executor = _executor(manager)
-    use_case = Run(body)
-
-    with pytest.raises(BusinessError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(observer, table) == []
-
-
-async def test_a_nested_execution_does_not_commit(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    executor = _executor(manager)
-    seen_after_nested: list[list[int]] = []
-
-    async def nested() -> None:
-        await _insert(manager, table, 1)
-
-    async def outer() -> None:
-        await executor.execute(Run(nested))
-        seen_after_nested.append(await _committed_ids(observer, table))
-
-    await executor.execute(Run(outer))
-
-    assert seen_after_nested == [[]]
-
-
-async def test_a_failure_after_a_nested_write_persists_nothing(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    executor = _executor(manager)
-
-    async def nested() -> None:
-        await _insert(manager, table, 1)
-
-    async def outer() -> None:
-        await executor.execute(Run(nested))
-        raise BusinessError
-
-    use_case = Run(outer)
-
-    with pytest.raises(BusinessError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(observer, table) == []
-
-
-async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    """One store raises what it raised before the scope: the driver's error, at commit."""
-    executor = _executor(manager)
-
-    async def first() -> None:
-        await _insert(manager, table, 1)
-
-    async def duplicate() -> None:
-        await _insert(manager, table, 2)
-        await _insert(manager, table, 1)  # the deferred key fails only at COMMIT
-
-    await executor.execute(Run(first))
-    use_case = Run(duplicate)
-
-    with pytest.raises(IntegrityError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(observer, table) == [1]
-
-
-async def test_a_connection_lost_before_commit_leaves_the_store_uncertain(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    coordinator = OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)})
-    async with invocation(coordinator) as scope:
-        async with scope.frame(Frame(DEFAULT_STORE)):
-            await _insert(manager, table, 1)
-            await _terminate_own_backend(manager, observer)
-        outcome = await coordinator.finish(scope, None)
-
-    [store] = outcome.stores
-    assert isinstance(store, Uncertain)
-    assert isinstance(store.cause, DBAPIError)
-    assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
-    assert await _committed_ids(observer, table) == []
-
-
 async def _terminate_own_backend(manager: SessionManager, observer: AsyncEngine) -> None:
     session = manager.active_session
     assert session is not None
@@ -220,112 +116,207 @@ async def _terminate_own_backend(manager: SessionManager, observer: AsyncEngine)
         await conn.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
 
 
-async def test_a_gather_child_running_a_nested_execution_writes_nothing(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    executor = _executor(manager)
-
-    async def nested() -> None:
-        await _insert(manager, table, 2)
-
-    async def outer() -> None:
-        await _insert(manager, table, 1)
-        await asyncio.gather(executor.execute(Run(nested)))
-
-    use_case = Run(outer)
-
-    with pytest.raises(ScopeOwnershipError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(observer, table) == []
-
-
-async def test_a_gather_child_running_a_read_only_execution_reads_per_call(
-    manager: SessionManager, table: str
-) -> None:
-    """T073: the child joins no session of the parent, so it never sees the uncommitted row."""
-    executor = _executor(manager)
-    seen: list[list[int]] = []
-
-    async def read() -> None:
-        seen.append(await _visible_ids(manager, table))
-
-    async def outer() -> None:
-        await _insert(manager, table, 1)
-        await asyncio.gather(executor.execute(Run(read), read_only=True))
-
-    await executor.execute(Run(outer))
-
-    assert seen == [[]]
-
-
-async def test_a_read_only_execution_in_the_owner_task_sees_the_uncommitted_write(
-    manager: SessionManager, table: str
-) -> None:
-    executor = _executor(manager)
-    seen: list[list[int]] = []
-
-    async def read() -> None:
-        seen.append(await _visible_ids(manager, table))
-
-    async def outer() -> None:
-        await _insert(manager, table, 1)
-        await executor.execute(Run(read), read_only=True)
-
-    await executor.execute(Run(outer))
-
-    assert seen == [[1]]
-
-
-async def test_a_gather_child_reading_the_enlisted_store_is_refused(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    async def outer() -> None:
-        await _insert(manager, table, 1)
-        await asyncio.gather(_visible_ids(manager, table))
-
-    use_case = Run(outer)
-    executor = _executor(manager)
-
-    with pytest.raises(ScopeOwnershipError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(observer, table) == []
-
-
-async def test_a_hundred_invocations_return_every_connection_and_reset_the_context(
-    manager: SessionManager, table: str, observer: AsyncEngine
-) -> None:
-    executor = _executor(manager)
-    clean: list[bool] = []
-
-    async def invoke(index: int) -> None:
+class TestInvocationScope:
+    async def test_a_clean_execution_commits_its_write(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
         async def body() -> None:
-            await _insert(manager, table, index)
-            if index % 3 == 1:
-                raise BusinessError
+            await _insert(manager, table, 1)
+
+        await _executor(manager).execute(Run(body))
+
+        assert await _committed_ids(observer, table) == [1]
+
+    async def test_a_failure_after_writing_persists_nothing(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        async def body() -> None:
+            await _insert(manager, table, 1)
+            raise BusinessError
+
+        executor = _executor(manager)
+        use_case = Run(body)
+
+        with pytest.raises(BusinessError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(observer, table) == []
+
+    async def test_a_nested_execution_does_not_commit(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        executor = _executor(manager)
+        seen_after_nested: list[list[int]] = []
+
+        async def nested() -> None:
+            await _insert(manager, table, 1)
+
+        async def outer() -> None:
+            await executor.execute(Run(nested))
+            seen_after_nested.append(await _committed_ids(observer, table))
+
+        await executor.execute(Run(outer))
+
+        assert seen_after_nested == [[]]
+
+    async def test_a_failure_after_a_nested_write_persists_nothing(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        executor = _executor(manager)
+
+        async def nested() -> None:
+            await _insert(manager, table, 1)
+
+        async def outer() -> None:
+            await executor.execute(Run(nested))
+            raise BusinessError
+
+        use_case = Run(outer)
+
+        with pytest.raises(BusinessError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(observer, table) == []
+
+    async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        """One store raises what it raised before the scope: the driver's error, at commit."""
+        executor = _executor(manager)
+
+        async def first() -> None:
+            await _insert(manager, table, 1)
+
+        async def duplicate() -> None:
+            await _insert(manager, table, 2)
+            await _insert(manager, table, 1)  # the deferred key fails only at COMMIT
+
+        await executor.execute(Run(first))
+        use_case = Run(duplicate)
+
+        with pytest.raises(IntegrityError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(observer, table) == [1]
+
+    async def test_a_connection_lost_before_commit_leaves_the_store_uncertain(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        coordinator = OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)})
+        async with invocation(coordinator) as scope:
+            async with scope.frame(Frame(DEFAULT_STORE)):
+                await _insert(manager, table, 1)
+                await _terminate_own_backend(manager, observer)
+            outcome = await coordinator.finish(scope, None)
+
+        [store] = outcome.stores
+        assert isinstance(store, Uncertain)
+        assert isinstance(store.cause, DBAPIError)
+        assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
+        assert await _committed_ids(observer, table) == []
+
+    async def test_a_gather_child_running_a_nested_execution_writes_nothing(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        executor = _executor(manager)
+
+        async def nested() -> None:
+            await _insert(manager, table, 2)
+
+        async def outer() -> None:
+            await _insert(manager, table, 1)
+            await asyncio.gather(executor.execute(Run(nested)))
+
+        use_case = Run(outer)
+
+        with pytest.raises(ScopeOwnershipError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(observer, table) == []
+
+    async def test_a_gather_child_running_a_read_only_execution_reads_per_call(
+        self, manager: SessionManager, table: str
+    ) -> None:
+        """T073: the child joins no session of the parent, so it never sees the uncommitted row."""
+        executor = _executor(manager)
+        seen: list[list[int]] = []
+
+        async def read() -> None:
+            seen.append(await _visible_ids(manager, table))
+
+        async def outer() -> None:
+            await _insert(manager, table, 1)
+            await asyncio.gather(executor.execute(Run(read), read_only=True))
+
+        await executor.execute(Run(outer))
+
+        assert seen == [[]]
+
+    async def test_a_read_only_execution_in_the_owner_task_sees_the_uncommitted_write(
+        self, manager: SessionManager, table: str
+    ) -> None:
+        executor = _executor(manager)
+        seen: list[list[int]] = []
+
+        async def read() -> None:
+            seen.append(await _visible_ids(manager, table))
+
+        async def outer() -> None:
+            await _insert(manager, table, 1)
+            await executor.execute(Run(read), read_only=True)
+
+        await executor.execute(Run(outer))
+
+        assert seen == [[1]]
+
+    async def test_a_gather_child_reading_the_enlisted_store_is_refused(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        async def outer() -> None:
+            await _insert(manager, table, 1)
+            await asyncio.gather(_visible_ids(manager, table))
+
+        use_case = Run(outer)
+        executor = _executor(manager)
+
+        with pytest.raises(ScopeOwnershipError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(observer, table) == []
+
+    async def test_a_hundred_invocations_return_every_connection_and_reset_the_context(
+        self, manager: SessionManager, table: str, observer: AsyncEngine
+    ) -> None:
+        executor = _executor(manager)
+        clean: list[bool] = []
+
+        async def invoke(index: int) -> None:
+            async def body() -> None:
+                await _insert(manager, table, index)
+                if index % 3 == 1:
+                    raise BusinessError
+                if index % 3 == 2:
+                    await asyncio.Event().wait()
+
+            try:
+                await executor.execute(Run(body))
+            except BusinessError:
+                pass
+            finally:
+                clean.append(_context_is_clean())
+
+        for index in range(100):
+            task = asyncio.create_task(invoke(index))
             if index % 3 == 2:
-                await asyncio.Event().wait()
+                while manager.engine.pool.checkedout() == 0:  # type: ignore[attr-defined]
+                    await asyncio.sleep(0.001)
+                await asyncio.sleep(0.01)
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
-        try:
-            await executor.execute(Run(body))
-        except BusinessError:
-            pass
-        finally:
-            clean.append(_context_is_clean())
-
-    for index in range(100):
-        task = asyncio.create_task(invoke(index))
-        if index % 3 == 2:
-            while manager.engine.pool.checkedout() == 0:  # type: ignore[attr-defined]
-                await asyncio.sleep(0.001)
-            await asyncio.sleep(0.01)
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-    assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
-    assert clean == [True] * 100
-    assert await _committed_ids(observer, table) == list(range(0, 100, 3))
+        assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
+        assert clean == [True] * 100
+        assert await _committed_ids(observer, table) == list(range(0, 100, 3))
 
 
 def _context_is_clean() -> bool:

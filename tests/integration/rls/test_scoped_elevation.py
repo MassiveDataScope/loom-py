@@ -145,19 +145,6 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
         reset_identity(identity)
 
 
-def test_the_composition_wires_one_scoped_sink(composed: Composed) -> None:
-    assert isinstance(composed.sink, ScopedElevationSink)
-
-
-async def test_elevate_from_a_gather_child_is_refused_and_elevates_nothing(
-    composed: Composed,
-) -> None:
-    refused, elevated, flag = await composed.app.invoke(ElevateFromGatherChild)
-
-    assert isinstance(refused, ScopeOwnershipError)
-    assert (elevated, flag) == (frozenset(), "")
-
-
 def _refused(message: str) -> Awaitable[object]:
     async def refuse() -> None:
         raise RuntimeError(message)
@@ -165,43 +152,61 @@ def _refused(message: str) -> Awaitable[object]:
     return refuse()
 
 
-@pytest.mark.parametrize("catch", [False, True], ids=["uncaught", "caught"])
-@pytest.mark.parametrize("invalidation_fails", [False, True], ids=["invalidated", "kept"])
-async def test_a_failed_clearing_commits_nothing_and_leaves_no_flag(
-    composed: Composed, monkeypatch: pytest.MonkeyPatch, catch: bool, invalidation_fails: bool
-) -> None:
-    monkeypatch.setattr(SQLAlchemyStoreElevation, "clear_flags", lambda *_: _refused("clearing"))
-    if invalidation_fails:
-        monkeypatch.setattr(AsyncSession, "invalidate", lambda _: _refused("invalidation"))
-    raised = "invalidation" if invalidation_fails and not catch else "clearing"
+class TestScopedElevation:
+    def test_the_composition_wires_one_scoped_sink(self, composed: Composed) -> None:
+        assert isinstance(composed.sink, ScopedElevationSink)
 
-    with pytest.raises(RuntimeError, match=raised):
-        await composed.app.invoke(WriteAndNest, params={"catch": catch, "timeout_s": None})
+    async def test_elevate_from_a_gather_child_is_refused_and_elevates_nothing(
+        self,
+        composed: Composed,
+    ) -> None:
+        refused, elevated, flag = await composed.app.invoke(ElevateFromGatherChild)
 
-    assert _flags == ["on"]
-    assert await composed.outcome() == (_SEEDED, "")
+        assert isinstance(refused, ScopeOwnershipError)
+        assert (elevated, flag) == (frozenset(), "")
 
+    @pytest.mark.parametrize("catch", [False, True], ids=["uncaught", "caught"])
+    @pytest.mark.parametrize("invalidation_fails", [False, True], ids=["invalidated", "kept"])
+    async def test_a_failed_clearing_commits_nothing_and_leaves_no_flag(
+        self,
+        composed: Composed,
+        monkeypatch: pytest.MonkeyPatch,
+        catch: bool,
+        invalidation_fails: bool,
+    ) -> None:
+        monkeypatch.setattr(
+            SQLAlchemyStoreElevation, "clear_flags", lambda *_: _refused("clearing")
+        )
+        if invalidation_fails:
+            monkeypatch.setattr(AsyncSession, "invalidate", lambda _: _refused("invalidation"))
+        raised = "invalidation" if invalidation_fails and not catch else "clearing"
 
-async def test_a_timeout_once_the_flag_was_sent_commits_nothing_even_when_caught(
-    composed: Composed, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sent = SQLAlchemyStoreElevation.set_flag
-    seen: list[str] = []
+        with pytest.raises(RuntimeError, match=raised):
+            await composed.app.invoke(WriteAndNest, params={"catch": catch, "timeout_s": None})
 
-    def set_then_linger(store: SQLAlchemyStoreElevation, scope: str) -> Awaitable[object]:
-        statement, session = sent(store, scope), store._open_session()
+        assert _flags == ["on"]
+        assert await composed.outcome() == (_SEEDED, "")
 
-        async def linger() -> None:
-            await statement  # set_config has run on the server
-            seen.append((await session.execute(text(FLAG))).scalar_one())
-            await asyncio.sleep(0.3)
+    async def test_a_timeout_once_the_flag_was_sent_commits_nothing_even_when_caught(
+        self, composed: Composed, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = SQLAlchemyStoreElevation.set_flag
+        seen: list[str] = []
 
-        return linger()
+        def set_then_linger(store: SQLAlchemyStoreElevation, scope: str) -> Awaitable[object]:
+            statement, session = sent(store, scope), store._open_session()
 
-    monkeypatch.setattr(SQLAlchemyStoreElevation, "set_flag", set_then_linger)
+            async def linger() -> None:
+                await statement  # set_config has run on the server
+                seen.append((await session.execute(text(FLAG))).scalar_one())
+                await asyncio.sleep(0.3)
 
-    with pytest.raises(RuntimeError, match="elevating scope 'editor' was interrupted"):
-        await composed.app.invoke(WriteAndNest, params={"catch": True, "timeout_s": 0.05})
+            return linger()
 
-    assert seen == ["on"]
-    assert await composed.outcome() == (_SEEDED, "")
+        monkeypatch.setattr(SQLAlchemyStoreElevation, "set_flag", set_then_linger)
+
+        with pytest.raises(RuntimeError, match="elevating scope 'editor' was interrupted"):
+            await composed.app.invoke(WriteAndNest, params={"catch": True, "timeout_s": 0.05})
+
+        assert seen == ["on"]
+        assert await composed.outcome() == (_SEEDED, "")

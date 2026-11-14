@@ -59,119 +59,115 @@ async def _committed_ids(collection: AsyncCollection[Any]) -> list[int]:
     return [document["_id"] async for document in collection.find({}, sort=[("_id", 1)])]
 
 
-async def test_a_clean_execution_commits_its_write(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    async def body() -> None:
-        await _insert(created, 1)
-
-    await _executor(mongo_client).execute(Run(body))
-
-    assert await _committed_ids(created) == [1]
-
-
-async def test_a_failure_after_writing_persists_nothing(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    async def body() -> None:
-        await _insert(created, 1)
-        raise BusinessError
-
-    executor = _executor(mongo_client)
-    use_case = Run(body)
-
-    with pytest.raises(BusinessError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(created) == []
-
-
-async def test_a_nested_execution_does_not_commit(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    executor = _executor(mongo_client)
-    seen_after_nested: list[list[int]] = []
-
-    async def nested() -> None:
-        await _insert(created, 1)
-
-    async def outer() -> None:
-        await executor.execute(Run(nested))
-        seen_after_nested.append(await _committed_ids(created))
-
-    await executor.execute(Run(outer))
-
-    assert seen_after_nested == [[]]
-
-
-async def test_a_failure_after_a_nested_write_persists_nothing(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    executor = _executor(mongo_client)
-
-    async def nested() -> None:
-        await _insert(created, 1)
-
-    async def outer() -> None:
-        await executor.execute(Run(nested))
-        raise BusinessError
-
-    use_case = Run(outer)
-
-    with pytest.raises(BusinessError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(created) == []
-
-
-async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    executor = _executor(mongo_client)
-    clean: list[bool] = []
-
-    async def invoke(index: int) -> None:
+class TestInvocationScope:
+    async def test_a_clean_execution_commits_its_write(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
         async def body() -> None:
-            await _insert(created, index)
-            if index % 3 == 1:
-                raise BusinessError
+            await _insert(created, 1)
+
+        await _executor(mongo_client).execute(Run(body))
+
+        assert await _committed_ids(created) == [1]
+
+    async def test_a_failure_after_writing_persists_nothing(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
+        async def body() -> None:
+            await _insert(created, 1)
+            raise BusinessError
+
+        executor = _executor(mongo_client)
+        use_case = Run(body)
+
+        with pytest.raises(BusinessError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(created) == []
+
+    async def test_a_nested_execution_does_not_commit(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
+        executor = _executor(mongo_client)
+        seen_after_nested: list[list[int]] = []
+
+        async def nested() -> None:
+            await _insert(created, 1)
+
+        async def outer() -> None:
+            await executor.execute(Run(nested))
+            seen_after_nested.append(await _committed_ids(created))
+
+        await executor.execute(Run(outer))
+
+        assert seen_after_nested == [[]]
+
+    async def test_a_failure_after_a_nested_write_persists_nothing(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
+        executor = _executor(mongo_client)
+
+        async def nested() -> None:
+            await _insert(created, 1)
+
+        async def outer() -> None:
+            await executor.execute(Run(nested))
+            raise BusinessError
+
+        use_case = Run(outer)
+
+        with pytest.raises(BusinessError):
+            await executor.execute(use_case)
+
+        assert await _committed_ids(created) == []
+
+    async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
+        executor = _executor(mongo_client)
+        clean: list[bool] = []
+
+        async def invoke(index: int) -> None:
+            async def body() -> None:
+                await _insert(created, index)
+                if index % 3 == 1:
+                    raise BusinessError
+                if index % 3 == 2:
+                    await asyncio.Event().wait()
+
+            try:
+                await executor.execute(Run(body))
+            except BusinessError:
+                pass
+            finally:
+                clean.append(current_scope() is None)
+
+        for index in range(100):
+            task = asyncio.create_task(invoke(index))
             if index % 3 == 2:
-                await asyncio.Event().wait()
+                await asyncio.sleep(0.05)
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
-        try:
-            await executor.execute(Run(body))
-        except BusinessError:
-            pass
-        finally:
-            clean.append(current_scope() is None)
+        assert clean == [True] * 100
+        assert await _committed_ids(created) == list(range(0, 100, 3))
 
-    for index in range(100):
-        task = asyncio.create_task(invoke(index))
-        if index % 3 == 2:
-            await asyncio.sleep(0.05)
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    async def test_a_gather_of_reads_using_the_session_is_refused_and_persists_nothing(
+        self, mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+    ) -> None:
+        sessions = _sessions(created)
 
-    assert clean == [True] * 100
-    assert await _committed_ids(created) == list(range(0, 100, 3))
+        async def read() -> Any:
+            return await created.find_one({}, session=sessions(False))
 
+        async def body() -> None:
+            await _insert(created, 1)
+            await asyncio.gather(read(), read())
 
-async def test_a_gather_of_reads_using_the_session_is_refused_and_persists_nothing(
-    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
-) -> None:
-    sessions = _sessions(created)
+        use_case = Run(body)
+        executor = _executor(mongo_client)
 
-    async def read() -> Any:
-        return await created.find_one({}, session=sessions(False))
+        with pytest.raises(ScopeOwnershipError):
+            await executor.execute(use_case)
 
-    async def body() -> None:
-        await _insert(created, 1)
-        await asyncio.gather(read(), read())
-
-    use_case = Run(body)
-    executor = _executor(mongo_client)
-
-    with pytest.raises(ScopeOwnershipError):
-        await executor.execute(use_case)
-
-    assert await _committed_ids(created) == []
+        assert await _committed_ids(created) == []

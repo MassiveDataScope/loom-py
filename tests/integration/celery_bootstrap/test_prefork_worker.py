@@ -174,27 +174,31 @@ def _run_prefork_worker(tmp_path: Path, database: str, children: int) -> _Run:
     return _Run(parent=parent, answers=answers, checks=recorded)
 
 
-def test_prefork_children_open_their_own_connections(tmp_path: Path, database: str) -> None:
-    run = _run_prefork_worker(tmp_path, database, children=2)
-    parent, answers = run.parent, run.answers
+class TestPreforkWorker:
+    def test_prefork_children_open_their_own_connections(
+        self, tmp_path: Path, database: str
+    ) -> None:
+        run = _run_prefork_worker(tmp_path, database, children=2)
+        parent, answers = run.parent, run.answers
 
-    assert parent["pool"] == "AsyncAdaptedQueuePool"
-    assert parent["checkedout"] == 0
-    assert parent["checkedin"] == 0
-    assert {answer["one"] for answer in answers} == {1}
-    child_pids = {answer["pid"] for answer in answers}
-    assert len(child_pids) == 2
-    assert parent["pid"] not in child_pids
+        assert parent["pool"] == "AsyncAdaptedQueuePool"
+        assert parent["checkedout"] == 0
+        assert parent["checkedin"] == 0
+        assert {answer["one"] for answer in answers} == {1}
+        child_pids = {answer["pid"] for answer in answers}
+        assert len(child_pids) == 2
+        assert parent["pid"] not in child_pids
 
+    def test_eight_children_open_after_one_check_in_the_parent(
+        self, tmp_path: Path, database: str
+    ) -> None:
+        """SC-006a: the parent checks once and none of its connections serves a child."""
+        run = _run_prefork_worker(tmp_path, database, children=8)
+        parent_pid = run.parent["pid"]
 
-def test_eight_children_open_after_one_check_in_the_parent(tmp_path: Path, database: str) -> None:
-    """SC-006a: the parent checks once and none of its connections serves a child."""
-    run = _run_prefork_worker(tmp_path, database, children=8)
-    parent_pid = run.parent["pid"]
-
-    assert run.checks == [parent_pid]
-    assert len({answer["pid"] for answer in run.answers}) == 8
-    assert {answer["one"] for answer in run.answers} == {1}
-    seen = {name for answer in run.answers for name in answer["connections"]}
-    assert f"prefork-{parent_pid}" not in seen
-    assert {f"prefork-{answer['pid']}" for answer in run.answers} <= seen
+        assert run.checks == [parent_pid]
+        assert len({answer["pid"] for answer in run.answers}) == 8
+        assert {answer["one"] for answer in run.answers} == {1}
+        seen = {name for answer in run.answers for name in answer["connections"]}
+        assert f"prefork-{parent_pid}" not in seen
+        assert {f"prefork-{answer['pid']}" for answer in run.answers} <= seen

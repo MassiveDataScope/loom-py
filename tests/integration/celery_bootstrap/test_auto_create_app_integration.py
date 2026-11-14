@@ -349,51 +349,59 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             db_path.unlink()
 
 
-def test_create_app_executes_job_that_invokes_use_case(
-    celery_files: Any,
-) -> None:
-    config_path, _db_path, module, callback_sink = celery_files
+class TestAutoCreateAppIntegration:
+    def test_create_app_executes_job_that_invokes_use_case(
+        self,
+        celery_files: Any,
+    ) -> None:
+        config_path, _db_path, module, callback_sink = celery_files
 
-    celery_app = create_app(
-        config_path,
-        jobs=[
-            _CreateRecordViaUseCaseJob,
-            _GetRecordViaLoadByIdJob,
-            _RenameRecordViaLoadByIdJob,
-            _LoadRecordByNameJob,
-            _ExistsRecordByNameJob,
-            _CreateRecordInlineJob,
-            _AlwaysFailJob,
-            _DispatchChildJobOrchestratorJob,
-        ],
-        modules=[module],
-        callbacks=[_RecordSuccessCallback, _RecordFailureCallback],
-    )
+        celery_app = create_app(
+            config_path,
+            jobs=[
+                _CreateRecordViaUseCaseJob,
+                _GetRecordViaLoadByIdJob,
+                _RenameRecordViaLoadByIdJob,
+                _LoadRecordByNameJob,
+                _ExistsRecordByNameJob,
+                _CreateRecordInlineJob,
+                _AlwaysFailJob,
+                _DispatchChildJobOrchestratorJob,
+            ],
+            modules=[module],
+            callbacks=[_RecordSuccessCallback, _RecordFailureCallback],
+        )
 
-    create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
-    get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]
-    rename_task = celery_app.tasks[f"loom.job.{_RenameRecordViaLoadByIdJob.__qualname__}"]
-    load_task = celery_app.tasks[f"loom.job.{_LoadRecordByNameJob.__qualname__}"]
-    exists_task = celery_app.tasks[f"loom.job.{_ExistsRecordByNameJob.__qualname__}"]
+        create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
+        get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]
+        rename_task = celery_app.tasks[f"loom.job.{_RenameRecordViaLoadByIdJob.__qualname__}"]
+        load_task = celery_app.tasks[f"loom.job.{_LoadRecordByNameJob.__qualname__}"]
+        exists_task = celery_app.tasks[f"loom.job.{_ExistsRecordByNameJob.__qualname__}"]
 
-    created = create_task.apply(kwargs={"payload": {"name": "alpha"}})
-    assert created.result == 1
-    assert get_task.apply(kwargs={"params": {"record_id": 1}}).result == "alpha"
+        created = create_task.apply(kwargs={"payload": {"name": "alpha"}})
+        assert created.result == 1
+        assert get_task.apply(kwargs={"params": {"record_id": 1}}).result == "alpha"
 
-    renamed = rename_task.apply(kwargs={"params": {"record_id": 1}, "payload": {"name": "omega"}})
-    assert renamed.result == "omega"
+        renamed = rename_task.apply(
+            kwargs={"params": {"record_id": 1}, "payload": {"name": "omega"}}
+        )
+        assert renamed.result == "omega"
 
-    assert load_task.apply(kwargs={"payload": {"name": "omega"}}).result == 1
-    assert load_task.apply(kwargs={"payload": {"name": "missing"}}).result == -1
-    assert exists_task.apply(kwargs={"payload": {"name": "omega"}}).result is True
-    assert exists_task.apply(kwargs={"payload": {"name": "missing"}}).result is False
+        assert load_task.apply(kwargs={"payload": {"name": "omega"}}).result == 1
+        assert load_task.apply(kwargs={"payload": {"name": "missing"}}).result == -1
+        assert exists_task.apply(kwargs={"payload": {"name": "omega"}}).result is True
+        assert exists_task.apply(kwargs={"payload": {"name": "missing"}}).result is False
 
-    dispatch_task = celery_app.tasks[f"loom.job.{_DispatchChildJobOrchestratorJob.__qualname__}"]
-    assert dispatch_task.apply(kwargs={"payload": {"name": "callback-ok"}}).result is True
-    failed_dispatch = dispatch_task.apply(
-        kwargs={"payload": {"name": "callback-fail", "should_fail": True}}
-    )
-    assert failed_dispatch.result is True  # fire-and-forget: exception silenced, job returns True
+        dispatch_task = celery_app.tasks[
+            f"loom.job.{_DispatchChildJobOrchestratorJob.__qualname__}"
+        ]
+        assert dispatch_task.apply(kwargs={"payload": {"name": "callback-ok"}}).result is True
+        failed_dispatch = dispatch_task.apply(
+            kwargs={"payload": {"name": "callback-fail", "should_fail": True}}
+        )
+        assert (
+            failed_dispatch.result is True
+        )  # fire-and-forget: exception silenced, job returns True
 
-    assert any("callback-ok" in entry for entry in callback_sink.successes)
-    assert any("callback-fail" in entry for entry in callback_sink.failures)
+        assert any("callback-ok" in entry for entry in callback_sink.successes)
+        assert any("callback-fail" in entry for entry in callback_sink.failures)

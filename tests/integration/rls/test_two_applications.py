@@ -89,13 +89,15 @@ async def _desk(application: Application) -> str:
         await manager.dispose()
 
 
-async def test_each_application_keeps_the_sources_registered_when_it_was_composed(
-    module_database_uri: str,
-) -> None:
-    register_scope_source("desk", lambda: "north")
-    first = _compose(module_database_uri, "first")
-    clear_scope_sources()
-    register_scope_source("desk", lambda: "south")
-    second = _compose(module_database_uri, "second")
+class TestTwoApplications:
+    async def test_each_application_keeps_the_sources_registered_when_it_was_composed(
+        self,
+        module_database_uri: str,
+    ) -> None:
+        register_scope_source("desk", lambda: "north")
+        first = _compose(module_database_uri, "first")
+        clear_scope_sources()
+        register_scope_source("desk", lambda: "south")
+        second = _compose(module_database_uri, "second")
 
-    assert [await _desk(first), await _desk(second)] == ["north", "south"]
+        assert [await _desk(first), await _desk(second)] == ["north", "south"]

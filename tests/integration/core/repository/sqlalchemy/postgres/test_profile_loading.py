@@ -127,59 +127,61 @@ async def _execute(manager: SessionManager, statement: str) -> None:
         await conn.execute(text(statement))
 
 
-async def test_relation_profile_runs_one_statement_per_relation_one_at_a_time(
-    manager: SessionManager,
-) -> None:
-    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
-    log = _log_statements(manager)
+class TestProfileLoading:
+    async def test_relation_profile_runs_one_statement_per_relation_one_at_a_time(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        log = _log_statements(manager)
 
-    page = await repo.list_paginated(_PAGE, profile="detail")
+        page = await repo.list_paginated(_PAGE, profile="detail")
 
-    first, second = page.items
-    assert [c.body for c in first.comments] == ["c1", "c2"]
-    assert first.customer.name == "acme"
-    assert [w.login for w in first.watchers] == ["ann"]
-    assert [c.body for c in second.comments] == ["c3"]
-    assert second.customer.name == "globex"
-    assert second.watchers == []
-    assert len(log.statements) == 1 + 3
-    assert log.max_in_flight == 1
+        first, second = page.items
+        assert [c.body for c in first.comments] == ["c1", "c2"]
+        assert first.customer.name == "acme"
+        assert [w.login for w in first.watchers] == ["ann"]
+        assert [c.body for c in second.comments] == ["c3"]
+        assert second.customer.name == "globex"
+        assert second.watchers == []
+        assert len(log.statements) == 1 + 3
+        assert log.max_in_flight == 1
 
+    async def test_projection_profile_runs_one_statement_per_projection_one_at_a_time(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        log = _log_statements(manager)
 
-async def test_projection_profile_runs_one_statement_per_projection_one_at_a_time(
-    manager: SessionManager,
-) -> None:
-    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
-    log = _log_statements(manager)
+        page = await repo.list_paginated(_PAGE, profile="counts")
 
-    page = await repo.list_paginated(_PAGE, profile="counts")
+        assert [(t.comment_count, t.has_watchers) for t in page.items] == [(2, True), (1, False)]
+        assert len(log.statements) == 1 + 2
+        assert log.max_in_flight == 1
 
-    assert [(t.comment_count, t.has_watchers) for t in page.items] == [(2, True), (1, False)]
-    assert len(log.statements) == 1 + 2
-    assert log.max_in_flight == 1
+    async def test_failing_relation_step_raises_its_error_and_the_engine_stays_usable(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN body TO gone")
+        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
+        with pytest.raises(ProgrammingError, match="body"):
+            await repo.list_paginated(_PAGE, profile="detail")
 
-async def test_failing_relation_step_raises_its_error_and_the_engine_stays_usable(
-    manager: SessionManager,
-) -> None:
-    await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN body TO gone")
-    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        page = await repo.list_paginated(_PAGE)
+        assert [t.title for t in page.items] == ["t1", "t2"]
 
-    with pytest.raises(ProgrammingError, match="body"):
-        await repo.list_paginated(_PAGE, profile="detail")
+    async def test_failing_projection_step_raises_its_error_and_the_engine_stays_usable(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN ticket_id TO gone")
+        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
-    page = await repo.list_paginated(_PAGE)
-    assert [t.title for t in page.items] == ["t1", "t2"]
+        with pytest.raises(ProgrammingError, match="ticket_id"):
+            await repo.list_paginated(_PAGE, profile="counts")
 
-
-async def test_failing_projection_step_raises_its_error_and_the_engine_stays_usable(
-    manager: SessionManager,
-) -> None:
-    await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN ticket_id TO gone")
-    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
-
-    with pytest.raises(ProgrammingError, match="ticket_id"):
-        await repo.list_paginated(_PAGE, profile="counts")
-
-    page = await repo.list_paginated(_PAGE)
-    assert [t.title for t in page.items] == ["t1", "t2"]
+        page = await repo.list_paginated(_PAGE)
+        assert [t.title for t in page.items] == ["t1", "t2"]

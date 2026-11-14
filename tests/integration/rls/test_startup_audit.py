@@ -35,51 +35,52 @@ async def _problems(
     return {problem.check for problem in problems}
 
 
-async def test_an_audited_schema_starts_clean(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database("books_start")
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
-    )
+class TestStartupAudit:
+    async def test_an_audited_schema_starts_clean(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database("books_start")
+        await create_schema(
+            database.migrator,
+            application_for(bookkeeping, database, tmp_path, schema=database.schema),
+        )
 
-    assert await _problems(database, audited=True) == set()
+        assert await _problems(database, audited=True) == set()
 
+    async def test_a_marked_table_without_its_trigger_stops_startup(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database("books_unmigrated")
+        await create_schema(
+            database.migrator,
+            application_for(bookkeeping, database, tmp_path, schema=database.schema),
+        )
 
-async def test_a_marked_table_without_its_trigger_stops_startup(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database("books_unmigrated")
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
-    )
+        protected = await _problems(database, audited=True, recording=("accounts", "memos"))
+        unmigrated = await _problems(database, audited=True, recording=("memos", "drafts"))
 
-    protected = await _problems(database, audited=True, recording=("accounts", "memos"))
-    unmigrated = await _problems(database, audited=True, recording=("memos", "drafts"))
+        assert protected == set()
+        assert unmigrated == {"audit.trigger"}
 
-    assert protected == set()
-    assert unmigrated == {"audit.trigger"}
+    async def test_a_changed_log_column_stops_startup_even_without_marked_tables(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database("books_shape")
+        await create_schema(
+            database.migrator,
+            application_for(bookkeeping, database, tmp_path, schema=database.schema),
+        )
+        await _drift(database, "ALTER TABLE books_shape.audit_log ADD COLUMN note text")
+        try:
+            assert "audit.shape" in await _problems(database, audited=False)
+        finally:
+            await _drift(database, "ALTER TABLE books_shape.audit_log DROP COLUMN note")
 
+    async def test_an_audited_application_on_revision_two_does_not_start(
+        self, scoped_database: BootstrapFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(guard_manifest, "GUARD_REVISIONS", guard_manifest.GUARD_REVISIONS[:2])
+        database = await scoped_database("books_old")
+        monkeypatch.undo()
 
-async def test_a_changed_log_column_stops_startup_even_without_marked_tables(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database("books_shape")
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=database.schema)
-    )
-    await _drift(database, "ALTER TABLE books_shape.audit_log ADD COLUMN note text")
-    try:
-        assert "audit.shape" in await _problems(database, audited=False)
-    finally:
-        await _drift(database, "ALTER TABLE books_shape.audit_log DROP COLUMN note")
-
-
-async def test_an_audited_application_on_revision_two_does_not_start(
-    scoped_database: BootstrapFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(guard_manifest, "GUARD_REVISIONS", guard_manifest.GUARD_REVISIONS[:2])
-    database = await scoped_database("books_old")
-    monkeypatch.undo()
-
-    assert await _problems(database, audited=True) == {"audit.guard_revision"}
+        assert await _problems(database, audited=True) == {"audit.guard_revision"}

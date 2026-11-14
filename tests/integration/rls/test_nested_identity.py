@@ -253,92 +253,93 @@ def ambient(request: pytest.FixtureRequest) -> Iterator[None]:
 # --------------------------------------------------------------------- H1
 
 
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h1_a_nested_execution_after_an_elevation_is_refused(app: AppInvoker) -> None:
-    with pytest.raises(NestedElevation, match="ProbeRls cannot run inside an execution"):
-        await app.invoke(ElevateThenNest)
+class TestNestedIdentity:
+    @pytest.mark.parametrize("ambient", [U1], indirect=True)
+    @pytest.mark.usefixtures("ambient")
+    async def test_h1_a_nested_execution_after_an_elevation_is_refused(
+        self, app: AppInvoker
+    ) -> None:
+        with pytest.raises(NestedElevation, match="ProbeRls cannot run inside an execution"):
+            await app.invoke(ElevateThenNest)
 
+    @pytest.mark.parametrize("ambient", [U1], indirect=True)
+    @pytest.mark.usefixtures("ambient")
+    async def test_h1_the_next_execution_after_a_refused_nesting_is_not_elevated(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        with pytest.raises(NestedElevation):
+            await app.invoke(ElevateThenNest)
 
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h1_the_next_execution_after_a_refused_nesting_is_not_elevated(
-    app: AppInvoker,
-) -> None:
-    with pytest.raises(NestedElevation):
-        await app.invoke(ElevateThenNest)
+        seen: Seen = await app.invoke(ProbeRls)
 
-    seen: Seen = await app.invoke(ProbeRls)
+        assert (seen.editor_any, seen.bob_rows_writable, seen.bodies) == ("", 0, ("a", "b"))
 
-    assert (seen.editor_any, seen.bob_rows_writable, seen.bodies) == ("", 0, ("a", "b"))
+    @pytest.mark.parametrize("ambient", [U1], indirect=True)
+    @pytest.mark.usefixtures("ambient")
+    async def test_h1_a_nested_execution_may_elevate_itself_and_clears_the_flag(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        child, parent_flag = await app.invoke(NestElevatingChild)
 
+        assert (child.editor_any, child.bob_rows_writable, parent_flag) == ("on", 1, "")
 
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h1_a_nested_execution_may_elevate_itself_and_clears_the_flag(
-    app: AppInvoker,
-) -> None:
-    child, parent_flag = await app.invoke(NestElevatingChild)
+    @pytest.mark.parametrize("ambient", [U1], indirect=True)
+    @pytest.mark.usefixtures("ambient")
+    async def test_h1_a_job_dispatched_after_an_elevation_runs_without_the_flag(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        handle = await app.invoke(ElevateThenDispatch)
 
-    assert (child.editor_any, child.bob_rows_writable, parent_flag) == ("on", 1, "")
+        seen: Seen = handle.wait()
+        assert (seen.editor_any, seen.bob_rows_writable, seen.owner_setting) == ("", 0, U1)
 
+    # --------------------------------------------------------------------- H2
 
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h1_a_job_dispatched_after_an_elevation_runs_without_the_flag(
-    app: AppInvoker,
-) -> None:
-    handle = await app.invoke(ElevateThenDispatch)
+    @pytest.mark.parametrize(
+        "ambient", [U2, None], ids=["ambient-U2", "ambient-none"], indirect=True
+    )
+    @pytest.mark.usefixtures("ambient")
+    async def test_h2_rls_follows_the_identity_the_executor_received(self, app: AppInvoker) -> None:
+        seen: Seen = await app.for_identity(ANA).invoke(ProbeRlsAsCaller)
 
-    seen: Seen = handle.wait()
-    assert (seen.editor_any, seen.bob_rows_writable, seen.owner_setting) == ("", 0, U1)
+        assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
 
+    async def test_h2_joining_the_parents_unit_of_work_as_another_identity_is_refused(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        refused, owner = await app.for_identity(ANA).invoke(NestAsZoe)
 
-# --------------------------------------------------------------------- H2
+        assert isinstance(refused, NestedIdentityMismatch)
+        assert "ProbeRlsAsCaller would join the open unit of work" in refused.message
+        assert owner == U1
 
+    async def test_h2_joining_the_parents_unit_of_work_as_the_same_identity_is_allowed(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        seen: Seen = await app.for_identity(ANA).invoke(NestAsSelf)
 
-@pytest.mark.parametrize("ambient", [U2, None], ids=["ambient-U2", "ambient-none"], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h2_rls_follows_the_identity_the_executor_received(app: AppInvoker) -> None:
-    seen: Seen = await app.for_identity(ANA).invoke(ProbeRlsAsCaller)
+        assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
 
-    assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
+    async def test_h2_a_writing_child_of_a_read_only_parent_is_refused_as_any_identity(
+        self,
+        app: AppInvoker,
+    ) -> None:
+        caller = app.for_identity(ANA)
 
+        with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
+            await caller.invoke(ReadThenWriteAsZoe)
 
-async def test_h2_joining_the_parents_unit_of_work_as_another_identity_is_refused(
-    app: AppInvoker,
-) -> None:
-    refused, owner = await app.for_identity(ANA).invoke(NestAsZoe)
+    # --------------------------------------------------------------------- H3
 
-    assert isinstance(refused, NestedIdentityMismatch)
-    assert "ProbeRlsAsCaller would join the open unit of work" in refused.message
-    assert owner == U1
+    @pytest.mark.parametrize("dispatch", [False, True], ids=["run", "dispatch"])
+    async def test_h3_an_inline_job_runs_as_the_invokers_identity(
+        self, app: AppInvoker, dispatch: bool
+    ) -> None:
+        result = await app.for_identity(ANA).invoke(RunOrDispatchJob, params={"dispatch": dispatch})
 
-
-async def test_h2_joining_the_parents_unit_of_work_as_the_same_identity_is_allowed(
-    app: AppInvoker,
-) -> None:
-    seen: Seen = await app.for_identity(ANA).invoke(NestAsSelf)
-
-    assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
-
-
-async def test_h2_a_writing_child_of_a_read_only_parent_is_refused_as_any_identity(
-    app: AppInvoker,
-) -> None:
-    caller = app.for_identity(ANA)
-
-    with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
-        await caller.invoke(ReadThenWriteAsZoe)
-
-
-# --------------------------------------------------------------------- H3
-
-
-@pytest.mark.parametrize("dispatch", [False, True], ids=["run", "dispatch"])
-async def test_h3_an_inline_job_runs_as_the_invokers_identity(
-    app: AppInvoker, dispatch: bool
-) -> None:
-    result = await app.for_identity(ANA).invoke(RunOrDispatchJob, params={"dispatch": dispatch})
-
-    assert (result.wait() if dispatch else result) == U1
+        assert (result.wait() if dispatch else result) == U1

@@ -115,38 +115,43 @@ async def sql() -> AsyncIterator[SessionManager]:
         await manager.dispose()
 
 
-@pytest.mark.parametrize(
-    ("refuse", "ran", "error", "stored"),
-    [
-        pytest.param(False, ["sql", "mongo"], None, 1, id="both-commit"),
-        pytest.param(True, ["sql"], StoresNotCommitted, 0, id="mongo-rolls-back"),
-    ],
-)
-async def test_each_store_runs_its_actions_by_its_own_outcome(
-    sql: SessionManager,
-    mongo_client: AsyncMongoClient[Any],
-    mongo_database: Any,
-    refuse: bool,
-    ran: list[str],
-    error: type[BaseException] | None,
-    stored: int,
-) -> None:
-    collection = mongo_client[mongo_database.name][f"entries_{uuid4().hex}"]
-    # A transaction cannot create the collection implicitly on 4.2.
-    await collection.database.create_collection(collection.name)
-    codec = CursorCodec(signing="ephemeral")
-    entries = RepositoryMongo(
-        _Entry, collection, session_provider=MongoSessions(mongo_client, AUDIT), cursor_codec=codec
+class TestStorePostCommit:
+    @pytest.mark.parametrize(
+        ("refuse", "ran", "error", "stored"),
+        [
+            pytest.param(False, ["sql", "mongo"], None, 1, id="both-commit"),
+            pytest.param(True, ["sql"], StoresNotCommitted, 0, id="mongo-rolls-back"),
+        ],
     )
-    coordinator = OrderedCommits(
-        {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(sql), AUDIT: _Mongo(mongo_client, refuse)}
-    )
-    executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
-    labels: list[str] = []
-    orders = RepositorySQLAlchemy(sql, _Order, cursor_codec=codec)
-    use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))
+    async def test_each_store_runs_its_actions_by_its_own_outcome(
+        self,
+        sql: SessionManager,
+        mongo_client: AsyncMongoClient[Any],
+        mongo_database: Any,
+        refuse: bool,
+        ran: list[str],
+        error: type[BaseException] | None,
+        stored: int,
+    ) -> None:
+        collection = mongo_client[mongo_database.name][f"entries_{uuid4().hex}"]
+        # A transaction cannot create the collection implicitly on 4.2.
+        await collection.database.create_collection(collection.name)
+        codec = CursorCodec(signing="ephemeral")
+        entries = RepositoryMongo(
+            _Entry,
+            collection,
+            session_provider=MongoSessions(mongo_client, AUDIT),
+            cursor_codec=codec,
+        )
+        coordinator = OrderedCommits(
+            {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(sql), AUDIT: _Mongo(mongo_client, refuse)}
+        )
+        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        labels: list[str] = []
+        orders = RepositorySQLAlchemy(sql, _Order, cursor_codec=codec)
+        use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))
 
-    with nullcontext() if error is None else pytest.raises(error):
-        await executor.execute(use_case)
+        with nullcontext() if error is None else pytest.raises(error):
+            await executor.execute(use_case)
 
-    assert (labels, await entries.count()) == (ran, stored)
+        assert (labels, await entries.count()) == (ran, stored)

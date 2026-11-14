@@ -32,64 +32,64 @@ from tests.integration.rls.conftest import (
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("notes_wiring")]
 
 
-async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_commit_ends_it(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(notes.SCHEMA)
-    application = application_for(notes, database, tmp_path)
-    await create_schema(database.migrator, application)
-    await seed_notes(database.bypass)
+class TestElevationFlag:
+    async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_commit_ends_it(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(notes.SCHEMA)
+        application = application_for(notes, database, tmp_path)
+        await create_schema(database.migrator, application)
+        await seed_notes(database.bypass)
 
-    manager = SessionManager(
-        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
-    )
-    decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
-    identity = set_identity(Identity(subject=U1))
-    try:
-        async with SQLAlchemyUnitOfWork(manager):
-            session = manager.active_session
-            assert session is not None
-            async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
-                assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
-                assert (await session.execute(text(FLAG))).scalar() == ""
+        manager = SessionManager(
+            database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+        )
+        decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+        identity = set_identity(Identity(subject=U1))
+        try:
+            async with SQLAlchemyUnitOfWork(manager):
+                session = manager.active_session
+                assert session is not None
+                async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
+                    assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
+                    assert (await session.execute(text(FLAG))).scalar() == ""
 
-                await elevate("editor", decision, at=Scope.of(U1))
+                    await elevate("editor", decision, at=Scope.of(U1))
 
-                assert (await session.execute(text(FLAG))).scalar() == "on"
-                update = text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'")
-                assert cast(CursorResult[Any], await session.execute(update)).rowcount == 1
-                await session.commit()
+                    assert (await session.execute(text(FLAG))).scalar() == "on"
+                    update = text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'")
+                    assert cast(CursorResult[Any], await session.execute(update)).rowcount == 1
+                    await session.commit()
 
-        async with manager.session() as session:
-            assert (await session.execute(text(FLAG))).scalar() == ""
-            edited = text("SELECT count(*) FROM notes WHERE body = 'edited'")
-            assert (await session.execute(edited)).scalar() == 1
-    finally:
-        reset_identity(identity)
-        await manager.dispose()
-
-
-async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database("notes_later")
-    application = application_for(notes, database, tmp_path, schema="notes_later")
-    await create_schema(database.migrator, application)
-    await seed_notes(database.bypass)
-
-    manager = SessionManager(
-        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
-    )
-    decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
-    identity = set_identity(Identity(subject=U1))
-    try:
-        async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
-            await elevate("editor", decision, at=Scope.of(U1))
             async with manager.session() as session:
-                assert (await session.execute(text(FLAG))).scalar() == "on"
-    finally:
-        reset_identity(identity)
-        await manager.dispose()
+                assert (await session.execute(text(FLAG))).scalar() == ""
+                edited = text("SELECT count(*) FROM notes WHERE body = 'edited'")
+                assert (await session.execute(edited)).scalar() == 1
+        finally:
+            reset_identity(identity)
+            await manager.dispose()
+
+    async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database("notes_later")
+        application = application_for(notes, database, tmp_path, schema="notes_later")
+        await create_schema(database.migrator, application)
+        await seed_notes(database.bypass)
+
+        manager = SessionManager(
+            database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+        )
+        decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+        identity = set_identity(Identity(subject=U1))
+        try:
+            async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
+                await elevate("editor", decision, at=Scope.of(U1))
+                async with manager.session() as session:
+                    assert (await session.execute(text(FLAG))).scalar() == "on"
+        finally:
+            reset_identity(identity)
+            await manager.dispose()
 
 
 _PID = "SELECT pg_backend_pid()"

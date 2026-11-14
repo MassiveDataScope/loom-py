@@ -194,137 +194,143 @@ async def _as_tenant(tenant: str, read: Any) -> Any:
     return await _as(_tenant(tenant), read)
 
 
-async def test_the_reader_role_is_subject_to_row_level_security(
-    repository: NoteRepository,
-) -> None:
-    async with repository.session_manager.session() as session:
-        row = (
-            await session.execute(
-                text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
-            )
-        ).one()
-    assert tuple(row) == (False, False)
+class TestCacheScope:
+    async def test_the_reader_role_is_subject_to_row_level_security(
+        self,
+        repository: NoteRepository,
+    ) -> None:
+        async with repository.session_manager.session() as session:
+            row = (
+                await session.execute(
+                    text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+                )
+            ).one()
+        assert tuple(row) == (False, False)
 
+    async def test_a_row_cached_by_id_for_one_scope_is_not_served_to_another(
+        self,
+        repository: NoteRepository,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        a_page = await _as_tenant(
+            "a", lambda: repository.list_paginated(PageParams(page=1, limit=10))
+        )
+        a_id = a_page.items[0].id
+        assert await _as_tenant("b", lambda: repository.get_by_id(a_id)) is None
 
-async def test_a_row_cached_by_id_for_one_scope_is_not_served_to_another(
-    repository: NoteRepository,
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    a_page = await _as_tenant("a", lambda: repository.list_paginated(PageParams(page=1, limit=10)))
-    a_id = a_page.items[0].id
-    assert await _as_tenant("b", lambda: repository.get_by_id(a_id)) is None
+        seen_by_a = await _as_tenant("a", lambda: cached.get_by_id(a_id))
+        seen_by_b = await _as_tenant("b", lambda: cached.get_by_id(a_id))
 
-    seen_by_a = await _as_tenant("a", lambda: cached.get_by_id(a_id))
-    seen_by_b = await _as_tenant("b", lambda: cached.get_by_id(a_id))
+        assert seen_by_a is not None
+        assert seen_by_a.tenant == "a"
+        assert seen_by_b is None
 
-    assert seen_by_a is not None
-    assert seen_by_a.tenant == "a"
-    assert seen_by_b is None
+    async def test_a_page_cached_for_one_scope_is_not_served_to_another(
+        self,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        page = PageParams(page=1, limit=10)
 
+        seen_by_a = await _as_tenant("a", lambda: cached.list_paginated(page))
+        seen_by_b = await _as_tenant("b", lambda: cached.list_paginated(page))
 
-async def test_a_page_cached_for_one_scope_is_not_served_to_another(
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    page = PageParams(page=1, limit=10)
+        assert sorted(note.body for note in seen_by_a.items) == ["a1", "a2"]
+        assert [note.body for note in seen_by_b.items] == ["b1"]
+        assert seen_by_b.total_count == 1
 
-    seen_by_a = await _as_tenant("a", lambda: cached.list_paginated(page))
-    seen_by_b = await _as_tenant("b", lambda: cached.list_paginated(page))
+    async def test_a_custom_list_read_cached_for_one_scope_is_not_served_to_another(
+        self,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        seen_by_a = await _as_tenant("a", lambda: cached.bodies())
+        seen_by_b = await _as_tenant("b", lambda: cached.bodies())
 
-    assert sorted(note.body for note in seen_by_a.items) == ["a1", "a2"]
-    assert [note.body for note in seen_by_b.items] == ["b1"]
-    assert seen_by_b.total_count == 1
+        assert seen_by_a == ["a1", "a2"]
+        assert seen_by_b == ["b1"]
 
+    async def test_a_custom_entity_read_cached_for_one_scope_is_not_served_to_another(
+        self,
+        repository: NoteRepository,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        a_page = await _as_tenant(
+            "a", lambda: repository.list_paginated(PageParams(page=1, limit=10))
+        )
+        a_id = a_page.items[0].id
 
-async def test_a_custom_list_read_cached_for_one_scope_is_not_served_to_another(
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    seen_by_a = await _as_tenant("a", lambda: cached.bodies())
-    seen_by_b = await _as_tenant("b", lambda: cached.bodies())
+        seen_by_a = await _as_tenant("a", lambda: cached.body_of(a_id))
+        seen_by_b = await _as_tenant("b", lambda: cached.body_of(a_id))
 
-    assert seen_by_a == ["a1", "a2"]
-    assert seen_by_b == ["b1"]
+        assert seen_by_a == "a1"
+        assert seen_by_b == ""
 
+    async def test_a_query_page_cached_for_one_scope_is_not_served_to_another(
+        self,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        query = QuerySpec(sort=(SortSpec(field="id"),), pagination=PaginationMode.OFFSET, limit=10)
 
-async def test_a_custom_entity_read_cached_for_one_scope_is_not_served_to_another(
-    repository: NoteRepository,
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    a_page = await _as_tenant("a", lambda: repository.list_paginated(PageParams(page=1, limit=10)))
-    a_id = a_page.items[0].id
+        seen_by_a = await _as_tenant("a", lambda: cached.list_with_query(query))
+        seen_by_b = await _as_tenant("b", lambda: cached.list_with_query(query))
 
-    seen_by_a = await _as_tenant("a", lambda: cached.body_of(a_id))
-    seen_by_b = await _as_tenant("b", lambda: cached.body_of(a_id))
+        assert [note.body for note in seen_by_a.items] == ["a1", "a2"]
+        assert [note.body for note in seen_by_b.items] == ["b1"]
 
-    assert seen_by_a == "a1"
-    assert seen_by_b == ""
+    async def test_a_page_cached_for_one_product_setting_is_not_served_to_another(
+        self,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        """A policy may read a setting outside loom.scope.*; the cache keeps it apart too."""
+        page = PageParams(page=1, limit=10)
 
+        seen_by_a = await _as({_APP_TENANT_SETTING: "a"}, lambda: cached.list_paginated(page))
+        seen_by_b = await _as({_APP_TENANT_SETTING: "b"}, lambda: cached.list_paginated(page))
 
-async def test_a_query_page_cached_for_one_scope_is_not_served_to_another(
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    query = QuerySpec(sort=(SortSpec(field="id"),), pagination=PaginationMode.OFFSET, limit=10)
+        assert sorted(note.body for note in seen_by_a.items) == ["a1", "a2"]
+        assert [note.body for note in seen_by_b.items] == ["b1"]
 
-    seen_by_a = await _as_tenant("a", lambda: cached.list_with_query(query))
-    seen_by_b = await _as_tenant("b", lambda: cached.list_with_query(query))
+    async def test_a_page_cached_for_an_elevated_caller_is_not_served_to_a_plain_one(
+        self,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        page = PageParams(page=1, limit=10)
+        elevated = {_TENANT_SETTING: "a", _ELEVATED_SETTING: "on"}
+        plain = {_TENANT_SETTING: "a", _ELEVATED_SETTING: ""}
 
-    assert [note.body for note in seen_by_a.items] == ["a1", "a2"]
-    assert [note.body for note in seen_by_b.items] == ["b1"]
+        seen_elevated = await _as(elevated, lambda: cached.list_paginated(page))
+        seen_plain = await _as(plain, lambda: cached.list_paginated(page))
 
+        assert sorted(note.body for note in seen_elevated.items) == ["a1", "a2", "b1"]
+        assert sorted(note.body for note in seen_plain.items) == ["a1", "a2"]
 
-async def test_a_page_cached_for_one_product_setting_is_not_served_to_another(
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    """A policy may read a setting outside loom.scope.*; the cache keeps it apart too."""
-    page = PageParams(page=1, limit=10)
+    async def test_reads_inside_a_caller_transaction_store_nothing(
+        self,
+        repository: NoteRepository,
+        cached: CachedRepository[Note, Any, Any, int],
+    ) -> None:
+        """The provider changes inside an open transaction: the cache stays out of it.
 
-    seen_by_a = await _as({_APP_TENANT_SETTING: "a"}, lambda: cached.list_paginated(page))
-    seen_by_b = await _as({_APP_TENANT_SETTING: "b"}, lambda: cached.list_paginated(page))
+        Postgres keeps the settings the transaction applied (tenant a), while a
+        custom read that opens its own session runs under the live provider
+        (tenant b), so no single scope describes both; neither is stored.
+        """
+        page = PageParams(page=1, limit=10)
+        settings = _settings.set(_tenant("a"))
+        try:
+            async with SQLAlchemyUnitOfWork(repository.session_manager):
+                session = repository.session_manager.active_session
+                assert session is not None
+                await session.execute(text("SELECT 1"))
+                _settings.set(_tenant("b"))
+                page_in_transaction = await cached.list_paginated(page)
+                bodies_in_transaction = await cached.bodies()
+        finally:
+            _settings.reset(settings)
 
-    assert sorted(note.body for note in seen_by_a.items) == ["a1", "a2"]
-    assert [note.body for note in seen_by_b.items] == ["b1"]
+        bodies_for_a = await _as_tenant("a", lambda: cached.bodies())
+        page_for_b = await _as_tenant("b", lambda: cached.list_paginated(page))
 
-
-async def test_a_page_cached_for_an_elevated_caller_is_not_served_to_a_plain_one(
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    page = PageParams(page=1, limit=10)
-    elevated = {_TENANT_SETTING: "a", _ELEVATED_SETTING: "on"}
-    plain = {_TENANT_SETTING: "a", _ELEVATED_SETTING: ""}
-
-    seen_elevated = await _as(elevated, lambda: cached.list_paginated(page))
-    seen_plain = await _as(plain, lambda: cached.list_paginated(page))
-
-    assert sorted(note.body for note in seen_elevated.items) == ["a1", "a2", "b1"]
-    assert sorted(note.body for note in seen_plain.items) == ["a1", "a2"]
-
-
-async def test_reads_inside_a_caller_transaction_store_nothing(
-    repository: NoteRepository,
-    cached: CachedRepository[Note, Any, Any, int],
-) -> None:
-    """The provider changes inside an open transaction: the cache stays out of it.
-
-    Postgres keeps the settings the transaction applied (tenant a), while a
-    custom read that opens its own session runs under the live provider
-    (tenant b), so no single scope describes both; neither is stored.
-    """
-    page = PageParams(page=1, limit=10)
-    settings = _settings.set(_tenant("a"))
-    try:
-        async with SQLAlchemyUnitOfWork(repository.session_manager):
-            session = repository.session_manager.active_session
-            assert session is not None
-            await session.execute(text("SELECT 1"))
-            _settings.set(_tenant("b"))
-            page_in_transaction = await cached.list_paginated(page)
-            bodies_in_transaction = await cached.bodies()
-    finally:
-        _settings.reset(settings)
-
-    bodies_for_a = await _as_tenant("a", lambda: cached.bodies())
-    page_for_b = await _as_tenant("b", lambda: cached.list_paginated(page))
-
-    assert sorted(note.body for note in page_in_transaction.items) == ["a1", "a2"]
-    assert bodies_in_transaction == ["b1"]
-    assert bodies_for_a == ["a1", "a2"]
-    assert [note.body for note in page_for_b.items] == ["b1"]
+        assert sorted(note.body for note in page_in_transaction.items) == ["a1", "a2"]
+        assert bodies_in_transaction == ["b1"]
+        assert bodies_for_a == ["a1", "a2"]
+        assert [note.body for note in page_for_b.items] == ["b1"]

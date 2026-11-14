@@ -87,34 +87,35 @@ def _run(config: str, identity: dict[str, Any] | None) -> None:
         worker_shutdown.send(sender=None)
 
 
-async def test_a_job_records_the_person_who_enqueued_it_and_an_event_its_system_identity(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(SCHEMA)
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
-    )
-    config = _config(tmp_path)
-    trigger = S3Trigger(job="AddMemoJob", identity=TriggerIdentity(subject="svc:importer"))
+class TestAuditJobs:
+    async def test_a_job_records_the_person_who_enqueued_it_and_an_event_its_system_identity(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(SCHEMA)
+        await create_schema(
+            database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
+        )
+        config = _config(tmp_path)
+        trigger = S3Trigger(job="AddMemoJob", identity=TriggerIdentity(subject="svc:importer"))
 
-    _run(config, encode_identity(Identity(subject="ana", mechanism="jwt")))
-    _run(config, _identity("importer", "s3", trigger, None))
-    _run(config, _identity("importer", "s3", trigger, "arn:aws:iam::1:user/ana"))
+        _run(config, encode_identity(Identity(subject="ana", mechanism="jwt")))
+        _run(config, _identity("importer", "s3", trigger, None))
+        _run(config, _identity("importer", "s3", trigger, "arn:aws:iam::1:user/ana"))
 
-    engine = create_async_engine(database.superuser, poolclass=NullPool)
-    try:
-        async with engine.connect() as connection:
-            rows = await connection.execute(
-                text(
-                    f"SELECT subject, mechanism, on_behalf_of FROM {SCHEMA}.audit_log "
-                    "WHERE table_name = 'memos' ORDER BY id"
+        engine = create_async_engine(database.superuser, poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                rows = await connection.execute(
+                    text(
+                        f"SELECT subject, mechanism, on_behalf_of FROM {SCHEMA}.audit_log "
+                        "WHERE table_name = 'memos' ORDER BY id"
+                    )
                 )
-            )
-            recorded = [tuple(row) for row in rows]
-    finally:
-        await engine.dispose()
-    assert recorded == [
-        ("ana", "jwt", ""),
-        ("svc:importer", "lambda:importer:s3", ""),
-        ("svc:importer", "lambda:importer:s3", "arn:aws:iam::1:user/ana"),
-    ]
+                recorded = [tuple(row) for row in rows]
+        finally:
+            await engine.dispose()
+        assert recorded == [
+            ("ana", "jwt", ""),
+            ("svc:importer", "lambda:importer:s3", ""),
+            ("svc:importer", "lambda:importer:s3", "arn:aws:iam::1:user/ana"),
+        ]

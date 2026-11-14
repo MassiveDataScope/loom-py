@@ -57,26 +57,29 @@ async def _peak_connections(admin_uri: str, application: str, stop: asyncio.Even
     return peak
 
 
-async def test_the_pool_never_opens_more_than_size_plus_overflow(pg_admin_uri: str) -> None:
-    application = f"loom-it-pool-{uuid.uuid4().hex[:8]}"
-    config = DatabaseConfig(
-        url=Dsn(pg_admin_uri),
-        pool=PoolConfig(size=2, max_overflow=1, timeout=_TIMEOUT_SECONDS),
-        connect_args=RedactedMap({"server_settings": {"application_name": application}}),
-    )
-    manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
-    outcomes: list[str] = []
-    durations: list[float] = []
-    stop = asyncio.Event()
-    try:
-        monitor = asyncio.create_task(_peak_connections(pg_admin_uri, application, stop))
-        await asyncio.gather(*(_hold(manager, outcomes, durations) for _ in range(_CALLERS)))
-        stop.set()
-        peak = await monitor
-    finally:
-        await manager.dispose()
+class TestPoolBounds:
+    async def test_the_pool_never_opens_more_than_size_plus_overflow(
+        self, pg_admin_uri: str
+    ) -> None:
+        application = f"loom-it-pool-{uuid.uuid4().hex[:8]}"
+        config = DatabaseConfig(
+            url=Dsn(pg_admin_uri),
+            pool=PoolConfig(size=2, max_overflow=1, timeout=_TIMEOUT_SECONDS),
+            connect_args=RedactedMap({"server_settings": {"application_name": application}}),
+        )
+        manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
+        outcomes: list[str] = []
+        durations: list[float] = []
+        stop = asyncio.Event()
+        try:
+            monitor = asyncio.create_task(_peak_connections(pg_admin_uri, application, stop))
+            await asyncio.gather(*(_hold(manager, outcomes, durations) for _ in range(_CALLERS)))
+            stop.set()
+            peak = await monitor
+        finally:
+            await manager.dispose()
 
-    assert peak <= 3
-    assert outcomes.count("held") == 3
-    assert outcomes.count("timed_out") == _CALLERS - 3
-    assert all(_TIMEOUT_SECONDS * 0.8 <= d < _TIMEOUT_SECONDS + 1 for d in durations)
+        assert peak <= 3
+        assert outcomes.count("held") == 3
+        assert outcomes.count("timed_out") == _CALLERS - 3
+        assert all(_TIMEOUT_SECONDS * 0.8 <= d < _TIMEOUT_SECONDS + 1 for d in durations)

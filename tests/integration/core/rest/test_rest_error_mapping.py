@@ -336,35 +336,37 @@ class TestSuccessfulOperations:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "error,method,path,http_method,payload,expected_status",
-    [
-        (NotFound("Product", id=1), "get_by_id", "/products/1", "GET", None, 404),
-        (Conflict("dup"), "create", "/products/", "POST", {"name": "W", "price": 1.0}, 409),
-        (Forbidden("no"), "update", "/products/1", "PATCH", {"price": 1.0}, 403),
-    ],
-)
-def test_error_detail_always_has_code_and_message(
-    error: Exception,
-    method: str,
-    path: str,
-    http_method: str,
-    payload: dict | None,
-    expected_status: int,
-) -> None:
-    harness = HttpTestHarness()
-    harness.inject_repo(Product, InMemoryProductRepository())
-    harness.force_error(Product, method, error)
-    client = harness.build_app(interfaces=[ProductRestInterface])
+class TestErrorDetail:
+    @pytest.mark.parametrize(
+        "error,method,path,http_method,payload,expected_status",
+        [
+            (NotFound("Product", id=1), "get_by_id", "/products/1", "GET", None, 404),
+            (Conflict("dup"), "create", "/products/", "POST", {"name": "W", "price": 1.0}, 409),
+            (Forbidden("no"), "update", "/products/1", "PATCH", {"price": 1.0}, 403),
+        ],
+    )
+    def test_error_detail_always_has_code_and_message(
+        self,
+        error: Exception,
+        method: str,
+        path: str,
+        http_method: str,
+        payload: dict | None,
+        expected_status: int,
+    ) -> None:
+        harness = HttpTestHarness()
+        harness.inject_repo(Product, InMemoryProductRepository())
+        harness.force_error(Product, method, error)
+        client = harness.build_app(interfaces=[ProductRestInterface])
 
-    if http_method == "GET":
-        resp = client.get(path)
-    elif http_method == "POST":
-        resp = client.post(path, json=payload)
-    else:
-        resp = client.patch(path, json=payload)
+        if http_method == "GET":
+            resp = client.get(path)
+        elif http_method == "POST":
+            resp = client.post(path, json=payload)
+        else:
+            resp = client.patch(path, json=payload)
 
-    assert resp.status_code == expected_status
-    detail = _error_detail(resp)
-    assert "code" in detail
-    assert "message" in detail
+        assert resp.status_code == expected_status
+        detail = _error_detail(resp)
+        assert "code" in detail
+        assert "message" in detail

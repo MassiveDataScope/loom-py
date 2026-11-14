@@ -297,61 +297,6 @@ def _as(application: Application, subject: str) -> Any:
     return application.kernel.app.for_identity(identity)
 
 
-@pytest.mark.parametrize("use_case", [_ReadBoth, _GatherBoth], ids=["sequential", "gather"])
-@pytest.mark.parametrize("subject", [U1, U2])
-async def test_a_read_only_execution_reads_each_store_as_its_caller(
-    application: Application, use_case: type[_ReadBoth], subject: str
-) -> None:
-    counts = await _as(application, subject).invoke(use_case)
-
-    assert counts == (len(NOTES[subject]), len(MEMOS[TENANT[subject]]))
-
-
-async def test_a_gather_child_may_not_touch_the_stores_of_a_writing_execution(
-    application: Application, two_stores: TwoStores
-) -> None:
-    caller = _as(application, U1)
-
-    with pytest.raises(ScopeOwnershipError):
-        await caller.invoke(_GatherWhileWriting)
-
-    assert await two_stores.rows() == (("a1", "a2", "a3"), ("b1", "b2", "b3"))
-
-
-async def test_a_nested_execution_on_the_other_store_keeps_the_caller_and_commits_on_b_only(
-    application: Application, two_stores: TwoStores
-) -> None:
-    owners = await _as(application, U1).invoke(_NoteThenNestedMemo)
-    notes_on_a, memos_on_b = await two_stores.rows()
-    memos_on_a = await scalar(
-        two_stores.default.bypass, f"SELECT to_regclass('{two_stores.default.schema}.memos')"
-    )
-
-    assert owners == (U1, T1)
-    assert (notes_on_a, memos_on_b) == (("a1", "a2", "a3", "outer"), ("b1", "b2", "b3", "nested"))
-    assert memos_on_a is None
-
-
-@pytest.mark.parametrize("store", [DEFAULT_STORE, AUDIT])
-async def test_a_write_in_a_read_only_execution_is_refused_on_either_store(
-    application: Application, two_stores: TwoStores, store: StoreKey
-) -> None:
-    caller = _as(application, U1)
-
-    with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
-        await caller.invoke(_WriteInRead, params={"store": store})
-
-    assert await two_stores.rows() == (("a1", "a2", "a3"), ("b1", "b2", "b3"))
-
-
-async def test_an_elevation_flags_only_the_store_that_declares_the_scope(
-    application: Application,
-) -> None:
-    flags = await _as(application, U1).invoke(_ElevateEditor)
-
-    assert flags == {DEFAULT_STORE: "on", AUDIT: ""}
-
-
 @pytest.fixture
 async def audit_refuses_at_commit(two_stores: TwoStores) -> None:
     """A deferred constraint on B's memos that fails the commit of a ``fail-at-commit`` memo."""
@@ -371,18 +316,73 @@ async def audit_refuses_at_commit(two_stores: TwoStores) -> None:
     )
 
 
-async def test_a_split_commit_raises_and_runs_only_the_committed_store_s_actions(
-    audit_refuses_at_commit: None, application: Application, two_stores: TwoStores
-) -> None:
-    sessions = application.kernel.container.resolve(_Sessions)
-    caller = _as(application, U1)
+class TestTwoStoresComposed:
+    @pytest.mark.parametrize("use_case", [_ReadBoth, _GatherBoth], ids=["sequential", "gather"])
+    @pytest.mark.parametrize("subject", [U1, U2])
+    async def test_a_read_only_execution_reads_each_store_as_its_caller(
+        self, application: Application, use_case: type[_ReadBoth], subject: str
+    ) -> None:
+        counts = await _as(application, subject).invoke(use_case)
 
-    with pytest.raises(StoresNotCommitted) as raised:
-        await caller.invoke(_SplitCommit)
+        assert counts == (len(NOTES[subject]), len(MEMOS[TENANT[subject]]))
 
-    outcome = raised.value.outcome
-    assert outcome is not None
-    assert [type(store) for store in outcome.stores] == [Committed, RolledBack]
-    assert [store.key for store in outcome.stores] == [DEFAULT_STORE, AUDIT]
-    assert await two_stores.rows() == (("a1", "a2", "a3", "split"), ("b1", "b2", "b3"))
-    assert sessions.ran == [DEFAULT_STORE]
+    async def test_a_gather_child_may_not_touch_the_stores_of_a_writing_execution(
+        self, application: Application, two_stores: TwoStores
+    ) -> None:
+        caller = _as(application, U1)
+
+        with pytest.raises(ScopeOwnershipError):
+            await caller.invoke(_GatherWhileWriting)
+
+        assert await two_stores.rows() == (("a1", "a2", "a3"), ("b1", "b2", "b3"))
+
+    async def test_a_nested_execution_on_the_other_store_keeps_the_caller_and_commits_on_b_only(
+        self, application: Application, two_stores: TwoStores
+    ) -> None:
+        owners = await _as(application, U1).invoke(_NoteThenNestedMemo)
+        notes_on_a, memos_on_b = await two_stores.rows()
+        memos_on_a = await scalar(
+            two_stores.default.bypass, f"SELECT to_regclass('{two_stores.default.schema}.memos')"
+        )
+
+        assert owners == (U1, T1)
+        assert (notes_on_a, memos_on_b) == (
+            ("a1", "a2", "a3", "outer"),
+            ("b1", "b2", "b3", "nested"),
+        )
+        assert memos_on_a is None
+
+    @pytest.mark.parametrize("store", [DEFAULT_STORE, AUDIT])
+    async def test_a_write_in_a_read_only_execution_is_refused_on_either_store(
+        self, application: Application, two_stores: TwoStores, store: StoreKey
+    ) -> None:
+        caller = _as(application, U1)
+
+        with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
+            await caller.invoke(_WriteInRead, params={"store": store})
+
+        assert await two_stores.rows() == (("a1", "a2", "a3"), ("b1", "b2", "b3"))
+
+    async def test_an_elevation_flags_only_the_store_that_declares_the_scope(
+        self,
+        application: Application,
+    ) -> None:
+        flags = await _as(application, U1).invoke(_ElevateEditor)
+
+        assert flags == {DEFAULT_STORE: "on", AUDIT: ""}
+
+    async def test_a_split_commit_raises_and_runs_only_the_committed_store_s_actions(
+        self, audit_refuses_at_commit: None, application: Application, two_stores: TwoStores
+    ) -> None:
+        sessions = application.kernel.container.resolve(_Sessions)
+        caller = _as(application, U1)
+
+        with pytest.raises(StoresNotCommitted) as raised:
+            await caller.invoke(_SplitCommit)
+
+        outcome = raised.value.outcome
+        assert outcome is not None
+        assert [type(store) for store in outcome.stores] == [Committed, RolledBack]
+        assert [store.key for store in outcome.stores] == [DEFAULT_STORE, AUDIT]
+        assert await two_stores.rows() == (("a1", "a2", "a3", "split"), ("b1", "b2", "b3"))
+        assert sessions.ran == [DEFAULT_STORE]
