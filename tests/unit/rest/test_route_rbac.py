@@ -19,7 +19,8 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi.router_runtime import bind_interfaces
@@ -87,7 +88,7 @@ def _interface(
 def _client(interface: type[RestInterface[Any]], identity: Identity | None) -> TestClient:
     compiler = UseCaseCompiler()
     compiler.compile(ReportUseCase)
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(ReportUseCase)
     app = FastAPI()
     bind_interfaces(

@@ -74,21 +74,21 @@ class TestTheKindsRegistry:
         kinds = ExecutionKinds()
         resolver = AcmeRecordingResolver()
         marker = AcmeMarker()
-        assert not kinds.bound(ACME)
+        assert not kinds.is_bound(ACME)
 
         kinds.bind(ACME, resolver)
 
-        assert kinds.bound(ACME)
+        assert kinds.is_bound(ACME)
         assert kinds.resolve(ACME, marker, int) == "acme-handle"
         assert resolver.calls == [(marker, int)]
         with pytest.raises(RuntimeError, match="already bound"):
             kinds.bind(ACME, AcmeRecordingResolver())
 
-    def test_targets_return_plain_classes_and_nothing_by_default(self) -> None:
-        calling = Kind("acme-call", targets=lambda annotation: (AcmeMarker,))
+    def test_called_classes_are_plain_classes_and_nothing_by_default(self) -> None:
+        calling = Kind("acme-call", called_classes=lambda annotation: (AcmeMarker,))
 
-        assert calling.targets(AcmeKindCall[AcmeMarker]) == (AcmeMarker,)
-        assert ACME.targets(AcmeKindCall[AcmeMarker]) == ()
+        assert calling.called_classes(AcmeKindCall[AcmeMarker]) == (AcmeMarker,)
+        assert ACME.called_classes(AcmeKindCall[AcmeMarker]) == ()
 
     @pytest.mark.parametrize(
         "marker",

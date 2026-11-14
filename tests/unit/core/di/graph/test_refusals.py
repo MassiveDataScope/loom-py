@@ -10,10 +10,8 @@ from loom.core.di.graph import (
     LENIENT_REFUSALS,
     REFUSALS,
     ClassNode,
-    DependencyGraph,
     DependencyGraphError,
     KeyNode,
-    analyse,
     refuse_unmapped_repository,
 )
 from loom.core.di.scope import Scope
@@ -75,13 +73,13 @@ class TestGraphRefusals:
             DependencyGraphError,
             match="AcmeSettlement: trades: no repository mapping is registered for AcmeTrade",
         ):
-            analyse(graph, [root], rules)
+            graph.analyse([root], rules)
 
     def test_an_unmapped_repository_of_a_node_the_rule_does_not_name_is_left_alone(self) -> None:
         graph = LoomContainer(classify_key=classify_key).graph
         rules = (*REFUSALS, refuse_unmapped_repository(set()))
 
-        analysis = analyse(graph, [ClassNode(AcmeSettlement)], rules)
+        analysis = graph.analyse([ClassNode(AcmeSettlement)], rules)
 
         assert graph.edges(ClassNode(AcmeSettlement)) == ()
         assert analysis.reachable == {ClassNode(AcmeSettlement)}
@@ -153,15 +151,15 @@ class TestGraphRefusals:
         built = acme.container()
         built.register(AcmeNamesLedger, AcmeNamesLedger)
 
-        analysis = analyse(built.graph, [ClassNode(AcmeNamesReport)], LENIENT_REFUSALS)
+        analysis = built.graph.analyse([ClassNode(AcmeNamesReport)], LENIENT_REFUSALS)
 
         (warning,) = analysis.warnings
         assert isinstance(warning, DependencyUnresolvable)
         assert str(warning).startswith("AcmeNamesLedger -> names: tuple[str, ...]")
 
     def test_the_lenient_rules_leave_a_missing_binding_alone(self) -> None:
-        graph = DependencyGraph(acme.container())
+        graph = acme.container().graph
 
-        analysis = analyse(graph, [ClassNode(AcmeLedger)], LENIENT_REFUSALS)
+        analysis = graph.analyse([ClassNode(AcmeLedger)], LENIENT_REFUSALS)
 
         assert KeyNode(AcmeClock) in analysis.reachable

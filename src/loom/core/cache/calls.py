@@ -74,9 +74,8 @@ def cached_calls(container: LoomContainer) -> CachedCalls:
     Returns:
         The registered binder, or a fresh pass-through.
     """
-    if container.is_registered(CachedCalls):
-        return cast(CachedCalls, container.resolve(CachedCalls))
-    return _UnconfiguredCalls()
+    calls: CachedCalls | None = container.resolve_or_none(CachedCalls)
+    return _UnconfiguredCalls() if calls is None else calls
 
 
 def _discriminated(value: Any, rendered: Any) -> list[Any]:

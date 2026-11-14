@@ -38,8 +38,10 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.dependency import classify_key
 from loom.core.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Caller, Input, UseCase
+from loom.core.use_case.factory import main_repository
 from tests.integration.ai.conftest import (
     DEFAULT_USAGE,
     ConversationRecorder,
@@ -130,7 +132,7 @@ def deps() -> StubDepsFactory:
 @pytest.fixture
 def container() -> LoomContainer:
     """Empty application container; no test here resolves anything from it."""
-    return LoomContainer()
+    return LoomContainer(classify_key=classify_key, implicit=main_repository)
 
 
 class _OneShotEngine:

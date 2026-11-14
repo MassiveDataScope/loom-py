@@ -9,11 +9,12 @@ reflection.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import warnings
+from collections.abc import Iterable
 from typing import Any, NamedTuple, TypeVar
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError, analyse
+from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError
 from loom.core.di.introspection import Constructor, RepoDependency
 from loom.core.repository.dependency import classify_key
 from loom.core.repository.registration import is_standard_capability
@@ -56,7 +57,8 @@ def main_repository(cls: type[Any]) -> Constructor:
 class UseCaseFactory:
     """Builds UseCase instances by resolving constructor dependencies from the container.
 
-    Each class is compiled once into a plan (:meth:`compiled`), the closure
+    Each class is compiled once into a plan
+    (:meth:`~loom.core.di.container.LoomContainer.compiled`), the supplier
     every :meth:`build` runs, so building reflects on nothing. A plan is
     compiled again after any registration into the container. :meth:`verify`,
     called once the host has finished wiring, compiles every registered class
@@ -65,7 +67,13 @@ class UseCaseFactory:
 
     Args:
         container: The :class:`~loom.core.di.container.LoomContainer` to
-            resolve dependencies from.
+            resolve dependencies from. One still on the default reading is
+            deprecated: it adopts the use-case reading once, with a
+            :class:`DeprecationWarning`.
+
+    Raises:
+        ValueError: When *container* reads constructors another way.
+        ContainerSealed: When *container* is sealed on the default reading.
 
     Example::
 
@@ -78,17 +86,23 @@ class UseCaseFactory:
         use_case = factory.build(CreateOrderUseCase)
 
     Attributes:
-        graph: The container's dependency graph, read from now on as loom
-            reads a use case or a job: constructor annotations classified
-            with :func:`~loom.core.repository.dependency.classify_key`, a
-            use case's main repository included (:func:`main_repository`).
-            The one reader of constructors; the composition analyses it and
-            the container seals with that analysis.
+        graph: The container's dependency graph, read as loom reads a use
+            case or a job: constructor annotations classified with
+            :func:`~loom.core.repository.dependency.classify_key`, a use
+            case's main repository included (:func:`main_repository`).
     """
 
     def __init__(self, container: LoomContainer) -> None:
+        if container._adopt_reading(classify_key, main_repository):
+            warnings.warn(
+                "UseCaseFactory over a container that does not read constructors as loom "
+                "builds a use case is deprecated; build it with create_kernel or "
+                "loom.composition.create_app",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._container = container
-        self.graph = container.read_with(classify_key=classify_key, implicit=main_repository)
+        self.graph = container.graph
         self._registered: dict[type[Any], None] = {}
 
     def build(self, use_case_type: type[_T]) -> _T:
@@ -111,10 +125,6 @@ class UseCaseFactory:
                 dependency the container cannot provide.
         """
         return self._container.compiled(use_case_type)()
-
-    def compiled(self, use_case_type: type[_T]) -> Callable[[], _T]:
-        """The plan :meth:`build` runs (:meth:`~loom.core.di.container.LoomContainer.compiled`)."""
-        return self._container.compiled(use_case_type)
 
     def register(self, use_case_type: type[Any]) -> None:
         """Record ``use_case_type`` for :meth:`verify`, refusing a parameter loom cannot provide.
@@ -161,7 +171,7 @@ class UseCaseFactory:
         for component, parameter, model in (*self._main_repository_reads(), *reads):
             if not self._container.has_repo_mapping(model):
                 raise UnservedModelError.for_parameter(component, parameter, model)
-        analyse(self.graph, map(ClassNode, self._registered), BINDING_REFUSALS)
+        self.graph.analyse(map(ClassNode, self._registered), BINDING_REFUSALS)
         for use_case_type in self._registered:
             self._container.compiled(use_case_type)
 

@@ -24,3 +24,8 @@ class Scope(Enum):
     APPLICATION = "application"
     REQUEST = "request"
     TRANSACTION = "transaction"
+
+    @property
+    def per_execution(self) -> bool:
+        """Whether a binding of this scope is built once per execution, not once per process."""
+        return self is not Scope.APPLICATION

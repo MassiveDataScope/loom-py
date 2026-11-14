@@ -2,8 +2,8 @@
 
 Provides key-based registration and resolution with application and
 per-execution scopes. A class binding's required constructor parameters are
-resolved from the container (autowiring), through a closure compiled once per
-binding (:mod:`loom.core.di.compiler`), so serving a binding reflects on
+resolved from the container (autowiring), through a supplier compiled once
+per binding (:mod:`loom.core.di.compiler`), so serving a binding reflects on
 nothing.
 
 An application seals its container once it has started
@@ -20,13 +20,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeVar
 
-from loom.core.di.compiler import (
-    COLD_PATH,
-    UNBUILT,
-    Closure,
-    compile_class,
-    compile_key,
-)
+from loom.core.di.compiler import STRUCTURE_LOCK, UNBUILT, Supplier, SupplierCompiler
 from loom.core.di.errors import (
     ContainerSealed,
     DependencyWarning,
@@ -40,13 +34,18 @@ from loom.core.di.graph import (
     GraphAnalysis,
     KeyNode,
     Node,
-    Rule,
-    analyse,
+    Refusal,
     refuse_unbound,
 )
-from loom.core.di.introspection import Constructor, KeyClassifier, plain_key
+from loom.core.di.introspection import (
+    Constructor,
+    KeyClassifier,
+    SignatureReader,
+    no_implicit_dependencies,
+    plain_key,
+)
 from loom.core.di.scope import Scope
-from loom.core.execution import ExecutionKinds, Kind
+from loom.core.execution import ExecutionKinds, Kind, NoExecution
 
 T = TypeVar("T")
 BindingKey = object
@@ -70,6 +69,16 @@ class _Binding:
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     refused: str | None = field(default=None, repr=False)
 
+    def build(self, make: Supplier) -> object:
+        """Return the instance, built once by *make* under :attr:`lock`, outside any execution."""
+        with self.lock:
+            instance = self.instance
+            if instance is UNBUILT:
+                with NoExecution():
+                    instance = make()
+                self.instance = instance
+        return instance
+
 
 class LoomContainer:
     """Lightweight key-based dependency injection container.
@@ -85,6 +94,9 @@ class LoomContainer:
         classify_key: The :data:`~loom.core.di.introspection.KeyClassifier`
             the dependency graph reads constructors with; defaults to
             :func:`~loom.core.di.introspection.plain_key`.
+        implicit: The dependencies loom injects into a class it builds
+            beyond its signature, such as a use case's main repository; none
+            by default.
 
     Attributes:
         kinds: The execution kinds of this application, shared with its
@@ -100,53 +112,53 @@ class LoomContainer:
         repo = container.resolve(UserRepository)
     """
 
-    def __init__(self, *, classify_key: KeyClassifier = plain_key) -> None:
+    def __init__(
+        self,
+        *,
+        classify_key: KeyClassifier = plain_key,
+        implicit: Callable[[type[Any]], Constructor] = no_implicit_dependencies,
+    ) -> None:
         self._bindings: dict[BindingKey, _Binding] = {}
         self._repo_bindings: dict[type[Any], BindingKey] = {}
-        self._compiled: dict[BindingKey, Closure] = {}
+        self._served: dict[BindingKey, Supplier] = {}
         self._plans: dict[type[Any], Callable[[], Any]] = {}
         self._sealed = False
         self.kinds = ExecutionKinds()
-        self._graph = DependencyGraph(self, classify_key=classify_key)
-        self._reading: tuple[KeyClassifier, Callable[[type[Any]], Constructor]] | None = None
+        self._install_reader(SignatureReader(self.kinds, classify_key, implicit))
 
     @property
     def graph(self) -> DependencyGraph:
         """The dependency graph the bindings form, the one :meth:`seal` takes the analysis of."""
         return self._graph
 
-    def read_with(
-        self, *, classify_key: KeyClassifier, implicit: Callable[[type[Any]], Constructor]
-    ) -> DependencyGraph:
-        """Read constructors with *classify_key* and *implicit* from now on; return :attr:`graph`.
+    def _install_reader(self, reader: SignatureReader) -> None:
+        """Read constructors with *reader*: a new graph, and a compiler over it."""
+        self._graph = DependencyGraph(self._bindings, self._repo_bindings, reader)
+        self._compiler = SupplierCompiler(self._graph, self.kinds, self._served, self._plans)
 
-        What loom builds reads as the graph does, so every use-case factory
-        on this container calls this, and they all get the one graph: a
-        ``register*`` forgets what it read for its key, and :meth:`seal`
-        refuses the analysis of any other graph. The first call compiles
-        again anything compiled before; a built singleton is kept. Asking a
-        sealed container for the way it already reads returns its graph.
+    def _adopt_reading(
+        self, classify_key: KeyClassifier, implicit: Callable[[type[Any]], Constructor]
+    ) -> bool:
+        """Read constructors with *classify_key* and *implicit*; ``True`` when adopted now.
 
-        Args:
-            classify_key: How a constructor annotation becomes a key.
-            implicit: The dependencies loom injects into a class it builds
-                beyond its signature, such as a use case's main repository.
+        Only a container still on the default reading adopts another one, and
+        only while unsealed; anything compiled before compiles again, and a
+        built singleton is kept.
 
         Raises:
             ValueError: When constructors are already read another way.
-            ContainerSealed: When the container is sealed and has not read
-                constructors this way yet.
+            ContainerSealed: When the container is sealed on the default reading.
         """
-        reading = (classify_key, implicit)
-        with COLD_PATH:
-            if self._reading is None:
-                self._refuse_if_sealed(DependencyGraph)
-                self._reading = reading
-                self._graph = DependencyGraph(self, classify_key=classify_key, implicit=implicit)
-                self._drop_compiled()
-            elif self._reading != reading:
+        with STRUCTURE_LOCK:
+            reader = self._graph.reader
+            if reader.classify_key is classify_key and reader.implicit is implicit:
+                return False
+            if reader != SignatureReader(self.kinds):
                 raise ValueError("the container already reads constructors another way")
-        return self._graph
+            self._refuse_if_sealed(DependencyGraph)
+            self._install_reader(SignatureReader(self.kinds, classify_key, implicit))
+            self._drop_compiled()
+            return True
 
     def register(
         self,
@@ -181,7 +193,7 @@ class LoomContainer:
             container.register(Gateway, gateway)
             container.register(AppConfig, lambda: load_config(MyCfg), scope=Scope.APPLICATION)
         """
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             self._bind(interface, provider, scope)
 
     def register_default(
@@ -215,7 +227,7 @@ class LoomContainer:
             container.register_default(JobService, InlineJobService)
             assert isinstance(container.resolve(JobService), MyJobService)
         """
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             self._refuse_if_sealed(interface)
             if interface not in self._bindings:
                 self._bind(interface, provider, scope)
@@ -243,7 +255,7 @@ class LoomContainer:
             container.register_instance(SessionManager, session_manager)
             assert container.resolve(SessionManager) is session_manager
         """
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             self._bind(interface, lambda: instance, Scope.APPLICATION)
 
     def resolve(self, interface: BindingKey) -> Any:
@@ -265,10 +277,10 @@ class LoomContainer:
                 refused, or they form a cycle; the message holds the path.
         """
         try:
-            closure = self._compiled[interface]
+            supplier = self._served[interface]
         except KeyError:
-            closure = compile_key(self, interface)
-        return closure()
+            supplier = self._compiler.serving(interface)
+        return supplier()
 
     def compiled(self, cls: type[T]) -> Callable[[], T]:
         """Return the plan of *cls*, a class loom builds itself such as a use case.
@@ -283,7 +295,7 @@ class LoomContainer:
         try:
             plan = self._plans[cls]
         except KeyError:
-            plan = compile_class(self, cls)
+            plan = self._compiler.plan(cls)
         return plan
 
     def validate(self) -> None:
@@ -314,16 +326,15 @@ class LoomContainer:
         binding as :meth:`validate` does, the reachable ones first, holding no
         container lock while a provider runs. A *strict* seal raises a
         reached binding that does not compile (a key registered again since
-        the analysis); otherwise it fails at its first resolve. Refusal 7
-        is one policy over the singletons *analysis* reaches: one declaring
-        a kind with no resolver bound is refused, unless the kind is in
-        *deferred* (a lenient composition defers the agent and MCP kinds);
-        then it warns with :class:`~loom.core.di.errors.DependencyWarning`
-        and is not built, but keeps its binding, so a resolver bound later
-        serves it. A singleton no root reaches whose construction a refusal
-        2-5 refuses, or that declares an execution kind, warns the same way
-        and fails with the reason whenever resolved. Without *analysis*, no
-        binding is reached.
+        the analysis); otherwise it fails at its first resolve. A singleton
+        *analysis* reaches that declares a kind with no resolver bound is
+        refused, unless the kind is in *deferred*; then it warns with
+        :class:`~loom.core.di.errors.DependencyWarning` and is not built, but
+        keeps its binding, so a resolver bound later serves it. A singleton
+        no root reaches whose construction a construction refusal refuses,
+        or that declares an execution kind, warns the same way and fails with
+        the reason whenever resolved. Without *analysis*, no binding is
+        reached.
 
         Every ``register*`` afterwards raises
         :class:`~loom.core.di.errors.ContainerSealed` naming the key and
@@ -332,11 +343,12 @@ class LoomContainer:
         Raises:
             ValueError: When *analysis* analysed another dependency graph
                 than :attr:`graph`.
-            DependencyGraphError: Refusal 7, with the path from its root.
+            DependencyGraphError: A reached singleton declaring an unbound
+                kind, with the path from its root.
             ResolutionError: If an ``APPLICATION`` binding fails to
                 instantiate, worded as :meth:`validate` words it.
         """
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             reached = frozenset[Node]()
             if analysis is not None:
                 reached = self._reached(analysis, deferred)
@@ -352,7 +364,7 @@ class LoomContainer:
         """What *analysis* reaches from its roots once every kind is bound, *deferred* skipped."""
         if analysis.graph is not self._graph:
             raise ValueError("seal() was given the analysis of another dependency graph")
-        analyse(self._graph, analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
+        self._graph.analyse(analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
         return analysis.reachable
 
     def _compile_reached(self, reached: frozenset[Node], *, strict: bool) -> None:
@@ -365,7 +377,7 @@ class LoomContainer:
         for node in reached:
             if isinstance(node, KeyNode) and node.key in self._bindings:
                 try:
-                    compile_key(self, node.key)
+                    self._compiler.serving(node.key)
                 except ResolutionError:
                     if strict:
                         raise
@@ -377,12 +389,12 @@ class LoomContainer:
         binding; one no root reaches is refused for good (:attr:`_Binding.refused`).
         """
         singletons = [k for k, b in self._bindings.items() if b.scope is Scope.APPLICATION]
-        reached_rules = (refuse_unbound(self.kinds),)
+        reached_refusals = (refuse_unbound(self.kinds),)
         buildable: list[BindingKey] = []
         unbuilt: list[str] = []
         for key in sorted(singletons, key=lambda k: KeyNode(k) not in reached):
             is_reached = KeyNode(key) in reached
-            refused = self._refusal(key, reached_rules if is_reached else UNREACHED_REFUSALS)
+            refused = self._refusal(key, reached_refusals if is_reached else UNREACHED_REFUSALS)
             if refused is None:
                 buildable.append(key)
                 continue
@@ -395,16 +407,16 @@ class LoomContainer:
                 self._drop_compiled()
         return buildable, unbuilt
 
-    def _refusal(self, key: BindingKey, rules: tuple[Rule, ...]) -> str | None:
-        """Why one of *rules* refuses building the singleton under *key*; else ``None``.
+    def _refusal(self, key: BindingKey, refusals: tuple[Refusal, ...]) -> str | None:
+        """Why one of *refusals* refuses building the singleton under *key*; else ``None``.
 
-        An opaque provider declares nothing, so no rule can refuse it: it is not analysed.
+        An opaque provider declares nothing, so nothing can refuse it: it is not analysed.
         """
         node = KeyNode(key)
         if not self._graph.constructor(node):
             return None
         try:
-            analyse(self._graph, (node,), rules)
+            self._graph.analyse((node,), refusals)
         except DependencyGraphError as refused:
             return str(refused)
         return None
@@ -424,19 +436,19 @@ class LoomContainer:
     def _bind(self, interface: BindingKey, provider: Callable[..., Any], scope: Scope) -> None:
         """Bind *provider* under *interface*, replacing its binding and its built instance.
 
-        Called under :data:`COLD_PATH`. Every compiled closure is stale then,
-        so all are dropped and each is compiled again at its next resolve.
-        Built instances live on their bindings and per-execution ones are
-        keyed by binding, so they stay.
+        Called under :data:`~loom.core.di.compiler.STRUCTURE_LOCK`. Every
+        compiled supplier is stale then, so all are dropped and each is
+        compiled again at its next resolve. Built instances live on their
+        bindings and per-execution ones are keyed by binding, so they stay.
         """
         self._refuse_if_sealed(interface)
         self._bindings[interface] = _Binding(provider, scope)
-        self._graph.forget(interface)
+        self._graph.invalidate(interface)
         self._drop_compiled()
 
     def _drop_compiled(self) -> None:
-        """Every compiled closure and plan is stale: each compiles again on its next use."""
-        self._compiled.clear()
+        """Every compiled supplier and plan is stale: each compiles again on its next use."""
+        self._served.clear()
         self._plans.clear()
 
     def _refuse_if_sealed(self, key: object) -> None:
@@ -489,10 +501,10 @@ class LoomContainer:
         Raises:
             ContainerSealed: When the container is sealed.
         """
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             self._refuse_if_sealed(model)
             self._repo_bindings[model] = interface
-            self._graph.forget_edges()
+            self._graph.invalidate_edges()
             self._drop_compiled()
 
     def resolve_repo(self, model: type[Any]) -> Any:

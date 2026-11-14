@@ -6,7 +6,7 @@ from typing import Generic, TypeVar
 
 import pytest
 
-from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, KeyNode, Path
+from loom.core.di.graph import ClassNode, DependencyGraphError, DependencyPath, Edge, KeyNode
 from loom.core.di.scope import Scope
 from tests.unit.core.di.graph import acme
 from tests.unit.core.di.graph.doubles import AcmeClock, AcmeLedger, AcmeQuote, AcmeRates
@@ -48,6 +48,8 @@ class AcmeSeries(Generic[T]):
 
 class TestParametrisedKeys:
     def test_a_parametrised_key_is_named_by_its_origin_and_arguments(self) -> None:
-        path = Path(ClassNode(AcmeQuote)).to(Edge(KeyNode(AcmeSeries[AcmeClock]), "clocks"))
+        path = DependencyPath(ClassNode(AcmeQuote)).to(
+            Edge(KeyNode(AcmeSeries[AcmeClock]), "clocks")
+        )
 
         assert str(path) == "AcmeQuote -> clocks: AcmeSeries[AcmeClock]"

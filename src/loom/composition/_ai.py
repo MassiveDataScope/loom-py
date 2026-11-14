@@ -12,7 +12,7 @@ from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, DependencyGraph, GraphAnalysis, Node, Path
+from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, GraphAnalysis, Node
 from loom.core.di.introspection import ExecutionDependency
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.kinds import AGENT, MCP
@@ -274,7 +274,7 @@ class DeclarationWalk:
 
     def _walk(self, root: Node) -> Iterator[ReachedDeclaration]:
         visited = {root}
-        pending = deque([(root, Path(root))])
+        pending = deque([(root, DependencyPath(root))])
         while pending:
             node, path = pending.popleft()
             declared = self._declared(node)

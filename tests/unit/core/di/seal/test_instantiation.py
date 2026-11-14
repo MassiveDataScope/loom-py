@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 import pytest
 
+from loom.core.di.compiler import SupplierCompiler
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.scope import Scope
 from tests.unit.core.di.graph import acme
@@ -99,12 +102,19 @@ class AcmeSessionLedger:
 
 
 class TestSealCompilesPerExecutionBindings:
-    def test_seal_compiles_reachable_per_execution_bindings_without_building_them(self) -> None:
+    def test_seal_compiles_reachable_per_execution_bindings_without_building_them(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         AcmeCountedSession.built = 0
         container = LoomContainer()
         container.register(AcmeCountedSession, AcmeCountedSession)
-
         container.seal(acme.analysed(container, AcmeSessionLedger))
-
         assert AcmeCountedSession.built == 0
-        assert container._compiled.keys() >= {AcmeCountedSession}  # noqa: SLF001 - compiled, not built
+
+        def compiles(compiler: SupplierCompiler, key: object) -> NoReturn:
+            raise AssertionError(f"{key!r} compiled after seal")
+
+        monkeypatch.setattr(SupplierCompiler, "serving", compiles)
+        container.resolve(AcmeCountedSession)
+
+        assert AcmeCountedSession.built == 1

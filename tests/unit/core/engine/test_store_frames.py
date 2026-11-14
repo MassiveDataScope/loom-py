@@ -27,13 +27,14 @@ from loom.core.errors import UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, RepoFor
+from loom.core.repository.dependency import classify_key
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import Committed, InvocationOutcome, OrderedCommits
 from loom.core.uow.scope import invocation
 from loom.core.use_case import Joined, UseCase
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -422,7 +423,7 @@ class TestCompiledStores:
 
     def test_a_joined_repository_is_injected_like_a_plain_one(self) -> None:
         orders, entries = object(), object()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(Orders, lambda: orders, scope=Scope.APPLICATION)
         container.register(Entries, lambda: entries, scope=Scope.APPLICATION)
         container.register_repo(_Order, Orders)

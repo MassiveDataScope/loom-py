@@ -20,7 +20,8 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
@@ -74,7 +75,7 @@ def _header(headers: list[tuple[bytes, bytes]], name: str) -> str | None:
 def _app() -> FastAPI:
     compiler = UseCaseCompiler()
     compiler.compile(WhoAmIUseCase)
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(WhoAmIUseCase)
     app = FastAPI()
     bind_interfaces(

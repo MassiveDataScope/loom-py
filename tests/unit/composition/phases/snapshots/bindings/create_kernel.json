@@ -6,7 +6,7 @@
       "scope": "APPLICATION"
     },
     "ApplicationInvoker": {
-      "provider": "install_kernel.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AppInvoker",
       "scope": "APPLICATION"
     },
@@ -16,17 +16,17 @@
       "scope": "APPLICATION"
     },
     "RuntimeExecutor": {
-      "provider": "install_kernel.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "RuntimeExecutor",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {
-      "provider": "install_use_cases.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "UseCaseFactory",
       "scope": "APPLICATION"
     },
     "UseCaseRegistry": {
-      "provider": "install_kernel.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
     }

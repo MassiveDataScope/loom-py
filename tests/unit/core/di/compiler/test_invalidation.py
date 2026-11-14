@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from loom.core.di import ContainerSealed
@@ -108,5 +110,8 @@ class TestRegisteringAfterSeal:
             bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
         assert bound.resolve(AcmeClockRates) is rates
 
-        served = bound._compiled[AcmeClockRates]  # pyright: ignore[reportPrivateUsage]
-        assert type(served).__name__ == "method-wrapper"  # repeat(rates).__next__, no Python frame
+        frames: list[str] = []
+        sys.setprofile(lambda frame, event, arg: frames.append(event))
+        bound.resolve(AcmeClockRates)
+        sys.setprofile(None)
+        assert frames.count("call") == 1

@@ -15,9 +15,7 @@ from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.errors import DependencyWarning
 from loom.core.di.graph import (
     ClassNode,
-    DependencyGraph,
     DependencyGraphError,
-    analyse,
     refuse_unbound,
 )
 from loom.core.di.scope import Scope
@@ -55,7 +53,7 @@ def _bound(scope: Scope) -> LoomContainer:
 
 def _refused(container: LoomContainer, *skip: Kind) -> None:
     rule = refuse_unbound(container.kinds, skip)
-    analyse(DependencyGraph(container), [ClassNode(AcmeUsesCrm)], (rule,))
+    container.graph.analyse([ClassNode(AcmeUsesCrm)], (rule,))
 
 
 class TestUnboundKind:

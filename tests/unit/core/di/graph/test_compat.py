@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, DependencyGraph, KeyNode, analyse
+from loom.core.di.graph import ClassNode, KeyNode
 from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.repository.abc import RepoFor
@@ -130,9 +130,9 @@ class TestGraphCompatibility:
         container = LoomContainer(classify_key=classify_key)
         container.register(AcmeClock, AcmeClock)
         container.register(AcmePort, _BUILT_TODAY[built_today], scope=Scope.APPLICATION)
-        graph = DependencyGraph(container)
+        graph = container.graph
 
-        analysis = analyse(graph, [ClassNode(AcmeConsumer)])
+        analysis = graph.analyse([ClassNode(AcmeConsumer)])
 
         assert graph.edges(KeyNode(AcmePort)) == ()
         assert analysis.warnings == ()

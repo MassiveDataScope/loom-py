@@ -19,9 +19,9 @@ from typing import Any, TypeAlias, cast
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.observation import Observer
-from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep
+from loom.core.engine.plan import ExecutionBinding, ExecutionPlan, ExistsStep, LoadStep
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
-from loom.core.execution import ExecutionKinds, Kind
+from loom.core.execution import ExecutionKinds
 from loom.core.identity import Identity
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 
@@ -160,18 +160,15 @@ class Preparation:
         to the use case. The resolvers read the execution the executor
         entered, the one the constructor was built in.
         """
-        bindings = tuple(
-            (binding.name, binding.kind, binding.declaration, binding.annotation)
-            for binding in plan.execution_bindings
-        )
+        bindings = plan.execution_bindings
         if not bindings:
             return None
-        kinds = self._kinds
-        resolve_kind = kinds.resolve
+        resolve_kind = self._kinds.resolve
+        refuse_unbound = self._refuse_unbound
 
         def resolve(call: _Call) -> None:
             if call.identity is None:
-                marker = _KIND_WORDING[bindings[0][1]][0]
+                marker = _KIND_WORDING[bindings[0].kind][0]
                 raise Unauthenticated(
                     f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
                     "parameter but this execution carried no identity. The transport "
@@ -179,14 +176,27 @@ class Preparation:
                     "to run without a caller)."
                 )
             bound = call.bound
-            for name, kind, declaration, annotation in bindings:
+            for binding in bindings:
                 try:
-                    bound[name] = resolve_kind(kind, declaration, annotation)
+                    bound[binding.name] = resolve_kind(
+                        binding.kind, binding.declaration, binding.annotation
+                    )
                 except KeyError:
-                    _refuse_unbound(kinds, plan, kind)
+                    refuse_unbound(plan, binding)
                     raise
 
         return resolve
+
+    def _refuse_unbound(self, plan: ExecutionPlan, binding: ExecutionBinding) -> None:
+        """Raise the "no resolver bound" error when *binding*'s kind has none."""
+        if self._kinds.is_bound(binding.kind):
+            return
+        marker, resolver, method = _KIND_WORDING[binding.kind]
+        raise RuntimeError(
+            f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
+            f"parameter but no {resolver} resolver is bound on this executor. "
+            f"Call RuntimeExecutor.{method}() once the AI runtime exists."
+        ) from None
 
     async def _load(self, step: LoadStep, plan: ExecutionPlan, call: _Call) -> Any:
         overrides = call.inputs.load_overrides
@@ -437,15 +447,3 @@ def _missing(step: LoadStep, value: Any) -> Any:
 
 def _label(fn: object) -> str:
     return getattr(fn, "__name__", type(fn).__name__)
-
-
-def _refuse_unbound(kinds: ExecutionKinds, plan: ExecutionPlan, kind: Kind) -> None:
-    """Raise the "no resolver bound" error when ``kind`` has none."""
-    if kinds.bound(kind):
-        return
-    marker, resolver, method = _KIND_WORDING[kind]
-    raise RuntimeError(
-        f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
-        f"parameter but no {resolver} resolver is bound on this executor. "
-        f"Call RuntimeExecutor.{method}() once the AI runtime exists."
-    ) from None

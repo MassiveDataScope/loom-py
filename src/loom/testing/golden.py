@@ -22,6 +22,7 @@ from typing import Any
 
 import msgspec
 
+from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
@@ -29,7 +30,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
-from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
+from loom.core.use_case.kinds import CALLER, CallerResolver
 from loom.core.use_case.use_case import UseCase
 
 
@@ -202,8 +203,7 @@ class GoldenHarness:
         return _ErrorProxy(instance, overrides) if overrides else instance
 
     def _build_container(self) -> LoomContainer:
-        container = LoomContainer()
-        declare_use_case_kinds(container.kinds)
+        container = KernelRecipe.container()
         container.kinds.bind(CALLER, CallerResolver())
 
         def _make_provider(instance: Any) -> Callable[[], Any]:

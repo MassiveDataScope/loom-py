@@ -32,7 +32,7 @@ import json
 import sys
 
 from loom.core.di import LoomContainer
-from loom.core.di.graph import ClassNode, analyse
+from loom.core.di.graph import ClassNode
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
@@ -48,7 +48,7 @@ compiler = UseCaseCompiler()
 compiler.compile(AcmeUnmarkedMcpUseCase)
 registry = UseCaseRegistry.build([AcmeUnmarkedMcpUseCase])
 
-analysis = analyse(LoomContainer().graph, [ClassNode(AcmeUnmarkedMcpUseCase)], ())
+analysis = LoomContainer().graph.analyse([ClassNode(AcmeUnmarkedMcpUseCase)], ())
 MarkerDeclarations.of(analysis, compiler, registry).verify({}, {})
 
 leaked = [name for name in sys.modules if name == "loom.ai" or name.startswith("loom.ai.")]

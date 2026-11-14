@@ -1,4 +1,4 @@
-"""``install_kernel`` adds the kernel to a filled container; ``create_kernel`` seeds and validates.
+"""``KernelRecipe.install`` adds the kernel to a filled container; ``create_kernel`` validates it.
 
 ``create_kernel`` has one mode: *config* is required.
 """
@@ -10,13 +10,16 @@ from typing import Any
 import pytest
 
 from loom.core.bootstrap import BootstrapError, create_kernel
-from loom.core.bootstrap.kernel import install_kernel
+from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
+from loom.core.di.graph import KeyNode
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import CompilationError
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
-from loom.core.use_case import Input
+from loom.core.execution import ExecutionScope
+from loom.core.identity import Identity
+from loom.core.use_case import Caller, Input
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
@@ -34,6 +37,16 @@ class AcmeUnbuildable:
 
     def __init__(self) -> None:
         raise RuntimeError("acme service cannot start")
+
+
+class AcmeCallerHolder:
+    def __init__(self, caller: Identity = Caller()) -> None:
+        self.caller = caller
+
+
+def _reads_the_holder_early(container: LoomContainer) -> None:
+    container.register(AcmeCallerHolder, AcmeCallerHolder)
+    container.graph.constructor(KeyNode(AcmeCallerHolder))
 
 
 def _binds_unbuildable(container: LoomContainer) -> None:
@@ -57,11 +70,37 @@ class TestKernelContainer:
 
         assert caught.value.__cause__ is not None
 
+    @pytest.mark.parametrize(
+        "key",
+        [UseCaseFactory, RuntimeExecutor, UseCaseRegistry, ApplicationInvoker],
+        ids=lambda key: key.__name__,
+    )
+    def test_a_module_binding_a_kernel_key_is_refused(self, key: type[Any]) -> None:
+        def binds_kernel_key(container: LoomContainer) -> None:
+            container.register_instance(key, object())
+
+        expected = f"binds_kernel_key binds {key.__qualname__}, a key the kernel binds itself$"
+        with pytest.raises(BootstrapError, match=expected) as caught:
+            create_kernel(config=AcmeConfig(), use_cases=[AcmePing], modules=[binds_kernel_key])
+
+        assert caught.value.__cause__ is None
+
+    def test_a_kind_a_module_reads_before_the_kernel_is_installed_still_resolves(self) -> None:
+        kernel = create_kernel(
+            config=AcmeConfig(), use_cases=[AcmePing], modules=[_reads_the_holder_early]
+        )
+        ada = Identity(subject="acme-ada", mechanism="test")
+
+        with ExecutionScope(ada):
+            holder = kernel.container.resolve(AcmeCallerHolder)
+
+        assert holder.caller is ada
+
     def test_installing_adds_the_kernel_without_seeding_or_validating(self) -> None:
-        container = LoomContainer()
+        container = KernelRecipe.container()
         _binds_unbuildable(container)
 
-        kernel = install_kernel(container, use_cases=[AcmePing], logger=LOG)
+        kernel = KernelRecipe([AcmePing], LOG).install(container)
 
         assert kernel.container is container
         assert set(container.bindings()) == {
@@ -75,10 +114,10 @@ class TestKernelContainer:
         assert kernel.compiler.get_plan(AcmePing) is not None
 
     def test_installing_constructs_one_executor(self, executors: list[RuntimeExecutor]) -> None:
-        kernel = install_kernel(LoomContainer(), use_cases=[AcmePing], logger=LOG)
+        kernel = KernelRecipe([AcmePing], LOG).install(KernelRecipe.container())
 
         assert executors == [kernel.executor]
 
     def test_installing_raises_a_compilation_error_as_is(self) -> None:
         with pytest.raises(CompilationError, match="AcmeUncompilable.execute"):
-            install_kernel(LoomContainer(), use_cases=[AcmeUncompilable], logger=LOG)
+            KernelRecipe([AcmeUncompilable], LOG).install(KernelRecipe.container())

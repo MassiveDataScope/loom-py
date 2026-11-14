@@ -38,8 +38,9 @@ from loom.core.repository.abc.query import (
     QuerySpec,
     build_page_result,
 )
+from loom.core.repository.dependency import classify_key
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.markers import Exists, Input
 from loom.core.use_case.use_case import UseCase
@@ -320,7 +321,7 @@ def _uc_compiler(*types: type[UseCase[Any, Any]]) -> UseCaseCompiler:
 
 
 def _factory(uc_compiler: UseCaseCompiler, *types: type[UseCase[Any, Any]]) -> UseCaseFactory:
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     factory = UseCaseFactory(container)
     for t in types:
         factory.register(t)

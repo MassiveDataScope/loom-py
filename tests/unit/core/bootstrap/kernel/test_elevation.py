@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import KernelRuntime, create_kernel
-from loom.core.bootstrap.kernel import install_kernel
+from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.bootstrap.kernel.components import LOG, AcmeConfig, AcmePing
@@ -28,15 +28,15 @@ class TestKernelElevationBinding:
 
     def test_installed_on_a_container_the_bound_sink_is_the_executors(self) -> None:
         sink = FakeSink()
-        container = LoomContainer()
+        container = KernelRecipe.container()
         container.register_instance(ElevationSink, sink)
 
-        kernel = install_kernel(container, use_cases=[AcmePing], logger=LOG)
+        kernel = KernelRecipe([AcmePing], LOG).install(container)
 
         assert _sink_of(kernel) is sink
         assert container.resolve(ElevationSink) is sink
 
     def test_without_any_sink_the_executor_has_none(self) -> None:
-        kernel = install_kernel(LoomContainer(), use_cases=[AcmePing], logger=LOG)
+        kernel = KernelRecipe([AcmePing], LOG).install(KernelRecipe.container())
 
         assert _sink_of(kernel) is None

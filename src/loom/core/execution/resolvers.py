@@ -18,7 +18,7 @@ _K = TypeVar("_K")
 _V = TypeVar("_V")
 
 
-def _no_targets(annotation: object) -> tuple[type, ...]:
+def _calls_nothing(annotation: object) -> tuple[type, ...]:
     return ()
 
 
@@ -30,8 +30,8 @@ class Kind:
         name: Shown in error messages.
         singleton_safe: ``False`` when a singleton must not depend on this kind,
             because the value belongs to one execution (the caller does).
-        targets: Returns the classes an annotation of this kind calls, as
-            plain classes; ``()`` unless the kind calls another use case.
+        called_classes: Returns the classes an annotation of this kind calls,
+            as plain classes; ``()`` unless the kind calls another use case.
 
     Example::
 
@@ -40,7 +40,7 @@ class Kind:
 
     name: str
     singleton_safe: bool = True
-    targets: Callable[[object], tuple[type, ...]] = _no_targets
+    called_classes: Callable[[object], tuple[type, ...]] = _calls_nothing
 
 
 @runtime_checkable
@@ -114,7 +114,7 @@ class ExecutionKinds:
             raise RuntimeError(f"A resolver is already bound for the {kind.name!r} kind")
         self._resolvers[kind] = resolver
 
-    def bound(self, kind: Kind) -> bool:
+    def is_bound(self, kind: Kind) -> bool:
         """Return whether ``kind`` has a resolver."""
         return kind in self._resolvers
 
@@ -122,7 +122,7 @@ class ExecutionKinds:
         """Resolve ``declaration: annotation`` through the resolver of ``kind``.
 
         Raises:
-            KeyError: When ``kind`` has no resolver (:meth:`bound` tells).
+            KeyError: When ``kind`` has no resolver (:meth:`is_bound` tells).
         """
         return self._resolvers[kind].resolve(declaration, annotation)
 

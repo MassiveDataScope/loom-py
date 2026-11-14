@@ -13,10 +13,14 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import FunctionType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from loom.core.di.errors import ResolutionError
 from loom.core.execution import ExecutionKinds, Kind
 from loom.core.model.introspection import resolve_type_hints
+
+if TYPE_CHECKING:
+    from loom.core.di.compiler import Supplier
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +49,31 @@ class ExecutionDependency:
     kind: Kind
     declaration: object
     annotation: object
+
+    def supplier(self, kinds: ExecutionKinds, where: str) -> Supplier:
+        """Return what resolves this dependency through its kind's resolver on each build.
+
+        Args:
+            kinds: The execution kinds whose resolver serves it, bound by then or not.
+            where: The path and parameter an unbound kind's error names.
+
+        Returns:
+            The supplier of the dependency's value.
+
+        Raises:
+            ResolutionError: From the supplier, when no resolver is bound for the kind.
+        """
+        kind, declaration, annotation = self.kind, self.declaration, self.annotation
+
+        def resolve() -> object:
+            try:
+                return kinds.resolve(kind, declaration, annotation)
+            except KeyError:
+                if kinds.is_bound(kind):
+                    raise
+                raise ResolutionError(f"{where}: no resolver is bound for {kind.name!r}") from None
+
+        return resolve
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,23 +112,74 @@ def plain_key(annotation: object) -> KeyDependency | None:
     return KeyDependency(annotation) if isinstance(annotation, type) else None
 
 
-def constructor_dependencies(
-    built: type[Any] | FunctionType, kinds: ExecutionKinds, classify_key: KeyClassifier
-) -> Constructor:
-    """Return the dependencies of a class's ``__init__`` or of a factory function.
+def no_implicit_dependencies(cls: type[Any]) -> Constructor:
+    return ()
 
-    ``self`` and ``*args``/``**kwargs`` are skipped. Annotations are resolved
-    through their module, falling back to the raw ones when they cannot be;
-    a signature that cannot be read has no dependencies, and is called with
-    no arguments.
+
+@dataclass(frozen=True, slots=True)
+class SignatureReader:
+    """Reads the dependencies of a constructor or a factory function from its signature.
+
+    Args:
+        kinds: The execution kinds a parameter's default or annotation may belong to.
+        classify_key: How an annotation becomes a container key.
+        implicit: The dependencies loom injects into a class it builds beyond
+            those its signature declares, such as a use case's main repository.
     """
-    init, first = (built.__init__, 1) if isinstance(built, type) else (built, 0)
-    parameters = _parameters(init, first)
-    hints = _annotations(init, parameters)
-    dependencies = (
-        (p.name, _dependency(p.default, hints.get(p.name), kinds, classify_key)) for p in parameters
-    )
-    return tuple((name, dependency) for name, dependency in dependencies if dependency is not None)
+
+    kinds: ExecutionKinds
+    classify_key: KeyClassifier = plain_key
+    implicit: Callable[[type[Any]], Constructor] = no_implicit_dependencies
+
+    def built_by_loom(self, cls: type[Any]) -> Constructor:
+        """Return the dependencies of a class loom builds: its signature's, then *implicit*'s."""
+        return (*self.dependencies(cls), *self.implicit(cls))
+
+    def dependencies(self, built: object) -> Constructor:
+        """Return the dependencies of a class's ``__init__`` or of a factory function.
+
+        ``self`` and ``*args``/``**kwargs`` are skipped. Annotations are resolved
+        through their module, falling back to the raw ones when they cannot be;
+        a signature that cannot be read has no dependencies. Any other
+        provider, and a class whose metaclass ``__call__`` or ``__new__`` may
+        return anything, is opaque: it has none either.
+
+        Args:
+            built: What the container or loom calls to build the value.
+
+        Returns:
+            The ``(parameter name, dependency)`` pairs, in signature order.
+        """
+        if isinstance(built, FunctionType):
+            init, first = built, 0
+        elif (
+            inspect.isclass(built)
+            and type(built).__call__ is type.__call__
+            and built.__new__ is object.__new__
+        ):
+            init, first = built.__init__, 1
+        else:
+            return ()
+        parameters = _parameters(init, first)
+        hints = _annotations(init, parameters)
+        dependencies = (
+            (p.name, self._dependency(p.default, hints.get(p.name))) for p in parameters
+        )
+        return tuple(
+            (name, dependency) for name, dependency in dependencies if dependency is not None
+        )
+
+    def _dependency(self, default: object, annotation: object) -> Dependency | None:
+        kind = self.kinds.kind_for(default, annotation)
+        if kind is not None:
+            return ExecutionDependency(kind, default, annotation)
+        reason = self.kinds.refusal(default)
+        if reason is not None:
+            return RefusedDependency(reason)
+        if default is not inspect.Parameter.empty:
+            return None
+        key = self.classify_key(annotation)
+        return UnresolvableDependency(annotation) if key is None else key
 
 
 def _annotations(
@@ -120,18 +200,3 @@ def _parameters(init: Callable[..., object], first: int) -> tuple[inspect.Parame
     except (TypeError, ValueError):
         return ()
     return tuple(p for p in parameters if p.kind not in _VARIADIC)
-
-
-def _dependency(
-    default: object, annotation: object, kinds: ExecutionKinds, classify_key: KeyClassifier
-) -> Dependency | None:
-    kind = kinds.kind_for(default, annotation)
-    if kind is not None:
-        return ExecutionDependency(kind, default, annotation)
-    reason = kinds.refusal(default)
-    if reason is not None:
-        return RefusedDependency(reason)
-    if default is not inspect.Parameter.empty:
-        return None
-    key = classify_key(annotation)
-    return UnresolvableDependency(annotation) if key is None else key

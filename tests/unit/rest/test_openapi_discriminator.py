@@ -20,7 +20,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
@@ -94,7 +95,7 @@ class Payments(RestInterface[Any]):
 
 def _openapi() -> dict[str, Any]:
     compiler = UseCaseCompiler()
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     for route in Payments.routes:
         compiler.compile(route.use_case)
         factory.register(route.use_case)

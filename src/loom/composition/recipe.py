@@ -15,7 +15,6 @@ from loom.core.di.graph import (
     DependencyGraph,
     DependencyGraphError,
     GraphAnalysis,
-    analyse,
     refuse_unmapped_repository,
 )
 from loom.core.persistence.stores import NONE_BACKEND
@@ -103,13 +102,13 @@ class Recipe:
         discovered = self.discovered
         callbacks = tuple(map(ClassNode, self.callbacks))
         roots = (*map(ClassNode, (*discovered.use_cases, *discovered.jobs)), *callbacks)
-        rules = (
+        refusals = (
             LENIENT_REFUSALS
             if self.lenient
             else (*REFUSALS, refuse_unmapped_repository(frozenset(callbacks)))
         )
         try:
-            analysis = analyse(graph, roots, rules)
+            analysis = graph.analyse(roots, refusals)
         except DependencyGraphError as exc:
             raise BootstrapError(f"Bootstrap failed: {exc}") from exc
         for warning in analysis.warnings:

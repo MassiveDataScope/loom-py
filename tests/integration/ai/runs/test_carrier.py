@@ -19,8 +19,10 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.dependency import classify_key
 from loom.core.sql.service import SqlQueryService
 from loom.core.use_case import Caller, UseCase
+from loom.core.use_case.factory import main_repository
 from tests.integration.ai.conftest import RecordingDepsFactory, RecordingObserver
 from tests.integration.ai.test_capabilities import (
     ALLOWED_ROLE,
@@ -78,7 +80,7 @@ def carrier(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
     """Build Alice's carrier over one granted toolset, with the backend's calls and tool spans."""
     calls: list[str] = []
     recorder = RecordingObserver()
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register_instance(ObservabilityRuntime, ObservabilityRuntime([recorder]))
     capability, tool = _GRANTS[request.param](calls, monkeypatch)
     model = ScriptedToolModel(calls=((tool, {"prompt": "p"} if tool == REMOTE_TOOL else {}),))
@@ -190,7 +192,7 @@ class Governed:
 
     def built_for(self, identity: Identity) -> NativeAgent:
         """Build the carrier, its bundle built for *identity*."""
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register_instance(ObservabilityRuntime, ObservabilityRuntime([self.recorder]))
         container.register_instance(CallersSeen, self.seen)
         container.register_instance(SqlQueryService, self.sql)

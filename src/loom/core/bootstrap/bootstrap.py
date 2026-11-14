@@ -10,14 +10,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 
 
 class BootstrapError(Exception):
@@ -104,16 +104,17 @@ def bootstrap_app(
         DeprecationWarning,
         stacklevel=2,
     )
-    from loom.core.bootstrap.kernel import install_use_cases, seeded_container
+    from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
-    with seeded_container(seeds, modules=modules, logger=log) as container:
-        result = install_use_cases(container, use_cases, logger=log, metrics=metrics)
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
+    with seeded_container(container, seeds, modules=modules, logger=log):
+        result = KernelRecipe(use_cases, log, metrics=metrics)._install_use_cases(container)
         executor = RuntimeExecutor(
             result.compiler, metrics=metrics, repo_resolver=container.resolve_repo
         )
-        container.register(RuntimeExecutor, lambda: executor, scope=Scope.APPLICATION)
+        container.register_instance(RuntimeExecutor, executor)
         log.info("[BOOT] Validating container bindings")
         container.validate()
     log.info("[BOOT] Bootstrap complete")

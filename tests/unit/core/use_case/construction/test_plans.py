@@ -1,4 +1,4 @@
-"""``compiled(type)``: the closure a class loom builds is built by, compiled once."""
+"""``LoomContainer.compiled(type)``: the plan a class loom builds is built by, compiled once."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from loom.core.di import container as container_module
+from loom.core.di.compiler import SupplierCompiler
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import DependencyGraphError
 from loom.core.di.scope import Scope
 from loom.core.repository.dependency import classify_key
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 
 
 class AcmePlanLedger:
@@ -33,27 +33,27 @@ class AcmeTagged:
 
 
 def _factory() -> UseCaseFactory:
-    container = LoomContainer(classify_key=classify_key)
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register(AcmePlanLedger, AcmePlanLedger, scope=Scope.APPLICATION)
     return UseCaseFactory(container)
 
 
 def _counting_compiles(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
     compiled: list[type[Any]] = []
-    compile_class = container_module.compile_class
+    plan = SupplierCompiler.plan
 
-    def counting(container: LoomContainer, cls: type[Any]) -> Any:
+    def counting(compiler: SupplierCompiler, cls: type[Any]) -> Any:
         compiled.append(cls)
-        return compile_class(container, cls)
+        return plan(compiler, cls)
 
-    monkeypatch.setattr(container_module, "compile_class", counting)
+    monkeypatch.setattr(SupplierCompiler, "plan", counting)
     return compiled
 
 
 class TestConstructionPlans:
     def test_the_plan_builds_a_fresh_instance_with_its_dependencies(self) -> None:
         factory = _factory()
-        plan = factory.compiled(AcmePosting)
+        plan = factory._container.compiled(AcmePosting)
 
         first, second = plan(), plan()
 
@@ -65,7 +65,7 @@ class TestConstructionPlans:
         factory = _factory()
         compiles = _counting_compiles(monkeypatch)
 
-        assert factory.compiled(AcmePosting) is factory.compiled(AcmePosting)
+        assert factory._container.compiled(AcmePosting) is factory._container.compiled(AcmePosting)
         factory.build(AcmePosting)
 
         assert compiles == [AcmePosting]
@@ -89,6 +89,6 @@ class TestConstructionPlans:
         )
 
     def test_a_root_whose_binding_comes_later_registers(self) -> None:
-        factory = UseCaseFactory(LoomContainer(classify_key=classify_key))
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
 
         factory.register(AcmePosting)

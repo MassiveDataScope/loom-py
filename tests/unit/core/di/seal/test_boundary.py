@@ -5,20 +5,15 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
 import pytest
 
 from loom.core.di import ContainerSealed, ResolutionError
-from loom.core.di.compiler import COLD_PATH
+from loom.core.di.compiler import STRUCTURE_LOCK
 from loom.core.di.container import LoomContainer
-from loom.core.di.introspection import Constructor, plain_key
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.seal.doubles import AcmeBoundLedger, AcmeLateLedger
-
-
-def _nothing_implicit(cls: type[Any]) -> Constructor:
-    return ()
-
 
 _REGISTERS: dict[str, Callable[[LoomContainer], None]] = {
     "register": lambda container: container.register(AcmeBoundLedger, AcmeLateLedger),
@@ -60,23 +55,22 @@ class TestSealedContainer:
         with pytest.raises(ResolutionError):
             sealed.register(AcmeBoundLedger, AcmeLateLedger)
 
-    def test_reading_constructors_a_new_way_is_refused(self, sealed: LoomContainer) -> None:
+    def test_a_factory_over_a_sealed_bare_container_is_refused(self, sealed: LoomContainer) -> None:
         with pytest.raises(ContainerSealed, match="build a new container to reconfigure"):
-            sealed.read_with(classify_key=plain_key, implicit=_nothing_implicit)
+            UseCaseFactory(sealed)
 
-    def test_asking_for_the_way_it_already_reads_returns_its_graph(self) -> None:
-        container = LoomContainer()
-        graph = container.read_with(classify_key=plain_key, implicit=_nothing_implicit)
+    def test_a_factory_over_a_sealed_container_reading_use_cases_shares_its_graph(self) -> None:
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.seal()
 
-        assert container.read_with(classify_key=plain_key, implicit=_nothing_implicit) is graph
+        assert UseCaseFactory(container).graph is container.graph
 
 
 class TestSealRegisterDefault:
     def test_a_default_waiting_for_the_lock_keeps_a_binding_made_meanwhile(self) -> None:
         """The check and the binding are one locked step: the late default binds nothing."""
         container = LoomContainer()
-        with COLD_PATH:
+        with STRUCTURE_LOCK:
             waiting = threading.Thread(
                 target=container.register_default, args=(AcmeBoundLedger, AcmeLateLedger)
             )

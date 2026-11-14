@@ -410,14 +410,25 @@
   container is sealed once it has started; `register`, `register_default`,
   `register_instance` and `register_repo` on it (through
   `Application.kernel.container`, `WorkerBootstrapResult.container` or any
-  container after `seal()`), and `read_with` asking it to read constructors a
-  new way, raise `loom.core.di.ContainerSealed` (a `ResolutionError`) naming
+  container after `seal()`), and a `UseCaseFactory` over a sealed container
+  that does not read constructors as loom builds a use case, raise
+  `loom.core.di.ContainerSealed` (a `ResolutionError`) naming
   the key and change nothing. `register_default` raises even when the key is
   already bound, and its check and binding are now one locked step.
   `ContainerSealedWarning` is removed. **Migration:** bind every key in a
   module passed to the application (`create_app(..., modules=[...])`,
   `compose_application(..., modules=...)`); to reconfigure, build a new
   container (in tests, a new application).
+- **core:** `create_kernel` refuses a module that binds a key the kernel binds
+  itself (`loom.core.bootstrap.kernel.KERNEL_KEYS`: `UseCaseFactory`,
+  `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
+  `BootstrapError` naming the module and the key, where the kernel used to
+  replace that binding without a word. A composed application also refuses a
+  module binding `UseCaseFactory`, with `ReservedBindingError`, as it already
+  did for the other three. The container `create_kernel` returns stays
+  unsealed, so a key can still be registered after it returns.
+  **Migration:** drop the binding from the module; the kernel's own instance
+  is the one served.
 
 ### execution
 
@@ -609,7 +620,7 @@
     `ApplicationInvoker`.
   - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
     `bind_mcp_resolver`, and the `agent_resolver=` and `mcp_resolver=`
-    arguments of `RuntimeExecutor`, `create_kernel` and `install_kernel` also
+    arguments of `RuntimeExecutor` and `create_kernel` also
     take a `loom.core.execution.ExecutionResolver`. A legacy
     `(name, identity)` or `(server, include, identity)` callable is
     deprecated: binding one emits a `DeprecationWarning`. It still works,
@@ -734,14 +745,16 @@
 - **di (new API):** `loom.core.execution.per_execution(key, make)` returns a
   callable building one value per execution (fresh outside one).
   `LoomContainer.graph` is the container's `DependencyGraph`;
-  `LoomContainer.read_with(*, classify_key, implicit)` sets how it reads
-  constructors, once (the same reading again returns it, another raises
-  `ValueError`); `LoomContainer.seal(analysis=None, *, deferred=(), strict=True)`
+  `LoomContainer(*, classify_key=, implicit=)` sets how it reads
+  constructors; `LoomContainer.seal(analysis=None, *, deferred=(), strict=True)`
   takes the start-up analysis, the execution kinds to defer, and whether a
   reached binding that does not compile fails the seal or its first resolve.
-  `UseCaseFactory.graph` is that same graph, read through
+  `UseCaseFactory.graph` is that same graph. `create_kernel` and the
+  composition build their container reading through
+  `loom.core.repository.dependency.classify_key` and
   `loom.core.use_case.factory.main_repository`, which gives a use case built
-  through `UseCase.__init__` its main repository.
+  through `UseCase.__init__` its main repository, with the use-case and AI
+  execution kinds declared before any module runs.
 - **di:** a factory function bound with `register` or `register_default`
   gets its required parameters from the container, as a class gets its
   constructor's: `def gateway(client: HttpClient) -> Gateway: ...` then
@@ -903,6 +916,16 @@
   is not deprecated. Its result is unchanged. Like any `DeprecationWarning`
   it is hidden under Python's default filters outside `__main__` and shown by
   test runners.
+- **deprecation:** `UseCaseFactory(container)` over a container still on the
+  default reading (`LoomContainer()`) warns with a `DeprecationWarning` and
+  adopts the use-case reading once, so `RepoFor[Model]` and a use case's main
+  repository are still injected. Over a container that reads another way it
+  raises `ValueError`; over a sealed bare container, `ContainerSealed`.
+  **Migration:** build the kernel with `create_kernel` or the application with
+  `loom.composition.create_app`.
+- **cache:** a deployment that binds its own `RepositoryDecorator` without a
+  `cache:` section now logs `CacheDecoratorAlreadyRegistered` naming it, as
+  it already did with the section; the binding is kept either way.
 - **composition:** `loom.composition.build` no longer re-exports
   `configure_job_service`, `reject_manifest_agents_without_ai_section`,
   `load_application_config` or `add_code_path`. A test that patched them there

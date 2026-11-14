@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Generic, TypeVar, get_args
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, GraphAnalysis, analyse
+from loom.core.di.graph import ClassNode, GraphAnalysis
 from loom.core.execution import Kind
 
 T = TypeVar("T")
@@ -28,7 +28,7 @@ def _called(annotation: object) -> tuple[type, ...]:
 
 
 CALLER = Kind("acme-caller", singleton_safe=False)
-CALL = Kind("acme-call", targets=_called)
+CALL = Kind("acme-call", called_classes=_called)
 
 
 def container() -> LoomContainer:
@@ -42,4 +42,4 @@ def container() -> LoomContainer:
 
 def analysed(built: LoomContainer, *roots: type[Any]) -> GraphAnalysis:
     """*built*'s graph analysed from *roots*."""
-    return analyse(built.graph, [ClassNode(root) for root in roots])
+    return built.graph.analyse([ClassNode(root) for root in roots])

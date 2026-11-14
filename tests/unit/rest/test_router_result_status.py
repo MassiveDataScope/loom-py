@@ -13,8 +13,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.dependency import classify_key
 from loom.core.use_case import Created
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
@@ -76,7 +77,7 @@ class AcceptedOrders(RestInterface[Any]):
 def _client(interface: type[RestInterface[Any]]) -> TestClient:
     use_cases = [route.use_case for route in interface.routes]
     compiler = UseCaseCompiler()
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     for use_case in use_cases:
         compiler.compile(use_case)
         factory.register(use_case)

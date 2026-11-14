@@ -66,7 +66,7 @@ class TestLegacyResolverBinding:
             UseCaseCompiler(), resolvers=kinds, agent_resolver=lambda name, identity: name
         )
 
-        assert kinds.bound(AGENT)
-        assert not kinds.bound(MCP)
+        assert kinds.is_bound(AGENT)
+        assert not kinds.is_bound(MCP)
         with pytest.raises(RuntimeError, match="more than once"):
             executor.bind_agent_resolver(lambda name, identity: name)

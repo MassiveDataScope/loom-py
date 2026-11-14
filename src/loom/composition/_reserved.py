@@ -8,13 +8,11 @@ from collections.abc import Callable, Iterable, Sequence
 
 from loom.composition.errors import ReservedBindingError
 from loom.core.authz.elevation import ElevationSink
+from loom.core.bootstrap.kernel import KERNEL_KEYS
 from loom.core.di.container import BindingKey, LoomContainer
-from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
 from loom.core.sql import CallerBoundSql, SqlQueryService
-from loom.core.use_case.invoker import ApplicationInvoker
-from loom.core.use_case.registry import UseCaseRegistry
 
 _RESERVED: tuple[BindingKey, ...] = (
     SqlQueryService,
@@ -22,9 +20,7 @@ _RESERVED: tuple[BindingKey, ...] = (
     ObservabilityRuntime,
     StoreCatalog,
     ElevationSink,
-    RuntimeExecutor,
-    UseCaseRegistry,
-    ApplicationInvoker,
+    *KERNEL_KEYS,
 )
 
 _STORE_SESSIONS = (

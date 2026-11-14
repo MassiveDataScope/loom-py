@@ -36,12 +36,13 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc.query import CursorResult, PageResult
+from loom.core.repository.dependency import classify_key
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
 from loom.core.uow.coordinator import Committed, InvocationOutcome
 from loom.core.use_case import Created
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
@@ -579,7 +580,10 @@ def _real_adapter(*use_case_types: type[UseCase[Any, Any]]) -> LoomRestAdapter:
     uc_compiler = UseCaseCompiler()
     for use_case_type in use_case_types:
         uc_compiler.compile(use_case_type)
-    return LoomRestAdapter(RuntimeExecutor(uc_compiler), factory=UseCaseFactory(LoomContainer()))
+    return LoomRestAdapter(
+        RuntimeExecutor(uc_compiler),
+        factory=UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository)),
+    )
 
 
 class TestLoomRestAdapterBoundaryValidation:

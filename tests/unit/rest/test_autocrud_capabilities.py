@@ -27,9 +27,10 @@ from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc import BulkCreatable, Creatable, Listable, Readable
+from loom.core.repository.dependency import classify_key
 from loom.core.repository.registry import repository_for
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.registry import model_entity_key
 from loom.core.use_case.use_case import UseCase
 from loom.rest.autocrud import build_auto_routes, crud_op_of
@@ -352,7 +353,7 @@ class _LookupInterface(RestInterface[str]):
 def _lookup_client() -> TestClient:
     compiler = UseCaseCompiler()
     compiler.compile(_LookupByName)
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(_LookupByName)
     app = FastAPI()
     register_error_handlers(app)

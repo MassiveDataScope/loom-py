@@ -25,8 +25,9 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.dependency import classify_key
 from loom.core.tracing import get_trace_id
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, send_payload_too_large
 from loom.rest.compiler import RestInterfaceCompiler
@@ -107,7 +108,7 @@ class ItemsInterface(RestInterface[str]):
 def _items_client(max_limit: int = 1000) -> TestClient:
     compiler = UseCaseCompiler()
     compiler.compile(ListItemsUseCase)
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(ListItemsUseCase)
     app = FastAPI()
     register_error_handlers(app)

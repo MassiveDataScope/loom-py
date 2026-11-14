@@ -24,7 +24,7 @@ from loom.composition.resources import Resource, ResourceKind, closing
 from loom.composition.source import CompositionSource
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import BootstrapError, KernelRuntime
-from loom.core.bootstrap.kernel import install_kernel, seeded_container
+from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey
@@ -341,16 +341,17 @@ def register(
         ObservabilityRuntime: observability,
         StoreCatalog: catalog,
     }
-    with seeded_container(seeds, modules=ordered, logger=logger) as container:
+    with seeded_container(
+        KernelRecipe.container(), seeds, modules=ordered, logger=logger
+    ) as container:
         if sink is not None:
             container.register_instance(ElevationSink, sink)
-        kernel = install_kernel(
-            container,
-            use_cases=recipe.discovered.use_cases,
-            logger=logger,
-            coordinator=coordinator,
+        kernel = KernelRecipe(
+            recipe.discovered.use_cases,
+            logger,
             metrics=recipe.metrics,
-        )
+            coordinator=coordinator,
+        ).install(container)
     job_resources = configure_job_service(
         ctx,
         kernel,

@@ -26,9 +26,10 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.dependency import classify_key
 from loom.core.sql.service import NullSqlQueryService, SqlQueryService
 from loom.core.use_case import Agent
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
@@ -151,7 +152,7 @@ def _kernel_runtime() -> KernelRuntime:
     here would fail every test in this class for a reason unrelated to what
     each one is pinning.
     """
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register_instance(SqlQueryService, NullSqlQueryService())
     compiler = UseCaseCompiler()
     factory = UseCaseFactory(container)

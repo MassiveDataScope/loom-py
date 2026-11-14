@@ -5,14 +5,15 @@ from __future__ import annotations
 import pytest
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, DependencyGraph, DependencyGraphError, analyse
-from loom.core.di.introspection import RepoDependency
+from loom.core.di.graph import ClassNode, DependencyGraph, DependencyGraphError
+from loom.core.di.introspection import RepoDependency, SignatureReader
 from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionScope, current_execution
 from loom.core.identity import ANONYMOUS
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.dependency import classify_key
 from loom.core.use_case import UseCase
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.graph import acme
 
 
@@ -47,7 +48,7 @@ class AcmeExecutionQuote:
 @pytest.fixture
 def container() -> LoomContainer:
     AcmeExecutionClock.seen = []
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register(AcmeExecutionClock, AcmeExecutionClock, scope=Scope.APPLICATION)
     container.register(AcmeExecutionRates, AcmeExecutionRates, scope=Scope.APPLICATION)
     return container
@@ -68,7 +69,8 @@ class TestSealBuildsReachableSingletons:
         assert AcmeExecutionClock.seen == [None]
 
     def test_seal_refuses_the_analysis_of_another_graph(self, container: LoomContainer) -> None:
-        analysis = analyse(DependencyGraph(container), [ClassNode(AcmeExecutionQuote)])
+        graph = DependencyGraph(container.bindings(), {}, SignatureReader(container.kinds))
+        analysis = graph.analyse([ClassNode(AcmeExecutionQuote)])
 
         with pytest.raises(ValueError, match="another dependency graph"):
             container.seal(analysis)
@@ -104,7 +106,7 @@ class TestSealUsesTheRegisteredConstructor:
         )
 
     def test_the_container_and_the_factory_read_one_graph(self) -> None:
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         UseCaseFactory(container)
 
         assert container.graph.constructor(ClassNode(AcmeListsOrders)) == (
@@ -129,15 +131,14 @@ class TestSealRefusesAnUncompilableBinding:
             container.seal(analysis)
 
     def test_a_second_factory_reads_the_one_graph(self) -> None:
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         first = UseCaseFactory(container)
         second = UseCaseFactory(container)
 
         assert first.graph is second.graph is container.graph
 
-    def test_reading_constructors_another_way_is_refused(self) -> None:
-        container = LoomContainer()
-        UseCaseFactory(container)
+    def test_a_factory_over_a_container_reading_another_way_is_refused(self) -> None:
+        container = LoomContainer(classify_key=lambda annotation: None)
 
         with pytest.raises(ValueError, match="already reads constructors"):
-            container.read_with(classify_key=lambda annotation: None, implicit=lambda cls: ())
+            UseCaseFactory(container)

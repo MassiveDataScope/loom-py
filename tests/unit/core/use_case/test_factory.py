@@ -14,7 +14,8 @@ from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.repository.abc import Listable, RepoFor
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.dependency import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from tests.unit.core.doubles import FakeOrderRepo, IOrderRepo
 
@@ -150,7 +151,7 @@ def _dependencies(factory: UseCaseFactory, use_case_type: type) -> list[tuple[st
 
 
 def _container_with(*pairs: tuple[type, object]) -> LoomContainer:
-    c = LoomContainer()
+    c = LoomContainer(classify_key=classify_key, implicit=main_repository)
     for iface, impl in pairs:
         c.register(iface, _make_provider(impl), scope=Scope.REQUEST)
     return c
@@ -163,7 +164,7 @@ def _container_with(*pairs: tuple[type, object]) -> LoomContainer:
 
 class TestUseCaseFactoryBuild:
     def test_build_no_deps(self) -> None:
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         factory = UseCaseFactory(container)
         uc = factory.build(AcmeNoDepsUseCase)
         assert isinstance(uc, AcmeNoDepsUseCase)
@@ -196,35 +197,28 @@ class TestUseCaseFactoryBuild:
         assert a is not b
 
     def test_build_missing_dep_raises(self) -> None:
-        container = LoomContainer()  # no bindings
+        container = LoomContainer(
+            classify_key=classify_key, implicit=main_repository
+        )  # no bindings
         factory = UseCaseFactory(container)
 
         with pytest.raises(ResolutionError, match="IOrderRepo"):
             factory.build(SingleDepUseCase)
 
-    def test_plan_compiled_on_verify_after_register(self) -> None:
+    def test_verify_compiles_the_plan_every_build_runs(self) -> None:
         container = _container_with((IOrderRepo, FakeOrderRepo()))
         factory = UseCaseFactory(container)
-
         factory.register(SingleDepUseCase)
+
         factory.verify()
-        assert container._plans[SingleDepUseCase] is factory.compiled(SingleDepUseCase)
-
-    def test_plan_compiled_on_first_build(self) -> None:
-        container = _container_with((IOrderRepo, FakeOrderRepo()))
-        factory = UseCaseFactory(container)
-
-        assert SingleDepUseCase not in container._plans
+        plan = container.compiled(SingleDepUseCase)
         factory.build(SingleDepUseCase)
-        assert SingleDepUseCase in container._plans
-        # Same plan object on second call
-        plan_first = container._plans[SingleDepUseCase]
-        factory.build(SingleDepUseCase)
-        assert container._plans[SingleDepUseCase] is plan_first
 
-    def test_register_raises_if_dep_not_in_container(self) -> None:
-        """register() itself doesn't raise — only build() does. Validate separately."""
-        container = LoomContainer()
+        assert container.compiled(SingleDepUseCase) is plan
+
+    def test_register_accepts_a_missing_dependency_that_build_then_refuses(self) -> None:
+        """register() records the class; only build() resolves its dependencies."""
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         factory = UseCaseFactory(container)
         # register() only caches dep list, doesn't resolve
         factory.register(SingleDepUseCase)
@@ -234,7 +228,7 @@ class TestUseCaseFactoryBuild:
 
     def test_build_resolves_repo_for_model(self) -> None:
         repo = FakeProductRepo()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register_repo(AcmeProduct, FakeProductRepo)
 
@@ -245,7 +239,7 @@ class TestUseCaseFactoryBuild:
     def test_build_resolves_repo_for_model_and_other_deps(self) -> None:
         repo = FakeProductRepo()
         email = FakeEmailService()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register(IEmailService, lambda: email, scope=Scope.REQUEST)
         container.register_repo(AcmeProduct, FakeProductRepo)
@@ -257,7 +251,7 @@ class TestUseCaseFactoryBuild:
 
     def test_build_auto_infers_main_repo_from_use_case_generic(self) -> None:
         repo = FakeProductRepo()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register_repo(AcmeProduct, FakeProductRepo)
 
@@ -269,7 +263,7 @@ class TestUseCaseFactoryBuild:
         self,
     ) -> None:
         repo = FakeProductRepo()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register_repo(AcmeProduct, FakeProductRepo)
 
@@ -279,7 +273,7 @@ class TestUseCaseFactoryBuild:
 
     def test_build_auto_infers_main_repo_with_explicit_contract(self) -> None:
         repo = FakeTaskViewRepo()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(TaskViewRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register_repo(TaskView, TaskViewRepo)
 
@@ -311,7 +305,7 @@ class TestUseCaseFactoryInspectFallback:
             def __init__(self, repo):
                 self._repo = repo
 
-        factory = UseCaseFactory(LoomContainer())
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
 
         assert _dependencies(factory, UntypedUseCase) == []
 
@@ -339,7 +333,7 @@ class FakeProductListing:
 class TestUseCaseFactoryCapabilities:
     def test_parametrised_capability_key_is_a_dependency(self) -> None:
         listing = FakeProductListing()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(Listable[AcmeProduct], lambda: listing, scope=Scope.APPLICATION)
         factory = UseCaseFactory(container)
 
@@ -348,7 +342,7 @@ class TestUseCaseFactoryCapabilities:
         assert cast(object, uc._products) is listing
 
     def test_verify_names_use_case_parameter_and_key(self) -> None:
-        factory = UseCaseFactory(LoomContainer())
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
         factory.register(SingleDepUseCase)
 
         with pytest.raises(ResolutionError, match="SingleDepUseCase") as exc_info:
@@ -359,7 +353,7 @@ class TestUseCaseFactoryCapabilities:
         assert "IOrderRepo" in message
 
     def test_verify_names_a_missing_capability_key(self) -> None:
-        factory = UseCaseFactory(LoomContainer())
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
         factory.register(ListingUseCase)
 
         with pytest.raises(ResolutionError, match="ListingUseCase") as exc_info:
@@ -369,7 +363,7 @@ class TestUseCaseFactoryCapabilities:
         assert "AcmeProduct" in str(exc_info.value)
 
     def test_verify_checks_the_model_repository_mapping(self) -> None:
-        factory = UseCaseFactory(LoomContainer())
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
         factory.register(MainRepoUseCase)
 
         with pytest.raises(ResolutionError, match="repository for AcmeProduct"):
@@ -377,7 +371,7 @@ class TestUseCaseFactoryCapabilities:
 
     def test_verify_accepts_a_binding_registered_after_the_use_case(self) -> None:
         """Hosts register some services after the use cases; only verify() judges."""
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         factory = UseCaseFactory(container)
         factory.register(SingleDepUseCase)
         container.register(IOrderRepo, FakeOrderRepo, scope=Scope.REQUEST)
@@ -396,7 +390,7 @@ class ListProductsUseCase(UseCase[AcmeProduct, str, Listable[AcmeProduct]]):
 
 
 def _container_mapping_product_to(repo_type: type) -> LoomContainer:
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register(repo_type, repo_type, scope=Scope.APPLICATION)
     container.register_repo(AcmeProduct, repo_type)
     return container
@@ -426,7 +420,7 @@ class TestUseCaseFactoryMainRepository:
 
     def test_build_with_a_capability_contract_still_resolves_through_the_repo_mapping(self) -> None:
         repo = FakeProductRepo()
-        container = LoomContainer()
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
         container.register_repo(AcmeProduct, FakeProductRepo)
         container.register(
@@ -439,7 +433,7 @@ class TestUseCaseFactoryMainRepository:
 
 
 def _task_view_container() -> LoomContainer:
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register(FakeTaskViewRepo, FakeTaskViewRepo, scope=Scope.APPLICATION)
     container.register_repo(TaskView, FakeTaskViewRepo)
     return container
@@ -525,3 +519,24 @@ class TestUseCaseFactoryDefaultedParameters:
 
         assert _dependencies(factory, ContainerAnnotatedUseCase) == [("repo", IOrderRepo)]
         factory.verify()
+
+
+class TestDeprecatedBareContainer:
+    @pytest.mark.parametrize("use_case", [AutoMainRepoUseCase, MainRepoUseCase])
+    def test_a_bare_container_adopts_the_use_case_reading_with_a_warning(
+        self, use_case: type[UseCase[AcmeProduct, str]]
+    ) -> None:
+        repo = FakeProductRepo()
+        container = LoomContainer()
+        container.register(FakeProductRepo, lambda: repo, scope=Scope.APPLICATION)
+        container.register_repo(AcmeProduct, FakeProductRepo)
+
+        with pytest.warns(DeprecationWarning, match="UseCaseFactory over a container"):
+            factory = UseCaseFactory(container)
+
+        assert cast(object, factory.build(use_case).main_repo) is repo
+        assert factory.graph is container.graph
+
+    def test_a_container_reading_another_way_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="reads constructors another way"):
+            UseCaseFactory(LoomContainer(classify_key=classify_key))

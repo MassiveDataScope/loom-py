@@ -18,8 +18,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.dependency import classify_key
 from loom.core.use_case import Query
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
@@ -122,7 +123,7 @@ class AcmeOrderQueryApi(RestInterface[Any]):
 
 class _RecordingFactory(UseCaseFactory):
     def __init__(self) -> None:
-        super().__init__(LoomContainer())
+        super().__init__(LoomContainer(classify_key=classify_key, implicit=main_repository))
         self.built: list[type[Any]] = []
 
     def build(self, use_case_type: type[Any]) -> Any:

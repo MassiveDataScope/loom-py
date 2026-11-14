@@ -24,9 +24,9 @@ class AcmeCountingKinds(ExecutionKinds):
         super().__init__()
         self.reads = 0
 
-    def bound(self, kind: Kind) -> bool:
+    def is_bound(self, kind: Kind) -> bool:
         self.reads += 1
-        return super().bound(kind)
+        return super().is_bound(kind)
 
     def resolve(self, kind: Kind, declaration: object, annotation: object) -> object:
         self.reads += 1

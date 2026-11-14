@@ -9,7 +9,6 @@ from loom.core.di.graph import (
     ClassNode,
     DependencyGraphError,
     KeyNode,
-    analyse,
 )
 from loom.core.di.scope import Scope
 from tests.unit.core.di.graph import acme
@@ -79,4 +78,4 @@ class TestCallTargetRoots:
         roots = [ClassNode(AcmeClose), ClassNode(AcmeSettle)]
 
         with pytest.raises(DependencyGraphError, match=r"^AcmeSettle: names: tuple\[str, \.\.\.\]"):
-            analyse(acme.container().graph, roots, LENIENT_REFUSALS)
+            acme.container().graph.analyse(roots, LENIENT_REFUSALS)
