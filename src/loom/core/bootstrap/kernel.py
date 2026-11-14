@@ -4,9 +4,8 @@ This module builds a reusable runtime composed of container, compiler,
 factory, and executor. Transport adapters (REST, Celery, CLI) can consume
 the same runtime without duplicating bootstrap logic.
 
-:func:`create_kernel` is the public entry point. :func:`bootstrapping`,
-:func:`install_use_cases` and :func:`install_kernel` are its steps, shared
-with ``loom.composition``.
+:func:`create_kernel` is the public entry point. :func:`seeded_container`,
+:func:`install_use_cases` and :func:`install_kernel` are its steps.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from loom.core.repository.dependency import classify_key
 from loom.core.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
-from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
+from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
 
@@ -111,7 +110,7 @@ def create_kernel(
     """
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
-    with bootstrapping(seeds, modules=modules, logger=log) as container:
+    with seeded_container(seeds, modules=modules, logger=log) as container:
         kernel = install_kernel(
             container,
             use_cases=use_cases,
@@ -129,7 +128,7 @@ def create_kernel(
 
 
 @contextmanager
-def bootstrapping(
+def seeded_container(
     seeds: Mapping[BindingKey, object],
     *,
     modules: Sequence[Callable[[LoomContainer], None]],
@@ -137,8 +136,7 @@ def bootstrapping(
 ) -> Iterator[LoomContainer]:
     """A new container with each of *seeds* bound under its key, then filled by *modules*.
 
-    Internal to loom, shared by :func:`create_kernel` and ``loom.composition``: not
-    public API, and it may change without deprecation.
+    Internal to loom: not public API, and it may change without deprecation.
 
     The container reads constructor annotations with
     :func:`~loom.core.repository.dependency.classify_key`. The seeds are bound
@@ -175,8 +173,9 @@ def install_use_cases(
 ) -> BootstrapResult:
     """Compile *use_cases* and register their :class:`UseCaseFactory` in the filled *container*.
 
-    Internal to loom, shared by :func:`create_kernel` and ``loom.composition``: not
-    public API, and it may change without deprecation.
+    Internal to loom, called by :func:`install_kernel` and
+    :func:`~loom.core.bootstrap.bootstrap_app`: not public API, and it may
+    change without deprecation.
 
     Raises:
         CompilationError: When a use case does not compile.
@@ -205,8 +204,7 @@ def install_kernel(
 ) -> KernelRuntime:
     """Compile *use_cases* and register the kernel's keys in the filled *container*.
 
-    Internal to loom, shared by :func:`create_kernel` and ``loom.composition``: not
-    public API, and it may change without deprecation.
+    Internal to loom: not public API, and it may change without deprecation.
 
     Registers :class:`~loom.core.use_case.factory.UseCaseFactory`, one
     :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation sink
@@ -223,7 +221,7 @@ def install_kernel(
         CompilationError: When a use case does not compile.
     """
     kinds = container.kinds
-    use_case_kinds(kinds)
+    declare_use_case_kinds(kinds)
     declare_ai_kinds(kinds)
     kinds.bind(CALLER, CallerResolver())
     base = install_use_cases(container, use_cases, logger=logger, metrics=metrics)
@@ -234,7 +232,7 @@ def install_kernel(
         repo_resolver=repo_resolver or container.resolve_repo,
         resolvers=kinds,
         builder=base.factory.build,
-        elevation_sink=_registered_sink(container),
+        elevation_sink=container.resolve_or_none(ElevationSink),
         agent_resolver=agent_resolver,
         mcp_resolver=mcp_resolver,
     )
@@ -252,10 +250,3 @@ def install_kernel(
         registry=registry,
         app=app,
     )
-
-
-def _registered_sink(container: LoomContainer) -> ElevationSink | None:
-    if container.is_registered(ElevationSink):
-        sink: ElevationSink = container.resolve(ElevationSink)
-        return sink
-    return None

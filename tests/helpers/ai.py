@@ -20,7 +20,7 @@ from loom.ai.abc import (
 from loom.ai.config import A2AAgentConfig, A2AConfig, AgentEndpointConfig, AiConfig, McpServerConfig
 from loom.ai.engines.pydantic_ai import create_a2a_client, create_mcp_client
 from loom.ai.inference import InferenceTarget
-from loom.composition._ai import MarkerDeclarations, marker_declarations
+from loom.composition._ai import MarkerDeclarations
 from loom.core.di import LoomContainer
 from loom.core.di.graph import ClassNode, analyse
 from loom.core.engine.compiler import UseCaseCompiler
@@ -252,4 +252,4 @@ def declared_markers(*use_cases: type[Any]) -> MarkerDeclarations:
     for use_case in use_cases:
         compiler.compile(use_case)
     analysis = analyse(LoomContainer().graph, map(ClassNode, use_cases), ())
-    return marker_declarations(analysis, compiler, UseCaseRegistry.build(list(use_cases)))
+    return MarkerDeclarations.of(analysis, compiler, UseCaseRegistry.build(list(use_cases)))

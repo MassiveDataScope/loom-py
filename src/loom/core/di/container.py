@@ -349,7 +349,7 @@ class LoomContainer:
             self._instantiate(key)
 
     def _reached(self, analysis: GraphAnalysis, deferred: Collection[Kind]) -> frozenset[Node]:
-        """What *analysis* reaches, once refusal 7 passed from its roots, *deferred* skipped."""
+        """What *analysis* reaches from its roots once every kind is bound, *deferred* skipped."""
         if analysis.graph is not self._graph:
             raise ValueError("seal() was given the analysis of another dependency graph")
         analyse(self._graph, analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
@@ -456,6 +456,20 @@ class LoomContainer:
         changed between two reads was bound or replaced in between.
         """
         return MappingProxyType(self._bindings)
+
+    def resolve_or_none(self, interface: BindingKey) -> Any:
+        """Return the instance bound to ``interface``, or ``None`` when nothing is bound.
+
+        Args:
+            interface: The DI key to resolve.
+
+        Returns:
+            What :meth:`resolve` returns, or ``None``.
+
+        Raises:
+            DependencyGraphError: As :meth:`resolve`, for a bound key.
+        """
+        return self.resolve(interface) if interface in self._bindings else None
 
     def is_registered(self, interface: BindingKey) -> bool:
         """Return ``True`` if ``interface`` has a registered binding.

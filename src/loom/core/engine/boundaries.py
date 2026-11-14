@@ -55,7 +55,6 @@ from loom.core.uow.scope import (
     invocation_error,
     unscoped,
 )
-from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 
 _READ_ONLY = Frame(None)
 
@@ -284,7 +283,8 @@ async def _in_frame(scope: InvocationScope, plan: ExecutionPlan, work: Work) -> 
         JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
     """
     async with scope.frame(Frame(plan.primary, plan.joined)):
-        _refuse_autocommit_joined(scope, plan)
+        if plan.joined:
+            plan.refuse_autocommit_joined(lambda key: scope.participants[key].transactional)
         return await work()
 
 
@@ -300,20 +300,6 @@ async def _finish(
         return await scope.coordinator.finish(scope, None)
     finally:
         attempt.commit_ms = (time.perf_counter() - started) * 1000
-
-
-def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> None:
-    """Refuse a ``Joined`` store of ``plan`` whose enlisted unit of work cannot roll back.
-
-    What composition refuses at startup for the components it discovers,
-    for any plan, compiled then or on its first execution.
-    """
-    for key in sorted(plan.joined):
-        if not scope.participants[key].transactional:
-            issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
-                component=plan.use_case_type, store=key
-            )
-            raise JoinedAutocommitStore(issue)
 
 
 def _refuse_nesting(use_case: str) -> None:

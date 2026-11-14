@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from loom.core.bootstrap import BootstrapError
+from loom.core.di.graph import (
+    LENIENT_REFUSALS,
+    REFUSALS,
+    ClassNode,
+    DependencyGraph,
+    DependencyGraphError,
+    GraphAnalysis,
+    analyse,
+    refuse_unmapped_repository,
+)
 from loom.core.persistence.stores import NONE_BACKEND
+from loom.core.repository.abc import CursorCodec
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
     from loom.composition.source import CompositionSource
+    from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.engine.metrics import MetricsAdapter
@@ -71,6 +85,46 @@ class Recipe:
     callbacks: tuple[type, ...] = ()
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
     lenient: bool = False
+
+    def analysed(self, graph: DependencyGraph) -> GraphAnalysis:
+        """*graph* analysed from the classes loom builds: use cases, jobs, then callbacks.
+
+        Each :class:`~loom.core.di.errors.DependencyUnresolvable` is emitted as a warning.
+
+        Args:
+            graph: The use-case factory's dependency graph.
+
+        Returns:
+            The analysis.
+
+        Raises:
+            BootstrapError: Wrapping the first structural refusal, cause chained.
+        """
+        discovered = self.discovered
+        callbacks = tuple(map(ClassNode, self.callbacks))
+        roots = (*map(ClassNode, (*discovered.use_cases, *discovered.jobs)), *callbacks)
+        rules = (
+            LENIENT_REFUSALS
+            if self.lenient
+            else (*REFUSALS, refuse_unmapped_repository(frozenset(callbacks)))
+        )
+        try:
+            analysis = analyse(graph, roots, rules)
+        except DependencyGraphError as exc:
+            raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+        for warning in analysis.warnings:
+            warnings.warn(warning, stacklevel=2)
+        return analysis
+
+    def cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
+        """The one cursor codec every store shares; ``None`` when no store serves a repository.
+
+        Raises:
+            ConfigError: When ``persistence.cursors`` is invalid.
+        """
+        if self.connection_only or not self.discovered.models:
+            return None
+        return CursorCodec.from_context(ctx)
 
 
 class Adapter(Protocol[T_co]):

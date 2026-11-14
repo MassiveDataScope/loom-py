@@ -231,6 +231,10 @@ class TestDecoration:
 
         assert gateways.counters is not gateways.data
         assert list(gateways.distinct()) == [gateways.data, gateways.counters]
+        assert list(gateways.named()) == [
+            ("data", gateways.data),
+            ("counters", gateways.counters),
+        ]
 
     def test_one_alias_opens_a_single_gateway(self) -> None:
         container = _container(cache_module(_single_alias()))
@@ -239,6 +243,7 @@ class TestDecoration:
 
         assert gateways.counters is gateways.data
         assert list(gateways.distinct()) == [gateways.data]
+        assert list(gateways.named()) == [("data", gateways.data)]
 
 
 class TestIncompleteRepository:

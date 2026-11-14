@@ -1,0 +1,470 @@
+"""The ordered phases that compose an application, and :func:`compose_application` running them.
+
+The order: :func:`plan` takes the adapter's recipe; :func:`build_stores` builds
+every store before any registration; :func:`register` fills the container and
+builds the kernel; :meth:`Recipe.analysed` analyses the dependency graph;
+:func:`wire_ai` builds the optional agent runtime; :func:`seal` seals the
+container. Nothing registers after :func:`register`.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
+from typing import TypeVar
+
+from loom.composition._ai import AiWiring, MarkerDeclarations
+from loom.composition._jobs import configure_job_service
+from loom.composition._reserved import refusing_reserved
+from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
+from loom.composition.application import Application
+from loom.composition.recipe import Adapter, Recipe
+from loom.composition.resources import Resource, ResourceKind, closing
+from loom.composition.source import CompositionSource
+from loom.core.authz.elevation import ElevationSink
+from loom.core.bootstrap import BootstrapError, KernelRuntime
+from loom.core.bootstrap.kernel import install_kernel, seeded_container
+from loom.core.cache.wiring import CacheGateways, cache_module_for
+from loom.core.checks import enforce_deploy_checks
+from loom.core.config import ConfigError, ConfigKey
+from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.graph import GraphAnalysis
+from loom.core.engine.kinds import AGENT, MCP
+from loom.core.environment import Environment
+from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
+from loom.core.job.config import JobSettings
+from loom.core.logger import LoggerPort, get_logger
+from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.persistence.elevation import ScopedElevationSink
+from loom.core.persistence.stores import (
+    DEFAULT_STORE,
+    DEFAULT_STORE_PATH,
+    StoreCatalog,
+    StoreKey,
+)
+from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
+from loom.core.use_case.factory import ModelRead
+
+T = TypeVar("T")
+
+
+class PhaseClock:
+    """The milliseconds of each composition phase, each from the end of the one before."""
+
+    def __init__(self) -> None:
+        self.started = self._mark = time.perf_counter()
+        self.ms: dict[str, float] = {}
+
+    def lap(self, phase: str, result: T) -> T:
+        """Record *phase* as ending now and hand its *result* back.
+
+        Args:
+            phase: The phase's name.
+            result: What the phase returned.
+
+        Returns:
+            *result*.
+        """
+        now = time.perf_counter()
+        self.ms[phase] = (now - self._mark) * 1000
+        self._mark = now
+        return result
+
+    @property
+    def total_ms(self) -> float:
+        """The milliseconds since the clock started."""
+        return (time.perf_counter() - self.started) * 1000
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Stores:
+    """The job settings, and one wiring per store the discovered models use.
+
+    Args:
+        job_settings: Each discovered job's settings.
+        backends: The name of the backend each store's wiring was built by.
+        wirings: Each store's wiring, its models prepared.
+    """
+
+    job_settings: JobSettings
+    backends: dict[StoreKey, str]
+    wirings: dict[StoreKey, PersistenceWiring]
+
+    @property
+    def factories(self) -> dict[StoreKey, UnitOfWorkFactory]:
+        """The unit-of-work factory of every store that has one."""
+        return {key: w.uow_factory for key, w in self.wirings.items() if w.uow_factory is not None}
+
+    @property
+    def resources(self) -> tuple[Resource, ...]:
+        """One resource per store; the default store's readiness is keyed by its backend's name."""
+        return tuple(
+            Resource(
+                kind=ResourceKind.STORE,
+                name=key,
+                manager=wiring.lifespan_init,
+                check=wiring.startup_checks,
+                readiness=wiring.readiness,
+                readiness_key=self.backends[key] if key == DEFAULT_STORE else key,
+            )
+            for key, wiring in self.wirings.items()
+        )
+
+
+def compose_application(
+    source: CompositionSource,
+    adapter: Adapter[object],
+    *,
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
+) -> Application:
+    """Compose the application *adapter* asks for from an already loaded *source*.
+
+    :func:`~loom.composition.build_application` loads the source from files; a
+    test or a host that holds its configuration in memory calls this directly.
+    Logs one ``loom.composition.composed`` info event with the milliseconds of
+    each phase.
+
+    Args:
+        source: Configuration, environment and code of the application.
+        adapter: Whose recipe to compose.
+        modules: DI modules run before repositories are registered; see
+            :func:`~loom.composition.create_app`.
+
+    Returns:
+        The composed, closed application.
+
+    Raises:
+        ConfigError: When a model belongs to a store the catalog does not
+            serve, or the store section is invalid, or a job backend cannot be built.
+        JoinedAutocommitStore: When a use case declares ``Joined`` on a store
+            that cannot roll back.
+        UncomposedWriteStore: When a use case or job writes to a store with
+            no unit of work.
+        DeployCheckError: When a deploy check of level error fails in a
+            deployed environment.
+        ReservedBindingError: When a module binds a framework-owned key.
+    """
+    logger = get_logger(__name__)
+    clock = PhaseClock()
+    recipe = clock.lap("plan", plan(source, adapter))
+    stores = clock.lap("build_stores", build_stores(source, recipe))
+    kernel, sql, job_resources = clock.lap(
+        "register", register(source, recipe, stores, modules=modules, logger=logger)
+    )
+    analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
+    ai = clock.lap("wire_ai", wire_ai(source, recipe, kernel, analysis, sql))
+    clock.lap(
+        "seal",
+        seal(kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories),
+    )
+    gateways = kernel.container.resolve_or_none(CacheGateways)
+    cache = () if gateways is None else gateways.named()
+    discovered = recipe.discovered
+    application = Application(
+        kernel=kernel,
+        config=source.config,
+        environment=source.environment,
+        code_path=source.code_path,
+        discovered=discovered,
+        observability=source.observability,
+        sql=sql,
+        ai=ai,
+        job_settings=stores.job_settings,
+        resources=(
+            *job_resources,
+            *(
+                Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
+                for name, gateway in cache
+            ),
+            *sql.resources,
+            *ai.resources,
+            *stores.resources,
+        ),
+    )
+    logger.info(
+        "loom.composition.composed",
+        adapter=type(adapter).__qualname__,
+        use_cases=len(discovered.use_cases),
+        jobs=len(discovered.jobs),
+        backends=stores.backends,
+        keys=len(kernel.container.bindings()),
+        modules=len(modules),
+        overrides=len(recipe.overrides),
+        agents=len(ai.plans),
+        mcp_servers=len(ai.mcp_servers),
+        phase_ms=clock.ms,
+        duration_ms=clock.total_ms,
+    )
+    return application
+
+
+def plan(source: CompositionSource, adapter: Adapter[object]) -> Recipe:
+    """Ask *adapter* for its recipe, then refuse a failing deploy check.
+
+    A lenient recipe runs no deploy check.
+
+    Args:
+        source: What the application composes from.
+        adapter: Whose recipe to take.
+
+    Returns:
+        The recipe.
+
+    Raises:
+        DeployCheckError: When a deploy check of level error fails in a
+            deployed environment.
+    """
+    recipe = adapter.recipe(source)
+    if not recipe.lenient:
+        enforce_deploy_checks(source.config, source.environment, skip=recipe.skip_checks)
+    return recipe
+
+
+def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
+    """Read each job's settings, then build and prepare every store the discovered models use.
+
+    Args:
+        source: What the application composes from.
+        recipe: What it composes.
+
+    Returns:
+        The job settings and the stores.
+
+    Raises:
+        ConfigError: When a job's settings, ``persistence.cursors`` or a
+            store section is invalid, or a store is named after the default
+            store's backend.
+    """
+    ctx, discovered, catalog = source.config, recipe.discovered, source.catalog
+    job_settings = JobSettings.from_config(ctx, discovered.jobs)
+    stores = catalog.models_by_store(discovered.models)
+    backends = {key: source.backend(key, default=recipe.default_backend) for key in stores}
+    default_label = backends[DEFAULT_STORE].name
+    if default_label in stores:
+        raise ConfigError(
+            f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
+            f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
+        )
+    cursor_codec = recipe.cursor_codec(ctx)
+    wirings: dict[StoreKey, PersistenceWiring] = {}
+    for key, models in stores.items():
+        runtime = BackendRuntime(
+            recipe.profile,
+            pool_metrics=recipe.pool_metrics,
+            connection_only=recipe.connection_only,
+            catalog=catalog,
+            store=key,
+            cursor_codec=cursor_codec,
+        )
+        wiring = wirings[key] = backends[key].build(ctx, models, runtime)
+        wiring.prepare_models(models)
+    return Stores(
+        job_settings=job_settings,
+        backends={key: backends[key].name for key in stores},
+        wirings=wirings,
+    )
+
+
+def register(
+    source: CompositionSource,
+    recipe: Recipe,
+    stores: Stores,
+    *,
+    modules: Sequence[Callable[[LoomContainer], None]],
+    logger: LoggerPort,
+) -> tuple[KernelRuntime, SqlWiring, tuple[Resource, ...]]:
+    """Fill a container and build the kernel on it, then register the job service and SQL.
+
+    The order: the seed keys (the application's ``AppConfig``,
+    ``Environment``, ``ObservabilityRuntime`` and ``StoreCatalog``); the
+    caller's modules; the recipe's overrides; each store's repositories; the
+    cache module; the framework's keys, among them the kernel, whose
+    construction compiles the discovered use cases; the job service; the SQL
+    collaborators. The caller's modules and the overrides run first, so the
+    framework's defaults leave what they bound alone; either one binding a
+    key the framework owns fails right after it runs. The container is
+    validated when the application is sealed.
+
+    Args:
+        source: What the application composes from.
+        recipe: What it composes.
+        stores: The stores, whose repositories and units of work it registers.
+        modules: The caller's DI modules.
+        logger: Where the container and the compilation log.
+
+    Returns:
+        The kernel, the SQL wiring and the job backends' resources.
+
+    Raises:
+        ConfigError: When the ``cache`` section, an elevation,
+            ``persistence.rollback_timeout``,
+            ``identity.max_delegation_seconds`` or the ``sql`` section is
+            invalid. Raised as is.
+        ReservedBindingError: When a caller module or an override binds or
+            replaces a framework-owned key.
+        BootstrapError: Wrapping any other failure of a module or of a use
+            case's compilation.
+        JobBackendError: When the job backend is unknown or its extra is
+            missing. Raised as is.
+        SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
+    """
+    ctx, catalog, observability = source.config, source.catalog, source.observability
+    reserved = tuple(catalog.specs)
+    cache = cache_module_for(ctx)
+    configure_delegation(
+        ctx.positive_seconds("identity.max_delegation_seconds", DEFAULT_MAX_DELEGATION_SECONDS)
+    )
+    sink = ScopedElevationSink.of(stores.wirings)
+    factories = stores.factories
+    coordinator = (
+        OrderedCommits(
+            factories,
+            rollback_timeout=ctx.positive_seconds(
+                "persistence.rollback_timeout", ROLLBACK_TIMEOUT_S
+            ),
+        )
+        if factories
+        else None
+    )
+    ordered = (
+        *refusing_reserved(modules, reserved),
+        *refusing_reserved(recipe.overrides, reserved),
+        *(wiring.repo_registration_module for wiring in stores.wirings.values()),
+        cache,
+    )
+    seeds = {
+        type(source.app): source.app,
+        Environment: source.environment,
+        ObservabilityRuntime: observability,
+        StoreCatalog: catalog,
+    }
+    with seeded_container(seeds, modules=ordered, logger=logger) as container:
+        if sink is not None:
+            container.register_instance(ElevationSink, sink)
+        kernel = install_kernel(
+            container,
+            use_cases=recipe.discovered.use_cases,
+            logger=logger,
+            coordinator=coordinator,
+            metrics=recipe.metrics,
+        )
+    job_resources = configure_job_service(
+        ctx,
+        kernel,
+        observability,
+        backend=source.app.job_service,
+        jobs=recipe.discovered.jobs,
+        settings=stores.job_settings,
+    )
+    sql = resolve_sql(ctx)
+    register_sql_collaborators(kernel.container, sql, observability)
+    return kernel, sql, job_resources
+
+
+def wire_ai(
+    source: CompositionSource,
+    recipe: Recipe,
+    kernel: KernelRuntime,
+    analysis: GraphAnalysis,
+    sql: SqlWiring,
+) -> AiWiring:
+    """Build the agent runtime when the entry point hosts it, else nothing.
+
+    Every ``Agent()`` and ``Mcp()`` declaration the analysed graph reaches
+    counts, in a use case's ``execute()`` or on an adapter it is built
+    with; the graph is walked once, here. An entry point that does not host
+    agents still refuses, at start-up, any such declaration. One that
+    serves no agent endpoints builds only the agents a declaration names. A
+    lenient recipe that hosts no agents refuses none and walks nothing.
+
+    Args:
+        source: What the application composes from.
+        recipe: What it composes.
+        kernel: The kernel whose executor resolves the markers.
+        analysis: The analysed dependency graph.
+        sql: The SQL wiring, whose configuration the runtime reads.
+
+    Returns:
+        The wiring, :attr:`AiWiring.ABSENT` when no runtime is built.
+
+    Raises:
+        ConfigError: When the manifest declares ``AGENTS`` and there is no
+            ``ai:`` section.
+        AgentCompilationError: When a declaration cannot be satisfied.
+    """
+    if not recipe.agents and recipe.lenient:
+        return AiWiring.ABSENT
+    declared = MarkerDeclarations.of(analysis, kernel.compiler, kernel.registry)
+    if not recipe.agents:
+        declared.verify({}, {})
+        return AiWiring.ABSENT
+    ai = AiWiring.build(
+        source.config,
+        kernel=kernel,
+        sql_cfg=sql.config,
+        code_path=source.code_path,
+        manifest_agent_specs=recipe.discovered.agent_specs,
+        declared=declared,
+        names=(
+            None
+            if recipe.agent_endpoints
+            else frozenset(found.binding.declaration.name for _, found in declared.agents)
+        ),
+    )
+    declared.verify({agent.name: agent for agent in ai.plans}, ai.mcp_servers)
+    ai.bind_resolvers(kernel)
+    return ai
+
+
+def seal(
+    kernel: KernelRuntime,
+    analysis: GraphAnalysis,
+    recipe: Recipe,
+    *,
+    catalog: StoreCatalog,
+    factories: Collection[StoreKey],
+) -> None:
+    """Seal the container and build its singletons; refuse an unservable store; verify use cases.
+
+    The container refuses a singleton the analysed graph reaches that
+    declares a kind no resolver is bound for. A lenient recipe defers the
+    agent and MCP kinds (such a singleton is built by its first resolve once
+    a resolver is bound) and stops after building the singletons. The model
+    reads verified are those of the use cases; a job's are not.
+
+    Args:
+        kernel: The kernel to seal.
+        analysis: The analysed dependency graph.
+        recipe: What the application composes.
+        catalog: The stores the application declares.
+        factories: The stores that have a unit of work.
+
+    Raises:
+        BootstrapError: Wrapping the refusal of such a singleton, with its
+            path, or the failure of an ``APPLICATION`` binding's
+            instantiation, cause chained.
+        CompilationError: When a use case or job does not compile.
+        UncomposedWriteStore: See :meth:`~loom.core.engine.plan.ExecutionPlan.refuse_unservable`.
+        JoinedAutocommitStore: See :meth:`~loom.core.engine.plan.ExecutionPlan.refuse_unservable`.
+        ResolutionError: When a use case's dependency or marker read cannot be served.
+    """
+    try:
+        kernel.container.seal(
+            analysis, deferred=(AGENT, MCP) if recipe.lenient else (), strict=not recipe.lenient
+        )
+    except ResolutionError as exc:
+        raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+    if recipe.lenient:
+        return
+    discovered = recipe.discovered
+    use_cases = frozenset(discovered.use_cases)
+    reads: list[ModelRead] = []
+    for component in (*discovered.use_cases, *discovered.jobs):
+        compiled = kernel.compiler.compile(component)
+        compiled.refuse_unservable(catalog, factories)
+        if component in use_cases:
+            reads.extend(compiled.model_reads())
+    kernel.factory.verify(reads=reads)

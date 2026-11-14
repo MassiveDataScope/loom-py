@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import unique
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
@@ -19,6 +19,9 @@ from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.scope import current_scope
+
+if TYPE_CHECKING:
+    from loom.core.persistence.abc import PersistenceWiring
 
 
 @unique
@@ -96,6 +99,22 @@ class ScopedElevationSink:
         validate_elevations(load_authz_product(), scoped)
         self._stores = stores
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
+
+    @classmethod
+    def of(cls, wirings: Mapping[StoreKey, PersistenceWiring]) -> ScopedElevationSink | None:
+        """The sink of the stores among *wirings* whose sessions carry elevation flags, if any.
+
+        Args:
+            wirings: Every store's wiring, its models prepared.
+
+        Returns:
+            The sink, or ``None`` when no store carries elevation flags.
+
+        Raises:
+            ConfigError: See :func:`validate_elevations`.
+        """
+        stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
+        return cls(stores) if stores else None
 
     def in_transaction(self, scopes: frozenset[str]) -> bool:
         return any(

@@ -52,11 +52,16 @@ class CacheGateways:
     data: CacheGateway
     counters: CacheGateway
 
+    def named(self) -> Iterator[tuple[str, CacheGateway]]:
+        """Yield each gateway once with its name, ``data`` then ``counters``."""
+        yield "data", self.data
+        if self.counters is not self.data:
+            yield "counters", self.counters
+
     def distinct(self) -> Iterator[CacheGateway]:
         """Yield each gateway once, so a shutdown closes an alias only once."""
-        yield self.data
-        if self.counters is not self.data:
-            yield self.counters
+        for _, gateway in self.named():
+            yield gateway
 
 
 def _register_calls(container: LoomContainer, calls: CachedCalls) -> None:

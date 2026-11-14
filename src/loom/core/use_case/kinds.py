@@ -24,7 +24,7 @@ _INPUT_MARKERS = {
 }
 
 
-def use_case_kinds(kinds: ExecutionKinds) -> None:
+def declare_use_case_kinds(kinds: ExecutionKinds) -> None:
     """Declare ``Caller()`` as :data:`CALLER` and refuse the input markers on ``kinds``.
 
     The input markers describe the request one ``execute`` call serves, so a

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _AuthWiring:
-    """Resolved authentication for the auto-bootstrap REST app.
+    """Resolved authentication for the REST adapter.
 
     Args:
         authenticator: Mechanism authenticating callers, or ``None`` when the

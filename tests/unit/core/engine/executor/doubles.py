@@ -31,7 +31,7 @@ from loom.core.uow.coordinator import Participant
 from loom.core.uow.scope import Frame, InvocationScope, current_scope
 from loom.core.use_case import Joined
 from loom.core.use_case.factory import UseCaseFactory
-from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
+from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
 from loom.core.use_case.markers import Agent, Caller, Exists, Input, Load, LoadById, Mcp, OnMissing
 from loom.core.use_case.use_case import UseCase
 
@@ -194,7 +194,7 @@ def serves_session(container: LoomContainer) -> None:
 def session_factory() -> UseCaseFactory:
     """A factory whose container serves :class:`AcmeSession` per execution."""
     container = LoomContainer(classify_key=classify_key)
-    use_case_kinds(container.kinds)
+    declare_use_case_kinds(container.kinds)
     container.kinds.bind(CALLER, CallerResolver())
     serves_session(container)
     built = UseCaseFactory(container)

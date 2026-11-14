@@ -104,11 +104,11 @@ def bootstrap_app(
         DeprecationWarning,
         stacklevel=2,
     )
-    from loom.core.bootstrap.kernel import bootstrapping, install_use_cases
+    from loom.core.bootstrap.kernel import install_use_cases, seeded_container
 
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
-    with bootstrapping(seeds, modules=modules, logger=log) as container:
+    with seeded_container(seeds, modules=modules, logger=log) as container:
         result = install_use_cases(container, use_cases, logger=log, metrics=metrics)
         executor = RuntimeExecutor(
             result.compiler, metrics=metrics, repo_resolver=container.resolve_repo

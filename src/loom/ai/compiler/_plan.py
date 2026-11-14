@@ -49,7 +49,7 @@ class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
         loom_type: Boundary type produced at compile, whichever library built
             it (:func:`~loom.core.model.loom_type` for a ``type_ref``,
             :func:`~loom.core.model.msgspec_type` for a ``json_schema``): the
-            start-up marker check (``ai/_startup.py``) reads ``.type``. The
+            start-up check of an ``Agent()`` marker reads ``.type``. The
             engine reads it differently per library: for a ``msgspec.Struct``,
             ``ai/engines/pydantic_ai/_output.py`` decodes the model's raw
             bytes through ``.decode_json(bytes)``; for a pydantic model,

@@ -239,8 +239,8 @@ Rule = Callable[[Node, Path, DependencyGraph], str | None]
 
 A rule may read the path only through whether a singleton holds its end and
 which nodes are on it, the two things :func:`analyse` memoises a check by. A
-check that needs more of the path (refusal 8) is a walk of its own; one that
-needs other facts (refusal 7) is a second :func:`analyse` with its own rules.
+check that needs more of the path is a walk of its own; one that needs other
+facts is a second :func:`analyse` with its own rules.
 """
 
 _PER_EXECUTION = (Scope.REQUEST, Scope.TRANSACTION)

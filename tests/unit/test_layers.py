@@ -143,7 +143,7 @@ _WRITERS: dict[str, tuple[str, ...]] = {
     "configure_delegation": (
         _IDENTITY,
         _IDENTITY_CONTEXT,
-        "loom.composition.pipeline.registration",
+        "loom.composition.phases",
     ),
     "_window": (_IDENTITY_CONTEXT,),
     "_acting": (_IDENTITY_CONTEXT, _EXECUTION),

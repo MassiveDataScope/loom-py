@@ -125,14 +125,14 @@ class _OpenedClient:
 class UseCaseMcpGrant:
     """One verified ``Mcp()`` marker binding, compiled into a runtime input.
 
-    Built by :mod:`loom.composition._ai` (``resolve_ai``) once the marker's
-    server name has already been verified against ``ai.mcp_servers``, and
-    handed to :class:`AgentRuntime` so the server it names joins the set the
-    runtime opens even when no agent plan declares it. ``capability`` carries
+    Built by ``MarkerDeclarations.mcp_grants`` once the marker's server
+    name has been verified against ``ai.mcp_servers``, and handed to
+    :class:`AgentRuntime` so the server it names joins the set the runtime
+    opens even when no agent plan declares it. ``capability`` carries
     this binding's own ``include`` — read only by :meth:`_use_case_filter_issues`,
     to check it at start-up against the server's real tool list. At call
     time the resolver never reads this ``include`` back: it receives its own
-    from the resolving :class:`~loom.core.engine.plan.McpBinding`, via the
+    from the resolving :class:`~loom.core.engine.plan.ExecutionBinding`, via the
     executor, which is why one instance of this class exists per binding
     rather than per server, even though start-up and call time end up
     checking the same value on two different objects. The *shared*

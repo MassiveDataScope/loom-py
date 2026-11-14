@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -39,6 +40,21 @@ class SqlWiring:
     config: SqlConfig | None
     registry: ClickHouseConnectionRegistry | None
     service: SqlQueryService
+
+    @property
+    def resources(self) -> tuple[Resource, ...]:
+        """The ClickHouse registry as the application's resource; none without a registry."""
+        registry = self.registry
+        if registry is None:
+            return ()
+        return (
+            Resource(
+                kind=ResourceKind.SQL,
+                name="clickhouse",
+                manager=lambda: registry,
+                check=registry.check,
+            ),
+        )
 
 
 class RegistryExecutors(Mapping[str, SqlExecutor]):

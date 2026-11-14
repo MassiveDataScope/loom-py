@@ -11,7 +11,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.kinds import AGENT, MCP, declare_ai_kinds
 from loom.core.execution import ExecutionKinds, Kind
 from loom.core.identity import Identity
-from loom.core.use_case.kinds import CALLER, use_case_kinds
+from loom.core.use_case.kinds import CALLER, declare_use_case_kinds
 from loom.core.use_case.markers import Agent, Caller, Exists, Input, Load, LoadById, Mcp, Query
 from loom.core.use_case.use_case import UseCase
 
@@ -103,14 +103,14 @@ class TestTheKindsRegistry:
     )
     def test_use_case_kinds_refuse_every_input_marker(self, marker: object) -> None:
         kinds = ExecutionKinds()
-        use_case_kinds(kinds)
+        declare_use_case_kinds(kinds)
 
         assert "input of execute" in (kinds.refusal(marker) or "")
         assert kinds.kind_for(marker, Any) is None
 
     def test_use_case_kinds_declare_the_caller_as_not_singleton_safe(self) -> None:
         kinds = ExecutionKinds()
-        use_case_kinds(kinds)
+        declare_use_case_kinds(kinds)
 
         assert kinds.kind_for(Caller(), Identity) is CALLER
         assert not CALLER.singleton_safe

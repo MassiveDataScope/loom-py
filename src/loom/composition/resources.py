@@ -6,6 +6,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from types import TracebackType
+
+_Exit = Callable[
+    [type[BaseException] | None, BaseException | None, TracebackType | None],
+    Awaitable[bool | None],
+]
+"""The ``__aexit__`` shape :meth:`AsyncExitStack.push_async_exit` takes."""
 
 
 class ResourceKind(StrEnum):
@@ -58,6 +65,31 @@ class Resource:
     def label(self) -> str:
         """``kind:name``, the way failures and logs name it."""
         return f"{self.kind}:{self.name}"
+
+    def recorded_exit(self, exit_: _Exit, failures: list[BaseException]) -> _Exit:
+        """*exit_*, appending a failure to close to *failures* instead of raising it.
+
+        Args:
+            exit_: The ``__aexit__`` of what :attr:`manager` returned.
+            failures: Where a failure to close is appended, noted with :attr:`label`.
+
+        Returns:
+            An ``__aexit__`` that never raises and never suppresses the error in flight.
+        """
+
+        async def recorded(
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool:
+            try:
+                await exit_(exc_type, exc, traceback)
+            except BaseException as failure:  # NOSONAR S5754
+                failure.add_note(f"while closing {self.label}")
+                failures.append(failure)
+            return False
+
+        return recorded
 
 
 def in_opening_order(resources: tuple[Resource, ...]) -> tuple[Resource, ...]:

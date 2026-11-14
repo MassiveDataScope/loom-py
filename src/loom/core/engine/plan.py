@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
 
 from loom.core.engine.kinds import AGENT, MCP
 from loom.core.execution import Kind
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey
 from loom.core.use_case.compute import ComputeFn
+from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
+from loom.core.use_case.factory import ModelRead
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
 
@@ -80,9 +83,7 @@ class CallerBinding:
 class ExecutionBinding:
     """One parameter of an execution kind, resolved per execution through its kind's resolver.
 
-    A plan holds those of ``execute``; the start-up walk of declarations
-    (:func:`~loom.core.use_case.walk.reached`) also makes them of constructor
-    and factory parameters.
+    A plan holds those of ``execute``.
 
     Args:
         name: Parameter name as declared in the signature.
@@ -101,17 +102,8 @@ class ExecutionBinding:
 class AgentBinding:
     """One ``Agent(name)`` marker parameter declared in ``execute``.
 
-    The executor resolves *agent* against the compiled agents of this
-    deployment and injects a handle bound to this execution's verified
-    caller. Unlike :class:`CallerBinding`, several may appear in one
-    signature — a use case may reach more than one named agent.
-
-    ``annotation`` is the parameter's own resolved type hint (an
-    ``AgentHandle[...]`` generic alias in practice), carried opaquely: this
-    module never imports ``loom.ai``, so it neither inspects nor names the
-    protocol it belongs to. Only the AI-pillar startup pass — which already
-    imports both sides — reads the type argument out of it, to check it
-    against the named agent's own declared output.
+    Several may appear in one signature. ``annotation`` is the parameter's
+    resolved type hint, an ``AgentHandle[...]`` alias in practice.
 
     Args:
         name: Parameter name as declared in the signature.
@@ -128,19 +120,7 @@ class AgentBinding:
 class McpBinding:
     """One ``Mcp(server, include=...)`` marker parameter declared in ``execute``.
 
-    The executor resolves *server* against the MCP servers compiled for
-    this deployment and injects a handle bound to this execution's verified
-    caller, through the resolver ``bind_mcp_resolver`` wires onto the
-    executor. A use case carrying this binding fails with ``RuntimeError``
-    at its first execution only if that resolver was never bound — naming
-    ``bind_mcp_resolver`` in the message. Like :class:`AgentBinding`,
-    several may appear in one signature — a use case may reach more than one
-    named server.
-
-    The parameter's annotation is not carried here, unlike ``AgentBinding``:
-    ``McpHandle`` has no type parameter, so nothing downstream reads a type
-    argument out of it, and storing an unread field is the abstraction the
-    project's rules forbid.
+    Several may appear in one signature.
 
     Args:
         name: Parameter name as declared in the signature.
@@ -295,6 +275,55 @@ class ExecutionPlan:
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE
     joined: frozenset[StoreKey] = frozenset()
+
+    def model_reads(self) -> tuple[ModelRead, ...]:
+        """The model each ``LoadById``, ``Load`` and ``Exists`` step reads, loads first."""
+        steps: tuple[LoadStep | ExistsStep, ...] = (*self.load_steps, *self.exists_steps)
+        return tuple(ModelRead(self.use_case_type, step.name, step.entity_type) for step in steps)
+
+    def refuse_autocommit_joined(self, transactional: Callable[[StoreKey], bool]) -> None:
+        """Refuse a joined store that cannot roll back.
+
+        Args:
+            transactional: Whether a store's unit of work can roll back.
+
+        Raises:
+            JoinedAutocommitStore: For the first joined store, by name, that cannot.
+        """
+        for key in sorted(self.joined):
+            if not transactional(key):
+                issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
+                    component=self.use_case_type, store=key
+                )
+                raise JoinedAutocommitStore(issue)
+
+    def refuse_unservable(self, catalog: StoreCatalog, factories: Collection[StoreKey]) -> None:
+        """Refuse a store this plan writes to that its invocation could not commit.
+
+        A read-only plan writes nowhere; without any unit of work every
+        execution runs bare.
+
+        Args:
+            catalog: The stores the application declares.
+            factories: The stores that have a unit of work.
+
+        Raises:
+            ConfigError: When the primary or a joined store is not declared.
+            JoinedAutocommitStore: When a joined store is not transactional.
+            UncomposedWriteStore: When a store written to has no unit of work.
+        """
+        name = self.use_case_type.__qualname__
+        if self.primary != DEFAULT_STORE:
+            catalog.require(self.primary, purpose=f"the __store__ of {name}")
+        self.refuse_autocommit_joined(
+            lambda key: catalog.require(key, purpose=f"Joined in {name}").capabilities.transactional
+        )
+        uncomposed = sorted({self.primary, *self.joined} - set(factories))
+        if factories and not self.read_only and uncomposed:
+            issue = UseCaseErrorCode.UNCOMPOSED_WRITE_STORE.issue(
+                component=self.use_case_type, store=uncomposed[0]
+            )
+            raise UncomposedWriteStore(issue)
 
     @property
     def agent_bindings(self) -> tuple[AgentBinding, ...]:

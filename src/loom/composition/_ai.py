@@ -2,27 +2,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from collections import deque
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
+from loom.composition.resources import Resource, ResourceKind
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.di.graph import ClassNode, GraphAnalysis
+from loom.core.di.graph import ClassNode, DependencyGraph, GraphAnalysis, Node, Path
+from loom.core.di.introspection import ExecutionDependency
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.kinds import AGENT, MCP
+from loom.core.engine.plan import ExecutionBinding
 from loom.core.execution import Kind
 from loom.core.identity import Identity
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
-from loom.core.use_case.walk import Reached, reached
 
 if TYPE_CHECKING:
+    import pathlib
+
     from loom.ai.compiler import AgentPlan
     from loom.ai.config import AiConfig, McpServerConfig
     from loom.ai.errors import AgentCompilationIssue
@@ -86,7 +90,7 @@ class AgentDepsFactory:
 
 @dataclass(frozen=True)
 class AiWiring:
-    """Resolved AI pillar pieces for the auto-bootstrap REST app.
+    """The agent runtime of a composed application and the ``ai:`` section it was built from.
 
     Args:
         config: Parsed ``ai:`` section, or ``None`` when absent.
@@ -96,9 +100,202 @@ class AiWiring:
             runtime.
     """
 
+    ABSENT: ClassVar[AiWiring]
+
     config: AiConfig | None
     runtime: AgentRuntime | None
     plans: tuple[AgentPlan, ...] = ()
+
+    @classmethod
+    def hosted(cls, config: AiConfig, runtime: AgentRuntime) -> AiWiring:
+        """The wiring of *runtime*, built from *config*, with the runtime's own plans."""
+        return cls(config=config, runtime=runtime, plans=runtime.plans)
+
+    @classmethod
+    def build(
+        cls,
+        ctx: ConfigContext,
+        *,
+        kernel: KernelRuntime,
+        sql_cfg: SqlConfig | None,
+        code_path: pathlib.Path,
+        manifest_agent_specs: tuple[str, ...],
+        declared: MarkerDeclarations,
+        names: Collection[str] | None = None,
+    ) -> AiWiring:
+        """Build the agent runtime the ``ai:`` section configures, without opening a connection.
+
+        Without the section the AI pillar is never imported. With it, every
+        ``Mcp()`` declaration is checked against ``ai.mcp_servers`` and
+        granted, the engine is resolved and the artifacts are compiled
+        offline; the runtime's live clients open with the application.
+
+        Args:
+            ctx: The application's configuration.
+            kernel: The kernel the runtime serves.
+            sql_cfg: The ``sql`` section, or ``None``.
+            code_path: Root the artifact globs are relative to.
+            manifest_agent_specs: Glob patterns of the manifest ``AGENTS`` attribute.
+            declared: Every ``Agent()`` and ``Mcp()`` declaration reached.
+            names: The agents to compile, those an ``Agent()`` declaration
+                names; ``None`` compiles every declared artifact. An agent left
+                out is never entered, so its MCP servers are never opened.
+
+        Returns:
+            The wiring; :attr:`ABSENT` without the section.
+
+        Raises:
+            ConfigError: When the manifest declares ``AGENTS`` and there is no
+                ``ai:`` section.
+            AgentCompilationError: When an ``Mcp()`` declaration names an
+                unknown server, the artifact sources conflict or are missing,
+                or an artifact does not compile.
+        """
+        if not ctx.has(ConfigKey.AI):
+            if manifest_agent_specs:
+                raise ConfigError(
+                    "The manifest declares AGENTS but the configuration has no 'ai:' section: "
+                    "agent artifacts need an engine and its model bindings to compile. Add the "
+                    "'ai:' section, or remove AGENTS from the manifest."
+                )
+            return cls.ABSENT
+        from loom.ai.bootstrap import build_agent_runtime
+        from loom.ai.config import AiConfig
+        from loom.ai.registry import resolve_engine_provider
+
+        ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
+        replace(declared, agents=()).verify({}, ai_cfg.mcp_servers)
+        grants = declared.mcp_grants(ai_cfg.mcp_servers)
+        provider = resolve_engine_provider(ai_cfg.engine)
+        runtime = build_agent_runtime(
+            ai_cfg,
+            root=code_path,
+            names=names,
+            specs=ai_cfg.artifact_specs(manifest_agent_specs, mcp_declared=bool(declared.mcp)),
+            engine_provider=provider,
+            registry=kernel.registry,
+            container=kernel.container,
+            deps=AgentDepsFactory(kernel.app),
+            sql=sql_cfg,
+            use_case_mcp=grants,
+        )
+        return cls.hosted(ai_cfg, runtime)
+
+    @property
+    def mcp_servers(self) -> Mapping[str, McpServerConfig]:
+        """The configured MCP servers, by name; empty without an ``ai:`` section."""
+        return self.config.mcp_servers if self.config is not None else {}
+
+    @property
+    def resources(self) -> tuple[Resource, ...]:
+        """The agent runtime as the application's resource; none without a runtime."""
+        runtime = self.runtime
+        if runtime is None:
+            return ()
+        return (Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime),)
+
+    def bind_resolvers(self, kernel: KernelRuntime) -> None:
+        """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`runtime`, if any.
+
+        Args:
+            kernel: The kernel whose executor resolves the markers; its
+                container serves ``SqlQueryService`` and, optionally,
+                ``ObservabilityRuntime``.
+        """
+        if self.runtime is None:
+            return
+        from loom.ai.runtime._handle import AgentMarkerResolver, McpMarkerResolver
+
+        container = kernel.container
+        observability = container.resolve_or_none(ObservabilityRuntime)
+        kernel.executor.bind_agent_resolver(
+            AgentMarkerResolver(
+                self.runtime,
+                sql_query_service=container.resolve(SqlQueryService),
+                observability=observability,
+            )
+        )
+        kernel.executor.bind_mcp_resolver(
+            McpMarkerResolver(self.runtime, observability=observability)
+        )
+
+
+AiWiring.ABSENT = AiWiring(config=None, runtime=None)
+
+
+@dataclass(frozen=True, slots=True)
+class ReachedDeclaration:
+    """One execution declaration a root reaches.
+
+    Attributes:
+        binding: The declaring parameter: its name, kind, declaration and annotation.
+        where: The parameter name for one the root declares itself, else the
+            path from the root to the declaring node then the name, as the
+            graph's refusals word it: ``"Market -> queries: Queries: gateway"``.
+    """
+
+    binding: ExecutionBinding
+    where: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeclarationWalk:
+    """Every execution declaration a root reaches through *graph*.
+
+    A node declares the execution kinds of its constructor or factory
+    parameters, then those of its plan's ``execute()``.
+
+    Args:
+        graph: The analysed dependency graph.
+        compiler: Holds the plan of each compiled use case.
+    """
+
+    graph: DependencyGraph
+    compiler: UseCaseCompiler
+
+    def reached(self, roots: Iterable[Node]) -> dict[Node, tuple[ReachedDeclaration, ...]]:
+        """Every declaration each of *roots* reaches, by root, in their order.
+
+        Each root is walked once, breadth first, along every edge of
+        :meth:`~loom.core.di.graph.DependencyGraph.edges`, call edges included,
+        so a called use case adds its declarations to its caller's. Each node
+        is visited once per root, under the first (shortest) path to it, so a
+        declaration appears once per parameter and path. A binding with no
+        edges, such as an instance or a zero-argument factory, ends the walk
+        there.
+
+        Args:
+            roots: The nodes to walk from.
+
+        Returns:
+            The declarations by root; a root reaching nothing maps to ``()``.
+        """
+        return {root: tuple(self._walk(root)) for root in roots}
+
+    def _walk(self, root: Node) -> Iterator[ReachedDeclaration]:
+        visited = {root}
+        pending = deque([(root, Path(root))])
+        while pending:
+            node, path = pending.popleft()
+            declared = self._declared(node)
+            if declared:
+                prefix = "" if node == root else f"{path}: "
+                yield from (ReachedDeclaration(item, prefix + item.name) for item in declared)
+            for edge in self.graph.edges(node):
+                if edge.target not in visited:
+                    visited.add(edge.target)
+                    pending.append((edge.target, path.to(edge)))
+
+    def _declared(self, node: Node) -> list[ExecutionBinding]:
+        declared = [
+            ExecutionBinding(name, dependency.kind, dependency.declaration, dependency.annotation)
+            for name, dependency in self.graph.constructor(node)
+            if isinstance(dependency, ExecutionDependency)
+        ]
+        plan = self.compiler.get_plan(node.cls) if isinstance(node, ClassNode) else None
+        if plan is not None:
+            declared.extend(plan.execution_bindings)
+        return declared
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,325 +305,140 @@ class MarkerDeclarations:
     Each declaration is paired with the component reaching it: its root's
     registered key, else the root's name. Where it is declared, on the root
     itself or on an adapter, factory or called use case along a path, is
-    :attr:`~loom.core.use_case.walk.Reached.where`, which every startup
-    message names as the parameter.
+    :attr:`ReachedDeclaration.where`, which every startup message names as
+    the parameter.
 
     Args:
         agents: The ``Agent()`` declarations, by root then path.
         mcp: The ``Mcp()`` declarations, by root then path.
     """
 
-    agents: tuple[tuple[str, Reached], ...]
-    mcp: tuple[tuple[str, Reached], ...]
+    agents: tuple[tuple[str, ReachedDeclaration], ...]
+    mcp: tuple[tuple[str, ReachedDeclaration], ...]
 
+    @classmethod
+    def of(
+        cls, analysis: GraphAnalysis, compiler: UseCaseCompiler, registry: UseCaseRegistry
+    ) -> MarkerDeclarations:
+        """Walk each root of *analysis* once and keep what it reaches of the two AI markers.
 
-def marker_declarations(
-    analysis: GraphAnalysis, compiler: UseCaseCompiler, registry: UseCaseRegistry
-) -> MarkerDeclarations:
-    """Walk each root of *analysis* once and keep what it reaches of the two AI markers.
+        A marker reached only through an adapter is kept like one in
+        ``execute()``; one behind an instance binding is never reached.
 
-    A marker reached only through an adapter is kept like one in
-    ``execute()``; one behind an instance binding is never reached.
-    """
-    by_kind: dict[Kind, list[tuple[str, Reached]]] = {AGENT: [], MCP: []}
-    for root, found in reached(analysis.roots, analysis.graph, compiler).items():
-        component = (isinstance(root, ClassNode) and registry.key_for(root.cls)) or str(root)
-        for declaration in found:
-            of_kind = by_kind.get(declaration.binding.kind)
-            if of_kind is not None:
-                of_kind.append((component, declaration))
-    return MarkerDeclarations(agents=tuple(by_kind[AGENT]), mcp=tuple(by_kind[MCP]))
+        Args:
+            analysis: The analysed dependency graph and its roots.
+            compiler: Holds the plan of each compiled use case.
+            registry: Names each root registered as a use case.
 
+        Returns:
+            The declarations found.
+        """
+        by_kind: dict[Kind, list[tuple[str, ReachedDeclaration]]] = {AGENT: [], MCP: []}
+        walk = DeclarationWalk(analysis.graph, compiler)
+        for root, found in walk.reached(analysis.roots).items():
+            component = (isinstance(root, ClassNode) and registry.key_for(root.cls)) or str(root)
+            for declaration in found:
+                of_kind = by_kind.get(declaration.binding.kind)
+                if of_kind is not None:
+                    of_kind.append((component, declaration))
+        return cls(agents=tuple(by_kind[AGENT]), mcp=tuple(by_kind[MCP]))
 
-def effective_agent_specs(
-    config_specs: tuple[str, ...],
-    manifest_specs: tuple[str, ...],
-    *,
-    has_declaring_use_case: bool,
-) -> tuple[str, ...]:
-    """Return the single artifact source of the application.
+    def verify(
+        self, plans: Mapping[str, AgentPlan], servers: Mapping[str, McpServerConfig]
+    ) -> None:
+        """Refuse every ``Agent()`` and ``Mcp()`` declaration start-up cannot satisfy.
 
-    ``ai.specs`` and the manifest ``AGENTS`` attribute are mutually exclusive:
-    an implicit precedence would silently ignore half of the agents an
-    operator declared.
+        Args:
+            plans: Every compiled agent plan, by name; empty when no runtime
+                is built, which reports every declared agent as unknown.
+            servers: Every configured MCP server, by name; empty when no
+                ``ai:`` section is present, which reports every declared
+                server as unknown.
 
-    Args:
-        config_specs: Glob patterns from ``ai.specs``.
-        manifest_specs: Glob patterns from the manifest ``AGENTS`` attribute.
-        has_declaring_use_case: Whether at least one root reaches an
-            ``Mcp()`` declaration, in ``execute()`` or through an adapter.
-            When ``True``, an empty artifact set is tolerated instead of
-            aborting: a deployment whose only AI usage is ``Mcp()`` need not
-            ship a filler agent artifact it never runs.
-            It still declares ``ai.engine`` and installs the extra:
-            ``resolve_ai`` resolves the engine provider, and
-            ``build_agent_runtime`` takes the MCP client factory from it.
+        Raises:
+            AgentCompilationError: With one issue per unknown agent, per
+                mismatched output type, then per unknown server.
+        """
+        if not self.agents and not self.mcp:
+            return
+        from loom.ai.errors import AgentCompilationError
 
-    Raises:
-        AgentCompilationError: When both sources declare artifacts, or when
-            neither does and no use case declares ``Mcp()``.
-    """
-    from loom.ai.errors import AgentCompilationError, AgentErrorCode
+        issues = [*self._agent_issues(plans), *self._mcp_issues(servers)]
+        if issues:
+            raise AgentCompilationError(issues)
 
-    if config_specs and manifest_specs:
-        raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
-    if not config_specs and not manifest_specs and not has_declaring_use_case:
-        raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
-    return config_specs or manifest_specs
+    def mcp_grants(self, servers: Mapping[str, McpServerConfig]) -> tuple[UseCaseMcpGrant, ...]:
+        """Compile every ``Mcp()`` declaration into the runtime's own grants.
 
+        Args:
+            servers: Every MCP server configured for this deployment.
 
-def resolve_ai(
-    ctx: ConfigContext,
-    *,
-    kernel: KernelRuntime,
-    sql_cfg: SqlConfig | None,
-    code_path: Path,
-    manifest_agent_specs: tuple[str, ...],
-    mcp: Sequence[tuple[str, Reached]],
-    names: Collection[str] | None = None,
-) -> AiWiring:
-    """Load the optional ``ai:`` section into its compiled agent runtime.
+        Returns:
+            One grant per declaration, in order; its parameter is where the
+            declaration is.
 
-    Absent section -> empty wiring, and the AI pillar is never imported.
-    Present section -> the configured engine is resolved, the declared
-    artifacts are compiled offline, and the runtime is built without opening
-    a single connection: its live clients open inside the app lifespan.
+        Raises:
+            AgentCompilationError: When a declaration names a server not in
+                *servers*, which :meth:`verify` refuses first.
+        """
+        if not self.mcp:
+            return ()
+        from loom.ai.compiler.phases import compile_mcp_capability
+        from loom.ai.errors import AgentCompilationError
+        from loom.ai.runtime import UseCaseMcpGrant
 
-    Args:
-        mcp: Every ``Mcp()`` declaration reached, see
-            :class:`MarkerDeclarations` — already verified against
-            ``ai.mcp_servers`` by ``verify_mcp_markers``, before this
-            function ever runs.
-        names: The agents to compile, those an ``Agent()`` declaration names; ``None``
-            compiles every declared artifact. An agent left out is never
-            entered, so its MCP servers are never opened.
-    """
-    if not ctx.has(ConfigKey.AI):
-        return AiWiring(config=None, runtime=None)
-    from loom.ai.bootstrap import build_agent_runtime
-    from loom.ai.config import AiConfig
-    from loom.ai.registry import resolve_engine_provider
-
-    ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
-    provider = resolve_engine_provider(ai_cfg.engine)
-    specs = effective_agent_specs(
-        ai_cfg.specs, manifest_agent_specs, has_declaring_use_case=bool(mcp)
-    )
-    runtime = build_agent_runtime(
-        ai_cfg,
-        root=code_path,
-        names=names,
-        specs=specs,
-        engine_provider=provider,
-        registry=kernel.registry,
-        container=kernel.container,
-        deps=AgentDepsFactory(kernel.app),
-        sql=sql_cfg,
-        use_case_mcp=compile_use_case_mcp(mcp, ai_cfg.mcp_servers),
-    )
-    return AiWiring(config=ai_cfg, runtime=runtime, plans=runtime.plans)
-
-
-def compile_use_case_mcp(
-    mcp: Sequence[tuple[str, Reached]],
-    servers: Mapping[str, McpServerConfig],
-) -> tuple[UseCaseMcpGrant, ...]:
-    """Compile every verified ``Mcp()`` declaration into the runtime's own grants.
-
-    ``verify_mcp_markers`` already checked every declaration's server name
-    against this same ``servers`` mapping, so the shared compile helper's own
-    ``MCP_SERVER_UNKNOWN`` is unreachable from this call by construction. The
-    caller still raises on one anyway rather than dropping it silently,
-    fail-closed should that ordering ever break — one line, no new
-    vocabulary.
-
-    Args:
-        mcp: Every ``Mcp()`` declaration reached, with the component
-            reaching it, see :class:`MarkerDeclarations`.
-        servers: Every MCP server configured for this deployment.
-
-    Returns:
-        One ``UseCaseMcpGrant`` per declaration, in order; its parameter is
-        where the declaration is.
-
-    Raises:
-        AgentCompilationError: Only if ``verify_mcp_markers``'s ordering were
-            ever broken and an unknown server reached this call unverified.
-    """
-    from loom.ai.compiler.phases import compile_mcp_capability
-    from loom.ai.errors import AgentCompilationError
-    from loom.ai.runtime import UseCaseMcpGrant
-
-    grants: list[UseCaseMcpGrant] = []
-    issues: list[AgentCompilationIssue] = []
-    for component, found in mcp:
-        marker = found.binding.declaration
-        capability, found_issues = compile_mcp_capability(
-            marker.server, include=marker.include, exclude=(), servers=servers, component=component
-        )
-        issues.extend(found_issues)
-        if capability is not None:
+        grants: list[UseCaseMcpGrant] = []
+        for component, found in self.mcp:
+            marker = found.binding.declaration
+            capability, issues = compile_mcp_capability(
+                marker.server,
+                include=marker.include,
+                exclude=(),
+                servers=servers,
+                component=component,
+            )
+            if capability is None:
+                raise AgentCompilationError(issues)
             grants.append(
                 UseCaseMcpGrant(capability=capability, usecase=component, parameter=found.where)
             )
-    if issues:
-        raise AgentCompilationError(issues)
-    return tuple(grants)
+        return tuple(grants)
 
+    def _agent_issues(self, plans: Mapping[str, AgentPlan]) -> Iterator[AgentCompilationIssue]:
+        from loom.ai.errors import AgentErrorCode
 
-def verify_mcp_markers(mcp: Sequence[tuple[str, Reached]], ctx: ConfigContext) -> None:
-    """Abort start-up when an ``Mcp()`` declaration names a server not configured.
+        available = tuple(plans)
+        for component, found in self.agents:
+            agent = found.binding.declaration.name
+            plan = plans.get(agent)
+            if plan is None:
+                yield AgentErrorCode.AGENT_MARKER_UNKNOWN.issue(
+                    component=component, parameter=found.where, agent=agent, available=available
+                )
+                continue
+            expected_args = get_args(found.binding.annotation)
+            if not expected_args:
+                continue
+            expected, declared = expected_args[0], plan.output.loom_type.type
+            if expected is declared:
+                continue
+            yield AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH.issue(
+                component=component,
+                parameter=found.where,
+                agent=agent,
+                expected=getattr(expected, "__name__", str(expected)),
+                declared=getattr(declared, "__name__", str(declared)),
+            )
 
-    Runs immediately before the ``resolve_ai`` call, not in the
-    ``verify_agent_markers`` slot after it: an unknown server must die here
-    so the shared MCP capability compiler (``compile_mcp_capability``) can
-    never be asked to report it for a use case — one condition, one message.
+    def _mcp_issues(
+        self, servers: Mapping[str, McpServerConfig]
+    ) -> Iterator[AgentCompilationIssue]:
+        from loom.ai.errors import AgentErrorCode
 
-    The AI section is decoded a second time here, once per boot, only when at
-    least one declaration is reached — ``ConfigContext.section`` caches
-    nothing. Accepted overhead, in exchange for one call site that also
-    covers the no-``ai:``-section case instead of two call sites keyed
-    on whether the section exists.
-
-    Args:
-        mcp: Every ``Mcp()`` declaration reached, see :class:`MarkerDeclarations`.
-        ctx: Deployment configuration, read for ``ai.mcp_servers`` only when
-            at least one declaration is reached.
-
-    Raises:
-        AgentCompilationError: Aggregating one issue per unknown server name,
-            each naming where it is declared.
-    """
-    if not mcp:
-        return
-    import loom.ai._startup as startup
-    from loom.ai.config import AiConfig
-
-    servers = ctx.section(ConfigKey.AI, AiConfig).mcp_servers if ctx.has(ConfigKey.AI) else {}
-    startup.verify_mcp_markers(mcp, servers)
-
-
-def bind_agent_resolver(result: KernelRuntime, ai: AiWiring) -> None:
-    """Wire the executor's ``Agent()`` marker resolver, once the AI runtime exists.
-
-    ``KernelRuntime.executor`` is built before this function can run — the AI
-    pillar it depends on is optional and resolved afterwards — so binding
-    happens here rather than at kernel construction. A no-op when no
-    ``ai:`` section is present: a use case declaring ``Agent()`` in that
-    deployment still compiles, and fails informatively at its first
-    execution instead, which is what an unresolved resolver already does.
-
-    ``SqlQueryService`` is resolved here, once, and handed to the resolver
-    rather than left for a handle to reach into the container for later:
-    it is always registered by this point (``_register_sql_service`` runs
-    before this function).
-    """
-    if ai.runtime is None:
-        return
-    from loom.ai.runtime._handle import AgentMarkerResolver
-
-    observability = (
-        result.container.resolve(ObservabilityRuntime)
-        if result.container.is_registered(ObservabilityRuntime)
-        else None
-    )
-    sql_query_service = result.container.resolve(SqlQueryService)
-    resolver = AgentMarkerResolver(
-        ai.runtime, sql_query_service=sql_query_service, observability=observability
-    )
-    result.executor.bind_agent_resolver(resolver)
-
-
-def bind_mcp_resolver(result: KernelRuntime, ai: AiWiring) -> None:
-    """Wire the executor's ``Mcp()`` marker resolver, once the AI runtime exists.
-
-    Mirrors :func:`bind_agent_resolver`, on the executor's second resolver.
-    A no-op only for a deployment where no use case declares ``Mcp()``: one
-    that does never reaches this function, because ``verify_mcp_markers``
-    already aborted start-up with ``MCP_MARKER_UNKNOWN`` against an empty
-    server mapping. The executor's own "no resolver bound" refusal is
-    therefore unreachable through this composition root, and stays as the
-    guard for a host that wires its own.
-    """
-    if ai.runtime is None:
-        return
-    from loom.ai.runtime._handle import McpMarkerResolver
-
-    observability = (
-        result.container.resolve(ObservabilityRuntime)
-        if result.container.is_registered(ObservabilityRuntime)
-        else None
-    )
-    resolver = McpMarkerResolver(ai.runtime, observability=observability)
-    result.executor.bind_mcp_resolver(resolver)
-
-
-def verify_agent_markers(agents: Sequence[tuple[str, Reached]], ai: AiWiring) -> None:
-    """Abort start-up when an ``Agent()`` declaration cannot be satisfied.
-
-    Runs in the slot between 'resolve_ai' and 'result.factory.verify()':
-    every compiled agent plan already exists here, whether or not an ``ai:``
-    section is present — an absent section means ``ai.plans`` is simply
-    empty, so every declared agent is reported unknown the same way a typo
-    would be. The check itself is shared with :func:`reject_ai_markers`, which calls the
-    same :func:`~loom.ai._startup.verify_agent_markers` with an always-empty
-    ``plans_by_name`` for an entry point that never builds an AI runtime at all.
-
-    Args:
-        agents: Every ``Agent()`` declaration reached, see :class:`MarkerDeclarations`.
-        ai: The (possibly empty) AI wiring 'resolve_ai' built.
-
-    Raises:
-        AgentCompilationError: Aggregating one issue per unknown agent name
-            and per mismatched output type, so a single run reports every
-            problem at once.
-    """
-    if not agents:
-        return
-    import loom.ai._startup as startup
-
-    startup.verify_agent_markers(agents, {plan.name: plan for plan in ai.plans})
-
-
-def reject_ai_markers(declared: MarkerDeclarations) -> None:
-    """Abort start-up when an entry point without agents reaches an ``Agent()`` or ``Mcp()``.
-
-    An entry point whose recipe declares ``agents=False`` (a task worker, for
-    instance) never builds an AI runtime, so a declaration reached in
-    ``execute()`` or through an adapter would compile and only fail once
-    something actually invoked it. Refusing at start-up instead reuses the
-    checks an agent-hosting entry point runs,
-    :func:`loom.ai._startup.verify_agent_markers` then
-    :func:`loom.ai._startup.verify_mcp_markers`, called with nothing
-    configured, which reports every declared name as unknown.
-
-    Args:
-        declared: Every declaration the roots reach, see :class:`MarkerDeclarations`.
-
-    Raises:
-        AgentCompilationError: Naming each declaring component and where the
-            declaration is, when at least one is reached.
-    """
-    if not declared.agents and not declared.mcp:
-        return
-    import loom.ai._startup as startup
-
-    startup.verify_agent_markers(declared.agents, {})
-    startup.verify_mcp_markers(declared.mcp, {})
-
-
-def reject_manifest_agents_without_ai_section(
-    ctx: ConfigContext,
-    manifest_agent_specs: tuple[str, ...],
-) -> None:
-    """Refuse a manifest declaring agents in an application with no ``ai:`` section.
-
-    Raises:
-        ConfigError: When ``AGENTS`` names artifacts nothing can compile.
-    """
-    if manifest_agent_specs and not ctx.has(ConfigKey.AI):
-        raise ConfigError(
-            "The manifest declares AGENTS but the configuration has no 'ai:' section: "
-            "agent artifacts need an engine and its model bindings to compile. Add the "
-            "'ai:' section, or remove AGENTS from the manifest."
-        )
+        available = tuple(servers)
+        for component, found in self.mcp:
+            server = found.binding.declaration.server
+            if server not in servers:
+                yield AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
+                    component=component, parameter=found.where, server=server, available=available
+                )

@@ -1,11 +1,9 @@
 """Boot a plain application, no ``ai:`` section, no ``Agent()`` marker (FR-050).
 
 Run by ``test_no_agent_marker_containment.py`` in a fresh interpreter: the AI
-pillar is optional, and several docstrings on the ``create_app`` path
-(``resolve_ai``, ``verify_agent_markers``) argue at length that neither
-guard imports ``loom.ai`` when no ``ai:`` section is present. Nothing here
-proves that on its own — this script is the proof, isolated from every other
-suite's already-imported modules, and from ``conftest`` modules (this one
+pillar is optional, and the ``create_app`` path imports no ``loom.ai`` when
+no ``ai:`` section is present. This script is the proof, isolated from every
+other suite's already-imported modules, and from ``conftest`` modules (this one
 included) that import ``loom.ai.abc`` in their own header and would poison a
 same-process assertion.
 

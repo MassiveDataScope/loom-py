@@ -398,6 +398,27 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             raise AgentCompilationError(issues)
         _warn_unused_prices(self.prices, self.models)
 
+    def artifact_specs(self, manifest: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
+        """The one artifact source of the application: :attr:`specs` or the manifest ``AGENTS``.
+
+        Args:
+            manifest: Glob patterns of the manifest ``AGENTS`` attribute.
+            mcp_declared: Whether a root reaches an ``Mcp()`` declaration; then
+                no artifact at all is accepted.
+
+        Returns:
+            The glob patterns of whichever source declares artifacts.
+
+        Raises:
+            AgentCompilationError: When both sources declare artifacts, or
+                neither does and no ``Mcp()`` declaration is reached.
+        """
+        if self.specs and manifest:
+            raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
+        if not self.specs and not manifest and not mcp_declared:
+            raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
+        return self.specs or manifest
+
 
 def _warn_unused_prices(
     prices: Mapping[str, ModelPrice], models: Mapping[str, InferenceTarget]

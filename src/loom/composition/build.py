@@ -6,8 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
 from loom.composition.application import Application
-from loom.composition.pipeline import compose
-from loom.composition.pipeline.load import load_source as load_source
+from loom.composition.phases import compose_application
 from loom.composition.source import CompositionSource
 from loom.core.config import ConfigError, ConfigResolver
 from loom.core.environment import Environment
@@ -78,7 +77,7 @@ def create_app(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    source = load_source(
+    source = CompositionSource.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,
@@ -150,7 +149,7 @@ def build_application(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    source = load_source(
+    source = CompositionSource.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,
@@ -161,35 +160,20 @@ def build_application(
     return compose_application(source, adapter, modules=modules)
 
 
-def compose_application(
-    source: CompositionSource,
-    adapter: Adapter[object],
-    *,
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
-) -> Application:
-    """Compose the application *adapter* asks for from an already loaded *source*.
-
-    :func:`build_application` loads the source from files; a test or a host
-    that holds its configuration in memory calls this directly.
-
-    Args:
-        source: Configuration, environment and code of the application.
-        adapter: Whose recipe to compose.
-        modules: DI modules run before repositories are registered; see
-            :func:`create_app`.
-
-    Returns:
-        The composed, closed application.
-
-    Raises:
-        ConfigError: When a model belongs to a store the catalog does not
-            serve, or the store section is invalid, or a job backend cannot be built.
-        JoinedAutocommitStore: When a use case declares ``Joined`` on a store
-            that cannot roll back.
-        UncomposedWriteStore: When a use case or job writes to a store with
-            no unit of work.
-        DeployCheckError: When a deploy check of level error fails in a
-            deployed environment.
-        ReservedBindingError: When a module binds a framework-owned key.
-    """
-    return compose(source, adapter, modules=modules)
+def load_source(
+    *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    caller: str = "load_source",
+) -> CompositionSource:
+    """Load the source an application composes from; see :meth:`CompositionSource.load`."""
+    return CompositionSource.load(
+        *config_paths,
+        config_dir=config_dir,
+        environment=environment,
+        code_path=code_path,
+        resolvers=resolvers,
+        caller=caller,
+    )

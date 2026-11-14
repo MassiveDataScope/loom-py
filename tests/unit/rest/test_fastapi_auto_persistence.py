@@ -17,7 +17,7 @@ import pytest
 import loom.core.plugins.entrypoints as entrypoints_module
 import loom.core.repository.mongo.backend as mongo_backend_module
 import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
-from loom.composition import AppConfig
+from loom.composition import AiWiring, AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
@@ -76,12 +76,7 @@ def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
 @pytest.fixture
 def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _agents_only())
-    # Composition now refuses manifest agents when the ai section is absent.
-    # These tests select a persistence backend; they never build an agent runtime.
-    monkeypatch.setattr(
-        "loom.composition.pipeline.ai.reject_manifest_agents_without_ai_section",
-        lambda _ctx, _specs: None,
-    )
+    monkeypatch.setattr(AiWiring, "build", classmethod(lambda cls, *args, **kwargs: cls.ABSENT))
 
 
 class TestBackendSelection:

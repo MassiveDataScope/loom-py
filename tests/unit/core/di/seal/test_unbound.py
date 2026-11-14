@@ -25,8 +25,8 @@ from loom.core.engine.kinds import MCP
 from loom.core.execution import Kind
 from loom.core.use_case import Mcp, UseCase
 from tests.helpers.composition import Serving, composition_source
-from tests.unit.composition.pipeline.components import AcmeMcpUser, AcmeRecord
-from tests.unit.composition.pipeline.paths import SQLITE
+from tests.unit.composition.phases.components import AcmeMcpUser, AcmeRecord
+from tests.unit.composition.phases.paths import SQLITE
 from tests.unit.core.di.graph import acme
 
 ACME_CRM = Kind("acme-crm")

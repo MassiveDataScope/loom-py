@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from types import TracebackType
 from typing import TYPE_CHECKING
 
 from loom.composition.errors import ApplicationAlreadyOpenError
@@ -22,12 +21,6 @@ if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
     from loom.core.observability.runtime import ObservabilityRuntime
-
-_Exit = Callable[
-    [type[BaseException] | None, BaseException | None, TracebackType | None],
-    Awaitable[bool | None],
-]
-"""The ``__aexit__`` shape :meth:`AsyncExitStack.push_async_exit` takes."""
 
 
 @dataclass(eq=False, kw_only=True)
@@ -131,7 +124,7 @@ class Application:
                         await resource.check()
                     manager = resource.manager()
                     await manager.__aenter__()
-                    stack.push_async_exit(_recorded(manager.__aexit__, resource, failures))
+                    stack.push_async_exit(resource.recorded_exit(manager.__aexit__, failures))
                 opened = True
                 yield self
         except BaseException as error:  # NOSONAR S5754
@@ -145,24 +138,6 @@ class Application:
             self._open = False
         if failures:
             raise _close_error(failures)  # NOSONAR S112
-
-
-def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -> _Exit:
-    """Record a failure to close instead of letting it replace the error in flight."""
-
-    async def recorded(
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool:
-        try:
-            await exit_(exc_type, exc, traceback)
-        except BaseException as failure:  # NOSONAR S5754
-            failure.add_note(f"while closing {resource.label}")
-            failures.append(failure)
-        return False
-
-    return recorded
 
 
 def _close_error(failures: list[BaseException]) -> BaseException:

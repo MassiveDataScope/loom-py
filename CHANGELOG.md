@@ -421,6 +421,12 @@
 
 ### execution
 
+- **engine (execution plan bindings):** `ExecutionPlan.agent_bindings` and
+  `ExecutionPlan.mcp_bindings` are read-only properties derived from
+  `ExecutionPlan.execution_bindings`; they are no longer constructor fields.
+  Migration: build the plan with `execution_bindings` (`ExecutionBinding`
+  entries for the `agent` and `mcp` kinds); reading the two properties is
+  unchanged.
 - **execution, identity (one acting identity):** the identity a request runs
   as governs everything that request causes, for its whole life: nested
   executions, the tasks it starts (even those that outlive it), the jobs and
@@ -629,18 +635,35 @@
   resolves `RuntimeExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
   `ObservabilityRuntime` or `StoreCatalog` while start-up validates the
   container gets the application's own instances.
-- **composition:** a composed application logs one structured info event per
-  start-up phase through `loom.core.logger` (logger
-  `loom.composition.pipeline`): `loom.composition.planned` (`adapter`,
-  `use_cases`, `jobs`), `loom.composition.persisted` (`backends`: each
-  store and the backend that built it), `loom.composition.registered`
-  (`keys`, `modules`, `overrides`), `loom.composition.ai_wired` (`agents`,
-  `mcp_servers`), `loom.composition.sealed` and `loom.composition.composed`,
-  each with its `duration_ms` (`composed` carries the total). It keeps the
+- **composition:** a composed application logs one structured info event,
+  `loom.composition.composed`, through `loom.core.logger` (logger
+  `loom.composition.phases`), with `adapter`, `use_cases`, `jobs`, `backends`
+  (each store and the backend that built it), `keys`, `modules`, `overrides`,
+  `agents`, `mcp_servers`, `phase_ms` (the milliseconds of `plan`,
+  `build_stores`, `register`, `analysed`, `wire_ai` and `seal`) and
+  `duration_ms` (the total). It keeps the
   `[BOOT]` container and use-case compilation lines of `bootstrap_app`, and
   its `[BOOT] Registering module` line for every module it runs: the
   caller's, the overrides, each store's repository module and the cache
   module. It no longer logs the validation and completion lines.
+- **composition:** when no agent runtime is built (an entry point without
+  agents, or one hosting agents with no `ai:` section), an unknown `Agent()`
+  and an unknown `Mcp()` declaration are reported in one
+  `AgentCompilationError`, agents first. Before, the first reported only the
+  agents and the second only the MCP servers.
+- **composition (new API):** `CompositionSource.load(*config_paths, ...)`
+  loads a source as `load_source` does; `load_source` stays. `AiWiring.ABSENT`
+  is the wiring of an application without agents, `AiWiring.hosted(config,
+  runtime)` the wiring of a built runtime, `AiWiring.build(...)` builds the
+  runtime the `ai:` section configures, `AiWiring.bind_resolvers(kernel)`
+  binds the executor's `Agent()` and `Mcp()` resolvers over its runtime, and
+  `AiWiring.mcp_servers` / `AiWiring.resources` and `SqlWiring.resources`
+  expose the configured servers and the resources each owns.
+  `LoomContainer.resolve_or_none(key)` resolves a key or answers `None` when
+  nothing is bound. `CacheGateways.named()` yields each gateway once with its
+  name. `ExecutionPlan.model_reads()` and
+  `ExecutionPlan.refuse_autocommit_joined(transactional)` expose the plan's
+  lookup reads and its joined-store rule.
 - **composition:** a composed application validates its container when it is
   sealed, after the job service, SQL and AI wiring, instead of right after its
   modules ran. When an `APPLICATION` provider fails and the job backend, the
@@ -732,13 +755,12 @@
   method or any other callable is still called with no arguments and is
   opaque to the graph. A factory function with a required parameter used to
   fail with `TypeError` at its first resolve.
-- **use_case (new API):** `loom.core.use_case.walk.reached(roots, graph, compiler)`
-  returns, for each root, every execution-kind declaration it reaches through
-  the dependency graph: those of its own and its dependencies' constructor
-  and factory parameters, and of the `execute()` of the root and of the use
-  cases it reaches through call edges, each as a `Reached(binding, where)` naming the path to
-  the parameter. Each root is walked once and each node visited once. It
-  runs at start-up only.
+- **composition:** start-up walks, for each root, every execution-kind
+  declaration it reaches through the dependency graph: those of its own and
+  its dependencies' constructor and factory parameters, and of the
+  `execute()` of the root and of the use cases it reaches through call edges,
+  each named by the path to the parameter. Each root is walked once and each
+  node visited once. It runs at start-up only.
 - **di:** a composed application's seal builds its singletons with no
   execution: those its use cases, jobs and callbacks reach first, then every
   other `APPLICATION` binding, as `validate()` does. A singleton the graph
@@ -884,11 +906,11 @@
 - **composition:** `loom.composition.build` no longer re-exports
   `configure_job_service`, `reject_manifest_agents_without_ai_section`,
   `load_application_config` or `add_code_path`. A test that patched them there
-  patches the phase module that calls them instead:
-  `loom.composition.pipeline.registration.configure_job_service`,
-  `loom.composition.pipeline.ai.reject_manifest_agents_without_ai_section`,
-  `loom.composition.pipeline.load.load_application_config` and
-  `loom.composition.pipeline.load.add_code_path`.
+  patches the module that calls them instead:
+  `loom.composition.phases.configure_job_service`,
+  `loom.composition.phases.reject_manifest_agents_without_ai_section`,
+  `loom.composition.source.load_application_config` and
+  `loom.composition.source.add_code_path`.
 - **testing:** `HttpTestHarness.build_app` composes its application through
   the same pipeline as `create_app`, with the new `Recipe.lenient` flag: as
   before, it runs no deploy check, does not verify use-case dependencies,
@@ -899,7 +921,7 @@
   `CallerBoundSql`, `ObservabilityRuntime`, `StoreCatalog`,
   `UseCaseRegistry`, `ApplicationInvoker` and the unconfigured cache keys, so
   a use case injecting one of them is served. It logs the
-  `loom.composition.*` phase events. It no longer calls the deprecated
+  `loom.composition.composed` event. It no longer calls the deprecated
   `bootstrap_app`.
 - **testing:** `HttpTestHarness.inject_repo` also binds the fake under each
   capability its class declares, as a store binds its repository: the
@@ -943,7 +965,7 @@
   in `execute()` or through an adapter, is still not an agent health check.
   The unexported modules `loom.core.use_case.agent_markers` and
   `loom.core.use_case.mcp_markers` (`declaring_agent_bindings`,
-  `declaring_mcp_bindings`) are removed; `loom.core.use_case.walk.reached`
+  `declaring_mcp_bindings`) are removed; the start-up walk of the composition
   replaces them.
 - **ai:** an MCP call that may have run on the server and failed (a cut
   connection, the client's own timeout, any client-made JSON-RPC code even

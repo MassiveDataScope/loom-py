@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-import loom.composition.pipeline as pipeline
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.composition import phases
 from tests.integration.ai.adapters.conftest import AgentlessHost, Compose
 from tests.integration.ai.adapters.doubles import (
     PATH_FROM_CALLBACK,
@@ -33,43 +33,58 @@ from tests.integration.ai.adapters.doubles import (
 def seals(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """Every application sealed while the test runs."""
     sealed: list[object] = []
-    seal = pipeline.seal
+    seal = phases.seal
 
-    def recorded(registered: Any) -> None:
-        sealed.append(registered)
-        seal(registered)
+    def recorded(*args: Any) -> None:
+        sealed.append(args)
+        seal(*args)
 
-    monkeypatch.setattr(pipeline, "seal", recorded)
+    monkeypatch.setattr(phases, "seal", recorded)
     return sealed
 
 
 class TestUnknownNameThroughAnAdapter:
     @pytest.mark.parametrize(
-        ("bindings", "code", "path"),
+        ("host", "bindings", "code", "path"),
         [
             (
+                None,
                 {"quotes": AcmeTypoQuotes, "advice": AcmeFakeAdvice()},
                 AgentErrorCode.MCP_MARKER_UNKNOWN,
                 PATH_TO_GATEWAY,
             ),
             (
+                None,
                 {"quotes": AcmeFakeQuotes(), "advice": AcmeTypoAdvice},
                 AgentErrorCode.AGENT_MARKER_UNKNOWN,
                 PATH_TO_ANALYST,
             ),
+            (
+                AgentlessHost((AcmeMarket,)),
+                {"advice": AcmeFakeAdvice()},
+                AgentErrorCode.MCP_MARKER_UNKNOWN,
+                PATH_TO_GATEWAY,
+            ),
+            (
+                AgentlessHost((AcmeMarket,)),
+                {"quotes": AcmeFakeQuotes()},
+                AgentErrorCode.AGENT_MARKER_UNKNOWN,
+                PATH_TO_ANALYST,
+            ),
         ],
-        ids=["server", "agent"],
+        ids=["hosted-server", "hosted-agent", "agentless-server", "agentless-agent"],
     )
-    def test_fails_in_the_ai_phase_naming_the_path(
+    def test_fails_before_seal_naming_the_path(
         self,
         compose: Compose,
         seals: list[object],
+        host: AgentlessHost | None,
         bindings: dict[str, object],
         code: AgentErrorCode,
         path: str,
     ) -> None:
         with pytest.raises(AgentCompilationError) as raised:
-            compose(**bindings)
+            compose(host=host, **bindings)
 
         assert {issue.code for issue in raised.value.issues} == {code}
         assert path in str(raised.value)
@@ -91,37 +106,6 @@ class TestUnknownToolThroughAnAdapter:
 
 
 class TestHostWithoutAgents:
-    @pytest.mark.parametrize(
-        ("bindings", "code", "path"),
-        [
-            (
-                {"advice": AcmeFakeAdvice()},
-                AgentErrorCode.MCP_MARKER_UNKNOWN,
-                PATH_TO_GATEWAY,
-            ),
-            (
-                {"quotes": AcmeFakeQuotes()},
-                AgentErrorCode.AGENT_MARKER_UNKNOWN,
-                PATH_TO_ANALYST,
-            ),
-        ],
-        ids=["server", "agent"],
-    )
-    def test_refuses_an_adapter_declaration_naming_the_path(
-        self,
-        compose: Compose,
-        seals: list[object],
-        bindings: dict[str, object],
-        code: AgentErrorCode,
-        path: str,
-    ) -> None:
-        with pytest.raises(AgentCompilationError) as raised:
-            compose(host=AgentlessHost((AcmeMarket,)), **bindings)
-
-        assert {issue.code for issue in raised.value.issues} == {code}
-        assert path in str(raised.value)
-        assert seals == []
-
     def test_refuses_a_callback_reaching_an_adapter_declaration(
         self, compose: Compose, seals: list[object]
     ) -> None:

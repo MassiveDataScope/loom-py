@@ -52,7 +52,7 @@ class TestGraphReadAtStartupOnly:
     ) -> None:
         walks: list[object] = []
         edge_reads: list[Node] = []
-        walk, edges = _ai.reached, DependencyGraph.edges
+        walk, edges = _ai.DeclarationWalk.reached, DependencyGraph.edges
 
         def counted_walk(*args: Any) -> Any:
             walks.append(args)
@@ -62,7 +62,7 @@ class TestGraphReadAtStartupOnly:
             edge_reads.append(node)
             return edges(graph, node)
 
-        monkeypatch.setattr(_ai, "reached", counted_walk)
+        monkeypatch.setattr(_ai.DeclarationWalk, "reached", counted_walk)
         monkeypatch.setattr(DependencyGraph, "edges", counted_edges)
         application = compose(AcmeMarket, AcmeHistory, advice=AcmeFakeAdvice())
         runtime = application.ai.runtime

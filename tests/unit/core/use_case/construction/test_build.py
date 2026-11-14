@@ -12,7 +12,7 @@ from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.repository.dependency import classify_key
 from loom.core.use_case.factory import UseCaseFactory
-from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
+from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
 from loom.core.use_case.markers import Caller
 
 
@@ -63,7 +63,7 @@ class TestConstructionBuild:
 
     def test_a_constructor_caller_needs_an_execution_to_build(self) -> None:
         container = LoomContainer(classify_key=classify_key)
-        use_case_kinds(container.kinds)
+        declare_use_case_kinds(container.kinds)
         container.kinds.bind(CALLER, CallerResolver())
         factory = UseCaseFactory(container)
 
