@@ -138,11 +138,12 @@ def _literal_codes() -> list[str]:
     return found
 
 
-def test_the_lint_sees_the_whole_hierarchy() -> None:
-    """A subclass of a pillar error is an error class too; the catalogue is in."""
-    names = _error_classes()
-    assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
-    assert "UnsupportedFormatError" in names
+class TestErrorPlacementLint:
+    def test_the_lint_sees_the_whole_hierarchy(self) -> None:
+        """A subclass of a pillar error is an error class too; the catalogue is in."""
+        names = _error_classes()
+        assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
+        assert "UnsupportedFormatError" in names
 
 
 def _outside_a_family() -> list[str]:
@@ -155,21 +156,19 @@ def _outside_a_family() -> list[str]:
     ]
 
 
-def test_every_error_code_is_a_catalogue_member() -> None:
-    """R1: a code is declared once, in a catalogue; no class spells one as a string."""
-    assert _literal_codes() == []
+class TestErrorPlacement:
+    def test_every_error_code_is_a_catalogue_member(self) -> None:
+        """R1: a code is declared once, in a catalogue; no class spells one as a string."""
+        assert _literal_codes() == []
 
+    def test_every_error_belongs_to_a_family(self) -> None:
+        """R2: a transport tells a 4xx from a 5xx, and what to retry, by the family alone."""
+        assert _outside_a_family() == []
 
-def test_every_error_belongs_to_a_family() -> None:
-    """R2: a transport tells a 4xx from a 5xx, and what to retry, by the family alone."""
-    assert _outside_a_family() == []
+    def test_core_error_subclasses_live_in_an_errors_module(self) -> None:
+        """R3: a ``LoomError`` subclass lives under ``core/errors/`` or in an errors module."""
+        assert _misplaced() == []
 
-
-def test_core_error_subclasses_live_in_an_errors_module() -> None:
-    """R3: a ``LoomError`` subclass lives under ``core/errors/`` or in an errors module."""
-    assert _misplaced() == []
-
-
-def test_core_imports_no_web_package() -> None:
-    """R5: core errors say what failed; a transport maps them."""
-    assert _web_imports_in_core() == []
+    def test_core_imports_no_web_package(self) -> None:
+        """R5: core errors say what failed; a transport maps them."""
+        assert _web_imports_in_core() == []

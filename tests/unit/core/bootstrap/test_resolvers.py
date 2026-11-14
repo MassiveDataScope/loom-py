@@ -13,7 +13,7 @@ from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Agent, Mcp
 
 
-class _Config:
+class AcmeResolverConfig:
     pass
 
 
@@ -41,32 +41,32 @@ def _binds(scope: Scope) -> object:
     return module
 
 
-def test_a_per_execution_adapter_gets_handles_from_the_kernel_resolvers() -> None:
-    kernel = create_kernel(
-        config=_Config(),
-        use_cases=(),
-        modules=(_binds(Scope.REQUEST),),  # type: ignore[arg-type]
-        agent_resolver=_agent,
-        mcp_resolver=_mcp,
-    )
-
-    with ExecutionScope(ANONYMOUS):
-        crm = kernel.container.resolve(AcmeCrm)
-
-    assert crm.crm == ("mcp", "acme-crm", ("find_*",), ANONYMOUS)
-    assert crm.triage == ("agent", "acme-triage", ANONYMOUS)
-
-
-def test_until_call_time_handles_a_singleton_holding_them_cannot_be_built() -> None:
-    with pytest.raises(BootstrapError) as caught:
-        create_kernel(
-            config=_Config(),
+class TestKernelLegacyResolvers:
+    def test_a_per_execution_adapter_gets_handles_from_the_kernel_resolvers(self) -> None:
+        kernel = create_kernel(
+            config=AcmeResolverConfig(),
             use_cases=(),
-            modules=(_binds(Scope.APPLICATION),),  # type: ignore[arg-type]
+            modules=(_binds(Scope.REQUEST),),  # type: ignore[arg-type]
             agent_resolver=_agent,
             mcp_resolver=_mcp,
         )
 
-    cause = caught.value.__cause__
-    assert isinstance(cause, ResolutionError)
-    assert isinstance(cause.__cause__, ExecutionRequired)
+        with ExecutionScope(ANONYMOUS):
+            crm = kernel.container.resolve(AcmeCrm)
+
+        assert crm.crm == ("mcp", "acme-crm", ("find_*",), ANONYMOUS)
+        assert crm.triage == ("agent", "acme-triage", ANONYMOUS)
+
+    def test_until_call_time_handles_a_singleton_holding_them_cannot_be_built(self) -> None:
+        with pytest.raises(BootstrapError) as caught:
+            create_kernel(
+                config=AcmeResolverConfig(),
+                use_cases=(),
+                modules=(_binds(Scope.APPLICATION),),  # type: ignore[arg-type]
+                agent_resolver=_agent,
+                mcp_resolver=_mcp,
+            )
+
+        cause = caught.value.__cause__
+        assert isinstance(cause, ResolutionError)
+        assert isinstance(cause.__cause__, ExecutionRequired)

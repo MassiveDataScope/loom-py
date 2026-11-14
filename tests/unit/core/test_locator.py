@@ -58,257 +58,262 @@ def _write(tmp_path: Path, name: str, config: dict[str, object]) -> str:
     return str(path)
 
 
-def test_a_scoped_application_is_loaded_with_its_own_metadata_and_bootstrap(
-    tmp_path: Path,
-) -> None:
-    application = load_application(
-        _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+class TestScopedApplicationSchema:
+    def test_a_scoped_application_is_loaded_with_its_own_metadata_and_bootstrap(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        application = load_application(
+            _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+        )
+
+        assert isinstance(application, Application)
+        assert {model.__name__ for model in application.models} == {"Note", "NoteItem", "NoteEvent"}
+        assert set(application.metadata.tables) == {"notes", "note_items", "note_events"}
+        assert set(application.scoped) == {
+            (None, "notes"),
+            (None, "note_items"),
+            (None, "note_events"),
+        }
+        assert application.bootstrap is not None
+        assert application.bootstrap.schema == "notes"
+        assert application.bootstrap.roles.owner == "notes_owner"
+        assert application.bootstrap.names == SchemaNames(
+            guard="notes_guard",
+            readers="notes_group_r",
+            writers="notes_group_w",
+            version_table="notes_versions",
+            data_version_table="notes_data_versions",
+        )
+        assert application.database.url == "postgresql+asyncpg://u:p@localhost/db"
+        assert application.scope_sources == {
+            "owner": "identity.subject",
+            "editor": "request.editor",
+        }
+
+    def test_access_is_parsed_for_every_database_user(self, tmp_path: Path) -> None:
+        application = load_application(
+            _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+        )
+
+        assert application.bootstrap is not None
+        users = application.bootstrap.database_users
+        assert users["notes_ro"].access == "read"
+        assert users["notes_rw"].access == "write"
+        assert users["notes_ops"].access == "bypass"
+        assert users["notes_ops"].login is True
+
+    def test_an_unknown_access_value_names_the_user(self, tmp_path: Path) -> None:
+        schema = _scoped_schema()
+        schema["database_users"] = {"notes_ro": {"login": True, "access": "admin"}}
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=r"notes_ro.*admin"):
+            load_application(config_path)
+
+    @pytest.mark.parametrize(
+        "missing",
+        ["name", "roles", "database_users", "scopes", "guard", "groups", "version_tables"],
     )
+    def test_a_missing_schema_key_names_itself(self, tmp_path: Path, missing: str) -> None:
+        schema = _scoped_schema()
+        del schema[missing]
 
-    assert isinstance(application, Application)
-    assert {model.__name__ for model in application.models} == {"Note", "NoteItem", "NoteEvent"}
-    assert set(application.metadata.tables) == {"notes", "note_items", "note_events"}
-    assert set(application.scoped) == {(None, "notes"), (None, "note_items"), (None, "note_events")}
-    assert application.bootstrap is not None
-    assert application.bootstrap.schema == "notes"
-    assert application.bootstrap.roles.owner == "notes_owner"
-    assert application.bootstrap.names == SchemaNames(
-        guard="notes_guard",
-        readers="notes_group_r",
-        writers="notes_group_w",
-        version_table="notes_versions",
-        data_version_table="notes_data_versions",
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=rf"stores\.default\.schema\.{missing}"):
+            load_application(config_path)
+
+    def test_a_missing_name_points_at_schema_init(self, tmp_path: Path) -> None:
+        schema = _scoped_schema()
+        del schema["guard"]
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match="loom schema init"):
+            load_application(config_path)
+
+    def test_groups_sharing_a_name_with_a_role_are_rejected(self, tmp_path: Path) -> None:
+        schema = _scoped_schema()
+        schema["groups"] = {"readers": "notes_owner", "writers": "notes_group_w"}
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*distinct names"):
+            load_application(config_path)
+
+    def test_a_version_table_that_is_not_an_identifier_is_rejected(self, tmp_path: Path) -> None:
+        schema = _scoped_schema()
+        schema["version_tables"] = {"structure": "Versions", "data": "notes_data_versions"}
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*'Versions'"):
+            load_application(config_path)
+
+    def test_a_declared_scope_without_a_source_names_the_scope(self, tmp_path: Path) -> None:
+        schema = _scoped_schema()
+        schema["scopes"] = {"owner": "identity.subject"}
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=r"stores\.default\.schema\.scopes\.editor"):
+            load_application(config_path)
+
+    @pytest.mark.parametrize(
+        ("scopes", "match"),
+        [
+            ({"owner": "env.subject", "editor": "request.editor"}, r"scopes\.owner.*env\.subject"),
+            (
+                {"owner": "identity.subject", "editor": "request.editor", "spare": "env.spare"},
+                r"scopes\.spare.*env\.spare",
+            ),
+        ],
+        ids=["declared", "undeclared"],
     )
-    assert application.database.url == "postgresql+asyncpg://u:p@localhost/db"
-    assert application.scope_sources == {"owner": "identity.subject", "editor": "request.editor"}
-
-
-def test_access_is_parsed_for_every_database_user(tmp_path: Path) -> None:
-    application = load_application(
-        _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
-    )
-
-    assert application.bootstrap is not None
-    users = application.bootstrap.database_users
-    assert users["notes_ro"].access == "read"
-    assert users["notes_rw"].access == "write"
-    assert users["notes_ops"].access == "bypass"
-    assert users["notes_ops"].login is True
-
-
-def test_an_unknown_access_value_names_the_user(tmp_path: Path) -> None:
-    schema = _scoped_schema()
-    schema["database_users"] = {"notes_ro": {"login": True, "access": "admin"}}
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"notes_ro.*admin"):
-        load_application(config_path)
-
-
-@pytest.mark.parametrize(
-    "missing",
-    ["name", "roles", "database_users", "scopes", "guard", "groups", "version_tables"],
-)
-def test_a_missing_schema_key_names_itself(tmp_path: Path, missing: str) -> None:
-    schema = _scoped_schema()
-    del schema[missing]
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=rf"stores\.default\.schema\.{missing}"):
-        load_application(config_path)
-
-
-def test_a_missing_name_points_at_schema_init(tmp_path: Path) -> None:
-    schema = _scoped_schema()
-    del schema["guard"]
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match="loom schema init"):
-        load_application(config_path)
-
-
-def test_groups_sharing_a_name_with_a_role_are_rejected(tmp_path: Path) -> None:
-    schema = _scoped_schema()
-    schema["groups"] = {"readers": "notes_owner", "writers": "notes_group_w"}
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*distinct names"):
-        load_application(config_path)
-
-
-def test_a_version_table_that_is_not_an_identifier_is_rejected(tmp_path: Path) -> None:
-    schema = _scoped_schema()
-    schema["version_tables"] = {"structure": "Versions", "data": "notes_data_versions"}
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*'Versions'"):
-        load_application(config_path)
-
-
-def test_a_declared_scope_without_a_source_names_the_scope(tmp_path: Path) -> None:
-    schema = _scoped_schema()
-    schema["scopes"] = {"owner": "identity.subject"}
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.scopes\.editor"):
-        load_application(config_path)
-
-
-@pytest.mark.parametrize(
-    ("scopes", "match"),
-    [
-        ({"owner": "env.subject", "editor": "request.editor"}, r"scopes\.owner.*env\.subject"),
-        (
-            {"owner": "identity.subject", "editor": "request.editor", "spare": "env.spare"},
-            r"scopes\.spare.*env\.spare",
-        ),
-    ],
-    ids=["declared", "undeclared"],
-)
-def test_a_scope_source_must_be_an_identity_or_request_reference(
-    tmp_path: Path, scopes: dict[str, str], match: str
-) -> None:
-    schema = _scoped_schema()
-    schema["scopes"] = scopes
-
-    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=match):
-        load_application(config_path)
-
-
-def test_an_application_without_scoped_models_needs_no_schema_keys(tmp_path: Path) -> None:
-    application = load_application(
-        _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
-    )
-
-    assert application.bootstrap is None
-    assert application.scoped == {}
-    assert application.scope_sources == {}
-    assert set(application.metadata.tables) == {"widgets"}
-
-
-def test_two_applications_share_no_metadata(tmp_path: Path) -> None:
-    scoped = load_application(
-        _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
-    )
-    plain = load_application(_write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all")))
-
-    assert scoped.metadata is not plain.metadata
-    assert set(scoped.metadata.tables).isdisjoint(plain.metadata.tables)
-
-
-def test_the_config_path_defaults_to_the_loom_config_variable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "LOOM_CONFIG", _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
-    )
-
-    assert set(load_application().metadata.tables) == {"widgets"}
-
-
-def test_a_missing_loom_config_variable_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LOOM_CONFIG", raising=False)
-
-    with pytest.raises(ConfigError, match="LOOM_CONFIG"):
-        load_application()
-
-
-def test_a_relative_code_path_resolves_against_the_config_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = tmp_path / "project"
-    package = project / "src" / "relcodepath_models"
-    package.mkdir(parents=True)
-    (package / "__init__.py").write_text("")
-    (package / "models.py").write_text(
-        "from loom.core.model import BaseModel, ColumnField\n\n\n"
-        "class Gadget(BaseModel):\n"
-        '    __tablename__ = "gadgets"\n'
-        "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
-    )
-    config = _config("relcodepath_models.models", mode="create_all")
-    app_section = config["app"]
-    assert isinstance(app_section, dict)
-    app_section["code_path"] = "src"
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
-    monkeypatch.setattr(sys, "path", list(sys.path))
-
-    application = load_application(_write(project, "loom.yaml", config))
-
-    assert set(application.metadata.tables) == {"gadgets"}
-
-
-def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path) -> None:
-    schema = {**_scoped_schema(), "name": "Notes"}
-
-    config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema"):
-        load_application(config_path)
-
-
-def test_a_naming_convention_names_the_constraints_of_the_compiled_metadata(
-    tmp_path: Path,
-) -> None:
-    convention = {"pk": "pk_%(table_name)s", "ck": "ck_%(table_name)s_%(constraint_name)s"}
-    schema = {**_scoped_schema(), "naming_convention": convention}
-
-    application = load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
-
-    assert application.metadata.naming_convention["pk"] == "pk_%(table_name)s"
-    assert application.metadata.tables["notes"].primary_key.name == "pk_notes"
-
-
-def test_without_a_naming_convention_the_metadata_keeps_sqlalchemy_defaults(
-    tmp_path: Path,
-) -> None:
-    application = load_application(
-        _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
-    )
-
-    assert application.metadata.naming_convention == MetaData().naming_convention
-    assert application.metadata.tables["notes"].primary_key.name is None
-
-
-def test_a_naming_convention_for_an_unknown_kind_names_the_key(tmp_path: Path) -> None:
-    schema = {**_scoped_schema(), "naming_convention": {"primary": "pk_%(table_name)s"}}
-
-    config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"):
-        load_application(config_path)
-
-
-def test_a_config_directory_layers_the_overlay_of_the_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    base = _config(PLAIN_MODULE, mode="create_all")
-    _write(tmp_path, "base.yaml", base)
-    _write(
-        tmp_path,
-        "staging.yaml",
-        {
-            "stores": {
-                "default": {"backend": "sqlalchemy", "url": "postgresql+asyncpg://u:p@stage/db"}
-            }
-        },
-    )
-    monkeypatch.setenv("LOOM_ENV", "staging")
-    monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
-
-    application = load_application()
-
-    assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
+    def test_a_scope_source_must_be_an_identity_or_request_reference(
+        self, tmp_path: Path, scopes: dict[str, str], match: str
+    ) -> None:
+        schema = _scoped_schema()
+        schema["scopes"] = scopes
+
+        config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=match):
+            load_application(config_path)
+
+    def test_an_application_without_scoped_models_needs_no_schema_keys(
+        self, tmp_path: Path
+    ) -> None:
+        application = load_application(
+            _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
+        )
+
+        assert application.bootstrap is None
+        assert application.scoped == {}
+        assert application.scope_sources == {}
+        assert set(application.metadata.tables) == {"widgets"}
+
+    def test_two_applications_share_no_metadata(self, tmp_path: Path) -> None:
+        scoped = load_application(
+            _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+        )
+        plain = load_application(
+            _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
+        )
+
+        assert scoped.metadata is not plain.metadata
+        assert set(scoped.metadata.tables).isdisjoint(plain.metadata.tables)
+
+
+class TestLocatorConfigPath:
+    def test_the_config_path_defaults_to_the_loom_config_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "LOOM_CONFIG", _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
+        )
+
+        assert set(load_application().metadata.tables) == {"widgets"}
+
+    def test_a_missing_loom_config_variable_is_named(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LOOM_CONFIG", raising=False)
+
+        with pytest.raises(ConfigError, match="LOOM_CONFIG"):
+            load_application()
+
+    def test_a_relative_code_path_resolves_against_the_config_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "project"
+        package = project / "src" / "relcodepath_models"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "models.py").write_text(
+            "from loom.core.model import BaseModel, ColumnField\n\n\n"
+            "class Gadget(BaseModel):\n"
+            '    __tablename__ = "gadgets"\n'
+            "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
+        )
+        config = _config("relcodepath_models.models", mode="create_all")
+        app_section = config["app"]
+        assert isinstance(app_section, dict)
+        app_section["code_path"] = "src"
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        monkeypatch.setattr(sys, "path", list(sys.path))
+
+        application = load_application(_write(project, "loom.yaml", config))
+
+        assert set(application.metadata.tables) == {"gadgets"}
+
+
+class TestCompiledSchemaNaming:
+    def test_an_invalid_schema_name_is_a_config_error_naming_the_key(self, tmp_path: Path) -> None:
+        schema = {**_scoped_schema(), "name": "Notes"}
+
+        config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(ConfigError, match=r"stores\.default\.schema"):
+            load_application(config_path)
+
+    def test_a_naming_convention_names_the_constraints_of_the_compiled_metadata(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        convention = {"pk": "pk_%(table_name)s", "ck": "ck_%(table_name)s_%(constraint_name)s"}
+        schema = {**_scoped_schema(), "naming_convention": convention}
+
+        application = load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+
+        assert application.metadata.naming_convention["pk"] == "pk_%(table_name)s"
+        assert application.metadata.tables["notes"].primary_key.name == "pk_notes"
+
+    def test_without_a_naming_convention_the_metadata_keeps_sqlalchemy_defaults(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        application = load_application(
+            _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+        )
+
+        assert application.metadata.naming_convention == MetaData().naming_convention
+        assert application.metadata.tables["notes"].primary_key.name is None
+
+    def test_a_naming_convention_for_an_unknown_kind_names_the_key(self, tmp_path: Path) -> None:
+        schema = {**_scoped_schema(), "naming_convention": {"primary": "pk_%(table_name)s"}}
+
+        config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
+
+        with pytest.raises(
+            ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
+        ):
+            load_application(config_path)
+
+
+class TestLocatorEnvironmentOverlay:
+    def test_a_config_directory_layers_the_overlay_of_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = _config(PLAIN_MODULE, mode="create_all")
+        _write(tmp_path, "base.yaml", base)
+        _write(
+            tmp_path,
+            "staging.yaml",
+            {
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "postgresql+asyncpg://u:p@stage/db"}
+                }
+            },
+        )
+        monkeypatch.setenv("LOOM_ENV", "staging")
+        monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
+
+        application = load_application()
+
+        assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
 
 
 class TestAddCodePath:
@@ -353,27 +358,29 @@ def two_stores(tmp_path: Path) -> str:
     return _write(tmp_path, "two.yaml", config)
 
 
-@pytest.mark.parametrize(
-    ("store", "table", "url", "skipped"),
-    [
-        ("default", "widgets", "postgresql+asyncpg://u:p@localhost/db", "audit"),
-        ("audit", "gadgets", AUDIT_URL, "default"),
-    ],
-)
-def test_a_store_is_loaded_with_its_own_models_and_section_and_names_the_others(
-    two_stores: str,
-    store: str,
-    table: str,
-    url: str,
-    skipped: str,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.INFO):
-        application = load_application(two_stores, store=StoreKey(store))
+class TestStoreSections:
+    @pytest.mark.parametrize(
+        ("store", "table", "url", "skipped"),
+        [
+            ("default", "widgets", "postgresql+asyncpg://u:p@localhost/db", "audit"),
+            ("audit", "gadgets", AUDIT_URL, "default"),
+        ],
+    )
+    def test_a_store_is_loaded_with_its_own_models_and_section_and_names_the_others(
+        self,
+        two_stores: str,
+        store: str,
+        table: str,
+        url: str,
+        skipped: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.INFO):
+            application = load_application(two_stores, store=StoreKey(store))
 
-    loaded = (set(application.metadata.tables), application.store, application.path)
-    left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
-    assert loaded == ({table}, store, f"stores.{store}")
-    assert application.database.url == url
-    assert len(left_out) == 1
-    assert repr(skipped) in left_out[0]
+        loaded = (set(application.metadata.tables), application.store, application.path)
+        left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+        assert loaded == ({table}, store, f"stores.{store}")
+        assert application.database.url == url
+        assert len(left_out) == 1
+        assert repr(skipped) in left_out[0]

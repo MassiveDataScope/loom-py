@@ -227,18 +227,21 @@ class TestApplicationCheckModules:
             run_deploy_checks(config, registry=registry)
 
 
-@pytest.mark.parametrize(
-    "checks",
-    [
-        {"silenced": ["${oc.env:SILENCED}"]},
-        {"modules": ["${oc.env:CHECK_MODULE}"]},
-        {"silenced": "${shared.silenced}"},
-    ],
-)
-def test_a_placeholder_in_the_checks_section_is_a_config_error(checks: dict[str, Any]) -> None:
-    config = _config(checks=checks, shared={"silenced": [_ERROR_ID]})
+class TestChecksPlaceholders:
+    @pytest.mark.parametrize(
+        "checks",
+        [
+            {"silenced": ["${oc.env:SILENCED}"]},
+            {"modules": ["${oc.env:CHECK_MODULE}"]},
+            {"silenced": "${shared.silenced}"},
+        ],
+    )
+    def test_a_placeholder_in_the_checks_section_is_a_config_error(
+        self, checks: dict[str, Any]
+    ) -> None:
+        config = _config(checks=checks, shared={"silenced": [_ERROR_ID]})
 
-    registry = _registry()
+        registry = _registry()
 
-    with pytest.raises(ConfigError, match="the checks section holds a placeholder"):
-        run_deploy_checks(config, registry=registry)
+        with pytest.raises(ConfigError, match="the checks section holds a placeholder"):
+            run_deploy_checks(config, registry=registry)

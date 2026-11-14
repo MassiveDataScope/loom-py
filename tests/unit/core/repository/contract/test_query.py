@@ -1,6 +1,6 @@
 """``list_with_query`` yields the rows the pure-Python oracle selects.
 
-``EXISTS`` / ``NOT_EXISTS`` are relation operators; the flat ``Order`` model
+``EXISTS`` / ``NOT_EXISTS`` are relation operators; the flat ``AcmeContractOrder`` model
 has no relation, so they are outside this contract.
 """
 
@@ -81,29 +81,34 @@ async def _ids(repository: Any, query: QuerySpec) -> list[int]:
     return [row.id for row in result.items]
 
 
-@pytest.mark.parametrize("name", list(_FILTERS))
-async def test_filter_selects_the_oracle_rows(case: BackendCase, seeded: Any, name: str) -> None:
-    require(case, Listable)
-    filters = _FILTERS[name]
+class TestContractQuery:
+    @pytest.mark.parametrize("name", list(_FILTERS))
+    async def test_filter_selects_the_oracle_rows(
+        self, case: BackendCase, seeded: Any, name: str
+    ) -> None:
+        require(case, Listable)
+        filters = _FILTERS[name]
 
-    found = await _ids(seeded, QuerySpec(filters=filters, limit=_ALL))
+        found = await _ids(seeded, QuerySpec(filters=filters, limit=_ALL))
 
-    assert sorted(found) == sorted(oracle(seed_rows(), filters))
+        assert sorted(found) == sorted(oracle(seed_rows(), filters))
 
+    @pytest.mark.parametrize("name", list(_SORTS))
+    async def test_sort_orders_rows_like_the_oracle(
+        self, case: BackendCase, seeded: Any, name: str
+    ) -> None:
+        require(case, Listable)
+        sort = _SORTS[name]
 
-@pytest.mark.parametrize("name", list(_SORTS))
-async def test_sort_orders_rows_like_the_oracle(case: BackendCase, seeded: Any, name: str) -> None:
-    require(case, Listable)
-    sort = _SORTS[name]
+        assert await _ids(seeded, QuerySpec(sort=sort, limit=_ALL)) == oracle(
+            seed_rows(), sort=sort
+        )
 
-    assert await _ids(seeded, QuerySpec(sort=sort, limit=_ALL)) == oracle(seed_rows(), sort=sort)
+    async def test_filter_and_sort_compose(self, case: BackendCase, seeded: Any) -> None:
+        require(case, Listable)
+        filters = _FILTERS["gte"]
+        sort = _SORTS["status-asc-amount-desc"]
 
+        found = await _ids(seeded, QuerySpec(filters=filters, sort=sort, limit=_ALL))
 
-async def test_filter_and_sort_compose(case: BackendCase, seeded: Any) -> None:
-    require(case, Listable)
-    filters = _FILTERS["gte"]
-    sort = _SORTS["status-asc-amount-desc"]
-
-    found = await _ids(seeded, QuerySpec(filters=filters, sort=sort, limit=_ALL))
-
-    assert found == oracle(seed_rows(), filters, sort)
+        assert found == oracle(seed_rows(), filters, sort)

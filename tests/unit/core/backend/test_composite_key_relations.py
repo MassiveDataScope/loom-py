@@ -23,7 +23,7 @@ class _CustomerOut(LoomStruct):
     name: str
 
 
-class _Customer(BaseModel):
+class AcmeCompositeCustomer(BaseModel):
     __tablename__ = "ck_customers"
     id: int = ColumnField(primary_key=True)
     name: str = ColumnField(length=16)
@@ -45,7 +45,7 @@ class _Child(BaseModel):
     parent_id: int = ColumnField(foreign_key="ck_parents.id")
 
 
-class _Parent(BaseModel):
+class AcmeCompositeParent(BaseModel):
     __tablename__ = "ck_parents"
     account_id: int = ColumnField(primary_key=True)
     id: int = ColumnField(primary_key=True, unique=True)
@@ -87,7 +87,7 @@ class _Author(BaseModel):
     )
 
 
-class _Book(BaseModel):
+class AcmeCompositeBook(BaseModel):
     __tablename__ = "ck_books"
     id: int = ColumnField(primary_key=True)
     author_id: int = ColumnField(foreign_key="ck_authors.id")
@@ -100,32 +100,34 @@ def _clean_registry() -> Generator[None, None, None]:
     reset_registry()
 
 
-@pytest.mark.parametrize(
-    ("models", "message"),
-    [
-        (
-            (_Customer, _Ticket),
-            r"_Ticket has the composite primary key \(account_id, id\).*customer",
-        ),
-        ((_Child, _Parent), r"_Parent has the composite primary key \(account_id, id\).*children"),
-        ((_Scored,), r"_Scored has the composite primary key \(account_id, id\).*score"),
-    ],
-    ids=["many-to-one", "one-to-many", "backend-projection"],
-)
-def test_a_composite_key_model_refuses_backend_relations_and_projections(
-    models: tuple[type, ...], message: str
-) -> None:
-    with pytest.raises(ValueError, match=rf"{message}.*by hand"):
-        compile_all(*models)
+class TestCompositeKeyRelations:
+    @pytest.mark.parametrize(
+        ("models", "message"),
+        [
+            (
+                (AcmeCompositeCustomer, _Ticket),
+                r"_Ticket has the composite primary key \(account_id, id\).*customer",
+            ),
+            (
+                (_Child, AcmeCompositeParent),
+                r"AcmeCompositeParent has the composite primary key \(account_id, id\).*children",
+            ),
+            ((_Scored,), r"_Scored has the composite primary key \(account_id, id\).*score"),
+        ],
+        ids=["many-to-one", "one-to-many", "backend-projection"],
+    )
+    def test_a_composite_key_model_refuses_backend_relations_and_projections(
+        self, models: tuple[type, ...], message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=rf"{message}.*by hand"):
+            compile_all(*models)
 
+    def test_a_composite_key_model_keeps_its_in_memory_projections(self) -> None:
+        compile_all(_Named)
 
-def test_a_composite_key_model_keeps_its_in_memory_projections() -> None:
-    compile_all(_Named)
+        assert get_compiled(_Named) is not None
 
-    assert get_compiled(_Named) is not None
+    def test_a_single_key_model_with_relations_compiles(self) -> None:
+        compile_all(_Author, AcmeCompositeBook)
 
-
-def test_a_single_key_model_with_relations_compiles() -> None:
-    compile_all(_Author, _Book)
-
-    assert get_compiled(_Author) is not None
+        assert get_compiled(_Author) is not None

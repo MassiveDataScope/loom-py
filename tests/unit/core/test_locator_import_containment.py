@@ -37,15 +37,16 @@ assert "loom.rest" not in sys.modules, sorted(m for m in sys.modules if m.starts
 """
 
 
-def test_the_locator_and_modules_discovery_work_without_fastapi(tmp_path: Path) -> None:
-    (tmp_path / "app_models.py").write_text(_APP_MODELS, encoding="utf-8")
+class TestLocatorImportContainment:
+    def test_the_locator_and_modules_discovery_work_without_fastapi(self, tmp_path: Path) -> None:
+        (tmp_path / "app_models.py").write_text(_APP_MODELS, encoding="utf-8")
 
-    result = subprocess.run(
-        [sys.executable, "-c", _WITHOUT_FASTAPI],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(_SRC), str(tmp_path)))},
-    )
+        result = subprocess.run(
+            [sys.executable, "-c", _WITHOUT_FASTAPI],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join((str(_SRC), str(tmp_path)))},
+        )
 
-    assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, result.stderr

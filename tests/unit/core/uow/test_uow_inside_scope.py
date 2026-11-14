@@ -39,7 +39,7 @@ def _sqlalchemy(manager: RecordingSessionManager) -> SQLAlchemyUnitOfWork:
 
 
 @dataclass(frozen=True)
-class _Case:
+class ScopedUnitOfWorkCase:
     """A transactional unit of work and probes of what it did to its backend.
 
     Attributes:
@@ -55,10 +55,10 @@ class _Case:
     commits: Callable[[], int]
 
 
-def _sqlalchemy_case() -> _Case:
+def _sqlalchemy_case() -> ScopedUnitOfWorkCase:
     session = make_session()
     manager = RecordingSessionManager(session)
-    return _Case(
+    return ScopedUnitOfWorkCase(
         _sqlalchemy(manager),
         "SQLAlchemyUnitOfWork",
         lambda: manager.exits,
@@ -66,10 +66,12 @@ def _sqlalchemy_case() -> _Case:
     )
 
 
-def _mongo_case() -> _Case:
+def _mongo_case() -> ScopedUnitOfWorkCase:
     client = FakeMongoClient()
     uow = MongoUnitOfWork(cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE)
-    return _Case(uow, "MongoUnitOfWork", lambda: len(client.sessions), lambda: client.committed)
+    return ScopedUnitOfWorkCase(
+        uow, "MongoUnitOfWork", lambda: len(client.sessions), lambda: client.committed
+    )
 
 
 _CASES = pytest.mark.parametrize(
@@ -89,7 +91,7 @@ async def _enter(uow: UnitOfWork) -> None:
 class TestInsideAScope:
     @_CASES
     async def test_a_transactional_unit_of_work_is_refused(
-        self, make_case: Callable[[], _Case]
+        self, make_case: Callable[[], ScopedUnitOfWorkCase]
     ) -> None:
         case = make_case()
 
@@ -99,7 +101,7 @@ class TestInsideAScope:
 
     @_CASES
     async def test_a_refused_unit_of_work_opens_no_session_and_commits_nothing(
-        self, make_case: Callable[[], _Case]
+        self, make_case: Callable[[], ScopedUnitOfWorkCase]
     ) -> None:
         case = make_case()
 
@@ -144,7 +146,7 @@ class TestInsideAScope:
 class TestOutsideAScope:
     @_CASES
     async def test_a_transactional_unit_of_work_still_commits(
-        self, make_case: Callable[[], _Case]
+        self, make_case: Callable[[], ScopedUnitOfWorkCase]
     ) -> None:
         case = make_case()
 
@@ -158,7 +160,7 @@ class TestAfterTheScopeClosed:
 
     @_CASES
     async def test_a_transactional_unit_of_work_commits(
-        self, make_case: Callable[[], _Case]
+        self, make_case: Callable[[], ScopedUnitOfWorkCase]
     ) -> None:
         case = make_case()
 

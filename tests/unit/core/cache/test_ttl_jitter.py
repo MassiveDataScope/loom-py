@@ -14,7 +14,7 @@ import pytest
 from loom.core.cache import CacheConfig
 from loom.core.repository import PageParams
 
-from ._doubles import CachedEnv, CountingRepository, Widget, wrap_with_cache
+from ._doubles import AcmeCacheWidget, CachedEnv, CountingRepository, wrap_with_cache
 
 ENTITY_TTL = 100
 LIST_TTL = 50
@@ -22,8 +22,8 @@ JITTER = 0.1
 ROW_COUNT = 40
 
 
-def _widgets(count: int) -> list[Widget]:
-    return [Widget(id=index, name=f"w{index}") for index in range(1, count + 1)]
+def _widgets(count: int) -> list[AcmeCacheWidget]:
+    return [AcmeCacheWidget(id=index, name=f"w{index}") for index in range(1, count + 1)]
 
 
 def _config(*, jitter: float, entity_ttl: int = ENTITY_TTL) -> CacheConfig:
@@ -34,9 +34,9 @@ def _config(*, jitter: float, entity_ttl: int = ENTITY_TTL) -> CacheConfig:
     )
 
 
-def _env(*, jitter: float, entity_ttl: int = ENTITY_TTL) -> CachedEnv[Widget]:
+def _env(*, jitter: float, entity_ttl: int = ENTITY_TTL) -> CachedEnv[AcmeCacheWidget]:
     return wrap_with_cache(
-        CountingRepository(_widgets(ROW_COUNT), Widget),
+        CountingRepository(_widgets(ROW_COUNT), AcmeCacheWidget),
         _config(jitter=jitter, entity_ttl=entity_ttl),
     )
 

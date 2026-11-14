@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 
-class AcmeLedger:
+class AcmeBoundLedger:
     """Bound before seal."""
 
 
-class AcmeOtherLedger(AcmeLedger):
+class AcmeLateLedger(AcmeBoundLedger):
     """What a late registration tries to bind."""

@@ -63,48 +63,44 @@ class TestLoomError:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "subclass,base",
-    [
-        (DomainError, LoomError),
-        (SystemError, LoomError),
-        (NotFound, DomainError),
-        (Forbidden, DomainError),
-        (Conflict, DomainError),
-        (RateLimited, DomainError),
-        (InsufficientAuthentication, Unauthenticated),
-        (RuleViolation, DomainError),
-        (RuleViolations, DomainError),
-    ],
-)
-def test_error_hierarchy(subclass: type, base: type) -> None:
-    assert issubclass(subclass, base)
+class TestErrorHierarchy:
+    @pytest.mark.parametrize(
+        "subclass,base",
+        [
+            (DomainError, LoomError),
+            (SystemError, LoomError),
+            (NotFound, DomainError),
+            (Forbidden, DomainError),
+            (Conflict, DomainError),
+            (RateLimited, DomainError),
+            (InsufficientAuthentication, Unauthenticated),
+            (RuleViolation, DomainError),
+            (RuleViolations, DomainError),
+        ],
+    )
+    def test_error_hierarchy(self, subclass: type, base: type) -> None:
+        assert issubclass(subclass, base)
+
+    def test_domain_error_not_system_error(self) -> None:
+        assert not issubclass(DomainError, SystemError)
 
 
-def test_domain_error_not_system_error() -> None:
-    assert not issubclass(DomainError, SystemError)
-
-
-# ---------------------------------------------------------------------------
-# Error codes — one parametrized test replaces per-class code checks
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "factory,expected_code",
-    [
-        (lambda: NotFound("User", id=1), ErrorCode.NOT_FOUND),
-        (lambda: Forbidden(), ErrorCode.FORBIDDEN),
-        (lambda: Conflict("x"), ErrorCode.CONFLICT),
-        (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
-        (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
-        (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
-        (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
-        (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
-    ],
-)
-def test_error_codes(factory: Any, expected_code: ErrorCode) -> None:
-    assert factory().code == expected_code
+class TestErrorCodes:
+    @pytest.mark.parametrize(
+        "factory,expected_code",
+        [
+            (lambda: NotFound("User", id=1), ErrorCode.NOT_FOUND),
+            (lambda: Forbidden(), ErrorCode.FORBIDDEN),
+            (lambda: Conflict("x"), ErrorCode.CONFLICT),
+            (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
+            (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
+            (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
+            (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
+            (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
+        ],
+    )
+    def test_error_codes(self, factory: Any, expected_code: ErrorCode) -> None:
+        assert factory().code == expected_code
 
 
 # ---------------------------------------------------------------------------
@@ -188,15 +184,16 @@ class TestForbidden:
 # ---------------------------------------------------------------------------
 
 
-def test_system_error_not_catchable_as_domain_error() -> None:
-    caught = False
-    try:
-        raise SystemError("boom")
-    except DomainError:
-        caught = True
-    except SystemError:
-        pass
-    assert not caught
+class TestSystemErrorIsNotADomainError:
+    def test_system_error_not_catchable_as_domain_error(self) -> None:
+        caught = False
+        try:
+            raise SystemError("boom")
+        except DomainError:
+            caught = True
+        except SystemError:
+            pass
+        assert not caught
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +240,13 @@ class TestRuleViolations:
             raise error
 
 
-@pytest.mark.parametrize("name", ["RuleViolation", "RuleViolations"])
-@pytest.mark.parametrize("module", [use_case_package, rule_module])
-def test_rule_errors_are_public_only_from_loom_core_errors(module: ModuleType, name: str) -> None:
-    assert name not in module.__all__
+class TestRuleErrorsAreExportedOnce:
+    @pytest.mark.parametrize("name", ["RuleViolation", "RuleViolations"])
+    @pytest.mark.parametrize("module", [use_case_package, rule_module])
+    def test_rule_errors_are_public_only_from_loom_core_errors(
+        self, module: ModuleType, name: str
+    ) -> None:
+        assert name not in module.__all__
 
 
 # ---------------------------------------------------------------------------

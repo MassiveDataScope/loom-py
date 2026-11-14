@@ -16,124 +16,128 @@ from loom.core.use_case.factory import UseCaseFactory
 from tests.unit.core.di.graph import acme
 
 
-class AcmeOrder(BaseModel):
+class AcmeSealOrder(BaseModel):
     __tablename__ = "di_seal_acme_orders"
 
     id: int = ColumnField(primary_key=True)
 
 
-class AcmeListsOrders(UseCase[AcmeOrder, int]):
+class AcmeListsOrders(UseCase[AcmeSealOrder, int]):
     async def execute(self) -> int:
         return 0
 
 
-class AcmeClock:
+class AcmeExecutionClock:
     seen: list[object] = []
 
     def __init__(self) -> None:
-        AcmeClock.seen.append(current_execution())
+        AcmeExecutionClock.seen.append(current_execution())
 
 
-class AcmeRates:
-    def __init__(self, clock: AcmeClock) -> None:
+class AcmeExecutionRates:
+    def __init__(self, clock: AcmeExecutionClock) -> None:
         self.clock = clock
 
 
-class AcmeQuote:
-    def __init__(self, rates: AcmeRates) -> None:
+class AcmeExecutionQuote:
+    def __init__(self, rates: AcmeExecutionRates) -> None:
         self.rates = rates
 
 
-def _bound() -> LoomContainer:
-    AcmeClock.seen = []
+@pytest.fixture
+def container() -> LoomContainer:
+    AcmeExecutionClock.seen = []
     container = LoomContainer()
-    container.register(AcmeClock, AcmeClock, scope=Scope.APPLICATION)
-    container.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
+    container.register(AcmeExecutionClock, AcmeExecutionClock, scope=Scope.APPLICATION)
+    container.register(AcmeExecutionRates, AcmeExecutionRates, scope=Scope.APPLICATION)
     return container
 
 
-def test_reachable_singletons_are_built_at_seal_outside_any_execution() -> None:
-    container = _bound()
-    analysis = acme.analysed(container, AcmeQuote)
+class TestSealBuildsReachableSingletons:
+    def test_reachable_singletons_are_built_at_seal_outside_any_execution(
+        self, container: LoomContainer
+    ) -> None:
+        analysis = acme.analysed(container, AcmeExecutionQuote)
 
-    with ExecutionScope(ANONYMOUS):
-        container.seal(analysis)
+        with ExecutionScope(ANONYMOUS):
+            container.seal(analysis)
 
-    assert AcmeClock.seen == [None]
-    rates = container.resolve(AcmeRates)
-    assert rates.clock is container.resolve(AcmeClock)
-    assert AcmeClock.seen == [None]
+        assert AcmeExecutionClock.seen == [None]
+        rates = container.resolve(AcmeExecutionRates)
+        assert rates.clock is container.resolve(AcmeExecutionClock)
+        assert AcmeExecutionClock.seen == [None]
 
+    def test_seal_refuses_the_analysis_of_another_graph(self, container: LoomContainer) -> None:
+        analysis = analyse(DependencyGraph(container), [ClassNode(AcmeExecutionQuote)])
 
-def test_seal_refuses_the_analysis_of_another_graph() -> None:
-    container = _bound()
-    analysis = analyse(DependencyGraph(container), [ClassNode(AcmeQuote)])
-
-    with pytest.raises(ValueError, match="another dependency graph"):
-        container.seal(analysis)
+        with pytest.raises(ValueError, match="another dependency graph"):
+            container.seal(analysis)
 
 
 class AcmeOldRates:
-    def __init__(self, clock: AcmeClock) -> None:
+    def __init__(self, clock: AcmeExecutionClock) -> None:
         self.clock = clock
 
 
-class AcmeLedger:
+class AcmeReplacementLedger:
     """What the new rates need instead of a clock."""
 
 
 class AcmeNewRates:
-    def __init__(self, ledger: AcmeLedger) -> None:
+    def __init__(self, ledger: AcmeReplacementLedger) -> None:
         self.ledger = ledger
 
 
-def test_a_key_registered_again_after_analysis_is_sealed_with_its_new_constructor() -> None:
-    container = _bound()
-    container.register(AcmeRates, AcmeOldRates, scope=Scope.APPLICATION)
-    container.register(AcmeLedger, AcmeLedger, scope=Scope.APPLICATION)
-    analysis = acme.analysed(container, AcmeQuote)
+class TestSealUsesTheRegisteredConstructor:
+    def test_a_key_registered_again_after_analysis_is_sealed_with_its_new_constructor(
+        self, container: LoomContainer
+    ) -> None:
+        container.register(AcmeExecutionRates, AcmeOldRates, scope=Scope.APPLICATION)
+        container.register(AcmeReplacementLedger, AcmeReplacementLedger, scope=Scope.APPLICATION)
+        analysis = acme.analysed(container, AcmeExecutionQuote)
 
-    container.register(AcmeRates, AcmeNewRates, scope=Scope.APPLICATION)
-    container.seal(analysis)
+        container.register(AcmeExecutionRates, AcmeNewRates, scope=Scope.APPLICATION)
+        container.seal(analysis)
 
-    assert container.resolve(AcmeRates).ledger is container.resolve(AcmeLedger)
+        assert container.resolve(AcmeExecutionRates).ledger is container.resolve(
+            AcmeReplacementLedger
+        )
 
+    def test_the_container_and_the_factory_read_one_graph(self) -> None:
+        container = LoomContainer()
+        UseCaseFactory(container)
 
-def test_the_container_and_the_factory_read_one_graph() -> None:
-    container = LoomContainer()
-    UseCaseFactory(container)
-
-    assert container.graph.constructor(ClassNode(AcmeListsOrders)) == (
-        ("main_repo", RepoDependency(AcmeOrder, None)),
-    )
+        assert container.graph.constructor(ClassNode(AcmeListsOrders)) == (
+            ("main_repo", RepoDependency(AcmeSealOrder, None)),
+        )
 
 
 class AcmeUnboundRates:
-    def __init__(self, ledger: AcmeLedger) -> None:
+    def __init__(self, ledger: AcmeReplacementLedger) -> None:
         self.ledger = ledger
 
 
-def test_a_strict_seal_surfaces_a_reached_binding_that_does_not_compile() -> None:
-    container = _bound()
-    container.register(AcmeRates, AcmeOldRates)
-    analysis = acme.analysed(container, AcmeQuote)
-    container.register(AcmeRates, AcmeUnboundRates)
+class TestSealRefusesAnUncompilableBinding:
+    def test_a_strict_seal_surfaces_a_reached_binding_that_does_not_compile(
+        self, container: LoomContainer
+    ) -> None:
+        container.register(AcmeExecutionRates, AcmeOldRates)
+        analysis = acme.analysed(container, AcmeExecutionQuote)
+        container.register(AcmeExecutionRates, AcmeUnboundRates)
 
-    with pytest.raises(DependencyGraphError, match="ledger: AcmeLedger: no binding"):
-        container.seal(analysis)
+        with pytest.raises(DependencyGraphError, match="ledger: AcmeReplacementLedger: no binding"):
+            container.seal(analysis)
 
+    def test_a_second_factory_reads_the_one_graph(self) -> None:
+        container = LoomContainer()
+        first = UseCaseFactory(container)
+        second = UseCaseFactory(container)
 
-def test_a_second_factory_reads_the_one_graph() -> None:
-    container = LoomContainer()
-    first = UseCaseFactory(container)
-    second = UseCaseFactory(container)
+        assert first.graph is second.graph is container.graph
 
-    assert first.graph is second.graph is container.graph
+    def test_reading_constructors_another_way_is_refused(self) -> None:
+        container = LoomContainer()
+        UseCaseFactory(container)
 
-
-def test_reading_constructors_another_way_is_refused() -> None:
-    container = LoomContainer()
-    UseCaseFactory(container)
-
-    with pytest.raises(ValueError, match="already reads constructors"):
-        container.read_with(classify_key=lambda annotation: None, implicit=lambda cls: ())
+        with pytest.raises(ValueError, match="already reads constructors"):
+            container.read_with(classify_key=lambda annotation: None, implicit=lambda cls: ())

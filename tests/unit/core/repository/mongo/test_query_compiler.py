@@ -18,7 +18,7 @@ from .conftest import Article
 _REF = UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")
 
 
-class Ledger(BaseModel):
+class AcmeMongoLedger(BaseModel):
     """Every type the repository stores as a string."""
 
     __tablename__ = "ledger"
@@ -43,7 +43,7 @@ def _single(spec: FilterSpec) -> FilterGroup:
 
 @pytest.fixture
 def ledger() -> MongoQueryCompiler:
-    return MongoQueryCompiler(Ledger, "id")
+    return MongoQueryCompiler(AcmeMongoLedger, "id")
 
 
 class TestFieldMapping:

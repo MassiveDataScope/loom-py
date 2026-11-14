@@ -12,13 +12,18 @@ from loom.core.repository.mongo.repository import RepositoryMongo
 from ._fake import FakeCollection
 
 
-class _Line(BaseModel):
+class AcmeMongoLine(BaseModel):
     __tablename__ = "lines"
     order_id: str = ColumnField(primary_key=True)
     id: str = ColumnField(primary_key=True)
 
 
-def test_a_composite_primary_key_is_refused() -> None:
-    collection = FakeCollection()
-    with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
-        RepositoryMongo(_Line, collection, cursor_codec=CursorCodec(signing="ephemeral"))
+class TestMongoCompositeKey:
+    def test_a_composite_primary_key_is_refused(self) -> None:
+        collection = FakeCollection()
+        with pytest.raises(
+            ConfigError, match=r"AcmeMongoLine has the composite primary key \(order_id, id\)"
+        ):
+            RepositoryMongo(
+                AcmeMongoLine, collection, cursor_codec=CursorCodec(signing="ephemeral")
+            )

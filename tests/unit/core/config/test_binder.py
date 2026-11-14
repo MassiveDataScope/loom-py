@@ -8,11 +8,7 @@ import pytest
 
 from loom.core.config import ConfigError, StructBinder
 from loom.core.model import LoomFrozenStruct
-
-
-class _DbConfig(LoomFrozenStruct, frozen=True):
-    host: str
-    port: int = 5432
+from tests.unit.core.config.doubles import AcmeDbConfig
 
 
 class _LimitsConfig(LoomFrozenStruct, frozen=True):
@@ -32,7 +28,7 @@ class _PrimitiveTarget:
 
 
 class _StructTarget:
-    def __init__(self, db: _DbConfig, label: str = "default") -> None:
+    def __init__(self, db: AcmeDbConfig, label: str = "default") -> None:
         self.db = db
         self.label = label
 
@@ -51,7 +47,7 @@ class _NestedStructTarget:
 class _MixedTarget:
     def __init__(
         self,
-        db: _DbConfig,
+        db: AcmeDbConfig,
         mode: Literal["batch", "stream"],
         batch_size: int = 1000,
         label: str = "orders",
@@ -94,7 +90,7 @@ class TestStructBinderPrimitives:
 class TestStructBinderStructs:
     def test_converts_dict_to_struct(self, binder: StructBinder) -> None:
         obj = binder.bind(_StructTarget, {"db": {"host": "pg", "port": 5432}})
-        assert isinstance(obj.db, _DbConfig)
+        assert isinstance(obj.db, AcmeDbConfig)
         assert obj.db.host == "pg"
 
     def test_struct_with_default_field(self, binder: StructBinder) -> None:
@@ -136,7 +132,7 @@ class TestStructBinderMixed:
             "batch_size": 500,
         }
         obj = binder.bind(_MixedTarget, raw)
-        assert isinstance(obj.db, _DbConfig)
+        assert isinstance(obj.db, AcmeDbConfig)
         assert obj.mode == "batch"
         assert obj.batch_size == 500
         assert obj.label == "orders"

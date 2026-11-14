@@ -14,27 +14,27 @@ from loom.core.repository.dependency import classify_key
 from loom.core.use_case.factory import UseCaseFactory
 
 
-class AcmeLedger:
+class AcmePlanLedger:
     pass
 
 
-class AcmeOtherLedger(AcmeLedger):
+class AcmePlanOtherLedger(AcmePlanLedger):
     pass
 
 
 class AcmePosting:
-    def __init__(self, ledger: AcmeLedger) -> None:
+    def __init__(self, ledger: AcmePlanLedger) -> None:
         self.ledger = ledger
 
 
 class AcmeTagged:
-    def __init__(self, ledger: AcmeLedger, tags: tuple[str, ...]) -> None:
+    def __init__(self, ledger: AcmePlanLedger, tags: tuple[str, ...]) -> None:
         self.ledger, self.tags = ledger, tags
 
 
 def _factory() -> UseCaseFactory:
     container = LoomContainer(classify_key=classify_key)
-    container.register(AcmeLedger, AcmeLedger, scope=Scope.APPLICATION)
+    container.register(AcmePlanLedger, AcmePlanLedger, scope=Scope.APPLICATION)
     return UseCaseFactory(container)
 
 
@@ -50,48 +50,45 @@ def _counting_compiles(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
     return compiled
 
 
-def test_the_plan_builds_a_fresh_instance_with_its_dependencies() -> None:
-    factory = _factory()
-    plan = factory.compiled(AcmePosting)
+class TestConstructionPlans:
+    def test_the_plan_builds_a_fresh_instance_with_its_dependencies(self) -> None:
+        factory = _factory()
+        plan = factory.compiled(AcmePosting)
 
-    first, second = plan(), plan()
+        first, second = plan(), plan()
 
-    assert isinstance(first, AcmePosting)
-    assert first is not second
-    assert first.ledger is second.ledger
+        assert isinstance(first, AcmePosting)
+        assert first is not second
+        assert first.ledger is second.ledger
 
+    def test_a_plan_is_compiled_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        factory = _factory()
+        compiles = _counting_compiles(monkeypatch)
 
-def test_a_plan_is_compiled_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    factory = _factory()
-    compiles = _counting_compiles(monkeypatch)
+        assert factory.compiled(AcmePosting) is factory.compiled(AcmePosting)
+        factory.build(AcmePosting)
 
-    assert factory.compiled(AcmePosting) is factory.compiled(AcmePosting)
-    factory.build(AcmePosting)
+        assert compiles == [AcmePosting]
 
-    assert compiles == [AcmePosting]
+    def test_a_registration_compiles_the_plan_again_with_the_new_binding(self) -> None:
+        factory = _factory()
+        factory.build(AcmePosting)
 
+        factory._container.register(AcmePlanLedger, AcmePlanOtherLedger, scope=Scope.APPLICATION)
 
-def test_a_registration_compiles_the_plan_again_with_the_new_binding() -> None:
-    factory = _factory()
-    factory.build(AcmePosting)
+        assert isinstance(factory.build(AcmePosting).ledger, AcmePlanOtherLedger)
 
-    factory._container.register(AcmeLedger, AcmeOtherLedger, scope=Scope.APPLICATION)
+    def test_a_root_with_a_parameter_loom_cannot_provide_fails_at_registration(self) -> None:
+        factory = _factory()
 
-    assert isinstance(factory.build(AcmePosting).ledger, AcmeOtherLedger)
+        with pytest.raises(DependencyGraphError) as caught:
+            factory.register(AcmeTagged)
 
+        assert str(caught.value) == (
+            "AcmeTagged: tags: tuple[str, ...] names nothing the container can serve"
+        )
 
-def test_a_root_with_a_parameter_loom_cannot_provide_fails_at_registration() -> None:
-    factory = _factory()
+    def test_a_root_whose_binding_comes_later_registers(self) -> None:
+        factory = UseCaseFactory(LoomContainer(classify_key=classify_key))
 
-    with pytest.raises(DependencyGraphError) as caught:
-        factory.register(AcmeTagged)
-
-    assert str(caught.value) == (
-        "AcmeTagged: tags: tuple[str, ...] names nothing the container can serve"
-    )
-
-
-def test_a_root_whose_binding_comes_later_registers() -> None:
-    factory = UseCaseFactory(LoomContainer(classify_key=classify_key))
-
-    factory.register(AcmePosting)
+        factory.register(AcmePosting)

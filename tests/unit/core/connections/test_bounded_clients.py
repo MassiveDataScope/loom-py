@@ -33,38 +33,44 @@ def _elapsed(call: Callable[[], Any]) -> float:
     return elapsed
 
 
-@pytest.fixture(autouse=True)
-def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
 
 
-def test_the_etl_dynamodb_client_fails_within_its_bounds(silent_endpoint: str) -> None:  # noqa: F811
-    from loom.etl.backends.polars.provider import _build_dynamodb_client
+class TestClientsFailWithinDeclaredBounds:
+    def test_the_etl_dynamodb_client_fails_within_its_bounds(
+        self,
+        aws_credentials: None,
+        silent_endpoint: str,  # noqa: F811
+    ) -> None:
+        from loom.etl.backends.polars.provider import _build_dynamodb_client
 
-    client = _build_dynamodb_client(
-        AwsClientConfig(
-            region="eu-west-1",
-            url=Dsn(silent_endpoint),
-            connect_timeout=1,
-            read_timeout=1,
-            max_attempts=1,
+        client = _build_dynamodb_client(
+            AwsClientConfig(
+                region="eu-west-1",
+                url=Dsn(silent_endpoint),
+                connect_timeout=1,
+                read_timeout=1,
+                max_attempts=1,
+            )
         )
-    )
 
-    assert _elapsed(lambda: client.describe_table(TableName="t")) < _BOUND
+        assert _elapsed(lambda: client.describe_table(TableName="t")) < _BOUND
 
+    @pytest.mark.slow
+    def test_the_ssm_resolver_fails_within_the_default_bounds(
+        self,
+        aws_credentials: None,
+        silent_endpoint: str,  # noqa: F811
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from loom.core.config.ssm import SsmResolver
 
-@pytest.mark.slow
-def test_the_ssm_resolver_fails_within_the_default_bounds(
-    silent_endpoint: str,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from loom.core.config.ssm import SsmResolver
+        # The resolvers take no section; the endpoint comes from boto3's own variable.
+        monkeypatch.setenv("AWS_ENDPOINT_URL", silent_endpoint)
+        defaults = AwsClientConfig()
+        bound = (defaults.connect_timeout + defaults.read_timeout) * defaults.max_attempts + 1
 
-    # The resolvers take no section; the endpoint comes from boto3's own variable.
-    monkeypatch.setenv("AWS_ENDPOINT_URL", silent_endpoint)
-    defaults = AwsClientConfig()
-    bound = (defaults.connect_timeout + defaults.read_timeout) * defaults.max_attempts + 1
-
-    assert _elapsed(lambda: SsmResolver("eu-west-1").resolve("/x")) < bound
+        assert _elapsed(lambda: SsmResolver("eu-west-1").resolve("/x")) < bound

@@ -37,116 +37,113 @@ def _names(path: str, retired: str, replacement: str) -> str:
     return rf"{path}\.{retired} was removed; use {path}\.{replacement}"
 
 
-@pytest.mark.parametrize(("retired", "value", "replacement"), _AWS_RETIRED)
-def test_persistence_dynamodb(retired: str, value: Any, replacement: str) -> None:
-    section = {"region": "eu-west-1", "table": "t", retired: value}
-    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
+class TestRetiredConnectionKeys:
+    @pytest.mark.parametrize(("retired", "value", "replacement"), _AWS_RETIRED)
+    def test_persistence_dynamodb(self, retired: str, value: Any, replacement: str) -> None:
+        section = {"region": "eu-west-1", "table": "t", retired: value}
+        ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
 
-    message = _names("stores.default", retired, replacement)
-    backend = DynamoDBBackend()
-    with pytest.raises(ConfigError, match=message):
-        build_backend(backend, ctx, (), SERVER_PROFILE)
+        message = _names("stores.default", retired, replacement)
+        backend = DynamoDBBackend()
+        with pytest.raises(ConfigError, match=message):
+            build_backend(backend, ctx, (), SERVER_PROFILE)
 
+    @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
+    def test_persistence_mongo(self, retired: str, value: Any, replacement: str) -> None:
+        pytest.importorskip("pymongo")
+        from loom.core.repository.mongo.backend import MongoBackend
 
-@pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
-def test_persistence_mongo(retired: str, value: Any, replacement: str) -> None:
-    pytest.importorskip("pymongo")
-    from loom.core.repository.mongo.backend import MongoBackend
+        section = {"url": "mongodb://h", "database": "app", retired: value}
+        ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
 
-    section = {"url": "mongodb://h", "database": "app", retired: value}
-    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
+        message = _names("stores.default", retired, replacement)
+        backend = MongoBackend()
+        with pytest.raises(ConfigError, match=message):
+            build_backend(backend, ctx, (), SERVER_PROFILE)
 
-    message = _names("stores.default", retired, replacement)
-    backend = MongoBackend()
-    with pytest.raises(ConfigError, match=message):
-        build_backend(backend, ctx, (), SERVER_PROFILE)
-
-
-@pytest.mark.parametrize(
-    ("section", "base", "retired", "value", "replacement"),
-    [
-        *[("dynamodb", {"region": "eu-west-1"}, *case) for case in _AWS_RETIRED],
-        *[("mongo", {"url": "mongodb://h", "database": "app"}, *case) for case in _MONGO_RETIRED],
-        *[("clickhouse", {"url": "clickhouse://h/db"}, *case) for case in _CLICKHOUSE_RETIRED],
-    ],
-)
-def test_storage_engine_sections(
-    section: str, base: dict[str, Any], retired: str, value: Any, replacement: str
-) -> None:
-    with pytest.raises(ConfigError, match=_names(f"storage.{section}", retired, replacement)):
-        normalise_storage_section({section: {**base, retired: value}})
-
-
-@pytest.mark.parametrize(("retired", "value", "replacement"), _CLICKHOUSE_RETIRED)
-def test_sql_connections(retired: str, value: Any, replacement: str) -> None:
-    raw = {"connections": {"analytics": {"backend": "clickhouse", "url": "x", retired: value}}}
-
-    named = _names("sql.connections.analytics", retired, replacement)
-    with pytest.raises(ConfigError, match=named):
-        reject_retired_sql_keys(raw)
-
-
-def test_the_sql_registry_refuses_a_retired_key_before_decoding() -> None:
-    pytest.importorskip("clickhouse_connect")
-    from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
-
-    raw = {"connections": {"a": {"backend": "clickhouse", "url": "http://h", "pool_size": 2}}}
-
-    with pytest.raises(ConfigError, match=_names("sql.connections.a", "pool_size", "pool.size")):
-        ClickHouseConnectionRegistry.from_config(raw)
-
-
-@pytest.mark.parametrize(("retired", "value", "replacement"), _CLICKHOUSE_RETIRED)
-def test_a_streaming_sink_database(retired: str, value: Any, replacement: str) -> None:
-    from loom.streaming.nodes._table.config import _clickhouse_connection
-
-    store = {"backend": "clickhouse", "url": "clickhouse://h/db", retired: value}
-    ctx = ConfigContext.from_dict({"stores": {"warehouse": store}})
-
-    message = _names("stores.warehouse", retired, replacement)
-    spec = load_catalog(ctx).specs[StoreKey("warehouse")]
-    with pytest.raises(ConfigError, match=message):
-        _clickhouse_connection(spec)
-
-
-@pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
-@pytest.mark.parametrize("path", ["mongo.source", "mongo.sources.orders"])
-def test_cdc_mongo_sources(path: str, retired: str, value: Any, replacement: str) -> None:
-    source = {"url": "mongodb://h", "database": "app", retired: value}
-    section: dict[str, Any] = (
-        {"source": source} if path == "mongo.source" else {"sources": {"orders": source}}
+    @pytest.mark.parametrize(
+        ("section", "base", "retired", "value", "replacement"),
+        [
+            *[("dynamodb", {"region": "eu-west-1"}, *case) for case in _AWS_RETIRED],
+            *[
+                ("mongo", {"url": "mongodb://h", "database": "app"}, *case)
+                for case in _MONGO_RETIRED
+            ],
+            *[("clickhouse", {"url": "clickhouse://h/db"}, *case) for case in _CLICKHOUSE_RETIRED],
+        ],
     )
-    ctx = ConfigContext.from_dict({"mongo": section})
+    def test_storage_engine_sections(
+        self, section: str, base: dict[str, Any], retired: str, value: Any, replacement: str
+    ) -> None:
+        with pytest.raises(ConfigError, match=_names(f"storage.{section}", retired, replacement)):
+            normalise_storage_section({section: {**base, retired: value}})
 
-    with pytest.raises(ConfigError, match=_names(path, retired, replacement)):
-        load_mongo_config(ctx)
+    @pytest.mark.parametrize(("retired", "value", "replacement"), _CLICKHOUSE_RETIRED)
+    def test_sql_connections(self, retired: str, value: Any, replacement: str) -> None:
+        raw = {"connections": {"analytics": {"backend": "clickhouse", "url": "x", retired: value}}}
 
+        named = _names("sql.connections.analytics", retired, replacement)
+        with pytest.raises(ConfigError, match=named):
+            reject_retired_sql_keys(raw)
 
-def test_a_retired_key_whose_unit_changed_says_so() -> None:
-    source = {"url": "mongodb://h", "database": "app", "server_selection_timeout_ms": 500}
-    ctx = ConfigContext.from_dict({"mongo": {"source": source}})
+    def test_the_sql_registry_refuses_a_retired_key_before_decoding(self) -> None:
+        pytest.importorskip("clickhouse_connect")
+        from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
 
-    with pytest.raises(ConfigError) as caught:
-        load_mongo_config(ctx)
+        raw = {"connections": {"a": {"backend": "clickhouse", "url": "http://h", "pool_size": 2}}}
 
-    assert str(caught.value) == (
-        "mongo.source.server_selection_timeout_ms was removed; "
-        "use mongo.source.server_selection_timeout (in seconds)"
-    )
+        with pytest.raises(
+            ConfigError, match=_names("sql.connections.a", "pool_size", "pool.size")
+        ):
+            ClickHouseConnectionRegistry.from_config(raw)
 
+    @pytest.mark.parametrize(("retired", "value", "replacement"), _CLICKHOUSE_RETIRED)
+    def test_a_streaming_sink_database(self, retired: str, value: Any, replacement: str) -> None:
+        from loom.streaming.nodes._table.config import _clickhouse_connection
 
-def test_every_retired_key_maps_to_a_key_path_only() -> None:
-    for connection in (MongoConnection, ClickHouseConnection, AwsClientConfig, DatabaseConfig):
-        for replacement in connection.retired_keys().values():
-            assert re.fullmatch(r"\w+(\.\w+)*", replacement), (connection, replacement)
+        store = {"backend": "clickhouse", "url": "clickhouse://h/db", retired: value}
+        ctx = ConfigContext.from_dict({"stores": {"warehouse": store}})
 
+        message = _names("stores.warehouse", retired, replacement)
+        spec = load_catalog(ctx).specs[StoreKey("warehouse")]
+        with pytest.raises(ConfigError, match=message):
+            _clickhouse_connection(spec)
 
-def test_cdc_mongo_sources_decode_without_a_retired_key() -> None:
-    ctx = ConfigContext.from_dict(
-        {"mongo": {"source": {"url": "mongodb://h", "database": "app", "pool": {"size": 4}}}}
-    )
+    @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
+    @pytest.mark.parametrize("path", ["mongo.source", "mongo.sources.orders"])
+    def test_cdc_mongo_sources(self, path: str, retired: str, value: Any, replacement: str) -> None:
+        source = {"url": "mongodb://h", "database": "app", retired: value}
+        section: dict[str, Any] = (
+            {"source": source} if path == "mongo.source" else {"sources": {"orders": source}}
+        )
+        ctx = ConfigContext.from_dict({"mongo": section})
 
-    source = load_mongo_config(ctx).source
+        with pytest.raises(ConfigError, match=_names(path, retired, replacement)):
+            load_mongo_config(ctx)
 
-    assert source is not None
-    assert source.pool.size == 4
+    def test_a_retired_key_whose_unit_changed_says_so(self) -> None:
+        source = {"url": "mongodb://h", "database": "app", "server_selection_timeout_ms": 500}
+        ctx = ConfigContext.from_dict({"mongo": {"source": source}})
+
+        with pytest.raises(ConfigError) as caught:
+            load_mongo_config(ctx)
+
+        assert str(caught.value) == (
+            "mongo.source.server_selection_timeout_ms was removed; "
+            "use mongo.source.server_selection_timeout (in seconds)"
+        )
+
+    def test_every_retired_key_maps_to_a_key_path_only(self) -> None:
+        for connection in (MongoConnection, ClickHouseConnection, AwsClientConfig, DatabaseConfig):
+            for replacement in connection.retired_keys().values():
+                assert re.fullmatch(r"\w+(\.\w+)*", replacement), (connection, replacement)
+
+    def test_cdc_mongo_sources_decode_without_a_retired_key(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"mongo": {"source": {"url": "mongodb://h", "database": "app", "pool": {"size": 4}}}}
+        )
+
+        source = load_mongo_config(ctx).source
+
+        assert source is not None
+        assert source.pool.size == 4

@@ -27,16 +27,13 @@ from loom.core.repository.sqlalchemy.loaders import (
     _SqlJoinFieldsLoader,
     make_sql_loader,
 )
-
-
-class _Note:
-    pass
+from tests.unit.core.doubles import AcmeNote
 
 
 class _CustomLoader:
     """A user-supplied loader that is not a registered descriptor."""
 
-    model = _Note
+    model = AcmeNote
 
     def load_from_object(self, obj: Any) -> int:
         _ = obj
@@ -78,9 +75,9 @@ def unbacked_descriptor() -> Iterator[type[_UnbackedLoader]]:
 # Every registered descriptor needs one sample instance here: the completeness
 # test below fails when a new descriptor is added without one.
 _DESCRIPTOR_SAMPLES: tuple[Any, ...] = (
-    CountLoader(model=_Note),
-    ExistsLoader(model=_Note),
-    JoinFieldsLoader(model=_Note, value_columns=("id",)),
+    CountLoader(model=AcmeNote),
+    ExistsLoader(model=AcmeNote),
+    JoinFieldsLoader(model=AcmeNote, value_columns=("id",)),
 )
 
 
@@ -121,7 +118,7 @@ class TestIsProjectionDescriptor:
         assert is_projection_descriptor(descriptor) is True
 
     def test_true_for_a_descriptor_subclass(self) -> None:
-        assert is_projection_descriptor(_CountSubclass(model=_Note)) is True
+        assert is_projection_descriptor(_CountSubclass(model=AcmeNote)) is True
 
     def test_false_for_a_custom_loader(self) -> None:
         assert is_projection_descriptor(_CustomLoader()) is False
@@ -129,13 +126,13 @@ class TestIsProjectionDescriptor:
 
 class TestMakeMemoryLoader:
     def test_delegates_to_the_descriptor(self) -> None:
-        loader = make_memory_loader(CountLoader(model=_Note), "notes")
+        loader = make_memory_loader(CountLoader(model=AcmeNote), "notes")
 
         assert loader == _MemoryCountLoader(relation="notes")
 
     def test_join_fields_carries_its_value_columns(self) -> None:
         loader = make_memory_loader(
-            JoinFieldsLoader(model=_Note, value_columns=("id", "title")), "notes"
+            JoinFieldsLoader(model=AcmeNote, value_columns=("id", "title")), "notes"
         )
 
         assert loader.value_columns == ("id", "title")
@@ -148,24 +145,24 @@ class TestMakeMemoryLoader:
 
 class TestMakeSqlLoader:
     def test_count_descriptor_selects_the_count_loader(self) -> None:
-        loader = make_sql_loader(CountLoader(model=_Note), _FakeRelationStep())
+        loader = make_sql_loader(CountLoader(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlCountLoader)
 
     def test_exists_descriptor_selects_the_exists_loader(self) -> None:
-        loader = make_sql_loader(ExistsLoader(model=_Note), _FakeRelationStep())
+        loader = make_sql_loader(ExistsLoader(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlExistsLoader)
 
     def test_join_fields_descriptor_selects_the_join_fields_loader(self) -> None:
         loader = make_sql_loader(
-            JoinFieldsLoader(model=_Note, value_columns=("id",)), _FakeRelationStep()
+            JoinFieldsLoader(model=AcmeNote, value_columns=("id",)), _FakeRelationStep()
         )
 
         assert isinstance(loader, _SqlJoinFieldsLoader)
 
     def test_descriptor_subclass_reuses_the_base_factory(self) -> None:
-        loader = make_sql_loader(_CountSubclass(model=_Note), _FakeRelationStep())
+        loader = make_sql_loader(_CountSubclass(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlCountLoader)
 
@@ -177,10 +174,10 @@ class TestMakeSqlLoader:
 
 class TestResolveModelReference:
     def test_returns_a_direct_class(self) -> None:
-        assert resolve_model_reference(_Note) is _Note
+        assert resolve_model_reference(AcmeNote) is AcmeNote
 
     def test_calls_a_lambda_wrapped_forward_reference(self) -> None:
-        assert resolve_model_reference(lambda: _Note) is _Note
+        assert resolve_model_reference(lambda: AcmeNote) is AcmeNote
 
     def test_returns_none_when_the_callable_raises(self) -> None:
         def broken() -> type:
@@ -201,7 +198,7 @@ class TestUnbackedDescriptor:
     def test_make_sql_loader_raises_for_a_descriptor_without_a_factory(
         self, unbacked_descriptor: type[Any]
     ) -> None:
-        loader = unbacked_descriptor(model=_Note)
+        loader = unbacked_descriptor(model=AcmeNote)
         step = _FakeRelationStep()
 
         with pytest.raises(ValueError, match="no SQL-path loader factory"):

@@ -16,7 +16,7 @@ from loom.core.repository.abc import (
 )
 
 
-class DummyOutput(msgspec.Struct):
+class AcmeQueryOutput(msgspec.Struct):
     id: int
 
 
@@ -40,7 +40,7 @@ class TestPageParams:
 class TestBuildPageResult:
     def test_build_page_result_calculates_has_next(self, page_params: PageParams) -> None:
         result = build_page_result(
-            items=[DummyOutput(id=1)],
+            items=[AcmeQueryOutput(id=1)],
             total_count=25,
             page_params=page_params,
         )

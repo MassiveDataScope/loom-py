@@ -19,13 +19,10 @@ from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.repository.abc import RepoFor
 from loom.core.repository.dependency import classify_key
+from tests.unit.core.doubles import AcmeClock
 
 
 class AcmePort:
-    pass
-
-
-class AcmeClock:
     pass
 
 
@@ -68,7 +65,7 @@ class AcmeDefaultedRepository:
 
 
 @dataclass
-class AcmeSettings:
+class AcmeRegionSettings:
     region: str = "eu-west-1"
 
 
@@ -115,7 +112,7 @@ _BUILT_TODAY: dict[str, Callable[[], Any]] = {
     "variadic": AcmeVariadic,
     "unresolvable-hints": AcmeForwardReference,
     "defaulted-repository": AcmeDefaultedRepository,
-    "dataclass": AcmeSettings,
+    "dataclass": AcmeRegionSettings,
     "unreadable-signature": AcmeUnreadable,
     "metaclass-call": AcmeMetaBuilt,
     "custom-new": AcmeNewBuilt,
@@ -124,16 +121,19 @@ _BUILT_TODAY: dict[str, Callable[[], Any]] = {
 }
 
 
-@pytest.mark.parametrize("scope", [Scope.APPLICATION, Scope.REQUEST])
-@pytest.mark.parametrize("built_today", list(_BUILT_TODAY))
-def test_a_class_built_today_is_accepted_and_given_no_edge(built_today: str, scope: Scope) -> None:
-    container = LoomContainer(classify_key=classify_key)
-    container.register(AcmeClock, AcmeClock)
-    container.register(AcmePort, _BUILT_TODAY[built_today], scope=Scope.APPLICATION)
-    graph = DependencyGraph(container)
+class TestGraphCompatibility:
+    @pytest.mark.parametrize("scope", [Scope.APPLICATION, Scope.REQUEST])
+    @pytest.mark.parametrize("built_today", list(_BUILT_TODAY))
+    def test_a_class_built_today_is_accepted_and_given_no_edge(
+        self, built_today: str, scope: Scope
+    ) -> None:
+        container = LoomContainer(classify_key=classify_key)
+        container.register(AcmeClock, AcmeClock)
+        container.register(AcmePort, _BUILT_TODAY[built_today], scope=Scope.APPLICATION)
+        graph = DependencyGraph(container)
 
-    analysis = analyse(graph, [ClassNode(AcmeConsumer)])
+        analysis = analyse(graph, [ClassNode(AcmeConsumer)])
 
-    assert graph.edges(KeyNode(AcmePort)) == ()
-    assert analysis.warnings == ()
-    assert container.resolve(AcmePort) is not None
+        assert graph.edges(KeyNode(AcmePort)) == ()
+        assert analysis.warnings == ()
+        assert container.resolve(AcmePort) is not None

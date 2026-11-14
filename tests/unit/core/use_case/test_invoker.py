@@ -20,7 +20,7 @@ from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.autocrud import _get_or_create
 
 
-class _Item(BaseModel):
+class AcmeInvokerItem(BaseModel):
     __tablename__ = "test_invoker_item"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
@@ -34,32 +34,32 @@ class _EchoInput(Command):
 class _Repo:
     def __init__(self) -> None:
         self._next = 1
-        self._data: dict[int, _Item] = {}
+        self._data: dict[int, AcmeInvokerItem] = {}
 
     async def _tick(self) -> None:
         await asyncio.sleep(0)
 
-    async def create(self, cmd: Any) -> _Item:
+    async def create(self, cmd: Any) -> AcmeInvokerItem:
         await self._tick()
         data = msgspec.to_builtins(cmd)
-        item = _Item(id=self._next, name=str(data.get("name", "")))
+        item = AcmeInvokerItem(id=self._next, name=str(data.get("name", "")))
         self._data[item.id] = item
         self._next += 1
         return item
 
-    async def get_by_id(self, id_value: Any, profile: str = "default") -> _Item | None:
+    async def get_by_id(self, id_value: Any, profile: str = "default") -> AcmeInvokerItem | None:
         await self._tick()
         del profile
         return self._data.get(int(id_value))
 
-    async def update(self, id_value: Any, cmd: Any) -> _Item | None:
+    async def update(self, id_value: Any, cmd: Any) -> AcmeInvokerItem | None:
         await self._tick()
         item = self._data.get(int(id_value))
         if item is None:
             return None
         data = msgspec.to_builtins(cmd)
         name = data.get("name", item.name)
-        updated = _Item(id=item.id, name=name)
+        updated = AcmeInvokerItem(id=item.id, name=name)
         self._data[item.id] = updated
         return updated
 
@@ -95,58 +95,56 @@ class _DupB(UseCase[Any, str]):
 def _module_for(repo: _Repo) -> Any:
     def _module(container: LoomContainer) -> None:
         container.register(_Repo, lambda: repo, scope=Scope.APPLICATION)
-        container.register_repo(_Item, _Repo)
+        container.register_repo(AcmeInvokerItem, _Repo)
 
     return _module
 
 
-def test_registry_build_raises_on_duplicate_keys() -> None:
-    with pytest.raises(ValueError, match="Duplicate use-case key"):
-        UseCaseRegistry.build([_DupA, _DupB])
+class TestUseCaseInvoker:
+    def test_registry_build_raises_on_duplicate_keys(self) -> None:
+        with pytest.raises(ValueError, match="Duplicate use-case key"):
+            UseCaseRegistry.build([_DupA, _DupB])
 
+    @pytest.mark.asyncio
+    async def test_invoke_and_invoke_name_work_with_registry(self) -> None:
+        repo = _Repo()
+        runtime = create_kernel(
+            config=object(),
+            use_cases=[_EchoUseCase],
+            modules=[_module_for(repo)],
+        )
 
-@pytest.mark.asyncio
-async def test_invoke_and_invoke_name_work_with_registry() -> None:
-    repo = _Repo()
-    runtime = create_kernel(
-        config=object(),
-        use_cases=[_EchoUseCase],
-        modules=[_module_for(repo)],
-    )
+        result_by_type = await runtime.app.invoke(_EchoUseCase, payload={"value": "ok"})
+        result_by_name = await runtime.app.invoke_name("demo.echo", payload={"value": "ok2"})
 
-    result_by_type = await runtime.app.invoke(_EchoUseCase, payload={"value": "ok"})
-    result_by_name = await runtime.app.invoke_name("demo.echo", payload={"value": "ok2"})
+        assert result_by_type == "ok"
+        assert result_by_name == "ok2"
+        assert runtime.registry.has("demo.echo")
 
-    assert result_by_type == "ok"
-    assert result_by_name == "ok2"
-    assert runtime.registry.has("demo.echo")
+    @pytest.mark.asyncio
+    async def test_entity_facade_invokes_autocrud_create_and_update(self) -> None:
+        repo = _Repo()
+        auto = _get_or_create(AcmeInvokerItem)
+        runtime = create_kernel(
+            config=object(),
+            use_cases=[auto["create"], auto["update"], auto["get"]],
+            modules=[_module_for(repo)],
+        )
 
+        app = runtime.container.resolve(ApplicationInvoker)
+        entity = app.entity(AcmeInvokerItem)
 
-@pytest.mark.asyncio
-async def test_entity_facade_invokes_autocrud_create_and_update() -> None:
-    repo = _Repo()
-    auto = _get_or_create(_Item)
-    runtime = create_kernel(
-        config=object(),
-        use_cases=[auto["create"], auto["update"], auto["get"]],
-        modules=[_module_for(repo)],
-    )
+        created = await entity.create(payload={"name": "first"})
+        assert created.name == "first"
 
-    app = runtime.container.resolve(ApplicationInvoker)
-    entity = app.entity(_Item)
+        updated = await entity.update(params={"id": created.id}, payload={"name": "second"})
+        assert updated.name == "second"
 
-    created = await entity.create(payload={"name": "first"})
-    assert created.name == "first"
+        loaded = await entity.get(params={"id": created.id})
+        assert loaded.name == "second"
 
-    updated = await entity.update(params={"id": created.id}, payload={"name": "second"})
-    assert updated.name == "second"
-
-    loaded = await entity.get(params={"id": created.id})
-    assert loaded.name == "second"
-
-
-@pytest.mark.asyncio
-async def test_invoke_name_raises_for_missing_key() -> None:
-    runtime = create_kernel(config=object(), use_cases=[_EchoUseCase])
-    with pytest.raises(KeyError, match="not registered"):
-        await runtime.app.invoke_name("missing:key", payload={})
+    @pytest.mark.asyncio
+    async def test_invoke_name_raises_for_missing_key(self) -> None:
+        runtime = create_kernel(config=object(), use_cases=[_EchoUseCase])
+        with pytest.raises(KeyError, match="not registered"):
+            await runtime.app.invoke_name("missing:key", payload={})

@@ -23,180 +23,175 @@ async def _elevate(decision: Decision | None = None, *, at: Scope = BOUNDARY) ->
     await elevate_scope("editor", chosen, at=at, permission=WRITE, catalog=CATALOG)
 
 
-def test_no_frame_means_no_elevation() -> None:
-    assert elevated_scopes() == frozenset()
-
-
-async def test_elevating_outside_an_execution_is_a_programming_error() -> None:
-    with pytest.raises(RuntimeError, match="frame"):
-        await _elevate()
-
-
-async def test_elevation_is_visible_inside_the_frame_and_gone_after_it() -> None:
-    sink = FakeSink()
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-        assert elevated_scopes() == frozenset({"editor"})
-    assert elevated_scopes() == frozenset()
-
-
-async def test_without_an_open_transaction_the_flag_is_left_to_the_provider() -> None:
-    sink = FakeSink(open=False)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-    assert sink.set == []
-
-
-async def test_with_an_open_transaction_the_flag_is_set_immediately() -> None:
-    sink = FakeSink(open=True)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-    assert sink.set == ["editor"]
-
-
-async def test_a_failing_sink_invalidates_leaves_the_scope_unelevated_and_re_raises() -> None:
-    sink = FakeSink(open=True, fail_on_set=True)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        with pytest.raises(RuntimeError, match="database says no"):
-            await _elevate()
+class TestElevationFrame:
+    def test_no_frame_means_no_elevation(self) -> None:
         assert elevated_scopes() == frozenset()
-    assert sink.invalidated == 1
 
+    async def test_elevating_outside_an_execution_is_a_programming_error(self) -> None:
+        with pytest.raises(RuntimeError, match="frame"):
+            await _elevate()
 
-async def test_a_cancellation_once_the_flag_was_sent_invalidates_the_session() -> None:
-    sink = FakeSink(open=True, set_gate=asyncio.Event())
-    assert sink.set_gate is not None
-    task = asyncio.create_task(_nested_elevation(sink))
-    while not sink.set:
+    async def test_elevation_is_visible_inside_the_frame_and_gone_after_it(self) -> None:
+        sink = FakeSink()
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+            assert elevated_scopes() == frozenset({"editor"})
+        assert elevated_scopes() == frozenset()
+
+    async def test_without_an_open_transaction_the_flag_is_left_to_the_provider(self) -> None:
+        sink = FakeSink(open=False)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+        assert sink.set == []
+
+    async def test_with_an_open_transaction_the_flag_is_set_immediately(self) -> None:
+        sink = FakeSink(open=True)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+        assert sink.set == ["editor"]
+
+    async def test_a_failing_sink_invalidates_leaves_the_scope_unelevated_and_re_raises(
+        self,
+    ) -> None:
+        sink = FakeSink(open=True, fail_on_set=True)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            with pytest.raises(RuntimeError, match="database says no"):
+                await _elevate()
+            assert elevated_scopes() == frozenset()
+        assert sink.invalidated == 1
+
+    async def test_a_cancellation_once_the_flag_was_sent_invalidates_the_session(self) -> None:
+        sink = FakeSink(open=True, set_gate=asyncio.Event())
+        assert sink.set_gate is not None
+        task = asyncio.create_task(_nested_elevation(sink))
+        while not sink.set:
+            await asyncio.sleep(0)
+        task.cancel()
         await asyncio.sleep(0)
-    task.cancel()
-    await asyncio.sleep(0)
-    sink.set_gate.set()
+        sink.set_gate.set()
 
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert (sink.invalidated, sink.cleared) == (1, [])
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert (sink.invalidated, sink.cleared) == (1, [])
 
 
-class _Interrupt(BaseException):
+class ElevationInterrupt(BaseException):
     """Not an ``Exception``, and not special to asyncio."""
 
 
-async def test_a_clearing_interrupted_by_a_base_exception_invalidates_the_session() -> None:
-    sink = FakeSink(open=True, clear_raises=_Interrupt())
+class TestElevationClearing:
+    async def test_a_clearing_interrupted_by_a_base_exception_invalidates_the_session(self) -> None:
+        sink = FakeSink(open=True, clear_raises=ElevationInterrupt())
 
-    with pytest.raises(_Interrupt):
-        await _nested_elevation(sink)
+        with pytest.raises(ElevationInterrupt):
+            await _nested_elevation(sink)
 
-    assert sink.invalidated == 1
+        assert sink.invalidated == 1
 
+    async def test_a_denied_decision_cannot_elevate(self) -> None:
+        sink = FakeSink()
+        denied = Decision(allowed=False, grant=None)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            with pytest.raises(PermissionError):
+                await _elevate(denied)
 
-async def test_a_denied_decision_cannot_elevate() -> None:
-    sink = FakeSink()
-    denied = Decision(allowed=False, grant=None)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        with pytest.raises(PermissionError):
-            await _elevate(denied)
+    async def test_a_grant_whose_role_lacks_the_mapped_permission_cannot_elevate(self) -> None:
+        sink = FakeSink()
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            viewer_grant = _allowed(role="viewer")
+            with pytest.raises(PermissionError, match="viewer"):
+                await _elevate(viewer_grant)
 
-
-async def test_a_grant_whose_role_lacks_the_mapped_permission_cannot_elevate() -> None:
-    sink = FakeSink()
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        viewer_grant = _allowed(role="viewer")
-        with pytest.raises(PermissionError, match="viewer"):
-            await _elevate(viewer_grant)
-
-
-async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate() -> None:
-    sink = FakeSink()
-    narrow = _allowed(scope=Scope.of("b1", "dept", "x"))
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        with pytest.raises(PermissionError, match="cover"):
-            await _elevate(narrow, at=BOUNDARY)
+    async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate(self) -> None:
+        sink = FakeSink()
+        narrow = _allowed(scope=Scope.of("b1", "dept", "x"))
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            with pytest.raises(PermissionError, match="cover"):
+                await _elevate(narrow, at=BOUNDARY)
 
 
 async def _elevate_second() -> None:
     await elevate_scope("second", _allowed(), at=BOUNDARY, permission=WRITE, catalog=CATALOG)
 
 
-async def test_a_nested_frame_inherits_nothing_and_sees_only_what_it_elevated() -> None:
-    sink = FakeSink(open=True)
-    seen: list[frozenset[str]] = []
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-        async with elevation_scope(owns_transaction=False, sink=sink):
-            seen.append(elevated_scopes())
-            await _elevate_second()
-            seen.append(elevated_scopes())
-
-    assert seen == [frozenset(), frozenset({"second"})]
-
-
-async def test_a_nested_frame_never_mutates_its_parent_and_clears_what_it_added() -> None:
-    sink = FakeSink(open=True)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-        async with elevation_scope(owns_transaction=False, sink=sink):
-            await _elevate_second()
-        assert elevated_scopes() == frozenset({"editor"})
-    assert sink.cleared == [frozenset({"second"})]
-
-
-async def test_a_nested_frame_elevating_an_already_elevated_scope_does_not_downgrade_it() -> None:
-    sink = FakeSink(open=True)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-        async with elevation_scope(owns_transaction=False, sink=sink):
+class TestNestedElevation:
+    async def test_a_nested_frame_inherits_nothing_and_sees_only_what_it_elevated(self) -> None:
+        sink = FakeSink(open=True)
+        seen: list[frozenset[str]] = []
+        async with elevation_scope(owns_transaction=True, sink=sink):
             await _elevate()
-        assert elevated_scopes() == frozenset({"editor"})
-    assert sink.cleared == []
+            async with elevation_scope(owns_transaction=False, sink=sink):
+                seen.append(elevated_scopes())
+                await _elevate_second()
+                seen.append(elevated_scopes())
 
+        assert seen == [frozenset(), frozenset({"second"})]
 
-async def test_an_owning_frame_never_clears_flags_the_commit_ends_them() -> None:
-    sink = FakeSink(open=True)
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-    assert sink.cleared == []
-
-
-async def test_a_task_spawned_inside_the_frame_loses_elevation_when_the_frame_closes() -> None:
-    sink = FakeSink()
-    seen_inside: list[frozenset[str]] = []
-    release = asyncio.Event()
-
-    async def child() -> frozenset[str]:
-        seen_inside.append(elevated_scopes())
-        await release.wait()
-        return elevated_scopes()
-
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        await _elevate()
-        task = asyncio.create_task(child())
-        await asyncio.sleep(0)
-    release.set()
-
-    assert seen_inside == [frozenset({"editor"})]
-    assert await task == frozenset()
-
-
-async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
-    sink = FakeSink(open=True)
-    elevated = asyncio.Event()
-
-    async def inner() -> None:
-        async with elevation_scope(owns_transaction=False, sink=sink):
+    async def test_a_nested_frame_never_mutates_its_parent_and_clears_what_it_added(self) -> None:
+        sink = FakeSink(open=True)
+        async with elevation_scope(owns_transaction=True, sink=sink):
             await _elevate()
-            elevated.set()
-            await asyncio.Event().wait()
+            async with elevation_scope(owns_transaction=False, sink=sink):
+                await _elevate_second()
+            assert elevated_scopes() == frozenset({"editor"})
+        assert sink.cleared == [frozenset({"second"})]
 
-    async with elevation_scope(owns_transaction=True, sink=sink):
-        task = asyncio.create_task(inner())
-        await elevated.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert elevated_scopes() == frozenset()
-    assert (sink.cleared, sink.invalidated) == ([frozenset({"editor"})], 0)
+    async def test_a_nested_frame_elevating_an_already_elevated_scope_does_not_downgrade_it(
+        self,
+    ) -> None:
+        sink = FakeSink(open=True)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+            async with elevation_scope(owns_transaction=False, sink=sink):
+                await _elevate()
+            assert elevated_scopes() == frozenset({"editor"})
+        assert sink.cleared == []
+
+    async def test_an_owning_frame_never_clears_flags_the_commit_ends_them(self) -> None:
+        sink = FakeSink(open=True)
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+        assert sink.cleared == []
+
+    async def test_a_task_spawned_inside_the_frame_loses_elevation_when_the_frame_closes(
+        self,
+    ) -> None:
+        sink = FakeSink()
+        seen_inside: list[frozenset[str]] = []
+        release = asyncio.Event()
+
+        async def child() -> frozenset[str]:
+            seen_inside.append(elevated_scopes())
+            await release.wait()
+            return elevated_scopes()
+
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            await _elevate()
+            task = asyncio.create_task(child())
+            await asyncio.sleep(0)
+        release.set()
+
+        assert seen_inside == [frozenset({"editor"})]
+        assert await task == frozenset()
+
+    async def test_a_cancelled_inner_frame_still_clears_what_it_added(self) -> None:
+        sink = FakeSink(open=True)
+        elevated = asyncio.Event()
+
+        async def inner() -> None:
+            async with elevation_scope(owns_transaction=False, sink=sink):
+                await _elevate()
+                elevated.set()
+                await asyncio.Event().wait()
+
+        async with elevation_scope(owns_transaction=True, sink=sink):
+            task = asyncio.create_task(inner())
+            await elevated.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert elevated_scopes() == frozenset()
+        assert (sink.cleared, sink.invalidated) == ([frozenset({"editor"})], 0)
 
 
 async def _nested_elevation(sink: FakeSink, elevated: asyncio.Event | None = None) -> None:
@@ -210,59 +205,63 @@ async def _nested_elevation(sink: FakeSink, elevated: asyncio.Event | None = Non
             await asyncio.Event().wait()
 
 
-@pytest.mark.parametrize(
-    ("sink", "message"),
-    [
-        (FakeSink(open=True, clear_raises=RuntimeError("database says no")), "database says no"),
-        (FakeSink(open=True, refuse_clear=True), "refused before any statement"),
-    ],
-    ids=["clear-fails", "clear-refused"],
-)
-async def test_a_failed_clear_invalidates_the_session_and_is_raised(
-    sink: FakeSink, message: str
-) -> None:
-    with pytest.raises(RuntimeError, match=message):
-        await _nested_elevation(sink)
-
-    assert sink.invalidated == 1
-
-
-async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    sink = FakeSink(
-        open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
+class TestElevationFailure:
+    @pytest.mark.parametrize(
+        ("sink", "message"),
+        [
+            (
+                FakeSink(open=True, clear_raises=RuntimeError("database says no")),
+                "database says no",
+            ),
+            (FakeSink(open=True, refuse_clear=True), "refused before any statement"),
+        ],
+        ids=["clear-fails", "clear-refused"],
     )
+    async def test_a_failed_clear_invalidates_the_session_and_is_raised(
+        self, sink: FakeSink, message: str
+    ) -> None:
+        with pytest.raises(RuntimeError, match=message):
+            await _nested_elevation(sink)
 
-    with pytest.raises(RuntimeError, match="database says no") as raised:
-        await _nested_elevation(sink)
+        assert sink.invalidated == 1
 
-    assert isinstance(raised.value.__cause__, RuntimeError)
-    assert "could not be invalidated" in caplog.text
-    assert elevated_scopes() == frozenset()
+    async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        sink = FakeSink(
+            open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
+        )
 
+        with pytest.raises(RuntimeError, match="database says no") as raised:
+            await _nested_elevation(sink)
 
-async def test_a_failed_invalidation_is_raised_over_a_cancellation() -> None:
-    sink = FakeSink(
-        open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
-    )
-    elevated = asyncio.Event()
-    task = asyncio.create_task(_nested_elevation(sink, elevated))
-    await elevated.wait()
-    task.cancel()
+        assert isinstance(raised.value.__cause__, RuntimeError)
+        assert "could not be invalidated" in caplog.text
+        assert elevated_scopes() == frozenset()
 
-    with pytest.raises(RuntimeError, match="database says no"):
-        await task
-    assert sink.invalidated == 1
+    async def test_a_failed_invalidation_is_raised_over_a_cancellation(self) -> None:
+        sink = FakeSink(
+            open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
+        )
+        elevated = asyncio.Event()
+        task = asyncio.create_task(_nested_elevation(sink, elevated))
+        await elevated.wait()
+        task.cancel()
 
+        with pytest.raises(RuntimeError, match="database says no"):
+            await task
+        assert sink.invalidated == 1
 
-async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_product() -> None:
-    from loom.core.authz.product import clear_authz_product
-    from loom.core.repository.sqlalchemy.rls import elevate
+    async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_product(
+        self,
+    ) -> None:
+        from loom.core.authz.product import clear_authz_product
+        from loom.core.repository.sqlalchemy.rls import elevate
 
-    clear_authz_product()
+        clear_authz_product()
 
-    allowed_decision = _allowed()
+        allowed_decision = _allowed()
 
-    with pytest.raises(RuntimeError, match="execution frame"):
-        await elevate("editor", allowed_decision, at=BOUNDARY)
+        with pytest.raises(RuntimeError, match="execution frame"):
+            await elevate("editor", allowed_decision, at=BOUNDARY)

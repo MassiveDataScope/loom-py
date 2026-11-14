@@ -324,15 +324,16 @@ class TestCanRevoke:
             can_revoke(CATALOG, grants, target, delegate=MANAGE, now=NAIVE)
 
 
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: Decision(True, None),
-        lambda: Decision(False, Grant("ada", "viewer", ROOT)),
-        lambda: GrantCheck(True, frozenset({READ})),
-        lambda: GrantCheck(False, frozenset()),
-    ],
-)
-def test_outcomes_cannot_contradict_themselves(build: Callable[[], object]) -> None:
-    with pytest.raises(ValueError):
-        build()
+class TestOutcomes:
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: Decision(True, None),
+            lambda: Decision(False, Grant("ada", "viewer", ROOT)),
+            lambda: GrantCheck(True, frozenset({READ})),
+            lambda: GrantCheck(False, frozenset()),
+        ],
+    )
+    def test_outcomes_cannot_contradict_themselves(self, build: Callable[[], object]) -> None:
+        with pytest.raises(ValueError):
+            build()

@@ -118,13 +118,14 @@ def _check(seed: int) -> None:
         assert not _reaches_construction_cycle(edges), "accepted a graph with a cycle"
 
 
-def test_refused_iff_a_root_reaches_a_cycle_of_non_call_edges() -> None:
-    """Every seed is checked; the failure names each failing seed and why."""
-    failures: list[str] = []
-    for seed in SEEDS:
-        try:
-            _check(seed)
-        except Exception as error:  # noqa: BLE001 - every failing seed is reported
-            failures.append(f"seed {seed}: {type(error).__name__}: {error}")
+class TestConstructionCycleProperty:
+    def test_refused_iff_a_root_reaches_a_cycle_of_non_call_edges(self) -> None:
+        """Every seed is checked; the failure names each failing seed and why."""
+        failures: list[str] = []
+        for seed in SEEDS:
+            try:
+                _check(seed)
+            except Exception as error:  # noqa: BLE001 - every failing seed is reported
+                failures.append(f"seed {seed}: {type(error).__name__}: {error}")
 
-    assert failures == [], "\n".join(failures)
+        assert failures == [], "\n".join(failures)

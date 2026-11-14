@@ -68,58 +68,56 @@ def _race(resolve: Callable[[], object]) -> list[object]:
     return [future.result() for future in done]
 
 
-def test_an_unbuilt_singleton_is_built_once() -> None:
-    container = LoomContainer()
-    container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
+class TestSingletonThreadSafety:
+    def test_an_unbuilt_singleton_is_built_once(self) -> None:
+        container = LoomContainer()
+        container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
 
-    results = _race(lambda: container.resolve(AcmeBottom))
+        results = _race(lambda: container.resolve(AcmeBottom))
 
-    assert AcmeBottom.built == 1
-    assert len({id(result) for result in results}) == 1
+        assert AcmeBottom.built == 1
+        assert len({id(result) for result in results}) == 1
 
-
-def test_a_provider_resolving_a_second_unbuilt_singleton_builds_each_once() -> None:
-    container = LoomContainer()
-    container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
-    container.register(
-        AcmeMiddle, lambda: AcmeMiddle(container.resolve(AcmeBottom)), scope=Scope.APPLICATION
-    )
-
-    results = _race(lambda: container.resolve(AcmeMiddle))
-
-    assert (AcmeMiddle.built, AcmeBottom.built) == (1, 1)
-    assert len({id(result) for result in results}) == 1
-
-
-def test_a_chain_three_deep_resolved_from_its_top_builds_each_once() -> None:
-    container = LoomContainer()
-    for key in (AcmeBottom, AcmeMiddle, AcmeTop):
-        container.register(key, key, scope=Scope.APPLICATION)
-
-    results = _race(lambda: container.resolve(AcmeTop))
-
-    assert (AcmeTop.built, AcmeMiddle.built, AcmeBottom.built) == (1, 1, 1)
-    assert len({id(result) for result in results}) == 1
-
-
-def test_a_provider_joining_a_thread_that_resolves_another_singleton_completes() -> None:
-    container = LoomContainer()
-    container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
-
-    def middle() -> AcmeMiddle:
-        found: list[AcmeBottom] = []
-        # A daemon thread: the test stays bounded if the worker is stuck on a lock.
-        worker = threading.Thread(
-            target=lambda: found.append(container.resolve(AcmeBottom)), daemon=True
+    def test_a_provider_resolving_a_second_unbuilt_singleton_builds_each_once(self) -> None:
+        container = LoomContainer()
+        container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
+        container.register(
+            AcmeMiddle, lambda: AcmeMiddle(container.resolve(AcmeBottom)), scope=Scope.APPLICATION
         )
-        worker.start()
-        worker.join(TIMEOUT_S)
-        assert found, "the worker did not return: a lock is held across the provider"
-        return AcmeMiddle(found[0])
 
-    container.register(AcmeMiddle, middle, scope=Scope.APPLICATION)
+        results = _race(lambda: container.resolve(AcmeMiddle))
 
-    built = container.resolve(AcmeMiddle)
+        assert (AcmeMiddle.built, AcmeBottom.built) == (1, 1)
+        assert len({id(result) for result in results}) == 1
 
-    assert built.bottom is container.resolve(AcmeBottom)
-    assert (AcmeMiddle.built, AcmeBottom.built) == (1, 1)
+    def test_a_chain_three_deep_resolved_from_its_top_builds_each_once(self) -> None:
+        container = LoomContainer()
+        for key in (AcmeBottom, AcmeMiddle, AcmeTop):
+            container.register(key, key, scope=Scope.APPLICATION)
+
+        results = _race(lambda: container.resolve(AcmeTop))
+
+        assert (AcmeTop.built, AcmeMiddle.built, AcmeBottom.built) == (1, 1, 1)
+        assert len({id(result) for result in results}) == 1
+
+    def test_a_provider_joining_a_thread_that_resolves_another_singleton_completes(self) -> None:
+        container = LoomContainer()
+        container.register(AcmeBottom, AcmeBottom, scope=Scope.APPLICATION)
+
+        def middle() -> AcmeMiddle:
+            found: list[AcmeBottom] = []
+            # A daemon thread: the test stays bounded if the worker is stuck on a lock.
+            worker = threading.Thread(
+                target=lambda: found.append(container.resolve(AcmeBottom)), daemon=True
+            )
+            worker.start()
+            worker.join(TIMEOUT_S)
+            assert found, "the worker did not return: a lock is held across the provider"
+            return AcmeMiddle(found[0])
+
+        container.register(AcmeMiddle, middle, scope=Scope.APPLICATION)
+
+        built = container.resolve(AcmeMiddle)
+
+        assert built.bottom is container.resolve(AcmeBottom)
+        assert (AcmeMiddle.built, AcmeBottom.built) == (1, 1)

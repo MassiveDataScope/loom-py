@@ -25,6 +25,7 @@ from loom.core.cache.result_codec import build_result_codec
 from loom.core.errors import BoundaryValidationError
 
 from ._doubles import (
+    AcmeCacheWidget,
     CachedEnv,
     CodecRepository,
     EvolvedRepository,
@@ -34,7 +35,6 @@ from ._doubles import (
     OutOfGrammarReadRepository,
     Stats,
     UnmarkedOverrideRepository,
-    Widget,
     WidgetCreate,
     WidgetUpdate,
     rewrap_with_cache,
@@ -43,11 +43,11 @@ from ._doubles import (
 
 ROW_COUNT = 3
 
-Wrapper = CachedRepository[Widget, WidgetCreate, WidgetUpdate, Any]
+Wrapper = CachedRepository[AcmeCacheWidget, WidgetCreate, WidgetUpdate, Any]
 
 
-def _widgets(count: int) -> list[Widget]:
-    return [Widget(id=index, name=f"w{index}") for index in range(1, count + 1)]
+def _widgets(count: int) -> list[AcmeCacheWidget]:
+    return [AcmeCacheWidget(id=index, name=f"w{index}") for index in range(1, count + 1)]
 
 
 def _expected_stats_list() -> list[Stats]:
@@ -55,13 +55,13 @@ def _expected_stats_list() -> list[Stats]:
 
 
 @pytest.fixture
-def codec_env(cache_config: CacheConfig) -> CachedEnv[Widget]:
+def codec_env(cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
     """A cached repository over a double covering the codec grammar."""
-    return wrap_with_cache(CodecRepository(_widgets(ROW_COUNT), Widget), cache_config)
+    return wrap_with_cache(CodecRepository(_widgets(ROW_COUNT), AcmeCacheWidget), cache_config)
 
 
 @pytest.fixture
-def codec_repository(codec_env: CachedEnv[Widget]) -> CodecRepository[Widget]:
+def codec_repository(codec_env: CachedEnv[AcmeCacheWidget]) -> CodecRepository[AcmeCacheWidget]:
     """The repository double behind ``codec_env``."""
     repository = codec_env.repository
     assert isinstance(repository, CodecRepository)
@@ -86,13 +86,13 @@ class TestDeclaredReturnTypeSurvivesTheCache:
             ("stats_for", ("known",), Stats(total=ROW_COUNT, label="known")),
             ("stats_for", ("other",), None),
             ("total", (), ROW_COUNT),
-            ("newest", (), Widget(id=ROW_COUNT, name=f"w{ROW_COUNT}")),
+            ("newest", (), AcmeCacheWidget(id=ROW_COUNT, name=f"w{ROW_COUNT}")),
             ("late_stats", (), LateStats(count=ROW_COUNT)),
         ],
     )
     async def test_both_calls_return_the_declared_value(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
         method_name: str,
         args: tuple[Any, ...],
         expected: Any,
@@ -110,13 +110,13 @@ class TestDeclaredReturnTypeSurvivesTheCache:
             ("stats_tuple", (), tuple),
             ("stats_for", ("known",), Stats),
             ("total", (), int),
-            ("newest", (), Widget),
+            ("newest", (), AcmeCacheWidget),
             ("late_stats", (), LateStats),
         ],
     )
     async def test_both_calls_return_the_declared_type(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
         method_name: str,
         args: tuple[Any, ...],
         expected_type: type,
@@ -140,8 +140,8 @@ class TestDeclaredReturnTypeSurvivesTheCache:
     )
     async def test_the_second_call_is_served_from_the_cache(
         self,
-        codec_env: CachedEnv[Widget],
-        codec_repository: CodecRepository[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
+        codec_repository: CodecRepository[AcmeCacheWidget],
         method_name: str,
         args: tuple[Any, ...],
     ) -> None:
@@ -151,7 +151,7 @@ class TestDeclaredReturnTypeSurvivesTheCache:
 
     async def test_the_elements_of_a_cached_container_keep_their_type(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         first, second = await _call_twice(codec_env.wrapper, "stats_list")
 
@@ -162,7 +162,9 @@ class TestDeclaredReturnTypeSurvivesTheCache:
 class TestAbsentResults:
     """An optional read that finds nothing is answered, not cached."""
 
-    async def test_none_is_returned_on_both_calls(self, codec_env: CachedEnv[Widget]) -> None:
+    async def test_none_is_returned_on_both_calls(
+        self, codec_env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         first, second = await _call_twice(codec_env.wrapper, "stats_for", "other")
 
         assert first is None
@@ -170,8 +172,8 @@ class TestAbsentResults:
 
     async def test_none_is_not_stored_so_the_read_runs_again(
         self,
-        codec_env: CachedEnv[Widget],
-        codec_repository: CodecRepository[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
+        codec_repository: CodecRepository[AcmeCacheWidget],
     ) -> None:
         await _call_twice(codec_env.wrapper, "stats_for", "other")
 
@@ -183,7 +185,7 @@ class TestAuditFinding05:
 
     async def test_the_cached_call_still_exposes_the_struct_attributes(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         first, second = await _call_twice(codec_env.wrapper, "stats")
 
@@ -193,7 +195,7 @@ class TestAuditFinding05:
 
     async def test_the_cached_call_does_not_return_a_mapping(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         _first, second = await _call_twice(codec_env.wrapper, "stats")
 
@@ -207,7 +209,7 @@ class TestUnusableAnnotations:
         self,
         cache_config: CacheConfig,
     ) -> None:
-        repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), Widget)
+        repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
         with pytest.raises(RuntimeError) as excinfo:
             wrap_with_cache(repository, cache_config)
@@ -218,7 +220,7 @@ class TestUnusableAnnotations:
 
     def test_a_cached_read_absent_from_the_class_is_refused_when_reached(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         """A read set on the instance escapes the wrap-time scan of the class."""
 
@@ -237,13 +239,13 @@ class TestCodecConstruction:
 
     def test_the_wrapper_of_a_cached_read_is_memoised(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         assert codec_env.wrapper.stats is codec_env.wrapper.stats
 
     def test_two_cached_reads_get_their_own_wrapper(
         self,
-        codec_env: CachedEnv[Widget],
+        codec_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         assert codec_env.wrapper.stats is not codec_env.wrapper.total
 
@@ -251,14 +253,14 @@ class TestCodecConstruction:
         self,
         cache_config: CacheConfig,
     ) -> None:
-        repository = ExplodingAttributeRepository(_widgets(ROW_COUNT), Widget)
+        repository = ExplodingAttributeRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
         wrap_with_cache(repository, cache_config)
 
         assert repository.property_reads == 0
 
 
-class ExplodingAttributeRepository(CodecRepository[Widget]):
+class ExplodingAttributeRepository(CodecRepository[AcmeCacheWidget]):
     """Double whose lazy attribute must not be evaluated at construction.
 
     A repository is free to expose a property that opens a connection or
@@ -269,7 +271,7 @@ class ExplodingAttributeRepository(CodecRepository[Widget]):
         property_reads: Number of times the lazy attribute was evaluated.
     """
 
-    def __init__(self, rows: list[Widget], row_type: type[Widget]) -> None:
+    def __init__(self, rows: list[AcmeCacheWidget], row_type: type[AcmeCacheWidget]) -> None:
         super().__init__(rows, row_type)
         self.property_reads = 0
 
@@ -284,19 +286,19 @@ class TestResultContradictingItsAnnotation:
     """A read that does not survive the round trip fails on the first call."""
 
     @pytest.fixture
-    def lying_env(self, cache_config: CacheConfig) -> CachedEnv[Widget]:
-        return wrap_with_cache(LyingRepository(_widgets(ROW_COUNT), Widget), cache_config)
+    def lying_env(self, cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
+        return wrap_with_cache(LyingRepository(_widgets(ROW_COUNT), AcmeCacheWidget), cache_config)
 
     async def test_a_result_the_declared_struct_rejects_raises(
         self,
-        lying_env: CachedEnv[Widget],
+        lying_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         with pytest.raises(BoundaryValidationError):
             await lying_env.wrapper.wrong_shape()
 
     async def test_a_result_no_payload_can_describe_raises(
         self,
-        lying_env: CachedEnv[Widget],
+        lying_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         with pytest.raises(TypeError):
             await lying_env.wrapper.unrenderable()
@@ -307,7 +309,7 @@ class TestResultContradictingItsAnnotation:
     )
     async def test_nothing_is_stored_so_the_next_call_reaches_the_repository(
         self,
-        lying_env: CachedEnv[Widget],
+        lying_env: CachedEnv[AcmeCacheWidget],
         method_name: str,
         error: type[Exception],
     ) -> None:
@@ -327,12 +329,12 @@ class TestSubclassOfTheDeclaredType:
     """The declared type is the contract: a subclass is narrowed to it."""
 
     @pytest.fixture
-    def lying_env(self, cache_config: CacheConfig) -> CachedEnv[Widget]:
-        return wrap_with_cache(LyingRepository(_widgets(ROW_COUNT), Widget), cache_config)
+    def lying_env(self, cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
+        return wrap_with_cache(LyingRepository(_widgets(ROW_COUNT), AcmeCacheWidget), cache_config)
 
     async def test_both_calls_return_the_declared_type_not_the_subclass(
         self,
-        lying_env: CachedEnv[Widget],
+        lying_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         first, second = await _call_twice(lying_env.wrapper, "narrowing")
 
@@ -341,7 +343,7 @@ class TestSubclassOfTheDeclaredType:
 
     async def test_the_added_fields_are_dropped_on_both_calls(
         self,
-        lying_env: CachedEnv[Widget],
+        lying_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         first, second = await _call_twice(lying_env.wrapper, "narrowing")
 
@@ -353,22 +355,22 @@ class TestPayloadWrittenByAnEarlierVersion:
     """A cached payload that no longer fits its type is a miss, not an outage."""
 
     @pytest.fixture
-    async def warm_env(self, codec_env: CachedEnv[Widget]) -> CachedEnv[Widget]:
+    async def warm_env(self, codec_env: CachedEnv[AcmeCacheWidget]) -> CachedEnv[AcmeCacheWidget]:
         await codec_env.wrapper.stats()
         return codec_env
 
     def _evolved(
         self,
-        warm_env: CachedEnv[Widget],
+        warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
-    ) -> tuple[Wrapper, EvolvedRepository[Widget]]:
+    ) -> tuple[Wrapper, EvolvedRepository[AcmeCacheWidget]]:
         """The later deployment, in front of the warm cache of the earlier one."""
-        repository = EvolvedRepository(_widgets(ROW_COUNT), Widget)
+        repository = EvolvedRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
         return rewrap_with_cache(warm_env, repository, cache_config), repository
 
     async def test_the_later_version_reads_the_key_the_earlier_one_wrote(
         self,
-        warm_env: CachedEnv[Widget],
+        warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
     ) -> None:
         wrapper, _repository = self._evolved(warm_env, cache_config)
@@ -380,7 +382,7 @@ class TestPayloadWrittenByAnEarlierVersion:
 
     async def test_the_undecodable_entry_does_not_reach_the_caller(
         self,
-        warm_env: CachedEnv[Widget],
+        warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
     ) -> None:
         wrapper, _repository = self._evolved(warm_env, cache_config)
@@ -389,7 +391,7 @@ class TestPayloadWrittenByAnEarlierVersion:
 
     async def test_the_stale_entry_is_overwritten_so_the_next_call_hits(
         self,
-        warm_env: CachedEnv[Widget],
+        warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
     ) -> None:
         wrapper, repository = self._evolved(warm_env, cache_config)
@@ -404,8 +406,8 @@ class TestUnmarkedOverride:
     """An override that drops the marker takes the name out of the cache."""
 
     @pytest.fixture
-    def override_env(self, cache_config: CacheConfig) -> CachedEnv[Widget]:
-        repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), Widget)
+    def override_env(self, cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
+        repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
         return wrap_with_cache(repository, cache_config)
 
@@ -413,7 +415,7 @@ class TestUnmarkedOverride:
         self,
         cache_config: CacheConfig,
     ) -> None:
-        repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), Widget)
+        repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
         env = wrap_with_cache(repository, cache_config)
 
@@ -421,7 +423,7 @@ class TestUnmarkedOverride:
 
     async def test_the_overridden_read_is_not_cached(
         self,
-        override_env: CachedEnv[Widget],
+        override_env: CachedEnv[AcmeCacheWidget],
     ) -> None:
         repository = override_env.repository
         assert isinstance(repository, UnmarkedOverrideRepository)
@@ -482,10 +484,10 @@ class TestGrammarBoundaries:
         self,
         method: Any,
     ) -> None:
-        assert build_result_codec(method, model=Widget) is None
+        assert build_result_codec(method, model=AcmeCacheWidget) is None
 
     def test_an_optional_list_of_structs_is_inside_the_grammar(self) -> None:
-        codec = build_result_codec(_returns_optional_list, model=Widget)
+        codec = build_result_codec(_returns_optional_list, model=AcmeCacheWidget)
 
         assert codec is not None
         assert codec.decode([{"total": 1, "label": "a"}]) == [Stats(total=1, label="a")]

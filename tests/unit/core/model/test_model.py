@@ -22,7 +22,7 @@ from loom.core.model import (
 )
 
 
-class _Product(BaseModel):
+class AcmeModelProduct(BaseModel):
     __tablename__ = "products"
     id: int = ColumnField(primary_key=True, autoincrement=True)
     name: str = ColumnField(length=120)
@@ -51,14 +51,15 @@ class _Line(BaseModel):
     line_no: int = ColumnField(primary_key=True)
 
 
-def test_annotated_projection_keeps_its_metadata() -> None:
-    types = {field.name: field.type for field in msgspec.structs.fields(_Product)}
-    assert types["rating"] == Annotated[int, "stars"] | UnsetType
+class TestModelMetadata:
+    def test_annotated_projection_keeps_its_metadata(self) -> None:
+        types = {field.name: field.type for field in msgspec.structs.fields(AcmeModelProduct)}
+        assert types["rating"] == Annotated[int, "stars"] | UnsetType
 
 
 class TestModelIntrospection:
     def test_column_fields(self) -> None:
-        fields = get_column_fields(_Product)
+        fields = get_column_fields(AcmeModelProduct)
         assert set(fields.keys()) == {"id", "name", "price", "active"}
         assert fields["id"].field.primary_key is True
         assert fields["name"].column_type.type_name == "String"
@@ -66,23 +67,23 @@ class TestModelIntrospection:
         assert fields["price"].column_type.type_name == "Float"
 
     def test_id_attribute_and_table_name(self) -> None:
-        assert get_id_attribute(_Product) == "id"
-        assert get_table_name(_Product) == "products"
+        assert get_id_attribute(AcmeModelProduct) == "id"
+        assert get_table_name(AcmeModelProduct) == "products"
 
     def test_id_attributes_list_every_key_column_in_declaration_order(self) -> None:
-        assert get_id_attributes(_Product) == ("id",)
+        assert get_id_attributes(AcmeModelProduct) == ("id",)
         assert get_id_attributes(_Line) == ("order_id", "line_no")
 
     def test_relations_and_projections(self) -> None:
-        assert "reviews" in get_relations(_Product)
-        assert get_relations(_Product)["reviews"].cardinality == Cardinality.ONE_TO_MANY
-        assert "count_reviews" in get_projections(_Product)
-        assert get_projections(_Product)["count_reviews"].default == 0
+        assert "reviews" in get_relations(AcmeModelProduct)
+        assert get_relations(AcmeModelProduct)["reviews"].cardinality == Cardinality.ONE_TO_MANY
+        assert "count_reviews" in get_projections(AcmeModelProduct)
+        assert get_projections(AcmeModelProduct)["count_reviews"].default == 0
 
 
 class TestStructBehavior:
     def test_frozen_and_omit_defaults(self) -> None:
-        p = _Product(id=1, name="x", price=1.0, active=False)
+        p = AcmeModelProduct(id=1, name="x", price=1.0, active=False)
         data = msgspec.json.decode(msgspec.json.encode(p))
         # Non-default column fields are present
         assert set(data.keys()) == {"id", "name", "price", "active"}
@@ -91,6 +92,6 @@ class TestStructBehavior:
             p.name = "y"
 
     def test_camel_rename_and_loaded_fields(self) -> None:
-        p = _Product(id=1, name="x", price=1.0, active=True, count_reviews=5)
+        p = AcmeModelProduct(id=1, name="x", price=1.0, active=True, count_reviews=5)
         data = msgspec.json.decode(msgspec.json.encode(p))
         assert data["countReviews"] == 5

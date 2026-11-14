@@ -14,30 +14,29 @@ def _sink_of(kernel: KernelRuntime) -> object:
     return kernel.executor._elevation_sink  # noqa: SLF001
 
 
-def test_the_sink_a_module_bound_is_the_executors() -> None:
-    sink = FakeSink()
+class TestKernelElevationBinding:
+    def test_the_sink_a_module_bound_is_the_executors(self) -> None:
+        sink = FakeSink()
 
-    def binds_sink(container: LoomContainer) -> None:
+        def binds_sink(container: LoomContainer) -> None:
+            container.register_instance(ElevationSink, sink)
+
+        kernel = create_kernel(config=AcmeConfig(), use_cases=[AcmePing], modules=[binds_sink])
+
+        assert _sink_of(kernel) is sink
+        assert kernel.container.resolve(ElevationSink) is sink
+
+    def test_installed_on_a_container_the_bound_sink_is_the_executors(self) -> None:
+        sink = FakeSink()
+        container = LoomContainer()
         container.register_instance(ElevationSink, sink)
 
-    kernel = create_kernel(config=AcmeConfig(), use_cases=[AcmePing], modules=[binds_sink])
+        kernel = install_kernel(container, use_cases=[AcmePing], logger=LOG)
 
-    assert _sink_of(kernel) is sink
-    assert kernel.container.resolve(ElevationSink) is sink
+        assert _sink_of(kernel) is sink
+        assert container.resolve(ElevationSink) is sink
 
+    def test_without_any_sink_the_executor_has_none(self) -> None:
+        kernel = install_kernel(LoomContainer(), use_cases=[AcmePing], logger=LOG)
 
-def test_installed_on_a_container_the_bound_sink_is_the_executors() -> None:
-    sink = FakeSink()
-    container = LoomContainer()
-    container.register_instance(ElevationSink, sink)
-
-    kernel = install_kernel(container, use_cases=[AcmePing], logger=LOG)
-
-    assert _sink_of(kernel) is sink
-    assert container.resolve(ElevationSink) is sink
-
-
-def test_without_any_sink_the_executor_has_none() -> None:
-    kernel = install_kernel(LoomContainer(), use_cases=[AcmePing], logger=LOG)
-
-    assert _sink_of(kernel) is None
+        assert _sink_of(kernel) is None

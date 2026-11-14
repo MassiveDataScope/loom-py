@@ -7,12 +7,9 @@ import pytest
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, KeyNode
 from loom.core.di.scope import Scope
+from tests.unit.core.di.doubles import AcmeSession
 from tests.unit.core.di.graph import acme
 from tests.unit.core.di.graph.acme import AcmeCall, AcmeCaller
-
-
-class AcmeSession:
-    """Bound per execution."""
 
 
 class AcmeValuate:
@@ -50,7 +47,7 @@ class AcmeCachedPricing:
         self.cache = cache
 
 
-class AcmeQuote:
+class AcmeCachedQuote:
     def __init__(self, pricing: AcmeCachedPricing) -> None:
         self.pricing = pricing
 
@@ -110,78 +107,79 @@ class AcmeTrading:
         self.book = book
 
 
-def _bound() -> LoomContainer:
+@pytest.fixture
+def container() -> LoomContainer:
     built = acme.container()
     built.register(AcmeSession, AcmeSession, scope=Scope.REQUEST)
     return built
 
 
-def test_a_called_class_is_wrapped_as_a_call_edge_to_its_class_node() -> None:
-    graph = acme.analysed(_bound(), AcmeMarket).graph
+class TestCallEdges:
+    def test_a_called_class_is_wrapped_as_a_call_edge_to_its_class_node(
+        self, container: LoomContainer
+    ) -> None:
+        graph = acme.analysed(container, AcmeMarket).graph
 
-    assert graph.edges(ClassNode(AcmeMarket)) == (
-        Edge(ClassNode(AcmeValuate), "valuate", call_edge=True),
-    )
+        assert graph.edges(ClassNode(AcmeMarket)) == (
+            Edge(ClassNode(AcmeValuate), "valuate", call_edge=True),
+        )
 
+    def test_a_closure_walk_crosses_call_edges(self, container: LoomContainer) -> None:
+        analysis = acme.analysed(container, AcmeMarket)
 
-def test_a_closure_walk_crosses_call_edges() -> None:
-    analysis = acme.analysed(_bound(), AcmeMarket)
+        assert {ClassNode(AcmeValuate), KeyNode(AcmeSession)} <= analysis.reachable
 
-    assert {ClassNode(AcmeValuate), KeyNode(AcmeSession)} <= analysis.reachable
+    def test_a_loop_through_call_edges_builds_and_its_analysis_ends(
+        self, container: LoomContainer
+    ) -> None:
+        analysis = acme.analysed(container, AcmeLoop)
 
+        assert {ClassNode(AcmeLoop), ClassNode(AcmeLoopBack)} <= analysis.reachable
 
-def test_a_loop_through_call_edges_builds_and_its_analysis_ends() -> None:
-    analysis = acme.analysed(_bound(), AcmeLoop)
+    def test_a_construction_cycle_after_a_call_edge_is_refused(
+        self, container: LoomContainer
+    ) -> None:
+        container.register(AcmeRingFirst, AcmeRingFirst)
+        container.register(AcmeRingSecond, AcmeRingSecond)
 
-    assert {ClassNode(AcmeLoop), ClassNode(AcmeLoopBack)} <= analysis.reachable
+        with pytest.raises(
+            DependencyGraphError,
+            match=(
+                "AcmeRing -> first: AcmeRingFirst -> second: AcmeRingSecond -> first: AcmeRingFirst"
+                " -> second: AcmeRingSecond: dependency cycle"
+            ),
+        ):
+            acme.analysed(container, AcmeRing)
 
+    def test_a_construction_cycle_first_reached_across_a_call_loop_is_refused(
+        self, container: LoomContainer
+    ) -> None:
+        for key in (AcmeBook, AcmeDesk, AcmeTrader):
+            container.register(key, key)
 
-def test_a_construction_cycle_after_a_call_edge_is_refused() -> None:
-    built = _bound()
-    built.register(AcmeRingFirst, AcmeRingFirst)
-    built.register(AcmeRingSecond, AcmeRingSecond)
+        with pytest.raises(DependencyGraphError, match="trader: AcmeTrader: dependency cycle"):
+            acme.analysed(container, AcmeTrading)
 
-    with pytest.raises(
-        DependencyGraphError,
-        match=(
-            "AcmeRing -> first: AcmeRingFirst -> second: AcmeRingSecond -> first: AcmeRingFirst"
-            " -> second: AcmeRingSecond: dependency cycle"
-        ),
-    ):
-        acme.analysed(built, AcmeRing)
+    def test_a_singleton_calling_a_class_with_per_execution_dependencies_is_not_captive(
+        self, container: LoomContainer
+    ) -> None:
+        container.register(AcmeInvoking, AcmeInvoking, scope=Scope.APPLICATION)
 
+        analysis = acme.analysed(container, AcmePricing)
 
-def test_a_construction_cycle_first_reached_across_a_call_loop_is_refused() -> None:
-    built = _bound()
-    for key in (AcmeBook, AcmeDesk, AcmeTrader):
-        built.register(key, key)
+        assert KeyNode(AcmeSession) in analysis.reachable
 
-    with pytest.raises(DependencyGraphError, match="trader: AcmeTrader: dependency cycle"):
-        acme.analysed(built, AcmeTrading)
+    def test_a_singleton_reaching_a_caller_through_a_plain_edge_is_refused(
+        self, container: LoomContainer
+    ) -> None:
+        container.register(AcmeCachedPricing, AcmeCachedPricing, scope=Scope.APPLICATION)
+        container.register(AcmeIdentityCache, AcmeIdentityCache, scope=Scope.APPLICATION)
 
+        with pytest.raises(DependencyGraphError, match="cache: AcmeIdentityCache: caller"):
+            acme.analysed(container, AcmeCachedQuote)
 
-def test_a_singleton_calling_a_class_with_per_execution_dependencies_is_not_captive() -> None:
-    built = _bound()
-    built.register(AcmeInvoking, AcmeInvoking, scope=Scope.APPLICATION)
+    def test_a_class_node_target_is_never_a_missing_binding(self, container: LoomContainer) -> None:
+        analysis = acme.analysed(container, AcmeMarket)
 
-    analysis = acme.analysed(built, AcmePricing)
-
-    assert KeyNode(AcmeSession) in analysis.reachable
-
-
-def test_a_singleton_reaching_a_caller_through_a_plain_edge_is_refused() -> None:
-    built = _bound()
-    built.register(AcmeCachedPricing, AcmeCachedPricing, scope=Scope.APPLICATION)
-    built.register(AcmeIdentityCache, AcmeIdentityCache, scope=Scope.APPLICATION)
-
-    with pytest.raises(DependencyGraphError, match="cache: AcmeIdentityCache: caller"):
-        acme.analysed(built, AcmeQuote)
-
-
-def test_a_class_node_target_is_never_a_missing_binding() -> None:
-    built = _bound()
-
-    analysis = acme.analysed(built, AcmeMarket)
-
-    assert not built.is_registered(AcmeValuate)
-    assert ClassNode(AcmeValuate) in analysis.reachable
+        assert not container.is_registered(AcmeValuate)
+        assert ClassNode(AcmeValuate) in analysis.reachable

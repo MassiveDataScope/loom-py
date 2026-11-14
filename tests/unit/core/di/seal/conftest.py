@@ -6,13 +6,13 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from tests.unit.core.di.seal.doubles import AcmeLedger
+from tests.unit.core.di.seal.doubles import AcmeBoundLedger
 
 
 @pytest.fixture
 def sealed() -> LoomContainer:
-    """A sealed container with one singleton, ``AcmeLedger``."""
+    """A sealed container with one singleton, ``AcmeBoundLedger``."""
     container = LoomContainer()
-    container.register(AcmeLedger, AcmeLedger, scope=Scope.APPLICATION)
+    container.register(AcmeBoundLedger, AcmeBoundLedger, scope=Scope.APPLICATION)
     container.seal()
     return container

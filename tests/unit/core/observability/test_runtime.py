@@ -21,7 +21,7 @@ from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleSt
 from loom.core.observability.runtime import ObservabilityRuntime
 
 
-class _RecordingObserver:
+class AcmeRuntimeRecordingObserver:
     def __init__(self) -> None:
         self.events: list[LifecycleEvent] = []
 
@@ -36,7 +36,7 @@ class _BrokenObserver:
 
 class TestEmit:
     def test_fans_out_to_all_observers(self) -> None:
-        a, b = _RecordingObserver(), _RecordingObserver()
+        a, b = AcmeRuntimeRecordingObserver(), AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([a, b])
         event = LifecycleEvent(scope=Scope.NODE, name="transform", kind=EventKind.START)
 
@@ -47,7 +47,7 @@ class TestEmit:
 
     def test_broken_observer_does_not_stop_others(self) -> None:
         broken = _BrokenObserver()
-        good = _RecordingObserver()
+        good = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([broken, good])
         event = LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START)
 
@@ -62,7 +62,7 @@ class TestEmit:
 
 class TestSpan:
     def test_emits_start_and_end_on_success(self) -> None:
-        obs = _RecordingObserver()
+        obs = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([obs])
 
         with runtime.span(Scope.USE_CASE, "CreateOrder"):
@@ -74,7 +74,7 @@ class TestSpan:
         assert obs.events[1].status is LifecycleStatus.SUCCESS
 
     def test_emits_start_and_error_on_exception(self) -> None:
-        obs = _RecordingObserver()
+        obs = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([obs])
 
         with pytest.raises(ValueError), runtime.span(Scope.USE_CASE, "CreateOrder"):
@@ -85,13 +85,13 @@ class TestSpan:
         assert obs.events[1].error == "bad input"
 
     def test_error_event_reraises_exception(self) -> None:
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = ObservabilityRuntime([AcmeRuntimeRecordingObserver()])
 
         with pytest.raises(RuntimeError, match="boom"), runtime.span(Scope.NODE, "step"):
             raise RuntimeError("boom")
 
     def test_end_event_carries_duration(self) -> None:
-        obs = _RecordingObserver()
+        obs = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([obs])
 
         with runtime.span(Scope.JOB, "ingest"):
@@ -103,7 +103,7 @@ class TestSpan:
         assert end.duration_ms >= 0
 
     def test_propagates_trace_and_correlation_id(self) -> None:
-        obs = _RecordingObserver()
+        obs = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([obs])
 
         with runtime.span(Scope.NODE, "x", trace_id="t-1", correlation_id="c-1"):
@@ -115,7 +115,7 @@ class TestSpan:
             assert event.correlation_id == "c-1"
 
     def test_meta_forwarded_to_both_events(self) -> None:
-        obs = _RecordingObserver()
+        obs = AcmeRuntimeRecordingObserver()
         runtime = ObservabilityRuntime([obs])
 
         with runtime.span(Scope.NODE, "x", flow="my_flow"):

@@ -3,23 +3,20 @@
 from __future__ import annotations
 
 from loom.core.repository.abc import RepoFor
-
-
-class AcmeClock:
-    pass
+from tests.unit.core.doubles import AcmeClock
 
 
 class AcmeFrozenClock(AcmeClock):
     pass
 
 
-class AcmeRates:
+class AcmeClockRates:
     def __init__(self, clock: AcmeClock) -> None:
         self.clock = clock
 
 
 class AcmeQuotes:
-    def __init__(self, rates: AcmeRates) -> None:
+    def __init__(self, rates: AcmeClockRates) -> None:
         self.rates = rates
 
 

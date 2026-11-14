@@ -37,64 +37,64 @@ def manifest(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     return module
 
 
-def test_manifest_discovery_accepts_repositories_list(manifest: types.ModuleType) -> None:
-    manifest.REPOSITORIES = [_ManifestProductRepository]  # type: ignore[attr-defined]
+class TestManifestDiscovery:
+    def test_manifest_discovery_accepts_repositories_list(self, manifest: types.ModuleType) -> None:
+        manifest.REPOSITORIES = [_ManifestProductRepository]  # type: ignore[attr-defined]
 
-    result = ManifestDiscoveryEngine(_MANIFEST).discover()
+        result = ManifestDiscoveryEngine(_MANIFEST).discover()
 
-    assert result.models == ()
-    assert result.use_cases == ()
-    assert result.interfaces == ()
+        assert result.models == ()
+        assert result.use_cases == ()
+        assert result.interfaces == ()
 
+    def test_manifest_discovery_rejects_invalid_repository_type(
+        self, manifest: types.ModuleType
+    ) -> None:
+        manifest.REPOSITORIES = [object]  # type: ignore[attr-defined]
+        engine = ManifestDiscoveryEngine(_MANIFEST)
 
-def test_manifest_discovery_rejects_invalid_repository_type(manifest: types.ModuleType) -> None:
-    manifest.REPOSITORIES = [object]  # type: ignore[attr-defined]
-    engine = ManifestDiscoveryEngine(_MANIFEST)
+        with pytest.raises(TypeError, match="must implement the Repository protocol"):
+            engine.discover()
 
-    with pytest.raises(TypeError, match="must implement the Repository protocol"):
-        engine.discover()
+    def test_manifest_discovery_accepts_agents_only_manifest(
+        self, manifest: types.ModuleType
+    ) -> None:
+        """A manifest that exposes only agent artifacts is a complete manifest."""
+        manifest.AGENTS = ["ai/agents/*/agent.yaml"]  # type: ignore[attr-defined]
 
+        result = ManifestDiscoveryEngine(_MANIFEST).discover()
 
-def test_manifest_discovery_accepts_agents_only_manifest(manifest: types.ModuleType) -> None:
-    """A manifest that exposes only agent artifacts is a complete manifest."""
-    manifest.AGENTS = ["ai/agents/*/agent.yaml"]  # type: ignore[attr-defined]
+        assert result.agent_specs == ("ai/agents/*/agent.yaml",)
 
-    result = ManifestDiscoveryEngine(_MANIFEST).discover()
+    def test_manifest_discovery_carries_the_jobs(self, manifest: types.ModuleType) -> None:
+        """A manifest that exposes only jobs is complete; the composition applies their config."""
+        manifest.JOBS = [_ManifestJob]  # type: ignore[attr-defined]
 
-    assert result.agent_specs == ("ai/agents/*/agent.yaml",)
+        result = ManifestDiscoveryEngine(_MANIFEST).discover()
 
+        assert result.jobs == (_ManifestJob,)
 
-def test_manifest_discovery_carries_the_jobs(manifest: types.ModuleType) -> None:
-    """A manifest that exposes only jobs is complete; the composition applies their config."""
-    manifest.JOBS = [_ManifestJob]  # type: ignore[attr-defined]
+    @pytest.mark.parametrize("attribute", ["AGENTS", "JOBS"])
+    def test_manifest_discovery_rejects_empty_manifest_naming_every_attribute(
+        self, manifest: types.ModuleType, attribute: str
+    ) -> None:
+        """The 'no components' message lists AGENTS and JOBS among the expected attributes."""
+        _ = manifest
+        engine = ManifestDiscoveryEngine(_MANIFEST)
 
-    result = ManifestDiscoveryEngine(_MANIFEST).discover()
+        with pytest.raises(ValueError, match=attribute):
+            engine.discover()
 
-    assert result.jobs == (_ManifestJob,)
+    @pytest.mark.parametrize(
+        "spec",
+        [object, ""],
+        ids=["a type, never a path or glob", "an empty string, which is never a grant"],
+    )
+    def test_manifest_discovery_rejects_an_invalid_agent_spec(
+        self, manifest: types.ModuleType, spec: object
+    ) -> None:
+        manifest.AGENTS = [spec]  # type: ignore[attr-defined]
+        engine = ManifestDiscoveryEngine(_MANIFEST)
 
-
-@pytest.mark.parametrize("attribute", ["AGENTS", "JOBS"])
-def test_manifest_discovery_rejects_empty_manifest_naming_every_attribute(
-    manifest: types.ModuleType, attribute: str
-) -> None:
-    """The 'no components' message lists AGENTS and JOBS among the expected attributes."""
-    _ = manifest
-    engine = ManifestDiscoveryEngine(_MANIFEST)
-
-    with pytest.raises(ValueError, match=attribute):
-        engine.discover()
-
-
-@pytest.mark.parametrize(
-    "spec",
-    [object, ""],
-    ids=["a type, never a path or glob", "an empty string, which is never a grant"],
-)
-def test_manifest_discovery_rejects_an_invalid_agent_spec(
-    manifest: types.ModuleType, spec: object
-) -> None:
-    manifest.AGENTS = [spec]  # type: ignore[attr-defined]
-    engine = ManifestDiscoveryEngine(_MANIFEST)
-
-    with pytest.raises(TypeError):
-        engine.discover()
+        with pytest.raises(TypeError):
+            engine.discover()

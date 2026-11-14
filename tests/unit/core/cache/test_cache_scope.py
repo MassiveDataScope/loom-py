@@ -22,10 +22,10 @@ from loom.core.repository.abc.query import QuerySpec
 from loom.core.repository.sqlalchemy.repository import with_session_scope
 
 from ._doubles import (
+    AcmeCacheWidget,
     CachedEnv,
     CountingCacheBackend,
     CountingRepository,
-    Widget,
     WidgetUpdate,
     WritableRepository,
     wrap_with_cache,
@@ -37,11 +37,11 @@ SCOPE_A = '[["loom.scope.tenant","a"]]'
 SCOPE_B = '[["loom.scope.tenant","b"]]'
 
 
-class ScopedRepository(WritableRepository[Widget]):
+class ScopedRepository(WritableRepository[AcmeCacheWidget]):
     """Writable double that reports the scope a test sets on it, counting the reads."""
 
-    def __init__(self, rows: Sequence[Widget]) -> None:
-        super().__init__(rows, Widget)
+    def __init__(self, rows: Sequence[AcmeCacheWidget]) -> None:
+        super().__init__(rows, AcmeCacheWidget)
         self.scope = SCOPE_A
         self.reads = 0
 
@@ -53,7 +53,7 @@ class ScopedRepository(WritableRepository[Widget]):
 class TransactionRepository(ScopedRepository):
     """Double that reports a caller-scoped session while ``in_transaction`` is set."""
 
-    def __init__(self, rows: Sequence[Widget]) -> None:
+    def __init__(self, rows: Sequence[AcmeCacheWidget]) -> None:
         super().__init__(rows)
         self.in_transaction = False
         self.names_in_calls = 0
@@ -72,7 +72,7 @@ class TransactionRepository(ScopedRepository):
 class SessionScopedRepository(TransactionRepository):
     """Double whose custom read takes its session as ``with_session_scope`` injects it."""
 
-    def __init__(self, rows: Sequence[Widget]) -> None:
+    def __init__(self, rows: Sequence[AcmeCacheWidget]) -> None:
         super().__init__(rows)
         self.sessions_seen: list[object] = []
 
@@ -94,7 +94,7 @@ class SessionScopedRepository(TransactionRepository):
 class SwitchingRepository(ScopedRepository):
     """Double whose caller scope changes while a read is loading."""
 
-    async def get_by_id(self, obj_id: Any, profile: str = "default") -> Widget | None:
+    async def get_by_id(self, obj_id: Any, profile: str = "default") -> AcmeCacheWidget | None:
         self.scope = SCOPE_B
         return await super().get_by_id(obj_id, profile)
 
@@ -113,11 +113,11 @@ class _SessionManager:
         self.has_session_settings = has_session_settings
 
 
-class SettingsRepository(CountingRepository[Widget]):
+class SettingsRepository(CountingRepository[AcmeCacheWidget]):
     """Double whose sessions may carry settings, but which reports no scope."""
 
     def __init__(self, has_session_settings: bool) -> None:
-        super().__init__([Widget(id=ROW_A, name="a")], Widget)
+        super().__init__([AcmeCacheWidget(id=ROW_A, name="a")], AcmeCacheWidget)
         self.session_manager = _SessionManager(has_session_settings)
 
 
@@ -135,12 +135,12 @@ def _wrap(repository: Any, backend: CountingCacheBackend) -> CachedRepository[An
 
 
 @pytest.fixture
-def env(cache_config: CacheConfig) -> CachedEnv[Widget]:
-    rows = [Widget(id=ROW_A, name="a"), Widget(id=2, name="b")]
+def env(cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
+    rows = [AcmeCacheWidget(id=ROW_A, name="a"), AcmeCacheWidget(id=2, name="b")]
     return wrap_with_cache(ScopedRepository(rows), cache_config)
 
 
-def _scoped(env: CachedEnv[Widget]) -> ScopedRepository:
+def _scoped(env: CachedEnv[AcmeCacheWidget]) -> ScopedRepository:
     assert isinstance(env.repository, ScopedRepository)
     return env.repository
 
@@ -191,7 +191,7 @@ class TestKeys:
 class TestReadsStayInTheirScope:
     @pytest.mark.asyncio
     async def test_a_row_cached_for_one_scope_is_read_again_for_another(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         await env.wrapper.get_by_id(ROW_A)
         await env.wrapper.get_by_id(ROW_A)
@@ -202,7 +202,7 @@ class TestReadsStayInTheirScope:
 
     @pytest.mark.asyncio
     async def test_a_page_cached_for_one_scope_is_read_again_for_another(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         await env.wrapper.list_paginated(PAGE)
         await env.wrapper.list_paginated(PAGE)
@@ -213,7 +213,7 @@ class TestReadsStayInTheirScope:
 
     @pytest.mark.asyncio
     async def test_a_custom_list_read_cached_for_one_scope_runs_again_for_another(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         await env.wrapper.all_names()
         await env.wrapper.all_names()
@@ -224,7 +224,7 @@ class TestReadsStayInTheirScope:
 
     @pytest.mark.asyncio
     async def test_a_custom_entity_read_cached_for_one_scope_runs_again_for_another(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         await env.wrapper.note_count(ROW_A)
         await env.wrapper.note_count(ROW_A)
@@ -236,7 +236,9 @@ class TestReadsStayInTheirScope:
 
 class TestAWriteReachesEveryScope:
     @pytest.mark.asyncio
-    async def test_an_update_evicts_the_row_in_every_scope(self, env: CachedEnv[Widget]) -> None:
+    async def test_an_update_evicts_the_row_in_every_scope(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         repository = _scoped(env)
         for scope in (SCOPE_A, SCOPE_B, SCOPE_A, SCOPE_B):
             repository.scope = scope
@@ -254,7 +256,9 @@ class TestAWriteReachesEveryScope:
         assert repository.get_by_id_calls == 4
 
     @pytest.mark.asyncio
-    async def test_an_update_evicts_the_page_in_every_scope(self, env: CachedEnv[Widget]) -> None:
+    async def test_an_update_evicts_the_page_in_every_scope(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         repository = _scoped(env)
         for scope in (SCOPE_A, SCOPE_B, SCOPE_A, SCOPE_B):
             repository.scope = scope
@@ -271,7 +275,7 @@ class TestAWriteReachesEveryScope:
 
     @pytest.mark.asyncio
     async def test_an_update_evicts_the_custom_reads_in_every_scope(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         repository = _scoped(env)
         for scope in (SCOPE_A, SCOPE_B, SCOPE_A, SCOPE_B):
@@ -291,21 +295,22 @@ class TestAWriteReachesEveryScope:
 
 
 class TestTheScopeIsNeverLost:
-    def test_the_wrapper_forwards_the_wrapped_scope(self, env: CachedEnv[Widget]) -> None:
+    def test_the_wrapper_forwards_the_wrapped_scope(self, env: CachedEnv[AcmeCacheWidget]) -> None:
         _scoped(env).scope = SCOPE_B
 
         assert env.wrapper.cache_scope() == SCOPE_B
 
     def test_an_unscoped_repository_reports_the_empty_scope(self) -> None:
         wrapper = _wrap(
-            CountingRepository([Widget(id=ROW_A, name="a")], Widget), CountingCacheBackend()
+            CountingRepository([AcmeCacheWidget(id=ROW_A, name="a")], AcmeCacheWidget),
+            CountingCacheBackend(),
         )
 
         assert wrapper.cache_scope() == ""
 
     @pytest.mark.asyncio
     async def test_a_wrapper_around_a_wrapper_keys_by_the_innermost_scope(self) -> None:
-        repository = ScopedRepository([Widget(id=ROW_A, name="a")])
+        repository = ScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         outer = _wrap(_wrap(repository, CountingCacheBackend()), CountingCacheBackend())
 
         await outer.get_by_id(ROW_A)
@@ -332,7 +337,7 @@ class TestAScopeChangeSkipsTheWrite:
 
     @pytest.mark.asyncio
     async def test_an_entity_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
-        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
 
@@ -343,7 +348,7 @@ class TestAScopeChangeSkipsTheWrite:
 
     @pytest.mark.asyncio
     async def test_a_page_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
-        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
 
@@ -354,7 +359,7 @@ class TestAScopeChangeSkipsTheWrite:
 
     @pytest.mark.asyncio
     async def test_a_custom_read_under_one_scope_is_not_stored_after_a_change(self) -> None:
-        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
 
@@ -365,7 +370,7 @@ class TestAScopeChangeSkipsTheWrite:
     async def test_a_page_reads_the_scope_for_its_keys_and_once_more_before_its_writes(
         self,
     ) -> None:
-        repository = ScopedRepository([Widget(id=ROW_A, name="a")])
+        repository = ScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.reads = 0
         wrapper = _wrap(repository, CountingCacheBackend())
 
@@ -380,7 +385,7 @@ class TestACallerTransactionBypassesTheCache:
 
     @pytest.mark.asyncio
     async def test_every_read_reaches_the_repository_and_nothing_is_stored(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.in_transaction = True
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
@@ -402,7 +407,7 @@ class TestACallerTransactionBypassesTheCache:
 
     @pytest.mark.asyncio
     async def test_reads_after_the_transaction_use_the_cache_again(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
 
         repository.in_transaction = True
@@ -417,7 +422,7 @@ class TestACallerTransactionBypassesTheCache:
 class TestASessionPassedByHandBypassesTheCache:
     @pytest.mark.asyncio
     async def test_a_custom_read_given_a_session_is_never_cached(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
 
@@ -429,7 +434,7 @@ class TestASessionPassedByHandBypassesTheCache:
 
     @pytest.mark.asyncio
     async def test_the_same_read_without_a_session_is_cached(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
 
         await wrapper.names_in()
@@ -439,7 +444,7 @@ class TestASessionPassedByHandBypassesTheCache:
 
     @pytest.mark.asyncio
     async def test_a_session_passed_positionally_is_never_cached(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         backend = CountingCacheBackend()
         wrapper = _wrap(repository, backend)
 
@@ -451,7 +456,7 @@ class TestASessionPassedByHandBypassesTheCache:
 
     @pytest.mark.asyncio
     async def test_a_session_of_none_is_cached_like_no_session(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
 
         await wrapper.names_in("a", None)
@@ -462,7 +467,7 @@ class TestASessionPassedByHandBypassesTheCache:
 
 class TestAWrapperAroundAWrapperInATransaction:
     def test_the_wrapper_reports_the_wrapped_caller_scoped_session(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
 
         repository.in_transaction = True
@@ -472,14 +477,15 @@ class TestAWrapperAroundAWrapperInATransaction:
 
     def test_a_wrapper_over_a_repository_without_the_capability_reports_none(self) -> None:
         wrapper = _wrap(
-            CountingRepository([Widget(id=ROW_A, name="a")], Widget), CountingCacheBackend()
+            CountingRepository([AcmeCacheWidget(id=ROW_A, name="a")], AcmeCacheWidget),
+            CountingCacheBackend(),
         )
 
         assert wrapper.has_caller_scoped_session() is False
 
     @pytest.mark.asyncio
     async def test_the_outer_cache_stays_out_of_the_transaction_too(self) -> None:
-        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.in_transaction = True
         outer_backend = CountingCacheBackend()
         outer = _wrap(_wrap(repository, CountingCacheBackend()), outer_backend)
@@ -494,7 +500,7 @@ class TestAWrapperAroundAWrapperInATransaction:
 class TestASessionScopedReadFollowsTheSameRule:
     @pytest.mark.asyncio
     async def test_a_read_without_a_session_is_cached(self) -> None:
-        repository = SessionScopedRepository([Widget(id=ROW_A, name="a")])
+        repository = SessionScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
 
         assert await wrapper.names_with("a") == ["a"]
@@ -504,7 +510,7 @@ class TestASessionScopedReadFollowsTheSameRule:
 
     @pytest.mark.asyncio
     async def test_a_read_given_a_session_is_not_cached(self) -> None:
-        repository = SessionScopedRepository([Widget(id=ROW_A, name="a")])
+        repository = SessionScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         wrapper = _wrap(repository, CountingCacheBackend())
         session = object()
 

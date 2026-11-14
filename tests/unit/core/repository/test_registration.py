@@ -35,20 +35,24 @@ from loom.core.repository.registry import (
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 
 
-class Widget(BaseModel):
+class AcmeRegistrationWidget(BaseModel):
     __tablename__ = "registration_widgets_fixture"
 
     id: int = ColumnField(primary_key=True)
     name: str = ColumnField(length=50)
 
 
-class _BulkWidgetRepository(Creatable[Widget], BulkCreatable[Widget]):
-    async def create(self, data: msgspec.Struct) -> Widget:  # pragma: no cover - never invoked
+class _BulkWidgetRepository(
+    Creatable[AcmeRegistrationWidget], BulkCreatable[AcmeRegistrationWidget]
+):
+    async def create(
+        self, data: msgspec.Struct
+    ) -> AcmeRegistrationWidget:  # pragma: no cover - never invoked
         raise AssertionError("not exercised")
 
     async def create_many(
         self, data: Sequence[msgspec.Struct]
-    ) -> tuple[Widget, ...]:  # pragma: no cover - never invoked
+    ) -> tuple[AcmeRegistrationWidget, ...]:  # pragma: no cover - never invoked
         raise AssertionError("not exercised")
 
 
@@ -61,7 +65,7 @@ def _unused_builder(
 def _container(default_repository_type: type | None) -> LoomContainer:
     container = LoomContainer()
     build_repository_registration_module(
-        models=(Widget,),
+        models=(AcmeRegistrationWidget,),
         build_registered_repository=_unused_builder,
         default_repository_type=default_repository_type,
         default_builder=_default_builder,
@@ -98,17 +102,17 @@ class TestDefaultKeys:
     def test_derived_from_the_default_repository_type(self) -> None:
         container = _container(_BulkWidgetRepository)
 
-        assert container.is_registered(Creatable[Widget])
-        assert container.is_registered(BulkCreatable[Widget])
-        assert not container.is_registered(Listable[Widget])
-        assert not container.is_registered(Readable[Widget])
+        assert container.is_registered(Creatable[AcmeRegistrationWidget])
+        assert container.is_registered(BulkCreatable[AcmeRegistrationWidget])
+        assert not container.is_registered(Listable[AcmeRegistrationWidget])
+        assert not container.is_registered(Readable[AcmeRegistrationWidget])
 
     def test_no_default_type_binds_no_capability(self) -> None:
         container = _container(None)
 
-        assert container.is_registered(RepositoryToken(Widget))
-        assert not container.is_registered(Readable[Widget])
-        assert not container.is_registered(Creatable[Widget])
+        assert container.is_registered(RepositoryToken(AcmeRegistrationWidget))
+        assert not container.is_registered(Readable[AcmeRegistrationWidget])
+        assert not container.is_registered(Creatable[AcmeRegistrationWidget])
 
 
 class _Wrapped:
@@ -139,19 +143,19 @@ class TestProviderMemo:
     def test_every_key_of_the_model_resolves_the_same_instance(self) -> None:
         container = _container_with_default_builder()
 
-        primary = container.resolve(RepositoryToken(Widget))
+        primary = container.resolve(RepositoryToken(AcmeRegistrationWidget))
 
-        assert container.resolve(Creatable[Widget]) is primary
-        assert container.resolve(BulkCreatable[Widget]) is primary
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is primary
+        assert container.resolve(BulkCreatable[AcmeRegistrationWidget]) is primary
 
     def test_a_registered_decorator_is_applied_once_per_model(self) -> None:
         container = _container_with_default_builder()
         decorator = _CountingDecorator()
         container.register_instance(RepositoryDecorator, decorator)
 
-        primary = container.resolve(RepositoryToken(Widget))
-        container.resolve(Creatable[Widget])
-        container.resolve(BulkCreatable[Widget])
+        primary = container.resolve(RepositoryToken(AcmeRegistrationWidget))
+        container.resolve(Creatable[AcmeRegistrationWidget])
+        container.resolve(BulkCreatable[AcmeRegistrationWidget])
 
         assert isinstance(primary, _Wrapped)
         assert isinstance(primary.repository, _BulkWidgetRepository)
@@ -160,4 +164,6 @@ class TestProviderMemo:
     def test_the_repository_is_untouched_without_a_decorator(self) -> None:
         container = _container_with_default_builder()
 
-        assert isinstance(container.resolve(RepositoryToken(Widget)), _BulkWidgetRepository)
+        assert isinstance(
+            container.resolve(RepositoryToken(AcmeRegistrationWidget)), _BulkWidgetRepository
+        )

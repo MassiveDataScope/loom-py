@@ -16,22 +16,22 @@ from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
 from loom.core.use_case.markers import Caller
 
 
-class AcmeSession:
+class AcmeBuildSession:
     pass
 
 
-class AcmeOrders:
-    def __init__(self, session: AcmeSession) -> None:
+class AcmeSessionOrders:
+    def __init__(self, session: AcmeBuildSession) -> None:
         self.session = session
 
 
 class AcmeInvoices:
-    def __init__(self, session: AcmeSession) -> None:
+    def __init__(self, session: AcmeBuildSession) -> None:
         self.session = session
 
 
 class AcmeBilling:
-    def __init__(self, orders: AcmeOrders, invoices: AcmeInvoices) -> None:
+    def __init__(self, orders: AcmeSessionOrders, invoices: AcmeInvoices) -> None:
         self.orders, self.invoices = orders, invoices
 
 
@@ -42,35 +42,34 @@ class AcmeAsCaller:
 
 def _factory() -> UseCaseFactory:
     container = LoomContainer(classify_key=classify_key)
-    for key in (AcmeSession, AcmeOrders, AcmeInvoices):
+    for key in (AcmeBuildSession, AcmeSessionOrders, AcmeInvoices):
         container.register(key, key, scope=Scope.REQUEST)
     return UseCaseFactory(container)
 
 
-def test_a_build_outside_an_execution_builds_each_per_execution_dependency_fresh() -> None:
-    billing = _factory().build(AcmeBilling)
+class TestConstructionBuild:
+    def test_a_build_outside_an_execution_builds_each_per_execution_dependency_fresh(self) -> None:
+        billing = _factory().build(AcmeBilling)
 
-    assert billing.orders.session is not billing.invoices.session
+        assert billing.orders.session is not billing.invoices.session
 
+    def test_builds_inside_an_execution_share_its_per_execution_dependencies(self) -> None:
+        factory = _factory()
 
-def test_builds_inside_an_execution_share_its_per_execution_dependencies() -> None:
-    factory = _factory()
+        with ExecutionScope(ANONYMOUS):
+            first, second = factory.build(AcmeBilling), factory.build(AcmeBilling)
 
-    with ExecutionScope(ANONYMOUS):
-        first, second = factory.build(AcmeBilling), factory.build(AcmeBilling)
+        assert first.orders.session is first.invoices.session is second.orders.session
 
-    assert first.orders.session is first.invoices.session is second.orders.session
+    def test_a_constructor_caller_needs_an_execution_to_build(self) -> None:
+        container = LoomContainer(classify_key=classify_key)
+        use_case_kinds(container.kinds)
+        container.kinds.bind(CALLER, CallerResolver())
+        factory = UseCaseFactory(container)
 
+        with pytest.raises(ExecutionRequired):
+            factory.build(AcmeAsCaller)
+        with ExecutionScope(ANONYMOUS):
+            built: Any = factory.build(AcmeAsCaller)
 
-def test_a_constructor_caller_needs_an_execution_to_build() -> None:
-    container = LoomContainer(classify_key=classify_key)
-    use_case_kinds(container.kinds)
-    container.kinds.bind(CALLER, CallerResolver())
-    factory = UseCaseFactory(container)
-
-    with pytest.raises(ExecutionRequired):
-        factory.build(AcmeAsCaller)
-    with ExecutionScope(ANONYMOUS):
-        built: Any = factory.build(AcmeAsCaller)
-
-    assert built.caller is ANONYMOUS
+        assert built.caller is ANONYMOUS

@@ -46,9 +46,9 @@ from loom.core.repository.abc.repo_for import Listable, Readable
 from ._doubles import (
     MEMORY_BACKEND,
     SERIALIZED_BACKEND,
+    AcmeCacheWidget,
     CachedWidgetRepository,
     CodeWidget,
-    Widget,
     WidgetUpdate,
     WritableRepository,
     enlisted_write,
@@ -82,7 +82,7 @@ class _SpyBuilder:
     def __call__(
         self, context: RepositoryBuildContext, registration: RepositoryRegistration
     ) -> Any:
-        rows = [Widget(id=1, name="one")] if registration.model is Widget else []
+        rows = [AcmeCacheWidget(id=1, name="one")] if registration.model is AcmeCacheWidget else []
         repository = registration.repository_type(rows)
         self.built.append(repository)
         return repository
@@ -110,10 +110,10 @@ class _TaggingDecorator:
 class ReadOnlyWidgetRepository:
     """Marked double that only reads, so the wrapper would advertise writes it lacks."""
 
-    def __init__(self, rows: Sequence[Widget] = ()) -> None:
+    def __init__(self, rows: Sequence[AcmeCacheWidget] = ()) -> None:
         self.rows = list(rows)
 
-    async def get_by_id(self, obj_id: int, profile: str = "default") -> Widget | None:
+    async def get_by_id(self, obj_id: int, profile: str = "default") -> AcmeCacheWidget | None:
         return next((row for row in self.rows if row.id == obj_id), None)
 
 
@@ -143,11 +143,11 @@ def _no_default_builder(context: RepositoryBuildContext) -> Any:
 @pytest.fixture
 def repository_module(builder: _SpyBuilder) -> Iterator[Module]:
     with ExitStack() as stack:
-        stack.enter_context(registered_repository(Widget, CachedWidgetRepository))
+        stack.enter_context(registered_repository(AcmeCacheWidget, CachedWidgetRepository))
         stack.enter_context(registered_repository(CodeWidget, PlainCodeWidgetRepository))
         yield build_repository_registration_module(
             models=(),
-            explicit_models=(Widget, CodeWidget),
+            explicit_models=(AcmeCacheWidget, CodeWidget),
             build_registered_repository=builder,
             default_builder=_no_default_builder,
             store=DEFAULT_STORE,
@@ -172,17 +172,17 @@ class TestDecoration:
     ) -> None:
         container = _in_either_order(repository_module, cache_module(_single_alias()), cache_first)
 
-        assert isinstance(container.resolve_repo(Widget), CachedRepository)
+        assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedRepository)
 
     def test_every_key_of_the_model_resolves_the_same_instance(
         self, repository_module: Module
     ) -> None:
         container = _container(repository_module, cache_module(_single_alias()))
 
-        primary = container.resolve_repo(Widget)
+        primary = container.resolve_repo(AcmeCacheWidget)
 
-        assert container.resolve(Readable[Widget]) is primary
-        assert container.resolve(Listable[Widget]) is primary
+        assert container.resolve(Readable[AcmeCacheWidget]) is primary
+        assert container.resolve(Listable[AcmeCacheWidget]) is primary
 
     @pytest.mark.parametrize("cache_first", [False, True])
     def test_an_unmarked_repository_is_served_bare(
@@ -205,7 +205,7 @@ class TestDecoration:
         repository_module(container)
 
         assert container.resolve(RepositoryDecorator) is _user_decorator
-        assert isinstance(container.resolve_repo(Widget), _Tagged)
+        assert isinstance(container.resolve_repo(AcmeCacheWidget), _Tagged)
 
     def test_names_the_decorator_that_already_held_the_slot(
         self, caplog: pytest.LogCaptureFixture
@@ -243,10 +243,10 @@ class TestDecoration:
 
 class TestIncompleteRepository:
     def test_refuses_a_marked_repository_that_cannot_be_delegated_to(self) -> None:
-        with registered_repository(Widget, ReadOnlyWidgetRepository):
+        with registered_repository(AcmeCacheWidget, ReadOnlyWidgetRepository):
             module = build_repository_registration_module(
                 models=(),
-                explicit_models=(Widget,),
+                explicit_models=(AcmeCacheWidget,),
                 build_registered_repository=_SpyBuilder(),
                 default_builder=_no_default_builder,
                 store=DEFAULT_STORE,
@@ -254,17 +254,17 @@ class TestIncompleteRepository:
             container = _container(module, cache_module(_single_alias()))
 
             with pytest.raises(RuntimeError, match="ReadOnlyWidgetRepository") as info:
-                container.resolve_repo(Widget)
+                container.resolve_repo(AcmeCacheWidget)
 
         assert "create" in str(info.value)
         assert "list_paginated" in str(info.value)
 
     def test_boot_validation_names_the_offending_repository(self) -> None:
         """``validate()`` wraps the refusal, so the aborted boot still names the class."""
-        with registered_repository(Widget, ReadOnlyWidgetRepository):
+        with registered_repository(AcmeCacheWidget, ReadOnlyWidgetRepository):
             module = build_repository_registration_module(
                 models=(),
-                explicit_models=(Widget,),
+                explicit_models=(AcmeCacheWidget,),
                 build_registered_repository=_SpyBuilder(),
                 default_builder=_no_default_builder,
                 store=DEFAULT_STORE,
@@ -283,7 +283,7 @@ class TestInvalidationThroughTheContainer:
         self, repository_module: Module, builder: _SpyBuilder
     ) -> None:
         container = _container(repository_module, cache_module(_two_aliases()))
-        wrapped = container.resolve_repo(Widget)
+        wrapped = container.resolve_repo(AcmeCacheWidget)
         inner = builder.built[0]
         assert isinstance(inner, CachedWidgetRepository)
 
@@ -296,7 +296,7 @@ class TestInvalidationThroughTheContainer:
         self, repository_module: Module, builder: _SpyBuilder
     ) -> None:
         container = _container(repository_module, cache_module(_two_aliases()))
-        wrapped = container.resolve_repo(Widget)
+        wrapped = container.resolve_repo(AcmeCacheWidget)
         inner = builder.built[0]
         await wrapped.get_by_id(1)
 
@@ -321,7 +321,7 @@ def _not_configured_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.L
 
 
 class TestCacheNotConfigured:
-    @pytest.fixture(autouse=True)
+    @pytest.fixture
     def _capture_wiring_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="loom.core.cache.wiring")
 
@@ -330,7 +330,11 @@ class TestCacheNotConfigured:
         [pytest.param({}, id="absent"), pytest.param({"cache": {"enabled": False}}, id="disabled")],
     )
     def test_boot_warns_once_for_a_marked_class_without_the_section(
-        self, repository_module: Module, caplog: pytest.LogCaptureFixture, raw: dict[str, Any]
+        self,
+        repository_module: Module,
+        caplog: pytest.LogCaptureFixture,
+        raw: dict[str, Any],
+        _capture_wiring_warnings: None,
     ) -> None:
         container = _container(repository_module, cache_module_for(ConfigContext.from_dict(raw)))
 
@@ -339,22 +343,28 @@ class TestCacheNotConfigured:
         warnings = _not_configured_warnings(caplog)
         assert len(warnings) == 1
         assert "CachedWidgetRepository" in warnings[0].getMessage()
-        assert isinstance(container.resolve_repo(Widget), CachedWidgetRepository)
+        assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedWidgetRepository)
 
     def test_resolving_after_validate_warns_no_further(
-        self, repository_module: Module, caplog: pytest.LogCaptureFixture
+        self,
+        repository_module: Module,
+        caplog: pytest.LogCaptureFixture,
+        _capture_wiring_warnings: None,
     ) -> None:
         container = _container(repository_module, cache_module_for(ConfigContext.from_dict({})))
         container.validate()
         caplog.clear()
 
-        container.resolve_repo(Widget)
-        container.resolve(Readable[Widget])
+        container.resolve_repo(AcmeCacheWidget)
+        container.resolve(Readable[AcmeCacheWidget])
 
         assert _not_configured_warnings(caplog) == []
 
     def test_an_unmarked_class_is_never_announced(
-        self, repository_module: Module, caplog: pytest.LogCaptureFixture
+        self,
+        repository_module: Module,
+        caplog: pytest.LogCaptureFixture,
+        _capture_wiring_warnings: None,
     ) -> None:
         container = _container(repository_module, cache_module_for(ConfigContext.from_dict({})))
         container.validate()
@@ -365,7 +375,10 @@ class TestCacheNotConfigured:
         )
 
     def test_an_enabled_section_wraps_and_stays_quiet(
-        self, repository_module: Module, caplog: pytest.LogCaptureFixture
+        self,
+        repository_module: Module,
+        caplog: pytest.LogCaptureFixture,
+        _capture_wiring_warnings: None,
     ) -> None:
         ctx = ConfigContext.from_dict(
             {"cache": {"aiocache_config": {"default": dict(SERIALIZED_BACKEND)}}}
@@ -374,7 +387,7 @@ class TestCacheNotConfigured:
 
         container.validate()
 
-        assert isinstance(container.resolve_repo(Widget), CachedRepository)
+        assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedRepository)
         assert _not_configured_warnings(caplog) == []
 
 

@@ -36,6 +36,7 @@ from loom.core.repository.mongo.repository import RepositoryMongo, SessionProvid
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
+from .doubles import Counter
 
 pytestmark = pytest.mark.asyncio
 
@@ -68,7 +69,7 @@ class ArticleWithExtra(BaseModel):
     extra: str
 
 
-class Event(BaseModel):
+class AcmeMongoEvent(BaseModel):
     """Aware datetime column (the ``DateTime`` default) plus a NOW column."""
 
     __tablename__ = "events"
@@ -84,7 +85,7 @@ class EventCreate(BaseModel):
     at: datetime
 
 
-class Invoice(BaseModel):
+class AcmeMongoInvoice(BaseModel):
     __tablename__ = "invoices"
 
     id: UUID = ColumnField(primary_key=True)
@@ -98,7 +99,7 @@ class InvoiceCreate(BaseModel):
     issued_on: date
 
 
-class Note(BaseModel):
+class AcmeMongoNote(BaseModel):
     """Model whose key is minted by loom: ``ServerDefault.UUID4`` plus a NOW column."""
 
     __tablename__ = "notes"
@@ -136,19 +137,12 @@ class Audited(BaseModel):
     touched_at: datetime | None = ColumnField(server_onupdate="NOW", nullable=True, default=None)
 
 
-class Counter(BaseModel):
-    __tablename__ = "counters"
-
-    id: int = ColumnField(primary_key=True, autoincrement=True)
-    value: int = ColumnField()
-
-
 class CounterCreate(BaseModel):
     value: int
     id: int | None = None
 
 
-class Shade(Enum):
+class AcmeMongoShade(Enum):
     DARK = "dark"
 
 
@@ -157,12 +151,12 @@ class Swatch(BaseModel):
 
     __tablename__ = "swatches"
 
-    shade: Shade
+    shade: AcmeMongoShade
     id: str = ColumnField(primary_key=True, server_default=ServerDefault.UUID4)
 
 
 class SwatchCreate(BaseModel):
-    shade: Shade
+    shade: AcmeMongoShade
 
 
 @pytest.fixture
@@ -176,8 +170,8 @@ def _articles(collection: FakeCollection) -> RepositoryMongo[Article, str]:
 
 def _notes(
     collection: FakeCollection, policy: Uuid4IdPolicy | ObjectIdPolicy | None = None
-) -> RepositoryMongo[Note, str]:
-    return RepositoryMongo(Note, collection, id_policy=policy, cursor_codec=_CODEC)
+) -> RepositoryMongo[AcmeMongoNote, str]:
+    return RepositoryMongo(AcmeMongoNote, collection, id_policy=policy, cursor_codec=_CODEC)
 
 
 async def _seed(repo: RepositoryMongo[Article, str], rows: list[tuple[str, int]]) -> None:
@@ -241,7 +235,7 @@ class TestStorageForm:
             Swatch, collection, cursor_codec=_CODEC
         )
 
-        created = await repo.create(SwatchCreate(shade=Shade.DARK))
+        created = await repo.create(SwatchCreate(shade=AcmeMongoShade.DARK))
 
         assert collection.documents[created.id]["shade"] == "dark"
         assert await repo.get_by_id(created.id) == created
@@ -268,7 +262,9 @@ class TestStorageForm:
             "_utc_now",
             lambda: datetime(2026, 1, 1, 0, 0, 0, 999_999, tzinfo=UTC),
         )
-        repo: RepositoryMongo[Event, str] = RepositoryMongo(Event, collection, cursor_codec=_CODEC)
+        repo: RepositoryMongo[AcmeMongoEvent, str] = RepositoryMongo(
+            AcmeMongoEvent, collection, cursor_codec=_CODEC
+        )
 
         created = await repo.create(
             EventCreate(at=datetime(2026, 1, 3, 12, 0, 0, 123_456, tzinfo=UTC))
@@ -299,8 +295,8 @@ class TestStorageForm:
     async def test_string_stored_types_round_trip_and_filter(
         self, collection: FakeCollection
     ) -> None:
-        repo: RepositoryMongo[Invoice, UUID] = RepositoryMongo(
-            Invoice, collection, cursor_codec=_CODEC
+        repo: RepositoryMongo[AcmeMongoInvoice, UUID] = RepositoryMongo(
+            AcmeMongoInvoice, collection, cursor_codec=_CODEC
         )
         ident = UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")
         created = await repo.create(
@@ -312,7 +308,9 @@ class TestStorageForm:
             "amount": "19.90",
             "issued_on": "2026-01-03",
         }
-        assert created == Invoice(id=ident, amount=Decimal("19.90"), issued_on=date(2026, 1, 3))
+        assert created == AcmeMongoInvoice(
+            id=ident, amount=Decimal("19.90"), issued_on=date(2026, 1, 3)
+        )
         assert await repo.get_by("issued_on", date(2026, 1, 3)) == created
         assert await repo.get_by("amount", Decimal("19.90")) == created
         assert await repo.exists_by("issued_on", date(2026, 1, 4)) is False
@@ -692,8 +690,8 @@ class TestCursorPagination:
         self, collection: FakeCollection, field: str
     ) -> None:
         """Documents hold dates and UUIDs as text; the cursor carries the model's types."""
-        repo: RepositoryMongo[Invoice, UUID] = RepositoryMongo(
-            Invoice, collection, cursor_codec=_CODEC
+        repo: RepositoryMongo[AcmeMongoInvoice, UUID] = RepositoryMongo(
+            AcmeMongoInvoice, collection, cursor_codec=_CODEC
         )
         created = [
             await repo.create(

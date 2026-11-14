@@ -58,46 +58,44 @@ def _refused(container: LoomContainer, *skip: Kind) -> None:
     analyse(DependencyGraph(container), [ClassNode(AcmeUsesCrm)], (rule,))
 
 
-def test_a_singleton_declaring_an_unbound_kind_is_refused_with_its_path() -> None:
-    with pytest.raises(
-        DependencyGraphError,
-        match="AcmeUsesCrm -> adapter: AcmeCrmAdapter: crm: no resolver is bound for 'acme-crm'",
-    ):
-        _refused(_bound(Scope.APPLICATION))
+class TestUnboundKind:
+    def test_a_singleton_declaring_an_unbound_kind_is_refused_with_its_path(self) -> None:
+        with pytest.raises(
+            DependencyGraphError,
+            match=(
+                "AcmeUsesCrm -> adapter: AcmeCrmAdapter: crm: no resolver is bound for 'acme-crm'"
+            ),
+        ):
+            _refused(_bound(Scope.APPLICATION))
 
+    def test_a_skipped_kind_is_not_refused(self) -> None:
+        _refused(_bound(Scope.APPLICATION), ACME_CRM)
 
-def test_a_skipped_kind_is_not_refused() -> None:
-    _refused(_bound(Scope.APPLICATION), ACME_CRM)
+    def test_a_per_execution_adapter_is_not_refused(self) -> None:
+        _refused(_bound(Scope.REQUEST))
 
+    def test_a_bound_kind_is_not_refused(self) -> None:
+        container = _bound(Scope.APPLICATION)
+        container.kinds.bind(ACME_CRM, acme_resolver())
 
-def test_a_per_execution_adapter_is_not_refused() -> None:
-    _refused(_bound(Scope.REQUEST))
+        _refused(container)
 
+    def test_seal_refuses_a_reached_singleton_declaring_an_unbound_kind(self) -> None:
+        container = _bound(Scope.APPLICATION)
 
-def test_a_bound_kind_is_not_refused() -> None:
-    container = _bound(Scope.APPLICATION)
-    container.kinds.bind(ACME_CRM, acme_resolver())
+        with pytest.raises(DependencyGraphError, match="crm: no resolver is bound for 'acme-crm'"):
+            container.seal(acme.analysed(container, AcmeUsesCrm))
 
-    _refused(container)
+    def test_seal_defers_an_unbound_kind_it_is_told_to_and_a_later_resolver_serves_it(self) -> None:
+        container = _bound(Scope.APPLICATION)
 
+        with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built"):
+            container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
+        with pytest.raises(ResolutionError, match="no resolver is bound for 'acme-crm'"):
+            container.resolve(AcmeCrmAdapter)
+        container.kinds.bind(ACME_CRM, acme_resolver())
 
-def test_seal_refuses_a_reached_singleton_declaring_an_unbound_kind() -> None:
-    container = _bound(Scope.APPLICATION)
-
-    with pytest.raises(DependencyGraphError, match="crm: no resolver is bound for 'acme-crm'"):
-        container.seal(acme.analysed(container, AcmeUsesCrm))
-
-
-def test_seal_defers_an_unbound_kind_it_is_told_to_and_a_later_resolver_serves_it() -> None:
-    container = _bound(Scope.APPLICATION)
-
-    with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built"):
-        container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
-    with pytest.raises(ResolutionError, match="no resolver is bound for 'acme-crm'"):
-        container.resolve(AcmeCrmAdapter)
-    container.kinds.bind(ACME_CRM, acme_resolver())
-
-    assert container.resolve(AcmeCrmAdapter).crm == "acme-crm-handle"
+        assert container.resolve(AcmeCrmAdapter).crm == "acme-crm-handle"
 
 
 class AcmeCrmPort:
@@ -134,35 +132,34 @@ def _source() -> CompositionSource:
     )
 
 
-def test_composition_refuses_an_adapter_singleton_with_no_mcp_resolver_at_seal() -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
+class TestUnboundMcpAdapter:
+    def test_composition_refuses_an_adapter_singleton_with_no_mcp_resolver_at_seal(self) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
 
-    with pytest.raises(BootstrapError) as caught:
-        compose_application(_source(), adapter, modules=(_binds_crm,))
+        with pytest.raises(BootstrapError) as caught:
+            compose_application(_source(), adapter, modules=(_binds_crm,))
 
-    assert isinstance(caught.value.__cause__, DependencyGraphError)
-    assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm: no resolver is bound for 'mcp'" in str(
-        caught.value
-    )
+        assert isinstance(caught.value.__cause__, DependencyGraphError)
+        assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm: no resolver is bound for 'mcp'" in str(
+            caught.value
+        )
 
+    def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
 
-def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter() -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
+        with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
+            application = compose_application(_source(), adapter, modules=(_binds_crm,))
+        container = application.kernel.container
+        container.kinds.bind(MCP, acme_resolver())
 
-    with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-        application = compose_application(_source(), adapter, modules=(_binds_crm,))
-    container = application.kernel.container
-    container.kinds.bind(MCP, acme_resolver())
+        assert container.resolve(AcmeCrmPort).crm == "acme-crm-handle"
 
-    assert container.resolve(AcmeCrmPort).crm == "acme-crm-handle"
+    def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal(self) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)
 
+        application = compose_application(_source(), adapter)
 
-def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal() -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)
-
-    application = compose_application(_source(), adapter)
-
-    assert application.kernel.compiler.get_plan(AcmeMcpUser) is not None
+        assert application.kernel.compiler.get_plan(AcmeMcpUser) is not None
 
 
 def acme_resolver() -> Any:
@@ -173,10 +170,11 @@ def acme_resolver() -> Any:
     return Resolver()
 
 
-def test_the_unbuilt_singleton_warning_points_at_the_caller_of_seal() -> None:
-    container = _bound(Scope.APPLICATION)
+class TestUnbuiltSingletonWarning:
+    def test_the_unbuilt_singleton_warning_points_at_the_caller_of_seal(self) -> None:
+        container = _bound(Scope.APPLICATION)
 
-    with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built") as caught:
-        container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
+        with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built") as caught:
+            container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
 
-    assert caught[0].filename == __file__
+        assert caught[0].filename == __file__

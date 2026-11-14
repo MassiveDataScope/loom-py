@@ -11,12 +11,15 @@ from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from .conftest import FakeClient
 
 
-class _Line(BaseModel):
+class AcmeDynamoLine(BaseModel):
     __tablename__ = "lines"
     order_id: int = ColumnField(primary_key=True)
     id: int = ColumnField(primary_key=True)
 
 
-def test_a_composite_primary_key_is_refused(fake_client: FakeClient) -> None:
-    with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
-        RepositoryDynamoDB(client=fake_client, table_name="lines", model=_Line)
+class TestDynamoCompositeKey:
+    def test_a_composite_primary_key_is_refused(self, fake_client: FakeClient) -> None:
+        with pytest.raises(
+            ConfigError, match=r"AcmeDynamoLine has the composite primary key \(order_id, id\)"
+        ):
+            RepositoryDynamoDB(client=fake_client, table_name="lines", model=AcmeDynamoLine)

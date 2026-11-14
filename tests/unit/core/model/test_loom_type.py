@@ -55,7 +55,7 @@ class ModelInvoice(BaseModel):
     amount: Decimal
 
 
-class LaxStruct(msgspec.Struct):
+class AcmeLoomLaxStruct(msgspec.Struct):
     total: int
 
 
@@ -222,7 +222,7 @@ class TestStrictness:
     def test_class_kwargs_are_strict(self) -> None:
         assert loom_type(KwargsModel).library == "pydantic"
 
-    @pytest.mark.parametrize("symbol", [LaxStruct, LaxModel, ReopenedModel])
+    @pytest.mark.parametrize("symbol", [AcmeLoomLaxStruct, LaxModel, ReopenedModel])
     def test_lax_types_are_rejected(self, symbol: type) -> None:
         with pytest.raises(UnsupportedBoundaryType) as excinfo:
             loom_type(symbol)
@@ -428,13 +428,13 @@ class TestLoomTypeOfDispatch:
         assert "mixes msgspec and pydantic" in str(excinfo.value)
 
     def test_a_non_strict_struct_is_accepted_by_loom_type_of(self) -> None:
-        compiled = loom_type_of(LaxStruct)
+        compiled = loom_type_of(AcmeLoomLaxStruct)
 
         assert compiled.library == "msgspec"
 
     def test_a_non_strict_struct_is_rejected_by_loom_type(self) -> None:
         with pytest.raises(UnsupportedBoundaryType):
-            loom_type(LaxStruct)
+            loom_type(AcmeLoomLaxStruct)
 
     def test_a_non_strict_model_is_accepted_by_loom_type_of(self) -> None:
         compiled = loom_type_of(LaxModel)
@@ -559,7 +559,7 @@ _SECRET = "secret-input-value"
 _SECRET_NUMBER = 424242
 
 
-class Colour(enum.Enum):
+class AcmeLoomColour(enum.Enum):
     RED = "red"
 
 
@@ -584,11 +584,11 @@ class Final(msgspec.Struct, forbid_unknown_fields=True, tag=2):
 
 
 class Paint(msgspec.Struct, forbid_unknown_fields=True):
-    colour: Colour = Colour.RED
+    colour: AcmeLoomColour = AcmeLoomColour.RED
     level: Level = Level.LOW
     finish: Literal["matte"] = "matte"
     code: Annotated[str, msgspec.Meta(pattern="^[A-Z]{3}$")] = "ABC"
-    stock: dict[Colour, int] = msgspec.field(default_factory=dict)
+    stock: dict[AcmeLoomColour, int] = msgspec.field(default_factory=dict)
     shape: Circle | Square = msgspec.field(default_factory=Circle)
     stage: Draft | Final = msgspec.field(default_factory=Draft)
 
@@ -608,7 +608,7 @@ class SquareModel(BaseModel):
 class PaintModel(BaseModel):
     model_config = ConfigDict(extra="forbid", val_json_bytes="base64")
 
-    colour: Colour = Colour.RED
+    colour: AcmeLoomColour = AcmeLoomColour.RED
     finish: Literal["matte"] = "matte"
     code: Annotated[str, pydantic.Field(pattern="^[A-Z]{3}$")] = "ABC"
     shape: Annotated[CircleModel | SquareModel, pydantic.Field(discriminator="type")] = (

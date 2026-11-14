@@ -8,11 +8,7 @@ from omegaconf import OmegaConf
 from loom.core.config import ConfigContext, ConfigError, StructBinder
 from loom.core.config.configurable import Configurable
 from loom.core.model import LoomFrozenStruct
-
-
-class _DbConfig(LoomFrozenStruct, frozen=True):
-    host: str
-    port: int = 5432
+from tests.unit.core.config.doubles import AcmeDbConfig
 
 
 class _ServiceConfig(LoomFrozenStruct, frozen=True):
@@ -21,12 +17,12 @@ class _ServiceConfig(LoomFrozenStruct, frozen=True):
 
 
 class _Client:
-    def __init__(self, db: _DbConfig, *, label: str = "default") -> None:
+    def __init__(self, db: AcmeDbConfig, *, label: str = "default") -> None:
         self.db = db
         self.label = label
 
 
-class _Worker(Configurable):
+class AcmeQueueWorker(Configurable):
     def __init__(self, *, queue: str, concurrency: int = 4) -> None:
         self.queue = queue
         self.concurrency = concurrency
@@ -46,63 +42,63 @@ def ctx() -> ConfigContext:
 
 class TestConfigContextSection:
     def test_extracts_typed_section(self, ctx: ConfigContext) -> None:
-        db = ctx.section("database", _DbConfig)
-        assert isinstance(db, _DbConfig)
+        db = ctx.section("database", AcmeDbConfig)
+        assert isinstance(db, AcmeDbConfig)
         assert db.host == "pg"
         assert db.port == 5432
 
     def test_raises_config_error_for_missing_key(self, ctx: ConfigContext) -> None:
         with pytest.raises(ConfigError):
-            ctx.section("missing.key", _DbConfig)
+            ctx.section("missing.key", AcmeDbConfig)
 
 
 class TestConfigContextBind:
     def test_bind_with_path(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(_Worker, path="worker")
+        worker = ctx.bind(AcmeQueueWorker, path="worker")
         assert worker.queue == "orders"
         assert worker.concurrency == 8
 
     def test_bind_overrides_win_over_yaml(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(_Worker, path="worker", concurrency=2)
+        worker = ctx.bind(AcmeQueueWorker, path="worker", concurrency=2)
         assert worker.concurrency == 2
         assert worker.queue == "orders"
 
     def test_bind_no_path_uses_overrides_only(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(_Worker, queue="events")
+        worker = ctx.bind(AcmeQueueWorker, queue="events")
         assert worker.queue == "events"
         assert worker.concurrency == 4
 
     def test_bind_struct_field_converted_from_dict(self, ctx: ConfigContext) -> None:
         client = ctx.bind(_Client, db={"host": "replica", "port": 5433})
-        assert isinstance(client.db, _DbConfig)
+        assert isinstance(client.db, AcmeDbConfig)
         assert client.db.port == 5433
 
     def test_bind_raises_on_missing_required(self, ctx: ConfigContext) -> None:
         with pytest.raises(ConfigError, match="requires config field 'queue'"):
-            ctx.bind(_Worker)
+            ctx.bind(AcmeQueueWorker)
 
     def test_bind_raises_on_bad_section(self, ctx: ConfigContext) -> None:
         with pytest.raises(ConfigError):
-            ctx.bind(_Worker, path="missing.section")
+            ctx.bind(AcmeQueueWorker, path="missing.section")
 
 
 class TestConfigContextResolve:
     def test_resolve_from_config_binding(self, ctx: ConfigContext) -> None:
-        binding = _Worker.from_config("worker")
+        binding = AcmeQueueWorker.from_config("worker")
         worker = ctx.resolve(binding)
-        assert isinstance(worker, _Worker)
+        assert isinstance(worker, AcmeQueueWorker)
         assert worker.queue == "orders"
 
     def test_resolve_overrides_win(self, ctx: ConfigContext) -> None:
-        binding = _Worker.from_config("worker", concurrency=1)
+        binding = AcmeQueueWorker.from_config("worker", concurrency=1)
         worker = ctx.resolve(binding)
-        assert isinstance(worker, _Worker)
+        assert isinstance(worker, AcmeQueueWorker)
         assert worker.concurrency == 1
 
     def test_resolve_configure_no_path(self, ctx: ConfigContext) -> None:
-        binding = _Worker.configure(queue="audit", concurrency=2)
+        binding = AcmeQueueWorker.configure(queue="audit", concurrency=2)
         worker = ctx.resolve(binding)
-        assert isinstance(worker, _Worker)
+        assert isinstance(worker, AcmeQueueWorker)
         assert worker.queue == "audit"
         assert worker.concurrency == 2
 
@@ -112,7 +108,7 @@ class TestConfigContextCustomBinder:
         cfg = OmegaConf.create({"worker": {"queue": "q", "concurrency": "not-an-int"}})
         strict_ctx = ConfigContext(cfg, binder=StructBinder(strict=True))
         with pytest.raises(ConfigError):
-            strict_ctx.bind(_Worker, path="worker")
+            strict_ctx.bind(AcmeQueueWorker, path="worker")
 
 
 class TestConfigContextRaw:

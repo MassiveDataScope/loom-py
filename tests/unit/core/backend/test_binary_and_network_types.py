@@ -31,21 +31,21 @@ class DeviceInput(msgspec.Struct):
     address: str
 
 
-def test_bytes_compiles_to_large_binary_and_inet_to_the_postgres_inet_type() -> None:
-    metadata = MetaData()
+class TestBinaryAndNetworkTypes:
+    def test_bytes_compiles_to_large_binary_and_inet_to_the_postgres_inet_type(self) -> None:
+        metadata = MetaData()
 
-    compile_all(Device, metadata=metadata)
+        compile_all(Device, metadata=metadata)
 
-    columns = metadata.tables["devices"].c
-    assert isinstance(columns.fingerprint.type, LargeBinary)
-    assert isinstance(columns.address.type, INET)
-    ddl = str(CreateTable(metadata.tables["devices"]).compile(dialect=postgresql.dialect()))
-    assert "fingerprint BYTEA NOT NULL" in ddl
-    assert "address INET NOT NULL" in ddl
+        columns = metadata.tables["devices"].c
+        assert isinstance(columns.fingerprint.type, LargeBinary)
+        assert isinstance(columns.address.type, INET)
+        ddl = str(CreateTable(metadata.tables["devices"]).compile(dialect=postgresql.dialect()))
+        assert "fingerprint BYTEA NOT NULL" in ddl
+        assert "address INET NOT NULL" in ddl
 
-
-def test_a_bytes_annotation_is_inferred_as_bytes() -> None:
-    assert get_column_fields(Device)["inferred"].column_type == Bytes
+    def test_a_bytes_annotation_is_inferred_as_bytes(self) -> None:
+        assert get_column_fields(Device)["inferred"].column_type == Bytes
 
 
 @pytest.fixture
@@ -56,16 +56,17 @@ def shared_registry() -> Iterator[None]:
     reset_registry()
 
 
-@pytest.mark.usefixtures("shared_registry")
-def test_bytes_reach_the_column_as_bytes_not_base64() -> None:
-    compile_all(Device)
-    repository: RepositorySQLAlchemy[Device, int] = RepositorySQLAlchemy(
-        session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
-        model=Device,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
+class TestBinaryValueRoundTrip:
+    @pytest.mark.usefixtures("shared_registry")
+    def test_bytes_reach_the_column_as_bytes_not_base64(self) -> None:
+        compile_all(Device)
+        repository: RepositorySQLAlchemy[Device, int] = RepositorySQLAlchemy(
+            session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
+            model=Device,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
-    row = repository.create_object(DeviceInput(fingerprint=b"\x00\xff", address="10.0.0.1"))
+        row = repository.create_object(DeviceInput(fingerprint=b"\x00\xff", address="10.0.0.1"))
 
-    assert row.fingerprint == b"\x00\xff"
-    assert row.address == "10.0.0.1"
+        assert row.fingerprint == b"\x00\xff"
+        assert row.address == "10.0.0.1"

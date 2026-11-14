@@ -16,6 +16,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.secrets import SecretsManagerResolver
 from tests.helpers.extras import BOTO3_ISLAND, patched_aws_clients
+from tests.unit.core.config.doubles import BotocoreClientError
 
 
 @pytest.fixture
@@ -23,14 +24,6 @@ def mock_client() -> MagicMock:
     client = MagicMock()
     client.get_secret_value.return_value = {"SecretString": "mysecret"}
     return client
-
-
-class _BotocoreShapedError(Exception):
-    """Stand-in for ``botocore.exceptions.ClientError`` (not a test dep)."""
-
-    def __init__(self, message: str, response: dict[str, object]) -> None:
-        super().__init__(message)
-        self.response = response
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +239,8 @@ class TestSecretsManagerResolverUnexpandedKey:
     KEY = "/app/%MY_ENV%/db"
     EXPANDED = "/app/super-secret/db"
 
-    @pytest.fixture(autouse=True)
-    def _env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MY_ENV", "super-secret")
-
     def test_log_carries_unexpanded_key_and_client_gets_expanded_path(
-        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self, my_env: None, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
@@ -264,7 +253,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
 
     def test_fetch_error_carries_unexpanded_key_and_chains_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         cause = Exception(f"ResourceNotFoundException: {self.EXPANDED}")
         mock_client.get_secret_value.side_effect = cause
@@ -276,7 +265,9 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert "super-secret" not in text
         assert info.value.__cause__ is cause
 
-    def test_binary_secret_error_carries_unexpanded_key(self, mock_client: MagicMock) -> None:
+    def test_binary_secret_error_carries_unexpanded_key(
+        self, my_env: None, mock_client: MagicMock
+    ) -> None:
         mock_client.get_secret_value.return_value = {"SecretBinary": b"bytes"}
         resolver = SecretsManagerResolver()
         with patched_aws_clients(mock_client), pytest.raises(ConfigError) as info:
@@ -305,7 +296,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db-1"})}
         with patched_aws_clients(mock_client):
@@ -314,9 +305,9 @@ class TestSecretsManagerResolverUnexpandedKey:
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
 
     def test_fetch_error_message_carries_aws_error_code_not_expanded_path(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
-        cause = _BotocoreShapedError(
+        cause = BotocoreClientError(
             f"An error occurred: {self.EXPANDED}",
             {"Error": {"Code": "AccessDeniedException", "Message": self.EXPANDED}},
         )
@@ -331,7 +322,9 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert "super-secret" not in text
         assert info.value.__cause__ is cause
 
-    def test_fetch_error_message_falls_back_to_type_name(self, mock_client: MagicMock) -> None:
+    def test_fetch_error_message_falls_back_to_type_name(
+        self, my_env: None, mock_client: MagicMock
+    ) -> None:
         mock_client.get_secret_value.side_effect = TimeoutError("boom")
         with patched_aws_clients(mock_client):
             resolver = SecretsManagerResolver()
@@ -340,7 +333,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert "TimeoutError" in str(info.value)
 
     def test_invalid_json_error_carries_unexpanded_key_without_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "not-json-at-all"}
         resolver = SecretsManagerResolver()
@@ -353,7 +346,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert info.value.__cause__ is None
 
     def test_missing_json_key_error_carries_unexpanded_key_without_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         resolver = SecretsManagerResolver()

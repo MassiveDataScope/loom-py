@@ -21,7 +21,7 @@ class Event(BaseModel, RowScoped):
     kind: str = ColumnField(Text)
 
 
-class Item(BaseModel, RowScoped):
+class AcmePartitionItem(BaseModel, RowScoped):
     __tablename__ = "items"
     owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
     id: int = ColumnField(Integer, primary_key=True)
@@ -33,62 +33,61 @@ def _metadata(*models: type) -> MetaData:
     return metadata
 
 
-def test_a_range_partitioned_model_compiles_to_a_partitioned_table() -> None:
-    metadata = _metadata(Event)
+class TestPartitionedTables:
+    def test_a_range_partitioned_model_compiles_to_a_partitioned_table(self) -> None:
+        metadata = _metadata(Event)
 
-    ddl = str(CreateTable(metadata.tables["events"]).compile(dialect=postgresql.dialect()))
+        ddl = str(CreateTable(metadata.tables["events"]).compile(dialect=postgresql.dialect()))
 
-    assert ddl.rstrip().endswith("PARTITION BY RANGE (at)")
+        assert ddl.rstrip().endswith("PARTITION BY RANGE (at)")
 
+    def test_the_scoped_table_records_its_partition_column(self) -> None:
+        metadata = _metadata(Event, AcmePartitionItem)
 
-def test_the_scoped_table_records_its_partition_column() -> None:
-    metadata = _metadata(Event, Item)
+        scoped = scoped_tables(metadata)
 
-    scoped = scoped_tables(metadata)
+        assert scoped[(None, "events")].partition_by == "at"
+        assert scoped[(None, "items")].partition_by is None
 
-    assert scoped[(None, "events")].partition_by == "at"
-    assert scoped[(None, "items")].partition_by is None
+    def test_an_invalid_partition_declaration_fails_at_compile_time(self) -> None:
+        class Wrong(BaseModel, RowScoped):
+            __tablename__ = "wrong"
+            __partition_by__ = ("HASH", "at")
+            owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
+            at: dt.datetime = ColumnField(DateTime(), primary_key=True)
 
+        with pytest.raises(ValueError, match="only RANGE partitioning"):
+            _metadata(Wrong)
 
-def test_an_invalid_partition_declaration_fails_at_compile_time() -> None:
-    class Wrong(BaseModel, RowScoped):
-        __tablename__ = "wrong"
-        __partition_by__ = ("HASH", "at")
-        owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
-        at: dt.datetime = ColumnField(DateTime(), primary_key=True)
+    def test_a_foreign_key_to_a_partitioned_table_off_its_partition_column_fails_to_compile(
+        self,
+    ) -> None:
+        """Postgres requires the referenced key to hold the partition column; C6 enforces it.
 
-    with pytest.raises(ValueError, match="only RANGE partitioning"):
-        _metadata(Wrong)
+        The partitioned target may only carry keys holding ``at``, so a key on
+        ``(owner_id, kind)`` cannot exist and the reference is refused.
+        """
 
+        class EventNote(BaseModel, RowScoped):
+            __tablename__ = "event_notes"
+            owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
+            id: int = ColumnField(Integer, primary_key=True)
+            event_kind: str = ColumnField(Text, foreign_key="events.kind")
 
-def test_a_foreign_key_to_a_partitioned_table_off_its_partition_column_fails_to_compile() -> None:
-    """Postgres requires the referenced key to hold the partition column; C6 enforces it.
+        with pytest.raises(ValueError, match=r"C6: EventNote\.event_kind needs a key"):
+            _metadata(Event, EventNote)
 
-    The partitioned target may only carry keys holding ``at``, so a key on
-    ``(owner_id, kind)`` cannot exist and the reference is refused.
-    """
+    def test_a_foreign_key_to_a_partitioned_table_on_its_partition_column_compiles(self) -> None:
+        class EventMark(BaseModel, RowScoped):
+            __tablename__ = "event_marks"
+            owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
+            id: int = ColumnField(Integer, primary_key=True)
+            event_at: dt.datetime = ColumnField(DateTime(), foreign_key="events.at")
 
-    class EventNote(BaseModel, RowScoped):
-        __tablename__ = "event_notes"
-        owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
-        id: int = ColumnField(Integer, primary_key=True)
-        event_kind: str = ColumnField(Text, foreign_key="events.kind")
+        table = _metadata(Event, EventMark).tables["event_marks"]
 
-    with pytest.raises(ValueError, match=r"C6: EventNote\.event_kind needs a key"):
-        _metadata(Event, EventNote)
-
-
-def test_a_foreign_key_to_a_partitioned_table_on_its_partition_column_compiles() -> None:
-    class EventMark(BaseModel, RowScoped):
-        __tablename__ = "event_marks"
-        owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
-        id: int = ColumnField(Integer, primary_key=True)
-        event_at: dt.datetime = ColumnField(DateTime(), foreign_key="events.at")
-
-    table = _metadata(Event, EventMark).tables["event_marks"]
-
-    (foreign_key,) = table.foreign_key_constraints
-    assert [element.target_fullname for element in foreign_key.elements] == [
-        "events.owner_id",
-        "events.at",
-    ]
+        (foreign_key,) = table.foreign_key_constraints
+        assert [element.target_fullname for element in foreign_key.elements] == [
+            "events.owner_id",
+            "events.at",
+        ]

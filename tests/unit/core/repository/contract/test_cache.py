@@ -66,47 +66,50 @@ def _cached(repository: Any) -> tuple[CachedRepository[Any, Any, Any, Any], _Mem
     return wrapped, cache
 
 
-async def test_cache_hit_returns_the_typed_output_struct(case: BackendCase, seeded: Any) -> None:
-    cached, _ = _cached(seeded)
-    first = await cached.get_by_id(SEED[0].id)
-    # A write behind the cache is not observed: the second read is a hit.
-    await seeded.update(SEED[0].id, UpdateOrder(amount=999))
+class TestContractCache:
+    async def test_cache_hit_returns_the_typed_output_struct(
+        self, case: BackendCase, seeded: Any
+    ) -> None:
+        cached, _ = _cached(seeded)
+        first = await cached.get_by_id(SEED[0].id)
+        # A write behind the cache is not observed: the second read is a hit.
+        await seeded.update(SEED[0].id, UpdateOrder(amount=999))
 
-    second = await cached.get_by_id(SEED[0].id)
+        second = await cached.get_by_id(SEED[0].id)
 
-    assert type(second) is case.model
-    assert second == first
-    assert second is not None
-    assert second.amount == SEED[0].amount
+        assert type(second) is case.model
+        assert second == first
+        assert second is not None
+        assert second.amount == SEED[0].amount
 
+    async def test_entity_keys_are_namespaced_by_the_model_table(
+        self, case: BackendCase, seeded: Any
+    ) -> None:
+        cached, cache = _cached(seeded)
 
-async def test_entity_keys_are_namespaced_by_the_model_table(
-    case: BackendCase, seeded: Any
-) -> None:
-    cached, cache = _cached(seeded)
+        await cached.get_by_id(SEED[0].id)
 
-    await cached.get_by_id(SEED[0].id)
+        assert cached.entity_name == case.model.__tablename__
+        assert cached.entity_name != type(seeded).__name__.lower()
+        entity_keys = [key for key in cache.data if f":{SEED[0].id}:" in key]
+        assert entity_keys
+        assert all(key.startswith(f"{case.model.__tablename__}:") for key in entity_keys)
 
-    assert cached.entity_name == case.model.__tablename__
-    assert cached.entity_name != type(seeded).__name__.lower()
-    entity_keys = [key for key in cache.data if f":{SEED[0].id}:" in key]
-    assert entity_keys
-    assert all(key.startswith(f"{case.model.__tablename__}:") for key in entity_keys)
+    async def test_create_many_invalidates_a_cached_first_page(
+        self, case: BackendCase, seeded: Any
+    ) -> None:
+        require(case, BulkCreatable, Listable)
+        cached, _ = _cached(seeded)
+        before = await cached.list_paginated(_FIRST_PAGE)
+        assert len(before.items) == len(SEED)
+        stamp = datetime(2026, 2, 1, 12, 0)
+        extra = (
+            CreateOrder(id=9, customer="gus", amount=5, status=OrderStatus.PAID, created_at=stamp),
+            CreateOrder(id=10, customer="hal", amount=5, status=OrderStatus.PAID, created_at=stamp),
+        )
 
+        await cached.create_many(extra)
 
-async def test_create_many_invalidates_a_cached_first_page(case: BackendCase, seeded: Any) -> None:
-    require(case, BulkCreatable, Listable)
-    cached, _ = _cached(seeded)
-    before = await cached.list_paginated(_FIRST_PAGE)
-    assert len(before.items) == len(SEED)
-    stamp = datetime(2026, 2, 1, 12, 0)
-    extra = (
-        CreateOrder(id=9, customer="gus", amount=5, status=OrderStatus.PAID, created_at=stamp),
-        CreateOrder(id=10, customer="hal", amount=5, status=OrderStatus.PAID, created_at=stamp),
-    )
-
-    await cached.create_many(extra)
-
-    after = await cached.list_paginated(_FIRST_PAGE)
-    assert {row.id for row in after.items} == {row.id for row in SEED} | {9, 10}
-    assert after.total_count == len(SEED) + 2
+        after = await cached.list_paginated(_FIRST_PAGE)
+        assert {row.id for row in after.items} == {row.id for row in SEED} | {9, 10}
+        assert after.total_count == len(SEED) + 2

@@ -267,16 +267,19 @@ async def _run(case: Case) -> Run:
     return await task
 
 
-@pytest.mark.parametrize("case", CASES, ids=[case.id for case in CASES])
-async def test_finish_reports_persists_and_ends_every_store_once_in_lifo_order(case: Case) -> None:
-    """Each store's outcome and what it persisted; every store ended once, LIFO; the cancel."""
-    run = await _run(case)
+class TestCoordinatorFaultMatrix:
+    @pytest.mark.parametrize("case", CASES, ids=[case.id for case in CASES])
+    async def test_finish_reports_persists_and_ends_every_store_once_in_lifo_order(
+        self, case: Case
+    ) -> None:
+        """Each store's outcome and what it persisted; every store ended once, LIFO; the cancel."""
+        run = await _run(case)
 
-    oracle = _Oracle(case)
-    expected = oracle.shapes()
-    assert run.outcome is not None
-    assert [_shape(store) for store in run.outcome.stores] == expected
-    assert {key: run.ledger.persisted[key] for key in case.keys} == oracle.persisted(expected)
-    assert [key for key, _ in run.ledger.terminal_calls()] == list(reversed(case.keys))
-    assert run.scope.closed is True
-    assert run.cancelled is case.cancels
+        oracle = _Oracle(case)
+        expected = oracle.shapes()
+        assert run.outcome is not None
+        assert [_shape(store) for store in run.outcome.stores] == expected
+        assert {key: run.ledger.persisted[key] for key in case.keys} == oracle.persisted(expected)
+        assert [key for key, _ in run.ledger.terminal_calls()] == list(reversed(case.keys))
+        assert run.scope.closed is True
+        assert run.cancelled is case.cancels

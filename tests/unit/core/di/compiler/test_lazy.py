@@ -33,35 +33,35 @@ class AcmeBranch:
         self.left, self.right = left, right
 
 
-def test_a_cycle_compiled_lazily_after_seal_is_refused_raw_with_its_path() -> None:
-    container = LoomContainer()
-    for key in (AcmeFirst, AcmeSecond, AcmeThird):
-        container.register(key, key)
-    container.seal()
+class TestLazyCycles:
+    def test_a_cycle_compiled_lazily_after_seal_is_refused_raw_with_its_path(self) -> None:
+        container = LoomContainer()
+        for key in (AcmeFirst, AcmeSecond, AcmeThird):
+            container.register(key, key)
+        container.seal()
 
-    with pytest.raises(DependencyGraphError) as caught:
-        container.resolve(AcmeSecond)
+        with pytest.raises(DependencyGraphError) as caught:
+            container.resolve(AcmeSecond)
 
-    assert str(caught.value) == (
-        "AcmeSecond -> third: AcmeThird -> first: AcmeFirst -> second: AcmeSecond: dependency cycle"
-    )
+        assert str(caught.value) == (
+            "AcmeSecond -> third: AcmeThird -> first: AcmeFirst -> "
+            "second: AcmeSecond: dependency cycle"
+        )
 
+    def test_a_cycle_leaves_nothing_compiled_and_stays_refused(self) -> None:
+        container = LoomContainer()
+        for key in (AcmeFirst, AcmeSecond, AcmeThird):
+            container.register(key, key)
 
-def test_a_cycle_leaves_nothing_compiled_and_stays_refused() -> None:
-    container = LoomContainer()
-    for key in (AcmeFirst, AcmeSecond, AcmeThird):
-        container.register(key, key)
+        for _ in range(2):
+            with pytest.raises(DependencyGraphError, match="dependency cycle"):
+                container.resolve(AcmeFirst)
 
-    for _ in range(2):
-        with pytest.raises(DependencyGraphError, match="dependency cycle"):
-            container.resolve(AcmeFirst)
+    def test_a_dependency_reached_twice_is_no_cycle(self) -> None:
+        container = LoomContainer()
+        container.register(AcmeLeaf, AcmeLeaf, scope=Scope.APPLICATION)
+        container.register(AcmeBranch, AcmeBranch)
 
+        branch = container.resolve(AcmeBranch)
 
-def test_a_dependency_reached_twice_is_no_cycle() -> None:
-    container = LoomContainer()
-    container.register(AcmeLeaf, AcmeLeaf, scope=Scope.APPLICATION)
-    container.register(AcmeBranch, AcmeBranch)
-
-    branch = container.resolve(AcmeBranch)
-
-    assert branch.left is branch.right
+        assert branch.left is branch.right

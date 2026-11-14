@@ -20,23 +20,23 @@ class _Badge(BaseModel):
     note: str | None | msgspec.UnsetType = msgspec.UNSET
 
 
-def test_an_unset_field_compiles_to_its_scalar_column() -> None:
-    metadata = MetaData()
-    compile_all(_Badge, metadata=metadata)
-    columns = metadata.tables["unset_compiled_badges"].c
+class TestUnsetColumns:
+    def test_an_unset_field_compiles_to_its_scalar_column(self) -> None:
+        metadata = MetaData()
+        compile_all(_Badge, metadata=metadata)
+        columns = metadata.tables["unset_compiled_badges"].c
 
-    assert (type(columns.label.type).__name__, columns.label.nullable) == ("String", False)
-    assert (type(columns.note.type).__name__, columns.note.nullable) == ("String", True)
+        assert (type(columns.label.type).__name__, columns.label.nullable) == ("String", False)
+        assert (type(columns.note.type).__name__, columns.note.nullable) == ("String", True)
 
+    def test_an_unset_decimal_needs_a_declared_column_type_like_a_decimal(self) -> None:
+        class _Priced(BaseModel):
+            __tablename__ = "unset_priced"
 
-def test_an_unset_decimal_needs_a_declared_column_type_like_a_decimal() -> None:
-    class _Priced(BaseModel):
-        __tablename__ = "unset_priced"
+            id: int = ColumnField(primary_key=True)
+            price: Decimal | msgspec.UnsetType = msgspec.UNSET
 
-        id: int = ColumnField(primary_key=True)
-        price: Decimal | msgspec.UnsetType = msgspec.UNSET
+        metadata = MetaData()
 
-    metadata = MetaData()
-
-    with pytest.raises(ValueError, match="no column type is inferred from a Decimal"):
-        compile_all(_Priced, metadata=metadata)
+        with pytest.raises(ValueError, match="no column type is inferred from a Decimal"):
+            compile_all(_Priced, metadata=metadata)

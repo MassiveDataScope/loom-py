@@ -42,33 +42,32 @@ def _is_allowed(name: str) -> bool:
     )
 
 
-def test_imports_only_the_standard_library() -> None:
-    foreign = {
-        (path.name, name)
-        for path in _modules()
-        for name in _imported(parsed(path))
-        if not _is_allowed(name)
-    }
+class TestAuthorisationImportContainment:
+    def test_imports_only_the_standard_library(self) -> None:
+        foreign = {
+            (path.name, name)
+            for path in _modules()
+            for name in _imported(parsed(path))
+            if not _is_allowed(name)
+        }
 
-    assert foreign == set()
+        assert foreign == set()
 
+    def test_names_no_domain_concept(self) -> None:
+        offenders = [path.name for path in _modules() if "tenant" in path.read_text().lower()]
 
-def test_names_no_domain_concept() -> None:
-    offenders = [path.name for path in _modules() if "tenant" in path.read_text().lower()]
+        assert offenders == []
 
-    assert offenders == []
-
-
-@pytest.mark.parametrize(
-    ("source", "allowed"),
-    [
-        ("import dataclasses", True),
-        ("from loom.core.authz._scope import Scope", True),
-        ("from ._scope import Scope", True),
-        ("from ..model import LoomType", False),
-        ("from loom.core.authzx import thing", False),
-        ("import pydantic", False),
-    ],
-)
-def test_the_import_rule_itself(source: str, allowed: bool) -> None:
-    assert all(_is_allowed(name) for name in _imported(ast.parse(source))) is allowed
+    @pytest.mark.parametrize(
+        ("source", "allowed"),
+        [
+            ("import dataclasses", True),
+            ("from loom.core.authz._scope import Scope", True),
+            ("from ._scope import Scope", True),
+            ("from ..model import LoomType", False),
+            ("from loom.core.authzx import thing", False),
+            ("import pydantic", False),
+        ],
+    )
+    def test_the_import_rule_itself(self, source: str, allowed: bool) -> None:
+        assert all(_is_allowed(name) for name in _imported(ast.parse(source))) is allowed

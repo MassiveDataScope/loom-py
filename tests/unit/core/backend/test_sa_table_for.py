@@ -18,7 +18,7 @@ from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 
 
-class _Shade(StrEnum):
+class AcmeTableShade(StrEnum):
     LIGHT = "light"
     DARK = "dark"
 
@@ -37,7 +37,7 @@ class _Meter(BaseModel):
     id: int = ColumnField(primary_key=True)
     label: str = ColumnField(String(12), unique=True, default="m")
     amount: Annotated[Decimal, Numeric(precision=12, scale=2)]
-    shade: _Shade
+    shade: AcmeTableShade
     taken_on: date
     opens_at: time
     blob: bytes
@@ -52,46 +52,47 @@ def _ddl_types(columns: Any) -> dict[str, str]:
     return {column.name: column.type.compile(dialect=dialect) for column in columns}
 
 
-def test_the_columns_are_the_column_fields_in_order_with_compile_model_types() -> None:
-    table = sa_table_for(_Meter, "meters")
-    compiled = compile_model(_Meter, metadata=MetaData()).__table__
+class TestSaTableColumns:
+    def test_the_columns_are_the_column_fields_in_order_with_compile_model_types(self) -> None:
+        table = sa_table_for(_Meter, "meters")
+        compiled = compile_model(_Meter, metadata=MetaData()).__table__
 
-    assert table.name == "meters"
-    assert [column.name for column in table.columns] == [
-        "id",
-        "label",
-        "amount",
-        "shade",
-        "taken_on",
-        "opens_at",
-        "blob",
-        "owner_id",
-    ]
-    assert _ddl_types(table.columns) == _ddl_types(compiled.columns)
+        assert table.name == "meters"
+        assert [column.name for column in table.columns] == [
+            "id",
+            "label",
+            "amount",
+            "shade",
+            "taken_on",
+            "opens_at",
+            "blob",
+            "owner_id",
+        ]
+        assert _ddl_types(table.columns) == _ddl_types(compiled.columns)
 
+    def test_keys_constraints_defaults_and_nullability_are_not_carried(self) -> None:
+        table = sa_table_for(_Meter, "meters")
+        compiled = compile_model(_Meter, metadata=MetaData()).__table__
 
-def test_keys_constraints_defaults_and_nullability_are_not_carried() -> None:
-    table = sa_table_for(_Meter, "meters")
-    compiled = compile_model(_Meter, metadata=MetaData()).__table__
+        assert not compiled.c.owner_id.nullable
+        assert list(table.primary_key.columns) == []
+        assert table.constraints == {table.primary_key}
+        assert table.indexes == set()
+        assert all(
+            column.default is None and column.server_default is None for column in table.columns
+        )
+        assert all(column.nullable for column in table.columns)
 
-    assert not compiled.c.owner_id.nullable
-    assert list(table.primary_key.columns) == []
-    assert table.constraints == {table.primary_key}
-    assert table.indexes == set()
-    assert all(column.default is None and column.server_default is None for column in table.columns)
-    assert all(column.nullable for column in table.columns)
+    def test_the_table_is_bound_to_a_fresh_metadata_and_registered_nowhere(self) -> None:
+        class _Plain(msgspec.Struct):
+            reading_id: int
 
+        first = sa_table_for(_Plain, "readings")
+        second = sa_table_for(_Plain, "readings")
 
-def test_the_table_is_bound_to_a_fresh_metadata_and_registered_nowhere() -> None:
-    class _Plain(msgspec.Struct):
-        reading_id: int
-
-    first = sa_table_for(_Plain, "readings")
-    second = sa_table_for(_Plain, "readings")
-
-    assert first.metadata is not second.metadata
-    assert list(first.metadata.tables) == ["readings"]
-    assert get_compiled(_Plain) is None
+        assert first.metadata is not second.metadata
+        assert list(first.metadata.tables) == ["readings"]
+        assert get_compiled(_Plain) is None
 
 
 class _UndeclaredMode(LoomStruct):
@@ -106,17 +107,18 @@ class _UndeclaredKind(LoomStruct):
     kind: Literal["first", "second"]
 
 
-@pytest.mark.parametrize(
-    ("struct_cls", "field"),
-    [
-        (_UndeclaredMode, "_UndeclaredMode.mode"),
-        (_UndeclaredAmount, "_UndeclaredAmount.amount"),
-        (_UndeclaredKind, "_UndeclaredKind.kind"),
-    ],
-    ids=["plain_enum", "decimal", "literal"],
-)
-def test_a_field_without_a_declared_column_type_is_refused(
-    struct_cls: type[Any], field: str
-) -> None:
-    with pytest.raises(ValueError, match=rf"^{field}: no column type is inferred"):
-        sa_table_for(struct_cls, "t")
+class TestSaTableUndeclaredFields:
+    @pytest.mark.parametrize(
+        ("struct_cls", "field"),
+        [
+            (_UndeclaredMode, "_UndeclaredMode.mode"),
+            (_UndeclaredAmount, "_UndeclaredAmount.amount"),
+            (_UndeclaredKind, "_UndeclaredKind.kind"),
+        ],
+        ids=["plain_enum", "decimal", "literal"],
+    )
+    def test_a_field_without_a_declared_column_type_is_refused(
+        self, struct_cls: type[Any], field: str
+    ) -> None:
+        with pytest.raises(ValueError, match=rf"^{field}: no column type is inferred"):
+            sa_table_for(struct_cls, "t")

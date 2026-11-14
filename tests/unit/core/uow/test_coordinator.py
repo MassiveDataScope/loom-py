@@ -75,14 +75,14 @@ def _ends(ledger: Ledger) -> list[StoreKey]:
     return [key for key, _ in ledger.terminal_calls()]
 
 
-class _Interrupt(BaseException):
+class CoordinatorInterrupt(BaseException):
     """An interruption that is not an ``Exception`` and that asyncio does not special-case."""
 
 
 class _InterruptedCommit(PhasedStore):
     async def commit(self) -> None:
         self._record("commit")
-        raise _Interrupt
+        raise CoordinatorInterrupt
 
 
 class _CloseFails(PhasedStore):
@@ -232,13 +232,17 @@ def _session_manager() -> MagicMock:
     return manager
 
 
-@pytest.mark.parametrize(
-    "uow",
-    [SQLAlchemyUnitOfWork(_session_manager()), MongoUnitOfWork(MagicMock(), store=DEFAULT_STORE)],
-    ids=["sqlalchemy", "mongo"],
-)
-def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:
-    assert Participant(S0, uow).phased
+class TestLoomTransactionalUnitsOfWork:
+    @pytest.mark.parametrize(
+        "uow",
+        [
+            SQLAlchemyUnitOfWork(_session_manager()),
+            MongoUnitOfWork(MagicMock(), store=DEFAULT_STORE),
+        ],
+        ids=["sqlalchemy", "mongo"],
+    )
+    def test_loom_transactional_units_of_work_are_phased(self, uow: UnitOfWork) -> None:
+        assert Participant(S0, uow).phased
 
 
 class TestCommitOrder:
@@ -372,25 +376,26 @@ def _shape(outcome: StoreOutcome) -> tuple[str, StoreKey, object]:
             return ("NonTransactional", key, wrote)
 
 
-@pytest.mark.parametrize("case", _KEY_CASES.values(), ids=_KEY_CASES.keys())
-async def test_key_cases_written_out_by_hand(case: _KeyCase) -> None:
-    ledger = Ledger()
-    target, fault = case.fault if case.fault is not None else (None, None)
-    keys = [StoreKey(f"s{index}") for index in range(len(case.kinds))]
-    stores = [
-        kind.store(key, ledger, fault if index == target else None)
-        for index, (kind, key) in enumerate(zip(case.kinds, keys, strict=True))
-    ]
-    coordinator, scope = OrderedCommits({s.key: Factory(s) for s in stores}), Scope()
-    await _enlist_all(coordinator, scope, *keys)
-    for order, index in enumerate(case.writes):
-        stores[index].write(f"row-{keys[index]}")
-        scope.participants[keys[index]].record_write(order)
+class TestCoordinatorKeyCases:
+    @pytest.mark.parametrize("case", _KEY_CASES.values(), ids=_KEY_CASES.keys())
+    async def test_key_cases_written_out_by_hand(self, case: _KeyCase) -> None:
+        ledger = Ledger()
+        target, fault = case.fault if case.fault is not None else (None, None)
+        keys = [StoreKey(f"s{index}") for index in range(len(case.kinds))]
+        stores = [
+            kind.store(key, ledger, fault if index == target else None)
+            for index, (kind, key) in enumerate(zip(case.kinds, keys, strict=True))
+        ]
+        coordinator, scope = OrderedCommits({s.key: Factory(s) for s in stores}), Scope()
+        await _enlist_all(coordinator, scope, *keys)
+        for order, index in enumerate(case.writes):
+            stores[index].write(f"row-{keys[index]}")
+            scope.participants[keys[index]].record_write(order)
 
-    outcome = await coordinator.finish(scope, None)
+        outcome = await coordinator.finish(scope, None)
 
-    assert [_shape(store) for store in outcome.stores] == case.outcome
-    assert {key: ledger.persisted[key] for key in keys} == case.persisted
+        assert [_shape(store) for store in outcome.stores] == case.outcome
+        assert {key: ledger.persisted[key] for key in keys} == case.persisted
 
 
 class TestOutcome:
@@ -686,14 +691,14 @@ class TestInterruptions:
         scope = Scope()
         await _enlist_all(coordinator, scope, S0, S1, S2)
 
-        with pytest.raises(_Interrupt):
+        with pytest.raises(CoordinatorInterrupt):
             await coordinator.finish(scope, None)
 
         assert scope.outcome is not None
         assert [_shape(store) for store in scope.outcome.stores] == [
             ("Committed", S0, None),
-            ("Uncertain", S1, _Interrupt),
-            ("RolledBack", S2, _Interrupt),
+            ("Uncertain", S1, CoordinatorInterrupt),
+            ("RolledBack", S2, CoordinatorInterrupt),
         ]
         assert _ends(ledger) == [S2, S1, S0]
 

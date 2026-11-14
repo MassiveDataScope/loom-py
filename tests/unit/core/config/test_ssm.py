@@ -15,6 +15,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.ssm import SsmResolver
 from tests.helpers.extras import patched_aws_clients
+from tests.unit.core.config.doubles import BotocoreClientError
 
 
 @pytest.fixture
@@ -22,14 +23,6 @@ def mock_client() -> MagicMock:
     client = MagicMock()
     client.get_parameter.return_value = {"Parameter": {"Value": "secret123"}}
     return client
-
-
-class _BotocoreShapedError(Exception):
-    """Stand-in for ``botocore.exceptions.ClientError`` (not a test dep)."""
-
-    def __init__(self, message: str, response: dict[str, object]) -> None:
-        super().__init__(message)
-        self.response = response
 
 
 class TestSsmResolverIdentity:
@@ -241,12 +234,8 @@ class TestSsmResolverUnexpandedKey:
     KEY = "/app/%MY_ENV%/db"
     EXPANDED = "/app/super-secret/db"
 
-    @pytest.fixture(autouse=True)
-    def _env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MY_ENV", "super-secret")
-
     def test_log_carries_unexpanded_key_and_client_gets_expanded_path(
-        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self, my_env: None, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.ssm"),
@@ -259,7 +248,7 @@ class TestSsmResolverUnexpandedKey:
         mock_client.get_parameter.assert_called_once_with(Name=self.EXPANDED, WithDecryption=True)
 
     def test_fetch_error_carries_unexpanded_key_and_chains_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         cause = Exception(f"ParameterNotFound: {self.EXPANDED}")
         mock_client.get_parameter.side_effect = cause
@@ -293,7 +282,7 @@ class TestSsmResolverUnexpandedKey:
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db-1"}'}}
         with patched_aws_clients(mock_client):
@@ -302,9 +291,9 @@ class TestSsmResolverUnexpandedKey:
         mock_client.get_parameter.assert_called_once_with(Name=self.EXPANDED, WithDecryption=True)
 
     def test_fetch_error_message_carries_aws_error_code_not_expanded_path(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
-        cause = _BotocoreShapedError(
+        cause = BotocoreClientError(
             f"An error occurred: {self.EXPANDED}",
             {"Error": {"Code": "AccessDeniedException", "Message": self.EXPANDED}},
         )
@@ -319,7 +308,9 @@ class TestSsmResolverUnexpandedKey:
         assert "super-secret" not in text
         assert info.value.__cause__ is cause
 
-    def test_fetch_error_message_falls_back_to_type_name(self, mock_client: MagicMock) -> None:
+    def test_fetch_error_message_falls_back_to_type_name(
+        self, my_env: None, mock_client: MagicMock
+    ) -> None:
         mock_client.get_parameter.side_effect = TimeoutError("boom")
         with patched_aws_clients(mock_client):
             resolver = SsmResolver()
@@ -328,7 +319,7 @@ class TestSsmResolverUnexpandedKey:
         assert "TimeoutError" in str(info.value)
 
     def test_invalid_json_error_carries_unexpanded_key_without_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "not-json-at-all"}}
         resolver = SsmResolver()
@@ -341,7 +332,7 @@ class TestSsmResolverUnexpandedKey:
         assert info.value.__cause__ is None
 
     def test_missing_json_key_error_carries_unexpanded_key_without_cause(
-        self, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db"}'}}
         resolver = SsmResolver()

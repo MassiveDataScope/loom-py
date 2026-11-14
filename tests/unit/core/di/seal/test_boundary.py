@@ -13,7 +13,7 @@ from loom.core.di import ContainerSealed, ResolutionError
 from loom.core.di.compiler import COLD_PATH
 from loom.core.di.container import LoomContainer
 from loom.core.di.introspection import Constructor, plain_key
-from tests.unit.core.di.seal.doubles import AcmeLedger, AcmeOtherLedger
+from tests.unit.core.di.seal.doubles import AcmeBoundLedger, AcmeLateLedger
 
 
 def _nothing_implicit(cls: type[Any]) -> Constructor:
@@ -21,12 +21,14 @@ def _nothing_implicit(cls: type[Any]) -> Constructor:
 
 
 _REGISTERS: dict[str, Callable[[LoomContainer], None]] = {
-    "register": lambda container: container.register(AcmeLedger, AcmeOtherLedger),
-    "register_default": lambda container: container.register_default(AcmeLedger, AcmeOtherLedger),
-    "register_instance": lambda container: container.register_instance(
-        AcmeLedger, AcmeOtherLedger()
+    "register": lambda container: container.register(AcmeBoundLedger, AcmeLateLedger),
+    "register_default": lambda container: container.register_default(
+        AcmeBoundLedger, AcmeLateLedger
     ),
-    "register_repo": lambda container: container.register_repo(AcmeLedger, AcmeOtherLedger),
+    "register_instance": lambda container: container.register_instance(
+        AcmeBoundLedger, AcmeLateLedger()
+    ),
+    "register_repo": lambda container: container.register_repo(AcmeBoundLedger, AcmeLateLedger),
 }
 
 
@@ -38,23 +40,25 @@ class TestSealedContainer:
         with pytest.raises(ContainerSealed) as caught:
             _REGISTERS[name](sealed)
 
-        assert str(caught.value).startswith("AcmeLedger cannot change: the container is sealed")
+        assert str(caught.value).startswith(
+            "AcmeBoundLedger cannot change: the container is sealed"
+        )
         assert "build a new container to reconfigure" in str(caught.value)
 
     @pytest.mark.parametrize("name", list(_REGISTERS), ids=list(_REGISTERS))
     def test_a_refused_register_changes_nothing(self, sealed: LoomContainer, name: str) -> None:
-        ledger, token = sealed.resolve(AcmeLedger), sealed.bindings()[AcmeLedger]
+        ledger, token = sealed.resolve(AcmeBoundLedger), sealed.bindings()[AcmeBoundLedger]
 
         with pytest.raises(ContainerSealed):
             _REGISTERS[name](sealed)
 
-        assert sealed.bindings()[AcmeLedger] is token
-        assert sealed.resolve(AcmeLedger) is ledger
-        assert not sealed.has_repo_mapping(AcmeLedger)
+        assert sealed.bindings()[AcmeBoundLedger] is token
+        assert sealed.resolve(AcmeBoundLedger) is ledger
+        assert not sealed.has_repo_mapping(AcmeBoundLedger)
 
     def test_is_a_resolution_error(self, sealed: LoomContainer) -> None:
         with pytest.raises(ResolutionError):
-            sealed.register(AcmeLedger, AcmeOtherLedger)
+            sealed.register(AcmeBoundLedger, AcmeLateLedger)
 
     def test_reading_constructors_a_new_way_is_refused(self, sealed: LoomContainer) -> None:
         with pytest.raises(ContainerSealed, match="build a new container to reconfigure"):
@@ -68,21 +72,21 @@ class TestSealedContainer:
         assert container.read_with(classify_key=plain_key, implicit=_nothing_implicit) is graph
 
 
-class TestRegisterDefault:
+class TestSealRegisterDefault:
     def test_a_default_waiting_for_the_lock_keeps_a_binding_made_meanwhile(self) -> None:
         """The check and the binding are one locked step: the late default binds nothing."""
         container = LoomContainer()
         with COLD_PATH:
             waiting = threading.Thread(
-                target=container.register_default, args=(AcmeLedger, AcmeOtherLedger)
+                target=container.register_default, args=(AcmeBoundLedger, AcmeLateLedger)
             )
             waiting.start()
             time.sleep(0.05)  # let the thread reach the lock
-            container.register(AcmeLedger, AcmeLedger)
+            container.register(AcmeBoundLedger, AcmeBoundLedger)
         waiting.join(timeout=5)
 
-        assert type(container.resolve(AcmeLedger)) is AcmeLedger
+        assert type(container.resolve(AcmeBoundLedger)) is AcmeBoundLedger
 
     def test_after_seal_raises_even_when_the_key_is_bound(self, sealed: LoomContainer) -> None:
         with pytest.raises(ContainerSealed):
-            sealed.register_default(AcmeLedger, AcmeLedger)
+            sealed.register_default(AcmeBoundLedger, AcmeBoundLedger)

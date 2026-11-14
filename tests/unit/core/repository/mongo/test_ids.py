@@ -30,11 +30,11 @@ class _IntKey(BaseModel):
     id: int | msgspec.UnsetType = ColumnField(primary_key=True, default=msgspec.UNSET)
 
 
-@pytest.mark.parametrize("model", [_TextKey, _UuidKey])
-def test_a_str_or_uuid_key_left_unset_until_generated_is_accepted(model: type) -> None:
-    assert validate_id_field(model).name == "id"
+class TestMongoGeneratedIds:
+    @pytest.mark.parametrize("model", [_TextKey, _UuidKey])
+    def test_a_str_or_uuid_key_left_unset_until_generated_is_accepted(self, model: type) -> None:
+        assert validate_id_field(model).name == "id"
 
-
-def test_an_int_key_left_unset_is_still_refused() -> None:
-    with pytest.raises(ConfigError, match="annotated int"):
-        validate_id_field(_IntKey)
+    def test_an_int_key_left_unset_is_still_refused(self) -> None:
+        with pytest.raises(ConfigError, match="annotated int"):
+            validate_id_field(_IntKey)

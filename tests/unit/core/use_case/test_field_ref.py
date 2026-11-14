@@ -4,15 +4,15 @@ from loom.core.command import Command, Patch
 from loom.core.use_case import F, PredicateOp
 
 
-class UpdateUser(Command, frozen=True):
+class AcmeEmailPatch(Command, frozen=True):
     email: Patch[str | None]
 
 
 class TestFieldRef:
     def test_builds_ref_from_command_class(self) -> None:
-        ref = F(UpdateUser).email
+        ref = F(AcmeEmailPatch).email
 
-        assert ref.root is UpdateUser
+        assert ref.root is AcmeEmailPatch
         assert ref.path == ("email",)
         assert ref.leaf == "email"
 
@@ -24,9 +24,9 @@ class TestFieldRef:
         assert ref.leaf == "name"
 
     def test_supports_or_expression(self) -> None:
-        expr = F(UpdateUser).email | F(UpdateUser).email
+        expr = F(AcmeEmailPatch).email | F(AcmeEmailPatch).email
         assert expr.op is PredicateOp.OR
 
     def test_supports_and_expression(self) -> None:
-        expr = F(UpdateUser).email & F(UpdateUser).email
+        expr = F(AcmeEmailPatch).email & F(AcmeEmailPatch).email
         assert expr.op is PredicateOp.AND

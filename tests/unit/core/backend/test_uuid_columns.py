@@ -26,15 +26,15 @@ def _ddl(dialect: Dialect) -> str:
     return str(CreateTable(metadata.tables["uuid_tickets"]).compile(dialect=dialect))
 
 
-def test_an_undeclared_uuid_compiles_to_the_postgres_uuid_type() -> None:
-    ddl = _ddl(postgresql.dialect())
+class TestUuidColumns:
+    def test_an_undeclared_uuid_compiles_to_the_postgres_uuid_type(self) -> None:
+        ddl = _ddl(postgresql.dialect())
 
-    assert "ref UUID NOT NULL" in ddl
-    assert "alt UUID" in ddl
+        assert "ref UUID NOT NULL" in ddl
+        assert "alt UUID" in ddl
 
+    def test_an_undeclared_uuid_compiles_to_char_32_on_sqlite(self) -> None:
+        ddl = _ddl(sqlite.dialect())
 
-def test_an_undeclared_uuid_compiles_to_char_32_on_sqlite() -> None:
-    ddl = _ddl(sqlite.dialect())
-
-    assert "ref CHAR(32) NOT NULL" in ddl
-    assert "alt CHAR(32)" in ddl
+        assert "ref CHAR(32) NOT NULL" in ddl
+        assert "alt CHAR(32)" in ddl

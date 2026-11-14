@@ -10,11 +10,14 @@ from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.persistence.stores import StoreKey, load_catalog
 
 
-@pytest.mark.parametrize("name", ["sqlalchemy", "mongo", "dynamodb"])
-def test_a_backend_asks_the_catalog_for_the_store_it_was_handed(name: str) -> None:
-    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": name}}})
-    runtime = BackendRuntime(SERVER_PROFILE, catalog=load_catalog(ctx), store=StoreKey("events"))
-    backend = resolve_backend(name)
+class TestBackendStoreLookup:
+    @pytest.mark.parametrize("name", ["sqlalchemy", "mongo", "dynamodb"])
+    def test_a_backend_asks_the_catalog_for_the_store_it_was_handed(self, name: str) -> None:
+        ctx = ConfigContext.from_dict({"stores": {"default": {"backend": name}}})
+        runtime = BackendRuntime(
+            SERVER_PROFILE, catalog=load_catalog(ctx), store=StoreKey("events")
+        )
+        backend = resolve_backend(name)
 
-    with pytest.raises(ConfigError, match=rf"the '{name}' backend needs stores\.events"):
-        backend.build(ctx, (), runtime)
+        with pytest.raises(ConfigError, match=rf"the '{name}' backend needs stores\.events"):
+            backend.build(ctx, (), runtime)

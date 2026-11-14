@@ -100,28 +100,28 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_building_a_msgspec_call_codec_does_not_import_pydantic() -> None:
-    """The msgspec path must never touch the optional pydantic dependency."""
-    result = _run_in_clean_interpreter(_SCRIPT)
-    assert result.returncode == 0, result.stderr
+class TestCacheImportContainment:
+    def test_building_a_msgspec_call_codec_does_not_import_pydantic(self) -> None:
+        """The msgspec path must never touch the optional pydantic dependency."""
+        result = _run_in_clean_interpreter(_SCRIPT)
+        assert result.returncode == 0, result.stderr
 
-    observed = json.loads(result.stdout.strip().splitlines()[-1])
+        observed = json.loads(result.stdout.strip().splitlines()[-1])
 
-    assert observed["codec"] is True, "the msgspec annotation should have produced a codec"
-    assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"
+        assert observed["codec"] is True, "the msgspec annotation should have produced a codec"
+        assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"
 
+    def test_an_annotation_outside_the_msgspec_grammar_does_not_import_pydantic(self) -> None:
+        """The ``sys.modules`` gate, not the annotation, decides the pydantic branch.
 
-def test_an_annotation_outside_the_msgspec_grammar_does_not_import_pydantic() -> None:
-    """The ``sys.modules`` gate, not the annotation, decides the pydantic branch.
+        Without the gate the codec would import pydantic to build an adapter for
+        ``Doc``, which is exactly what a deployment without the ``rest`` extra
+        cannot afford. Uncached is the right answer there.
+        """
+        result = _run_in_clean_interpreter(_UNGATED_SCRIPT)
+        assert result.returncode == 0, result.stderr
 
-    Without the gate the codec would import pydantic to build an adapter for
-    ``Doc``, which is exactly what a deployment without the ``rest`` extra
-    cannot afford. Uncached is the right answer there.
-    """
-    result = _run_in_clean_interpreter(_UNGATED_SCRIPT)
-    assert result.returncode == 0, result.stderr
+        observed = json.loads(result.stdout.strip().splitlines()[-1])
 
-    observed = json.loads(result.stdout.strip().splitlines()[-1])
-
-    assert observed["codec"] is False, "no codec is possible without pydantic in the process"
-    assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"
+        assert observed["codec"] is False, "no codec is possible without pydantic in the process"
+        assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"

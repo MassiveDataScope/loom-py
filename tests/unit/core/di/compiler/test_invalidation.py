@@ -12,9 +12,9 @@ from tests.unit.core.di.compiler.doubles import (
     AcmeAudit,
     AcmeAuditReport,
     AcmeClock,
+    AcmeClockRates,
     AcmeFrozenClock,
     AcmeQuotes,
-    AcmeRates,
     AcmeTenant,
 )
 
@@ -28,7 +28,7 @@ class TestRegisteringBeforeSeal:
         bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
 
         assert type(bound.resolve(AcmeQuotes).rates.clock) is AcmeFrozenClock
-        assert type(bound.resolve(AcmeRates).clock) is AcmeFrozenClock
+        assert type(bound.resolve(AcmeClockRates).clock) is AcmeFrozenClock
 
     def test_a_re_registered_key_drops_its_own_instance(self, bound: LoomContainer) -> None:
         clock = bound.resolve(AcmeClock)
@@ -41,7 +41,7 @@ class TestRegisteringBeforeSeal:
         audit, tenant = bound.resolve(AcmeAudit), bound.resolve(AcmeTenant)
 
         bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-        bound.register(AcmeRates, AcmeRates)
+        bound.register(AcmeClockRates, AcmeClockRates)
 
         assert bound.resolve(AcmeAudit) is audit
         assert bound.resolve(AcmeTenant) is tenant
@@ -63,10 +63,10 @@ class TestRegisteringAfterSeal:
     def test_is_refused_and_dependents_and_built_singletons_stay(
         self, bound: LoomContainer
     ) -> None:
-        bound.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
+        bound.register(AcmeClockRates, AcmeClockRates, scope=Scope.APPLICATION)
         bound.seal()
         rates, audit, tenant = (
-            bound.resolve(AcmeRates),
+            bound.resolve(AcmeClockRates),
             bound.resolve(AcmeAudit),
             bound.resolve(AcmeTenant),
         )
@@ -76,19 +76,19 @@ class TestRegisteringAfterSeal:
             bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
 
         assert type(bound.resolve(AcmeClock)) is AcmeClock
-        assert bound.resolve(AcmeRates) is rates
+        assert bound.resolve(AcmeClockRates) is rates
         assert type(rates.clock) is AcmeClock
         assert bound.resolve(AcmeAudit) is audit
         assert bound.resolve(AcmeTenant) is tenant
 
     def test_a_per_execution_dependent_keeps_the_sealed_key(self, bound: LoomContainer) -> None:
         bound.seal()
-        bound.resolve(AcmeRates)
+        bound.resolve(AcmeClockRates)
 
         with pytest.raises(ContainerSealed):
             bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
 
-        assert type(bound.resolve(AcmeRates).clock) is AcmeClock
+        assert type(bound.resolve(AcmeClockRates).clock) is AcmeClock
         assert type(bound.resolve(AcmeQuotes).rates.clock) is AcmeClock
 
     def test_a_registered_instance_is_refused(self, bound: LoomContainer) -> None:
@@ -100,13 +100,13 @@ class TestRegisteringAfterSeal:
         assert type(bound.resolve(AcmeClock)) is AcmeClock
 
     def test_a_built_dependent_is_still_served_as_a_constant(self, bound: LoomContainer) -> None:
-        bound.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
+        bound.register(AcmeClockRates, AcmeClockRates, scope=Scope.APPLICATION)
         bound.seal()
-        rates = bound.resolve(AcmeRates)
+        rates = bound.resolve(AcmeClockRates)
 
         with pytest.raises(ContainerSealed):
             bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-        assert bound.resolve(AcmeRates) is rates
+        assert bound.resolve(AcmeClockRates) is rates
 
-        served = bound._compiled[AcmeRates]  # pyright: ignore[reportPrivateUsage]
+        served = bound._compiled[AcmeClockRates]  # pyright: ignore[reportPrivateUsage]
         assert type(served).__name__ == "method-wrapper"  # repeat(rates).__next__, no Python frame

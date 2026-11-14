@@ -46,13 +46,13 @@ from ._doubles import SERIALIZED_BACKEND, CountingCacheBackend
 TTL = 100
 
 
-class Doc(msgspec.Struct):
+class AcmeCallDoc(msgspec.Struct):
     """Return element inside the msgspec grammar."""
 
     title: str
 
 
-class PydanticDoc(BaseModel):
+class AcmeCallPydanticDoc(BaseModel):
     """Return type that only the pydantic branch can describe."""
 
     title: str
@@ -84,7 +84,7 @@ class NewPydanticDoc(BaseModel):
     author: str
 
 
-class LooseDoc(BaseModel):
+class AcmeCallLooseDoc(BaseModel):
     """Model whose ``Any`` field the JSON-mode dump changes shape of."""
 
     stale: bool
@@ -92,9 +92,9 @@ class LooseDoc(BaseModel):
 
 
 @cache_call(version=3)
-async def known_call(query: str, limit: int = 10) -> Doc:
+async def known_call(query: str, limit: int = 10) -> AcmeCallDoc:
     """Call whose key the suite asserts as a literal string."""
-    return Doc(title=f"{query}:{limit}")
+    return AcmeCallDoc(title=f"{query}:{limit}")
 
 
 def _config(**overrides: Any) -> CacheConfig:
@@ -154,7 +154,7 @@ def _expected_key(func: Any, **arguments: Any) -> str:
     return f"call:{func.__module__}.{func.__qualname__}:v1:{digest}"
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _capture_call_warnings(caplog: pytest.LogCaptureFixture) -> None:
     """Every warning this module asserts on comes from the calls module."""
     caplog.set_level(logging.WARNING, logger="loom.core.cache.calls")
@@ -177,8 +177,8 @@ class TestWrappingIsIdempotent:
         """``functools.wraps`` copies the policy, so the marker cannot tell them apart."""
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         calls = _calls(CountingCacheBackend())
         wrapped = calls.wrap(fetch)
@@ -189,8 +189,8 @@ class TestWrappingIsIdempotent:
         """A double wrap would store the same key twice, once per layer."""
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         backend = CountingCacheBackend()
         calls = _calls(backend)
@@ -203,13 +203,13 @@ class TestWrappingIsIdempotent:
     async def test_an_unmarked_coroutine_is_returned_unchanged(self) -> None:
         """Only a declared call is bound; everything else passes through."""
 
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         assert _calls(CountingCacheBackend()).wrap(fetch) is fetch
 
     async def test_an_uncacheable_return_type_warns_once_and_returns_the_function(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """A mapping return has no codec, so the coroutine runs uncached."""
 
@@ -232,10 +232,10 @@ class TestTheKeyIsTheArguments:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_gateway("calls_equal_args")).wrap(fetch)
 
@@ -243,16 +243,16 @@ class TestTheKeyIsTheArguments:
         second = await wrapped("q")
 
         assert runs == 1
-        assert first == second == Doc(title="q")
+        assert first == second == AcmeCallDoc(title="q")
 
     async def test_different_arguments_run_the_body_twice(self) -> None:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_gateway("calls_other_args")).wrap(fetch)
 
@@ -266,10 +266,10 @@ class TestTheKeyIsTheArguments:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str, limit: int = 10) -> Doc:
+        async def fetch(query: str, limit: int = 10) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=f"{query}:{limit}")
+            return AcmeCallDoc(title=f"{query}:{limit}")
 
         wrapped = _calls(_gateway("calls_defaults")).wrap(fetch)
 
@@ -283,10 +283,10 @@ class TestTheKeyIsTheArguments:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_gateway("calls_positional")).wrap(fetch)
 
@@ -300,10 +300,10 @@ class TestTheKeyIsTheArguments:
         runs = 0
 
         @cache_call()
-        async def fetch(**criteria: int) -> Doc:
+        async def fetch(**criteria: int) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=str(sorted(criteria.items())))
+            return AcmeCallDoc(title=str(sorted(criteria.items())))
 
         wrapped = _calls(_gateway("calls_kwargs_order")).wrap(fetch)
 
@@ -317,10 +317,10 @@ class TestTheKeyIsTheArguments:
         runs = 0
 
         @cache_call()
-        async def fetch(tags: frozenset[str]) -> Doc:
+        async def fetch(tags: frozenset[str]) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=str(sorted(tags)))
+            return AcmeCallDoc(title=str(sorted(tags)))
 
         wrapped = _calls(_gateway("calls_frozenset")).wrap(fetch)
 
@@ -348,7 +348,7 @@ class TestTheKeyIsTheArguments:
         ]
 
 
-class Colour(enum.Enum):
+class AcmeCallColour(enum.Enum):
     """Enum member whose value is exactly the string it renders to."""
 
     RED = "red"
@@ -418,7 +418,7 @@ _ERASED_SCALARS: list[tuple[Any, Any]] = [
     (b"a", "YQ=="),
     (bytearray(b"a"), b"a"),
     (memoryview(b"a"), b"a"),
-    (Colour.RED, "red"),
+    (AcmeCallColour.RED, "red"),
     (Shade.RED, "red"),
     (Rank.ONE, 1),
 ]
@@ -443,7 +443,7 @@ _NESTED_ARGUMENTS: list[tuple[Any, Any]] = [
     ([datetime(2020, 1, 1)], ["2020-01-01T00:00:00"]),
     ({"when": datetime(2020, 1, 1)}, {"when": "2020-01-01T00:00:00"}),
     ({datetime(2020, 1, 1)}, {"2020-01-01T00:00:00"}),
-    (Query(when=Colour.RED), Query(when="red")),
+    (Query(when=AcmeCallColour.RED), Query(when="red")),
     (Query(when={"a"}), Query(when=["a"])),
 ]
 """A typed value and its erased twin, each nested one level down."""
@@ -471,10 +471,10 @@ async def _runs_and_entries(*arguments: Any) -> tuple[int, int]:
     runs = 0
 
     @cache_call()
-    async def fetch(argument: Any) -> Doc:
+    async def fetch(argument: Any) -> AcmeCallDoc:
         nonlocal runs
         runs += 1
-        return Doc(title="fetched")
+        return AcmeCallDoc(title="fetched")
 
     backend = CountingCacheBackend()
     wrapped = _calls(backend).wrap(fetch)
@@ -563,15 +563,15 @@ class TestAMappingKeepsEveryPair:
 
     def test_two_keys_that_used_to_collapse_stay_two_pairs(self) -> None:
         """The old rendering was ``{"red": 2}``: one pair short of the argument."""
-        rendered = _render({Colour.RED: 1, "red": 2})
+        rendered = _render({AcmeCallColour.RED: 1, "red": 2})
 
         assert len(rendered[1]) == 2
 
     def test_the_mapping_differs_from_the_one_it_used_to_render_as(self) -> None:
-        assert _render({Colour.RED: 1, "red": 2}) != _render({"red": 2})
+        assert _render({AcmeCallColour.RED: 1, "red": 2}) != _render({"red": 2})
 
     async def test_the_two_mappings_are_two_entries_and_each_one_is_still_cached(self) -> None:
-        await _assert_separate_entries({Colour.RED: 1, "red": 2}, {"red": 2})
+        await _assert_separate_entries({AcmeCallColour.RED: 1, "red": 2}, {"red": 2})
 
     def test_two_keys_with_identical_renderings_are_still_two_pairs(self) -> None:
         """A ``dict`` built from the pairs would keep one of them and lose the other.
@@ -683,18 +683,18 @@ class TestConcurrentCallersShareOneLoad:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
             await asyncio.sleep(0.01)
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_gateway("calls_single_flight")).wrap(fetch)
 
         first, second = await asyncio.gather(wrapped("q"), wrapped("q"))
 
         assert runs == 1
-        assert first == second == Doc(title="q")
+        assert first == second == AcmeCallDoc(title="q")
 
 
 class TestAHitAnswersWhatAMissAnswered:
@@ -702,32 +702,32 @@ class TestAHitAnswersWhatAMissAnswered:
 
     async def test_a_list_of_structs_round_trips(self) -> None:
         @cache_call()
-        async def fetch(query: str) -> list[Doc]:
-            return [Doc(title=query)]
+        async def fetch(query: str) -> list[AcmeCallDoc]:
+            return [AcmeCallDoc(title=query)]
 
         wrapped = _calls(_gateway("calls_struct_list")).wrap(fetch)
 
-        assert await wrapped("q") == await wrapped("q") == [Doc(title="q")]
+        assert await wrapped("q") == await wrapped("q") == [AcmeCallDoc(title="q")]
 
     async def test_a_pydantic_model_round_trips(self) -> None:
         """The L13 shape: a pydantic value used to raise on write and read as a miss."""
 
         @cache_call()
-        async def fetch(query: str) -> PydanticDoc:
-            return PydanticDoc(title=query)
+        async def fetch(query: str) -> AcmeCallPydanticDoc:
+            return AcmeCallPydanticDoc(title=query)
 
         wrapped = _calls(_gateway("calls_pydantic")).wrap(fetch)
 
-        assert await wrapped("q") == await wrapped("q") == PydanticDoc(title="q")
+        assert await wrapped("q") == await wrapped("q") == AcmeCallPydanticDoc(title="q")
 
     async def test_an_optional_list_of_models_round_trips(self) -> None:
         @cache_call()
-        async def fetch(query: str) -> list[PydanticDoc] | None:
-            return [PydanticDoc(title=query)]
+        async def fetch(query: str) -> list[AcmeCallPydanticDoc] | None:
+            return [AcmeCallPydanticDoc(title=query)]
 
         wrapped = _calls(_gateway("calls_optional_models")).wrap(fetch)
 
-        assert await wrapped("q") == await wrapped("q") == [PydanticDoc(title="q")]
+        assert await wrapped("q") == await wrapped("q") == [AcmeCallPydanticDoc(title="q")]
 
     async def test_the_wrapper_carries_resolved_annotations(self) -> None:
         """The wrapper answers for itself, with the metadata a schema needs.
@@ -738,12 +738,12 @@ class TestAHitAnswersWhatAMissAnswered:
         """
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(CountingCacheBackend()).wrap(fetch)
 
-        assert wrapped.__annotations__ == {"query": str, "return": Doc}
+        assert wrapped.__annotations__ == {"query": str, "return": AcmeCallDoc}
 
 
 class TestUnlessRefusesToStore:
@@ -753,7 +753,7 @@ class TestUnlessRefusesToStore:
         runs = 0
 
         @cache_call(unless=lambda docs: not docs)
-        async def fetch(query: str) -> list[Doc]:
+        async def fetch(query: str) -> list[AcmeCallDoc]:
             nonlocal runs
             runs += 1
             return []
@@ -769,8 +769,8 @@ class TestUnlessRefusesToStore:
 
     async def test_a_non_empty_answer_is_stored(self) -> None:
         @cache_call(unless=lambda docs: not docs)
-        async def fetch(query: str) -> list[Doc]:
-            return [Doc(title=query)]
+        async def fetch(query: str) -> list[AcmeCallDoc]:
+            return [AcmeCallDoc(title=query)]
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(fetch)
@@ -789,8 +789,8 @@ class TestUnlessRefusesToStore:
         moment = datetime(2026, 9, 8, tzinfo=UTC)
 
         @cache_call(unless=lambda doc: doc.stale)
-        async def fetch(*, stale: bool) -> LooseDoc:
-            return LooseDoc(stale=stale, moment=moment)
+        async def fetch(*, stale: bool) -> AcmeCallLooseDoc:
+            return AcmeCallLooseDoc(stale=stale, moment=moment)
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(fetch)
@@ -809,8 +809,8 @@ class TestUnlessRefusesToStore:
             raise RuntimeError("broken predicate")
 
         @cache_call(unless=explode)
-        async def fetch(query: str) -> list[Doc]:
-            return [Doc(title=query)]
+        async def fetch(query: str) -> list[AcmeCallDoc]:
+            return [AcmeCallDoc(title=query)]
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(fetch)
@@ -826,12 +826,12 @@ class TestTheKeyNamesTheFunctionAndItsVersion:
 
     async def test_bumping_the_version_changes_the_key(self) -> None:
         @cache_call(version=1)
-        async def fetch_v1(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch_v1(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         @cache_call(version=2)
-        async def fetch_v2(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch_v2(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         fetch_v2.__qualname__ = fetch_v1.__qualname__
         backend = CountingCacheBackend()
@@ -846,12 +846,12 @@ class TestTheKeyNamesTheFunctionAndItsVersion:
         """The module is in the key, so two homonyms never share an entry."""
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         @cache_call()
-        async def fetch_elsewhere(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch_elsewhere(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         fetch_elsewhere.__qualname__ = fetch.__qualname__
         fetch_elsewhere.__module__ = "another.module"
@@ -870,9 +870,9 @@ class _Base:
     calls_made = 0
 
     @cache_call()
-    async def search(self, query: str) -> Doc:
+    async def search(self, query: str) -> AcmeCallDoc:
         type(self).calls_made += 1
-        return Doc(title=query)
+        return AcmeCallDoc(title=query)
 
     @property
     def broken(self) -> str:
@@ -908,7 +908,7 @@ class TestAnOverrideThatIsNotACoroutine:
     """FR-087: the method is unpublished, and the change is announced."""
 
     def test_the_shadowed_method_is_not_published_and_is_announced(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         calls = _calls(CountingCacheBackend())
 
@@ -971,15 +971,15 @@ class _StaticTools:
 
     @staticmethod
     @cache_call()
-    async def cached_static(query: str) -> Doc:
+    async def cached_static(query: str) -> AcmeCallDoc:
         _StaticTools.static_calls += 1
-        return Doc(title=query)
+        return AcmeCallDoc(title=query)
 
     @classmethod
     @cache_call()
-    async def cached_class(cls, query: str) -> Doc:
+    async def cached_class(cls, query: str) -> AcmeCallDoc:
         cls.class_calls += 1
-        return Doc(title=query)
+        return AcmeCallDoc(title=query)
 
     @staticmethod
     async def plain_static(text: str) -> str:
@@ -1011,8 +1011,8 @@ class TestBindPublishesStaticAndClassMethods:
         wrapped = _calls(_gateway("calls_static_method")).bind(_StaticTools())[0]
         monkeypatch.setattr(_StaticTools, "static_calls", 0)
 
-        assert await wrapped("q") == Doc(title="q")
-        assert await wrapped("q") == Doc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
 
         assert _StaticTools.static_calls == 1
 
@@ -1020,8 +1020,8 @@ class TestBindPublishesStaticAndClassMethods:
         wrapped = _calls(_gateway("calls_class_method")).bind(_StaticTools())[1]
         monkeypatch.setattr(_StaticTools, "class_calls", 0)
 
-        assert await wrapped("q") == Doc(title="q")
-        assert await wrapped("q") == Doc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
 
         assert _StaticTools.class_calls == 1
 
@@ -1080,15 +1080,15 @@ class TestWithoutASection:
     """AC9: an unconfigured deployment learns at boot, not from its bill."""
 
     async def test_a_marked_function_runs_uncached_and_warns_once(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         calls = _UnconfiguredCalls()
         wrapped = calls.wrap(fetch)
@@ -1103,9 +1103,11 @@ class TestWithoutASection:
         assert len(records) == 1
         assert f"{fetch.__module__}.{fetch.__qualname__}" in records[0].getMessage()
 
-    def test_an_unmarked_function_is_not_announced(self, caplog: pytest.LogCaptureFixture) -> None:
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+    def test_an_unmarked_function_is_not_announced(
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
+    ) -> None:
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         assert _UnconfiguredCalls().wrap(fetch) is fetch
         assert _warnings(caplog, "CacheCallNotConfigured") == []
@@ -1142,27 +1144,27 @@ class TestAFailedWriteNeverFailsTheCall:
     """AC10: the answer is already produced; the cache is the optional part."""
 
     async def test_a_write_error_is_logged_once_and_the_value_returned(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_RaisingBackend()).wrap(fetch)
 
-        assert await wrapped("q") == Doc(title="q")
-        assert await wrapped("q") == Doc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
 
         records = _warnings(caplog, "CacheCallWriteFailed")
         assert len(records) == 1
         message = records[0].getMessage()
         assert f"'function': '{fetch.__module__}.{fetch.__qualname__}'" in message
         assert f"'key': '{_expected_key(fetch)}'" in message
-        assert "'value_type': 'Doc'" in message
+        assert "'value_type': 'AcmeCallDoc'" in message
 
     async def test_an_error_from_the_body_propagates_and_stores_nothing(self) -> None:
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             raise RuntimeError("upstream down")
 
         backend = CountingCacheBackend()
@@ -1197,20 +1199,20 @@ class TestABackendOutageDegradesToAnUncachedCall:
     """
 
     async def test_a_failing_read_runs_the_body_and_logs_once(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         runs = 0
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title=query)
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_ReadOutageBackend()).wrap(fetch)
 
-        assert await wrapped("q") == Doc(title="q")
-        assert await wrapped("q") == Doc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
 
         assert runs == 2
         records = _warnings(caplog, "CacheCallReadFailed")
@@ -1221,16 +1223,16 @@ class TestABackendOutageDegradesToAnUncachedCall:
         assert "'error': 'ConnectionError'" in message
 
     async def test_a_failing_write_returns_the_value_and_logs_once(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         wrapped = _calls(_WriteOutageBackend()).wrap(fetch)
 
-        assert await wrapped("q") == Doc(title="q")
-        assert await wrapped("q") == Doc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
+        assert await wrapped("q") == AcmeCallDoc(title="q")
 
         records = _warnings(caplog, "CacheCallWriteFailed")
         assert len(records) == 1
@@ -1242,7 +1244,7 @@ class TestABackendOutageDegradesToAnUncachedCall:
         """The guards cover the two gateway calls, never the body between them."""
 
         @cache_call()
-        async def fetch(query: str) -> Doc:
+        async def fetch(query: str) -> AcmeCallDoc:
             raise RuntimeError("upstream down")
 
         wrapped = _calls(_ReadOutageBackend()).wrap(fetch)
@@ -1255,13 +1257,13 @@ class TestTheWarningMemo:
     """The dedupe is per event, per function and per binder instance."""
 
     async def test_two_events_about_one_function_are_both_logged(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """Deduping on the function alone would hide the second failure."""
 
         @cache_call()
-        async def fetch(sample: Any) -> Doc:
-            return Doc(title="fetched")
+        async def fetch(sample: Any) -> AcmeCallDoc:
+            return AcmeCallDoc(title="fetched")
 
         wrapped = _calls(_RaisingBackend()).wrap(fetch)
 
@@ -1272,7 +1274,7 @@ class TestTheWarningMemo:
         assert len(_warnings(caplog, "CacheCallWriteFailed")) == 1
 
     def test_one_event_about_two_functions_is_logged_twice(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """Deduping on the event alone would announce only the first function."""
 
@@ -1290,7 +1292,9 @@ class TestTheWarningMemo:
 
         assert len(_warnings(caplog, "CacheCallNotCacheable")) == 2
 
-    def test_a_second_binder_warns_again(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_a_second_binder_warns_again(
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
+    ) -> None:
         """The memo belongs to the instance, not to the module."""
 
         @cache_call()
@@ -1317,11 +1321,14 @@ class TestTheDecodeGuardIsNotACatchAll:
     """A stale payload is a miss; a broken codec is a bug and must be seen."""
 
     async def test_an_error_that_is_not_a_validation_failure_propagates(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        _capture_call_warnings: None,
     ) -> None:
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         monkeypatch.setattr(
             "loom.core.cache.calls.build_call_codec", lambda _func: _ExplodingCodec()
@@ -1394,37 +1401,37 @@ class TestAnArgumentWithoutACanonicalRendering:
         ],
     )
     async def test_a_non_finite_float_runs_the_call_uncached(
-        self, argument: object, caplog: pytest.LogCaptureFixture
+        self, argument: object, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """msgspec renders ``nan`` as ``null``, which would collide with ``None``."""
         runs = 0
 
         @cache_call()
-        async def measure(sample: Any) -> Doc:
+        async def measure(sample: Any) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title="measured")
+            return AcmeCallDoc(title="measured")
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(measure)
 
-        assert await wrapped(argument) == Doc(title="measured")
-        assert await wrapped(argument) == Doc(title="measured")
+        assert await wrapped(argument) == AcmeCallDoc(title="measured")
+        assert await wrapped(argument) == AcmeCallDoc(title="measured")
 
         assert runs == 2
         assert backend.data == {}
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_an_open_socket_runs_the_call_uncached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         runs = 0
 
         @cache_call()
-        async def probe(connection: Any) -> Doc:
+        async def probe(connection: Any) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title="probed")
+            return AcmeCallDoc(title="probed")
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(probe)
@@ -1438,7 +1445,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_a_self_referential_list_runs_the_call_uncached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """The walk cannot terminate on a cycle, and exhausting the stack is not an answer."""
         cyclic: list[Any] = []
@@ -1448,7 +1455,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_a_self_referential_mapping_runs_the_call_uncached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         cyclic: dict[str, Any] = {}
         cyclic["self"] = cyclic
@@ -1457,7 +1464,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_an_unassigned_dataclass_field_runs_the_call_uncached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """``getattr`` raises for the field, and no argument shape may reach the caller."""
         pending = Pending(name="a")
@@ -1466,7 +1473,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_a_dataclass_class_runs_the_call_uncached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """A class is not an instance: msgspec refuses it, and the walk must not descend it.
 
@@ -1477,7 +1484,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
 
     async def test_a_mapping_keyed_by_none_is_cached(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """It was refused only because a rendered mapping had to be a ``dict``.
 
@@ -1488,16 +1495,16 @@ class TestAnArgumentWithoutACanonicalRendering:
         runs = 0
 
         @cache_call()
-        async def fetch(criteria: Any) -> Doc:
+        async def fetch(criteria: Any) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title="fetched")
+            return AcmeCallDoc(title="fetched")
 
         backend = CountingCacheBackend()
         wrapped = _calls(backend).wrap(fetch)
 
-        assert await wrapped({None: "v"}) == Doc(title="fetched")
-        assert await wrapped({None: "v"}) == Doc(title="fetched")
+        assert await wrapped({None: "v"}) == AcmeCallDoc(title="fetched")
+        assert await wrapped({None: "v"}) == AcmeCallDoc(title="fetched")
 
         assert runs == 1
         assert len(backend.data) == 1
@@ -1511,10 +1518,10 @@ class TestAnArgumentWithoutACanonicalRendering:
         runs = 0
 
         @cache_call()
-        async def measure(sample: float) -> Doc:
+        async def measure(sample: float) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return Doc(title="measured")
+            return AcmeCallDoc(title="measured")
 
         wrapped = _calls(_gateway("calls_finite_float")).wrap(measure)
 
@@ -1531,8 +1538,8 @@ class TestTheWrittenTtl:
         self, backend: CountingCacheBackend, *, config: CacheConfig, argument: str = "q"
     ) -> None:
         @cache_call(ttl_key="web_search")
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         await _calls(backend, config=config).wrap(fetch)(argument)
 
@@ -1552,8 +1559,8 @@ class TestTheWrittenTtl:
 
     async def test_a_call_without_a_ttl_key_writes_the_default(self) -> None:
         @cache_call()
-        async def fetch(query: str) -> Doc:
-            return Doc(title=query)
+        async def fetch(query: str) -> AcmeCallDoc:
+            return AcmeCallDoc(title=query)
 
         backend = CountingCacheBackend()
 
@@ -1592,8 +1599,8 @@ class TestTheWrittenTtl:
             calls = _calls(backend, config=config, rng=random.Random(seed))
 
             @cache_call()
-            async def fetch(query: str) -> Doc:
-                return Doc(title=query)
+            async def fetch(query: str) -> AcmeCallDoc:
+                return AcmeCallDoc(title=query)
 
             wrapped = calls.wrap(fetch)
             for index in range(20):
@@ -1610,7 +1617,7 @@ class TestAPayloadThatNoLongerFits:
     """AC16: a stale entry is a miss, not an outage for a whole TTL."""
 
     async def test_a_stale_payload_is_re_stored_and_logged_once(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         @cache_call()
         async def read(query: str) -> OldDoc:
@@ -1636,7 +1643,7 @@ class TestAPayloadThatNoLongerFits:
         assert "call:" in records[0].getMessage()
 
     async def test_a_mismatch_logs_no_value_from_the_stored_payload(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         """A pydantic error spells ``input_value=``; the log must not repeat it."""
         stored_title = "another-callers-private-answer"

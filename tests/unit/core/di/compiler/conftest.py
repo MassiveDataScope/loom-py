@@ -9,8 +9,8 @@ from loom.core.di.scope import Scope
 from tests.unit.core.di.compiler.doubles import (
     AcmeAudit,
     AcmeClock,
+    AcmeClockRates,
     AcmeQuotes,
-    AcmeRates,
     AcmeTenant,
 )
 
@@ -20,7 +20,7 @@ def bound() -> LoomContainer:
     """A clock singleton, rates and quotes per execution over it, and two unrelated singletons."""
     container = LoomContainer()
     container.register(AcmeClock, AcmeClock, scope=Scope.APPLICATION)
-    container.register(AcmeRates, AcmeRates)
+    container.register(AcmeClockRates, AcmeClockRates)
     container.register(AcmeQuotes, AcmeQuotes)
     container.register(AcmeAudit, AcmeAudit, scope=Scope.APPLICATION)
     container.register_instance(AcmeTenant, AcmeTenant())

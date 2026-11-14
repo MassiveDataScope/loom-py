@@ -24,7 +24,7 @@ class AnotherService:
     pass
 
 
-class Product:
+class AcmeProductToken:
     pass
 
 
@@ -57,7 +57,7 @@ class TestRegister:
         assert isinstance(instance, AltService)
 
 
-class TestRegisterDefault:
+class TestContainerRegisterDefault:
     def test_registers_when_the_key_is_absent(self, container: LoomContainer) -> None:
         container.register_default(IService, ConcreteService, scope=Scope.APPLICATION)
 
@@ -184,17 +184,17 @@ class TestRepoResolution:
     def test_register_repo_and_resolve_repo(self, container: LoomContainer) -> None:
         repo = ProductRepo()
         container.register(ProductRepo, lambda: repo, scope=Scope.APPLICATION)
-        container.register_repo(Product, ProductRepo)
+        container.register_repo(AcmeProductToken, ProductRepo)
 
-        resolved = container.resolve_repo(Product)
+        resolved = container.resolve_repo(AcmeProductToken)
         assert resolved is repo
 
     def test_resolve_repo_missing_mapping_raises(
         self,
         container: LoomContainer,
     ) -> None:
-        with pytest.raises(ResolutionError, match="Product"):
-            container.resolve_repo(Product)
+        with pytest.raises(ResolutionError, match="AcmeProductToken"):
+            container.resolve_repo(AcmeProductToken)
 
 
 class TestTokenResolution:

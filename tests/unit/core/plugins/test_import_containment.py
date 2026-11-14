@@ -80,23 +80,25 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_the_entry_point_loader_imports_nothing_outside_the_stdlib() -> None:
-    """Importing the entry-point leaf must add no ``loom`` nor third-party module."""
-    result = _run_in_clean_interpreter(_LEAF_SCRIPT)
-    assert result.returncode == 0, result.stderr
+class TestPluginImportContainment:
+    def test_the_entry_point_loader_imports_nothing_outside_the_stdlib(self) -> None:
+        """Importing the entry-point leaf must add no ``loom`` nor third-party module."""
+        result = _run_in_clean_interpreter(_LEAF_SCRIPT)
+        assert result.returncode == 0, result.stderr
 
-    imported = json.loads(result.stdout.strip().splitlines()[-1])
+        imported = json.loads(result.stdout.strip().splitlines()[-1])
 
-    unexpected_loom = sorted(set(imported["loom"]) - _ALLOWED_LOOM_MODULES)
-    assert unexpected_loom == [], f"unexpected loom modules imported: {unexpected_loom}"
-    assert imported["third_party"] == [], f"non-stdlib packages imported: {imported['third_party']}"
+        unexpected_loom = sorted(set(imported["loom"]) - _ALLOWED_LOOM_MODULES)
+        assert unexpected_loom == [], f"unexpected loom modules imported: {unexpected_loom}"
+        assert imported["third_party"] == [], (
+            f"non-stdlib packages imported: {imported['third_party']}"
+        )
 
+    def test_importing_the_provider_loader_does_not_pull_in_rest_or_pydantic(self) -> None:
+        """Importing the ETL provider loader must not pull in REST-only modules."""
+        result = _run_in_clean_interpreter(_SCRIPT.format(forbidden=_FORBIDDEN))
+        assert result.returncode == 0, result.stderr
 
-def test_importing_the_provider_loader_does_not_pull_in_rest_or_pydantic() -> None:
-    """Importing the ETL provider loader must not pull in REST-only modules."""
-    result = _run_in_clean_interpreter(_SCRIPT.format(forbidden=_FORBIDDEN))
-    assert result.returncode == 0, result.stderr
+        leaked = json.loads(result.stdout.strip().splitlines()[-1])
 
-    leaked = json.loads(result.stdout.strip().splitlines()[-1])
-
-    assert leaked == [], f"forbidden modules imported: {leaked}\n{result.stderr}"
+        assert leaked == [], f"forbidden modules imported: {leaked}\n{result.stderr}"

@@ -28,7 +28,7 @@ from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, RolledBack, StoreOutcome
 from loom.core.uow.scope import Frame, invocation
-from tests.unit.core.repository.contract.conftest import CreateOrder, Order, OrderStatus
+from tests.unit.core.repository.contract.conftest import AcmeContractOrder, CreateOrder, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
 
@@ -55,7 +55,7 @@ class _Commands(CommandListener):
 class _Audit:
     client: AsyncMongoClient[Any]
     commands: _Commands
-    orders: RepositoryMongo[Order, int]
+    orders: RepositoryMongo[AcmeContractOrder, int]
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ async def audit(mongo_database: Any) -> AsyncIterator[_Audit]:
     # A transaction cannot create the collection implicitly on 4.2.
     await collection.database.create_collection(collection.name)
     orders = RepositoryMongo(
-        Order,
+        AcmeContractOrder,
         collection,
         session_provider=MongoSessions(client, AUDIT),
         cursor_codec=CursorCodec(signing="ephemeral"),

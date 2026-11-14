@@ -48,45 +48,45 @@ class NoMcpUseCase(UseCase[object, str]):
         return "no servers here"
 
 
-def test_returns_only_declaring_use_cases_in_input_order() -> None:
-    compiler = UseCaseCompiler()
-    compiler.compile(NoMcpUseCase)
-    compiler.compile(DocsSearchUseCase)
-    compiler.compile(TwoServersUseCase)
+class TestMcpMarkers:
+    def test_returns_only_declaring_use_cases_in_input_order(self) -> None:
+        compiler = UseCaseCompiler()
+        compiler.compile(NoMcpUseCase)
+        compiler.compile(DocsSearchUseCase)
+        compiler.compile(TwoServersUseCase)
 
-    result = declaring_mcp_bindings([NoMcpUseCase, DocsSearchUseCase, TwoServersUseCase], compiler)
+        result = declaring_mcp_bindings(
+            [NoMcpUseCase, DocsSearchUseCase, TwoServersUseCase], compiler
+        )
 
-    assert [uc_type for uc_type, _ in result] == [DocsSearchUseCase, TwoServersUseCase]
+        assert [uc_type for uc_type, _ in result] == [DocsSearchUseCase, TwoServersUseCase]
 
+    def test_carries_each_use_cases_own_bindings(self) -> None:
+        compiler = UseCaseCompiler()
+        compiler.compile(DocsSearchUseCase)
+        compiler.compile(TwoServersUseCase)
 
-def test_carries_each_use_cases_own_bindings() -> None:
-    compiler = UseCaseCompiler()
-    compiler.compile(DocsSearchUseCase)
-    compiler.compile(TwoServersUseCase)
+        result = declaring_mcp_bindings([DocsSearchUseCase, TwoServersUseCase], compiler)
 
-    result = declaring_mcp_bindings([DocsSearchUseCase, TwoServersUseCase], compiler)
+        servers = {uc_type: tuple(b.server for b in bindings) for uc_type, bindings in result}
+        assert servers[DocsSearchUseCase] == ("docs-server",)
+        assert servers[TwoServersUseCase] == ("docs-server", "billing-server")
 
-    servers = {uc_type: tuple(b.server for b in bindings) for uc_type, bindings in result}
-    assert servers[DocsSearchUseCase] == ("docs-server",)
-    assert servers[TwoServersUseCase] == ("docs-server", "billing-server")
+    def test_a_use_case_never_compiled_is_absent_even_when_listed(self) -> None:
+        compiler = UseCaseCompiler()
+        compiler.compile(DocsSearchUseCase)
 
+        result = declaring_mcp_bindings([DocsSearchUseCase, NoMcpUseCase], compiler)
 
-def test_a_use_case_never_compiled_is_absent_even_when_listed() -> None:
-    compiler = UseCaseCompiler()
-    compiler.compile(DocsSearchUseCase)
+        assert [uc_type for uc_type, _ in result] == [DocsSearchUseCase]
 
-    result = declaring_mcp_bindings([DocsSearchUseCase, NoMcpUseCase], compiler)
+    def test_empty_when_no_use_case_declares_a_marker(self) -> None:
+        compiler = UseCaseCompiler()
+        compiler.compile(NoMcpUseCase)
 
-    assert [uc_type for uc_type, _ in result] == [DocsSearchUseCase]
+        result = declaring_mcp_bindings([NoMcpUseCase], compiler)
 
-
-def test_empty_when_no_use_case_declares_a_marker() -> None:
-    compiler = UseCaseCompiler()
-    compiler.compile(NoMcpUseCase)
-
-    result = declaring_mcp_bindings([NoMcpUseCase], compiler)
-
-    assert result == []
+        assert result == []
 
 
 _SCRIPT = """
@@ -127,25 +127,26 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_the_module_imports_nothing_from_loom_ai() -> None:
-    """Importing this module and calling ``declaring_mcp_bindings`` must not
-    pull in ``loom.ai``.
+class TestMcpMarkersImportContainment:
+    def test_the_module_imports_nothing_from_loom_ai(self) -> None:
+        """Importing this module and calling ``declaring_mcp_bindings`` must not
+        pull in ``loom.ai``.
 
-    Runs in a clean subprocess, following the precedent set by
-    ``tests/unit/core/plugins/test_import_containment.py`` and
-    ``tests/unit/core/cache/test_cache_import_containment.py``: the pytest
-    interpreter running this suite has already imported ``loom.ai`` (and
-    everything it depends on) for other suites, so those modules stay
-    cached regardless of what this module imports. Evicting only
-    ``loom.ai*`` and ``mcp_markers`` from ``sys.modules`` and reimporting
-    would leave any transitive dependency (e.g. ``loom.core.engine.compiler``
-    hiding an ``import loom.ai``) cached and unexecuted, so that leak would
-    go undetected. A subprocess starts with none of that baggage, so the
-    check catches a leak anywhere in the import chain, not only in this
-    module's own top-level statements.
-    """
-    result = _run_in_clean_interpreter(_SCRIPT)
-    assert result.returncode == 0, result.stderr
+        Runs in a clean subprocess, following the precedent set by
+        ``tests/unit/core/plugins/test_import_containment.py`` and
+        ``tests/unit/core/cache/test_cache_import_containment.py``: the pytest
+        interpreter running this suite has already imported ``loom.ai`` (and
+        everything it depends on) for other suites, so those modules stay
+        cached regardless of what this module imports. Evicting only
+        ``loom.ai*`` and ``mcp_markers`` from ``sys.modules`` and reimporting
+        would leave any transitive dependency (e.g. ``loom.core.engine.compiler``
+        hiding an ``import loom.ai``) cached and unexecuted, so that leak would
+        go undetected. A subprocess starts with none of that baggage, so the
+        check catches a leak anywhere in the import chain, not only in this
+        module's own top-level statements.
+        """
+        result = _run_in_clean_interpreter(_SCRIPT)
+        assert result.returncode == 0, result.stderr
 
-    leaked = json.loads(result.stdout.strip().splitlines()[-1])
-    assert leaked == [], f"loom.ai modules leaked in: {leaked}"
+        leaked = json.loads(result.stdout.strip().splitlines()[-1])
+        assert leaked == [], f"loom.ai modules leaked in: {leaked}"

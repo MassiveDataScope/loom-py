@@ -17,7 +17,7 @@ import pytest
 from loom.core.cache import CacheConfig
 from loom.core.cache._single_flight import SingleFlight
 
-from ._doubles import CachedEnv, GatedRepository, Widget, wrap_with_cache
+from ._doubles import AcmeCacheWidget, CachedEnv, GatedRepository, wrap_with_cache
 
 WAITERS = 200
 ROW_COUNT = 3
@@ -49,18 +49,18 @@ class GatedLoader:
         return self.value
 
 
-def _widgets(count: int) -> list[Widget]:
-    return [Widget(id=index, name=f"w{index}") for index in range(1, count + 1)]
+def _widgets(count: int) -> list[AcmeCacheWidget]:
+    return [AcmeCacheWidget(id=index, name=f"w{index}") for index in range(1, count + 1)]
 
 
-def _env() -> CachedEnv[Widget]:
+def _env() -> CachedEnv[AcmeCacheWidget]:
     return wrap_with_cache(
         GatedRepository(_widgets(ROW_COUNT)),
         CacheConfig(default_ttl=100, default_list_ttl=50, ttl_jitter=0.0),
     )
 
 
-def _gated(env: CachedEnv[Widget]) -> GatedRepository:
+def _gated(env: CachedEnv[AcmeCacheWidget]) -> GatedRepository:
     repository = env.repository
     assert isinstance(repository, GatedRepository)
     return repository
@@ -88,7 +88,7 @@ class TestCoalescedEntityReads:
         results = await asyncio.gather(*waiters)
 
         assert repository.get_by_id_calls == 1
-        assert results == [Widget(id=1, name="w1")] * WAITERS
+        assert results == [AcmeCacheWidget(id=1, name="w1")] * WAITERS
 
     async def test_two_keys_are_not_serialised_against_each_other(self) -> None:
         env = _env()
@@ -99,8 +99,8 @@ class TestCoalescedEntityReads:
         await _until(lambda: repository.get_by_id_calls == 2)
         repository.gate.set()
 
-        assert await first == Widget(id=1, name="w1")
-        assert await second == Widget(id=2, name="w2")
+        assert await first == AcmeCacheWidget(id=1, name="w1")
+        assert await second == AcmeCacheWidget(id=2, name="w2")
 
     async def test_the_cached_custom_method_is_coalesced_too(self) -> None:
         env = _env()
@@ -142,7 +142,7 @@ class TestLoaderFailure:
             await env.wrapper.get_by_id(1)
         repository.failure = None
 
-        assert await env.wrapper.get_by_id(1) == Widget(id=1, name="w1")
+        assert await env.wrapper.get_by_id(1) == AcmeCacheWidget(id=1, name="w1")
         assert repository.get_by_id_calls == 2
 
 
@@ -165,7 +165,7 @@ class TestCallerScopedTransaction:
         results = await asyncio.gather(*waiters)
 
         assert repository.get_by_id_calls == 3
-        assert results == [Widget(id=1, name="w1")] * 3
+        assert results == [AcmeCacheWidget(id=1, name="w1")] * 3
 
     async def test_a_cancelled_caller_leaves_no_load_running(self) -> None:
         """Nothing may resume against the session the caller is closing."""
@@ -214,7 +214,7 @@ class TestFirstCallerCancellation:
         survivors = await asyncio.gather(*waiters[1:])
 
         assert waiters[0].cancelled()
-        assert survivors == [Widget(id=1, name="w1")] * 2
+        assert survivors == [AcmeCacheWidget(id=1, name="w1")] * 2
         assert repository.get_by_id_calls == 1
 
     async def test_an_abandoned_burst_still_populates_the_cache(self) -> None:
@@ -230,7 +230,7 @@ class TestFirstCallerCancellation:
         repository.gate.set()
         await _until(lambda: len(env.backend.set_ttls) == 1)
 
-        assert await env.wrapper.get_by_id(1) == Widget(id=1, name="w1")
+        assert await env.wrapper.get_by_id(1) == AcmeCacheWidget(id=1, name="w1")
         assert repository.get_by_id_calls == 1
 
 

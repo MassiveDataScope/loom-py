@@ -84,18 +84,19 @@ def _ty(module: Path, tmp_path: Path) -> list[str]:
     return [_tool("ty"), "check", "--python", sys.executable, *concise, str(module)]
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("command", [_pyright, _mypy, _ty], ids=["pyright", "mypy", "ty"])
-def test_checkers_report_only_the_expected_lines(
-    command: Callable[[Path, Path], list[str]], tmp_path: Path
-) -> None:
-    module = tmp_path / "fixture.py"
-    module.write_text(_FIXTURE, encoding="utf-8")
+class TestStrictStructTyping:
+    @pytest.mark.slow
+    @pytest.mark.parametrize("command", [_pyright, _mypy, _ty], ids=["pyright", "mypy", "ty"])
+    def test_checkers_report_only_the_expected_lines(
+        self, command: Callable[[Path, Path], list[str]], tmp_path: Path
+    ) -> None:
+        module = tmp_path / "fixture.py"
+        module.write_text(_FIXTURE, encoding="utf-8")
 
-    result = subprocess.run(  # noqa: S603
-        command(module, tmp_path), capture_output=True, text=True, check=False, cwd=tmp_path
-    )
+        result = subprocess.run(  # noqa: S603
+            command(module, tmp_path), capture_output=True, text=True, check=False, cwd=tmp_path
+        )
 
-    output = result.stdout + result.stderr
-    reported = {int(n) for n in re.findall(r"fixture\.py:(\d+)", output)}
-    assert reported == _EXPECTED_LINES, output
+        output = result.stdout + result.stderr
+        reported = {int(n) for n in re.findall(r"fixture\.py:(\d+)", output)}
+        assert reported == _EXPECTED_LINES, output

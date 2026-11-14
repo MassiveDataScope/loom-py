@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     of ``resume``'s hints raises ``NameError`` — AC12's unresolvable case."""
 
 
-class Doc(msgspec.Struct):
+class AcmeToolsetDoc(msgspec.Struct):
     """Result type named by annotation, resolvable only from this module."""
 
     title: str
@@ -39,7 +39,7 @@ class SearchTools:
         self,
         query: str,
         limit: Annotated[int, Field(description="Never more than this many documents.")] = 10,
-    ) -> list[Doc]:
+    ) -> list[AcmeToolsetDoc]:
         """Search the corpus.
 
         Args:
@@ -49,9 +49,9 @@ class SearchTools:
         Returns:
             The matching documents.
         """
-        return [Doc(title=f"{query}#{index}") for index in range(limit)]
+        return [AcmeToolsetDoc(title=f"{query}#{index}") for index in range(limit)]
 
-    async def describe(self, title: str) -> Doc:
+    async def describe(self, title: str) -> AcmeToolsetDoc:
         """Build a document from a title, uncached because nothing declares it.
 
         Args:
@@ -60,14 +60,14 @@ class SearchTools:
         Returns:
             The document.
         """
-        return Doc(title=title)
+        return AcmeToolsetDoc(title=title)
 
 
 class CursorTools:
     """Toolset whose second method no runtime resolution can type."""
 
     @cache_call()
-    async def latest(self, limit: int = 5) -> list[Doc]:
+    async def latest(self, limit: int = 5) -> list[AcmeToolsetDoc]:
         """Return the most recent documents.
 
         Args:
@@ -76,10 +76,10 @@ class CursorTools:
         Returns:
             The most recent documents.
         """
-        return [Doc(title=str(index)) for index in range(limit)]
+        return [AcmeToolsetDoc(title=str(index)) for index in range(limit)]
 
     @cache_call()
-    async def resume(self, cursor: Cursor) -> list[Doc]:
+    async def resume(self, cursor: Cursor) -> list[AcmeToolsetDoc]:
         """Continue a search from a cursor whose type only a type checker sees.
 
         Args:
@@ -88,4 +88,4 @@ class CursorTools:
         Returns:
             The next documents.
         """
-        return [Doc(title=cursor)]
+        return [AcmeToolsetDoc(title=cursor)]

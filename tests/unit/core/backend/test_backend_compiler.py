@@ -31,7 +31,7 @@ from loom.core.model.types import Numeric, String
 from loom.core.projection.loaders import ExistsLoader
 
 
-class _Product(BaseModel):
+class AcmeCompilerProduct(BaseModel):
     __tablename__ = "test_products"
     id: int = ColumnField(primary_key=True, autoincrement=True)
     name: str = ColumnField(length=120)
@@ -135,13 +135,13 @@ def _clean_registry() -> Generator[None, None, None]:
     reset_registry()
 
 
-class _Shade(Enum):
+class AcmeCompilerShade(Enum):
     DARK = "dark"
 
 
 class _ShadedItem(BaseModel):
     __tablename__ = "test_shaded_items"
-    shade: _Shade
+    shade: AcmeCompilerShade
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
@@ -154,7 +154,7 @@ class _ModedItem(BaseModel):
 class _DeclaredShadeItem(BaseModel):
     __tablename__ = "test_declared_shade_items"
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    shade: _Shade = ColumnField(String(8))
+    shade: AcmeCompilerShade = ColumnField(String(8))
     mode: Annotated[Literal["a", "b"], String(1)] | None = None
     kind: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
 
@@ -224,14 +224,14 @@ class TestUndeclaredColumnTypes:
 
 class TestCompileModel:
     def test_columns_and_pk(self) -> None:
-        sa_cls = cast(Any, compile_model(_Product))
+        sa_cls = cast(Any, compile_model(AcmeCompilerProduct))
         table = sa_cls.__table__
         assert sa_cls.__tablename__ == "test_products"
         assert {c.name for c in table.columns} >= {"id", "name", "price"}
         assert [c.name for c in table.primary_key.columns] == ["id"]
 
     def test_foreign_key_on_delete(self) -> None:
-        compile_model(_Product)
+        compile_model(AcmeCompilerProduct)
         sa_cls = cast(Any, compile_model(_Review))
         fk = next(iter(sa_cls.__table__.c.product_id.foreign_keys))
         assert fk.column.table.name == "test_products"
@@ -264,21 +264,21 @@ class TestCompileModel:
 
 class TestCompileAll:
     def test_batch_compile_and_relationships(self) -> None:
-        compile_all(_Product, _Review)
+        compile_all(AcmeCompilerProduct, _Review)
         tables = set(get_metadata().tables.keys())
         assert {"test_products", "test_reviews"} <= tables
 
-        sa_product = get_compiled(_Product)
+        sa_product = get_compiled(AcmeCompilerProduct)
         assert sa_product is not None
         assert hasattr(sa_product, "reviews")
 
     def test_idempotent(self) -> None:
-        first = compile_model(_Product)
-        second = compile_model(_Product)
+        first = compile_model(AcmeCompilerProduct)
+        second = compile_model(AcmeCompilerProduct)
         assert first is second
 
     def test_unknown_returns_none(self) -> None:
-        assert get_compiled(_Product) is None
+        assert get_compiled(AcmeCompilerProduct) is None
 
 
 class TestFqForeignKeyOtmCompilation:

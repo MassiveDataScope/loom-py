@@ -19,6 +19,13 @@ async def _raise_error() -> None:
     raise ValueError("boom")
 
 
+@pytest.fixture
+def stopped_bridge() -> AsyncBridge:
+    bridge = AsyncBridge()
+    bridge.shutdown()
+    return bridge
+
+
 class TestAsyncBridgeLifecycle:
     def test_bridge_starts_alive(self) -> None:
         bridge = AsyncBridge()
@@ -27,16 +34,11 @@ class TestAsyncBridgeLifecycle:
         finally:
             bridge.shutdown()
 
-    def test_bridge_reports_dead_after_shutdown(self) -> None:
-        bridge = AsyncBridge()
-        bridge.shutdown()
+    def test_bridge_reports_dead_after_shutdown(self, stopped_bridge: AsyncBridge) -> None:
+        assert stopped_bridge.is_alive is False
 
-        assert bridge.is_alive is False
-
-    def test_shutdown_is_idempotent(self) -> None:
-        bridge = AsyncBridge()
-        bridge.shutdown()
-        bridge.shutdown()  # must not raise
+    def test_shutdown_is_idempotent(self, stopped_bridge: AsyncBridge) -> None:
+        stopped_bridge.shutdown()  # must not raise
 
 
 class TestAsyncBridgeRun:
@@ -58,13 +60,10 @@ class TestAsyncBridgeRun:
         finally:
             bridge.shutdown()
 
-    def test_run_raises_after_shutdown(self) -> None:
-        bridge = AsyncBridge()
-        bridge.shutdown()
-
+    def test_run_raises_after_shutdown(self, stopped_bridge: AsyncBridge) -> None:
         coro = _return_value(1)
         with pytest.raises(RuntimeError, match="shut down"):
-            bridge.run(coro)
+            stopped_bridge.run(coro)
 
     def test_run_with_timeout_raises_on_slow_coro(self) -> None:
         import anyio

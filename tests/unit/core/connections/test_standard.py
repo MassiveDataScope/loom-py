@@ -67,49 +67,51 @@ def _banned_names(kind: type) -> frozenset[str]:
     return _RETIRED_NAMES
 
 
-def test_the_walk_finds_every_engine_and_context() -> None:
-    names = {cls.__name__ for cls in _TYPES}
+class TestConnectionFieldStandard:
+    def test_the_walk_finds_every_engine_and_context(self) -> None:
+        names = {cls.__name__ for cls in _TYPES}
 
-    assert {
-        "AwsClientConfig",
-        "AwsPool",
-        "ClickHouseConnection",
-        "DatabaseConfig",
-        "DynamoDBRepositoryConfig",
-        "MongoConnection",
-        "MongoPool",
-        "MongoRepositoryConfig",
-        "MongoSourceConfig",
-        "PoolConfig",
-        "SqlConnectionConfig",
-    } <= names
+        assert {
+            "AwsClientConfig",
+            "AwsPool",
+            "ClickHouseConnection",
+            "DatabaseConfig",
+            "DynamoDBRepositoryConfig",
+            "MongoConnection",
+            "MongoPool",
+            "MongoRepositoryConfig",
+            "MongoSourceConfig",
+            "PoolConfig",
+            "SqlConnectionConfig",
+        } <= names
 
+    def test_the_retired_names_come_from_every_engine(self) -> None:
+        engines = [cls for cls in _CONNECTION_TYPES if ConnectionSettings in cls.__bases__]
 
-def test_the_retired_names_come_from_every_engine() -> None:
-    engines = [cls for cls in _CONNECTION_TYPES if ConnectionSettings in cls.__bases__]
+        assert all(cls.retired_keys() for cls in engines)
 
-    assert all(cls.retired_keys() for cls in engines)
+    @pytest.mark.parametrize("kind", _TYPES, ids=lambda cls: cls.__name__)
+    def test_no_field_uses_a_retired_name_or_milliseconds(
+        self, kind: type[ConnectionSettings]
+    ) -> None:
+        offending = sorted(
+            name
+            for name in kind.__struct_fields__
+            if name in _banned_names(kind) or name.endswith("_ms")
+        )
 
-
-@pytest.mark.parametrize("kind", _TYPES, ids=lambda cls: cls.__name__)
-def test_no_field_uses_a_retired_name_or_milliseconds(kind: type[ConnectionSettings]) -> None:
-    offending = sorted(
-        name
-        for name in kind.__struct_fields__
-        if name in _banned_names(kind) or name.endswith("_ms")
-    )
-
-    assert offending == []
+        assert offending == []
 
 
 _ENGINES = [cls for cls in _CONNECTION_TYPES if ConnectionSettings in cls.__bases__]
 
 
-def test_each_engine_type_translates_its_fields_for_its_driver() -> None:
-    assert sorted(cls.__name__ for cls in _ENGINES) == [
-        "AwsClientConfig",
-        "ClickHouseConnection",
-        "DatabaseConfig",
-        "MongoConnection",
-    ]
-    assert all("client_options" in vars(cls) for cls in _ENGINES)
+class TestEngineTranslatesItsOwnFields:
+    def test_each_engine_type_translates_its_fields_for_its_driver(self) -> None:
+        assert sorted(cls.__name__ for cls in _ENGINES) == [
+            "AwsClientConfig",
+            "ClickHouseConnection",
+            "DatabaseConfig",
+            "MongoConnection",
+        ]
+        assert all("client_options" in vars(cls) for cls in _ENGINES)

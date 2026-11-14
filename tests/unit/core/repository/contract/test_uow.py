@@ -16,49 +16,47 @@ class _Abort(Exception):
     pass
 
 
-async def test_commit_makes_writes_visible(case: BackendCase, repository: Any) -> None:
-    require(case, Creatable, Readable)
+class TestContractCommit:
+    async def test_commit_makes_writes_visible(self, case: BackendCase, repository: Any) -> None:
+        require(case, Creatable, Readable)
 
-    async with case.unit_of_work(repository):
-        created = await repository.create(SEED[0])
-
-    assert await repository.get_by_id(created.id) == created
-
-
-async def test_rollback_discards_writes(case: BackendCase, repository: Any) -> None:
-    require(case, Creatable, Readable)
-    if not case.transactions:
-        pytest.skip(f"{case.name} does not roll back writes")
-
-    async def _create_then_abort() -> None:
         async with case.unit_of_work(repository):
-            await repository.create(SEED[0])
-            raise _Abort
+            created = await repository.create(SEED[0])
 
-    with pytest.raises(_Abort):
-        await _create_then_abort()
-
-    assert await repository.get_by_id(SEED[0].id) is None
-
-
-async def test_unit_of_work_declares_transactional_as_the_case_does(
-    case: BackendCase, repository: Any
-) -> None:
-    assert type(case.unit_of_work(repository)).transactional is case.transactions
-
-
-async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
-    case: BackendCase, repository: Any
-) -> None:
-    require(case, Creatable, Readable)
-
-    async with case.unit_of_work(repository):
-        session_before = _active_session(repository)
-        created = await repository.create(SEED[0])
         assert await repository.get_by_id(created.id) == created
-        if case.name == "sqlalchemy":
-            assert session_before is not None
-            assert _active_session(repository) is session_before
+
+    async def test_rollback_discards_writes(self, case: BackendCase, repository: Any) -> None:
+        require(case, Creatable, Readable)
+        if not case.transactions:
+            pytest.skip(f"{case.name} does not roll back writes")
+
+        async def _create_then_abort() -> None:
+            async with case.unit_of_work(repository):
+                await repository.create(SEED[0])
+                raise _Abort
+
+        with pytest.raises(_Abort):
+            await _create_then_abort()
+
+        assert await repository.get_by_id(SEED[0].id) is None
+
+    async def test_unit_of_work_declares_transactional_as_the_case_does(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        assert type(case.unit_of_work(repository)).transactional is case.transactions
+
+    async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, Creatable, Readable)
+
+        async with case.unit_of_work(repository):
+            session_before = _active_session(repository)
+            created = await repository.create(SEED[0])
+            assert await repository.get_by_id(created.id) == created
+            if case.name == "sqlalchemy":
+                assert session_before is not None
+                assert _active_session(repository) is session_before
 
 
 def _active_session(repository: Any) -> object:
@@ -74,125 +72,123 @@ async def _fail_the_commit(case: BackendCase, repository: Any) -> Any:
     return created
 
 
-async def test_a_failed_sqlalchemy_commit_persists_nothing_and_closes_the_unit_of_work(
-    case: BackendCase, repository: Any
-) -> None:
-    if case.name != "sqlalchemy":
-        pytest.skip(f"{case.name}: the commit-failure seam is SQLAlchemy's duplicate key")
-    committed = await repository.create(SEED[1])
+class TestContractFailedCommit:
+    async def test_a_failed_sqlalchemy_commit_persists_nothing_and_closes_the_unit_of_work(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        if case.name != "sqlalchemy":
+            pytest.skip(f"{case.name}: the commit-failure seam is SQLAlchemy's duplicate key")
+        committed = await repository.create(SEED[1])
 
-    with pytest.raises(IntegrityError):
-        await _fail_the_commit(case, repository)
+        with pytest.raises(IntegrityError):
+            await _fail_the_commit(case, repository)
 
-    assert current_scope() is None
-    assert await repository.get_by_id(SEED[0].id) is None
-    assert await repository.get_by_id(SEED[1].id) == committed
+        assert current_scope() is None
+        assert await repository.get_by_id(SEED[0].id) is None
+        assert await repository.get_by_id(SEED[1].id) == committed
 
+    async def test_a_failed_mongo_commit_leaves_its_write_visible(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        if case.name != "mongo-transactional":
+            pytest.skip(f"{case.name}: the commit-failure seam is the transactional Mongo fake")
 
-async def test_a_failed_mongo_commit_leaves_its_write_visible(
-    case: BackendCase, repository: Any
-) -> None:
-    if case.name != "mongo-transactional":
-        pytest.skip(f"{case.name}: the commit-failure seam is the transactional Mongo fake")
+        with pytest.raises(ConnectionError):
+            await _fail_the_commit(case, repository)
 
-    with pytest.raises(ConnectionError):
-        await _fail_the_commit(case, repository)
+        client = mongo_client_of(repository)
+        assert current_scope() is None
+        assert client.sessions
+        assert all(session.ended for session in client.sessions)
+        # characterisation: MongoUnitOfWork does not abort after a failed commit
+        # (pymongo marks the transaction itself) and FakeSession.commit_error does
+        # not restore the snapshot, so the flushed write stays in the collection.
+        # US7 decides whether the unit of work aborts explicitly.
+        assert client.aborted == 0
+        assert await repository.get_by_id(SEED[0].id) is not None
 
-    client = mongo_client_of(repository)
-    assert current_scope() is None
-    assert client.sessions
-    assert all(session.ended for session in client.sessions)
-    # characterisation: MongoUnitOfWork does not abort after a failed commit
-    # (pymongo marks the transaction itself) and FakeSession.commit_error does
-    # not restore the snapshot, so the flushed write stays in the collection.
-    # US7 decides whether the unit of work aborts explicitly.
-    assert client.aborted == 0
-    assert await repository.get_by_id(SEED[0].id) is not None
+    async def test_cancellation_rolls_back_and_reraises_cancelled_error(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, Creatable, Readable)
+        started = asyncio.Event()
+        recorded: list[object] = []
+        created: list[Any] = []
 
+        async def _run() -> None:
+            try:
+                async with case.unit_of_work(repository):
+                    created.append(await repository.create(SEED[0]))
+                    started.set()
+                    await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                recorded.append(current_scope())
+                raise
 
-async def test_cancellation_rolls_back_and_reraises_cancelled_error(
-    case: BackendCase, repository: Any
-) -> None:
-    require(case, Creatable, Readable)
-    started = asyncio.Event()
-    recorded: list[object] = []
-    created: list[Any] = []
+        task = asyncio.create_task(_run())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    async def _run() -> None:
+        assert recorded == [None]
+        visible = await repository.get_by_id(SEED[0].id)
+        if case.transactions:
+            assert visible is None
+            return
+        # characterisation: autocommit, cancellation cannot discard it.
+        assert visible == created[0]
+
+    async def test_error_exit_resets_the_session_context(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, Creatable)
+        assert current_scope() is None
+        recorded: list[object] = []
+
         try:
             async with case.unit_of_work(repository):
-                created.append(await repository.create(SEED[0]))
-                started.set()
-                await asyncio.Event().wait()
-        except asyncio.CancelledError:
+                await repository.create(SEED[0])
+                raise _Abort
+        except _Abort:
             recorded.append(current_scope())
-            raise
+        else:
+            raise AssertionError("unit of work suppressed _Abort")
 
-    task = asyncio.create_task(_run())
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+        assert recorded == [None]
 
-    assert recorded == [None]
-    visible = await repository.get_by_id(SEED[0].id)
-    if case.transactions:
-        assert visible is None
-        return
-    # characterisation: autocommit, cancellation cannot discard it.
-    assert visible == created[0]
+    async def test_write_before_an_exception_stays_visible_without_transactions(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, Creatable, Readable)
+        if case.transactions:
+            pytest.skip(f"{case.name} rolls back writes")
 
+        created = None
 
-async def test_error_exit_resets_the_session_context(case: BackendCase, repository: Any) -> None:
-    require(case, Creatable)
-    assert current_scope() is None
-    recorded: list[object] = []
+        async def _create_then_abort() -> None:
+            nonlocal created
+            async with case.unit_of_work(repository):
+                created = await repository.create(SEED[0])
+                raise _Abort
 
-    try:
-        async with case.unit_of_work(repository):
-            await repository.create(SEED[0])
-            raise _Abort
-    except _Abort:
-        recorded.append(current_scope())
-    else:
-        raise AssertionError("unit of work suppressed _Abort")
+        with pytest.raises(_Abort):
+            await _create_then_abort()
 
-    assert recorded == [None]
+        # characterisation: no-op UoW autocommits each write; rollback is a no-op.
+        assert await repository.get_by_id(SEED[0].id) == created
 
+    async def test_no_op_unit_of_work_exit_never_suppresses_or_claims_rollback(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, Creatable, Readable)
+        if case.transactions:
+            pytest.skip(f"{case.name} rolls back writes")
 
-async def test_write_before_an_exception_stays_visible_without_transactions(
-    case: BackendCase, repository: Any
-) -> None:
-    require(case, Creatable, Readable)
-    if case.transactions:
-        pytest.skip(f"{case.name} rolls back writes")
-
-    created = None
-
-    async def _create_then_abort() -> None:
-        nonlocal created
-        async with case.unit_of_work(repository):
-            created = await repository.create(SEED[0])
-            raise _Abort
-
-    with pytest.raises(_Abort):
-        await _create_then_abort()
-
-    # characterisation: no-op UoW autocommits each write; rollback is a no-op.
-    assert await repository.get_by_id(SEED[0].id) == created
-
-
-async def test_no_op_unit_of_work_exit_never_suppresses_or_claims_rollback(
-    case: BackendCase, repository: Any
-) -> None:
-    require(case, Creatable, Readable)
-    if case.transactions:
-        pytest.skip(f"{case.name} rolls back writes")
-
-    uow = case.unit_of_work(repository)
-    assert await uow.__aenter__() is uow
-    created = await repository.create(SEED[0])
-    assert not await uow.__aexit__(_Abort, _Abort(), None)
-    assert await uow.rollback() is None
-    assert await repository.get_by_id(SEED[0].id) == created
-    assert await uow.commit() is None
+        uow = case.unit_of_work(repository)
+        assert await uow.__aenter__() is uow
+        created = await repository.create(SEED[0])
+        assert not await uow.__aexit__(_Abort, _Abort(), None)
+        assert await uow.rollback() is None
+        assert await repository.get_by_id(SEED[0].id) == created
+        assert await uow.commit() is None

@@ -42,15 +42,12 @@ from loom.core.model.types import (
     Time,
     Uuid,
 )
+from tests.unit.core.doubles import AcmeNote
 
 
-class _Note:
-    pass
-
-
-class _Parent:
-    note: _Note
-    notes: list[_Note] | msgspec.UnsetType
+class AcmeHintParent:
+    note: AcmeNote
+    notes: list[AcmeNote] | msgspec.UnsetType
     tagged: Annotated[int, "unit"]
 
 
@@ -77,20 +74,20 @@ class _OtherBox(Generic[_T]):
 
 class TestResolveTypeHints:
     def test_resolves_annotations_of_a_plain_class(self) -> None:
-        hints = resolve_type_hints(_Parent)
+        hints = resolve_type_hints(AcmeHintParent)
 
-        assert hints["note"] is _Note
+        assert hints["note"] is AcmeNote
 
     def test_returns_empty_mapping_for_unresolvable_forward_reference(self) -> None:
         assert resolve_type_hints(_Unresolvable) == {}
 
     def test_include_extras_keeps_annotated_metadata(self) -> None:
-        hints = resolve_type_hints(_Parent, include_extras=True)
+        hints = resolve_type_hints(AcmeHintParent, include_extras=True)
 
         assert getattr(hints["tagged"], "__metadata__", ()) == ("unit",)
 
     def test_without_include_extras_strips_annotated_metadata(self) -> None:
-        hints = resolve_type_hints(_Parent)
+        hints = resolve_type_hints(AcmeHintParent)
 
         assert hints["tagged"] is int
 
@@ -100,7 +97,7 @@ class TestUnionInnerArgs:
         assert _union_inner_args(int | None) == (int,)
 
     def test_drops_unset_type_from_a_pep604_union(self) -> None:
-        assert _union_inner_args(_Note | msgspec.UnsetType) == (_Note,)
+        assert _union_inner_args(AcmeNote | msgspec.UnsetType) == (AcmeNote,)
 
     def test_normalises_the_typing_union_form(self) -> None:
         # The legacy spelling is the point of this test, so it stays verbatim.
@@ -114,12 +111,12 @@ class TestUnionInnerArgs:
 
 class TestExtractModelFromHint:
     def test_unwraps_a_list_inside_a_union(self) -> None:
-        hints = resolve_type_hints(_Parent)
+        hints = resolve_type_hints(AcmeHintParent)
 
-        assert extract_model_from_hint(hints["notes"]) is _Note
+        assert extract_model_from_hint(hints["notes"]) is AcmeNote
 
     def test_returns_a_bare_class_unchanged(self) -> None:
-        assert extract_model_from_hint(_Note) is _Note
+        assert extract_model_from_hint(AcmeNote) is AcmeNote
 
     def test_returns_none_for_a_parametrised_dict(self) -> None:
         assert extract_model_from_hint(list[dict[str, Any]]) is None
@@ -130,13 +127,13 @@ class TestExtractModelFromHint:
 
 class TestListElementType:
     def test_returns_the_element_of_a_plain_list(self) -> None:
-        assert list_element_type(list[_Note]) is _Note
+        assert list_element_type(list[AcmeNote]) is AcmeNote
 
     def test_returns_the_element_of_a_list_widened_with_unset(self) -> None:
-        assert list_element_type(list[_Note] | msgspec.UnsetType) is _Note
+        assert list_element_type(list[AcmeNote] | msgspec.UnsetType) is AcmeNote
 
     def test_returns_none_for_a_non_list_annotation(self) -> None:
-        assert list_element_type(_Note) is None
+        assert list_element_type(AcmeNote) is None
 
     def test_returns_none_when_the_element_is_not_a_class(self) -> None:
         assert list_element_type(list[dict[str, Any]]) is None
@@ -144,13 +141,13 @@ class TestListElementType:
 
 class TestGenericTypeArg:
     def test_returns_the_single_argument_of_the_expected_origin(self) -> None:
-        assert generic_type_arg(_Box[_Note], _Box) is _Note
+        assert generic_type_arg(_Box[AcmeNote], _Box) is AcmeNote
 
     def test_returns_none_for_a_different_origin(self) -> None:
-        assert generic_type_arg(_OtherBox[_Note], _Box) is None
+        assert generic_type_arg(_OtherBox[AcmeNote], _Box) is None
 
     def test_returns_none_for_a_non_generic_annotation(self) -> None:
-        assert generic_type_arg(_Note, _Box) is None
+        assert generic_type_arg(AcmeNote, _Box) is None
 
     def test_returns_none_when_the_argument_is_not_a_class(self) -> None:
         assert generic_type_arg(_Box[list[int]], _Box) is None
@@ -412,7 +409,7 @@ class _Shelf(BaseModel):
     marks: list[int] = ColumnField(Postgres.ARRAY(Integer))
 
 
-class _Book(BaseModel):
+class AcmeIntrospectionBook(BaseModel):
     __tablename__ = "introspection_books"
 
     id: int = ColumnField(primary_key=True)
@@ -433,7 +430,11 @@ class _Priced(BaseModel):
 
 class TestScalarColumnAnnotations:
     def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
-        assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
+        assert scalar_column_annotations(AcmeIntrospectionBook) == {
+            "id": int,
+            "rank": int | None,
+            "shelf_id": int,
+        }
 
     def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
         assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}

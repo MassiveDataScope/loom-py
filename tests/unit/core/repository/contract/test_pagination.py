@@ -63,65 +63,66 @@ async def _walk(
     raise AssertionError("cursor walk did not terminate")
 
 
-async def test_offset_pages_carry_totals(case: BackendCase, seeded: Any) -> None:
-    require(case, Listable)
-    pages = len(SEED) // _PAGE
+class TestContractPagination:
+    async def test_offset_pages_carry_totals(self, case: BackendCase, seeded: Any) -> None:
+        require(case, Listable)
+        pages = len(SEED) // _PAGE
 
-    first = await _page(seeded, 1)
-    last = await _page(seeded, pages)
-    beyond = await _page(seeded, pages + 1)
+        first = await _page(seeded, 1)
+        last = await _page(seeded, pages)
+        beyond = await _page(seeded, pages + 1)
 
-    assert (first.total_count, first.page, first.limit, first.has_next) == (
-        len(SEED),
-        1,
-        _PAGE,
-        True,
-    )
-    assert (last.total_count, last.has_next, len(last.items)) == (len(SEED), False, _PAGE)
-    assert (beyond.total_count, beyond.has_next, beyond.items) == (len(SEED), False, ())
+        assert (first.total_count, first.page, first.limit, first.has_next) == (
+            len(SEED),
+            1,
+            _PAGE,
+            True,
+        )
+        assert (last.total_count, last.has_next, len(last.items)) == (len(SEED), False, _PAGE)
+        assert (beyond.total_count, beyond.has_next, beyond.items) == (len(SEED), False, ())
 
+    @pytest.mark.parametrize("name", list(_CURSOR_SORTS))
+    async def test_offset_pages_cover_every_row_once(
+        self, case: BackendCase, seeded: Any, name: str
+    ) -> None:
+        """Ties across page boundaries at limit 2 are only broken exactly by the id."""
+        require(case, Listable)
+        sort = _CURSOR_SORTS[name]
 
-@pytest.mark.parametrize("name", list(_CURSOR_SORTS))
-async def test_offset_pages_cover_every_row_once(case: BackendCase, seeded: Any, name: str) -> None:
-    """Ties across page boundaries at limit 2 are only broken exactly by the id."""
-    require(case, Listable)
-    sort = _CURSOR_SORTS[name]
+        seen: list[int] = []
+        for page in range(1, len(SEED) // _PAGE + 1):
+            result = await seeded.list_with_query(QuerySpec(sort=sort, limit=_PAGE, page=page))
+            assert isinstance(result, PageResult)
+            seen.extend(row.id for row in result.items)
 
-    seen: list[int] = []
-    for page in range(1, len(SEED) // _PAGE + 1):
-        result = await seeded.list_with_query(QuerySpec(sort=sort, limit=_PAGE, page=page))
-        assert isinstance(result, PageResult)
-        seen.extend(row.id for row in result.items)
+        assert seen == oracle(seed_rows(), sort=sort)
 
-    assert seen == oracle(seed_rows(), sort=sort)
+    @pytest.mark.parametrize("filters", [_PAID, _NONE_MATCH])
+    async def test_offset_total_reflects_the_filter(
+        self, case: BackendCase, seeded: Any, filters: FilterGroup
+    ) -> None:
+        require(case, Listable)
+        expected = oracle(seed_rows(), filters)
 
+        first = await _page(seeded, 1, filters)
+        beyond = await _page(seeded, len(expected) // _PAGE + 2, filters)
 
-@pytest.mark.parametrize("filters", [_PAID, _NONE_MATCH])
-async def test_offset_total_reflects_the_filter(
-    case: BackendCase, seeded: Any, filters: FilterGroup
-) -> None:
-    require(case, Listable)
-    expected = oracle(seed_rows(), filters)
+        assert first.total_count == len(expected)
+        assert [row.id for row in first.items] == expected[:_PAGE]
+        assert first.has_next == (len(expected) > _PAGE)
+        assert (beyond.total_count, beyond.items) == (len(expected), ())
 
-    first = await _page(seeded, 1, filters)
-    beyond = await _page(seeded, len(expected) // _PAGE + 2, filters)
+    @pytest.mark.parametrize("name", list(_CURSOR_SORTS))
+    async def test_cursor_walk_visits_every_row_once(
+        self, case: BackendCase, seeded: Any, name: str
+    ) -> None:
+        require(case, Listable)
+        sort = _CURSOR_SORTS[name]
 
-    assert first.total_count == len(expected)
-    assert [row.id for row in first.items] == expected[:_PAGE]
-    assert first.has_next == (len(expected) > _PAGE)
-    assert (beyond.total_count, beyond.items) == (len(expected), ())
+        assert await _walk(seeded, sort) == oracle(seed_rows(), sort=sort)
 
+    async def test_cursor_walk_honours_the_filter(self, case: BackendCase, seeded: Any) -> None:
+        require(case, Listable)
+        sort = _CURSOR_SORTS["single-desc"]
 
-@pytest.mark.parametrize("name", list(_CURSOR_SORTS))
-async def test_cursor_walk_visits_every_row_once(case: BackendCase, seeded: Any, name: str) -> None:
-    require(case, Listable)
-    sort = _CURSOR_SORTS[name]
-
-    assert await _walk(seeded, sort) == oracle(seed_rows(), sort=sort)
-
-
-async def test_cursor_walk_honours_the_filter(case: BackendCase, seeded: Any) -> None:
-    require(case, Listable)
-    sort = _CURSOR_SORTS["single-desc"]
-
-    assert await _walk(seeded, sort, _PAID) == oracle(seed_rows(), _PAID, sort)
+        assert await _walk(seeded, sort, _PAID) == oracle(seed_rows(), _PAID, sort)

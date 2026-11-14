@@ -12,14 +12,17 @@ def _run(stores: dict[str, object]) -> object:
     return check(ConfigContext.from_dict({"stores": stores}))
 
 
-def test_audit_switched_off_is_reported_with_the_store() -> None:
-    finding = _run({"main": {"backend": "sqlalchemy", "schema": {"audit": {"enabled": False}}}})
+class TestAuditCheck:
+    def test_audit_switched_off_is_reported_with_the_store(self) -> None:
+        finding = _run({"main": {"backend": "sqlalchemy", "schema": {"audit": {"enabled": False}}}})
 
-    assert finding is not None
-    assert "stores.main.schema.audit.enabled" in finding.message  # type: ignore[attr-defined]
+        assert finding is not None
+        assert "stores.main.schema.audit.enabled" in finding.message  # type: ignore[attr-defined]
 
-
-def test_audit_left_on_or_unset_is_quiet() -> None:
-    assert _run({"main": {"backend": "sqlalchemy", "schema": {"audit": {"enabled": True}}}}) is None
-    assert _run({"main": {"backend": "sqlalchemy"}}) is None
-    assert _run({}) is None
+    def test_audit_left_on_or_unset_is_quiet(self) -> None:
+        assert (
+            _run({"main": {"backend": "sqlalchemy", "schema": {"audit": {"enabled": True}}}})
+            is None
+        )
+        assert _run({"main": {"backend": "sqlalchemy"}}) is None
+        assert _run({}) is None

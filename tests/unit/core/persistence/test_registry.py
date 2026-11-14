@@ -28,27 +28,27 @@ _GROUP = "loom.persistence.backends"
 _SRC = Path(__file__).resolve().parents[4] / "src"
 
 
-class _FakeDist:
+class AcmePersistenceDist:
     def __init__(self, name: str) -> None:
         self.name = name
 
 
-class _FakeEntryPoint:
+class AcmePersistenceEntryPoint:
     def __init__(self, name: str, dist_name: str, target: object) -> None:
         self.name = name
         self.group = _GROUP
-        self.dist = _FakeDist(dist_name)
+        self.dist = AcmePersistenceDist(dist_name)
         self._target = target
 
     def load(self) -> object:
         return self._target
 
 
-class _FakeEntryPoints:
-    def __init__(self, entries: tuple[_FakeEntryPoint, ...]) -> None:
+class AcmePersistenceEntryPoints:
+    def __init__(self, entries: tuple[AcmePersistenceEntryPoint, ...]) -> None:
         self._entries = entries
 
-    def select(self, *, group: str) -> tuple[_FakeEntryPoint, ...]:
+    def select(self, *, group: str) -> tuple[AcmePersistenceEntryPoint, ...]:
         return tuple(ep for ep in self._entries if ep.group == group)
 
 
@@ -62,8 +62,12 @@ class _FakeBackend:
         return NoneBackend().build(ctx, (), runtime)
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, entries: tuple[_FakeEntryPoint, ...]) -> None:
-    monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _FakeEntryPoints(entries))
+def _install(
+    monkeypatch: pytest.MonkeyPatch, entries: tuple[AcmePersistenceEntryPoint, ...]
+) -> None:
+    monkeypatch.setattr(
+        entrypoints_module, "entry_points", lambda: AcmePersistenceEntryPoints(entries)
+    )
 
 
 class TestResolveBackend:
@@ -73,8 +77,8 @@ class TestResolveBackend:
         _install(
             monkeypatch,
             (
-                _FakeEntryPoint("zeta", "loom-zeta", _FakeBackend),
-                _FakeEntryPoint("alpha", "loom-alpha", _FakeBackend),
+                AcmePersistenceEntryPoint("zeta", "loom-zeta", _FakeBackend),
+                AcmePersistenceEntryPoint("alpha", "loom-alpha", _FakeBackend),
             ),
         )
 
@@ -96,7 +100,7 @@ class TestResolveBackend:
     def test_injected_entry_point_resolves_to_an_instance_of_its_class(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _install(monkeypatch, (_FakeEntryPoint("fake", "loom-fake", _FakeBackend),))
+        _install(monkeypatch, (AcmePersistenceEntryPoint("fake", "loom-fake", _FakeBackend),))
 
         backend = resolve_backend("fake")
 
@@ -107,8 +111,8 @@ class TestResolveBackend:
         _install(
             monkeypatch,
             (
-                _FakeEntryPoint("fake", "loom-fake-a", _FakeBackend),
-                _FakeEntryPoint("fake", "loom-fake-b", _FakeBackend),
+                AcmePersistenceEntryPoint("fake", "loom-fake-a", _FakeBackend),
+                AcmePersistenceEntryPoint("fake", "loom-fake-b", _FakeBackend),
             ),
         )
 
@@ -141,37 +145,40 @@ class TestNoneBackend:
         assert not container.method_calls
 
 
-def test_persistence_package_imports_without_sqlalchemy_or_boto3() -> None:
-    script = (
-        "import sys\n"
-        "sys.modules['sqlalchemy'] = None\n"
-        "sys.modules['boto3'] = None\n"
-        "import loom.core.persistence\n"
-        "assert not [m for m in sys.modules if m.startswith('loom.core.repository')], "
-        "sorted(m for m in sys.modules if m.startswith('loom.core.repository'))\n"
-    )
-    env = {**os.environ, "PYTHONPATH": str(_SRC)}
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env
-    )
+class TestPersistencePackageImport:
+    def test_persistence_package_imports_without_sqlalchemy_or_boto3(self) -> None:
+        script = (
+            "import sys\n"
+            "sys.modules['sqlalchemy'] = None\n"
+            "sys.modules['boto3'] = None\n"
+            "import loom.core.persistence\n"
+            "assert not [m for m in sys.modules if m.startswith('loom.core.repository')], "
+            "sorted(m for m in sys.modules if m.startswith('loom.core.repository'))\n"
+        )
+        env = {**os.environ, "PYTHONPATH": str(_SRC)}
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env
+        )
 
-    assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, result.stderr
 
 
-class _BrokenEntryPoint(_FakeEntryPoint):
+class _BrokenEntryPoint(AcmePersistenceEntryPoint):
     def load(self) -> object:
         raise ModuleNotFoundError("No module named 'sqlalchemy'", name="sqlalchemy")
 
 
-def test_backend_whose_module_import_fails_reports_the_extra_to_install(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install(monkeypatch, (_BrokenEntryPoint("sqlalchemy", "loom-kernel", _FakeBackend),))
+class TestBrokenBackendImport:
+    def test_backend_whose_module_import_fails_reports_the_extra_to_install(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install(monkeypatch, (_BrokenEntryPoint("sqlalchemy", "loom-kernel", _FakeBackend),))
 
-    with pytest.raises(ConfigError) as excinfo:
-        resolve_backend("sqlalchemy")
+        with pytest.raises(ConfigError) as excinfo:
+            resolve_backend("sqlalchemy")
 
-    message = str(excinfo.value)
-    assert "'sqlalchemy'" in message
-    assert "loom-kernel[sqlalchemy]" in message
-    assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+        message = str(excinfo.value)
+        assert "'sqlalchemy'" in message
+        assert "loom-kernel[sqlalchemy]" in message
+        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
