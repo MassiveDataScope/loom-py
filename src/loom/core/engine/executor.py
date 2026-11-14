@@ -1,186 +1,66 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
-import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import (
-    AbstractAsyncContextManager,
-    asynccontextmanager,
-    contextmanager,
-    nullcontext,
-)
-from contextvars import Token
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
-from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
+from loom.core.authz.elevation import ElevationSink
+from loom.core.engine.boundaries import Boundaries
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter
-from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep
-from loom.core.engine.post_commit import (
-    PostCommitChannel,
-    active_channel,
-    bind_channel,
-    drain_after_failure,
-    reset_channel,
-)
-from loom.core.errors import (
-    NestedElevation,
-    NestedIdentityMismatch,
-    NotFound,
-    PostCommitError,
-    RuleViolation,
-    RuleViolations,
-    Unauthenticated,
-)
+from loom.core.engine.observation import Observer
+from loom.core.engine.plan import ExecutionPlan
+from loom.core.engine.preparation import ExecutionInputs, ParameterBindingError, Preparation
+from loom.core.engine.principal import inherited, top_level
 from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
-    Kind,
-    current_execution,
     enter,
     execution_identity,
     leave,
 )
-from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.tracing import get_trace_id
-from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
-from loom.core.uow.scope import (
-    Frame,
-    InvocationScope,
-    current_scope,
-    invocation,
-    invocation_error,
-    refuse_write_under_read_only,
-    unscoped,
-)
-from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
-from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
+from loom.core.uow.coordinator import Coordinator
+from loom.core.uow.scope import current_scope, refuse_write_under_read_only
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
 
+__all__ = ["ParameterBindingError", "RuntimeExecutor"]
+
 ResultT = TypeVar("ResultT")
 _TargetT = TypeVar("_TargetT")
-
-_LOG_EXEC = "[EXEC]"
-_LOG_DONE = "[DONE]"
-_LOG_FAIL = "[FAIL]"
-_STATUS_SUCCESS = "success"
-_STATUS_FAILURE = "failure"
-_READ_ONLY = Frame(None)
-_STATUS_RULE_FAILURE = "rule_failure"
-_ERROR_KIND_BEGIN = "begin"
-_ERROR_KIND_BUILD = "build"
-_ERROR_KIND_BUSINESS = "business"
-_ERROR_KIND_COMMIT = "commit"
-_ERROR_KIND_CANCELLED = "cancelled"
-_ERROR_KIND_POST_COMMIT = "post_commit"
-# The marker, the resolver and the binding method each execution kind's errors name.
-_KIND_WORDING = {
-    AGENT: ("Agent()", "agent", "bind_agent_resolver"),
-    MCP: ("Mcp()", "MCP", "bind_mcp_resolver"),
-}
-
-
-class ParameterBindingError(ValueError):
-    """Raised when a primitive execute parameter cannot be coerced to its declared type."""
-
-
-@dataclass(frozen=True, slots=True)
-class _ExecutionInputs:
-    """Everything one execution receives from the caller, as a single value.
-
-    Groups the per-call inputs so the internal pipeline stages take one
-    argument instead of one positional per input kind.
-    """
-
-    params: dict[str, Any] | None = None
-    payload: dict[str, Any] | None = None
-    dependencies: dict[type[Any], Any] | None = None
-    load_overrides: dict[type[Any], Any] | None = None
-    identity: Identity | None = None
-
-
-@dataclass(slots=True)
-class _ExecutionState:
-    """Identity, timings and current phase of one execution.
-
-    ``phase`` names the lifecycle step in flight so a failure can be
-    reported with the ``error_kind`` of the step that raised; it is
-    ``commit`` from the flush on. ``post_commit`` is set once the
-    coordinator has ended the invocation scope this execution owns: the
-    actions its stores' outcomes let run, which
-    :meth:`RuntimeExecutor._run_lifecycle` drains even on failure — a write
-    already committed must never lose its queued invalidations to another
-    store's failure or an unrelated teardown one.
-    """
-
-    use_case_name: str
-    trace_id: str | None
-    logger: LoggerPort
-    start: float = field(default_factory=time.perf_counter)
-    phase: str = _ERROR_KIND_BEGIN
-    pipeline_ms: float | None = None
-    commit_ms: float | None = None
-    post_commit: PostCommitChannel | None = None
-
-    def elapsed_ms(self) -> float:
-        return (time.perf_counter() - self.start) * 1000
-
-    def error_kind(self, error: BaseException) -> str:
-        if isinstance(error, asyncio.CancelledError):
-            return _ERROR_KIND_CANCELLED
-        if isinstance(error, PostCommitError):
-            # Raised by the drain of an inner execution that owned its own
-            # unit of work: the failure is not this execution's business logic.
-            return _ERROR_KIND_POST_COMMIT
-        return self.phase
 
 
 class RuntimeExecutor:
     """Executes UseCases from their compiled ExecutionPlan without reflection.
 
-    Receives a fully constructed UseCase instance and drives execution
-    through the fixed pipeline: bind params → build command → load entities
-    → apply computes → check rules → call execute.
+    The public facade of one execution: it computes who the execution runs
+    as (given, else the enclosing execution's caller, else no one;
+    :mod:`~loom.core.engine.principal`), installs that identity and the
+    execution context, builds the instance inside them, and delegates the
+    rest to its three pieces:
 
-    Owns the execution lifecycle around that pipeline.  When a
-    ``coordinator`` is provided, each top-level execution that is not
-    read-only opens an :class:`~loom.core.uow.scope.InvocationScope` and
-    ends it through that coordinator: commit on success, rollback on any exception, cancellation
-    included.  A nested execution in the task that owns the scope pushes its
-    frame and never commits; one from another task, or into a closed scope,
-    raises :class:`~loom.core.errors.ScopeOwnershipError`.  Post-commit
-    actions (job dispatches, cache invalidations) are held by the store that
-    owns them and, once the scope has closed, run on the
-    :class:`~loom.core.engine.post_commit.PostCommitChannel` of the execution
-    that owns the scope as that store's outcome allows (or on the outermost
-    execution's channel when there is no scope).
+    - :mod:`~loom.core.engine.boundaries`: the unit of work (a top-level
+      writer opens an invocation scope over ``coordinator`` and commits it;
+      a nested one joins this task's scope; a read-only one enlists no
+      store) and the post-commit actions it settles.
+    - :mod:`~loom.core.engine.preparation`: the plan's steps that build the
+      arguments of ``execute()`` (parameters, caller, ``Agent()``/``Mcp()``,
+      command, loads, computes, rules) and the call itself.
+    - :mod:`~loom.core.engine.observation`: ``EXEC_START`` before the unit of
+      work opens and exactly one terminal outcome, ``EXEC_DONE`` or
+      ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
+      structured logs (``usecase``, ``duration_ms``, ``status``).
 
     An execution given an ``identity`` installs it as the ambient
     :func:`~loom.core.identity.current_identity` until it ends, drain
     included, so row-level security and the jobs it dispatches see the
-    identity ``Caller()`` receives.  A nested execution that joins the
-    invocation scope must run as the identity the scope was opened with, and
-    none may start while its parent holds an elevation.
-
-    No signature inspection occurs at runtime. All structural information
-    comes from the cached ExecutionPlan produced by UseCaseCompiler.
-
-    Emits ``RuntimeEvent`` objects to the optional ``MetricsAdapter``:
-    ``EXEC_START`` before the unit of work opens and exactly one terminal
-    event, ``EXEC_DONE`` once the unit of work has committed and closed or
-    ``EXEC_ERROR`` with the ``error_kind`` of the step that failed.
-    Enriches log calls with structured fields (``usecase``,
-    ``duration_ms``, ``status``) for structured log consumers.
+    identity ``Caller()`` receives.
 
     Args:
         compiler: Compiler used to retrieve cached plans.
@@ -237,13 +117,14 @@ class RuntimeExecutor:
     ) -> None:
         self._compiler = compiler
         self._builder = builder
+        # Kept as given, for introspection by the composition root's tests.
         self._coordinator = coordinator
         self._elevation_sink = elevation_sink
-        self._debug = debug_execution
-        self._logger = logger or get_logger(__name__)
         self._metrics = metrics
-        self._repo_resolver = repo_resolver
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
+        self._observer = Observer(logger or get_logger(__name__), metrics, debug_execution)
+        self._boundaries = Boundaries(coordinator, elevation_sink)
+        self._preparation = Preparation(self._kinds, repo_resolver, self._observer)
         self._agent_resolver: Callable[[str, Identity], Any] | None = None
         self._mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None
         if agent_resolver is not None:
@@ -364,7 +245,8 @@ class RuntimeExecutor:
             plan,
             build,
             use_case_type,
-            _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
+            ExecutionInputs(params, payload, dependencies, load_overrides),
+            identity,
             read_only or plan.read_only,
         )
 
@@ -489,7 +371,8 @@ class RuntimeExecutor:
             plan,
             _given,
             compilable,
-            _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
+            ExecutionInputs(params, payload, dependencies, load_overrides),
+            identity,
             read_only or plan.read_only,
         )
 
@@ -498,42 +381,47 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         build: Callable[[_TargetT], Compilable],
         target: _TargetT,
-        inputs: _ExecutionInputs,
+        inputs: ExecutionInputs,
+        identity: Identity | None,
         read_only: bool,
     ) -> Any:
         """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
 
         *read_only* is already the caller's flag or the plan's. The effective
         identity is computed here, once (NS2): the one given, else the
-        enclosing execution's (:func:`_inherited`), else ``None``. That value
-        reaches the inputs, the ambient identity and the execution context,
-        which are installed before the instance is built and reset after the
-        drain.
+        enclosing execution's (:func:`~loom.core.engine.principal.inherited`),
+        else ``None``. That value reaches the arguments, the ambient identity
+        and the execution context, which are installed before the instance is
+        built and reset after the drain.
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level
-        (:func:`_as_top_level`).
+        (:func:`~loom.core.engine.principal.top_level`).
         """
         scope = current_scope()
         if scope is not None and scope.closed:
-            with _as_top_level(inputs.identity):
-                return await self._execute(plan, build, target, inputs, read_only)
-        if inputs.identity is None:
-            inputs = _inherited(inputs, plan)
-        identity = inputs.identity
+            with top_level(identity):
+                return await self._execute(plan, build, target, inputs, identity, read_only)
+        if identity is None:
+            identity = inherited(plan.use_case_type)
         identity_token = None if identity is None else set_identity(identity)
         execution_token = enter(identity)
         try:
+            use_case = plan.use_case_type.__qualname__
             if not read_only:
-                refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
+                refuse_write_under_read_only(f"{use_case}, which writes,")
             try:
                 compilable = build(target)
             except Exception as exc:
-                self._log_unbuilt(plan, exc)
+                self._observer.unbuilt(use_case, exc)
                 raise
-            owned = self._coordinator if scope is None and not read_only else None
-            return await self._run_lifecycle(
-                plan, compilable, inputs, owned, scope, read_only=read_only
+            attempt = self._observer.start(use_case)
+            call = self._preparation.call
+            return await self._boundaries.run(
+                self._boundaries.of(scope, read_only),
+                plan,
+                attempt,
+                lambda: attempt.business(call(plan, compilable, inputs, identity)),
             )
         finally:
             try:
@@ -553,777 +441,10 @@ class RuntimeExecutor:
             return plan
         return self._compiler.compile(uc_type)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    async def _run_lifecycle(
-        self,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        inputs: _ExecutionInputs,
-        owned: Coordinator | None,
-        enclosing: InvocationScope | None,
-        *,
-        read_only: bool = False,
-    ) -> Any:
-        """Run one execution: start event, invocation scope, one terminal event, drain.
-
-        Args:
-            plan: The compiled plan of ``compilable``.
-            compilable: The instance to execute.
-            inputs: What the caller passed.
-            owned: The coordinator of the scope this execution opens, if it
-                opens one.
-            enclosing: The scope already published in this context, which this
-                execution joins, if any.
-            read_only: Whether the execution writes nothing; it may not elevate.
-        """
-        state = self._begin_execution(plan.use_case_type.__qualname__)
-        channel = PostCommitChannel() if owned is not None or active_channel() is None else None
-        channel_token = bind_channel(channel) if channel is not None else None
-        try:
-            _refuse_nesting(state.use_case_name)
-            # The elevation frame wraps the coordinator's flush and commit too:
-            # the session-settings provider reads ``elevated_scopes()`` when a
-            # transaction begins, which may be at that flush.
-            async with elevation_scope(
-                owns_transaction=owned is not None,
-                sink=self._elevation_sink,
-                read_only=read_only,
-            ):
-                if owned is None:
-                    result = await self._run_in_frame(
-                        enclosing, state, plan, compilable, inputs, read_only=read_only
-                    )
-                else:
-                    result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
-        except BaseException as exc:
-            # ``BaseException``: a cancellation is a terminal outcome too,
-            # accounted for and re-raised.  ``state.post_commit`` holds only
-            # the actions of stores whose writes may be durable, so they run
-            # even though the invocation failed (another store did not commit,
-            # or resetting the scope's token raised).  Without it, nothing
-            # durable happened: discard.
-            #
-            # Unbound here, before either branch, not left to the trailing
-            # ``finally``: a drain must never run with its own channel still
-            # bound (module docstring) — a nested execution started from an
-            # action would otherwise see this channel as ``active_channel()``,
-            # get no channel of its own, and enqueue onto one already
-            # mid-drain, silently lost.  ``channel_token`` is nulled so the
-            # ``finally`` below does not unbind a second time.
-            self._unbind(channel_token)
-            channel_token = None
-            if state.post_commit is not None:
-                await drain_after_failure(state.post_commit)
-            else:
-                self._discard(channel)
-            self._handle_failure(state, exc)
-            raise
-        finally:
-            self._unbind(channel_token)
-        try:
-            self._handle_success(state)
-        finally:
-            # In a ``finally``: a failing metrics adapter must not skip the
-            # actions of a committed invocation.
-            settled = state.post_commit if state.post_commit is not None else channel
-            if settled is not None:
-                await settled.drain(committed=owned is not None)
-        return result
-
-    async def _run_in_invocation(
-        self,
-        coordinator: Coordinator,
-        state: _ExecutionState,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        inputs: _ExecutionInputs,
-    ) -> Any:
-        """Open an invocation scope, run the execution in it, end it, raise what it ended with.
-
-        The scope is unpublished before this returns, so the drain that
-        follows (an inline job dispatch among its actions) opens its own.
-        """
-        result: Any = None
-        error: BaseException | None = None
-        async with invocation(coordinator) as scope:
-            scope.post_commit = active_channel()
-            try:
-                result = await self._run_in_frame(scope, state, plan, compilable, inputs)
-            except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
-                error = exc
-            try:
-                outcome = await self._finish(scope, error, state)
-            finally:
-                # ``finish`` records the outcome before it raises an
-                # interruption caught while ending a store (a cancelled close).
-                state.post_commit = PostCommitChannel()
-                scope.settle_post_commit(state.post_commit, error)
-        failure = invocation_error(outcome, error or scope.poisoned)
-        if failure is not None:
-            raise failure
-        return result
-
-    async def _run_in_frame(
-        self,
-        scope: InvocationScope | None,
-        state: _ExecutionState,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        inputs: _ExecutionInputs,
-        *,
-        read_only: bool = False,
-    ) -> Any:
-        """Push this execution's frame on ``scope``, if any, and run the pipeline under it.
-
-        Raises:
-            JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
-        """
-        frame: AbstractAsyncContextManager[None]
-        if read_only:
-            frame = self._read_only_frame(scope)
-        elif scope is None:
-            frame = nullcontext()
-        else:
-            frame = scope.frame(Frame(plan.primary, plan.joined))
-        async with frame:
-            if scope is not None and not read_only:
-                _refuse_autocommit_joined(scope, plan)
-            return await self._run_pipeline(state, plan, compilable, inputs)
-
-    @asynccontextmanager
-    async def _read_only_frame(self, scope: InvocationScope | None) -> AsyncIterator[None]:
-        """Push a frame writing to no store: on ``scope`` in the task that owns it.
-
-        Anywhere else it opens a read-only invocation of its own, enlisting no
-        store, unpublished before the execution's post-commit actions run.
-        """
-        if scope is not None and scope.owned_here():
-            async with scope.frame(_READ_ONLY):
-                yield
-            return
-        coordinator = self._coordinator or OrderedCommits({})
-        with nullcontext() if scope is None else unscoped():
-            async with invocation(coordinator, read_only=True) as own, own.frame(_READ_ONLY):
-                yield
-
-    @staticmethod
-    async def _finish(
-        scope: InvocationScope, error: BaseException | None, state: _ExecutionState
-    ) -> InvocationOutcome:
-        """End every participant of ``scope``; from the flush on, the phase is the commit."""
-        if error is not None:
-            return await scope.coordinator.finish(scope, error)
-        state.phase = _ERROR_KIND_COMMIT
-        started = time.perf_counter()
-        try:
-            return await scope.coordinator.finish(scope, None)
-        finally:
-            state.commit_ms = (time.perf_counter() - started) * 1000
-
-    @staticmethod
-    def _discard(channel: PostCommitChannel | None) -> None:
-        if channel is not None:
-            channel.discard()
-
-    @staticmethod
-    def _unbind(token: Token[PostCommitChannel | None] | None) -> None:
-        if token is not None:
-            reset_channel(token)
-
-    # ------------------------------------------------------------------
-    # Pipeline
-    # ------------------------------------------------------------------
-
-    async def _run_pipeline(
-        self,
-        state: _ExecutionState,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        inputs: _ExecutionInputs,
-    ) -> Any:
-        """Run the compiled pipeline and record its duration; emits no event."""
-        state.phase = _ERROR_KIND_BUSINESS
-        started = time.perf_counter()
-        try:
-            return await self._run_core_pipeline(plan, compilable, inputs)
-        finally:
-            state.pipeline_ms = (time.perf_counter() - started) * 1000
-
-    def _begin_execution(self, use_case_name: str) -> _ExecutionState:
-        trace_id = get_trace_id()
-        logger = self._logger.bind(trace_id=trace_id) if trace_id else self._logger
-        state = _ExecutionState(use_case_name=use_case_name, trace_id=trace_id, logger=logger)
-        logger.info(f"{_LOG_EXEC} {use_case_name}", usecase=use_case_name)
-        self._emit(
-            RuntimeEvent(
-                kind=EventKind.EXEC_START,
-                use_case_name=use_case_name,
-                trace_id=trace_id,
-            )
-        )
-        return state
-
-    async def _run_core_pipeline(
-        self,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        inputs: _ExecutionInputs,
-    ) -> Any:
-        bound: dict[str, Any] = {}
-        self._check_query(plan, inputs.params or {})
-        self._bind_params(plan, inputs.params or {}, bound)
-        self._bind_caller(plan, inputs.identity, bound)
-        if plan.execution_bindings:
-            self._bind_executions(plan, inputs.identity, bound)
-        fields_set = self._build_command(plan, inputs.payload, bound)
-        await self._execute_loads(
-            plan, compilable, bound, inputs.dependencies, inputs.load_overrides
-        )
-        await self._execute_exists(plan, compilable, bound, inputs.dependencies)
-        self._apply_computes(plan, bound, fields_set)
-        self._check_rules(plan, bound, fields_set)
-        return await self._invoke_execute(compilable, bound)
-
-    async def _invoke_execute(
-        self,
-        compilable: Compilable,
-        bound: dict[str, Any],
-    ) -> Any:
-        self._log_step("Execute core logic")
-        execute_fn = compilable.execute
-        if inspect.iscoroutinefunction(execute_fn):
-            return await execute_fn(**bound)
-        return execute_fn(**bound)
-
-    def _handle_failure(self, state: _ExecutionState, error: BaseException) -> None:
-        elapsed_ms = state.elapsed_ms()
-        error_kind = state.error_kind(error)
-        status = _STATUS_RULE_FAILURE if isinstance(error, RuleViolations) else _STATUS_FAILURE
-        self._log_failure(state, error, status, elapsed_ms, error_kind)
-        self._emit(
-            RuntimeEvent(
-                kind=EventKind.EXEC_ERROR,
-                use_case_name=state.use_case_name,
-                duration_ms=elapsed_ms,
-                status=status,
-                error=error,
-                trace_id=state.trace_id,
-                error_kind=error_kind,
-                pipeline_ms=state.pipeline_ms,
-                commit_ms=state.commit_ms,
-            )
-        )
-
-    @staticmethod
-    def _log_failure(
-        state: _ExecutionState,
-        error: BaseException,
-        status: str,
-        elapsed_ms: float,
-        error_kind: str,
-    ) -> None:
-        message = f"{_LOG_FAIL} {state.use_case_name}"
-        if status == _STATUS_RULE_FAILURE:
-            state.logger.warning(
-                message,
-                usecase=state.use_case_name,
-                duration_ms=elapsed_ms,
-                status=status,
-                error_kind=error_kind,
-            )
-            return
-        state.logger.error(
-            message,
-            usecase=state.use_case_name,
-            duration_ms=elapsed_ms,
-            status=status,
-            error_kind=error_kind,
-            error=str(error),
-        )
-
-    def _log_unbuilt(self, plan: ExecutionPlan, error: Exception) -> None:
-        """Log a failed build as an execution failure; no event: the execution never started."""
-        use_case_name = plan.use_case_type.__qualname__
-        trace_id = get_trace_id()
-        logger = self._logger.bind(trace_id=trace_id) if trace_id else self._logger
-        logger.error(
-            f"{_LOG_FAIL} {use_case_name}",
-            usecase=use_case_name,
-            status=_STATUS_FAILURE,
-            error_kind=_ERROR_KIND_BUILD,
-            error=str(error),
-        )
-
-    def _handle_success(self, state: _ExecutionState) -> None:
-        elapsed_ms = state.elapsed_ms()
-        state.logger.info(
-            f"{_LOG_DONE} {elapsed_ms:.1f}ms",
-            usecase=state.use_case_name,
-            duration_ms=elapsed_ms,
-            status=_STATUS_SUCCESS,
-        )
-        self._emit(
-            RuntimeEvent(
-                kind=EventKind.EXEC_DONE,
-                use_case_name=state.use_case_name,
-                duration_ms=elapsed_ms,
-                status=_STATUS_SUCCESS,
-                trace_id=state.trace_id,
-                pipeline_ms=state.pipeline_ms,
-                commit_ms=state.commit_ms,
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Pipeline stages
-    # ------------------------------------------------------------------
-
-    def _bind_params(
-        self,
-        plan: ExecutionPlan,
-        params: dict[str, Any],
-        bound: dict[str, Any],
-    ) -> None:
-        for pb in plan.param_bindings:
-            if pb.name not in params:
-                raise ValueError(
-                    f"{plan.use_case_type.__qualname__}: missing required parameter '{pb.name}'"
-                )
-            raw = params[pb.name]
-            bound[pb.name] = self._coerce_param(
-                param_name=pb.name,
-                annotation=pb.annotation,
-                raw=raw,
-                use_case_name=plan.use_case_type.__qualname__,
-            )
-
-    @staticmethod
-    def _check_query(plan: ExecutionPlan, params: dict[str, Any]) -> None:
-        """Refuse a ``Query()`` value that is not an instance of its type.
-
-        A generic coercion would call the type with the raw value: a struct
-        whose fields are positional would take a dict as its first field. The
-        message names the type received, never the value.
-        """
-        binding = plan.query_binding
-        if binding is None or binding.name not in params:
-            return
-        raw = params[binding.name]
-        if not isinstance(raw, binding.query_type):
-            raise ParameterBindingError(
-                f"{plan.use_case_type.__qualname__}: parameter '{binding.name}' takes a "
-                f"{binding.query_type.__name__} instance, got {type(raw).__name__}"
-            )
-
-    @staticmethod
-    def _bind_caller(
-        plan: ExecutionPlan,
-        identity: Identity | None,
-        bound: dict[str, Any],
-    ) -> None:
-        """Inject the declared caller identity, refusing to invent one.
-
-        Substituting the anonymous identity for a missing one would turn a
-        transport that forgot to propagate the caller into a silently
-        unauthenticated execution.  The transport must say ``ANONYMOUS``
-        explicitly for that to happen.
-        """
-        binding = plan.caller_binding
-        if binding is None:
-            return
-        if identity is None:
-            raise Unauthenticated(
-                f"{plan.use_case_type.__qualname__}.execute declares "
-                f"'{binding.name}: Identity = Caller()' but this execution carried no "
-                "identity. The transport must pass identity=... to the executor "
-                "(pass ANONYMOUS explicitly to run without a caller)."
-            )
-        bound[binding.name] = identity
-
-    def _bind_executions(
-        self,
-        plan: ExecutionPlan,
-        identity: Identity | None,
-        bound: dict[str, Any],
-    ) -> None:
-        """Inject one value per execution binding, resolved in this execution.
-
-        Requires an identity for the reason ``_bind_caller`` does. An
-        explicitly anonymous one is accepted: the handle refuses it when
-        used, right before the network call, not before it is known whether
-        this execution makes one. A kind with no resolver bound fails loud,
-        naming the method that binds it, instead of handing the raw marker
-        to the use case. The resolvers read the execution :meth:`_execute`
-        entered, the one the constructor was built in.
-        """
-        bindings = plan.execution_bindings
-        if identity is None:
-            marker = _KIND_WORDING[bindings[0].kind][0]
-            raise Unauthenticated(
-                f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
-                "parameter but this execution carried no identity. The transport "
-                "must pass identity=... to the executor (pass ANONYMOUS explicitly "
-                "to run without a caller)."
-            )
-        kinds = self._kinds
-        for binding in bindings:
-            try:
-                value = kinds.resolve(binding.kind, binding.declaration, binding.annotation)
-            except KeyError:
-                _refuse_unbound(kinds, plan, binding.kind)
-                raise
-            bound[binding.name] = value
-
-    @staticmethod
-    def _coerce_param(
-        *,
-        param_name: str,
-        annotation: Any,
-        raw: Any,
-        use_case_name: str,
-    ) -> Any:
-        if annotation is Any:
-            return raw
-        if not isinstance(annotation, type):
-            return raw
-        if isinstance(raw, annotation):
-            return raw
-        try:
-            return annotation(raw)
-        except (TypeError, ValueError) as exc:
-            raise ParameterBindingError(
-                f"{use_case_name}: invalid value for parameter '{param_name}': "
-                f"expected {annotation.__name__}, got {type(raw).__name__} ({raw!r})"
-            ) from exc
-
-    def _build_command(
-        self,
-        plan: ExecutionPlan,
-        payload: dict[str, Any] | None,
-        bound: dict[str, Any],
-    ) -> frozenset[str]:
-        if plan.input_binding is None:
-            return frozenset()
-
-        if payload is None:
-            raise ValueError(
-                f"{plan.use_case_type.__qualname__}: payload is required for a UseCase with Input()"
-            )
-
-        cmd_type = plan.input_binding.command_type
-        if hasattr(cmd_type, "from_payload"):
-            command, fields_set = cmd_type.from_payload(payload)
-        else:
-            raise TypeError(
-                f"{plan.use_case_type.__qualname__}: "
-                f"command type {cmd_type!r} must implement from_payload()"
-            )
-        bound[plan.input_binding.name] = command
-        self._log_step("Bind Input")
-        return cast(frozenset[str], fields_set)
-
-    async def _execute_loads(
-        self,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        bound: dict[str, Any],
-        dependencies: dict[type[Any], Any] | None,
-        load_overrides: dict[type[Any], Any] | None,
-    ) -> None:
-        for ls in plan.load_steps:
-            bound[ls.name] = await self._resolve_load(
-                ls, plan, compilable, bound, dependencies, load_overrides
-            )
-            self._log_step(f"Load {ls.entity_type.__name__}")
-
-    async def _execute_exists(
-        self,
-        plan: ExecutionPlan,
-        compilable: Compilable,
-        bound: dict[str, Any],
-        dependencies: dict[type[Any], Any] | None,
-    ) -> None:
-        for es in plan.exists_steps:
-            bound[es.name] = await self._resolve_exists(es, plan, compilable, bound, dependencies)
-            self._log_step(f"Exists {es.entity_type.__name__}")
-
-    def _apply_computes(
-        self,
-        plan: ExecutionPlan,
-        bound: dict[str, Any],
-        fields_set: frozenset[str],
-    ) -> None:
-        if plan.input_binding is None or not plan.compute_steps:
-            return
-
-        command = bound[plan.input_binding.name]
-        for cs in plan.compute_steps:
-            compute_fn = cast(Any, cs.fn)
-            label = getattr(cs.fn, "__name__", type(cs.fn).__name__)
-            if cs.accepts_context:
-                command = compute_fn(command, fields_set, bound)
-            else:
-                command = compute_fn(command, fields_set)
-            self._log_step(f"Compute {label}")
-
-        bound[plan.input_binding.name] = command
-
-    def _check_rules(
-        self,
-        plan: ExecutionPlan,
-        bound: dict[str, Any],
-        fields_set: frozenset[str],
-    ) -> None:
-        if plan.input_binding is None or not plan.rule_steps:
-            return
-
-        command = bound[plan.input_binding.name]
-        violations: list[RuleViolation] = []
-
-        for rs in plan.rule_steps:
-            label = getattr(rs.fn, "__name__", type(rs.fn).__name__)
-            try:
-                if rs.accepts_context:
-                    rs.fn(command, fields_set, bound)
-                else:
-                    rs.fn(command, fields_set)
-                self._log_step(f"Rule {label}")
-            except RuleViolation as exc:
-                violations.append(exc)
-                self._logger.warning(
-                    f"[RULE] {label} failed: {exc.field}: {exc.message}",
-                    usecase=plan.use_case_type.__qualname__,
-                    field=exc.field,
-                )
-
-        if violations:
-            raise RuleViolations(violations)
-
-    # ------------------------------------------------------------------
-    # Load resolution
-    # ------------------------------------------------------------------
-
-    async def _resolve_load(
-        self,
-        step: LoadStep,
-        plan: ExecutionPlan,
-        _compilable: Compilable,
-        bound: dict[str, Any],
-        dependencies: dict[type[Any], Any] | None,
-        load_overrides: dict[type[Any], Any] | None,
-    ) -> Any:
-        if load_overrides and step.entity_type in load_overrides:
-            return load_overrides[step.entity_type]
-
-        if dependencies is None:
-            repo = self._resolve_repo(step.entity_type)
-            if repo is None and self._repo_resolver is None:
-                raise RuntimeError(
-                    f"No dependencies provided for LoadById({step.entity_type.__name__})"
-                )
-        else:
-            repo = dependencies.get(step.entity_type)
-            if repo is None:
-                repo = self._resolve_repo(step.entity_type)
-        if repo is None:
-            raise RuntimeError(
-                f"No repository registered for entity type '{step.entity_type.__name__}'"
-            )
-
-        value = self._resolve_lookup_value(step.source_kind, step.source_name, plan, bound)
-        entity = await self._get_entity(repo, step, value)
-
-        if entity is None:
-            if step.on_missing is OnMissing.RETURN_NONE:
-                return None
-            if step.on_missing is OnMissing.RETURN_FALSE:
-                return False
-            raise NotFound(step.entity_type.__name__, id=value)
-
-        return entity
-
-    async def _resolve_exists(
-        self,
-        step: ExistsStep,
-        plan: ExecutionPlan,
-        _compilable: Compilable,
-        bound: dict[str, Any],
-        dependencies: dict[type[Any], Any] | None,
-    ) -> bool:
-        if dependencies is None:
-            repo = self._resolve_repo(step.entity_type)
-            if repo is None and self._repo_resolver is None:
-                raise RuntimeError(
-                    f"No dependencies provided for Exists({step.entity_type.__name__})"
-                )
-        else:
-            repo = dependencies.get(step.entity_type)
-            if repo is None:
-                repo = self._resolve_repo(step.entity_type)
-        if repo is None:
-            raise RuntimeError(
-                f"No repository registered for entity type '{step.entity_type.__name__}'"
-            )
-
-        value = self._resolve_lookup_value(step.source_kind, step.source_name, plan, bound)
-        exists_by = getattr(repo, "exists_by", None)
-        if not callable(exists_by):
-            raise RuntimeError(
-                "Repository for "
-                f"'{step.entity_type.__name__}' must implement exists_by(field, value)"
-            )
-
-        exists_by_async = cast(Callable[[str, Any], Awaitable[bool]], exists_by)
-        found = bool(await exists_by_async(step.against, value))
-        if found:
-            return True
-
-        if step.on_missing is OnMissing.RAISE:
-            raise NotFound(step.entity_type.__name__, id=value)
-        return False
-
-    async def _get_entity(self, repo: Any, step: LoadStep, value: Any) -> Any | None:
-        if step.lookup_kind is LookupKind.BY_ID:
-            return await repo.get_by_id(value, profile=step.profile)
-
-        get_by = getattr(repo, "get_by", None)
-        if not callable(get_by):
-            raise RuntimeError(
-                f"Repository for '{step.entity_type.__name__}' must implement get_by(field, value)"
-            )
-        get_by_async = cast(Callable[..., Awaitable[Any | None]], get_by)
-        return await get_by_async(step.against, value, profile=step.profile)
-
-    @staticmethod
-    def _resolve_lookup_value(
-        source_kind: SourceKind,
-        source_name: str,
-        plan: ExecutionPlan,
-        bound: dict[str, Any],
-    ) -> Any:
-        if source_kind is SourceKind.PARAM:
-            return bound[source_name]
-
-        if plan.input_binding is None:
-            raise RuntimeError("from_command source requires Input() binding")
-        command = bound[plan.input_binding.name]
-        if not hasattr(command, source_name):
-            raise RuntimeError(f"Command '{type(command).__name__}' has no field '{source_name}'")
-        return getattr(command, source_name)
-
-    def _resolve_repo(self, entity_type: type[Any]) -> Any | None:
-        if self._repo_resolver is None:
-            return None
-        return self._repo_resolver(entity_type)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _emit(self, event: RuntimeEvent) -> None:
-        if self._metrics is not None:
-            self._metrics.on_event(event)
-
-    def _log_step(self, label: str) -> None:
-        if self._debug:
-            self._logger.info(f"[STEP] {label}")
-
-
-@contextmanager
-def _as_top_level(identity: Identity | None) -> Iterator[None]:
-    """Hide what a departed execution left in this task, for one execution started from it.
-
-    No invocation scope, no post-commit channel, and the ambient identity
-    *identity*, else :data:`~loom.core.identity.ANONYMOUS`: nothing of the
-    departed caller survives. Its execution context needs no hiding: an
-    ended one is no execution (:func:`~loom.core.execution.current_execution`).
-    """
-    identity_token = set_identity(ANONYMOUS if identity is None else identity)
-    channel_token = bind_channel(None)
-    try:
-        with unscoped():
-            yield
-    finally:
-        reset_channel(channel_token)
-        reset_identity(identity_token)
-
-
-def _inherited(inputs: _ExecutionInputs, plan: ExecutionPlan) -> _ExecutionInputs:
-    """``inputs`` given no identity, as the caller of the enclosing execution, if any (NS2).
-
-    The ambient identity must still be that caller, or
-    :class:`~loom.core.errors.NestedIdentityMismatch` is raised: code changed
-    it during the enclosing execution, or opened that execution with
-    ``ExecutionScope`` / ``enter`` without ``set_identity`` of the same
-    identity. The message names no identity, as the other refusals do.
-    """
-    enclosing = current_execution()
-    inherited = None if enclosing is None else enclosing.identity
-    if inherited is None:
-        return inputs
-    ambient = current_identity()
-    if ambient is not inherited and ambient != inherited:  # `is`: the parent installed it
-        raise NestedIdentityMismatch(
-            f"{plan.use_case_type.__qualname__} was given no identity, and the ambient identity "
-            "differs from the enclosing execution's: it was changed during that execution, or "
-            "the execution was opened (ExecutionScope, enter) without set_identity; pass "
-            "identity=... explicitly"
-        )
-    return _ExecutionInputs(
-        inputs.params, inputs.payload, inputs.dependencies, inputs.load_overrides, inherited
-    )
-
 
 def _given(compilable: Compilable) -> Compilable:
     """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
     return compilable
-
-
-def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> None:
-    """Refuse a ``Joined`` store of ``plan`` whose enlisted unit of work cannot roll back.
-
-    What composition refuses at startup for the components it discovers,
-    for any plan, compiled then or on its first execution.
-    """
-    for key in sorted(plan.joined):
-        if not scope.participants[key].transactional:
-            issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
-                component=plan.use_case_type, store=key
-            )
-            raise JoinedAutocommitStore(issue)
-
-
-def _refuse_unbound(kinds: ExecutionKinds, plan: ExecutionPlan, kind: Kind) -> None:
-    """Raise the "no resolver bound" error when ``kind`` has none."""
-    if kinds.bound(kind):
-        return
-    marker, resolver, method = _KIND_WORDING[kind]
-    raise RuntimeError(
-        f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
-        f"parameter but no {resolver} resolver is bound on this executor. "
-        f"Call RuntimeExecutor.{method}() once the AI runtime exists."
-    ) from None
-
-
-def _refuse_nesting(use_case: str) -> None:
-    """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
-
-    Its identity is compared with the scope's identity, never the ambient one a parent set.
-    """
-    scopes = elevated_scopes()
-    if scopes:
-        raise NestedElevation.opening(use_case, scopes)
-    scope = current_scope()
-    if (
-        scope is not None
-        and not scope.read_only
-        and scope.owned_here()
-        and current_identity() != scope.identity
-    ):
-        raise NestedIdentityMismatch.joining(use_case)
 
 
 class _LegacyAgent:

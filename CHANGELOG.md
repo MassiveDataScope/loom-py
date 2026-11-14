@@ -578,6 +578,22 @@
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
   optional, and `run` raises `TypeError` when neither is given.
+- **engine (internal):** `RuntimeExecutor` is split by its reasons to change;
+  its public API, events, metrics, log lines and their order are unchanged.
+  `loom.core.engine.principal` computes who an execution runs as (given,
+  inherited from the enclosing execution with the tamper check, or none) and
+  the top-level re-entry of a task that outlived its execution;
+  `loom.core.engine.boundaries` runs each execution in one unit of work
+  (`Owned`, `Joined` or `ReadOnly`) and settles its post-commit actions;
+  `loom.core.engine.preparation` compiles each plan once, on its first
+  execution, into the steps it declares and builds the arguments of
+  `execute()`; `loom.core.engine.observation` reports one terminal outcome
+  per attempted run, a build failure included (`[FAIL]` with
+  `error_kind="build"`, no runtime event, as before). An execution makes
+  no more calls than before, fewer in most cases (a plan runs only the steps
+  it declares).
+  `ParameterBindingError` is defined in `loom.core.engine.preparation` and
+  still importable from `loom.core.engine.executor`.
 - **engine:** a writing use case or job run under a read-only execution is
   refused with `UndeclaredStoreWrite` before it is built, so its constructor
   no longer runs first.

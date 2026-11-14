@@ -416,31 +416,26 @@ class UseCaseCompiler:
     ) -> None:
         param_names = {pb.name for pb in bindings.param_bindings}
         has_input = bindings.input_binding is not None
-        for ls in bindings.load_steps:
-            if ls.source_kind is SourceKind.PARAM and ls.source_name not in param_names:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"LoadById({ls.entity_type.__name__}): "
-                    f"parameter '{ls.source_name}' not found in execute signature"
-                )
-            if ls.source_kind is SourceKind.COMMAND and not has_input:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"LoadById({ls.entity_type.__name__}): from_command requires Input() parameter"
-                )
+        steps = (("LoadById", bindings.load_steps), ("Exists", bindings.exists_steps))
+        for marker, declared in steps:
+            for step in declared:
+                problem = _source_problem(step, param_names, has_input)
+                if problem is not None:
+                    raise CompilationError(
+                        f"{use_case_type.__qualname__}.execute: "
+                        f"{marker}({step.entity_type.__name__}): {problem}"
+                    )
 
-        for es in bindings.exists_steps:
-            if es.source_kind is SourceKind.PARAM and es.source_name not in param_names:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"Exists({es.entity_type.__name__}): "
-                    f"parameter '{es.source_name}' not found in execute signature"
-                )
-            if es.source_kind is SourceKind.COMMAND and not has_input:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"Exists({es.entity_type.__name__}): from_command requires Input() parameter"
-                )
+
+def _source_problem(
+    step: LoadStep | ExistsStep, param_names: set[str], has_input: bool
+) -> str | None:
+    """Why *step*'s lookup source cannot be read, or ``None`` when it can."""
+    if step.source_kind is SourceKind.PARAM and step.source_name not in param_names:
+        return f"parameter '{step.source_name}' not found in execute signature"
+    if step.source_kind is SourceKind.COMMAND and not has_input:
+        return "from_command requires Input() parameter"
+    return None
 
 
 def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
