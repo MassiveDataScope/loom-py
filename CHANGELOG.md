@@ -88,6 +88,24 @@
   `app.discovery` or `lambda.functions.*.trigger` stops every load, as one
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
 
+### rest
+
+- **rest:** `LoomRestAdapter.handle(use_case, request)` and the
+  `loom.core.transport.LoomAdapter` protocol take the use case **class** and
+  build it inside its execution, as every other entry point does:
+  `LoomRestAdapter(executor, *, factory, error_mapper=None)` runs
+  `executor.run(use_case, factory=factory, params=..., payload=...,
+  identity=current_identity())`, so constructor ports, `Caller()` and
+  per-execution adapters are injected by the container, as the request's
+  caller. `AdapterRequest.dependencies` is removed: repositories for
+  `LoadById` / `Load` / `Exists` come from the executor's repository resolver
+  (the kernel's executor resolves them from the container). **Migration**, one
+  line per route: `LoomRestAdapter(executor)` →
+  `LoomRestAdapter(kernel.executor, factory=kernel.factory)`, and
+  `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p,
+  dependencies={User: users}))` → `await adapter.handle(CreateUser,
+  AdapterRequest(params=p))`, with `users` bound in the container.
+
 ## ✨ Features
 
 ### model
@@ -590,6 +608,14 @@
   (the ambient identity the transport installed, passed explicitly), so a
   `Caller()` in `execute()` now receives it instead of raising
   `Unauthenticated`.
+- **core (behaviour change, F3):** an `ApplicationInvoker` not bound to a
+  caller (`identity=None`, the default) invoked outside any execution, for
+  instance from a route or a middleware that installed the caller as the
+  ambient identity, now runs the use case as `ANONYMOUS` instead of leaving
+  that ambient identity in place (its `Caller()` already raised
+  `Unauthenticated`). **Migration:** bind it to the caller,
+  `invoker.for_identity(caller).invoke(...)`. Inside a use case the bare
+  invoker still runs as the enclosing execution's caller (NS2).
 - **jobs (behaviour change, D7):** job callbacks (`on_success`, `on_failure`;
   inline, Celery sync and async) are built and called inside an execution
   with no caller (`loom.core.job.callback.callback_execution`), opened in the

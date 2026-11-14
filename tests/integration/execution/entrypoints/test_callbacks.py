@@ -13,7 +13,6 @@ import pytest
 
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
-from loom.core.identity import ANONYMOUS
 from loom.core.job.callback import run_on_failure, run_on_success
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
@@ -21,21 +20,14 @@ from loom.core.use_case.factory import UseCaseFactory
 
 from .doubles import (
     ALICE,
-    AcmeAsyncCallback,
+    CALLBACKS,
+    NO_CALLER,
     AcmeCallback,
     AcmeCallerCallback,
     AcmeFailingJob,
     AcmeProbeJob,
     AcmeRun,
     CallbackLog,
-    Seen,
-)
-
-NO_CALLER = Seen(
-    in_execution=True, execution_identity=None, ambient=ANONYMOUS, handle="Unauthenticated"
-)
-CALLBACKS = pytest.mark.parametrize(
-    "callback", [AcmeCallback, AcmeAsyncCallback], ids=["sync", "async"]
 )
 
 

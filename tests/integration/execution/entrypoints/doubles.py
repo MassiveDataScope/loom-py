@@ -6,11 +6,13 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionRequired, current_execution, execution_identity
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.repository.dependency import classify_key
 from loom.core.use_case.factory import UseCaseFactory
@@ -20,6 +22,13 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
 
 ALICE = Identity(subject="acme-alice", mechanism="test")
+
+CALLERS = pytest.mark.parametrize(
+    ("caller", "subject"),
+    [(ALICE, ALICE.subject), (None, ANONYMOUS.subject)],
+    ids=["authenticated", "anonymous"],
+)
+"""Each request authenticated as alice, and anonymous; ``subject`` is who it runs as."""
 
 Asgi = Callable[
     [MutableMapping[str, Any], Callable[[], Awaitable[Any]], Callable[[Any], Awaitable[None]]],
@@ -108,11 +117,26 @@ class AcmeBuiltAs(UseCase[Any, dict[str, Any]]):
         }
 
 
-class AcmeAnswering(UseCase[Any, dict[str, str]]):
-    """Answers who ``execute()``'s ``Caller()`` and the ambient identity are."""
+class AcmeGreeter:
+    """A port the container injects into a constructor."""
+
+    def greet(self, subject: str) -> str:
+        return f"hello {subject}"
+
+
+class AcmeGreeting(UseCase[Any, dict[str, str]]):
+    """Its constructor takes a port and ``Caller()``; ``execute()`` takes ``Caller()`` too."""
+
+    def __init__(self, greeter: AcmeGreeter, caller: Identity = Caller()) -> None:
+        self.greeter = greeter
+        self.caller = caller
 
     async def execute(self, caller: Identity = Caller()) -> dict[str, str]:
-        return {"runs_as": caller.subject, "ambient": current_identity().subject}
+        return {
+            "greeting": self.greeter.greet(self.caller.subject),
+            "runs_as": caller.subject,
+            "ambient": current_identity().subject,
+        }
 
 
 class AcmeRoutes(RestInterface[dict[str, Any]]):
@@ -150,6 +174,12 @@ def seen_now() -> Seen:
     )
 
 
+NO_CALLER = Seen(
+    in_execution=True, execution_identity=None, ambient=ANONYMOUS, handle="Unauthenticated"
+)
+"""What a job callback sees, built and called: an execution with no caller (D7, F3)."""
+
+
 class CallbackLog(list[tuple[str, Seen]]):
     """Each moment a callback recorded (``built``, ``on_success``, ``on_failure``)."""
 
@@ -176,6 +206,12 @@ class AcmeAsyncCallback(AcmeCallback):
         self, job_id: str, exc_type: str, exc_msg: str, **context: Any
     ) -> None:
         self.log.append(("on_failure", seen_now()))
+
+
+CALLBACKS = pytest.mark.parametrize(
+    "callback", [AcmeCallback, AcmeAsyncCallback], ids=["sync", "async"]
+)
+"""Each test runs with a sync and an async callback."""
 
 
 class AcmeCallerCallback:
@@ -213,9 +249,10 @@ def probe_factory(log: CallbackLog) -> UseCaseFactory:
     use_case_kinds(container.kinds)
     container.kinds.bind(CALLER, CallerResolver())
     container.register(AcmeSession, AcmeSession, scope=DiScope.REQUEST)
+    container.register(AcmeGreeter, AcmeGreeter, scope=DiScope.APPLICATION)
     container.register_instance(CallbackLog, log)
     factory = UseCaseFactory(container)
-    for built in (AcmeProbe, AcmeProbeJob, AcmeFailingJob, AcmeRouted):
+    for built in (AcmeProbe, AcmeProbeJob, AcmeFailingJob, AcmeRouted, AcmeGreeting):
         factory.register(built)
     return factory
 

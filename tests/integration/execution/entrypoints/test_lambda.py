@@ -10,13 +10,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.identity import ANONYMOUS, Identity
+from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
@@ -28,15 +27,11 @@ from loom.serverless.aws.lambda_.triggers.http import (
     _route,  # pyright: ignore[reportPrivateUsage]
 )
 
-from .doubles import ALICE, AcmeProbeJob, AcmeRecordingFactory, AcmeRoutes, as_caller
+from .doubles import ALICE, CALLERS, AcmeProbeJob, AcmeRecordingFactory, AcmeRoutes, as_caller
 
 
 class TestLambdaHttpRoute:
-    @pytest.mark.parametrize(
-        ("caller", "subject"),
-        [(ALICE, ALICE.subject), (None, ANONYMOUS.subject)],
-        ids=["authenticated", "anonymous"],
-    )
+    @CALLERS
     def test_builds_and_runs_inside_one_execution_as_the_request_caller(
         self,
         factory: UseCaseFactory,

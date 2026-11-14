@@ -1,12 +1,13 @@
 """The execution identity and the ambient identity never disagree (plan 6).
 
-A seeded generator plays a few hundred random trees of executions, run by a
-helper shaped like the executor's lifecycle (NS2): the effective identity is
-computed once, then installed with ``set_identity`` (``ANONYMOUS`` when it is
-``None``, F3) and ``enter`` and reset in ``finally``. Trees mix nesting,
-``gather`` across tasks, raising bodies and cancelled bodies. At every step the test checks:
+A seeded generator plays a few hundred random trees of executions, each run
+by a real :class:`~loom.core.engine.executor.RuntimeExecutor` (no stores), so
+the property holds for the lifecycle loom ships, not for a copy of it. Trees
+mix nesting, ``gather`` across tasks, raising bodies and cancelled bodies, with
+explicit identities and none. At every step the test checks:
 
-- the current execution runs as the expected effective identity;
+- the current execution runs as the expected effective identity (NS2: the one
+  given, else the enclosing execution's, else ``None``);
 - whenever that identity is not ``None`` it equals ``current_identity()``, and
   whenever it is ``None``, ``current_identity()`` is ``ANONYMOUS`` (F3);
 - after each child (finished, raising or cancelled) the parent's execution is
@@ -24,10 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from typing import Any
 
-from loom.core.execution import current_execution, enter, leave
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.execution import current_execution
 from loom.core.identity import (
     ANONYMOUS,
     Identity,
@@ -35,6 +40,7 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
+from loom.core.use_case.use_case import UseCase
 
 _ALICE = Identity(subject="acme-alice", mechanism="test")
 _BOB = Identity(subject="acme-bob", mechanism="test")
@@ -75,18 +81,25 @@ class _Cancel:
 _Step = _Run | _Gather | _Fail | _Cancel
 
 
+class _Body(UseCase[Any, None]):
+    """A use case whose ``execute()`` plays the body it is built with."""
+
+    def __init__(self, body: Callable[[], Awaitable[None]]) -> None:
+        self._body = body
+
+    async def execute(self) -> None:
+        await self._body()
+
+
+_EXECUTOR = RuntimeExecutor(UseCaseCompiler())
+
+
 async def _execute(run: _Run) -> None:
-    """Play ``run`` the way ``RuntimeExecutor._execute`` will run an execution (NS2)."""
+    """Run ``run`` through the executor, expecting the effective identity NS2 defines."""
     enclosing = current_execution()
     explicit = run.identity
     effective = explicit if explicit is not None or enclosing is None else enclosing.identity
-    identity_token = set_identity(ANONYMOUS if effective is None else effective)
-    token = enter(effective)
-    try:
-        await _play(run.body, effective)
-    finally:
-        leave(token)
-        reset_identity(identity_token)
+    await _EXECUTOR.execute(_Body(lambda: _play(run.body, effective)), identity=explicit)
 
 
 def _check(expected: Identity | None) -> None:

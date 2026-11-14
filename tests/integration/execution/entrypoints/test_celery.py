@@ -8,7 +8,7 @@ ambient identity, as an eager callback does inside the job that links it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -23,24 +23,16 @@ from loom.celery.runner import (
 from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
-from loom.core.identity import ANONYMOUS, reset_identity, set_identity
+from loom.core.identity import ANONYMOUS
 from loom.core.use_case.factory import UseCaseFactory
 
 from .doubles import (
-    ALICE,
-    AcmeAsyncCallback,
+    CALLBACKS,
+    NO_CALLER,
     AcmeCallback,
     AcmeCallerCallback,
     AcmeProbeJob,
     CallbackLog,
-    Seen,
-)
-
-NO_CALLER = Seen(
-    in_execution=True, execution_identity=None, ambient=ANONYMOUS, handle="Unauthenticated"
-)
-CALLBACKS = pytest.mark.parametrize(
-    "callback", [AcmeCallback, AcmeAsyncCallback], ids=["sync", "async"]
 )
 
 
@@ -49,15 +41,6 @@ def celery_app() -> Celery:
     app = Celery("acme", set_as_current=False)
     app.conf.task_always_eager = True
     return app
-
-
-@pytest.fixture
-def as_alice() -> Iterator[None]:
-    token = set_identity(ALICE)
-    try:
-        yield
-    finally:
-        reset_identity(token)
 
 
 @pytest.fixture

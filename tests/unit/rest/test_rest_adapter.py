@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, cast
@@ -11,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from loom.core.command import Command
+from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import (
@@ -31,6 +33,7 @@ from loom.core.errors import (
     UnitOfWorkInsideScope,
 )
 from loom.core.errors.codes import ErrorCode
+from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc.query import CursorResult, PageResult
 from loom.core.sql import SqlExecutionError
@@ -38,6 +41,7 @@ from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
 from loom.core.uow.coordinator import Committed, InvocationOutcome
 from loom.core.use_case import Created
+from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
@@ -61,6 +65,11 @@ class _SimpleUseCase(UseCase[Any, str]):
         return "ok"
 
 
+_ACME_CALLER = Identity(subject="acme-caller", mechanism="test")
+_FACTORY = cast(UseCaseFactory, MagicMock(spec=["build"]))
+"""Handed to adapters whose executor is a double: only forwarded, never called."""
+
+
 # ---------------------------------------------------------------------------
 # AdapterRequest
 # ---------------------------------------------------------------------------
@@ -79,17 +88,11 @@ class TestAdapterRequest:
         req = AdapterRequest(params={}, payload={"email": "x@corp.com"})
         assert req.payload == {"email": "x@corp.com"}
 
-    def test_dependencies_default_empty(self) -> None:
-        req = AdapterRequest(params={})
-        assert req.dependencies == {}
-
-    def test_dependencies_stored(self) -> None:
-        class Repo:
-            pass
-
-        repo = Repo()
-        req = AdapterRequest(params={}, dependencies={Repo: repo})
-        assert req.dependencies[Repo] is repo
+    def test_carries_no_dependencies_the_container_owns_them(self) -> None:
+        assert {field.name for field in dataclasses.fields(AdapterRequest)} == {
+            "params",
+            "payload",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -99,15 +102,15 @@ class TestAdapterRequest:
 
 class TestLoomAdapterProtocol:
     def test_rest_adapter_satisfies_loom_adapter(self) -> None:
-        executor = MagicMock(spec=["execute"])
-        adapter = LoomRestAdapter(executor)
-        assert callable(adapter.handle)
+        executor = MagicMock(spec=["run"])
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        assert isinstance(adapter, LoomAdapter)
 
     def test_loom_adapter_is_protocol(self) -> None:
         class _CustomAdapter:
             async def handle(
                 self,
-                use_case: UseCase[Any, Any],
+                use_case: type[UseCase[Any, Any]],
                 request: AdapterRequest,
             ) -> Any:
                 return None
@@ -394,19 +397,19 @@ class TestHttpErrorMapper:
 class TestLoomRestAdapterSuccess:
     def _make_executor(self, return_value: Any) -> Any:
         executor = MagicMock()
-        executor.execute = AsyncMock(return_value=return_value)
+        executor.run = AsyncMock(return_value=return_value)
         return executor
 
     async def test_returns_plain_result(self) -> None:
-        adapter = LoomRestAdapter(self._make_executor("ok"))
-        result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor("ok"))
+        result = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
         assert result == "ok"
 
     async def test_a_created_result_answers_201_with_its_value(self) -> None:
         created = Created(_ResultStruct(id=1, name="Alice"), location="/items/1")
-        adapter = LoomRestAdapter(self._make_executor(created))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor(created))
 
-        response = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        response = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
 
         assert (response.status_code, msgspec.json.decode(response.body)) == (
             201,
@@ -416,8 +419,8 @@ class TestLoomRestAdapterSuccess:
 
     async def test_struct_result_serialized_to_builtins(self) -> None:
         struct = _ResultStruct(id=1, name="Alice")
-        adapter = LoomRestAdapter(self._make_executor(struct))
-        result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor(struct))
+        result = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
         assert result == {"id": 1, "name": "Alice"}
 
     async def test_page_result_envelope_serialized_in_camel_case(self) -> None:
@@ -428,9 +431,9 @@ class TestLoomRestAdapterSuccess:
             limit=50,
             has_next=False,
         )
-        adapter = LoomRestAdapter(self._make_executor(page))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor(page))
 
-        result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        result = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
 
         assert result["totalCount"] == 1
         assert result["hasNext"] is False
@@ -444,9 +447,9 @@ class TestLoomRestAdapterSuccess:
             next_cursor="opaque-token",
             has_next=True,
         )
-        adapter = LoomRestAdapter(self._make_executor(cursor))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor(cursor))
 
-        result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        result = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
 
         assert result["nextCursor"] == "opaque-token"
         assert result["hasNext"] is True
@@ -455,45 +458,46 @@ class TestLoomRestAdapterSuccess:
 
     async def test_non_struct_result_returned_as_is(self) -> None:
         payload = {"key": "value"}
-        adapter = LoomRestAdapter(self._make_executor(payload))
-        result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+        adapter = LoomRestAdapter(factory=_FACTORY, executor=self._make_executor(payload))
+        result = await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
         assert result is payload
 
     async def test_params_forwarded_to_executor(self) -> None:
         executor = self._make_executor("ok")
-        adapter = LoomRestAdapter(executor)
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
         req = AdapterRequest(params={"user_id": 7})
-        await adapter.handle(_SimpleUseCase(), req)
-        _, kwargs = executor.execute.call_args
+        await adapter.handle(_SimpleUseCase, req)
+        _, kwargs = executor.run.call_args
         assert kwargs["params"] == {"user_id": 7}
 
     async def test_payload_forwarded_to_executor(self) -> None:
         executor = self._make_executor("ok")
-        adapter = LoomRestAdapter(executor)
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
         req = AdapterRequest(params={}, payload={"email": "x@corp.com"})
-        await adapter.handle(_SimpleUseCase(), req)
-        _, kwargs = executor.execute.call_args
+        await adapter.handle(_SimpleUseCase, req)
+        _, kwargs = executor.run.call_args
         assert kwargs["payload"] == {"email": "x@corp.com"}
 
-    async def test_empty_dependencies_passed_as_none(self) -> None:
+    async def test_runs_the_class_built_by_its_factory(self) -> None:
         executor = self._make_executor("ok")
-        adapter = LoomRestAdapter(executor)
-        req = AdapterRequest(params={})
-        await adapter.handle(_SimpleUseCase(), req)
-        _, kwargs = executor.execute.call_args
-        assert kwargs["dependencies"] is None
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
+        args, kwargs = executor.run.call_args
+        assert (args, kwargs["factory"]) == ((_SimpleUseCase,), _FACTORY)
 
-    async def test_non_empty_dependencies_forwarded(self) -> None:
-        class Repo:
-            pass
-
-        repo = Repo()
+    @pytest.mark.parametrize(
+        "caller", [_ACME_CALLER, ANONYMOUS], ids=["authenticated", "anonymous"]
+    )
+    async def test_runs_as_the_ambient_caller_passed_explicitly(self, caller: Identity) -> None:
         executor = self._make_executor("ok")
-        adapter = LoomRestAdapter(executor)
-        req = AdapterRequest(params={}, dependencies={Repo: repo})
-        await adapter.handle(_SimpleUseCase(), req)
-        _, kwargs = executor.execute.call_args
-        assert kwargs["dependencies"] == {Repo: repo}
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        token = set_identity(caller)
+        try:
+            await adapter.handle(_SimpleUseCase, AdapterRequest(params={}))
+        finally:
+            reset_identity(token)
+        _, kwargs = executor.run.call_args
+        assert kwargs["identity"] is caller
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +508,13 @@ class TestLoomRestAdapterSuccess:
 class TestLoomRestAdapterErrors:
     def _make_failing_executor(self, error: Exception) -> Any:
         executor = MagicMock()
-        executor.execute = AsyncMock(side_effect=error)
+        executor.run = AsyncMock(side_effect=error)
         return executor
 
     async def test_loom_error_mapped_to_http_exception(self) -> None:
         executor = self._make_failing_executor(NotFound("Item", id=99))
-        adapter = LoomRestAdapter(executor)
-        use_case = _SimpleUseCase()
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        use_case = _SimpleUseCase
         request = AdapterRequest(params={})
         with pytest.raises(HTTPException) as exc_info:
             await adapter.handle(use_case, request)
@@ -519,8 +523,8 @@ class TestLoomRestAdapterErrors:
     async def test_rule_violations_mapped_to_422(self) -> None:
         err = RuleViolations([RuleViolation("email", "bad")])
         executor = self._make_failing_executor(err)
-        adapter = LoomRestAdapter(executor)
-        use_case = _SimpleUseCase()
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        use_case = _SimpleUseCase
         request = AdapterRequest(params={})
         with pytest.raises(HTTPException) as exc_info:
             await adapter.handle(use_case, request)
@@ -528,17 +532,17 @@ class TestLoomRestAdapterErrors:
 
     async def test_rule_violation_mapped_to_422_with_its_field(self) -> None:
         executor = self._make_failing_executor(RuleViolation("tenant", "bad"))
-        adapter = LoomRestAdapter(executor)
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
         request = AdapterRequest(params={})
         with pytest.raises(HTTPException) as exc_info:
-            await adapter.handle(_SimpleUseCase(), request)
+            await adapter.handle(_SimpleUseCase, request)
         assert exc_info.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
         assert _detail(exc_info.value)[ErrorField.FIELD] == "tenant"
 
     async def test_non_loom_error_not_caught(self) -> None:
         executor = self._make_failing_executor(RuntimeError("unexpected"))
-        adapter = LoomRestAdapter(executor)
-        use_case = _SimpleUseCase()
+        adapter = LoomRestAdapter(executor, factory=_FACTORY)
+        use_case = _SimpleUseCase
         request = AdapterRequest(params={})
         with pytest.raises(RuntimeError, match="unexpected"):
             await adapter.handle(use_case, request)
@@ -549,8 +553,8 @@ class TestLoomRestAdapterErrors:
                 return HTTPException(status_code=418, detail="teapot")
 
         executor = self._make_failing_executor(NotFound("X", id=1))
-        adapter = LoomRestAdapter(executor, error_mapper=_AlwaysTeapot())
-        use_case = _SimpleUseCase()
+        adapter = LoomRestAdapter(executor, factory=_FACTORY, error_mapper=_AlwaysTeapot())
+        use_case = _SimpleUseCase
         request = AdapterRequest(params={})
         with pytest.raises(HTTPException) as exc_info:
             await adapter.handle(use_case, request)
@@ -571,20 +575,20 @@ class _CreateItemUseCase(UseCase[Any, dict[str, Any]]):
         return {"full_name": cmd.full_name}
 
 
-def _real_executor(*use_case_types: type[UseCase[Any, Any]]) -> RuntimeExecutor:
+def _real_adapter(*use_case_types: type[UseCase[Any, Any]]) -> LoomRestAdapter:
     uc_compiler = UseCaseCompiler()
     for use_case_type in use_case_types:
         uc_compiler.compile(use_case_type)
-    return RuntimeExecutor(uc_compiler)
+    return LoomRestAdapter(RuntimeExecutor(uc_compiler), factory=UseCaseFactory(LoomContainer()))
 
 
 class TestLoomRestAdapterBoundaryValidation:
     """A bad body drives the same 422 through the adapter and a real executor."""
 
     async def test_a_bad_field_maps_to_422_with_violations(self) -> None:
-        adapter = LoomRestAdapter(_real_executor(_CreateItemUseCase))
+        adapter = _real_adapter(_CreateItemUseCase)
         request = AdapterRequest(params={}, payload={"fullName": 12})
-        use_case = _CreateItemUseCase()
+        use_case = _CreateItemUseCase
 
         with pytest.raises(HTTPException) as exc_info:
             await adapter.handle(use_case, request)
@@ -607,13 +611,13 @@ class _RejectTenantUseCase(UseCase[Any, str]):
 
 def _app_without_database() -> FastAPI:
     """A bare app: no container, no database, no ``schema.mode``, no RLS guard."""
-    adapter = LoomRestAdapter(_real_executor(_RejectTenantUseCase))
+    adapter = _real_adapter(_RejectTenantUseCase)
     app = FastAPI()
     register_error_handlers(app)
 
     @app.get("/tenant")
     async def tenant() -> Any:
-        return await adapter.handle(_RejectTenantUseCase(), AdapterRequest(params={}))
+        return await adapter.handle(_RejectTenantUseCase, AdapterRequest(params={}))
 
     return app
 

@@ -9,10 +9,10 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.execution import current_execution
-from loom.core.identity import ANONYMOUS, current_identity
+from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
 from loom.core.use_case.factory import UseCaseFactory
 
-from .doubles import AcmeRouted, CallbackLog, probe_factory
+from .doubles import ALICE, AcmeRouted, CallbackLog, probe_factory
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +21,27 @@ def no_execution_left_open() -> Iterator[None]:
     yield
     assert current_execution() is None, "an execution was left open"
     assert current_identity() is ANONYMOUS, "an ambient identity was left set"
+
+
+@pytest.fixture
+def as_alice() -> Iterator[None]:
+    """The ambient identity is alice, as a transport that authenticated her sets it."""
+    token = set_identity(ALICE)
+    try:
+        yield
+    finally:
+        reset_identity(token)
+
+
+@pytest.fixture
+def authenticated(caller: Identity | None) -> Iterator[None]:
+    """The transport authenticated the request as ``caller`` (from ``CALLERS``), if any."""
+    token = None if caller is None else set_identity(caller)
+    try:
+        yield
+    finally:
+        if token is not None:
+            reset_identity(token)
 
 
 @pytest.fixture

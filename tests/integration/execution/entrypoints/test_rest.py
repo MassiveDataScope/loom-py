@@ -8,7 +8,7 @@ the boundary, and passes it to the executor.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
+from loom.core.identity import Identity
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.transport.adapter import AdapterRequest
 from loom.core.use_case.factory import UseCaseFactory
@@ -24,13 +24,7 @@ from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.rest_adapter import LoomRestAdapter
 
-from .doubles import ALICE, AcmeAnswering, AcmeRoutes, as_caller
-
-CALLERS = pytest.mark.parametrize(
-    ("caller", "subject"),
-    [(ALICE, ALICE.subject), (None, ANONYMOUS.subject)],
-    ids=["authenticated", "anonymous"],
-)
+from .doubles import CALLERS, AcmeGreeting, AcmeRoutes, as_caller
 
 
 @pytest.fixture
@@ -46,17 +40,6 @@ def client(factory: UseCaseFactory, compiler: UseCaseCompiler) -> Callable[..., 
         return TestClient(as_caller(app, caller))  # type: ignore[arg-type]
 
     return serve
-
-
-@pytest.fixture
-def authenticated(caller: Identity | None) -> Iterator[None]:
-    """The transport authenticated the request as ``caller``, if any."""
-    token = None if caller is None else set_identity(caller)
-    try:
-        yield
-    finally:
-        if token is not None:
-            reset_identity(token)
 
 
 class TestRestRoute:
@@ -76,15 +59,19 @@ class TestRestRoute:
 
 
 class TestRestAdapter:
-    """``LoomRestAdapter`` executes the instance it is handed (its ``LoomAdapter`` contract)."""
+    """``LoomRestAdapter`` builds the use case class it is handed inside its execution."""
 
     @CALLERS
     @pytest.mark.usefixtures("authenticated")
-    async def test_runs_as_the_request_caller(
-        self, executor: RuntimeExecutor, caller: Identity | None, subject: str
+    async def test_injects_a_constructor_port_and_caller_as_the_request_caller(
+        self,
+        executor: RuntimeExecutor,
+        factory: UseCaseFactory,
+        caller: Identity | None,
+        subject: str,
     ) -> None:
-        adapter = LoomRestAdapter(executor)
+        adapter = LoomRestAdapter(executor, factory=factory)
 
-        seen = await adapter.handle(AcmeAnswering(), AdapterRequest(params={}))
+        seen = await adapter.handle(AcmeGreeting, AdapterRequest(params={}))
 
-        assert seen == {"runs_as": subject, "ambient": subject}
+        assert seen == {"greeting": f"hello {subject}", "runs_as": subject, "ambient": subject}
