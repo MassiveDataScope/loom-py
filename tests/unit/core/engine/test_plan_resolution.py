@@ -38,57 +38,55 @@ def executor(compiler: UseCaseCompiler) -> RuntimeExecutor:
     return RuntimeExecutor(compiler)
 
 
-async def test_parent_compiled_first_child_executes_with_its_own_plan(
-    compiler: UseCaseCompiler, executor: RuntimeExecutor
-) -> None:
-    parent, child = _fresh_hierarchy()
-    compiler.compile(parent)
-    assert _own_plan(child) is None
+class TestSubclassPlanResolution:
+    async def test_parent_compiled_first_child_executes_with_its_own_plan(
+        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+    ) -> None:
+        parent, child = _fresh_hierarchy()
+        compiler.compile(parent)
+        assert _own_plan(child) is None
 
-    result = await executor.execute(child(), params={"value": "v", "extra": "e"})
+        result = await executor.execute(child(), params={"value": "v", "extra": "e"})
 
-    assert result == "child:v:e"
-    child_plan = _own_plan(child)
-    assert child_plan is not None
-    assert child_plan.use_case_type is child
-    assert child_plan is not _own_plan(parent)
+        assert result == "child:v:e"
+        child_plan = _own_plan(child)
+        assert child_plan is not None
+        assert child_plan.use_case_type is child
+        assert child_plan is not _own_plan(parent)
 
+    async def test_child_compiled_first_parent_executes_with_its_own_plan(
+        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+    ) -> None:
+        parent, child = _fresh_hierarchy()
+        compiler.compile(child)
+        assert _own_plan(parent) is None
 
-async def test_child_compiled_first_parent_executes_with_its_own_plan(
-    compiler: UseCaseCompiler, executor: RuntimeExecutor
-) -> None:
-    parent, child = _fresh_hierarchy()
-    compiler.compile(child)
-    assert _own_plan(parent) is None
+        assert await executor.execute(parent(), params={"value": "v"}) == "parent:v"
+        assert await executor.execute(child(), params={"value": "v", "extra": "e"}) == "child:v:e"
+        parent_plan = _own_plan(parent)
+        assert parent_plan is not None
+        assert parent_plan.use_case_type is parent
 
-    assert await executor.execute(parent(), params={"value": "v"}) == "parent:v"
-    assert await executor.execute(child(), params={"value": "v", "extra": "e"}) == "child:v:e"
-    parent_plan = _own_plan(parent)
-    assert parent_plan is not None
-    assert parent_plan.use_case_type is parent
+    async def test_both_compiled_explicitly(
+        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+    ) -> None:
+        parent, child = _fresh_hierarchy()
+        compiler.compile(parent)
+        compiler.compile(child)
 
+        assert await executor.execute(child(), params={"value": "v", "extra": "e"}) == "child:v:e"
+        assert await executor.execute(parent(), params={"value": "v"}) == "parent:v"
 
-async def test_both_compiled_explicitly(
-    compiler: UseCaseCompiler, executor: RuntimeExecutor
-) -> None:
-    parent, child = _fresh_hierarchy()
-    compiler.compile(parent)
-    compiler.compile(child)
+    async def test_parent_only_params_bind_against_the_child_plan(
+        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+    ) -> None:
+        parent, child = _fresh_hierarchy()
+        compiler.compile(parent)
 
-    assert await executor.execute(child(), params={"value": "v", "extra": "e"}) == "child:v:e"
-    assert await executor.execute(parent(), params={"value": "v"}) == "parent:v"
+        use_case = child()
+        with pytest.raises(ValueError, match="missing required parameter 'extra'"):
+            await executor.execute(use_case, params={"value": "v"})
 
-
-async def test_parent_only_params_bind_against_the_child_plan(
-    compiler: UseCaseCompiler, executor: RuntimeExecutor
-) -> None:
-    parent, child = _fresh_hierarchy()
-    compiler.compile(parent)
-
-    use_case = child()
-    with pytest.raises(ValueError, match="missing required parameter 'extra'"):
-        await executor.execute(use_case, params={"value": "v"})
-
-    child_plan = _own_plan(child)
-    assert child_plan is not None
-    assert child_plan.use_case_type is child
+        child_plan = _own_plan(child)
+        assert child_plan is not None
+        assert child_plan.use_case_type is child

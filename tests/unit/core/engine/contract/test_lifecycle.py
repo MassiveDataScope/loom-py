@@ -157,15 +157,18 @@ class _SelectOne(UseCase[Any, int]):
         return (await session.execute(text("SELECT 1"))).scalar_one()
 
 
-async def test_sc002_sqlite_sessions_opened_equal_sessions_closed_after_a_thousand() -> None:
-    async with sqlite_session_manager() as manager:
-        factory = SQLAlchemyUnitOfWorkFactory(manager.as_session_manager())
-        executor = RuntimeExecutor(
-            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-        )
+class TestSqliteSessionAccounting:
+    async def test_sc002_sqlite_sessions_opened_equal_sessions_closed_after_a_thousand(
+        self,
+    ) -> None:
+        async with sqlite_session_manager() as manager:
+            factory = SQLAlchemyUnitOfWorkFactory(manager.as_session_manager())
+            executor = RuntimeExecutor(
+                UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+            )
 
-        for _ in range(_EXECUTIONS):
-            assert await executor.execute(_SelectOne(manager)) == 1
+            for _ in range(_EXECUTIONS):
+                assert await executor.execute(_SelectOne(manager)) == 1
 
-        assert manager.opened == manager.closed == _EXECUTIONS
-        assert context_is_clean()
+            assert manager.opened == manager.closed == _EXECUTIONS
+            assert context_is_clean()

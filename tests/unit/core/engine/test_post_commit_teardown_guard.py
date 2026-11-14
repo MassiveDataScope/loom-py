@@ -71,27 +71,6 @@ class _RecordingPriorityAction(UseCase[Any, str]):
         return value
 
 
-async def test_a_teardown_failure_after_commit_still_drains_instead_of_discarding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    log = Log()
-    factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
-    monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
-    action = _RecordingPriorityAction(log)
-
-    with pytest.raises(RuntimeError, match="token reset boom"):
-        await executor.execute(action, params={"value": "x"})
-
-    # The commit happened and the teardown failure is what propagated (not
-    # some other error), but the queued invalidation still ran rather than
-    # being thrown away with it.
-    assert "uow.commit" in log.entries
-    assert "priority.ran" in log.entries
-
-
 class _NestedEnqueue(UseCase[Any, str]):
     """A use case that enqueues onto whatever channel is active when it runs."""
 
@@ -131,30 +110,53 @@ class _DispatchStartsNestedExecution(UseCase[Any, str]):
         return value
 
 
-async def test_a_late_enqueue_from_a_nested_execution_during_the_teardown_drain_is_not_lost(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The channel must be unbound before this exceptional drain, same as the success path.
+class TestPostCommitTeardownGuard:
+    async def test_a_teardown_failure_after_commit_still_drains_instead_of_discarding(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        log = Log()
+        factory = StubUnitOfWorkFactory(log)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
+        monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
+        action = _RecordingPriorityAction(log)
 
-    Otherwise the nested execution a plain-lane dispatch starts sees the
-    channel already mid-drain as its own ``active_channel()``, opens no
-    channel of its own, and its enqueue lands on lists ``drain`` has
-    already emptied into local deques — dropped without a trace.
-    """
-    log = Log()
-    factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
-    monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
-    action = _DispatchStartsNestedExecution(executor, log)
+        with pytest.raises(RuntimeError, match="token reset boom"):
+            await executor.execute(action, params={"value": "x"})
 
-    with pytest.raises(RuntimeError, match="token reset boom"):
-        await executor.execute(action, params={"value": "x"})
+        # The commit happened and the teardown failure is what propagated (not
+        # some other error), but the queued invalidation still ran rather than
+        # being thrown away with it.
+        assert "uow.commit" in log.entries
+        assert "priority.ran" in log.entries
 
-    assert "uow.commit" in log.entries
-    assert "dispatch.finished" in log.entries
-    assert "nested.ran" in log.entries
+    async def test_a_late_enqueue_from_a_nested_execution_during_the_teardown_drain_is_not_lost(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The channel must be unbound before this exceptional drain, same as the success path.
+
+        Otherwise the nested execution a plain-lane dispatch starts sees the
+        channel already mid-drain as its own ``active_channel()``, opens no
+        channel of its own, and its enqueue lands on lists ``drain`` has
+        already emptied into local deques — dropped without a trace.
+        """
+        log = Log()
+        factory = StubUnitOfWorkFactory(log)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
+        monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
+        action = _DispatchStartsNestedExecution(executor, log)
+
+        with pytest.raises(RuntimeError, match="token reset boom"):
+            await executor.execute(action, params={"value": "x"})
+
+        assert "uow.commit" in log.entries
+        assert "dispatch.finished" in log.entries
+        assert "nested.ran" in log.entries
 
 
 class _StubChannel:

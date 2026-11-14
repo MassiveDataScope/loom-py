@@ -237,293 +237,14 @@ def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]
     return nullcontext() if error is None else pytest.raises(error)
 
 
-@pytest.mark.parametrize(
-    ("failures", "ran", "error"),
-    [
-        pytest.param(
-            {},
-            ["default.priority", "audit.priority", "events.priority"]
-            + ["default.publish", "audit.publish", "events.publish"]
-            + ["gathered", "default.plain", "audit.plain", "events.plain"],
-            None,
-            id="every-store-commits",
-        ),
-        pytest.param(
-            {AUDIT: _Refused()},
-            ["default.priority", "events.priority", "default.publish", "events.publish"]
-            + ["default.plain", "events.plain"],
-            StoresNotCommitted,
-            id="audit-rolls-back-after-default-committed",
-        ),
-        pytest.param(
-            {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
-            ["default.priority", "audit.priority", "events.priority"]
-            + ["default.publish", "events.publish", "default.plain", "events.plain"],
-            StoresNotCommitted,
-            id="audit-uncertain-runs-its-priority-lane-only",
-        ),
-        pytest.param(
-            {DEFAULT_STORE: _Refused()},
-            ["events.priority", "events.publish", "events.plain"],
-            _Refused,
-            id="default-rolls-back-first",
-        ),
-    ],
-)
-async def test_each_store_runs_what_its_outcome_lets_run(
-    stores: _Stores,
-    failures: dict[StoreKey, BaseException],
-    ran: list[str],
-    error: type[BaseException] | None,
-) -> None:
-    FAILURES.update(failures)
-    use_case = _OnDefault(
-        stores.write_order(),
-        stores.queue("default"),
-        stores.gathered(),
-        stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
-        stores.run(_OnEvents(stores.queue("events"))),
-    )
-
-    with _raises(error):
-        await stores.executor.execute(use_case)
-
-    assert stores.ran == ran
-
-
-@pytest.mark.parametrize(
-    ("failures", "ran", "error"),
-    [
-        pytest.param({}, ["job.priority", "job.publish", "job.plain"], None, id="both-commit"),
-        pytest.param({AUDIT: _Refused()}, [], StoresNotCommitted, id="joined-rolls-back"),
-    ],
-)
-async def test_a_dispatch_runs_only_if_every_store_of_its_execution_committed(
-    stores: _Stores,
-    failures: dict[StoreKey, BaseException],
-    ran: list[str],
-    error: type[BaseException] | None,
-) -> None:
-    FAILURES.update(failures)
-    entries = cast("RepoFor[_Entry]", stores.entries)
-    use_case = _JoinsAudit(entries, stores.write_order(), stores.write_entry(), stores.queue("job"))
-
-    with _raises(error):
-        await stores.executor.execute(use_case)
-
-    assert stores.ran == ran
-
-
-@pytest.mark.parametrize(
-    ("failing", "bumped", "error"),
-    [
-        pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
-        pytest.param(AUDIT, False, _Refused, id="audit-rolled-back"),
-    ],
-)
-async def test_a_cache_invalidation_follows_the_store_of_its_repository(
-    stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
-) -> None:
-    FAILURES[failing] = _Refused()
-    backend = CountingCacheBackend()
-    cached = stores.cached_entries(backend)
-    use_case = _JoinsAudit(cached, stores.write_entry(cached), stores.write_order())
-
-    with pytest.raises(error):
-        await stores.executor.execute(use_case)
-
-    assert bool(backend.incr_keys) is bumped
-
-
-async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(stores: _Stores) -> None:
-    backend = CountingCacheBackend()
-    cached = stores.cached_entries(backend)
-
-    async with SQLAlchemyUnitOfWork(stores.audit):
-        await cached.create(_New(ref="by hand"))
-        bumped_inside = bool(backend.incr_keys)
-
-    assert (bumped_inside, bool(backend.incr_keys)) == (False, True)
-
-
-async def test_a_durable_write_bumps_even_if_its_invocation_fails(stores: _Stores) -> None:
-    """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
-    backend = CountingCacheBackend()
-    cached = stores.cached_entries(backend)
-
-    async def durable() -> None:
-        with unscoped():
-            await cached.create(_New(ref="durable"))
-
-    async def fail() -> None:
-        raise _BodyFails
-
-    use_case = _OnDefault(stores.write_order(), durable, fail)
-
-    with pytest.raises(_BodyFails):
-        await stores.executor.execute(use_case)
-
-    assert backend.incr_keys
-
-
 class _BodyFails(Exception):
     pass
-
-
-@pytest.mark.parametrize(
-    ("failure", "ran", "error"),
-    [
-        pytest.param(
-            None, ["default.priority", "default.publish", "default.plain"], None, id="commits"
-        ),
-        pytest.param(_BodyFails(), [], _BodyFails, id="body-raises"),
-        pytest.param(_Refused(), [], _Refused, id="rolls-back"),
-        pytest.param(
-            CommitUncertain(ConnectionError("ack lost")),
-            ["default.priority"],
-            StoresNotCommitted,
-            id="uncertain-runs-its-priority-lane-only",
-        ),
-    ],
-)
-async def test_a_use_case_run_inside_a_unit_of_work_entered_by_hand_waits_for_its_outcome(
-    stores: _Stores, failure: Exception | None, ran: list[str], error: type[Exception] | None
-) -> None:
-    """T099 P1/P2: never drained before the outer commit, and by its outcome (D4)."""
-    if failure is not None and not isinstance(failure, _BodyFails):
-        FAILURES[DEFAULT_STORE] = failure
-    uow = cast(SQLAlchemyUnitOfWork, _Sql(stores.default).create())
-    ran_inside: list[str] = []
-
-    async def by_hand() -> None:
-        async with uow:
-            await stores.executor.execute(_OnDefault(stores.queue("default")))
-            ran_inside.extend(stores.ran)
-            if isinstance(failure, _BodyFails):
-                raise failure
-
-    with _raises(error):
-        await by_hand()
-
-    assert (ran_inside, stores.ran) == ([], ran)
-
-
-async def test_clearing_the_dispatches_keeps_every_cache_invalidation(stores: _Stores) -> None:
-    async def clear() -> None:
-        clear_pending_dispatches()
-
-    use_case = _OnDefault(
-        stores.write_order(),
-        stores.queue("default"),
-        stores.gathered(),
-        stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
-        clear,
-    )
-
-    await stores.executor.execute(use_case)
-
-    assert stores.ran == ["default.priority", "audit.priority"]
-
-
-async def test_an_action_queued_after_the_settlement_never_runs(stores: _Stores) -> None:
-    FAILURES[AUDIT] = _Refused()
-    settled, queued = asyncio.Event(), asyncio.Event()
-    left_running: list[asyncio.Task[None]] = []
-
-    async def late() -> None:  # outlives the use case, sharing its context
-        await settled.wait()
-        add_pending_dispatch(stores.mark("late"))
-        queued.set()
-
-    async def wait_for_late() -> None:  # runs in the drain, after the settlement
-        settled.set()
-        await queued.wait()
-
-    async def spawn() -> None:
-        channel = store_channel()
-        assert channel is not None
-        channel.enqueue_priority(wait_for_late)
-        left_running.append(asyncio.create_task(late()))
-
-    use_case = _OnDefault(stores.write_order(), spawn, stores.run(_OnAudit(stores.write_entry())))
-
-    with pytest.raises(StoresNotCommitted):
-        await stores.executor.execute(use_case)
-    await left_running[0]
-
-    assert stores.ran == []
-
-
-async def test_a_cancellation_after_the_commit_still_runs_every_stores_shielded_lanes(
-    stores: _Stores,
-) -> None:
-    started, release, published = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-    async def gate() -> None:
-        started.set()
-        await release.wait()
-
-    async def park() -> None:
-        channel = store_channel()
-        assert channel is not None
-        channel.enqueue_priority(gate)
-
-    async def publish() -> None:
-        add_pending_publish(published.set)
-
-    use_case = _OnDefault(
-        stores.write_order(),
-        park,
-        stores.queue("default"),
-        stores.run(_OnAudit(stores.write_entry(), publish)),
-    )
-    task = asyncio.create_task(stores.executor.execute(use_case))
-    await started.wait()
-
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    release.set()
-    await published.wait()
-
-    assert stores.ran == ["default.priority", "default.publish"]
-
-
-async def test_sqs_jobs_leave_in_one_batch_per_store(stores: _Stores) -> None:
-    client = SQSClient()
-    service = sqs_service(client)
-    ids: list[str] = []
-
-    async def dispatch() -> None:
-        ids.append(service.dispatch(EmailJob).job_id)
-
-    use_case = _OnDefault(
-        stores.write_order(), dispatch, stores.run(_OnAudit(stores.write_entry(), dispatch))
-    )
-
-    await stores.executor.execute(use_case)
-
-    assert client.batches == [(SQS_URL, [ids[0]]), (SQS_URL, [ids[1]])]
 
 
 class _FailsWhenDone:
     def on_event(self, event: RuntimeEvent) -> None:
         if event.kind is EventKind.EXEC_DONE:
             raise _Failed
-
-
-async def test_a_failing_metrics_adapter_does_not_skip_the_actions(stores: _Stores) -> None:
-    executor = RuntimeExecutor(
-        UseCaseCompiler(),
-        coordinator=OrderedCommits({DEFAULT_STORE: _Sql(stores.default)}),
-        metrics=_FailsWhenDone(),
-    )
-    use_case = _OnDefault(stores.write_order(), stores.queue("default"))
-
-    with pytest.raises(_Failed):
-        await executor.execute(use_case)
-
-    assert stores.ran == ["default.priority", "default.publish", "default.plain"]
 
 
 async def _poison() -> None:
@@ -536,21 +257,6 @@ async def _fail() -> None:
     raise _Failed
 
 
-@pytest.mark.parametrize("failure", [_fail, _poison], ids=["use-case-fails", "poisoned"])
-async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
-    stores: _Stores, failure: Step
-) -> None:
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: _NoTransactions()})
-    )
-    use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)
-
-    with pytest.raises(_Failed):
-        await executor.execute(use_case)
-
-    assert stores.ran == ["default.priority"]
-
-
 class _Send:
     """A broker send naming its job and task for the logs, never its payload."""
 
@@ -561,29 +267,333 @@ class _Send:
         return [{"job_name": "EmailJob", "task_id": "task-1"}]
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [
-        pytest.param(CommitUncertain(ConnectionError("ack lost")), id="uncertain"),
-        pytest.param(_Refused(), id="rolled-back"),
-    ],
-)
-async def test_the_dispatches_a_store_drops_are_logged_by_job_and_task(
-    stores: _Stores, caplog: pytest.LogCaptureFixture, failure: BaseException
-) -> None:
-    FAILURES[AUDIT] = failure
+class TestStorePostCommit:
+    @pytest.mark.parametrize(
+        ("failures", "ran", "error"),
+        [
+            pytest.param(
+                {},
+                ["default.priority", "audit.priority", "events.priority"]
+                + ["default.publish", "audit.publish", "events.publish"]
+                + ["gathered", "default.plain", "audit.plain", "events.plain"],
+                None,
+                id="every-store-commits",
+            ),
+            pytest.param(
+                {AUDIT: _Refused()},
+                ["default.priority", "events.priority", "default.publish", "events.publish"]
+                + ["default.plain", "events.plain"],
+                StoresNotCommitted,
+                id="audit-rolls-back-after-default-committed",
+            ),
+            pytest.param(
+                {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
+                ["default.priority", "audit.priority", "events.priority"]
+                + ["default.publish", "events.publish", "default.plain", "events.plain"],
+                StoresNotCommitted,
+                id="audit-uncertain-runs-its-priority-lane-only",
+            ),
+            pytest.param(
+                {DEFAULT_STORE: _Refused()},
+                ["events.priority", "events.publish", "events.plain"],
+                _Refused,
+                id="default-rolls-back-first",
+            ),
+        ],
+    )
+    async def test_each_store_runs_what_its_outcome_lets_run(
+        self,
+        stores: _Stores,
+        failures: dict[StoreKey, BaseException],
+        ran: list[str],
+        error: type[BaseException] | None,
+    ) -> None:
+        FAILURES.update(failures)
+        use_case = _OnDefault(
+            stores.write_order(),
+            stores.queue("default"),
+            stores.gathered(),
+            stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
+            stores.run(_OnEvents(stores.queue("events"))),
+        )
 
-    async def send() -> None:
-        add_pending_publish(_Send())
+        with _raises(error):
+            await stores.executor.execute(use_case)
 
-    use_case = _OnDefault(stores.write_order(), stores.run(_OnAudit(stores.write_entry(), send)))
+        assert stores.ran == ran
 
-    with pytest.raises(StoresNotCommitted):
+    @pytest.mark.parametrize(
+        ("failures", "ran", "error"),
+        [
+            pytest.param({}, ["job.priority", "job.publish", "job.plain"], None, id="both-commit"),
+            pytest.param({AUDIT: _Refused()}, [], StoresNotCommitted, id="joined-rolls-back"),
+        ],
+    )
+    async def test_a_dispatch_runs_only_if_every_store_of_its_execution_committed(
+        self,
+        stores: _Stores,
+        failures: dict[StoreKey, BaseException],
+        ran: list[str],
+        error: type[BaseException] | None,
+    ) -> None:
+        FAILURES.update(failures)
+        entries = cast("RepoFor[_Entry]", stores.entries)
+        use_case = _JoinsAudit(
+            entries, stores.write_order(), stores.write_entry(), stores.queue("job")
+        )
+
+        with _raises(error):
+            await stores.executor.execute(use_case)
+
+        assert stores.ran == ran
+
+    @pytest.mark.parametrize(
+        ("failing", "bumped", "error"),
+        [
+            pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
+            pytest.param(AUDIT, False, _Refused, id="audit-rolled-back"),
+        ],
+    )
+    async def test_a_cache_invalidation_follows_the_store_of_its_repository(
+        self, stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
+    ) -> None:
+        FAILURES[failing] = _Refused()
+        backend = CountingCacheBackend()
+        cached = stores.cached_entries(backend)
+        use_case = _JoinsAudit(cached, stores.write_entry(cached), stores.write_order())
+
+        with pytest.raises(error):
+            await stores.executor.execute(use_case)
+
+        assert bool(backend.incr_keys) is bumped
+
+    async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(
+        self, stores: _Stores
+    ) -> None:
+        backend = CountingCacheBackend()
+        cached = stores.cached_entries(backend)
+
+        async with SQLAlchemyUnitOfWork(stores.audit):
+            await cached.create(_New(ref="by hand"))
+            bumped_inside = bool(backend.incr_keys)
+
+        assert (bumped_inside, bool(backend.incr_keys)) == (False, True)
+
+    async def test_a_durable_write_bumps_even_if_its_invocation_fails(
+        self, stores: _Stores
+    ) -> None:
+        """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
+        backend = CountingCacheBackend()
+        cached = stores.cached_entries(backend)
+
+        async def durable() -> None:
+            with unscoped():
+                await cached.create(_New(ref="durable"))
+
+        async def fail() -> None:
+            raise _BodyFails
+
+        use_case = _OnDefault(stores.write_order(), durable, fail)
+
+        with pytest.raises(_BodyFails):
+            await stores.executor.execute(use_case)
+
+        assert backend.incr_keys
+
+    @pytest.mark.parametrize(
+        ("failure", "ran", "error"),
+        [
+            pytest.param(
+                None, ["default.priority", "default.publish", "default.plain"], None, id="commits"
+            ),
+            pytest.param(_BodyFails(), [], _BodyFails, id="body-raises"),
+            pytest.param(_Refused(), [], _Refused, id="rolls-back"),
+            pytest.param(
+                CommitUncertain(ConnectionError("ack lost")),
+                ["default.priority"],
+                StoresNotCommitted,
+                id="uncertain-runs-its-priority-lane-only",
+            ),
+        ],
+    )
+    async def test_a_use_case_run_inside_a_unit_of_work_entered_by_hand_waits_for_its_outcome(
+        self,
+        stores: _Stores,
+        failure: Exception | None,
+        ran: list[str],
+        error: type[Exception] | None,
+    ) -> None:
+        """T099 P1/P2: never drained before the outer commit, and by its outcome (D4)."""
+        if failure is not None and not isinstance(failure, _BodyFails):
+            FAILURES[DEFAULT_STORE] = failure
+        uow = cast(SQLAlchemyUnitOfWork, _Sql(stores.default).create())
+        ran_inside: list[str] = []
+
+        async def by_hand() -> None:
+            async with uow:
+                await stores.executor.execute(_OnDefault(stores.queue("default")))
+                ran_inside.extend(stores.ran)
+                if isinstance(failure, _BodyFails):
+                    raise failure
+
+        with _raises(error):
+            await by_hand()
+
+        assert (ran_inside, stores.ran) == ([], ran)
+
+    async def test_clearing_the_dispatches_keeps_every_cache_invalidation(
+        self, stores: _Stores
+    ) -> None:
+        async def clear() -> None:
+            clear_pending_dispatches()
+
+        use_case = _OnDefault(
+            stores.write_order(),
+            stores.queue("default"),
+            stores.gathered(),
+            stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
+            clear,
+        )
+
         await stores.executor.execute(use_case)
 
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
-    ]
-    assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")
+        assert stores.ran == ["default.priority", "audit.priority"]
+
+    async def test_an_action_queued_after_the_settlement_never_runs(self, stores: _Stores) -> None:
+        FAILURES[AUDIT] = _Refused()
+        settled, queued = asyncio.Event(), asyncio.Event()
+        left_running: list[asyncio.Task[None]] = []
+
+        async def late() -> None:  # outlives the use case, sharing its context
+            await settled.wait()
+            add_pending_dispatch(stores.mark("late"))
+            queued.set()
+
+        async def wait_for_late() -> None:  # runs in the drain, after the settlement
+            settled.set()
+            await queued.wait()
+
+        async def spawn() -> None:
+            channel = store_channel()
+            assert channel is not None
+            channel.enqueue_priority(wait_for_late)
+            left_running.append(asyncio.create_task(late()))
+
+        use_case = _OnDefault(
+            stores.write_order(), spawn, stores.run(_OnAudit(stores.write_entry()))
+        )
+
+        with pytest.raises(StoresNotCommitted):
+            await stores.executor.execute(use_case)
+        await left_running[0]
+
+        assert stores.ran == []
+
+    async def test_a_cancellation_after_the_commit_still_runs_every_stores_shielded_lanes(
+        self,
+        stores: _Stores,
+    ) -> None:
+        started, release, published = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def gate() -> None:
+            started.set()
+            await release.wait()
+
+        async def park() -> None:
+            channel = store_channel()
+            assert channel is not None
+            channel.enqueue_priority(gate)
+
+        async def publish() -> None:
+            add_pending_publish(published.set)
+
+        use_case = _OnDefault(
+            stores.write_order(),
+            park,
+            stores.queue("default"),
+            stores.run(_OnAudit(stores.write_entry(), publish)),
+        )
+        task = asyncio.create_task(stores.executor.execute(use_case))
+        await started.wait()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await published.wait()
+
+        assert stores.ran == ["default.priority", "default.publish"]
+
+    async def test_sqs_jobs_leave_in_one_batch_per_store(self, stores: _Stores) -> None:
+        client = SQSClient()
+        service = sqs_service(client)
+        ids: list[str] = []
+
+        async def dispatch() -> None:
+            ids.append(service.dispatch(EmailJob).job_id)
+
+        use_case = _OnDefault(
+            stores.write_order(), dispatch, stores.run(_OnAudit(stores.write_entry(), dispatch))
+        )
+
+        await stores.executor.execute(use_case)
+
+        assert client.batches == [(SQS_URL, [ids[0]]), (SQS_URL, [ids[1]])]
+
+    async def test_a_failing_metrics_adapter_does_not_skip_the_actions(
+        self, stores: _Stores
+    ) -> None:
+        executor = RuntimeExecutor(
+            UseCaseCompiler(),
+            coordinator=OrderedCommits({DEFAULT_STORE: _Sql(stores.default)}),
+            metrics=_FailsWhenDone(),
+        )
+        use_case = _OnDefault(stores.write_order(), stores.queue("default"))
+
+        with pytest.raises(_Failed):
+            await executor.execute(use_case)
+
+        assert stores.ran == ["default.priority", "default.publish", "default.plain"]
+
+    @pytest.mark.parametrize("failure", [_fail, _poison], ids=["use-case-fails", "poisoned"])
+    async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
+        self, stores: _Stores, failure: Step
+    ) -> None:
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: _NoTransactions()})
+        )
+        use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)
+
+        with pytest.raises(_Failed):
+            await executor.execute(use_case)
+
+        assert stores.ran == ["default.priority"]
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            pytest.param(CommitUncertain(ConnectionError("ack lost")), id="uncertain"),
+            pytest.param(_Refused(), id="rolled-back"),
+        ],
+    )
+    async def test_the_dispatches_a_store_drops_are_logged_by_job_and_task(
+        self, stores: _Stores, caplog: pytest.LogCaptureFixture, failure: BaseException
+    ) -> None:
+        FAILURES[AUDIT] = failure
+
+        async def send() -> None:
+            add_pending_publish(_Send())
+
+        use_case = _OnDefault(
+            stores.write_order(), stores.run(_OnAudit(stores.write_entry(), send))
+        )
+
+        with pytest.raises(StoresNotCommitted):
+            await stores.executor.execute(use_case)
+
+        (fields,) = [
+            record.msg
+            for record in caplog.records
+            if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
+        ]
+        assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")
