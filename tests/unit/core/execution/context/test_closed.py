@@ -25,12 +25,9 @@ from loom.core.identity import (
     set_identity,
 )
 from tests.helpers.delegation import acting_as
+from tests.unit.core.execution.context.doubles import PlannedFailure
 
 _ALICE = Identity(subject="acme-alice", mechanism="test")
-
-
-class _Boom(Exception):
-    pass
 
 
 class TestExecutionIdentity:
@@ -75,14 +72,14 @@ class TestExitPaths:
     """Every exit path closes the execution."""
 
     def test_a_raising_body_closes_the_execution(self) -> None:
-        with pytest.raises(_Boom), ExecutionScope(_ALICE):
-            raise _Boom
+        with pytest.raises(PlannedFailure), ExecutionScope(_ALICE):
+            raise PlannedFailure
         assert current_execution() is None
 
         token = enter(_ALICE)
-        with pytest.raises(_Boom):
+        with pytest.raises(PlannedFailure):
             try:
-                raise _Boom
+                raise PlannedFailure
             finally:
                 leave(token)
         assert current_execution() is None

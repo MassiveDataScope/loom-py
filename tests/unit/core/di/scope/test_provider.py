@@ -19,46 +19,45 @@ class AcmeDefaults(AcmePort):
         self.region, self.retries = region, retries
 
 
-class AcmeVariadic(AcmePort):
+class AcmeVariadicPort(AcmePort):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args, self.kwargs = args, kwargs
 
 
-@pytest.mark.parametrize("impl", [AcmeDefaults, AcmeVariadic])
-def test_a_class_needing_no_argument_is_built_with_none(impl: type[AcmePort]) -> None:
-    container = LoomContainer()
-    container.register(AcmePort, impl)
+class TestZeroArgumentConstruction:
+    @pytest.mark.parametrize("impl", [AcmeDefaults, AcmeVariadicPort])
+    def test_a_class_needing_no_argument_is_built_with_none(self, impl: type[AcmePort]) -> None:
+        container = LoomContainer()
+        container.register(AcmePort, impl)
 
-    built = container.resolve(AcmePort)
+        built = container.resolve(AcmePort)
 
-    assert type(built) is impl
-    assert vars(built) in ({"region": "eu", "retries": 3}, {"args": (), "kwargs": {}})
+        assert type(built) is impl
+        assert vars(built) in ({"region": "eu", "retries": 3}, {"args": (), "kwargs": {}})
 
+    @pytest.mark.parametrize("scope", list(Scope))
+    def test_a_provider_is_called_with_no_argument(self, scope: Scope) -> None:
+        calls: list[int] = []
 
-@pytest.mark.parametrize("scope", list(Scope))
-def test_a_provider_is_called_with_no_argument(scope: Scope) -> None:
-    calls: list[int] = []
+        def provide() -> AcmePort:
+            calls.append(1)
+            return AcmePort()
 
-    def provide() -> AcmePort:
-        calls.append(1)
-        return AcmePort()
+        container = LoomContainer()
+        container.register(AcmePort, provide, scope=scope)
 
-    container = LoomContainer()
-    container.register(AcmePort, provide, scope=scope)
+        with ExecutionScope(ANONYMOUS):
+            container.resolve(AcmePort)
+            container.resolve(AcmePort)
 
-    with ExecutionScope(ANONYMOUS):
-        container.resolve(AcmePort)
-        container.resolve(AcmePort)
+        assert calls == [1]
 
-    assert calls == [1]
+    def test_a_registered_instance_is_served_as_is_inside_and_outside_an_execution(self) -> None:
+        port = AcmePort()
+        container = LoomContainer()
+        container.register_instance(AcmePort, port)
 
+        with ExecutionScope(ANONYMOUS):
+            inside = container.resolve(AcmePort)
 
-def test_a_registered_instance_is_served_as_is_inside_and_outside_an_execution() -> None:
-    port = AcmePort()
-    container = LoomContainer()
-    container.register_instance(AcmePort, port)
-
-    with ExecutionScope(ANONYMOUS):
-        inside = container.resolve(AcmePort)
-
-    assert inside is port is container.resolve(AcmePort)
+        assert inside is port is container.resolve(AcmePort)

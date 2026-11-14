@@ -8,5 +8,13 @@ ACME_ALICE = Identity(subject="acme-alice", mechanism="test")
 ACME_BOB = Identity(subject="acme-bob", mechanism="test")
 
 
-class AcmeSession:
+class AcmePerExecutionValue:
     """A per-execution value."""
+
+
+class AcmeBuiltSession:
+    """Built per execution."""
+
+
+class PlannedFailure(Exception):
+    pass

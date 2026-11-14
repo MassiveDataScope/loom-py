@@ -33,28 +33,29 @@ class AcmeCountingKinds(ExecutionKinds):
         return super().resolve(kind, declaration, annotation)
 
 
-class AcmePingUseCase(UseCase[object, str]):
+class AcmePongUseCase(UseCase[object, str]):
     async def execute(self) -> str:
         return "pong"
 
 
-@pytest.mark.parametrize("identity", [None, _ACME], ids=["no-identity", "identity"])
-async def test_no_execution_binding_enters_one_execution_and_reads_no_registry(
-    identity: Identity | None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    entered: list[Identity | None] = []
+class TestAnExecutionFreePlan:
+    @pytest.mark.parametrize("identity", [None, _ACME], ids=["no-identity", "identity"])
+    async def test_no_execution_binding_enters_one_execution_and_reads_no_registry(
+        self, identity: Identity | None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entered: list[Identity | None] = []
 
-    def counting(given: Identity | None, *args: Any) -> Token[ExecutionContext | None]:
-        entered.append(given)
-        return enter(given, *args)
+        def counting(given: Identity | None, *args: Any) -> Token[ExecutionContext | None]:
+            entered.append(given)
+            return enter(given, *args)
 
-    monkeypatch.setattr(executor_module, "enter", counting)
-    kinds = AcmeCountingKinds()
-    compiler = UseCaseCompiler()
-    plan = compiler.compile(AcmePingUseCase)
-    executor = RuntimeExecutor(compiler, resolvers=kinds)
+        monkeypatch.setattr(executor_module, "enter", counting)
+        kinds = AcmeCountingKinds()
+        compiler = UseCaseCompiler()
+        plan = compiler.compile(AcmePongUseCase)
+        executor = RuntimeExecutor(compiler, resolvers=kinds)
 
-    assert await executor.execute(AcmePingUseCase(), identity=identity) == "pong"
-    assert plan.execution_bindings == ()
-    assert kinds.reads == 0
-    assert entered == [identity]
+        assert await executor.execute(AcmePongUseCase(), identity=identity) == "pong"
+        assert plan.execution_bindings == ()
+        assert kinds.reads == 0
+        assert entered == [identity]

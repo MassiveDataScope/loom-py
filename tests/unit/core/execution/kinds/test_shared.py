@@ -17,14 +17,15 @@ from tests.unit.core.bootstrap.kernel.components import AcmeConfig, AcmePing
 _ACME = Identity(subject="acme-alice", mechanism="test")
 
 
-def test_the_kernel_executor_uses_the_container_kinds_with_the_caller_bound() -> None:
-    kernel = create_kernel(config=AcmeConfig(), use_cases=[AcmePing])
-    kinds = kernel.container.kinds
+class TestSharedKernelKinds:
+    def test_the_kernel_executor_uses_the_container_kinds_with_the_caller_bound(self) -> None:
+        kernel = create_kernel(config=AcmeConfig(), use_cases=[AcmePing])
+        kinds = kernel.container.kinds
 
-    assert kernel.executor._kinds is kinds  # noqa: SLF001 - the shared registry is the contract
-    assert kinds.kind_for(Caller(), Identity) is CALLER
-    assert kinds.kind_for(Agent("acme-triage"), Any) is AGENT
-    with pytest.raises(ExecutionRequired):
-        kinds.resolve(CALLER, Caller(), Identity)
-    with ExecutionScope(_ACME):
-        assert kinds.resolve(CALLER, Caller(), Identity) is _ACME
+        assert kernel.executor._kinds is kinds  # noqa: SLF001 - the shared registry is the contract
+        assert kinds.kind_for(Caller(), Identity) is CALLER
+        assert kinds.kind_for(Agent("acme-triage"), Any) is AGENT
+        with pytest.raises(ExecutionRequired):
+            kinds.resolve(CALLER, Caller(), Identity)
+        with ExecutionScope(_ACME):
+            assert kinds.resolve(CALLER, Caller(), Identity) is _ACME

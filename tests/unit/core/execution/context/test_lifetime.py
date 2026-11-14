@@ -36,7 +36,7 @@ from loom.core.identity import (
     set_identity,
 )
 from tests.helpers.loggers import RecordingLogger
-from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmeSession
+from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmePerExecutionValue
 
 Outliving = Callable[..., Awaitable["asyncio.Task[object]"]]
 
@@ -135,7 +135,7 @@ class TestATaskOutlivingItsExecution:
     async def test_a_per_execution_value_built_before_the_end_raises_execution_closed(
         self, outliving: Outliving
     ) -> None:
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         task = await outliving(session, inside=session)
 
@@ -145,7 +145,7 @@ class TestATaskOutlivingItsExecution:
     async def test_a_per_execution_value_never_built_raises_execution_closed(
         self, outliving: Outliving
     ) -> None:
-        task = await outliving(per_execution(AcmeSession, AcmeSession))
+        task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
         with pytest.raises(ExecutionClosed):
             await task
@@ -164,7 +164,7 @@ class TestATaskOutlivingItsExecution:
     async def test_the_error_names_the_supported_paths_for_background_work(
         self, outliving: Outliving
     ) -> None:
-        task = await outliving(per_execution(AcmeSession, AcmeSession))
+        task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
         with pytest.raises(ExecutionClosed) as caught:
             await task
@@ -176,7 +176,7 @@ class TestATaskOutlivingItsExecution:
     async def test_each_refused_read_logs_the_guidance_once_without_the_caller(
         self, outliving: Outliving, recorded: RecordingLogger
     ) -> None:
-        task = await outliving(per_execution(AcmeSession, AcmeSession))
+        task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
         with pytest.raises(ExecutionClosed):
             await task
@@ -188,7 +188,7 @@ class TestATaskOutlivingItsExecution:
         assert ACME_ALICE.subject not in repr(recorded.calls)
 
     async def test_execution_closed_is_an_execution_required(self, outliving: Outliving) -> None:
-        task = await outliving(per_execution(AcmeSession, AcmeSession))
+        task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
         with pytest.raises(ExecutionRequired):
             await task
@@ -200,11 +200,11 @@ class TestATaskOutlivingItsExecution:
             await release.wait()
 
         with ExecutionScope(ACME_ALICE):
-            value = AcmeSession()
+            value = AcmePerExecutionValue()
             kept = weakref.ref(value)
             context = current_execution()
             assert context is not None
-            context.store(AcmeSession, value)
+            context.store(AcmePerExecutionValue, value)
             task = asyncio.create_task(late())
         del value
         gc.collect()
@@ -217,7 +217,7 @@ class TestATaskOutlivingItsExecution:
         self,
     ) -> None:
         release = threading.Event()
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         def late() -> object:
             release.wait(timeout=5)
@@ -242,7 +242,7 @@ class TestWorkAwaitedInsideItsExecution:
         assert execution_ended() is False
 
     async def test_gathered_children_read_the_identity_and_share_the_cache(self) -> None:
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         async def child() -> tuple[Identity, object]:
             await asyncio.sleep(0)
@@ -276,7 +276,7 @@ class TestWorkAwaitedInsideItsExecution:
         assert seen is ACME_ALICE
 
     async def test_to_thread_reads_the_identity_and_the_execution_value(self) -> None:
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         with ExecutionScope(ACME_ALICE):
             built = session()
@@ -309,7 +309,7 @@ class TestWorkAwaitedInsideItsExecution:
     ) -> None:
         started, release = asyncio.Event(), asyncio.Event()
         children: list[asyncio.Task[object]] = []
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         async def child() -> object:
             await release.wait()
@@ -335,7 +335,7 @@ class TestWorkAwaitedInsideItsExecution:
 class TestANestedExecutionEnding:
     async def test_closes_only_the_nested_execution(self) -> None:
         release = asyncio.Event()
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         async def late() -> object:
             await release.wait()
@@ -373,7 +373,7 @@ class TestANestedExecutionEnding:
         assert (switch["from_subject"], switch["to_subject"]) == (from_subject, ACME_BOB.subject)
 
     def test_the_enclosing_execution_keeps_its_cache(self) -> None:
-        session = per_execution(AcmeSession, AcmeSession)
+        session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)
 
         with ExecutionScope(ACME_ALICE):
             outer = session()

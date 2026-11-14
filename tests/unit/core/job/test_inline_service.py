@@ -18,7 +18,7 @@ class DoubleJob(Job[int]):
         return value * 2
 
 
-class SyncJob(Job[str]):
+class UpperJob(Job[str]):
     def execute(self, text: str) -> str:  # type: ignore[override]
         return text.upper()
 
@@ -41,131 +41,120 @@ def _make_service(return_value: Any = 42) -> InlineJobService:
 # ---------------------------------------------------------------------------
 
 
-async def test_run_executes_immediately_and_returns_result() -> None:
-    service = _make_service(return_value=10)
-    result = await service.run(DoubleJob, params={"value": 5})
-    assert result == 10
-    service._executor.run.assert_awaited_once()  # type: ignore[attr-defined]
+class TestInProcessJobService:
+    async def test_run_executes_immediately_and_returns_result(self) -> None:
+        service = _make_service(return_value=10)
+        result = await service.run(DoubleJob, params={"value": 5})
+        assert result == 10
+        service._executor.run.assert_awaited_once()  # type: ignore[attr-defined]
 
+    # ---------------------------------------------------------------------------
+    # dispatch() — post-commit semantics
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# dispatch() — post-commit semantics
-# ---------------------------------------------------------------------------
+    def test_dispatch_does_not_execute_immediately(self) -> None:
+        service = _make_service()
+        service.dispatch(DoubleJob, payload={})
+        service._executor.run.assert_not_awaited()  # type: ignore[attr-defined]
 
+    def test_dispatch_returns_handle_with_uuid(self) -> None:
+        service = _make_service()
+        handle = service.dispatch(DoubleJob)
+        assert isinstance(handle, JobHandle)
+        assert len(handle.job_id) == 36  # UUID4 format
 
-def test_dispatch_does_not_execute_immediately() -> None:
-    service = _make_service()
-    service.dispatch(DoubleJob, payload={})
-    service._executor.run.assert_not_awaited()  # type: ignore[attr-defined]
+    async def test_dispatch_then_flush_executes_and_fills_result_holder(self) -> None:
+        service = _make_service(return_value=99)
+        handle = service.dispatch(DoubleJob, payload={})
+        assert handle._inline_result_holder == []
+        await flush_pending_dispatches()
+        assert handle._inline_result_holder == [99]
+        assert handle.wait() == 99
 
+    def test_dispatch_respects_queue_override(self) -> None:
+        service = _make_service()
+        handle = service.dispatch(DoubleJob, queue="custom-queue")
+        assert handle.queue == "custom-queue"
 
-def test_dispatch_returns_handle_with_uuid() -> None:
-    service = _make_service()
-    handle = service.dispatch(DoubleJob)
-    assert isinstance(handle, JobHandle)
-    assert len(handle.job_id) == 36  # UUID4 format
+    def test_dispatch_uses_job_default_queue_when_not_overridden(self) -> None:
+        service = _make_service()
+        handle = service.dispatch(DoubleJob)
+        assert handle.queue == DoubleJob.__queue__
 
+    # ---------------------------------------------------------------------------
+    # Callbacks
+    # ---------------------------------------------------------------------------
 
-async def test_dispatch_then_flush_executes_and_fills_result_holder() -> None:
-    service = _make_service(return_value=99)
-    handle = service.dispatch(DoubleJob, payload={})
-    assert handle._inline_result_holder == []
-    await flush_pending_dispatches()
-    assert handle._inline_result_holder == [99]
-    assert handle.wait() == 99
+    async def test_dispatch_calls_on_success_callback_after_flush(self) -> None:
+        success_calls: list[str] = []
 
+        class RecordCallback:
+            def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
+                success_calls.append(job_id)
 
-def test_dispatch_respects_queue_override() -> None:
-    service = _make_service()
-    handle = service.dispatch(DoubleJob, queue="custom-queue")
-    assert handle.queue == "custom-queue"
+            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+                # No-op by design: this test validates the success callback path.
+                return None
 
+        factory = MagicMock()
+        executor = MagicMock()
+        executor.run = AsyncMock(return_value=7)
+        factory.build = MagicMock(
+            side_effect=lambda cls: RecordCallback() if cls is not DoubleJob else MagicMock()
+        )
 
-def test_dispatch_uses_job_default_queue_when_not_overridden() -> None:
-    service = _make_service()
-    handle = service.dispatch(DoubleJob)
-    assert handle.queue == DoubleJob.__queue__
+        service = InlineJobService(factory=factory, executor=executor)
+        handle = service.dispatch(DoubleJob, on_success=RecordCallback)
+        await flush_pending_dispatches()
 
+        assert handle.wait() == 7
+        assert len(success_calls) == 1
 
-# ---------------------------------------------------------------------------
-# Callbacks
-# ---------------------------------------------------------------------------
+    async def test_dispatch_calls_on_failure_callback_on_exception(self) -> None:
+        failure_calls: list[str] = []
 
+        class ErrCallback:
+            def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
+                # No-op by design: this test validates the failure callback path.
+                return None
 
-async def test_dispatch_calls_on_success_callback_after_flush() -> None:
-    success_calls: list[str] = []
+            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+                failure_calls.append(exc_type)
 
-    class RecordCallback:
-        def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
-            success_calls.append(job_id)
+        factory = MagicMock()
+        executor = MagicMock()
+        executor.run = AsyncMock(side_effect=ValueError("boom"))
+        factory.build = MagicMock(
+            side_effect=lambda cls: ErrCallback() if cls is not DoubleJob else MagicMock()
+        )
 
-        def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
-            # No-op by design: this test validates the success callback path.
-            return None
+        service = InlineJobService(factory=factory, executor=executor)
+        service.dispatch(DoubleJob, on_failure=ErrCallback)
 
-    factory = MagicMock()
-    executor = MagicMock()
-    executor.run = AsyncMock(return_value=7)
-    factory.build = MagicMock(
-        side_effect=lambda cls: RecordCallback() if cls is not DoubleJob else MagicMock()
-    )
+        # fire-and-forget: exception is silenced after the failure callback runs
+        await flush_pending_dispatches()
 
-    service = InlineJobService(factory=factory, executor=executor)
-    handle = service.dispatch(DoubleJob, on_success=RecordCallback)
-    await flush_pending_dispatches()
+        assert failure_calls == ["ValueError"]
 
-    assert handle.wait() == 7
-    assert len(success_calls) == 1
+    # ---------------------------------------------------------------------------
+    # dispatch_parallel()
+    # ---------------------------------------------------------------------------
 
+    def test_dispatch_parallel_returns_job_group(self) -> None:
+        service = _make_service(return_value=1)
+        group = service.dispatch_parallel([(DoubleJob, {}), (UpperJob, {})])
+        assert isinstance(group, JobGroup)
+        assert len(group.handles) == 2
 
-async def test_dispatch_calls_on_failure_callback_on_exception() -> None:
-    failure_calls: list[str] = []
+    async def test_dispatch_parallel_all_execute_after_flush(self) -> None:
+        results = [10, 20]
+        executor = MagicMock()
+        executor.run = AsyncMock(side_effect=results)
+        factory = MagicMock()
+        factory.build = MagicMock(return_value=MagicMock())
 
-    class ErrCallback:
-        def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
-            # No-op by design: this test validates the failure callback path.
-            return None
+        service = InlineJobService(factory=factory, executor=executor)
+        group = service.dispatch_parallel([(DoubleJob, {}), (UpperJob, {})])
+        await flush_pending_dispatches()
 
-        def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
-            failure_calls.append(exc_type)
-
-    factory = MagicMock()
-    executor = MagicMock()
-    executor.run = AsyncMock(side_effect=ValueError("boom"))
-    factory.build = MagicMock(
-        side_effect=lambda cls: ErrCallback() if cls is not DoubleJob else MagicMock()
-    )
-
-    service = InlineJobService(factory=factory, executor=executor)
-    service.dispatch(DoubleJob, on_failure=ErrCallback)
-
-    # fire-and-forget: exception is silenced after the failure callback runs
-    await flush_pending_dispatches()
-
-    assert failure_calls == ["ValueError"]
-
-
-# ---------------------------------------------------------------------------
-# dispatch_parallel()
-# ---------------------------------------------------------------------------
-
-
-def test_dispatch_parallel_returns_job_group() -> None:
-    service = _make_service(return_value=1)
-    group = service.dispatch_parallel([(DoubleJob, {}), (SyncJob, {})])
-    assert isinstance(group, JobGroup)
-    assert len(group.handles) == 2
-
-
-async def test_dispatch_parallel_all_execute_after_flush() -> None:
-    results = [10, 20]
-    executor = MagicMock()
-    executor.run = AsyncMock(side_effect=results)
-    factory = MagicMock()
-    factory.build = MagicMock(return_value=MagicMock())
-
-    service = InlineJobService(factory=factory, executor=executor)
-    group = service.dispatch_parallel([(DoubleJob, {}), (SyncJob, {})])
-    await flush_pending_dispatches()
-
-    assert group.wait_all() == [10, 20]
+        assert group.wait_all() == [10, 20]

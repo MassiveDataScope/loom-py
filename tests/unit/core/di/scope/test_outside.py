@@ -36,24 +36,25 @@ def _bound(scope: Scope) -> LoomContainer:
     return container
 
 
-def test_a_singleton_first_resolved_inside_an_execution_through_a_legacy_resolver_fails() -> None:
-    container = _bound(Scope.APPLICATION)
+class TestResolutionOutsideAnExecution:
+    def test_a_singleton_first_resolved_inside_an_execution_through_a_legacy_resolver_fails(
+        self,
+    ) -> None:
+        container = _bound(Scope.APPLICATION)
 
-    with ExecutionScope(ANONYMOUS), pytest.raises(ExecutionRequired):
-        container.resolve(AcmeTriage)
+        with ExecutionScope(ANONYMOUS), pytest.raises(ExecutionRequired):
+            container.resolve(AcmeTriage)
 
+    def test_a_per_execution_adapter_resolves_its_handle_as_the_caller(self) -> None:
+        container = _bound(Scope.REQUEST)
 
-def test_a_per_execution_adapter_resolves_its_handle_as_the_caller() -> None:
-    container = _bound(Scope.REQUEST)
+        with ExecutionScope(ANONYMOUS):
+            triage = container.resolve(AcmeTriage)
 
-    with ExecutionScope(ANONYMOUS):
-        triage = container.resolve(AcmeTriage)
+        assert triage.agent == ("acme-triage", ANONYMOUS)
 
-    assert triage.agent == ("acme-triage", ANONYMOUS)
+    def test_a_per_execution_adapter_resolved_outside_an_execution_fails_closed(self) -> None:
+        container = _bound(Scope.REQUEST)
 
-
-def test_a_per_execution_adapter_resolved_outside_an_execution_fails_closed() -> None:
-    container = _bound(Scope.REQUEST)
-
-    with pytest.raises(ExecutionRequired):
-        container.resolve(AcmeTriage)
+        with pytest.raises(ExecutionRequired):
+            container.resolve(AcmeTriage)

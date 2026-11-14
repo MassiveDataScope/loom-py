@@ -15,7 +15,7 @@ explicit identities and none. At every step the test checks:
   identity are current again, and after each tree no execution remains and the
   transport's identity is back;
 - an assertion failing inside a gathered task fails the test: ``gather``
-  collects results, and anything but the planned ``_Boom`` and cancellation
+  collects results, and anything but the planned ``PlannedFailure`` and cancellation
   is raised again.
 
 ``hypothesis`` is not a dependency of this repository, so the trees come from
@@ -42,16 +42,13 @@ from loom.core.identity import (
 )
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.delegation import acting_as
+from tests.unit.core.execution.context.doubles import PlannedFailure
 
 _ALICE = Identity(subject="acme-alice", mechanism="test")
 _BOB = Identity(subject="acme-bob", mechanism="test")
 _AMBIENT = Identity(subject="acme-transport", mechanism="test")
 _IDENTITIES = (None, None, _ALICE, _BOB, ANONYMOUS)
 _TREES = 300
-
-
-class _Boom(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -114,12 +111,12 @@ async def _play(steps: tuple[_Step, ...], expected: Identity | None) -> None:
         before = current_execution()
         match step:
             case _Run():
-                with suppress(_Boom):
+                with suppress(PlannedFailure):
                     await _execute(step)
             case _Gather():
                 await _gather(step)
             case _Fail():
-                raise _Boom
+                raise PlannedFailure
             case _Cancel():
                 task = asyncio.current_task()
                 assert task is not None
@@ -134,7 +131,7 @@ async def _gather(step: _Gather) -> None:
     tasks = (asyncio.create_task(_execute(run)) for run in step.runs)
     for result in await asyncio.gather(*tasks, return_exceptions=True):
         if isinstance(result, BaseException) and not isinstance(
-            result, (_Boom, asyncio.CancelledError)
+            result, (PlannedFailure, asyncio.CancelledError)
         ):
             raise result
 
@@ -168,7 +165,7 @@ class TestExecutionAndAmbientIdentity:
             root = _Run(rng.choice(_IDENTITIES), _tree(rng, 3, in_task=False))
             try:
                 with acting_as(_AMBIENT):
-                    with suppress(_Boom):
+                    with suppress(PlannedFailure):
                         await _execute(root)
                     assert current_execution() is None
                     assert current_caller() is _AMBIENT
