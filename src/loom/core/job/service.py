@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 # The type annotation is kept in TYPE_CHECKING only.
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from loom.core.identity import ANONYMOUS, Identity, current_identity
+from loom.core.identity import Identity, delegation, reset_identity, set_identity
 from loom.core.job.callback import JobCallback, run_on_failure, run_on_success
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
@@ -46,17 +46,28 @@ class _PendingDispatch:
     result_holder: list[Any]
     factory: UseCaseFactory
     executor: RuntimeExecutor = field(repr=False)
-    identity: Identity = ANONYMOUS
+    captured: tuple[Identity | None, float | None] = (None, None)
+    """The dispatcher's caller and deadline (:func:`~loom.core.identity.delegation`)."""
 
     async def run(self) -> None:
-        """Build the job, execute it, store the result, and invoke callbacks."""
+        """Run the job, then its callback, as the dispatcher, within the captured delegation.
+
+        Where its dispatcher acts (drained by the work that dispatched it), it
+        runs as is. Elsewhere it resumes the captured delegation, refused
+        past its deadline when the job's execution starts; inside work acting
+        as anyone else, resuming it raises
+        :class:`~loom.core.identity.IdentityFixed`: it fails closed.
+        """
+        caller, until = self.captured
+        # Compared in the captured form: delegation() maps ANONYMOUS to None.
+        acting = delegation()[0]
+        token = None if acting is caller or acting == caller else set_identity(caller, until=until)
         try:
             result: Any = await self.executor.run(
                 self.job_type,
                 factory=self.factory,
                 params=self.params,
                 payload=self.payload,
-                identity=self.identity,
             )
             self.result_holder.append(result)
             if self.on_success is not None:
@@ -73,6 +84,9 @@ class _PendingDispatch:
                     str(exc),
                     self.payload,
                 )
+        finally:
+            if token is not None:
+                reset_identity(token)
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +199,12 @@ class InlineJobService:
     execution without one).  Outside an execution the fallback channel
     holds it until :func:`~loom.core.job.context.flush_pending_dispatches`.
 
-    A job runs as :func:`~loom.core.identity.current_identity` at the time of
-    the call, which inside an execution is the identity that execution was
-    given. With no transport and no execution to set one, that is
-    :data:`~loom.core.identity.identity.ANONYMOUS`.
+    A dispatched job, and its callbacks, act as
+    :func:`~loom.core.identity.current_caller` at the time of the dispatch:
+    the authenticated caller acting there, else no caller, with the deadline
+    of its delegation (:func:`~loom.core.identity.delegation`), exactly as
+    the Celery and SQS services capture it. :meth:`run` acts as the identity
+    acting, as any execution given none.
 
     Args:
         factory: Used to build Job and callback instances from the container.
@@ -236,7 +252,6 @@ class InlineJobService:
             factory=self._factory,
             params=params,
             payload=payload,
-            identity=current_identity(),
         )
         return result
 
@@ -288,7 +303,7 @@ class InlineJobService:
             executor=self._executor,
             # Captured now, not at flush time: the dispatch belongs to the
             # caller that requested it, whatever runs the queue afterwards.
-            identity=current_identity(),
+            captured=delegation(),
         )
         add_pending_dispatch(pending.run)
         return JobHandle(

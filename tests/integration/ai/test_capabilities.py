@@ -14,6 +14,7 @@ FR-046b, and the capability kinds the adapter announces.
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -59,17 +60,19 @@ from loom.ai.errors import AgentCompilationError, AgentRunErrorCode
 from loom.ai.runtime import AgentRunError
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
+from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.errors import Forbidden
-from loom.core.identity import ANONYMOUS, Identity, current_identity
+from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model.redaction import Dsn
 from loom.core.sql.abc import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.sql.service import SqlQueryService
 from loom.core.use_case import Caller
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
+from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from tests.integration.ai.conftest import make_plan, make_policies
 
@@ -130,6 +133,20 @@ class WhoAmIUseCase(UseCase[object, str]):
         return caller.subject
 
 
+class RenameProduct(Command, frozen=True):
+    """The command a rename carries as its payload."""
+
+    name: str
+
+
+class RenameProductUseCase(UseCase[object, str]):
+    """Granted operation taking a parameter and a command payload."""
+
+    async def execute(self, product_id: str, cmd: RenameProduct = Input()) -> str:
+        """Return a confirmation for the rename."""
+        return f"renamed {product_id} to {cmd.name}"
+
+
 def _compile_use_cases() -> None:
     compiler = UseCaseCompiler()
     for use_case in (
@@ -137,6 +154,7 @@ def _compile_use_cases() -> None:
         GetProductUseCase,
         DeleteProductUseCase,
         WhoAmIUseCase,
+        RenameProductUseCase,
     ):
         compiler.compile(use_case)
 
@@ -208,13 +226,14 @@ class RecordedInvocation:
         use_case: Type the capability asked the invoker to run.
         params: Primitive parameters handed over.
         payload: Command payload handed over, if any.
-        identity: Ambient identity *inside* the invocation (FR-043).
+        identity: Caller the invoker was bound to (FR-043): the real
+            ``AppInvoker.for_identity`` makes the executor act as it.
     """
 
     use_case: type[Compilable]
     params: Mapping[str, Any]
     payload: Mapping[str, Any] | None
-    identity: Identity
+    identity: Identity | None
 
 
 class RecordingInvoker:
@@ -230,6 +249,13 @@ class RecordingInvoker:
         self.result = result
         self.failure = failure
         self.calls: list[RecordedInvocation] = []
+        self.identity: Identity | None = None
+
+    def for_identity(self, identity: Identity) -> RecordingInvoker:
+        """A copy bound to *identity*, recording into the same ``calls``, as ``AppInvoker``'s."""
+        bound = copy.copy(self)
+        bound.identity = identity
+        return bound
 
     async def invoke(
         self,
@@ -238,13 +264,13 @@ class RecordingInvoker:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> str:
-        """Record the call, the ambient identity, and return the fixed result."""
+        """Record the call, the caller it is bound to, and return the fixed result."""
         self.calls.append(
             RecordedInvocation(
                 use_case=use_case,
                 params=dict(params or {}),
                 payload=dict(payload) if payload is not None else None,
-                identity=current_identity(),
+                identity=self.identity,
             )
         )
         if self.failure is not None:
@@ -366,9 +392,11 @@ class CapabilityDepsFactory:
         container: LoomContainer,
         state: Mapping[str, Any] | None = None,
     ) -> object:
-        """Return the bundle carrying the caller, the container and the invoker."""
+        """Return the bundle carrying the caller, the container and the invoker bound to it."""
         registered = container.is_registered(ApplicationInvoker)
         invoker = container.resolve(ApplicationInvoker) if registered else None
+        if isinstance(invoker, RecordingInvoker):
+            invoker = invoker.for_identity(identity)  # as AgentDeps binds AppInvoker
         return CapabilityDeps(identity=identity, container=container, invoker=invoker)
 
 
@@ -611,6 +639,36 @@ class TestIdentity:
             await engine.run("hello", identity=ANALYST)
 
         assert (failure.value.code, invoker.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
+
+
+class TestInvocation:
+    async def test_the_parameters_and_the_payload_reach_the_bound_invoker(
+        self, app_container: LoomContainer, invoker: RecordingInvoker
+    ) -> None:
+        """What the model sends is what the use case receives, as the caller."""
+        arguments = {"product_id": "p-1", "cmd": {"name": "widget"}}
+        model = ScriptedToolModel(calls=(("usecase_product_rename", arguments),))
+        engine = build_engine(
+            capabilities=(
+                CompiledUsecaseCapability(
+                    keys=("product:rename",), use_cases=(RenameProductUseCase,)
+                ),
+            ),
+            model=model,
+            container=app_container,
+            deps=CapabilityDepsFactory(),
+        )
+
+        await engine.run("hello", identity=ANALYST)
+
+        assert invoker.calls == [
+            RecordedInvocation(
+                use_case=RenameProductUseCase,
+                params={"product_id": "p-1"},
+                payload={"name": "widget"},
+                identity=ANALYST,
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------

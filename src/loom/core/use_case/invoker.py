@@ -97,15 +97,14 @@ class AppInvoker:
         executor: Runs the built instance against its execution plan.
         registry: Resolves a use case from its registered key.
         identity: Verified caller every invocation runs as. ``None`` — the
-            default — passes no caller to the executor, so a use case declaring
-            ``Caller()`` raises ``Unauthenticated`` exactly as it does today; a
-            transport that has a caller binds one with :meth:`for_identity`.
+            default — gives the executor none, so each invocation acts as the
+            identity acting where it is called (the request's caller, which
+            everything it causes inherits), else with no caller.
 
-    The identity is a field rather than something read from ambient state
-    inside :meth:`invoke`: a facade that discovers who it runs as would make
-    the caller of one invocation depend on what the surrounding task happened
-    to set, which is the ambient-configuration rule the REST layer already
-    keeps to a single documented site.
+    Binding an identity with :meth:`for_identity` is an explicit switch: an
+    invocation acting as someone other than the identity acting where it is
+    called is logged by the executor (``identity_switched``) and never joins
+    the unit of work of the execution around it.
     """
 
     factory: UseCaseFactory
@@ -114,7 +113,11 @@ class AppInvoker:
     identity: Identity | None = None
 
     def for_identity(self, identity: Identity) -> AppInvoker:
-        """Return a copy of this invoker bound to *identity*.
+        """Return a copy of this invoker bound to *identity*: an explicit switch.
+
+        Every invocation of the copy acts as *identity*, and so does all the
+        work it causes; where another identity is acting, the executor logs
+        the switch.
 
         Args:
             identity: Verified caller the copy invokes every use case as.

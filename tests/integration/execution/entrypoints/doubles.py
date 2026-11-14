@@ -12,7 +12,12 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionRequired, current_execution, execution_identity
-from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import (
+    ANONYMOUS,
+    Identity,
+    current_caller,
+    current_identity,
+)
 from loom.core.job.job import Job
 from loom.core.repository.dependency import classify_key
 from loom.core.use_case.factory import UseCaseFactory
@@ -20,8 +25,10 @@ from loom.core.use_case.kinds import CALLER, CallerResolver, use_case_kinds
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
+from tests.helpers.delegation import acting_as
 
 ALICE = Identity(subject="acme-alice", mechanism="test")
+BOB = Identity(subject="acme-bob", mechanism="test")
 
 CALLERS = pytest.mark.parametrize(
     ("caller", "subject"),
@@ -151,10 +158,10 @@ class AcmeRoutes(RestInterface[dict[str, Any]]):
 
 @dataclass(frozen=True)
 class Seen:
-    """Whether code ran in an execution, as whom, and what a handle got there."""
+    """Whether code ran in an execution, who acted, and what a handle got there."""
 
     in_execution: bool
-    execution_identity: Identity | None
+    caller: Identity | None
     ambient: Identity
     handle: str
 
@@ -166,18 +173,14 @@ def seen_now() -> Seen:
         handle = execution_identity().subject
     except (ExecutionRequired, Unauthenticated) as exc:
         handle = type(exc).__name__
-    return Seen(
-        execution is not None,
-        None if execution is None else execution.identity,
-        current_identity(),
-        handle,
-    )
+    return Seen(execution is not None, current_caller(), current_identity(), handle)
 
 
-NO_CALLER = Seen(
-    in_execution=True, execution_identity=None, ambient=ANONYMOUS, handle="Unauthenticated"
-)
-"""What a job callback sees, built and called: an execution with no caller (D7, F3)."""
+AS_ALICE = Seen(in_execution=True, caller=ALICE, ambient=ALICE, handle=ALICE.subject)
+"""What a job callback alice's dispatch caused sees, built and called (D7 revised, T09a)."""
+
+NO_CALLER = Seen(in_execution=True, caller=None, ambient=ANONYMOUS, handle="Unauthenticated")
+"""What a job callback whose dispatch had no caller sees: an execution acting as no one."""
 
 
 class CallbackLog(list[tuple[str, Seen]]):
@@ -215,9 +218,10 @@ CALLBACKS = pytest.mark.parametrize(
 
 
 class AcmeCallerCallback:
-    """A job callback whose constructor declares ``Caller()``: callbacks have none (D7)."""
+    """A job callback whose constructor declares ``Caller()``: its dispatcher's (D7)."""
 
-    def __init__(self, caller: Identity = Caller()) -> None:
+    def __init__(self, log: CallbackLog, caller: Identity = Caller()) -> None:
+        log.append(("caller", seen_now()))
         self.caller = caller
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
@@ -257,6 +261,19 @@ def probe_factory(log: CallbackLog) -> UseCaseFactory:
     return factory
 
 
+class AcmeAuthenticator:
+    """Authenticates every request as the identity it is given."""
+
+    name = "acme"
+    provides_roles = False
+
+    def __init__(self, identity: Identity) -> None:
+        self._identity = identity
+
+    async def authenticate(self, credentials: object) -> Identity:
+        return self._identity
+
+
 def as_caller(app: Asgi, identity: Identity | None) -> Asgi:
     """``app`` behind a transport that authenticated each request as ``identity``, if any."""
 
@@ -268,10 +285,7 @@ def as_caller(app: Asgi, identity: Identity | None) -> Asgi:
         if identity is None:
             await app(scope, receive, send)
             return
-        token = set_identity(identity)
-        try:
+        with acting_as(identity):
             await app(scope, receive, send)
-        finally:
-            reset_identity(token)
 
     return authenticated

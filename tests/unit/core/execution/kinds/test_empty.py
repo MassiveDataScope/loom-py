@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextvars import Token
+from typing import Any
 
 import pytest
 
@@ -43,9 +44,9 @@ async def test_no_execution_binding_enters_one_execution_and_reads_no_registry(
 ) -> None:
     entered: list[Identity | None] = []
 
-    def counting(given: Identity | None) -> Token[ExecutionContext | None]:
+    def counting(given: Identity | None, *args: Any) -> Token[ExecutionContext | None]:
         entered.append(given)
-        return enter(given)
+        return enter(given, *args)
 
     monkeypatch.setattr(executor_module, "enter", counting)
     kinds = AcmeCountingKinds()

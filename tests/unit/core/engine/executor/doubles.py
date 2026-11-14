@@ -20,7 +20,7 @@ from loom.core.execution import (
     execution_identity,
     per_execution,
 )
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import Identity, current_caller, current_identity
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -45,6 +45,8 @@ from .._lifecycle_doubles import Body, Run
 ALICE = Identity(subject="acme-alice", mechanism="test")
 ANA = Identity(subject="acme-ana", mechanism="test")
 BOB = Identity(subject="acme-bob", mechanism="test")
+PROMOTED_ALICE = Identity(subject="acme-alice", mechanism="test", roles=("admin",))
+"""Alice with other roles: the same subject."""
 
 
 # ---------------------------------------------------------------------------
@@ -232,10 +234,9 @@ Seen = tuple[Identity | None, Identity, Identity | None]
 
 
 def seen(caller: Identity | None) -> Seen:
-    """The caller received, the ambient identity and the execution context's identity."""
-    context = current_execution()
-    assert context is not None
-    return caller, current_identity(), context.identity
+    """The caller received, the acting identity and the caller, read inside an execution."""
+    assert current_execution() is not None
+    return caller, current_identity(), current_caller()
 
 
 class AcmeWho(UseCase[Any, Seen]):
@@ -259,15 +260,11 @@ class AcmeNests(UseCase[Any, Seen]):
         return result
 
 
-class AcmeTampers(AcmeNests):
-    """Changes the ambient identity, then runs ``inner`` nested with no identity."""
+class AcmeWhoJob(Job[Identity]):
+    """Returns the caller it runs as."""
 
-    async def execute(self) -> Seen:
-        token = set_identity(BOB)
-        try:
-            return await super().execute()
-        finally:
-            reset_identity(token)
+    async def execute(self, caller: Identity = Caller()) -> Identity:
+        return caller
 
 
 class AcmeTicket:

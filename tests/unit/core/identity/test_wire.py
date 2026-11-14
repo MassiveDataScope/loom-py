@@ -8,12 +8,13 @@ half-decoded caller.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
 
 from loom.core.identity import Identity
-from loom.core.identity.wire import decode_identity, encode_identity
+from loom.core.identity.wire import EXPIRED, decode_delegation, decode_identity, encode_identity
 
 _SUBJECT = "user-1"
 _ROLES = ("role_a", "role_b")
@@ -111,3 +112,28 @@ def test_a_missing_mechanism_decodes_to_an_empty_label() -> None:
     identity = decode_identity({"subject": _SUBJECT})
     assert identity is not None
     assert identity.mechanism == ""
+
+
+class TestTheDelegationOnTheWire:
+    """The deadline travels inside the identity, under ``until``."""
+
+    def test_a_finite_deadline_survives_the_round_trip(self) -> None:
+        assert decode_delegation(encode_identity(_identity(), 1234.5)) == (_identity(), 1234.5)
+
+    def test_a_caller_without_one_decodes_with_none_for_the_worker_to_start(self) -> None:
+        assert decode_delegation(encode_identity(_identity())) == (_identity(), None)
+
+    @pytest.mark.parametrize(
+        "until",
+        [math.inf, math.nan, "soon", True, None, 10**400],
+        ids=["infinite", "nan", "string", "bool", "null", "huge-int"],
+    )
+    def test_an_unreadable_deadline_has_expired(self, until: Any) -> None:
+        """``null`` included: msgspec writes ``inf`` as ``null``, never a fresh window."""
+        payload = {**(encode_identity(_identity()) or {}), "until": until}
+
+        assert decode_delegation(payload) == (_identity(), EXPIRED)
+
+    @pytest.mark.parametrize("until", [math.inf, math.nan], ids=["infinite", "nan"])
+    def test_a_non_finite_deadline_is_encoded_as_expired(self, until: float) -> None:
+        assert (encode_identity(_identity(), until) or {})["until"] == EXPIRED

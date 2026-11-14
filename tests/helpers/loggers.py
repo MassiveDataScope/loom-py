@@ -20,6 +20,10 @@ class RecordingLogger:
 
     debug = info = warning = error = exception = _record
 
+    def named(self, event: str) -> list[dict[str, Any]]:
+        """The fields of every event logged exactly as *event*, in order."""
+        return [fields for logged, fields in self.calls if logged == event]
+
     def fields_for(self, substr: str) -> dict[str, Any]:
         """The fields of the first event containing *substr*, or ``{}``."""
         for event, fields in self.calls:

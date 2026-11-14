@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from loom.core.execution import enter, leave
-from loom.core.identity import ANONYMOUS, reset_identity, set_identity
+from loom.core.identity import current_caller
 
 if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
@@ -81,29 +81,24 @@ class NullJobCallback:
 
 @contextmanager
 def callback_execution() -> Iterator[None]:
-    """Run a job callback's construction and call in an execution with no caller (D7).
+    """Run a job callback's construction and call in an execution acting as its dispatcher (D7).
 
-    A callback reacts to a job; it does not act for the job's caller, whose
-    identity reaching it through the callback link is backlog item L. So the
-    execution runs as no one: a constructor ``Caller()`` and a handle (which
-    reads the execution identity at call time, D2) raise
-    :class:`~loom.core.errors.Unauthenticated`. The ambient identity is
-    :data:`~loom.core.identity.ANONYMOUS`, as in any execution with no caller
-    (F3): neither row-level security nor a job the callback dispatches sees
-    the caller of the execution whose drain runs it. Both are restored after.
+    A callback is work its job's dispatch caused, so it acts as the caller
+    acting where it runs: the inline dispatch installs the identity captured
+    at dispatch, and the Celery callback worker the one its link envelope
+    carries. A constructor ``Caller()``, a handle (which reads the execution
+    identity at call time, D2), row-level security and a job the callback
+    dispatches all see it; with no caller captured they fail closed. It is
+    refused once that caller's delegation has expired.
 
     Enter it in the thread or coroutine that builds and calls the callback:
     a coroutine handed to another event loop does not carry it.
     """
-    identity_token = set_identity(ANONYMOUS)
-    execution_token = enter(None)
+    execution_token = enter(current_caller(), "job callback")
     try:
         yield
     finally:
-        try:
-            leave(execution_token)
-        finally:
-            reset_identity(identity_token)
+        leave(execution_token)
 
 
 async def run_on_success(

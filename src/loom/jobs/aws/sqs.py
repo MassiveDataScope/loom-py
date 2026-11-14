@@ -20,7 +20,7 @@ from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.identity import current_identity
+from loom.core.identity import delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.envelope import encode_job_message, wire_job_name
@@ -321,12 +321,14 @@ class SQSJobService:
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
         payload = payload or {}
+        caller, until = delegation()
         body = encode_job_message(
             job_type,
             payload=payload,
             params=params,
-            identity=current_identity(),
+            identity=caller,
             trace_id=trace_id,
+            until=until,
         )
         if any(refused in body for refused in _REFUSED_CHARACTERS):
             raise SQSDispatchError(

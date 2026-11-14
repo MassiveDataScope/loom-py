@@ -110,7 +110,8 @@ def test_session_settings_with_autocommit_is_rejected_at_construction(
         )
 
 
-async def test_without_session_settings_sessions_use_the_plain_sqlalchemy_session_class() -> None:
+async def test_without_session_settings_sessions_carry_only_the_delegation_check() -> None:
+    """Every store's session class refuses an expired caller (T09a); none applies settings."""
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -121,7 +122,9 @@ async def test_without_session_settings_sessions_use_the_plain_sqlalchemy_sessio
     )
     try:
         async with manager.session() as session:
-            assert type(session.sync_session) is Session
+            assert type(session.sync_session).__name__ == "LoomSession"
+            assert isinstance(session.sync_session, Session)
+        assert not manager.has_session_settings
     finally:
         await manager.dispose()
 
@@ -179,14 +182,14 @@ def test_a_failing_settings_statement_invalidates_the_connection() -> None:
         assert session.connection().invalidated
 
 
-async def test_a_provider_on_a_postgres_url_installs_a_dedicated_session_class() -> None:
+async def test_a_provider_on_a_postgres_url_installs_on_the_store_s_session_class() -> None:
     manager = SessionManager(
         "postgresql+asyncpg://user:secret@localhost/db",
         session_settings=lambda: None,
         store=DEFAULT_STORE,
     )
     try:
-        assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
+        assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
     finally:
         await manager.dispose()
 
@@ -199,7 +202,7 @@ async def test_the_configured_constructor_installs_the_provider_on_a_postgres_ur
         database=DEFAULT_STORE,
     )
     try:
-        assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
+        assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
     finally:
         await manager.dispose()
 

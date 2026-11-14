@@ -1,57 +1,80 @@
-"""The execution in progress: who it runs as and what it has built.
+"""The execution in progress: the resources it owns, and the identity it fixes.
 
 An *execution* is one run of a use case, a job or an agent turn. Each one gets
-an :class:`ExecutionContext`, published in a :class:`~contextvars.ContextVar`
-while it runs. Handles read its identity through :func:`execution_identity`
-when they are called, never when they are built (spec 011, D2), and a
-``REQUEST`` binding is built once per execution through its cache (D4). The
-rules live where they apply: inheritance and fresh contexts in :func:`enter`,
-the token pair and closing in :func:`leave`, failing closed in
+an :class:`ExecutionContext` holding what it owns: the per-execution cache
+through which a ``REQUEST`` binding is built once per execution (D4). It is
+published as the ``work`` of the acting identity of :mod:`loom.core.identity`,
+beside who it acts as: :func:`enter` fixes both, for the execution and every
+task it starts, in one value. Handles read the identity through
+:func:`execution_identity` when they are called, never when they are built
+(spec 011, D2). The rules live where they apply: fresh contexts and the
+switch rule in :func:`enter`, closing in :func:`leave`, failing closed in
 :func:`execution_identity`, singleton construction in :class:`NoExecution`.
+
+This module writes the carrier of :mod:`loom.core.identity` (``_acting``)
+itself, not only through :func:`~loom.core.identity.fix_identity`: to leave
+an execution, to act as no one in :class:`NoExecution`, and to close a
+context after a token misuse. The leak is deliberate and fenced by
+``tests/unit/test_layers.py``.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
     (each child of an ``asyncio.gather`` or a ``TaskGroup`` included) copies
-    the context, so it sees the same identity and shares the same cache while
-    the execution runs. ``asyncio.to_thread`` copies the context too;
+    the context, so it acts as the same identity and shares the same cache
+    while the execution runs. ``asyncio.to_thread`` copies the context too;
     ``loop.run_in_executor`` does not, so a handle called there fails closed
     with :class:`ExecutionRequired`.
 
 Lifetime:
-    The execution owns its context: :func:`leave` closes it. A task or a
-    thread still holding a copy afterwards reads neither its identity nor a
-    per-execution value, nor dispatch a job (:func:`refuse_ended_execution`):
-    each raises :class:`ExecutionClosed` and logs the supported paths for
-    background work: dispatch a job from inside the execution, or call
-    ``executor.run(UseCase, identity=...)`` from the task, which opens its
-    own execution (an ended execution is no execution, so
-    :func:`current_execution` returns ``None`` there). Work awaited inside
-    the execution has ended before it closes.
+    The identity governs everything the execution causes, for its whole life;
+    the resources last as long as the execution. :func:`leave` closes them: a
+    task or thread still holding a copy afterwards keeps acting as the same
+    caller (:func:`execution_identity`, ``Caller()``, row-level security) but
+    reads no per-execution value: that raises :class:`ExecutionClosed` and
+    logs the supported paths, run a use case or dispatch a job, which act as
+    the same caller in resources of their own (an ended execution is no
+    execution, so :func:`current_execution` returns ``None`` there). Work
+    awaited inside the execution has ended before it closes. Such a task acts
+    as its caller only within its delegation: past the deadline,
+    :func:`enter` refuses an execution it opens, and
+    :func:`execution_identity` refuses to read its caller.
 """
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable, Hashable
-from contextvars import ContextVar, Token
+from contextvars import Token
 from types import TracebackType
 from typing import Any, cast
 
 from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
-from loom.core.identity import Identity
+from loom.core.identity import (
+    ANONYMOUS,
+    Acting,
+    Identity,
+    fix_identity,
+    refuse_expired_delegation,
+)
+from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
 from loom.core.logger import get_logger
 
 _log = get_logger(__name__)
+
+# Bound once: CPython 3.14 looks ``.get`` up on a name imported with ``from`` as a
+# plain attribute, building a bound method on every call of the read paths.
+_acting_now = _acting.get
 
 _NO_EXECUTION_MESSAGE = (
     "The execution identity was read outside an execution. Call this from a use case, "
     "a job or an agent run, not while building a singleton or importing a module."
 )
 _NO_CALLER_MESSAGE = (
-    "Authentication required: the execution in progress runs with no caller "
-    "(such as a job callback, or executor.run given no identity=... from a task "
-    "whose execution ended)."
+    "Authentication required: the execution in progress acts with no caller: nothing was "
+    "given and nothing was acting when it started. Pass identity=... to the executor "
+    "(ANONYMOUS to run without a caller)."
 )
 _MISUSED_TOKEN_MESSAGE = (
     "Execution token misuse: a token must be left once, in reverse order of entering; "
@@ -61,18 +84,17 @@ _LEFT_OPEN_MESSAGE = (
     "An execution was left open or misused inside NoExecution; the execution context was closed."
 )
 _BACKGROUND_WORK = (
-    "Background work runs in an execution of its own: dispatch a job from inside the "
-    "execution (JobService.dispatch), or call executor.run(UseCase, identity=...) from "
-    "the task, which opens its own execution."
+    "Run a use case (executor.run(UseCase)) or dispatch a job (JobService.dispatch) from "
+    "the task: they act as the same caller, in resources of their own."
 )
 _ENDED_MESSAGE = (
-    "The execution this task or thread copied its context from has ended: its identity "
-    "and per-execution values are gone. " + _BACKGROUND_WORK
+    "The execution this task or thread copied its context from has ended: its resources "
+    "(per-execution values, unit of work, post-commit channel) are gone. " + _BACKGROUND_WORK
 )
 
 
 class ExecutionContext:
-    """The state of one execution: its identity and its per-execution cache.
+    """The resources of one execution: its per-execution cache.
 
     Built by :func:`enter`; code reads it through :func:`current_execution`.
     The cache is allocated on the first store, so an execution that builds
@@ -80,8 +102,9 @@ class ExecutionContext:
     what :meth:`store` and :func:`per_execution` keep, each value under its
     key, and, for each key :func:`per_execution` has built, the reentrant
     lock it builds under, keyed ``(_BUILDING, key)`` with a private tag no
-    caller's key can equal. :func:`leave` closes it: the identity, the cache
-    and every read of either are gone (:class:`ExecutionClosed`).
+    caller's key can equal. :func:`leave` closes it: the cache and every read
+    of it are gone (:class:`ExecutionClosed`). It holds no identity: who the
+    execution acts as is the acting identity :func:`enter` fixed with it.
 
     Example::
 
@@ -93,28 +116,11 @@ class ExecutionContext:
                 context.store(AcmeClient, client)
     """
 
-    __slots__ = ("_cache", "_identity", "_token")
+    __slots__ = ("_cache", "_token")
 
-    def __init__(self, identity: Identity | None) -> None:
-        self._identity = identity
+    def __init__(self) -> None:
         self._cache: dict[Hashable, object] | None = None
-        self._token: Token[ExecutionContext | None] | None = None
-
-    @property
-    def identity(self) -> Identity | None:
-        """The identity this execution runs as, or ``None`` for no caller.
-
-        Read-only: it is fixed by :func:`enter`, and every task copied from
-        this execution shares this object, so a reassignment would change the
-        caller of all of them.
-
-        Raises:
-            ExecutionClosed: Once the execution has ended.
-        """
-        identity = self._identity
-        if identity is None and self._cache is _ENDED:
-            raise _closed("identity")
-        return identity
+        self._token: Token[Acting] | None = None
 
     def get(self, key: Hashable, default: object = None) -> object:
         """Return what this execution stored under ``key``.
@@ -196,9 +202,16 @@ def _closed(read: str) -> ExecutionClosed:
 _BUILDING = object()
 """Tags the key of a per-execution build lock in the cache: ``(_BUILDING, key)``."""
 
-_current: ContextVar[ExecutionContext | None] = ContextVar("loom_execution", default=None)
-_CLOSED = ExecutionContext(None)
-"""Installed by a token misuse: reads as no execution, and no reset restores over it."""
+_OUTSIDE = ExecutionContext()
+"""The work of :class:`NoExecution` and of a closed context: no execution, and no caller, fixed."""
+_OUTSIDE_ACTING: Acting = (ANONYMOUS, None, math.inf, _OUTSIDE)
+_CLOSED_ACTING: Acting = (ANONYMOUS, None, math.inf, _OUTSIDE)
+"""Installed after a token misuse: no execution, no caller, and never restored.
+
+A tuple of its own, not :data:`_OUTSIDE_ACTING`: no later ``leave`` or
+:class:`NoExecution` exit can bring back an execution or a caller a misused
+token may have ended.
+"""
 
 
 def current_execution() -> ExecutionContext | None:
@@ -211,8 +224,8 @@ def current_execution() -> ExecutionContext | None:
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
-    context = _current.get()
-    if context is None or context is _CLOSED or context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
+    context: Any = _acting_now()[3]
+    if context is None or context is _OUTSIDE or context._cache is _ENDED:
         return None
     return context
 
@@ -252,19 +265,18 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
         with ExecutionScope(acme_identity):
             assert acme_session() is acme_session()
     """
-    current = _current.get
     building = (_BUILDING, key)
 
     def value() -> object:
-        context = current()
+        context: Any = _acting_now()[3]
         if context is None:
             return make()
-        cache = context._cache  # pyright: ignore[reportPrivateUsage]
+        cache = context._cache
         if cache is not None and key in cache:
             return cache[key]
-        if context is _CLOSED:
+        if context is _OUTSIDE:
             return make()
-        cache = context._allocated()  # pyright: ignore[reportPrivateUsage]
+        cache = context._allocated()
         lock: Any = cache.get(building)
         if lock is None:
             # setdefault is atomic: threads racing here all get the one lock stored.
@@ -277,45 +289,52 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
     return value
 
 
-def enter(identity: Identity | None) -> Token[ExecutionContext | None]:
-    """Open a new execution that runs as ``identity``.
+def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
+    """Open a new execution acting as ``identity``, and fix it for the execution's work.
 
-    No inheritance happens here (NS2): ``identity`` is installed as given, even
-    inside another execution. The executor computes the effective identity
-    (explicit, else the enclosing execution's, else ``None``) once per
-    execution. ``None`` means no caller: job callbacks run under
-    ``enter(None)`` (D7). Every call builds a new :class:`ExecutionContext`,
-    so a nested execution gets a fresh cache and shares no ``REQUEST``
-    instance with the one around it (L12).
+    The only code that fixes an identity for work (:func:`leave` and
+    :class:`NoExecution` restore or clear it): it fixes ``identity`` with
+    the new :class:`ExecutionContext` as its work, so
+    ``set_identity`` raises :class:`~loom.core.identity.IdentityFixed` in the
+    execution and in every task it starts. ``identity`` is the effective one,
+    computed by the caller; ``None`` means no caller. Every call builds a new
+    :class:`ExecutionContext`, so a nested execution gets a fresh cache and
+    shares no ``REQUEST`` instance with the one around it (L12). The switch
+    rule is :func:`~loom.core.identity.fix_identity`'s: the same subject
+    keeps the delegation and is refused past it; another subject is a logged
+    switch with a delegation of its own.
 
     Args:
         identity: The effective identity, computed by the caller.
+        what: What runs, for the switch report (the use case's name).
 
     Returns:
         The token to pass to :func:`leave` in a ``finally`` block.
 
+    Raises:
+        Unauthenticated: Acting as the subject acting, past its deadline.
+
     Example::
 
-        token = enter(identity)
+        token = enter(identity, "AcmeUseCase")
         try:
             await acme_use_case.execute()
         finally:
             leave(token)
     """
-    context = ExecutionContext(identity)
-    token = _current.set(context)
-    context._token = token  # pyright: ignore[reportPrivateUsage]
+    context = ExecutionContext()
+    context._token = token = fix_identity(identity, context, what)  # pyright: ignore[reportPrivateUsage]
     return token
 
 
-def leave(token: Token[ExecutionContext | None]) -> None:
-    """Close the execution ``token`` opened and restore the one before it.
+def leave(token: Token[Acting]) -> None:
+    """Close the execution ``token`` opened and restore the work and identity before it.
 
     Leave every token exactly once, in reverse order of entering, in the
     :mod:`contextvars` context that entered it: a ``finally`` block does all
-    three. The execution's identity and cache are dropped: a task or thread
-    that copied its context and reads either afterwards gets
-    :class:`ExecutionClosed`.
+    three. The execution's cache is dropped: a task or thread that copied its
+    context and reads it afterwards gets :class:`ExecutionClosed`, and keeps
+    acting as the same caller.
 
     Args:
         token: The token returned by the matching :func:`enter`.
@@ -324,43 +343,40 @@ def leave(token: Token[ExecutionContext | None]) -> None:
         RuntimeError: If ``token`` is not the token of the execution in
             progress (left twice, out of order, or with an execution entered
             over it and not left). The current :mod:`contextvars` context is
-            then *closed*: it reads as no execution, and no later ``leave``
-            or :class:`NoExecution` exit can bring a caller back.
+            then *closed*: it reads as no execution, acts as no one with its
+            identity fixed, and no later ``leave`` or :class:`NoExecution`
+            exit can bring a caller back.
         ValueError: If ``token`` was created in another :mod:`contextvars`
             context (a task that copied it); nothing changes in either.
     """
-    context = _current.get()
-    if context is None or context._token is not token:  # pyright: ignore[reportPrivateUsage]
-        _current.set(_CLOSED)
+    context: Any = _acting_now()[3]
+    if context is None or context._token is not token:
+        _acting.set(_CLOSED_ACTING)
         raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
-    _current.reset(token)
-    context._token = None  # pyright: ignore[reportPrivateUsage]
-    context._identity = None  # pyright: ignore[reportPrivateUsage]
-    context._cache = _ENDED  # pyright: ignore[reportPrivateUsage]
+    _acting.reset(token)
+    context._token = None
+    context._cache = _ENDED
 
 
-def refuse_ended_execution(what: str) -> None:
-    """Refuse *what* in a task or thread whose execution has ended, logging the guidance.
+def execution_ended() -> bool:
+    """Whether this context was copied from an execution that has since ended.
 
-    For work that would land on what the ended execution owned, such as a
-    job dispatch queued on its drained post-commit channel.
+    Such a task or thread is in no execution: what it does runs as at top
+    level, acting as the same caller.
 
-    Args:
-        what: What is refused, for the log (``"job dispatch"``).
-
-    Raises:
-        ExecutionClosed: When the execution this context copied has ended.
+    Returns:
+        ``True`` in a task or thread whose execution ended.
     """
-    context = _current.get()
-    if context is not None and context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
-        raise _closed(what)
+    context: Any = _acting_now()[3]
+    return context is not None and context._cache is _ENDED
 
 
 def execution_identity() -> Identity:
-    """Return the identity of the execution in progress, failing closed.
+    """Return the identity the execution in progress acts as, failing closed.
 
-    It never falls back to :func:`~loom.core.identity.current_identity`: the
-    ambient identity and the execution identity are separate on purpose.
+    That is the acting identity :func:`enter` fixed, which a task the
+    execution started keeps after the execution ended, within its
+    delegation.
 
     Returns:
         The identity, :data:`~loom.core.identity.ANONYMOUS` included.
@@ -369,30 +385,28 @@ def execution_identity() -> Identity:
         ExecutionRequired: Outside any execution, even while
             :func:`~loom.core.identity.set_identity` is active, and in a
             context closed by a token misuse.
-        ExecutionClosed: In a task or thread whose execution has ended.
-        Unauthenticated: When the execution runs with no caller. Refusing
-            ``ANONYMOUS`` is the consumer's rule.
+        Unauthenticated: When the execution acts with no caller, or, read
+            from a task whose execution ended, past the caller's deadline.
+            Refusing ``ANONYMOUS`` is the consumer's rule.
     """
-    context = _current.get()
-    if context is None:
+    _, identity, _, context = _acting_now()
+    if identity is not None and context is not None:
+        if context._cache is _ENDED:  # pyright: ignore[reportAttributeAccessIssue]
+            refuse_expired_delegation()
+        return identity
+    if context is None or context is _OUTSIDE:
         raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
-    identity = context._identity  # pyright: ignore[reportPrivateUsage]
-    if identity is None:
-        # Closed and ended contexts have no identity: checked here, off the success path.
-        if context is _CLOSED:
-            raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
-        if context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
-            raise _closed("identity")
-        raise Unauthenticated(_NO_CALLER_MESSAGE)
-    return identity
+    raise Unauthenticated(_NO_CALLER_MESSAGE)
 
 
 class ExecutionScope:
-    """Run a ``with`` body as an execution with the given identity.
+    """Run a ``with`` body as an execution acting as the given identity.
 
     The class form of :func:`enter` / :func:`leave` for code off the per-call
     hot path: an agent run, or building a ``REQUEST`` binding outside any
-    execution. Entering an open instance again raises :class:`RuntimeError`.
+    execution. Acting as another identity than the one acting is an explicit
+    switch, by :func:`enter`'s rule, as ``executor.run(identity=...)``: logged.
+    Entering an open instance again raises :class:`RuntimeError`.
 
     Args:
         identity: The identity the body runs as; ``None`` for no caller.
@@ -407,12 +421,12 @@ class ExecutionScope:
 
     def __init__(self, identity: Identity | None) -> None:
         self._identity = identity
-        self._token: Token[ExecutionContext | None] | None = None
+        self._token: Token[Acting] | None = None
 
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("This ExecutionScope is already open")
-        self._token = enter(self._identity)
+        self._token = enter(self._identity, "ExecutionScope")
 
     def __exit__(
         self,
@@ -420,20 +434,22 @@ class ExecutionScope:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        token = cast("Token[ExecutionContext | None]", self._token)
+        token = cast("Token[Acting]", self._token)
         self._token = None
         leave(token)
 
 
 class NoExecution:
-    """Run a ``with`` body outside any execution, even inside one.
+    """Run a ``with`` body outside any execution, acting as no one, even inside one.
 
     Singletons are built here, so a constructor that reads the execution
-    identity raises :class:`ExecutionRequired` instead of freezing whichever
-    caller built it first. The enclosing execution is back after the body,
-    unless the body left an execution open or misused a token: then the block
-    closes the context and raises :class:`RuntimeError`, since the enclosing
-    execution may be the one a misused token already tried to leave.
+    identity raises :class:`ExecutionRequired`, and one that reads the acting
+    identity sees :data:`~loom.core.identity.ANONYMOUS`, instead of freezing
+    whichever caller built it first (D2). The enclosing execution and its
+    caller are back after the body, unless the body left an execution open or
+    misused a token: then the block closes the context and raises
+    :class:`RuntimeError`, since the enclosing execution may be the one a
+    misused token already tried to leave.
 
     Example::
 
@@ -444,12 +460,13 @@ class NoExecution:
     __slots__ = ("_token",)
 
     def __init__(self) -> None:
-        self._token: Token[ExecutionContext | None] | None = None
+        self._token: Token[Acting] | None = None
 
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("This NoExecution is already open")
-        self._token = _current.set(None)
+        # No caller, and fixed: a constructor cannot install one either.
+        self._token = _acting.set(_OUTSIDE_ACTING)
 
     def __exit__(
         self,
@@ -457,9 +474,9 @@ class NoExecution:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        token = cast("Token[ExecutionContext | None]", self._token)
+        token = cast("Token[Acting]", self._token)
         self._token = None
-        if _current.get() is not None:
-            _current.set(_CLOSED)
+        if _acting_now() is not _OUTSIDE_ACTING:
+            _acting.set(_CLOSED_ACTING)
             raise RuntimeError(_LEFT_OPEN_MESSAGE)
-        _current.reset(token)
+        _acting.reset(token)

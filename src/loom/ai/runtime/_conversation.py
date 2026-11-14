@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from loom.ai._usecase import invoke_as, require_invoker
+from loom.ai._usecase import require_invoker
 from loom.ai.abc import Conversation, DepsFactory
 from loom.ai.compiler._plan import CompiledConversation
 from loom.ai.errors import (
@@ -56,7 +56,7 @@ async def _invoke_loader(
     bundle = deps.build(run.identity, container)
     invoker = require_invoker(bundle, f"{_LOADER} '{loader.usecase}'")
     command = loader_command(run, loader.accepted)
-    return await invoke_as(invoker, loader.use_case, run.identity, params=None, payload=command)
+    return await invoker.invoke(loader.use_case, params=None, payload=command)
 
 
 def _as_history(value: object, bound: int) -> bytes | None:

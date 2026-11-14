@@ -34,7 +34,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.identity import current_identity
+from loom.core.identity import delegation
 from loom.core.identity.wire import encode_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
@@ -131,10 +131,16 @@ def _build_link(
     *,
     name_prefix: str,
     immutable: bool,
+    identity: dict[str, Any] | None,
 ) -> Any:
     return celery_app.signature(
         f"{name_prefix}.{callback_type.__qualname__}",
-        kwargs={"job_id": task_id, "context": payload, "trace_id": trace_id},
+        kwargs={
+            "job_id": task_id,
+            "context": payload,
+            "trace_id": trace_id,
+            "identity": identity,
+        },
         immutable=immutable,
     )
 
@@ -145,6 +151,8 @@ def _build_success_link(
     payload: dict[str, Any],
     task_id: str,
     trace_id: str | None = None,
+    *,
+    identity: dict[str, Any] | None = None,
 ) -> Any:
     """Build a Celery success-callback signature (``immutable=False``).
 
@@ -154,6 +162,8 @@ def _build_success_link(
         payload: Dispatch payload forwarded as execution context.
         task_id: Parent task UUID for correlation.
         trace_id: Distributed trace ID propagated to the callback worker.
+        identity: The dispatcher's encoded identity, with the deadline of its
+            delegation: the callback acts as it.
 
     Returns:
         Celery ``Signature`` passed as ``link`` on the parent task.
@@ -166,6 +176,7 @@ def _build_success_link(
         trace_id,
         name_prefix=TASK_CALLBACK_PREFIX,
         immutable=False,
+        identity=identity,
     )
 
 
@@ -175,6 +186,8 @@ def _build_failure_link(
     payload: dict[str, Any],
     task_id: str,
     trace_id: str | None = None,
+    *,
+    identity: dict[str, Any] | None = None,
 ) -> Any:
     """Build a Celery failure-callback signature (``immutable=True``).
 
@@ -184,6 +197,8 @@ def _build_failure_link(
         payload: Dispatch payload forwarded as execution context.
         task_id: Parent task UUID for correlation.
         trace_id: Distributed trace ID propagated to the callback worker.
+        identity: The dispatcher's encoded identity, with the deadline of its
+            delegation: the callback acts as it.
 
     Returns:
         Celery ``Signature`` passed as ``link_error`` on the parent task.
@@ -196,6 +211,7 @@ def _build_failure_link(
         trace_id,
         name_prefix=TASK_CALLBACK_ERROR_PREFIX,
         immutable=True,
+        identity=identity,
     )
 
 
@@ -305,7 +321,6 @@ class CeleryJobService:
             factory=self._factory,
             params=params,
             payload=payload,
-            identity=current_identity(),
         )
         return result
 
@@ -329,10 +344,12 @@ class CeleryJobService:
         the current Unit of Work commits.  If the UoW rolls back, the
         pending entry is discarded and no task reaches the broker.
 
-        The current trace ID and caller identity are captured at registration
-        time so they are propagated to the Celery worker even though the send
-        happens later.  Both travel inside the envelope: no context variable
-        crosses a broker.
+        The current trace ID, the identity acting
+        (:func:`~loom.core.identity.current_caller`) and the deadline of its
+        delegation are captured at registration time so they are propagated
+        to the Celery worker even though the send happens later.  They travel
+        inside the envelope, and inside each callback link: no context
+        variable crosses a broker, and the callbacks act as the dispatcher.
 
         Args:
             job_type: Concrete ``Job`` subclass to dispatch.
@@ -353,19 +370,33 @@ class CeleryJobService:
         """
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
-        identity = encode_identity(current_identity())
+        identity = encode_identity(*delegation())
         options = self._settings.of(job_type)
         eff_queue = queue or options.queue
         eff_countdown = countdown if countdown is not None else options.countdown
         eff_priority = priority if priority is not None else options.priority
 
         link = (
-            _build_success_link(self._app, on_success, payload or {}, task_id, trace_id)
+            _build_success_link(
+                self._app,
+                on_success,
+                payload or {},
+                task_id,
+                trace_id,
+                identity=identity,
+            )
             if on_success
             else None
         )
         link_error = (
-            _build_failure_link(self._app, on_failure, payload or {}, task_id, trace_id)
+            _build_failure_link(
+                self._app,
+                on_failure,
+                payload or {},
+                task_id,
+                trace_id,
+                identity=identity,
+            )
             if on_failure
             else None
         )

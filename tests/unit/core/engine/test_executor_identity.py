@@ -1,20 +1,26 @@
-"""The executor installs the identity it was given, and refuses nestings that would leak it."""
+"""The executor fixes the identity an execution acts as, and refuses nestings that would leak it."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any, ClassVar, cast
 
 import pytest
 
-from loom.ai._usecase import invoke_as
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import ReadOnlyElevation, elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
-from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import (
+    Identity,
+    IdentityFixed,
+    current_caller,
+    current_identity,
+    set_identity,
+)
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.persistence.stores import DEFAULT_STORE
@@ -23,6 +29,7 @@ from loom.core.uow.scope import invocation
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
+from tests.helpers.delegation import acting_as
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 
@@ -97,11 +104,8 @@ def executor(sink: FakeSink) -> RuntimeExecutor:
 
 @pytest.fixture
 def ambient_bob() -> Iterator[None]:
-    token = set_identity(BOB)
-    try:
+    with acting_as(BOB):
         yield
-    finally:
-        reset_identity(token)
 
 
 def _child_call(executor: RuntimeExecutor, child: Run, identity: Identity | None) -> Body:
@@ -117,7 +121,7 @@ def _invoking_as(executor: RuntimeExecutor, identity: Identity) -> Body:
     )
 
     async def call() -> object:
-        return await invoke_as(invoker, Child, identity, params=None, payload=None)
+        return await invoker.invoke(Child, params=None, payload=None)
 
     return call
 
@@ -150,48 +154,29 @@ def _elevating_then(call: Body) -> Parent:
 
 
 class TestAmbientBinding:
-    """The executor installs who an execution runs as as the ambient identity, and restores it."""
-
-    @pytest.mark.usefixtures("ambient_bob")
-    async def test_an_execution_sees_its_identity_as_the_ambient_one(
-        self, executor: RuntimeExecutor
-    ) -> None:
-        assert await executor.execute(Run(_whoami), identity=ANA) == ANA
-
-    @pytest.mark.usefixtures("ambient_bob")
-    async def test_an_execution_given_no_identity_runs_with_the_ambient_anonymous(
-        self,
-        executor: RuntimeExecutor,
-    ) -> None:
-        """F3: no caller means ANONYMOUS, never an ambient identity the execution was not given."""
-        assert await executor.execute(Run(_whoami)) is ANONYMOUS
-        assert current_identity() == BOB
-
-    @pytest.mark.usefixtures("ambient_bob")
-    async def test_gather_children_see_the_bound_identity(self, executor: RuntimeExecutor) -> None:
-        async def body() -> list[Identity]:
-            return list(await asyncio.gather(_whoami(), _whoami()))
-
-        assert await executor.execute(Run(body), identity=ANA) == [ANA, ANA]
+    """The transport's caller acts again once an execution as another ends, however it ends."""
 
     @pytest.mark.usefixtures("ambient_bob")
     @pytest.mark.parametrize(
-        ("body", "raised"),
+        ("body", "ends"),
         [
-            (_raise_runtime, RuntimeError),
-            (_raise_cancelled, asyncio.CancelledError),
-            (_raise_interrupted, Interrupted),
+            (_whoami, nullcontext),
+            (_raise_runtime, lambda: pytest.raises(RuntimeError)),
+            (_raise_cancelled, lambda: pytest.raises(asyncio.CancelledError)),
+            (_raise_interrupted, lambda: pytest.raises(Interrupted)),
         ],
-        ids=["exception", "cancellation", "interruption"],
+        ids=["success", "exception", "cancellation", "interruption"],
     )
-    async def test_the_ambient_identity_is_restored_when_the_execution_fails(
-        self, executor: RuntimeExecutor, body: Body, raised: type[BaseException]
+    async def test_the_transport_caller_is_back_when_the_execution_ends(
+        self,
+        executor: RuntimeExecutor,
+        body: Body,
+        ends: Callable[[], AbstractContextManager[object]],
     ) -> None:
-        use_case = Run(body)
-        with pytest.raises(raised):
-            await executor.execute(use_case, identity=ANA)
+        with ends():
+            await executor.execute(Run(body), identity=ANA)
 
-        assert current_identity() == BOB
+        assert current_caller() is BOB
 
 
 class TestNestedIdentity:
@@ -223,28 +208,46 @@ class TestNestedIdentity:
     async def test_a_refused_nesting_is_logged_with_the_use_cases_only(
         self, executor: RuntimeExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """The refusal names no identity; the switch before it is logged by subject (T09a)."""
         parent = _catching(_child_call(executor, Child(_whoami), BOB))
 
         await executor.execute(parent, identity=ANA)
 
-        assert REFUSED_JOIN in caplog.text
-        assert BOB.subject not in caplog.text
+        refusals = [
+            record.getMessage() for record in caplog.records if REFUSED_JOIN in record.getMessage()
+        ]
+        assert refusals
+        assert all(BOB.subject not in refusal for refusal in refusals)
 
     async def test_changing_the_ambient_identity_mid_execution_does_not_unlock_a_join(
         self,
         executor: RuntimeExecutor,
     ) -> None:
-        call = _child_call(executor, Child(_whoami), None)
+        """No way to join ana's unit of work as bob: neither a silent switch nor an explicit one.
 
-        async def body() -> BaseException | None:
-            token = set_identity(BOB)
+        The silent switch (``set_identity`` inside the work) is refused outright,
+        and changes nothing: the child given no identity joins as ana. The
+        explicit switch to bob is refused at the join.
+        """
+        inheriting = _child_call(executor, Child(_whoami), None)
+        as_bob = _child_call(executor, Child(_whoami), BOB)
+
+        async def body() -> tuple[bool, Identity | None, object, BaseException | None]:
             try:
-                return await _caught(call)
-            finally:
-                reset_identity(token)
+                set_identity(BOB)
+            except IdentityFixed:
+                silent_refused = True
+            else:
+                silent_refused = False
+            return silent_refused, current_caller(), await inheriting(), await _caught(as_bob)
 
-        refused = await executor.execute(Parent(body), identity=ANA)
+        silent_refused, caller, joined_as, refused = await executor.execute(
+            Parent(body), identity=ANA
+        )
 
+        assert silent_refused
+        assert caller is ANA
+        assert joined_as is ANA
         assert isinstance(refused, NestedIdentityMismatch)
 
     async def test_invoking_as_another_identity_from_inside_a_use_case_is_refused(

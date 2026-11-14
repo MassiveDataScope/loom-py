@@ -12,18 +12,16 @@ from collections.abc import Iterator
 import pytest
 
 from loom.core.execution import current_execution
-from loom.core.execution.context import _current  # pyright: ignore[reportPrivateUsage]
-from loom.core.identity import ANONYMOUS, current_identity, reset_identity, set_identity
+from loom.core.identity import ANONYMOUS, current_identity
+from loom.core.identity.context import _NO_ONE, _acting  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture(autouse=True)
 def _no_execution_leaks() -> Iterator[None]:
-    execution_token = _current.set(None)
-    identity_token = set_identity(ANONYMOUS)
+    token = _acting.set(_NO_ONE)
     try:
         yield
         assert current_execution() is None, "an execution was left open"
         assert current_identity() is ANONYMOUS, "an ambient identity was left set"
     finally:
-        reset_identity(identity_token)
-        _current.reset(execution_token)
+        _acting.reset(token)

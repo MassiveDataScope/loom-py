@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.backend.sqlalchemy import get_metadata
+from loom.core.identity import refuse_expired_delegation
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
@@ -120,16 +121,15 @@ class SessionManager:
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
         self.store = store
-        factory_kwargs: dict[str, Any] = {}
+        session_class = type("LoomSession", (Session,), {})
+        event.listen(session_class, "after_begin", _refuse_an_expired_caller)
         if session_settings is not None:
-            session_class = type("SettingsSession", (Session,), {})
             install_session_settings(session_class, session_settings)
-            factory_kwargs["sync_session_class"] = session_class
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,
             expire_on_commit=False,
-            **factory_kwargs,
+            sync_session_class=session_class,
         )
         if inject_trace_id:
             _register_trace_id_listener(self._engine)
@@ -405,3 +405,14 @@ def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
         else None,
     )
     return any(isinstance(level, str) and level.upper() == "AUTOCOMMIT" for level in levels)
+
+
+def _refuse_an_expired_caller(_session: Session, transaction: Any, _connection: Any) -> None:
+    """Open no transaction as a caller past its delegation (spec 011, T09a).
+
+    One check per outer transaction, for every store, before its settings
+    and its first statement: the row-level security settings and the audit
+    columns written in it act as that caller.
+    """
+    if not transaction.nested:
+        refuse_expired_delegation()

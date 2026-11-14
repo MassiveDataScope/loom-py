@@ -23,8 +23,9 @@ Callbacks follow the same pattern: async ``on_success`` / ``on_failure``
 methods are submitted to the shared :class:`~loom.core.async_bridge.AsyncBridge`;
 sync methods are called directly from the task thread. Either way the callback
 is built and called inside a
-:func:`~loom.core.job.callback.callback_execution` with no caller (D7), opened
-in the coroutine the bridge runs or in the task thread. Every task body first
+:func:`~loom.core.job.callback.callback_execution` acting as the identity its
+link envelope carries, the dispatcher's (D7), opened in the coroutine the
+bridge runs or in the task thread; a link without one acts as no one. Every task body first
 calls ``ensure_open``, so a process whose application failed to open refuses
 sync and async work alike.
 """
@@ -52,6 +53,7 @@ from loom.core.job.run import run_job
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.tracing import reset_trace_id, set_trace_id
 
 if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
@@ -325,7 +327,9 @@ def _make_job_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
     ) -> Any:
-        with job_context(trace_id, identity):
+        # The trace only: run_job resumes the envelope's caller, once, where the job runs.
+        trace_token = set_trace_id(trace_id) if trace_id else None
+        try:
             _emit(metrics, _job_event(EventKind.JOB_STARTED, name, trace_id))
             t0 = time.monotonic()
             try:
@@ -349,6 +353,9 @@ def _make_job_task(
                 ),
             )
             return result
+        finally:
+            if trace_token is not None:
+                reset_trace_id(trace_token)
 
     return _job_task
 
@@ -394,10 +401,11 @@ def _make_callback_task(
         job_id: str,
         context: dict[str, Any],
         trace_id: str | None = None,
+        identity: dict[str, Any] | None = None,
     ) -> None:
         async_runtime.ensure_open()
         with (
-            job_context(trace_id, None),
+            job_context(trace_id, identity),
             runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,
@@ -474,10 +482,11 @@ def _make_callback_error_task(
         job_id: str,
         context: dict[str, Any],
         trace_id: str | None = None,
+        identity: dict[str, Any] | None = None,
     ) -> None:
         async_runtime.ensure_open()
         with (
-            job_context(trace_id, None),
+            job_context(trace_id, identity),
             runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,

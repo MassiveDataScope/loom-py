@@ -9,6 +9,7 @@ Nothing registers after this phase, which ends by analysing the dependency graph
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -26,6 +27,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import GraphAnalysis
 from loom.core.environment import Environment
+from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.logger import LoggerPort
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import PersistenceWiring
@@ -55,7 +57,8 @@ def register(
 
     Raises:
         ConfigError: When the ``cache`` section, an elevation,
-            ``persistence.rollback_timeout`` or the ``sql`` section is
+            ``persistence.rollback_timeout``,
+            ``identity.max_delegation_seconds`` or the ``sql`` section is
             invalid. Raised as is.
         ReservedBindingError: When a caller module or an override binds or
             replaces a framework-owned key.
@@ -100,8 +103,9 @@ def _bind_application(
     when the application is sealed.
 
     Raises:
-        ConfigError: When the ``cache`` section, an elevation or
-            ``persistence.rollback_timeout`` is invalid; raised before any
+        ConfigError: When the ``cache`` section, an elevation,
+            ``persistence.rollback_timeout`` or
+            ``identity.max_delegation_seconds`` is invalid; raised before any
             module runs.
         ReservedBindingError: When a caller module or an override binds or
             replaces a framework-owned key.
@@ -112,10 +116,20 @@ def _bind_application(
     ctx, observability, catalog = source.config, source.observability, source.catalog
     stores = tuple(catalog.specs)
     cache = cache_module_for(ctx)
+    configure_delegation(
+        ctx.section_or_default(
+            "identity.max_delegation_seconds", float, DEFAULT_MAX_DELEGATION_SECONDS
+        )
+    )
     sink = _elevation_sink(persisted.wirings)
     factories = persisted.factories
     coordinator = (
-        OrderedCommits(factories, rollback_timeout=_rollback_timeout(ctx)) if factories else None
+        OrderedCommits(
+            factories,
+            rollback_timeout=_rollback_timeout(ctx),
+        )
+        if factories
+        else None
     )
 
     ordered = (
@@ -164,9 +178,11 @@ def _rollback_timeout(ctx: ConfigContext) -> float:
     """``persistence.rollback_timeout``: seconds the rollbacks of one invocation may take together.
 
     Raises:
-        ConfigError: When it is not above zero.
+        ConfigError: When it is not a finite number above zero.
     """
     timeout = ctx.section_or_default("persistence.rollback_timeout", float, ROLLBACK_TIMEOUT_S)
-    if timeout <= 0:
-        raise ConfigError(f"persistence.rollback_timeout must be above zero, got {timeout}")
+    if not (timeout > 0 and math.isfinite(timeout)):
+        raise ConfigError(
+            f"persistence.rollback_timeout must be a finite number above zero, got {timeout}"
+        )
     return timeout

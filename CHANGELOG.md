@@ -421,34 +421,122 @@
 
 ### execution
 
-- **execution:** an execution owns its context and closes it when it ends. A
-  task or thread created during an execution that is still running after it
-  ended (fire-and-forget `asyncio.create_task`, a thread left behind by a
-  cancelled caller) can no longer read the execution's identity
-  (`execution_identity()`, `ExecutionContext.identity`, a `Caller()` handle,
-  an executor call given no identity) or a per-execution value (a `REQUEST`
-  binding, `ExecutionContext.get` / `store`): each read raises
-  `loom.core.execution.ExecutionClosed` (an `ExecutionRequired`) and logs an
-  `execution_closed` warning with the guidance, never the caller. The ended
-  execution's cached values are released. Work awaited inside the execution
-  (`gather`, `TaskGroup`, an awaited task, `asyncio.to_thread`) is unaffected.
-  Queuing a job dispatch (`JobService.dispatch`) from such a task raises
-  `ExecutionClosed` too, instead of landing silently on the ended execution's
-  drained post-commit channel. An ended execution is no execution:
-  `current_execution()` returns `None` there, and the executor called from
-  such a task runs as at top level, with nothing of the departed caller: its
-  own invocation scope and post-commit channel, no inherited identity, and the
-  ambient identity set to the one given or `ANONYMOUS` for that run (a
-  `Caller()` given none raises `Unauthenticated`, whose message names
-  `identity=...`). Touching the ended execution's closed invocation scope by
-  hand is still refused with `ScopeOwnershipError`. The ambient
-  `current_identity()` of the outliving task itself, outside such a run, is
-  still the departed caller's (handles and executions never read it: an
-  execution it starts runs as the identity given, else as `ANONYMOUS`).
-  **Migration:** dispatch
-  a job from inside the execution (`JobService.dispatch`), or call
-  `executor.run(UseCase, identity=...)` from the task, which opens its own
-  execution, unit of work, post-commit channel and `REQUEST` instances.
+- **execution, identity (one acting identity):** the identity a request runs
+  as governs everything that request causes, for its whole life: nested
+  executions, the tasks it starts (even those that outlive it), the jobs and
+  callbacks it dispatches, row-level security and audit. `loom.core.identity`
+  holds the one carrier: the caller, the deadline of its delegation, and the
+  work (the execution) that fixed it. `current_caller()` (new) returns the
+  caller, `None` for no caller, and `current_identity()` still returns
+  `ANONYMOUS` for none. `ExecutionContext` holds the execution's resources
+  only: `ExecutionContext.identity` is removed, `enter(identity)` is
+  `enter(identity, what="execution")` (`what` names the work in a switch
+  report), its token is the acting identity's, and `refuse_ended_execution`
+  is replaced by `execution_ended()`.
+  - `set_identity` inside an execution, or in a task it started, raises
+    `loom.core.identity.IdentityFixed`. A transport installing a caller (the
+    HTTP middleware, the job worker) never fixes it, so transports may nest.
+    The only way to act as someone else is an explicit switch, which opens
+    work of its own: `executor.run(UseCase, identity=X)`,
+    `invoker.for_identity(X)` or `ExecutionScope(X)`, inside work or under a
+    transport's caller alike. Outside work, a transport replacing a different
+    caller (`set_identity`, e.g. from a FastAPI dependency) is logged as one,
+    with `use_case="transport"`. A switch to the same subject with other
+    roles or attributes keeps the delegation's deadline; another subject
+    starts a delegation of its own.
+    Each is logged at `WARNING` as `identity_switched` (`from_subject`,
+    `to_subject`, `from_roles`, `to_roles`, `attributes_changed`,
+    `use_case`, `trace_id`; never attribute values or credentials), with
+    `from_subject=None` for a switch inside work that had no caller, and
+    recorded on the current span (`loom.identity.switched_from`,
+    `loom.identity.switched_to`). A switched identity never joins its
+    parent's unit of work (`NestedIdentityMismatch`). **Migration:** replace
+    `set_identity(X)` followed by a call inside a use case with
+    `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`.
+  - An execution given no `identity` acts as the identity acting: the
+    enclosing execution's, the transport's, or the one a task inherited; with
+    nothing acting it has no caller (`current_identity()` reads `ANONYMOUS`,
+    a `Caller()` raises `Unauthenticated`). A bare `ApplicationInvoker`, and
+    `InlineJobService.run` / `CeleryJobService.run`, called from a route act
+    as the request's caller; called with nothing acting they have no caller
+    (they used to pass `ANONYMOUS`).
+  - A task that outlives its execution keeps acting as its caller
+    (`execution_identity()`, `Caller()`, `current_identity()`, row-level
+    security), but the execution's resources are gone: a `REQUEST` binding or
+    `ExecutionContext.get` / `store` raises
+    `loom.core.execution.ExecutionClosed` (an `ExecutionRequired`) and logs an
+    `execution_closed` warning with the guidance. `executor.run(UseCase)`
+    from such a task acts as the same caller in an execution, unit of work,
+    post-commit channel and `REQUEST` instances of its own, and
+    `JobService.dispatch` from it goes out at once, detached, carrying the
+    caller. Work awaited inside the execution (`gather`, `TaskGroup`,
+    `asyncio.to_thread`) is unaffected.
+  - Delegation window: work a request causes acts as its caller for at most
+    `identity.max_delegation_seconds` (default 3600) from the request's
+    start. The composition reads it and sets it for the process with
+    `loom.core.identity.configure_delegation(seconds)`, the one validation
+    point: a value that is not a finite number above zero is a `ConfigError`.
+    No constructor takes it, two kernels in one process share it, and a kernel
+    built with `create_kernel` outside the composition uses the default. A caller always has a
+    deadline: `set_identity(identity)` starts one (`now + window`, the HTTP
+    request), `set_identity(identity, until=...)` resumes one (a job
+    envelope, a queued dispatch), clamped to `now + window`, so a tampered or
+    skewed deadline never extends past one window. Expiry is checked where work starts (an
+    execution, a job, a callback, `ExecutionScope`, a queued dispatch's job:
+    `Unauthenticated`, `delegation_expired` warning), once at the start of
+    every SQLAlchemy transaction (any store, row-level security or not), and
+    by `execution_identity()` read from a task whose execution ended (an
+    Agent or MCP handle); never by `current_identity()`, so work started
+    before the deadline may finish. A queued inline dispatch run past its
+    deadline fails as a job whose execution is refused, and its failure
+    callback, acting as the same caller, is refused too. **Migration:** run
+    long background work as a system identity, switching explicitly with
+    `executor.run(UseCase, identity=...)`; a custom transport calls
+    `set_identity(identity)`, which starts the delegation.
+  - Wire: the encoded identity in a job envelope gains `until`, the deadline
+    of the caller's delegation (a Unix time), so a deadline never travels
+    without a caller (`encode_identity(identity, until=None)`; the new
+    `loom.core.identity.wire.decode_delegation(payload)` returns the caller
+    and its deadline). Celery callback links carry `identity` too. A caller
+    without `until` (a message queued by an earlier version, or built with
+    `LambdaEvent.jobs`) gets `now + window` at the worker, so in-flight
+    messages keep running after a deploy; an infinite, `nan`, `null`,
+    non-numeric or out-of-range `until` has expired
+    (`loom.core.identity.wire.EXPIRED`), and a non-finite deadline is encoded
+    as `EXPIRED`, never as `null`. Links from earlier versions decode to no caller, so
+    a callback declaring `Caller()` fails closed.
+  - Signatures: `encode_job_message(..., until=None)` writes the deadline;
+    `job_context(trace_id, identity)` reads it from the identity.
+    `run_on_success`, `run_on_failure` and `callback_execution()`
+    keep their signatures: the callback acts as the caller acting where it
+    runs, which the inline dispatch and the Celery link install.
+    `loom.core.identity` adds `Acting` (the value behind the tokens of
+    `set_identity` and `enter`), `current_caller`, `configure_delegation`,
+    `delegation`, `fix_identity` (for `enter` only),
+    `refuse_expired_delegation`, `IdentityFixed` (also in
+    `loom.core.errors`) and `DEFAULT_MAX_DELEGATION_SECONDS`;
+    `loom.core.identity.wire` adds `decode_delegation` and `EXPIRED`.
+  - A dispatched job captures the authenticated caller acting and its
+    deadline (`loom.core.identity.delegation()`) in every backend (inline,
+    Celery, SQS); an anonymous caller is captured as no caller, as the wire
+    always carried it. `RecordingJobService` records the same capture:
+    `DispatchedJob.identity` is `Identity | None`, `None` for an anonymous
+    caller. A dispatch with no caller
+    runs the job with no caller inline as on Celery. A queued inline
+    dispatch drained inside work acting as anyone but its dispatcher is
+    refused (`IdentityFixed`).
+  - `persistence.rollback_timeout` is refused when infinite or `nan`, like
+    zero and negative values (`ConfigError`).
+  - `NoExecution` (singleton construction) acts as no one, fixed: a
+    singleton built lazily inside a request reads `ANONYMOUS`, never that
+    request's caller, and cannot install one.
+  - Known limits: a caller revoked after its request started keeps acting for
+    the work it caused until the window ends (no revocation check); the
+    identity and deadline in a job envelope are not signed; deadlines compare
+    wall clocks across processes; a handle built before the request ended
+    (Agent, MCP, SQL grant views) is bounded by the window only once it reads
+    the identity per call; the transaction check covers SQLAlchemy ORM
+    sessions, not `manager.engine` or Core connections.
 
 ## ⚠ Behaviour changes
 
@@ -586,46 +674,21 @@
   when it ends, so a use case that enters an execution (`enter`) and never
   leaves it now makes that end raise `RuntimeError` (token misuse) and closes
   the context.
-- **engine (behaviour change, NS2):** an execution given no `identity` runs as
-  the execution enclosing it, if any: a nested use case, an inline job or a
-  bare invoker inside a use case gets its caller for `Caller()`, `Agent()`,
-  `Mcp()` and the ambient `current_identity()`, instead of no identity. If
-  the ambient identity is not that caller, the nested execution raises
-  `NestedIdentityMismatch`: code changed it during the enclosing execution,
-  or opened that execution directly (`ExecutionScope`, `enter`) without
-  `set_identity` of the same identity, which code opening one must also do.
-- **engine (behaviour change, security F3):** an execution with no caller
-  (given no `identity`, at top level or nested under an execution with no
-  caller) sets the ambient `current_identity()` to `ANONYMOUS` for its length
-  and restores the previous one after, instead of leaving in place whatever
-  ambient identity it found. Row-level security, `InlineJobService.run` /
-  `dispatch` and `CeleryJobService.run` inside it therefore act as
-  `ANONYMOUS`, never as an identity the execution was not given.
-  **Migration:** a transport whose caller is the ambient identity passes it
-  explicitly (`executor.run(..., identity=current_identity())`), as the REST
-  routes, `LoomRestAdapter` and the job workers do.
 - **rest:** `LoomRestAdapter.handle` runs the use case as the request's caller
   (the ambient identity the transport installed, passed explicitly), so a
   `Caller()` in `execute()` now receives it instead of raising
   `Unauthenticated`.
-- **core (behaviour change, F3):** an `ApplicationInvoker` not bound to a
-  caller (`identity=None`, the default) invoked outside any execution, for
-  instance from a route or a middleware that installed the caller as the
-  ambient identity, now runs the use case as `ANONYMOUS` instead of leaving
-  that ambient identity in place (its `Caller()` already raised
-  `Unauthenticated`). **Migration:** bind it to the caller,
-  `invoker.for_identity(caller).invoke(...)`. Inside a use case the bare
-  invoker still runs as the enclosing execution's caller (NS2).
 - **jobs (behaviour change, D7):** job callbacks (`on_success`, `on_failure`;
   inline, Celery sync and async) are built and called inside an execution
-  with no caller (`loom.core.job.callback.callback_execution`), opened in the
-  task thread or inside the coroutine the worker's async bridge runs. A
-  constructor `Caller()` or a per-execution adapter declaring it raises
-  `Unauthenticated` naming job callbacks, where it raised `ExecutionRequired`;
-  an inline callback, which runs in the drain of the dispatching execution,
-  no longer sees that execution's caller through a handle or the ambient
-  identity (`ANONYMOUS` inside the callback). `REQUEST` bindings of a
-  callback are built once per callback run.
+  acting as the identity captured when the job was dispatched, which the
+  inline dispatch and the Celery link install
+  (`loom.core.job.callback.callback_execution()`), opened in the
+  task thread or inside the coroutine the worker's async bridge runs: a
+  constructor `Caller()`, a handle, row-level security and a job the callback
+  dispatches see the dispatcher, where a constructor `Caller()` raised
+  `ExecutionRequired`. A dispatch with no caller gives its callbacks none
+  (`Caller()` raises `Unauthenticated`). `REQUEST` bindings of a callback are
+  built once per callback run.
 - **testing:** `GoldenHarness.run` builds the use case inside its execution,
   so a constructor `Caller()` receives the `identity` given (and raises
   `Unauthenticated` without one).
@@ -635,8 +698,6 @@
   optional, and `run` raises `TypeError` when neither is given.
 - **engine (internal):** `RuntimeExecutor` is split by its reasons to change;
   its public API, events, metrics, log lines and their order are unchanged.
-  `loom.core.engine.principal` computes who an execution runs as (given,
-  inherited from the enclosing execution with the tamper check, or none);
   `loom.core.engine.boundaries` runs each execution in one unit of work
   (`Owned`, `Joined` or `ReadOnly`) and settles its post-commit actions;
   `loom.core.engine.preparation` compiles each plan once, on its first

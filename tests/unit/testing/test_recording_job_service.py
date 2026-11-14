@@ -79,6 +79,15 @@ async def test_a_committed_dispatch_is_recorded_with_its_caller(
     ]
 
 
+async def test_an_anonymous_caller_is_recorded_as_no_caller(
+    jobs: RecordingJobService, executor: RuntimeExecutor
+) -> None:
+    """The capture every backend makes: the job wire carries no anonymous caller."""
+    await executor.execute(_Ship(jobs, fail=False), identity=ANONYMOUS)
+
+    assert [record.identity for record in jobs.dispatched] == [None]
+
+
 async def test_a_rolled_back_dispatch_is_not_recorded(
     jobs: RecordingJobService, executor: RuntimeExecutor
 ) -> None:
@@ -99,7 +108,7 @@ async def test_a_dispatch_outside_an_execution_is_recorded_on_flush(
     await flush_pending_dispatches()
 
     assert [record.payload for record in jobs.dispatched] == [{"a": 1}, {"b": 2}]
-    assert jobs.dispatched[0].identity is ANONYMOUS
+    assert jobs.dispatched[0].identity is None
 
 
 @pytest.fixture

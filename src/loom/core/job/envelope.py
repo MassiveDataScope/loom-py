@@ -10,7 +10,7 @@ import msgspec
 
 from loom.core.errors import MalformedJobMessage
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.identity.wire import decode_identity, encode_identity
+from loom.core.identity.wire import decode_delegation, encode_identity
 from loom.core.job.job import Job
 from loom.core.tracing import reset_trace_id, set_trace_id
 
@@ -28,6 +28,9 @@ class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
 
     ``job`` accepts a bare job qualname or ``loom.job.<qualname>``.
     ``payload`` may be null; consumers treat it as an empty mapping.
+    ``identity`` carries the deadline of the caller's delegation under
+    ``until`` (a Unix time); the worker gives a caller without one a
+    delegation from its own clock.
     """
 
     job: str
@@ -49,9 +52,10 @@ def encode_job_message(
     params: dict[str, Any] | None,
     identity: Identity | None,
     trace_id: str | None = None,
+    until: float | None = None,
 ) -> bytes:
-    """The JSON :class:`JobEnvelope` that runs *job_type* as *identity*."""
-    job, who = wire_job_name(job_type.__qualname__), encode_identity(identity)
+    """The JSON :class:`JobEnvelope` that runs *job_type* as *identity*, until *until*."""
+    job, who = wire_job_name(job_type.__qualname__), encode_identity(identity, until)
     return msgspec.json.encode(
         JobEnvelope(job=job, payload=payload or {}, params=params, trace_id=trace_id, identity=who)
     )
@@ -67,14 +71,20 @@ def decode_job_envelope(body: str) -> JobEnvelope:
 
 @contextmanager
 def job_context(trace_id: str | None, identity: dict[str, Any] | None) -> Iterator[Identity | None]:
-    """Publish a message's trace and caller, restoring both after execution."""
+    """Publish a message's trace and caller, restoring both after execution.
+
+    The worker acts as the caller the message carries, and as no one when it
+    carries none (an unreadable identity included): never as whatever the
+    worker's context held. It resumes the delegation the caller carries; a
+    caller with none gets ``now + identity.max_delegation_seconds``, and an
+    unreadable deadline has expired, so the job's execution is refused.
+    """
+    caller, until = decode_delegation(identity)
+    token = set_identity(caller, until=until)
     trace_token = set_trace_id(trace_id) if trace_id else None
-    caller = decode_identity(identity)
-    identity_token = set_identity(caller) if caller is not None else None
     try:
         yield caller
     finally:
-        if identity_token is not None:
-            reset_identity(identity_token)
         if trace_token is not None:
             reset_trace_id(trace_token)
+        reset_identity(token)

@@ -1,4 +1,4 @@
-"""The execution identity and the ambient identity never disagree (plan 6).
+"""Every execution acts as its effective identity, restored after each child (plan 6, T09a).
 
 A seeded generator plays a few hundred random trees of executions, each run
 by a real :class:`~loom.core.engine.executor.RuntimeExecutor` (no stores), so
@@ -6,13 +6,14 @@ the property holds for the lifecycle loom ships, not for a copy of it. Trees
 mix nesting, ``gather`` across tasks, raising bodies and cancelled bodies, with
 explicit identities and none. At every step the test checks:
 
-- the current execution runs as the expected effective identity (NS2: the one
-  given, else the enclosing execution's, else ``None``);
+- the current execution acts as the expected effective identity (the one
+  given, else the one acting: the enclosing execution's, or the transport's
+  for the root), read through ``current_caller()``;
 - whenever that identity is not ``None`` it equals ``current_identity()``, and
-  whenever it is ``None``, ``current_identity()`` is ``ANONYMOUS`` (F3);
-- after each child (finished, raising or cancelled) the parent's execution is
-  current again, and after each tree no execution remains and the ambient
-  identity is back;
+  whenever it is ``None``, ``current_identity()`` is ``ANONYMOUS``;
+- after each child (finished, raising or cancelled) the parent's execution and
+  identity are current again, and after each tree no execution remains and the
+  transport's identity is back;
 - an assertion failing inside a gathered task fails the test: ``gather``
   collects results, and anything but the planned ``_Boom`` and cancellation
   is raised again.
@@ -36,11 +37,11 @@ from loom.core.execution import current_execution
 from loom.core.identity import (
     ANONYMOUS,
     Identity,
+    current_caller,
     current_identity,
-    reset_identity,
-    set_identity,
 )
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.delegation import acting_as
 
 _ALICE = Identity(subject="acme-alice", mechanism="test")
 _BOB = Identity(subject="acme-bob", mechanism="test")
@@ -95,17 +96,15 @@ _EXECUTOR = RuntimeExecutor(UseCaseCompiler())
 
 
 async def _execute(run: _Run) -> None:
-    """Run ``run`` through the executor, expecting the effective identity NS2 defines."""
-    enclosing = current_execution()
+    """Run ``run`` through the executor, expecting the given identity, else the one acting."""
     explicit = run.identity
-    effective = explicit if explicit is not None or enclosing is None else enclosing.identity
+    effective = explicit if explicit is not None else current_caller()
     await _EXECUTOR.execute(_Body(lambda: _play(run.body, effective)), identity=explicit)
 
 
 def _check(expected: Identity | None) -> None:
-    context = current_execution()
-    assert context is not None
-    assert context.identity is expected
+    assert current_execution() is not None
+    assert current_caller() is expected
     assert current_identity() is (ANONYMOUS if expected is None else expected)
 
 
@@ -167,14 +166,12 @@ class TestExecutionAndAmbientIdentity:
         for seed in range(_TREES):
             rng = random.Random(seed)
             root = _Run(rng.choice(_IDENTITIES), _tree(rng, 3, in_task=False))
-            ambient = set_identity(_AMBIENT)
             try:
-                with suppress(_Boom):
-                    await _execute(root)
-                assert current_execution() is None
-                assert current_identity() is _AMBIENT
+                with acting_as(_AMBIENT):
+                    with suppress(_Boom):
+                        await _execute(root)
+                    assert current_execution() is None
+                    assert current_caller() is _AMBIENT
             except AssertionError as exc:
                 exc.add_note(f"seed {seed}")
                 raise
-            finally:
-                reset_identity(ambient)

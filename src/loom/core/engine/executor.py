@@ -12,7 +12,6 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.observation import Observer
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.engine.preparation import ExecutionInputs, ParameterBindingError, Preparation
-from loom.core.engine.principal import inherited
 from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
@@ -20,7 +19,7 @@ from loom.core.execution import (
     execution_identity,
     leave,
 )
-from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
+from loom.core.identity import Identity, current_caller
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.uow.coordinator import Coordinator
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -39,11 +38,10 @@ _TargetT = TypeVar("_TargetT")
 class RuntimeExecutor:
     """Executes UseCases from their compiled ExecutionPlan without reflection.
 
-    The public facade of one execution: it computes who the execution runs
-    as (given, else the enclosing execution's caller, else no one;
-    :mod:`~loom.core.engine.principal`), installs that identity and the
-    execution context, builds the instance inside them, and delegates the
-    rest to its three pieces:
+    The public facade of one execution: it computes who the execution acts
+    as (given, else the identity acting, else no one), opens the execution
+    context, which fixes that identity, builds the instance inside it, and
+    delegates the rest to its three pieces:
 
     - :mod:`~loom.core.engine.boundaries`: the unit of work (a top-level
       writer opens an invocation scope over ``coordinator`` and commits it;
@@ -57,12 +55,15 @@ class RuntimeExecutor:
       ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
       structured logs (``usecase``, ``duration_ms``, ``status``).
 
-    An execution installs who it runs as as the ambient
-    :func:`~loom.core.identity.current_identity` until it ends, drain
-    included, so row-level security and the jobs it dispatches see the
-    identity ``Caller()`` receives; an execution with no caller installs
-    :data:`~loom.core.identity.ANONYMOUS` (F3), never leaving in place an
-    ambient identity it was not given.
+    One acting identity governs everything a request causes (spec 011,
+    T09a): row-level security, the jobs it dispatches, its nested executions
+    and the tasks it starts, even those that outlive it, all act as the
+    identity ``Caller()`` receives. Only an explicit switch changes it: given
+    an identity other than the one acting, an execution logs
+    ``identity_switched`` and acts as the given one, and so does everything
+    it causes. A caller acts within its delegation
+    (``identity.max_delegation_seconds`` from the request's start): past it,
+    a task that outlived the request can no longer act as that caller.
 
     Args:
         compiler: Compiler used to retrieve cached plans.
@@ -336,11 +337,13 @@ class RuntimeExecutor:
                 set to ``True`` by the HTTP layer for GET routes.  Also
                 honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
-                transport.  ``None`` runs as the caller of the execution
-                enclosing this one, if any (NS2), else with no caller and
-                the ambient identity ``ANONYMOUS`` (F3): a transport whose
-                caller is the ambient identity passes it explicitly.
-                Required, given or inherited, when the plan declares a
+                transport.  ``None`` acts as the identity acting
+                (:func:`~loom.core.identity.current_caller`: the enclosing
+                execution's, the transport's, or the one a task inherited),
+                else with no caller (``current_identity()`` then reads
+                ``ANONYMOUS``).  Another identity than the one acting is an
+                explicit switch: logged as ``identity_switched``.
+                Required, given or acting, when the plan declares a
                 ``Caller()``, ``Agent()`` or ``Mcp()`` parameter; pass
                 :data:`~loom.core.identity.identity.ANONYMOUS` explicitly to
                 run a declared-identity use case without a caller.
@@ -362,9 +365,8 @@ class RuntimeExecutor:
                 of the invocation did not end the same way.
             loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other
-                than the one the scope was opened with; or, given no
-                identity inside another execution, the ambient identity is
-                not that execution's, with or without a unit of work.
+                than the one the scope was opened with (a switched identity
+                never joins its parent's unit of work).
             loom.core.errors.NestedElevation: If the execution running
                 in this context has elevated a scope.
             loom.core.errors.UndeclaredStoreWrite: If this execution
@@ -392,30 +394,27 @@ class RuntimeExecutor:
         """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
 
         *read_only* is already the caller's flag or the plan's. The effective
-        identity is computed here, once (NS2): the one given, else the
-        enclosing execution's (:func:`~loom.core.engine.principal.inherited`),
-        else ``None``. That value reaches the arguments, the ambient identity
-        (``ANONYMOUS`` for ``None``, F3) and the execution context, which are
-        installed before the instance is built and reset after the drain.
+        identity is computed here, once: the one given, else the one acting
+        (``None`` for no caller). :func:`enter` fixes it before the instance
+        is built, reporting a switch and keeping or starting its delegation,
+        so the arguments, the acting identity and everything the execution
+        causes see the same value.
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level, out
         of that execution's scope and channel
-        (:func:`~loom.core.engine.boundaries.detached`). Nothing of the
-        departed caller survives: it inherits no identity, so it runs as the
-        one given, else with no caller and the ambient ``ANONYMOUS``.
+        (:func:`~loom.core.engine.boundaries.detached`), still acting as the
+        same caller within its delegation window.
         """
         scope = current_scope()
         if scope is not None and scope.closed:
             with detached():
                 return await self._execute(plan, build, target, inputs, identity, read_only)
         if identity is None:
-            identity = inherited(plan.use_case_type)
-        # F3: an execution with no caller runs with the ambient identity ANONYMOUS.
-        identity_token = set_identity(ANONYMOUS if identity is None else identity)
-        execution_token = enter(identity)
+            identity = current_caller()
+        use_case = plan.use_case_type.__qualname__
+        execution_token = enter(identity, use_case)
         try:
-            use_case = plan.use_case_type.__qualname__
             if not read_only:
                 refuse_write_under_read_only(f"{use_case}, which writes,")
             try:
@@ -432,10 +431,7 @@ class RuntimeExecutor:
                 lambda: attempt.business(call(plan, compilable, inputs, identity)),
             )
         finally:
-            try:
-                leave(execution_token)
-            finally:
-                reset_identity(identity_token)
+            leave(execution_token)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.

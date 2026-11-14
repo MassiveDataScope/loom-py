@@ -4,6 +4,10 @@ A job crosses a process boundary, where no context variable follows it.  The
 identity therefore travels inside the envelope, as an explicit part of the wire
 contract, encoded with plain JSON types so any broker serializer can carry it.
 
+The deadline of the caller's delegation travels inside it, under ``until``
+(:func:`decode_delegation`): a deadline never travels without a caller, and
+the worker refuses a job whose deadline has passed.
+
 Decoding treats its input as untrusted: anything that cannot be read as an
 identity becomes ``None``, and a use case declaring ``Caller()`` then fails
 closed instead of running as a partially decoded caller.
@@ -11,6 +15,7 @@ closed instead of running as a partially decoded caller.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -20,13 +25,16 @@ _SUBJECT = "subject"
 _ROLES = "roles"
 _ATTRIBUTES = "attributes"
 _MECHANISM = "mechanism"
+_UNTIL = "until"
 
 
-def encode_identity(identity: Identity | None) -> dict[str, Any] | None:
-    """Encode *identity* for transport inside a job envelope.
+def encode_identity(identity: Identity | None, until: float | None = None) -> dict[str, Any] | None:
+    """Encode *identity*, and the deadline of its delegation, for transport inside a job envelope.
 
     Args:
         identity: Caller to propagate, or ``None``.
+        until: The deadline of the caller's delegation (a Unix time); none
+            for a caller whose worker starts one (a system identity).
 
     Returns:
         A JSON-serialisable mapping, or ``None`` when there is no
@@ -38,12 +46,16 @@ def encode_identity(identity: Identity | None) -> dict[str, Any] | None:
     """
     if identity is None or not identity.is_authenticated:
         return None
-    return {
+    encoded: dict[str, Any] = {
         _SUBJECT: identity.subject,
         _ROLES: list(identity.roles),
         _ATTRIBUTES: dict(identity.attributes),
         _MECHANISM: identity.mechanism,
     }
+    if until is not None:
+        # inf would cross msgspec's JSON as null; a deadline that is not one has expired.
+        encoded[_UNTIL] = until if math.isfinite(until) else EXPIRED
+    return encoded
 
 
 def decode_identity(payload: Any) -> Identity | None:
@@ -70,6 +82,40 @@ def decode_identity(payload: Any) -> Identity | None:
         attributes=_decode_attributes(payload.get(_ATTRIBUTES)),
         mechanism=mechanism if isinstance(mechanism, str) else "",
     )
+
+
+def decode_delegation(payload: Any) -> tuple[Identity | None, float | None]:
+    """Rebuild the caller and the deadline of its delegation from a job envelope, failing closed.
+
+    Args:
+        payload: Value found under the envelope's identity key.
+
+    Returns:
+        ``(None, None)`` when no caller can be read. Otherwise the caller
+        with: ``None`` when it carries no ``until`` (an earlier version's
+        message, a system identity), so the worker starts a delegation; the
+        deadline when it is a finite number, which
+        :func:`~loom.core.identity.set_identity` clamps to one window; and
+        :data:`EXPIRED` for anything else (``inf``, ``nan``, ``null``, a
+        string, an int too large for a float), so the job is refused.
+    """
+    caller = decode_identity(payload)
+    if caller is None:
+        return None, None
+    if _UNTIL not in payload:
+        return caller, None
+    until = payload[_UNTIL]
+    if isinstance(until, bool) or not isinstance(until, (int, float)):
+        return caller, EXPIRED
+    try:
+        deadline = float(until)
+    except OverflowError:  # an int too large for a float
+        return caller, EXPIRED
+    return caller, deadline if math.isfinite(deadline) else EXPIRED
+
+
+EXPIRED = 0.0
+"""The deadline an unreadable one decodes to: the epoch, long passed."""
 
 
 def _decode_roles(value: Any) -> tuple[str, ...]:

@@ -1,25 +1,29 @@
-"""Inline job callbacks are built and called inside an execution with no caller (D7).
+"""Inline job callbacks act as the identity captured at dispatch (D7 revised, T09a).
 
-A callback reacts to a job; it does not act for the job's caller. So inside
-it the execution identity is ``None``: a handle (which reads it at call time,
-D2) and a constructor ``Caller()`` fail closed with ``Unauthenticated``, and
-the ambient identity is ``ANONYMOUS`` (F3), never the caller of the execution
-whose drain runs the callback.
+A callback is work its job's dispatch caused, so it acts as the dispatcher:
+a handle (which reads the execution identity at call time, D2), a constructor
+``Caller()`` and ``current_identity()`` all see that caller. A dispatch with
+no caller gives callbacks none, and they fail closed.
 """
 
 from __future__ import annotations
+
+import time
 
 import pytest
 
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
+from loom.core.execution import current_execution
 from loom.core.job.callback import run_on_failure, run_on_success
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.use_case.factory import UseCaseFactory
+from tests.helpers.delegation import acting_as
 
 from .doubles import (
     ALICE,
+    AS_ALICE,
     CALLBACKS,
     NO_CALLER,
     AcmeCallback,
@@ -30,17 +34,19 @@ from .doubles import (
     CallbackLog,
 )
 
+OUTCOMES = pytest.mark.parametrize(
+    ("job", "moment"),
+    [(AcmeProbeJob, "on_success"), (AcmeFailingJob, "on_failure")],
+    ids=["success", "failure"],
+)
+
 
 class TestInlineCallbacks:
-    """Dispatched by an execution as alice and run by its drain."""
+    """Dispatched by an execution and run by its drain."""
 
     @CALLBACKS
-    @pytest.mark.parametrize(
-        ("job", "moment"),
-        [(AcmeProbeJob, "on_success"), (AcmeFailingJob, "on_failure")],
-        ids=["success", "failure"],
-    )
-    async def test_are_built_and_called_with_no_caller(
+    @OUTCOMES
+    async def test_act_as_their_dispatcher(
         self,
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
@@ -56,28 +62,66 @@ class TestInlineCallbacks:
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
 
-        assert callback_log == [("built", NO_CALLER), (moment, NO_CALLER)]
+        assert callback_log == [("built", AS_ALICE), (moment, AS_ALICE)]
+
+    async def test_a_dispatch_with_no_caller_gives_the_job_and_them_none(
+        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+    ) -> None:
+        """The job's constructor ``Caller()`` fails closed, and its failure callback has none."""
+        jobs = InlineJobService(factory, executor)
+
+        async def dispatch() -> None:
+            jobs.dispatch(AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback)
+
+        await executor.execute(AcmeRun(dispatch))
+
+        assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
 
 class TestCallbackRunners:
-    """``run_on_success`` / ``run_on_failure``: the one way loom builds and calls a callback."""
+    """``run_on_success`` / ``run_on_failure``: the one way loom builds and calls a callback.
+
+    They act as the caller acting where they run: the one the inline dispatch
+    or the Celery link envelope installed, the dispatcher's.
+    """
 
     @CALLBACKS
-    async def test_leave_no_execution_or_identity_behind(
+    async def test_act_as_the_caller_acting_and_leave_nothing_behind(
         self, factory: UseCaseFactory, callback_log: CallbackLog, callback: type[AcmeCallback]
     ) -> None:
-        await run_on_success(factory, callback, "acme-job", None, {})
-        await run_on_failure(factory, callback, "acme-job", "LookupError", "acme", {})
+        with acting_as(ALICE):
+            await run_on_success(factory, callback, "acme-job", None, {})
+            await run_on_failure(factory, callback, "acme-job", "LookupError", "acme", {})
+            assert current_execution() is None
 
-        assert [moment for moment, _ in callback_log] == [
-            "built",
-            "on_success",
-            "built",
-            "on_failure",
+        assert callback_log == [
+            ("built", AS_ALICE),
+            ("on_success", AS_ALICE),
+            ("built", AS_ALICE),
+            ("on_failure", AS_ALICE),
         ]
 
-    async def test_a_constructor_caller_is_refused_as_a_callback_has_none(
+    async def test_a_constructor_caller_receives_the_dispatcher(
+        self, factory: UseCaseFactory, callback_log: CallbackLog
+    ) -> None:
+        with acting_as(ALICE):
+            await run_on_success(factory, AcmeCallerCallback, "acme-job", None, {})
+
+        assert callback_log == [("caller", AS_ALICE)]
+
+    async def test_a_constructor_caller_is_refused_when_the_dispatch_had_none(
         self, factory: UseCaseFactory
     ) -> None:
-        with pytest.raises(Unauthenticated, match="job callback"):
+        with pytest.raises(Unauthenticated, match="identity="):
             await run_on_success(factory, AcmeCallerCallback, "acme-job", None, {})
+
+    async def test_past_the_dispatcher_s_deadline_nothing_is_built(
+        self, factory: UseCaseFactory, callback_log: CallbackLog
+    ) -> None:
+        with (
+            acting_as(ALICE, until=time.time() - 1),
+            pytest.raises(Unauthenticated, match="system identity"),
+        ):
+            await run_on_success(factory, AcmeCallback, "acme-job", None, {})
+
+        assert callback_log == []

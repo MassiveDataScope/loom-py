@@ -21,7 +21,7 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core._async import held_task
 from loom.core.errors import PostCommitError
-from loom.core.execution import refuse_ended_execution
+from loom.core.execution import execution_ended
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -310,19 +310,21 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
     :meth:`~loom.core.uow.scope.InvocationScope.owners_of` names. Anywhere
     else a job dispatch (``store`` omitted) is queued on
     :func:`active_channel`, and a cache invalidation gets ``None``: its write
-    is already durable, so it runs now.
+    is already durable, so it runs now. A job dispatch from a task whose
+    execution ended gets ``None`` too: that execution's channel is drained,
+    so the dispatch goes out detached, as at top level, acting as the same
+    caller.
 
     Args:
         store: Store the action depends on; ``None`` for a job dispatch of
             the running execution.
 
     Raises:
-        ExecutionClosed: For a job dispatch from a task whose execution
-            ended: it would land on that execution's drained channel.
         UndeclaredStoreWrite: For a job dispatch while a read-only execution runs.
     """
     if store is None:
-        refuse_ended_execution("job dispatch")
+        if execution_ended():
+            return None
         refuse_write_under_read_only("a job dispatch")
     scope = current_scope()
     owners = None if scope is None else scope.owners_of(store)

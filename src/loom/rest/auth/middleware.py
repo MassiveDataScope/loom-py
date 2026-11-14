@@ -54,8 +54,10 @@ class AuthenticationMiddleware:
        ``INFO`` — the response and the log have different audiences, and only the
        response has an attacker in it.  Never the credential: a log holding a
        bearer token turns log access into API access.
-    4. On success, installs the identity for the duration of the request and
-       restores the previous one in a ``finally`` — without it, a reused
+    4. On success, installs the identity for the duration of the request,
+       starting its delegation (work the request causes, tasks that outlive
+       it included, acts as its caller for ``identity.max_delegation_seconds``),
+       and restores the previous one in a ``finally`` — without it, a reused
        worker task would inherit the previous caller.
     5. When the authenticator raises
        :class:`~loom.rest.auth.abc.AuthenticationUnavailable`, answers ``503``

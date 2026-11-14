@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.identity import Identity, current_identity
+from loom.core.identity import Identity, delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.handle import JobGroup, JobHandle
@@ -37,7 +37,8 @@ class DispatchedJob:
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
-    identity: Identity
+    identity: Identity | None
+    """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
 
 
 class RecordingJobService:
@@ -104,7 +105,7 @@ class RecordingJobService:
             payload=copy.deepcopy(payload or {}),
             params=copy.deepcopy(params),
             queue=queue or self._settings.of(job_type).queue,
-            identity=current_identity(),
+            identity=delegation()[0],
         )
         add_pending_publish(functools.partial(self.dispatched.append, record))
         return JobHandle(

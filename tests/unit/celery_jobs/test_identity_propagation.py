@@ -85,9 +85,11 @@ async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
 
 
 async def test_dispatch_puts_the_caller_in_the_envelope() -> None:
-    """The identity is captured at dispatch, when the caller is still known."""
+    """The identity is captured at dispatch, with the deadline of the caller's delegation."""
     envelope = await _dispatch_kwargs(CALLER)
-    assert envelope[_IDENTITY_KEY] == {
+    identity = dict(envelope[_IDENTITY_KEY])
+    assert isinstance(identity.pop("until"), float)
+    assert identity == {
         "subject": _SUBJECT,
         "roles": list(_ROLES),
         "attributes": dict(_ATTRIBUTES),

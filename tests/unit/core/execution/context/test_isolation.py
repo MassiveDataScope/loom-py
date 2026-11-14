@@ -12,7 +12,7 @@ import pytest
 
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, current_execution, enter, execution_identity, leave
-from loom.core.identity import Identity
+from loom.core.identity import Identity, current_caller
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB
 
 
@@ -50,19 +50,18 @@ class TestInterleavedExecutions:
 
 class TestEnter:
     def test_enter_installs_the_identity_given_without_inheriting(self) -> None:
-        """NS2: inheritance belongs to the executor; ``enter(None)`` inside Alice has no caller."""
+        """Inheritance belongs to the executor: ``enter(None, ...)`` inside Alice has no caller."""
         with ExecutionScope(ACME_ALICE):
             token = enter(None)
             try:
-                context = current_execution()
-                assert context is not None
-                assert context.identity is None
+                assert current_execution() is not None
+                assert current_caller() is None
             finally:
                 leave(token)
             assert execution_identity() is ACME_ALICE
 
     def test_enter_none_outside_any_execution_is_still_an_execution(self) -> None:
-        """D7: a job callback runs under ``enter(None)``; it has no caller, not no execution."""
+        """An execution with no caller is still an execution: reading its caller fails closed."""
         token = enter(None)
         try:
             with pytest.raises(Unauthenticated):
@@ -73,13 +72,14 @@ class TestEnter:
 
 
 class TestExecutionContext:
-    def test_the_identity_of_an_execution_is_read_only(self) -> None:
-        """Every task copied from the execution shares the object; nobody may rewrite it."""
+    def test_it_holds_resources_and_no_identity(self) -> None:
+        """Who acts is the acting identity ``enter`` fixed; the context keeps only resources."""
         with ExecutionScope(ACME_ALICE):
             context = current_execution()
             assert context is not None
+            assert not hasattr(context, "identity")
             with pytest.raises(AttributeError):
-                context.identity = ACME_BOB  # type: ignore[misc]
+                context.identity = ACME_BOB  # type: ignore[attr-defined]
             assert execution_identity() is ACME_ALICE
 
     def test_a_nested_execution_starts_with_a_fresh_cache(self) -> None:

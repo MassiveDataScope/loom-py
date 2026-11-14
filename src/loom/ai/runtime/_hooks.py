@@ -17,7 +17,7 @@ from typing import Any, Final
 
 import msgspec
 
-from loom.ai._usecase import invoke_as, require_invoker
+from loom.ai._usecase import require_invoker
 from loom.ai.abc import AgentEvent, DepsFactory, ErrorEvent, FinalEvent
 from loom.ai.compiler._plan import HOOK_MESSAGES_FIELD, HOOK_OUTPUT_FIELD, CompiledOutputHook
 from loom.ai.errors import AgentRunErrorCode
@@ -94,7 +94,7 @@ async def _invoke_hook(
     bundle = deps.build(run.identity, container)
     invoker = require_invoker(bundle, f"{_HOOK} '{hook.usecase}'")
     command = hook_command(final.output, run, hook.accepted, messages=final.messages)
-    return await invoke_as(invoker, hook.use_case, run.identity, params=None, payload=command)
+    return await invoker.invoke(hook.use_case, params=None, payload=command)
 
 
 async def hooked_events(

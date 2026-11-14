@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -10,12 +12,13 @@ import pytest
 
 from loom.composition import AppConfig, compose_application
 from loom.core.config import ConfigContext
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import Identity, current_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import LambdaEvent
 from tests.helpers.composition import composition_source
+from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import SQSClient, sqs_service
 
 pytestmark = pytest.mark.timeout(30)
@@ -107,16 +110,18 @@ def test_a_raw_body_loom_cannot_read_is_retried(
 
 
 async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
+    """All but the caller's deadline: an event's caller gets one at the worker."""
     client = SQSClient()
     service = sqs_service(client)
-    token = set_identity(_ALICE)
+    deadline = time.time() + 60
     try:
-        service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
-        await flush_pending_dispatches()
+        with acting_as(_ALICE, until=deadline):
+            service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
+            await flush_pending_dispatches()
     finally:
-        reset_identity(token)
         clear_pending_dispatches()
 
     event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
-    record = event["Records"][0]
-    assert [request["MessageBody"] for request in client.requests] == [record["body"]]
+    expected = json.loads(event["Records"][0]["body"])
+    expected["identity"]["until"] = deadline
+    assert [json.loads(request["MessageBody"]) for request in client.requests] == [expected]

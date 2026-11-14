@@ -1,22 +1,22 @@
-"""Contracts of the engine-free use-case helpers in ``loom.ai._usecase``.
+"""Contracts of the engine-free use-case helper in ``loom.ai._usecase``.
 
 ``require_invoker`` reads the bound invoker structurally from a dependency
-bundle and refuses a bundle that carries none; ``invoke_as`` runs a use case
-as a given caller, installing the ambient identity only for the duration of
-the call and forwarding ``params``/``payload`` untouched.
+bundle and refuses a bundle that carries none. The invoker it returns acts as
+its bound caller through the executor; nothing installs an ambient identity
+(spec 011, T09a).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
-from loom.ai._usecase import invoke_as, require_invoker
+from loom.ai._usecase import require_invoker
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.engine.compilable import Compilable
-from loom.core.identity import ANONYMOUS, Identity, current_identity
+from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
 
 
@@ -61,13 +61,6 @@ class _Bundle:
     invoker: object
 
 
-class _UseCase:
-    """Stand-in use case type; ``invoke_as`` forwards it without inspecting it."""
-
-
-_USE_CASE = cast("type[Compilable]", _UseCase)
-
-
 def test_require_invoker_returns_the_invoker_when_the_bundle_exposes_one() -> None:
     invoker = _RecordingInvoker()
 
@@ -97,52 +90,6 @@ def test_require_invoker_rejects_an_attribute_that_is_not_an_invoker() -> None:
         require_invoker(bundle, "tool")
 
     assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
-
-
-async def test_invoke_as_installs_the_ambient_identity_before_calling_the_invoker() -> None:
-    invoker = _RecordingInvoker()
-    identity = Identity(subject="caller")
-
-    await invoke_as(invoker, _USE_CASE, identity, params=None, payload=None)
-
-    assert invoker.calls[0]["identity"] is identity
-
-
-async def test_invoke_as_restores_the_previous_identity_on_completion() -> None:
-    invoker = _RecordingInvoker()
-
-    await invoke_as(invoker, _USE_CASE, Identity(subject="caller"), params=None, payload=None)
-
-    assert current_identity() is ANONYMOUS
-
-
-async def test_invoke_as_restores_the_previous_identity_when_the_invoker_fails() -> None:
-    class _Failing(_RecordingInvoker):
-        async def invoke(self, use_case: type[Compilable], **_: Any) -> Any:
-            raise RuntimeError("boom")
-
-    invoker = _Failing()
-    identity = Identity(subject="caller")
-
-    with pytest.raises(RuntimeError):
-        await invoke_as(invoker, _USE_CASE, identity, params=None, payload=None)
-
-    assert current_identity() is ANONYMOUS
-
-
-async def test_invoke_as_forwards_params_and_payload_to_the_invoker() -> None:
-    invoker = _RecordingInvoker()
-    params = {"id": "1"}
-    payload = {"value": 2}
-
-    result = await invoke_as(
-        invoker, _USE_CASE, Identity(subject="caller"), params=params, payload=payload
-    )
-
-    assert result == "result"
-    assert invoker.calls[0]["use_case"] is _UseCase
-    assert invoker.calls[0]["params"] == params
-    assert invoker.calls[0]["payload"] == payload
 
 
 def test_the_fake_satisfies_the_invoker_protocol() -> None:

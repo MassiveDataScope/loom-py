@@ -35,7 +35,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from loom.ai._filters import admits
 from loom.ai._roles import bound_query_roles
-from loom.ai._usecase import invoke_as, require_invoker
+from loom.ai._usecase import require_invoker
 from loom.ai.abc import McpSession, ToolsetContext
 from loom.ai.compiler import (
     AgentPlan,
@@ -157,11 +157,11 @@ def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
 async def _invoke(
     grant: _UsecaseGrant, deps: CapabilityDeps, arguments: Mapping[str, Any]
 ) -> object:
-    """Invoke the granted use case as the caller, ambient identity included."""
+    """Invoke the granted use case as the caller, through the invoker bound to it."""
     invoker = require_invoker(deps, f"tool '{grant.tool_name}'")
     params = {name: arguments[name] for name in grant.param_names if name in arguments}
     payload = _payload_of(grant, arguments)
-    return await invoke_as(invoker, grant.use_case, deps.identity, params=params, payload=payload)
+    return await invoker.invoke(grant.use_case, params=params, payload=payload)
 
 
 def _payload_of(grant: _UsecaseGrant, arguments: Mapping[str, Any]) -> dict[str, Any] | None:

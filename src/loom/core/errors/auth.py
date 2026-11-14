@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from loom.core.errors.base import DomainError
+from loom.core.errors.base import DomainError, SystemError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -131,3 +131,17 @@ class Forbidden(DomainError):
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
         self.missing: tuple[str, ...] = permissions
+
+
+class IdentityFixed(SystemError):
+    """Raised by :func:`~loom.core.identity.set_identity` inside work whose identity is fixed.
+
+    An execution fixes its identity when it starts, and a task it started
+    keeps it, even one that outlives it. Changing who acts there silently
+    would let one request's work act as someone else, so the only way is an
+    explicit switch, which opens work of its own and is logged:
+    ``executor.run(UseCase, identity=...)``, ``invoker.for_identity(...)``
+    or ``ExecutionScope(...)``.
+    """
+
+    retryable = False  # a programming error: a retry meets it again

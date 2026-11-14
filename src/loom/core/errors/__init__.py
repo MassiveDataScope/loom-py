@@ -1,6 +1,11 @@
 """The errors loom raises at run time, by area; every class is importable from here."""
 
-from loom.core.errors.auth import Forbidden, InsufficientAuthentication, Unauthenticated
+from loom.core.errors.auth import (
+    Forbidden,
+    IdentityFixed,
+    InsufficientAuthentication,
+    Unauthenticated,
+)
 from loom.core.errors.base import DomainError, LoomError, SystemError
 from loom.core.errors.domain import (
     BODY_FIELD,
@@ -37,6 +42,7 @@ __all__ = [
     "Conflict",
     "DomainError",
     "Forbidden",
+    "IdentityFixed",
     "ForeignSessionError",
     "InsufficientAuthentication",
     "JobFailedError",

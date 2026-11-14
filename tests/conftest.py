@@ -18,6 +18,8 @@ from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 
+pytest_plugins = ["tests.helpers.delegation"]
+
 _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"
 _OUTPUTS_DIR = _GOLDEN_DIR / "outputs"
