@@ -29,6 +29,7 @@ _DEFAULT_500_CODES: frozenset[AgentRunErrorCode] = frozenset(
     {
         AgentRunErrorCode.CANCELLED,
         AgentRunErrorCode.MCP_GRANT_UNKNOWN,
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED,
         AgentRunErrorCode.SQL_GRANT_UNKNOWN,
         AgentRunErrorCode.TOOL_UNKNOWN,
         AgentRunErrorCode.TOOL_UNTYPED,

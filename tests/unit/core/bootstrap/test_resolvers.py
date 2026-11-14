@@ -1,4 +1,4 @@
-"""A standalone kernel takes the legacy agent and MCP resolvers, as ``RuntimeExecutor`` does."""
+"""A standalone kernel takes the agent and MCP resolvers, call-time or legacy."""
 
 from __future__ import annotations
 
@@ -34,6 +34,13 @@ def _agent(name: str, identity: Identity) -> object:
     return ("agent", name, identity)
 
 
+class AcmeCallTimeResolver:
+    """Returns a handle per declaration without reading the identity, as the AI resolvers do."""
+
+    def resolve(self, declaration: object, annotation: object) -> object:
+        return ("call-time", declaration)
+
+
 def _binds(scope: Scope) -> object:
     def module(container: LoomContainer) -> None:
         container.register(AcmeCrm, AcmeCrm, scope=scope)
@@ -41,7 +48,7 @@ def _binds(scope: Scope) -> object:
     return module
 
 
-class TestKernelLegacyResolvers:
+class TestKernelResolvers:
     def test_a_per_execution_adapter_gets_handles_from_the_kernel_resolvers(self) -> None:
         kernel = create_kernel(
             config=AcmeResolverConfig(),
@@ -57,7 +64,20 @@ class TestKernelLegacyResolvers:
         assert crm.crm == ("mcp", "acme-crm", ("find_*",), ANONYMOUS)
         assert crm.triage == ("agent", "acme-triage", ANONYMOUS)
 
-    def test_until_call_time_handles_a_singleton_holding_them_cannot_be_built(self) -> None:
+    def test_a_singleton_holding_call_time_handles_is_built_at_startup(self) -> None:
+        kernel = create_kernel(
+            config=AcmeResolverConfig(),
+            use_cases=(),
+            modules=(_binds(Scope.APPLICATION),),  # type: ignore[arg-type]
+            agent_resolver=AcmeCallTimeResolver(),  # type: ignore[arg-type]
+            mcp_resolver=AcmeCallTimeResolver(),  # type: ignore[arg-type]
+        )
+
+        crm = kernel.container.resolve(AcmeCrm)
+        assert crm.crm[0] == crm.triage[0] == "call-time"
+        assert crm is kernel.container.resolve(AcmeCrm)
+
+    def test_a_singleton_holding_legacy_handles_cannot_be_built(self) -> None:
         with pytest.raises(BootstrapError) as caught:
             create_kernel(
                 config=AcmeResolverConfig(),

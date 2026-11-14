@@ -16,8 +16,9 @@ from pydantic import BaseModel, ConfigDict
 from loom.ai.abc import StateShape
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _BoundAgentHandle
+from loom.ai.runtime._handle import _AgentHandle
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.sql.service import NullSqlQueryService
@@ -111,15 +112,15 @@ class TestStateReachesTheEngine:
         """The same channel, driven from ``AgentHandle.run`` (FR-007)."""
         engine = RecordingScriptedEngine()
         runtime = _runtime(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
         async with runtime:
-            await handle.run("hola", state={"marca": "civic", "km": 7})
+            with ExecutionScope(_AUTHENTICATED):
+                await handle.run("hola", state={"marca": "civic", "km": 7})
         assert engine.states == [{"marca": "civic", "km": 7}]
 
 

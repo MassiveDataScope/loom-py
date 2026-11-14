@@ -62,6 +62,7 @@ RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
             "the run declares a required state field with no default, and no state was given"
         ),
         AgentRunErrorCode.MCP_GRANT_UNKNOWN: "the requested MCP grant is unknown",
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED: "the MCP server is not granted to any use case",
         AgentRunErrorCode.SQL_GRANT_UNKNOWN: "the requested SQL grant is unknown",
         AgentRunErrorCode.TOOL_UNKNOWN: "the requested tool is unknown",
         AgentRunErrorCode.TOOL_UNTYPED: "the requested tool publishes no output schema",

@@ -65,6 +65,7 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.errors import Forbidden
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model.redaction import Dsn
 from loom.core.sql.abc import SqlColumn, SqlQueryResult
@@ -531,7 +532,8 @@ class TestContainment:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == sorted(GRANTED_TOOLS)
 
@@ -553,7 +555,7 @@ class TestContainment:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert failure.value.code is AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION
@@ -578,7 +580,8 @@ class TestIdentity:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert [call.identity for call in invoker.calls] == [ANALYST]
 
@@ -600,7 +603,7 @@ class TestIdentity:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
@@ -618,7 +621,7 @@ class TestIdentity:
             deps=IdentitylessDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
@@ -635,7 +638,7 @@ class TestIdentity:
             deps=IdentitylessDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert (failure.value.code, invoker.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -659,7 +662,8 @@ class TestInvocation:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert invoker.calls == [
             RecordedInvocation(
@@ -689,7 +693,8 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert [call.roles for call in sql_service.calls] == [(ALLOWED_ROLE,)]
 
@@ -707,7 +712,8 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         unbound = [call for call in sql_service.calls if not call.roles]
         assert (len(sql_service.calls), unbound) == (2, [])
@@ -724,7 +730,7 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, sql_service.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -741,7 +747,7 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ROLELESS):
             await engine.run("hello", identity=ROLELESS)
 
         assert (failure.value.code, sql_service.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -767,7 +773,8 @@ class TestResultBounds:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (bool(model.tool_returns), CANARY in model.shown) == (True, False)
 
@@ -785,7 +792,8 @@ class TestResultBounds:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (bool(model.tool_returns), CANARY in model.shown) == (True, False)
 
@@ -950,7 +958,7 @@ class TestSkillsCapability:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError, match="invented"):
+        with pytest.raises(AgentRunError, match="invented"), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
     def test_builds_no_toolset_when_the_capability_is_skills(
@@ -983,7 +991,8 @@ class TestSkillsCapability:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert result.output == {"answer": "42"}
 
@@ -1040,7 +1049,7 @@ class TestCapabilityRunsAreNotReplayed:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError):
+        with pytest.raises(AgentRunError), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 1
@@ -1058,7 +1067,7 @@ class TestCapabilityRunsAreNotReplayed:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError):
+        with pytest.raises(AgentRunError), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert model.responses > 1
@@ -1086,7 +1095,8 @@ class TestContainedApplicationFailures:
             policies=REPLAYING_POLICIES,
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 1
 
@@ -1105,7 +1115,8 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ("refused" in model.shown, BACKEND_CANARY in model.shown) == (True, False)
 
@@ -1128,7 +1139,8 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ("refused" in model.shown, BACKEND_CANARY in model.shown) == (True, False)
 
@@ -1147,7 +1159,7 @@ class TestContainedApplicationFailures:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert (failure.value.code, len(invoker.calls)) == (AgentRunErrorCode.UNAUTHORIZED, 1)
@@ -1167,7 +1179,7 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert BACKEND_CANARY not in str(failure.value)
@@ -1320,7 +1332,8 @@ class TestEngineSignalsSurviveTheGuard:
             policies=make_policies(retries=2),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert any("bad argument, try X" in prompt for prompt in model.retry_prompts)
         assert "refused" not in model.shown
@@ -1344,7 +1357,7 @@ class TestEngineSignalsSurviveTheGuard:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert "deferred" in str(failure.value).lower()
@@ -1369,7 +1382,8 @@ class TestForeignToolsetsCannotDictateTheirSummary:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         part = model.tool_parts[0]
         metadata = part.metadata or {}
@@ -1403,7 +1417,8 @@ class TestToolCallsAreCounted:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 2
         assert result.usage.tool_calls == 2
@@ -1419,7 +1434,8 @@ class TestToolCallsAreCounted:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert result.usage.tool_calls == 0
 
@@ -1438,7 +1454,7 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -1456,7 +1472,8 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert calls == ["ping"]
 
@@ -1474,7 +1491,7 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -1493,7 +1510,8 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert calls == ["remote_ping"]
 
@@ -1524,7 +1542,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == ["search_docs", "search_web"]
 
@@ -1552,7 +1571,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert model.offered_tools == ("search_web",)
 
@@ -1571,7 +1591,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == ["delete_index", "search_web"]
 
@@ -1594,7 +1615,8 @@ class TestStatementBound:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (sql_service.calls, "max_sql_bytes" in model.shown) == ([], True)
 
@@ -1615,7 +1637,8 @@ class TestRowBoundCountsTheRowsHandedOver:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (CANARY in model.shown, "max_rows" in model.shown) == (False, True)
 
@@ -1657,7 +1680,8 @@ class TestPublishedToolNames:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert model.offered_tools == ("sql_sales_eu",)
 
@@ -1700,7 +1724,8 @@ class TestRefusalsAreVisibleInTheStream:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
         events = [translate(FunctionToolResultEvent(part=part)) for part in model.tool_parts]
 
         assert [
@@ -1719,7 +1744,8 @@ class TestRefusalsAreVisibleInTheStream:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
         events = [translate(FunctionToolResultEvent(part=part)) for part in model.tool_parts]
 
         assert [
@@ -1762,7 +1788,8 @@ class TestIdentityReachesTheExecutor:
         """The subject of the agent's caller reaches the ``Caller()`` binding."""
         engine, model = self._engine_and_model()
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ANALYST.subject in model.shown
 
@@ -1770,6 +1797,7 @@ class TestIdentityReachesTheExecutor:
         """No ``Unauthenticated``: the executor is handed the caller explicitly."""
         engine, model = self._engine_and_model()
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert "the operation failed" not in model.shown

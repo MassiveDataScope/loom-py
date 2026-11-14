@@ -57,7 +57,6 @@ from loom.ai.engines.pydantic_ai._guards import (
     capability_deps,
     guarded,
     guarded_toolset,
-    require_authenticated,
 )
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._native import native_capability as _native_capability
@@ -74,11 +73,18 @@ from loom.ai.engines.pydantic_ai._schemas import (
     tool_name,
     usecase_schema,
 )
-from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
+from loom.ai.errors import (
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunError,
+    AgentRunErrorCode,
+    require_authenticated,
+)
 from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.execution import execution_identity
 from loom.core.identity import Identity
 from loom.core.sql.abc import SqlQueryResult
 from loom.core.sql.service import SqlQueryService
@@ -134,7 +140,7 @@ def _usecase_toolset(
 def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
     async def call(run: RunContext[Any], **arguments: Any) -> ToolReturn:
         deps = capability_deps(run)
-        require_authenticated(deps.identity, grant.tool_name)
+        require_authenticated(execution_identity(), f"tool '{grant.tool_name}'")
         async with capability_call(context, "usecase", grant.tool_name, deps.identity):
             return await guarded(
                 grant.tool_name, lambda: _invoke(grant, deps, arguments), ok_return
@@ -172,7 +178,7 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
 
     async def call(run: RunContext[Any], sql: str) -> ToolReturn:
         deps = capability_deps(run)
-        require_authenticated(deps.identity, name)
+        require_authenticated(execution_identity(), f"tool '{name}'")
         oversized = _oversized_statement(capability, sql)
         if oversized is not None:
             return oversized

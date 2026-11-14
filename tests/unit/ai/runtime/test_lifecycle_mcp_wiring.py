@@ -26,8 +26,9 @@ import pytest
 
 from loom.ai.abc import McpToolCallResult, McpToolInfo
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _BoundAgentHandle
+from loom.ai.runtime._handle import _AgentHandle
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.sql.service import NullSqlQueryService
 from tests.integration.ai.conftest import (
@@ -109,21 +110,21 @@ class TestUndeclaredThirdPartySession:
             container=container,
             mcp_client_factory=mcp_client_factory({_MCP_SERVER: client}),  # type: ignore[arg-type]
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            mcp = handle.mcp(_MCP_SERVER)
-            first = asyncio.create_task(mcp.call_untyped("echo", {"token": "a"}))
-            while not session.started:
-                await asyncio.sleep(0)
-            second = asyncio.create_task(mcp.call_untyped("echo", {"token": "b"}))
-            results = await asyncio.gather(first, second)
+            with ExecutionScope(_AUTHENTICATED):
+                mcp = handle.mcp(_MCP_SERVER)
+                first = asyncio.create_task(mcp.call_untyped("echo", {"token": "a"}))
+                while not session.started:
+                    await asyncio.sleep(0)
+                second = asyncio.create_task(mcp.call_untyped("echo", {"token": "b"}))
+                results = await asyncio.gather(first, second)
 
         assert session.interleaved is False
         assert {result["token"] for result in results} == {"a", "b"}

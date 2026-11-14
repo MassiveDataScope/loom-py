@@ -332,7 +332,7 @@ def bind_agent_resolver(result: KernelRuntime, ai: AiWiring) -> None:
     """
     if ai.runtime is None:
         return
-    from loom.ai.runtime._handle import agent_marker_resolver
+    from loom.ai.runtime._handle import AgentMarkerResolver
 
     observability = (
         result.container.resolve(ObservabilityRuntime)
@@ -340,7 +340,7 @@ def bind_agent_resolver(result: KernelRuntime, ai: AiWiring) -> None:
         else None
     )
     sql_query_service = result.container.resolve(SqlQueryService)
-    resolver = agent_marker_resolver(
+    resolver = AgentMarkerResolver(
         ai.runtime, sql_query_service=sql_query_service, observability=observability
     )
     result.executor.bind_agent_resolver(resolver)
@@ -359,14 +359,14 @@ def bind_mcp_resolver(result: KernelRuntime, ai: AiWiring) -> None:
     """
     if ai.runtime is None:
         return
-    from loom.ai.runtime._handle import mcp_marker_resolver
+    from loom.ai.runtime._handle import McpMarkerResolver
 
     observability = (
         result.container.resolve(ObservabilityRuntime)
         if result.container.is_registered(ObservabilityRuntime)
         else None
     )
-    resolver = mcp_marker_resolver(ai.runtime, observability=observability)
+    resolver = McpMarkerResolver(ai.runtime, observability=observability)
     result.executor.bind_mcp_resolver(resolver)
 
 

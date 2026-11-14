@@ -27,10 +27,11 @@ from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import agent_marker_resolver
+from loom.ai.runtime._handle import AgentMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
@@ -198,7 +199,7 @@ def _wired(
         else NullSqlQueryService()
     )
     executor.bind_agent_resolver(
-        agent_marker_resolver(runtime, sql_query_service=sql_query_service, observability=None)
+        AgentMarkerResolver(runtime, sql_query_service=sql_query_service, observability=None)
     )
     return executor, runtime
 
@@ -325,10 +326,10 @@ class TestAgentPathIncludeIsWiredToo:
         )
 
         async with runtime:
-            resolver = agent_marker_resolver(
+            resolver = AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
-            handle = resolver(MARKER_AGENT_NAME, _ALICE)
+            handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
             assert handle.mcp(_MCP_SERVER).tools() == ("read_orders",)
 
     async def test_the_agent_tool_span_still_says_agent_not_mcp_server(
@@ -350,11 +351,12 @@ class TestAgentPathIncludeIsWiredToo:
         observability = ObservabilityRuntime(observers=[observer])
 
         async with runtime:
-            resolver = agent_marker_resolver(
+            resolver = AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=observability
             )
-            handle = resolver(MARKER_AGENT_NAME, _ALICE)
-            await handle.mcp(_MCP_SERVER).call_untyped("read_orders", {})
+            handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
+            with ExecutionScope(_ALICE):
+                await handle.mcp(_MCP_SERVER).call_untyped("read_orders", {})
 
         tool_spans = [e.meta or {} for e in observer.events if e.scope is Scope.TOOL]
         assert tool_spans
@@ -390,12 +392,12 @@ class TestAgentPathIncludeIsWiredToo:
         )
 
         async with runtime:
-            resolver = agent_marker_resolver(
+            resolver = AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
-            handle = resolver(MARKER_AGENT_NAME, _ALICE)
+            handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
             mcp_handle = handle.mcp(_MCP_SERVER)
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_ALICE), pytest.raises(AgentRunError) as excinfo:
                 await mcp_handle.call_untyped("read_orders", {})
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_TIMEOUT

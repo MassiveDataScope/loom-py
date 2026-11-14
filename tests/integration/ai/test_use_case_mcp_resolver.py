@@ -1,8 +1,8 @@
-"""``mcp_marker_resolver`` (T302) and its degradation (T303).
+"""``McpMarkerResolver`` (T302) and its degradation (T303).
 
 Builds real ``AgentRuntime`` instances over stub MCP clients — the same
 shape ``test_use_case_mcp_runtime.py`` (T203) uses — and resolves through
-:func:`~loom.ai.runtime._handle.mcp_marker_resolver`, the callable
+:class:`~loom.ai.runtime._handle.McpMarkerResolver`, the resolver
 ``RuntimeExecutor.bind_mcp_resolver`` takes, instead of constructing
 ``McpGrantView`` by hand. This is the seam T203's suite deliberately stops
 short of: the resolving *binding's own* ``include``, not the shared
@@ -18,9 +18,10 @@ import pytest
 from loom.ai.compiler._plan import CompiledMcpCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _UnavailableMcpHandle, mcp_marker_resolver
+from loom.ai.runtime._handle import McpMarkerResolver
 from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -101,14 +102,15 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
         )
 
         async with runtime:
-            resolve = mcp_marker_resolver(runtime, observability=None)
+            resolve = McpMarkerResolver(runtime, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
-            assert handle.tools() == ("search",)
-            result = await handle.call_untyped("search", {})
+            with ExecutionScope(identity):
+                assert handle.tools() == ("search",)
+                result = await handle.call_untyped("search", {})
             assert result == {"hits": 1}
 
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("delete", {})
             assert excinfo.value.code is AgentRunErrorCode.TOOL_UNKNOWN
 
@@ -132,16 +134,19 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
         )
 
         async with runtime:
-            resolve = mcp_marker_resolver(runtime, observability=None)
+            resolve = McpMarkerResolver(runtime, observability=None)
             first = resolve(_SERVER_A, ("search",), identity)
             second = resolve(_SERVER_A, ("delete",), identity)
 
-            assert first.tools() == ("search",)
-            assert second.tools() == ("delete",)
-            # Both bindings resolve over the very same session object
-            # (FR-15): neither a second connection nor a second listing
-            # served either one.
-            assert first._session is second._session  # noqa: SLF001
+            with ExecutionScope(identity):
+                assert first.tools() == ("search",)
+                assert second.tools() == ("delete",)
+                await first.call_untyped("search", {})
+                await second.call_untyped("delete", {})
+            # Both bindings call through the very same session (FR-15):
+            # neither a second connection nor a second listing served either one.
+            assert [name for name, _ in session.calls] == ["search", "delete"]
+            assert session.listed == 1
 
     async def test_reading_the_shared_grants_include_instead_of_the_bindings_own_fails_this(
         self,
@@ -173,11 +178,12 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
             # The shared substrate carries no filter of its own (H1, T203).
             assert grant.capability.include == ()
 
-            resolve = mcp_marker_resolver(runtime, observability=None)
+            resolve = McpMarkerResolver(runtime, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
-            assert handle.tools() == ("search",)
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(identity):
+                assert handle.tools() == ("search",)
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("delete", {})
             assert excinfo.value.code is AgentRunErrorCode.TOOL_UNKNOWN
 
@@ -202,9 +208,10 @@ class TestTheSpanDistinguishesTheUseCasePath:
         observability = ObservabilityRuntime(observers=[observer])
 
         async with runtime:
-            resolve = mcp_marker_resolver(runtime, observability=observability)
+            resolve = McpMarkerResolver(runtime, observability=observability)
             handle = resolve(_SERVER_A, ("search",), identity)
-            await handle.call_untyped("search", {})
+            with ExecutionScope(identity):
+                await handle.call_untyped("search", {})
 
         tool_spans = [e for e in observer.events if e.scope is Scope.TOOL]
         assert tool_spans
@@ -248,9 +255,9 @@ class TestTimeoutComesFromTheServersOwnDeadline:
         )
 
         async with runtime:
-            resolve = mcp_marker_resolver(runtime, observability=None)
+            resolve = McpMarkerResolver(runtime, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_TIMEOUT
@@ -278,20 +285,20 @@ class TestUnreachableServerTolerated:
         )
 
         async with runtime:
-            resolve = mcp_marker_resolver(runtime, observability=None)
+            resolve = McpMarkerResolver(runtime, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
-            assert isinstance(handle, _UnavailableMcpHandle)
-            assert handle.tools() == ()
+            with ExecutionScope(identity):
+                assert handle.tools() == ()
 
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})
             assert excinfo.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE
 
             # ``call`` is the Protocol's typed default and the one a use case
             # writes; degrading only on the untyped path would return ``None``
             # where the signature promises ``expect``.
-            with pytest.raises(AgentRunError) as typed:
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as typed:
                 await handle.call("search", {}, expect=dict)
             assert typed.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE
 
@@ -310,7 +317,10 @@ class TestUnreachableServerTolerated:
             deps=deps,
             container=container,
         )
-        resolve = mcp_marker_resolver(runtime, observability=None)
+        handle = McpMarkerResolver(runtime, observability=None)(_SERVER_A, ("search",), identity)
 
-        with pytest.raises(RuntimeError, match="must be entered before use"):
-            resolve(_SERVER_A, ("search",), identity)
+        with (
+            ExecutionScope(identity),
+            pytest.raises(RuntimeError, match="must be entered before use"),
+        ):
+            handle.tools()

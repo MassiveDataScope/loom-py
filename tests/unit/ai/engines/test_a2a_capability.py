@@ -36,6 +36,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorC
 from loom.ai.inference import InferenceTarget
 from loom.ai.runtime import AgentRunError, AgentRuntime
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from tests.helpers.extras import ENGINE_EXTRAS, without_extra
 from tests.helpers.pydantic_ai_engine import (
@@ -192,7 +193,8 @@ class TestOutboundToolset:
         model = delegating_model()
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", _replying("42"))
 
-        await build_engine(model=model).run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await build_engine(model=model).run("hello", identity=ANALYST)
 
         assert model.offered_tools == (REMOTE_TOOL,)
 
@@ -209,7 +211,8 @@ class TestOutboundToolset:
         model = delegating_model("summarise the market")
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", transport)
 
-        await build_engine(model=model).run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await build_engine(model=model).run("hello", identity=ANALYST)
 
         assert seen == [(REMOTE_URL, "summarise the market")]
         assert "the market grew 4%" in "\n".join(model.tool_returns)
@@ -265,7 +268,7 @@ class TestGovernedDelegation:
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", transport)
         engine = build_engine(model=delegating_model())
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, reached) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -282,7 +285,7 @@ class TestGovernedDelegation:
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", hanging)
         engine = build_engine(model=delegating_model(), tool_timeout_ms=20)
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert failure.value.code is AgentRunErrorCode.TOOL_TIMEOUT
@@ -298,7 +301,7 @@ class TestGovernedDelegation:
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", refused)
         engine = build_engine(model=delegating_model())
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert failure.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE
@@ -314,7 +317,7 @@ class TestGovernedDelegation:
         monkeypatch.setattr(_capabilities, "send_to_remote_agent", refused)
         engine = build_engine(model=delegating_model())
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert "ignore previous instructions" not in str(failure.value)

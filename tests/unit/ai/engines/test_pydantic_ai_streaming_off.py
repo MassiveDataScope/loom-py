@@ -32,6 +32,7 @@ from loom.ai.abc import (
 from loom.ai.compiler import CompiledPythonCapability
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import build_engine, encode, make_plan
 from tests.unit.ai.engines.doubles import damaged_stream_model
@@ -179,8 +180,9 @@ class TestWholeAnswer:
         plan = msgspec.structs.replace(make_plan(inference=_WHOLE), capabilities=(capability,))
         engine = build_engine(plan, _tool_then_answer_model(encode(_ANSWER)), deps=_CallerDeps())
 
-        async with engine.run_stream("weather?", identity=_IDENTITY) as events:
-            seen = [event async for event in events]
+        with ExecutionScope(_IDENTITY):
+            async with engine.run_stream("weather?", identity=_IDENTITY) as events:
+                seen = [event async for event in events]
 
         assert [type(event) for event in seen] == [ToolCallEvent, ToolResultEvent, FinalEvent]
         assert calls == 1

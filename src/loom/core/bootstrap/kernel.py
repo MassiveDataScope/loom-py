@@ -26,6 +26,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
+from loom.core.execution import ExecutionResolver
 from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.repository.dependency import classify_key
@@ -65,8 +66,8 @@ def create_kernel(
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
-    agent_resolver: Callable[[str, Identity], Any] | None = None,
-    mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
+    agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None,
+    mcp_resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any] | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
@@ -92,8 +93,9 @@ def create_kernel(
             :class:`~loom.core.environment.Environment`.
         agent_resolver: Bound on the executor as by
             :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
-            Its handles are built at call time, inside an execution, so a
-            singleton holding ``Agent()`` cannot be built.
+            A singleton holding ``Agent()`` is built only with an
+            :class:`~loom.core.execution.ExecutionResolver`; a legacy callable
+            reads the identity when it resolves, so it cannot build one.
         mcp_resolver: Bound as by
             :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`;
             the same holds for a singleton holding ``Mcp()``.
@@ -198,8 +200,8 @@ def install_kernel(
     metrics: MetricsAdapter | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
-    agent_resolver: Callable[[str, Identity], Any] | None = None,
-    mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
+    agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None,
+    mcp_resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any] | None = None,
 ) -> KernelRuntime:
     """Compile *use_cases* and register the kernel's keys in the filled *container*.
 

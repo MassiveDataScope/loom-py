@@ -533,10 +533,70 @@
   - Known limits: a caller revoked after its request started keeps acting for
     the work it caused until the window ends (no revocation check); the
     identity and deadline in a job envelope are not signed; deadlines compare
-    wall clocks across processes; a handle built before the request ended
-    (Agent, MCP, SQL grant views) is bounded by the window only once it reads
-    the identity per call; the transaction check covers SQLAlchemy ORM
+    wall clocks across processes; the transaction check covers SQLAlchemy ORM
     sessions, not `manager.engine` or Core connections.
+
+### ai
+
+- **ai (call-time handles):** an `Agent()` or `Mcp()` handle, and the `mcp()`
+  and `sql()` grant views an agent handle returns, hold no identity. Every
+  call acts as the execution identity of that moment
+  (`execution_identity()`), so one handle serves each caller as itself.
+  - A handle kept by a task that outlives its request keeps acting as that
+    request's caller until the delegation deadline. After it, every call
+    raises `Unauthenticated` (`delegation_expired`) before reaching the
+    model, the MCP server or the database. Called outside any execution, a
+    handle raises `ExecutionRequired`.
+  - A singleton adapter or factory holding `Agent()` or `Mcp()` is now built
+    at start-up, and by a standalone
+    `create_kernel(agent_resolver=..., mcp_resolver=...)` given the AI
+    resolvers. Before, building it failed with `ExecutionRequired`.
+  - Each declaration resolves to one handle, built on its first resolve; the
+    `Mcp()` handle looks its server's grant up on every call. A server that
+    no `Mcp()` declaration reached at start-up raises the new
+    `AgentRunErrorCode.MCP_SERVER_NOT_GRANTED` (authorization class), and so
+    does `AgentRuntime.use_case_mcp_grant(server)`, which returned `None`
+    for it before. It still returns `None` for a server tolerated as
+    unreachable, whose calls keep raising `TOOL_UNAVAILABLE`. A caller with
+    no subject keeps `UNAUTHORIZED`, on the `Mcp()` handle too (its
+    `tools()` included), before the grant is looked up, so it never learns
+    whether a server is granted or reachable, and no call is made.
+  - An agent run (`run`, `run_stream`, and the guard of a hand-driven
+    `native()` run) is an execution acting as the run's caller: tools,
+    hooks, marker handles and native tools inside it read that caller from
+    `execution_identity()`. A run for another subject than the one acting
+    is logged as an `identity_switched`, like `ExecutionScope`. The agent
+    HTTP and A2A endpoints open no execution of their own. The A2A
+    `message/stream` response sends heartbeats from when the run starts, as
+    the HTTP stream does, so none is sent while the run loads its
+    conversation (admission refuses at once and never waits).
+  - Every agent tool checks the identity acting where it runs
+    (`execution_identity()`), not the caller its dependency bundle was built
+    for. A `NativeAgent` kept past its caller's delegation raises
+    `Unauthenticated` at the first tool call and runs no tool. Driven
+    outside any execution it raises `ExecutionRequired`, and driven by an
+    execution acting as no one it is refused with `UNAUTHORIZED`. The
+    `mcp`, `python` and `a2a` tools of a carrier driven inside another
+    caller's execution act as that caller; its `usecase` and `sql` tools
+    still act as the bundle's caller once the check passes. The check is
+    `loom.ai.errors.require_authenticated(identity, who)`.
+  - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
+    `bind_mcp_resolver`, and the `agent_resolver=` and `mcp_resolver=`
+    arguments of `RuntimeExecutor`, `create_kernel` and `install_kernel` also
+    take a `loom.core.execution.ExecutionResolver`. A legacy
+    `(name, identity)` or `(server, include, identity)` callable is
+    deprecated: binding one emits a `DeprecationWarning`. It still works,
+    but it captures the identity when it resolves, so the handles it returns
+    are not bounded by the delegation window and it cannot serve a
+    singleton. In the private `loom.ai.runtime._handle` module, the
+    `agent_marker_resolver(runtime, ...)` and `mcp_marker_resolver(runtime,
+    ...)` functions are replaced by the `AgentMarkerResolver` and
+    `McpMarkerResolver` classes, which take the same arguments and accept
+    both resolver shapes. Inside an execution, an identity passed to the
+    legacy shape must be the execution identity, or `IdentityFixed` is
+    raised. `_UnavailableMcpHandle` is removed.
+    `loom.ai.runtime._grants.McpGrantView` and `SqlGrantView` lose their
+    `identity=` argument.
 
 ## ⚠ Behaviour changes
 

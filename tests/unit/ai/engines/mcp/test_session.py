@@ -21,6 +21,7 @@ from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _ToolsetSession
 from loom.ai.errors import AgentRunError
 from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE, McpGrantView
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.unit.ai.engines.doubles import AcmeToolsetFactory
 
@@ -196,6 +197,9 @@ async def _open(first: _ScriptedSessionToolset, factory: AcmeToolsetFactory) -> 
     return _ToolsetSession(first, rebuild=factory)  # type: ignore[arg-type]
 
 
+_TESTER = Identity(subject="tester")
+
+
 def _view(session: _ToolsetSession, *, timeout_s: float = 5.0) -> McpGrantView:
     """The ``Mcp()`` marker's view over the session."""
     return McpGrantView(
@@ -209,7 +213,6 @@ def _view(session: _ToolsetSession, *, timeout_s: float = 5.0) -> McpGrantView:
             McpToolInfo(name="slow", has_output_schema=False),
         ),
         timeout_s=timeout_s,
-        identity=Identity(subject="tester"),
         observability=None,
     )
 
@@ -243,7 +246,7 @@ class TestASafeFailure:
         factory = AcmeToolsetFactory(second, third)
         session = await _open(first, factory)
 
-        with pytest.raises(AgentRunError) as raised:
+        with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
         assert raised.value.code is INTERRUPTED_CALL_CODE
@@ -291,7 +294,7 @@ class TestAnUnsafeFailure:
         factory = AcmeToolsetFactory(second)
         session = await _open(first, factory)
 
-        with pytest.raises(AgentRunError) as raised:
+        with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
         assert raised.value.code is INTERRUPTED_CALL_CODE
@@ -430,7 +433,8 @@ class TestBoundedSessions:
         first = _ScriptedSessionToolset("first", ledger, gate, _cut())
         second = _ScriptedSessionToolset("second", ledger)
         session = await _open(first, AcmeToolsetFactory(second))
-        slow = asyncio.create_task(_view(session, timeout_s=0.2).call_untyped("slow", {}))
+        with ExecutionScope(_TESTER):
+            slow = asyncio.create_task(_view(session, timeout_s=0.2).call_untyped("slow", {}))
         await asyncio.sleep(0)
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("write_orders", {})
@@ -788,7 +792,7 @@ class TestTheMarkersView:
         session = await _open(_ScriptedSessionToolset("first", _Ledger()), AcmeToolsetFactory())
         await session.aclose()
 
-        with pytest.raises(AgentRunError) as raised:
+        with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
         assert raised.value.code is INTERRUPTED_CALL_CODE

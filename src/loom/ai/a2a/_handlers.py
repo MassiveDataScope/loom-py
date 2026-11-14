@@ -280,21 +280,31 @@ def _make_send_handler(
 def _run_frames(
     runtime: AgentRuntime, call: Call, prompt: str, *, task_id: str, context_id: str
 ) -> AsyncIterator[bytes]:
-    """Project one run onto A2A frames, terminal failure included."""
+    """Project one run onto A2A frames, heartbeats and terminal failure included.
+
+    The run is entered and left by the task consuming the frames; heartbeats
+    relay the run's events inside it.
+    """
+    projector = A2AEventProjector(
+        task_id=task_id, context_id=context_id, max_steps=call.agent.max_steps
+    )
+
+    async def _projected(events: AsyncIterator[Any]) -> AsyncIterator[bytes]:
+        async for event in events:
+            for projected in projector.project(event):
+                yield _sse_frame(call.request_id, projected)
 
     async def _frames() -> AsyncIterator[bytes]:
-        projector = A2AEventProjector(
-            task_id=task_id, context_id=context_id, max_steps=call.agent.max_steps
-        )
         yield _sse_frame(call.request_id, _task(task_id, context_id, {"state": "submitted"}))
         try:
             async with runtime.run_stream(
                 call.agent.name, prompt, identity=call.identity, conversation_id=context_id
             ) as events:
                 projected_events = projecting_final(events, runtime.output_type(call.agent.name))
-                async for event in projected_events:
-                    for projected in projector.project(event):
-                        yield _sse_frame(call.request_id, projected)
+                async for frame in with_heartbeats(
+                    _projected(projected_events), heartbeat_ms=HEARTBEAT_MS
+                ):
+                    yield frame
         except Exception as exc:
             _logger.warning("a2a stream failed after the first byte", exc_info=exc)
             for projected in projector.project(failure_event(exc)):
@@ -330,8 +340,9 @@ def _make_stream_handler(
                     mechanism=call.identity.mechanism,
                 )
             ):
-                frames = _run_frames(runtime, call, prompt, task_id=task_id, context_id=context_id)
-                async for frame in with_heartbeats(frames, heartbeat_ms=HEARTBEAT_MS):
+                async for frame in _run_frames(
+                    runtime, call, prompt, task_id=task_id, context_id=context_id
+                ):
                     yield frame
 
         return StreamingResponse(_framed(), media_type=_MEDIA_TYPE_SSE)

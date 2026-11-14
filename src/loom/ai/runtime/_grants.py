@@ -48,8 +48,9 @@ from loom.ai._filters import admits
 from loom.ai._roles import bound_query_roles
 from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
 from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
+from loom.core.execution import execution_identity
 from loom.core.identity import Identity
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
@@ -157,9 +158,10 @@ class McpGrantView:
         catalogue: The server's already-listed tool catalogue this view
             filters — never a second listing.
         timeout_s: Deadline bounding one call, in seconds.
-        identity: Verified caller this view's queries and spans are bound
-            to.
         observability: Runtime this view's own span opens on, or ``None``.
+
+    Each call acts as the execution identity of the moment
+    (:func:`~loom.ai.errors.require_authenticated`).
     """
 
     def __init__(
@@ -172,13 +174,12 @@ class McpGrantView:
         session: McpSession,
         catalogue: Sequence[McpToolInfo],
         timeout_s: float,
-        identity: Identity,
         observability: ObservabilityRuntime | None,
     ) -> None:
         self._span_attributes = span_attributes
         self._capability = capability
+        self._who = f"mcp server {capability.server!r}"
         self._session = session
-        self._identity = identity
         self._observability = observability
         self._timeout_s = timeout_s
         self._tools: dict[str, McpToolInfo] = {
@@ -192,7 +193,30 @@ class McpGrantView:
         return tuple(self._tools)
 
     async def call(self, tool: str, arguments: Mapping[str, Any], *, expect: type[_T]) -> _T:
-        """Call *tool* and decode its structured result into *expect*."""
+        """Call *tool* as the caller of the moment; decode its structured result into *expect*."""
+        return await self.call_as(
+            require_authenticated(execution_identity(), self._who), tool, arguments, expect=expect
+        )
+
+    async def call_as(
+        self, caller: Identity, tool: str, arguments: Mapping[str, Any], *, expect: type[_T]
+    ) -> _T:
+        """Call *tool* as *caller*, already read, and decode its structured result into *expect*.
+
+        Args:
+            caller: The execution identity, read by :func:`~loom.core.execution.execution_identity`.
+            tool: Tool name.
+            arguments: Tool arguments.
+            expect: Type the structured result decodes into.
+
+        Returns:
+            The decoded result.
+
+        Raises:
+            AgentRunError: With ``TOOL_UNKNOWN``, ``TOOL_UNTYPED``,
+                ``TOOL_RESULT_UNSTRUCTURED``, ``TOOL_DECODE_FAILED``,
+                ``TOOL_TIMEOUT`` or the call's own failure code.
+        """
         info = self._require_tool(tool)
         if not info.has_output_schema:
             raise AgentRunError(
@@ -202,7 +226,7 @@ class McpGrantView:
             )
         try:
             expect_type = loom_type_of(expect)
-            structured = await self._call(tool, arguments)
+            structured = await self._call(tool, arguments, caller)
             if structured is None:
                 raise AgentRunError(
                     AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED,
@@ -227,8 +251,29 @@ class McpGrantView:
         contradicts itself fails" rule :meth:`call` applies through
         ``TOOL_DECODE_FAILED``.
         """
+        return await self.call_untyped_as(
+            require_authenticated(execution_identity(), self._who), tool, arguments
+        )
+
+    async def call_untyped_as(
+        self, caller: Identity, tool: str, arguments: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Call *tool* as *caller*, already read, and return its structured content, undecoded.
+
+        Args:
+            caller: The execution identity, read by :func:`~loom.core.execution.execution_identity`.
+            tool: Tool name.
+            arguments: Tool arguments.
+
+        Returns:
+            The structured content, ``{}`` for none.
+
+        Raises:
+            AgentRunError: With ``TOOL_UNKNOWN``, ``TOOL_RESULT_UNSTRUCTURED``,
+                ``TOOL_TIMEOUT`` or the call's own failure code.
+        """
         self._require_tool(tool)
-        structured = await self._call(tool, arguments)
+        structured = await self._call(tool, arguments, caller)
         if structured is None:
             return {}
         if not isinstance(structured, Mapping):
@@ -239,8 +284,10 @@ class McpGrantView:
             )
         return structured
 
-    async def _call(self, tool: str, arguments: Mapping[str, Any]) -> object | None:
-        async with self._guard(tool):
+    async def _call(
+        self, tool: str, arguments: Mapping[str, Any], caller: Identity
+    ) -> object | None:
+        async with self._guard(tool, caller):
             result = await self._session.call_tool(tool, arguments)
         if not result.ok:
             raise AgentRunError(
@@ -261,14 +308,14 @@ class McpGrantView:
         return info
 
     @asynccontextmanager
-    async def _guard(self, tool: str) -> AsyncIterator[None]:
+    async def _guard(self, tool: str, caller: Identity) -> AsyncIterator[None]:
         """Bound one call by this view's own tool timeout, inside its own span.
 
         A call the session reports ``MCP_CALL_INTERRUPTED`` (it may have run,
         or was never sent, and is not repeated) reaches the use case under
         :data:`INTERRUPTED_CALL_CODE`, with the session's own account of it.
         """
-        with self._span(tool):
+        with self._span(tool, caller):
             try:
                 async with asyncio.timeout(self._timeout_s):
                     yield
@@ -285,7 +332,7 @@ class McpGrantView:
                     INTERRUPTED_CALL_CODE, f"mcp server {self._capability.server!r}: {exc}"
                 ) from exc
 
-    def _span(self, tool: str) -> AbstractContextManager[None]:
+    def _span(self, tool: str, caller: Identity) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
         return self._observability.span(
@@ -293,7 +340,7 @@ class McpGrantView:
             tool,
             **self._span_attributes,
             capability="mcp",
-            subject=self._identity.subject,
+            subject=caller.subject,
         )
 
 
@@ -307,8 +354,9 @@ class SqlGrantView:
             service — resolved once by whoever builds the marker resolver,
             never per call and never by reaching into a container this view
             holds no reference to.
-        identity: Verified caller whose roles bind this view's queries.
         observability: Runtime this view's own span opens on, or ``None``.
+
+    Each query runs with the roles of the execution identity of the moment.
     """
 
     def __init__(
@@ -317,13 +365,11 @@ class SqlGrantView:
         agent: str,
         capability: CompiledSqlCapability,
         sql_query_service: SqlQueryService,
-        identity: Identity,
         observability: ObservabilityRuntime | None,
     ) -> None:
         self._agent = agent
         self._capability = capability
         self._sql_query_service = sql_query_service
-        self._identity = identity
         self._observability = observability
 
     async def query(
@@ -332,9 +378,17 @@ class SqlGrantView:
         *,
         parameters: Mapping[str, Any] | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        """Run *statement* with the caller's roles, under this grant's own bounds."""
-        roles = bound_query_roles(self._capability, self._identity)
-        with self._span(roles):
+        """Run *statement* with the caller's roles, under this grant's own bounds.
+
+        Raises:
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller holds no role
+                this grant allows.
+        """
+        caller = execution_identity()
+        roles = bound_query_roles(self._capability, caller)
+        with self._span(roles, caller):
             result = await self._sql_query_service.execute(
                 statement,
                 connection=self._capability.connection,
@@ -344,7 +398,7 @@ class SqlGrantView:
             )
         return _bounded_rows(self._capability, result)
 
-    def _span(self, roles: tuple[str, ...]) -> AbstractContextManager[None]:
+    def _span(self, roles: tuple[str, ...], caller: Identity) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
         return self._observability.span(
@@ -353,7 +407,7 @@ class SqlGrantView:
             agent=self._agent,
             connection=self._capability.connection,
             roles=",".join(roles),
-            subject=self._identity.subject,
+            subject=caller.subject,
         )
 
 

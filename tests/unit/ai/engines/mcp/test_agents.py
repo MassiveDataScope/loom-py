@@ -36,6 +36,7 @@ from pydantic_ai.tools import RunContext  # noqa: E402
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset  # noqa: E402
 from pydantic_ai.usage import RunUsage  # noqa: E402
 
+from loom.ai.abc import McpHandle
 from loom.ai.compiler import CompiledPythonCapability
 from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
 from loom.ai.engines.pydantic_ai._guards import BuildContext
@@ -43,21 +44,26 @@ from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset,
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE
-from loom.ai.runtime._handle import _BoundAgentHandle, mcp_marker_resolver
+from loom.ai.runtime._handle import McpMarkerResolver, _AgentHandle
 from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.sql.service import NullSqlQueryService
+from loom.core.use_case import Mcp
 from tests.unit.ai.engines.mcp.server import InProcessServer, serving
 
 _HANDSHAKE = ("server/discover", "initialize")
+
+
+_TESTER = Identity(subject="tester")
 
 
 @dataclass
 class _Deps:
     """The dependency bundle a capability call requires."""
 
-    identity: Identity = field(default_factory=lambda: Identity(subject="tester"))
+    identity: Identity = _TESTER
     container: LoomContainer = field(default_factory=LoomContainer)
     invoker: Any = None
 
@@ -115,7 +121,8 @@ class _World:
         """Run one agent whose model calls *tool* once (``echo`` with ``"agent"`` by default)."""
         model = _Model(tool, {"text": "agent"} if arguments is None else arguments)
         agent = Agent(FunctionModel(model), toolsets=[self.toolset()], deps_type=_Deps)
-        await agent.run("go", deps=_Deps())
+        with ExecutionScope(_TESTER):
+            await agent.run("go", deps=_Deps())
         return model
 
     async def failed_run(
@@ -124,7 +131,7 @@ class _World:
         """Run one agent that must fail; return the error and the model."""
         model = _Model(tool, {"text": "agent"} if arguments is None else arguments)
         agent = Agent(FunctionModel(model), toolsets=[self.toolset()], deps_type=_Deps)
-        with pytest.raises(AgentRunError) as raised:
+        with pytest.raises(AgentRunError) as raised, ExecutionScope(_TESTER):
             await agent.run("go", deps=_Deps())
         return raised.value, model
 
@@ -436,7 +443,8 @@ class TestListingTools:
                 FunctionModel(model), toolsets=[world.toolset()], tools=[_clock], deps_type=_Deps
             )
 
-            result = await agent.run("go", deps=_Deps())
+            with ExecutionScope(_TESTER):
+                result = await agent.run("go", deps=_Deps())
 
         assert result.output == "done"
         assert world.server.log == []
@@ -523,19 +531,21 @@ class TestTheGrantViews:
         async with serving(monkeypatch) as server, _runtime_over(server) as runtime:
             identity = Identity(subject="tester")
             server.fault("echo", "cut", "cut")
-            marker = mcp_marker_resolver(runtime, observability=None)(_SERVER, ("echo",), identity)
-            handle = _BoundAgentHandle(
+            marker = McpMarkerResolver(runtime, observability=None).resolve(
+                Mcp(_SERVER, include=["echo"]), McpHandle
+            )
+            handle = _AgentHandle(
                 name="agent",
                 runtime=runtime,
-                identity=identity,
                 observability=None,
                 sql_query_service=NullSqlQueryService(),
             ).mcp(_SERVER)
 
-            with pytest.raises(AgentRunError) as from_marker:
-                await marker.call_untyped("echo", {"text": "marker"})
-            with pytest.raises(AgentRunError) as from_handle:
-                await handle.call_untyped("echo", {"text": "handle"})
+            with ExecutionScope(identity):
+                with pytest.raises(AgentRunError) as from_marker:
+                    await marker.call_untyped("echo", {"text": "marker"})
+                with pytest.raises(AgentRunError) as from_handle:
+                    await handle.call_untyped("echo", {"text": "handle"})
 
         assert from_marker.value.code is from_handle.value.code is INTERRUPTED_CALL_CODE
         assert INTERRUPTED_CALL_CODE is AgentRunErrorCode.MCP_CALL_INTERRUPTED  # owner, decision A

@@ -40,9 +40,10 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._returns import foreign_return, refusal
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden, Unauthenticated
+from loom.core.execution import execution_identity
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -167,20 +168,23 @@ def capability_deps(run: RunContext[Any]) -> CapabilityDeps:
     return cast(CapabilityDeps, bundle)
 
 
-def require_authenticated(identity: Identity, tool: str) -> None:
-    """Refuse an unauthenticated caller before any side effect."""
-    if not identity.is_authenticated:
-        raise AgentRunError(
-            AgentRunErrorCode.UNAUTHORIZED,
-            f"tool '{tool}' requires an authenticated caller",
-        )
-
-
 def authenticated_caller(run: RunContext[Any], tool: str) -> Identity:
-    """Identity strategy of a capability that must not run as nobody."""
-    deps = capability_deps(run)
-    require_authenticated(deps.identity, tool)
-    return deps.identity
+    """Identity strategy of a capability that must not run as nobody: the acting identity.
+
+    Args:
+        run: The engine's run context; not read.
+        tool: Published tool name, named in a refusal.
+
+    Returns:
+        The identity the execution in progress acts as.
+
+    Raises:
+        ExecutionRequired: Outside any execution.
+        Unauthenticated: Past the caller's delegation.
+        AgentRunError: With ``UNAUTHORIZED`` when that identity is anonymous.
+    """
+    del run
+    return require_authenticated(execution_identity(), f"tool '{tool}'")
 
 
 def _observability(container: LoomContainer) -> ObservabilityRuntime | None:

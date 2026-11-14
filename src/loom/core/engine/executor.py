@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
@@ -114,8 +115,10 @@ class RuntimeExecutor:
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
-        agent_resolver: Callable[[str, Identity], Any] | None = None,
-        mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
+        agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None,
+        mcp_resolver: ExecutionResolver
+        | Callable[[str, tuple[str, ...], Identity], Any]
+        | None = None,
         elevation_sink: ElevationSink | None = None,
     ) -> None:
         self._compiler = compiler
@@ -127,14 +130,16 @@ class RuntimeExecutor:
         self._observer = Observer(logger or get_logger(__name__), metrics, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._preparation = Preparation(self._kinds, repo_resolver, self._observer)
-        self._agent_resolver: Callable[[str, Identity], Any] | None = None
-        self._mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None
+        self._agent_resolver: object | None = None
+        self._mcp_resolver: object | None = None
         if agent_resolver is not None:
             self.bind_agent_resolver(agent_resolver)
         if mcp_resolver is not None:
             self.bind_mcp_resolver(mcp_resolver)
 
-    def bind_agent_resolver(self, resolver: Callable[[str, Identity], Any]) -> None:
+    def bind_agent_resolver(
+        self, resolver: ExecutionResolver | Callable[[str, Identity], Any]
+    ) -> None:
         """Bind the resolver used by every ``Agent()`` marker parameter.
 
         A separate step from construction because the resolver depends on the
@@ -152,20 +157,24 @@ class RuntimeExecutor:
         called with the execution identity at resolve time.
 
         Args:
-            resolver: Builds one agent handle from the agent's deployment
-                name and the verified caller of one execution.
+            resolver: An :class:`~loom.core.execution.ExecutionResolver` of
+                ``Agent()`` declarations, or a callable building one agent
+                handle from the agent's name and the caller of one execution.
 
         Raises:
             RuntimeError: If a resolver is already bound.
         """
         if self._agent_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_agent_resolver() called more than once")
-        given = resolver
-        shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyAgent(resolver)
-        self._kinds.bind(AGENT, shim)
-        self._agent_resolver = given
+        bound = (
+            resolver if isinstance(resolver, ExecutionResolver) else _Legacy(resolver, ("name",))
+        )
+        self._kinds.bind(AGENT, bound)
+        self._agent_resolver = resolver
 
-    def bind_mcp_resolver(self, resolver: Callable[[str, tuple[str, ...], Identity], Any]) -> None:
+    def bind_mcp_resolver(
+        self, resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any]
+    ) -> None:
         """Bind the resolver used by every ``Mcp()`` marker parameter.
 
         A second resolver, not an overload of :meth:`bind_agent_resolver`:
@@ -180,19 +189,23 @@ class RuntimeExecutor:
         pillar has built it.
 
         Args:
-            resolver: Builds one MCP handle from the marker's server name,
-                its own declared ``include`` and the verified caller of one
-                execution.
+            resolver: An :class:`~loom.core.execution.ExecutionResolver` of
+                ``Mcp()`` declarations, or a callable building one MCP handle
+                from the marker's server name, its own ``include`` and the
+                caller of one execution.
 
         Raises:
             RuntimeError: If a resolver is already bound.
         """
         if self._mcp_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_mcp_resolver() called more than once")
-        given = resolver
-        shim = resolver if isinstance(resolver, ExecutionResolver) else _LegacyMcp(resolver)
-        self._kinds.bind(MCP, shim)
-        self._mcp_resolver = given
+        bound = (
+            resolver
+            if isinstance(resolver, ExecutionResolver)
+            else _Legacy(resolver, ("server", "include"))
+        )
+        self._kinds.bind(MCP, bound)
+        self._mcp_resolver = resolver
 
     async def run(
         self,
@@ -449,25 +462,25 @@ def _given(compilable: Compilable) -> Compilable:
     return compilable
 
 
-class _LegacyAgent:
-    """Calls a ``(name, identity)`` agent resolver with the execution identity."""
+class _Legacy:
+    """Calls a legacy resolver with the declaration's *fields*, then the execution identity.
 
-    __slots__ = ("_resolver",)
+    Building one emits a :class:`DeprecationWarning`.
+    """
 
-    def __init__(self, resolver: Callable[[str, Identity], Any]) -> None:
+    __slots__ = ("_fields", "_resolver")
+
+    def __init__(self, resolver: Callable[..., Any], fields: tuple[str, ...]) -> None:
+        warnings.warn(
+            f"a legacy ({', '.join(fields)}, identity) resolver captures the execution "
+            "identity when it resolves, so its handles are not bounded by the delegation "
+            "window; bind a loom.core.execution.ExecutionResolver instead",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         self._resolver = resolver
+        self._fields = fields
 
-    def resolve(self, declaration: Any, annotation: object) -> object:
-        return self._resolver(declaration.name, execution_identity())
-
-
-class _LegacyMcp:
-    """Calls a ``(server, include, identity)`` MCP resolver with the execution identity."""
-
-    __slots__ = ("_resolver",)
-
-    def __init__(self, resolver: Callable[[str, tuple[str, ...], Identity], Any]) -> None:
-        self._resolver = resolver
-
-    def resolve(self, declaration: Any, annotation: object) -> object:
-        return self._resolver(declaration.server, declaration.include, execution_identity())
+    def resolve(self, declaration: object, annotation: object) -> object:
+        arguments = [getattr(declaration, field) for field in self._fields]
+        return self._resolver(*arguments, execution_identity())

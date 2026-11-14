@@ -34,6 +34,7 @@ from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
 if TYPE_CHECKING:
     from loom.ai.abc import AgentUsage
+    from loom.core.identity import Identity
 
 _FIELD_SPEC_VERSION: Final = "spec_version"
 _FIELD_CAPABILITIES: Final = "capabilities"
@@ -785,6 +786,7 @@ class AgentRunErrorCode(StrEnum):
     STATE_REQUIRED = "STATE_REQUIRED"
 
     MCP_GRANT_UNKNOWN = "MCP_GRANT_UNKNOWN"
+    MCP_SERVER_NOT_GRANTED = "MCP_SERVER_NOT_GRANTED"
     SQL_GRANT_UNKNOWN = "SQL_GRANT_UNKNOWN"
     TOOL_UNKNOWN = "TOOL_UNKNOWN"
     TOOL_UNTYPED = "TOOL_UNTYPED"
@@ -858,6 +860,7 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
         AgentRunErrorCode.STATE_UNDECLARED: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.STATE_REQUIRED: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.MCP_GRANT_UNKNOWN: AgentRunErrorClass.AUTHORIZATION,
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED: AgentRunErrorClass.AUTHORIZATION,
         AgentRunErrorCode.SQL_GRANT_UNKNOWN: AgentRunErrorClass.AUTHORIZATION,
         AgentRunErrorCode.TOOL_UNKNOWN: AgentRunErrorClass.APPLICATION,
         AgentRunErrorCode.TOOL_UNTYPED: AgentRunErrorClass.APPLICATION,
@@ -937,3 +940,25 @@ def is_retriable(code: AgentRunErrorCode) -> bool:
     if code in _NEVER_RETRIED:
         return False
     return run_error_class(code) is AgentRunErrorClass.INFRASTRUCTURE
+
+
+def require_authenticated(identity: Identity, who: str) -> Identity:
+    """Return *identity*, refusing one that carries no subject.
+
+    Args:
+        identity: The identity acting, read with
+            :func:`~loom.core.execution.execution_identity`.
+        who: What refuses it, as the refusal names it (``"tool 'x'"``).
+
+    Returns:
+        *identity*.
+
+    Raises:
+        AgentRunError: With ``UNAUTHORIZED`` when *identity* is not
+            authenticated.
+    """
+    if not identity.is_authenticated:
+        raise AgentRunError(
+            AgentRunErrorCode.UNAUTHORIZED, f"{who} requires an authenticated caller"
+        )
+    return identity

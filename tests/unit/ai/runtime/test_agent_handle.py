@@ -1,4 +1,4 @@
-"""``_BoundAgentHandle``: the AgentHandle a marker resolves to (T203/T205/T304).
+"""``_AgentHandle``: the AgentHandle a marker resolves to (T203/T205/T304).
 
 Covers the anonymous-caller refusal, the handle's own span (nothing else
 opens one on this code path — see the module docstring of ``_handle.py``),
@@ -18,19 +18,28 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from loom.ai.abc import AgentEvent, AgentResult, Conversation, FinalEvent, HealthStatus, StateShape
+from loom.ai.abc import (
+    AgentEvent,
+    AgentHandle,
+    AgentResult,
+    Conversation,
+    FinalEvent,
+    HealthStatus,
+    StateShape,
+)
 from loom.ai.compiler._plan import CompiledOutputHook
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _BoundAgentHandle, agent_marker_resolver
+from loom.ai.runtime._handle import AgentMarkerResolver, _AgentHandle
 from loom.core.command import Command
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.service import NullSqlQueryService
-from loom.core.use_case import Caller, Input, UseCase
+from loom.core.use_case import Agent, Caller, Input, UseCase
 from tests.integration.ai.conftest import (
     DEFAULT_USAGE,
     ConversationRecorder,
@@ -223,16 +232,15 @@ class TestAnonymousIdentity:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=ANONYMOUS,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola")
 
         assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
@@ -250,16 +258,15 @@ class TestAnonymousIdentity:
         # this name, so a name absent from the runtime's own plans is fine
         # here — it matches the agent name ``markers.md`` and the example
         # in ``docs/rest/use-case-dsl.md`` both use.
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name="incident-triage",
             runtime=runtime,
-            identity=ANONYMOUS,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola")
 
         assert str(excinfo.value) == "agent 'incident-triage' requires an authenticated caller"
@@ -277,18 +284,17 @@ class TestAnonymousIdentity:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=ANONYMOUS,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError):
+            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError):
                 await handle.run("hola")
-            assert engine.run_stream_calls == 0
+                assert engine.run_stream_calls == 0
 
     async def test_an_authenticated_caller_runs_as_itself(
         self, deps: StubDepsFactory, container: LoomContainer
@@ -308,16 +314,16 @@ class TestAnonymousIdentity:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.output == {"ok": True}
         assert engine.identities == [_AUTHENTICATED]
@@ -338,16 +344,16 @@ class TestProviderDetailsReachTheAnswer:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.provider_details == details
 
@@ -368,16 +374,16 @@ class TestTheHandlesSpan:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=observability,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         spans = exporter.get_finished_spans()
         assert [span.name for span in spans] == ["agent:agent_run"]
@@ -390,16 +396,16 @@ class TestTheHandlesSpan:
     ) -> None:
         """``observability=None`` is an explicit no-op, not a silent failure."""
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.output == {"ok": True}
 
@@ -460,16 +466,16 @@ class TestTheThreeModes:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.output == {"ok": True}
 
@@ -478,16 +484,16 @@ class TestTheThreeModes:
     ) -> None:
         engine = _ShapedEngine(shaped_output={"severity": 5})
         runtime = await _shaped_runtime(deps, container, engine)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola", expect=dict)
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola", expect=dict)
 
         assert answer.output == {"severity": 5}
         assert engine.shaped_calls == [dict]
@@ -497,16 +503,16 @@ class TestTheThreeModes:
     ) -> None:
         engine = _ShapedEngine(shaped_output="a plain sentence")
         runtime = await _shaped_runtime(deps, container, engine)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run_text("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run_text("hola")
 
         assert answer.output == "a plain sentence"
         assert engine.shaped_calls == [str]
@@ -517,16 +523,16 @@ class TestTheThreeModes:
         """The declared shape uses run_stream; a per-run shape uses run_stream_shaped."""
         engine = _ShapedEngine(shaped_output={"anything": True})
         runtime = await _shaped_runtime(deps, container, engine)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            await handle.run("hola", expect=dict)
+            with ExecutionScope(_AUTHENTICATED):
+                await handle.run("hola", expect=dict)
 
         assert engine.run_stream_calls == 0
         assert engine.shaped_calls == [dict]
@@ -548,16 +554,15 @@ class TestRejectionByOutputHook:
             deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola", expect=dict)
 
         assert excinfo.value.code is AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK
@@ -582,16 +587,15 @@ class TestRejectionByOutputHook:
             deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=agent_name,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola", expect=dict)
 
         assert str(excinfo.value) == (
@@ -613,16 +617,15 @@ class TestRejectionByOutputHook:
             deps=RecordingDepsFactory((RecordTurn,)),  # type: ignore[arg-type]
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run_text("hola")
 
         assert excinfo.value.code is AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK
@@ -641,16 +644,16 @@ class TestRejectionByOutputHook:
             deps=RecordingDepsFactory((_RecordMessageOnly,)),  # type: ignore[arg-type]
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.output == {"ok": True}
         assert recorder.timeline == ["hook"]
@@ -670,16 +673,16 @@ class TestRejectionByOutputHook:
             deps=RecordingDepsFactory((_RecordMessageOnly,)),  # type: ignore[arg-type]
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            answer = await handle.run("hola", expect=dict)
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola", expect=dict)
 
         assert answer.output == {"custom": True}
         assert recorder.timeline == ["hook"]
@@ -725,16 +728,15 @@ class TestUngrantedGrants:
     ) -> None:
         """The message names the one granted server, not an arbitrary one."""
         runtime = await _runtime_with_one_mcp_grant(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.mcp("not-granted")
 
         assert excinfo.value.code is AgentRunErrorCode.MCP_GRANT_UNKNOWN
@@ -748,16 +750,15 @@ class TestUngrantedGrants:
     ) -> None:
         """The same rejection on the ``sql`` side: an agent with no ``sql`` grant at all."""
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.sql("reporting")
 
         assert excinfo.value.code is AgentRunErrorCode.SQL_GRANT_UNKNOWN
@@ -778,16 +779,16 @@ class TestPublishedGrants:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         runtime = await _runtime_with_one_mcp_grant(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            assert handle.grants() == (_RUNBOOKS_SERVER,)
+            with ExecutionScope(_AUTHENTICATED):
+                assert handle.grants() == (_RUNBOOKS_SERVER,)
 
     async def test_grants_groups_servers_ahead_of_connections(
         self, deps: StubDepsFactory, container: LoomContainer
@@ -827,33 +828,34 @@ class TestPublishedGrants:
             container=container,
             mcp_client_factory=mcp_client_factory(sessions),  # type: ignore[arg-type]
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            assert handle.grants() == (_RUNBOOKS_SERVER, second, "analytics")
+            with ExecutionScope(_AUTHENTICATED):
+                assert handle.grants() == (_RUNBOOKS_SERVER, second, "analytics")
 
 
 class TestTheMarkerResolver:
-    """``agent_marker_resolver`` builds the callable the executor takes."""
+    """``AgentMarkerResolver`` resolves the ``Agent()`` declarations the executor reaches."""
 
-    async def test_the_resolver_binds_the_name_and_the_caller(
+    async def test_the_resolver_binds_the_name_and_runs_as_the_caller(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         runtime = await _agent_runtime(deps, container)
-        resolve = agent_marker_resolver(
+        resolver = AgentMarkerResolver(
             runtime, sql_query_service=NullSqlQueryService(), observability=None
         )
 
-        handle = resolve(_AGENT_NAME, _AUTHENTICATED)
+        handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
         async with runtime:
-            answer = await handle.run("hola")
+            with ExecutionScope(_AUTHENTICATED):
+                answer = await handle.run("hola")
 
         assert answer.output == {"ok": True}
 
@@ -866,16 +868,15 @@ class TestTheNativeEscapeHatch:
     ) -> None:
         """``_OneShotEngine`` implements the contract and nothing else."""
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(NotImplementedError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(NotImplementedError) as excinfo:
                 handle.native()
 
         assert "no 'native'" in str(excinfo.value)
@@ -885,16 +886,15 @@ class TestTheNativeEscapeHatch:
     ) -> None:
         """The hatch never hands out what ``run`` would have refused."""
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=ANONYMOUS,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 handle.native()
 
         assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
@@ -904,16 +904,15 @@ class TestTheNativeEscapeHatch:
     ) -> None:
         """Undeclared state is refused here exactly as it is on a run."""
         runtime = await _agent_runtime(deps, container)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.native(state={"ticket": "INC-1"})
 
         assert excinfo.value.code is AgentRunErrorCode.STATE_UNDECLARED
@@ -939,16 +938,16 @@ class TestTheNativeEscapeHatch:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            handle.native()
+            with ExecutionScope(_AUTHENTICATED):
+                handle.native()
 
         assert engine.states == [{"marca": "", "km": 0}]
 
@@ -965,16 +964,15 @@ class TestTheNativeEscapeHatch:
             deps=deps,
             container=container,
         )
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
         async with runtime:
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.native()
 
         assert excinfo.value.code is AgentRunErrorCode.STATE_REQUIRED

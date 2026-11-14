@@ -36,7 +36,7 @@ import yaml
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import agent_marker_resolver, mcp_marker_resolver
+from loom.ai.runtime._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.composition._ai import compile_use_case_mcp
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
@@ -179,10 +179,10 @@ def _mcp_wired(
         mcp_client_factory=factory or mcp_client_factory(dict(clients)),  # type: ignore[arg-type]
         use_case_mcp=use_case_mcp,
     )
-    executor.bind_mcp_resolver(mcp_marker_resolver(runtime, observability=None))
+    executor.bind_mcp_resolver(McpMarkerResolver(runtime, observability=None))
     if plans:
         executor.bind_agent_resolver(
-            agent_marker_resolver(
+            AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
         )

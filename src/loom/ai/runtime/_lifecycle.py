@@ -80,6 +80,7 @@ from loom.ai.runtime._mcp import (
 )
 from loom.core.di import LoomContainer
 from loom.core.errors import BoundaryValidationError
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import LoomType
 from loom.core.sql.config import SqlConfig
@@ -198,10 +199,9 @@ class AgentRuntime:
             probe: this runtime never reports it as an ``/health`` check
             entry — see :meth:`_probe_forever`, which iterates the per-plan
             slots. What a caller observes when such a server is down is
-            decided by
-            :func:`~loom.ai.runtime._handle.mcp_marker_resolver`: a
-            tolerated-unreachable server resolves to a handle whose every
-            call raises ``TOOL_UNAVAILABLE``, never a bind-time failure.
+            decided by :class:`~loom.ai.runtime._handle.McpMarkerResolver`:
+            every call on a tolerated-unreachable server raises
+            ``TOOL_UNAVAILABLE``, never a bind-time failure.
 
     Runs emit no span of their own: the transport owns observability, because
     only it knows the route, the method and the status code a run is attributed
@@ -256,7 +256,7 @@ class AgentRuntime:
         self._live: set[str] = set()
         self._health: dict[str, AgentHealth] = {}
         self._grants: dict[str, AgentGrants] = {}
-        self._use_case_grants: dict[str, McpGrant] = {}
+        self._use_case_grants: dict[str, McpGrant | None] = {}
         self._runs = asyncio.Semaphore(config.max_concurrent_runs)
 
     async def __aenter__(self) -> Self:
@@ -909,29 +909,30 @@ class AgentRuntime:
         _check_conversation_id(conversation_id)
         resolved_state = _resolve_state(name, slot.plan.state, state)
         async with self._chain_bound(name), self._admitted(name):
-            run = RunContext(
-                plan=slot.plan,
-                identity=identity,
-                interaction_id=uuid4().hex,
-                conversation_id=conversation_id,
-            )
-            conversation = await load_conversation(run, self._deps, self._container)
-            engine_stream = _open_engine_stream(
-                slot.engine,
-                prompt,
-                identity=identity,
-                conversation=conversation,
-                output_type=output_type,
-                state=resolved_state,
-            )
-            async with engine_stream as events:
-                supervised = supervised_events(events, slot.plan.policies)
-                hooked = hooked_events(supervised, run, self._deps, self._container)
-                try:
-                    yield hooked
-                finally:
-                    await hooked.aclose()
-                    await supervised.aclose()
+            with ExecutionScope(identity):
+                run = RunContext(
+                    plan=slot.plan,
+                    identity=identity,
+                    interaction_id=uuid4().hex,
+                    conversation_id=conversation_id,
+                )
+                conversation = await load_conversation(run, self._deps, self._container)
+                engine_stream = _open_engine_stream(
+                    slot.engine,
+                    prompt,
+                    identity=identity,
+                    conversation=conversation,
+                    output_type=output_type,
+                    state=resolved_state,
+                )
+                async with engine_stream as events:
+                    supervised = supervised_events(events, slot.plan.policies)
+                    hooked = hooked_events(supervised, run, self._deps, self._container)
+                    try:
+                        yield hooked
+                    finally:
+                        await hooked.aclose()
+                        await supervised.aclose()
 
     @asynccontextmanager
     async def _chain_bound(self, name: str) -> AsyncIterator[None]:
@@ -1056,25 +1057,31 @@ class AgentRuntime:
                 f"{type(slot.engine).__name__} publishes no native form: it declares no 'native'"
             )
         return slot.engine.native(
-            identity=identity, state=resolved_state, guard=self._native_guard(name)
+            identity=identity, state=resolved_state, guard=self._native_guard(name, identity)
         )
 
-    def _native_guard(self, name: str) -> Callable[[], AbstractAsyncContextManager[None]]:
+    def _native_guard(
+        self, name: str, identity: Identity
+    ) -> Callable[[], AbstractAsyncContextManager[None]]:
         """Build the guard a hand-driven run of *name* enters to rejoin this runtime's bounds.
 
-        Composes :meth:`_chain_bound` and :meth:`_admitted` in the same order
-        :meth:`_run_stream` does, so a run entered through the returned
-        factory is subject to the same cycle, depth and admission bounds as
-        one this runtime drives itself. Handed to the engine's own
-        ``native()`` rather than entered here: the engine pairs it with its
-        own objects, and :func:`~loom.ai.engines.pydantic_ai.native_agent`
-        is the one place it is entered, around the whole hand-driven run.
+        The guard enters the call chain and takes an admission slot in
+        :meth:`_run_stream`'s order, and runs its body as an execution acting
+        as *identity*.
+
+        Args:
+            name: Agent the hand-driven run belongs to.
+            identity: Caller the run acts as.
+
+        Returns:
+            A zero-argument factory of the guard.
         """
 
         @asynccontextmanager
         async def _guard() -> AsyncIterator[None]:
             async with self._chain_bound(name), self._admitted(name):
-                yield
+                with ExecutionScope(identity):
+                    yield
 
         return _guard
 
@@ -1082,71 +1089,55 @@ class AgentRuntime:
         """Resolve every plan's grants once, right after its engine is built."""
         return {name: self._plan_grants(plan) for name, plan in self._plans.items()}
 
-    def _build_use_case_grants(self) -> dict[str, McpGrant]:
-        """Resolve the one shared substrate grant per server, keyed by server name.
+    def _build_use_case_grants(self) -> dict[str, McpGrant | None]:
+        """Resolve the one shared substrate grant per server ``Mcp()`` markers declared.
 
-        This grant is **not** any one binding's filtered view: it carries the
-        live session and the server's full, unfiltered catalogue, which is why
-        its own capability is built through :func:`mcp_connection` — the same
-        helper that keys a shared MCP client by connection identity — so
-        ``include``/``exclude`` come back explicitly empty rather than
-        whichever binding happened to be folded in last. Two use cases naming
-        the same server can declare different ``include``s without either
-        one's filter leaking into the other or into this shared grant: each
-        binding's own filter is checked at start-up by
-        :meth:`_use_case_filter_issues` and applied at call time from its
-        own :class:`~loom.core.engine.plan.McpBinding`, via the executor —
-        never from the value returned here.
+        Each grant carries the live session and the server's full, unfiltered
+        catalogue, its own capability built through :func:`mcp_connection`
+        (``include``/``exclude`` empty); every binding applies its own filter.
 
-        Built through the existing :meth:`_mcp_grant`, so a tolerated
-        unreachable server yields ``None`` here exactly as it does for an
-        agent's own grant. Keyed by server name alone: this is the shared
-        substrate every binding on that server reads its session and
-        catalogue from, so one entry per server is exactly right, not a
-        limitation to work around.
+        Returns:
+            The grant of each declared server by name, ``None`` for a server
+            tolerated unreachable.
         """
-        grants: dict[str, McpGrant] = {}
+        grants: dict[str, McpGrant | None] = {}
         for entry in self._use_case_mcp:
             server = entry.capability.server
-            if server in grants:
-                continue
-            grant = self._mcp_grant(mcp_connection(entry.capability))
-            if grant is not None:
-                grants[server] = grant
+            if server not in grants:
+                grants[server] = self._mcp_grant(mcp_connection(entry.capability))
         return grants
 
     def use_case_mcp_grant(self, server: str) -> McpGrant | None:
         """Return the shared substrate grant of one server ``Mcp()`` markers declared.
 
-        This is the server-keyed substrate — live session, full unfiltered
-        catalogue — every binding on *server* shares; it is **not** any one
-        caller's filtered view, and its own capability carries an explicitly
-        empty ``include``/``exclude`` (see :meth:`_build_use_case_grants`). A
-        caller's own filter comes from its own
-        :class:`~loom.core.engine.plan.McpBinding`, passed to the resolver
-        by the executor at resolution time, never from the value this
-        method returns.
+        The grant carries the live session and the full, unfiltered catalogue
+        every binding on *server* shares; a binding's own filter is its own.
 
         Args:
             server: MCP server name a marker declared.
 
         Returns:
-            The resolved shared grant, or ``None`` when *server* was never
-            declared by any use case, or its connection was tolerated as
+            The shared grant, or ``None`` when the server was tolerated
             unreachable under ``ai.remote_clients: optional``.
 
         Raises:
-            RuntimeError: When the runtime was never entered. This follows
-                ``_require_slot``'s own rule rather than calling it: that
-                method calls ``_require_plan`` first, which would raise
-                ``KeyError`` on a server name that is not an agent name.
+            RuntimeError: When the runtime was never entered.
+            AgentRunError: With ``MCP_SERVER_NOT_GRANTED`` when no ``Mcp()``
+                declaration reached at startup names *server*.
         """
         if self._stack is None:
             raise RuntimeError(
                 "AgentRuntime must be entered before use: wrap it in "
                 "'async with runtime:' to open its clients and build its engines"
             )
-        return self._use_case_grants.get(server)
+        try:
+            return self._use_case_grants[server]
+        except KeyError:
+            raise AgentRunError(
+                AgentRunErrorCode.MCP_SERVER_NOT_GRANTED,
+                f"mcp server {server!r} is not granted to any use case: no Mcp() "
+                "declaration reached at startup names it",
+            ) from None
 
     def _plan_grants(self, plan: AgentPlan) -> AgentGrants:
         """Resolve one plan's ``mcp``/``sql`` grants against the clients start-up opened."""
