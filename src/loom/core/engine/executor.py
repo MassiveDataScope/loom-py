@@ -508,19 +508,19 @@ class RuntimeExecutor:
         scope = current_scope()
         identity_token = None if identity is None else set_identity(identity)
         execution_token = enter(identity)
+        read_only = read_only or plan.read_only
         try:
+            if not read_only:
+                refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
             try:
                 compilable = build(target)
             except Exception as exc:
                 self._log_unbuilt(plan, exc)
                 raise
-            if read_only or plan.read_only:
-                return await self._run_lifecycle(
-                    plan, compilable, inputs, None, scope, read_only=True
-                )
-            refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
-            owned = self._coordinator if scope is None else None
-            return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
+            owned = self._coordinator if scope is None and not read_only else None
+            return await self._run_lifecycle(
+                plan, compilable, inputs, owned, scope, read_only=read_only
+            )
         finally:
             try:
                 leave(execution_token)

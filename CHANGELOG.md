@@ -543,6 +543,9 @@
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
   optional, and `run` raises `TypeError` when neither is given.
+- **engine:** a writing use case or job run under a read-only execution is
+  refused with `UndeclaredStoreWrite` before it is built, so its constructor
+  no longer runs first.
 - **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
   on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
   bind them, so a standalone kernel serves a per-execution adapter declaring
