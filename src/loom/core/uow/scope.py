@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import (
     ForeignSessionError,
+    NestedIdentityMismatch,
     ScopeOwnershipError,
     StoresNotCommitted,
     UndeclaredStoreWrite,
@@ -136,6 +137,22 @@ class InvocationScope:
     def owned_here(self) -> bool:
         """Whether the caller may touch this scope's participants (:meth:`require_owner` passes)."""
         return self._ownership_problem() is None
+
+    def transactional(self, key: StoreKey) -> bool:
+        """Whether the participant of store *key* can roll back."""
+        return self.participants[key].transactional
+
+    def refuse_other_identity(self, use_case: str) -> None:
+        """Refuse *use_case* running in this writing scope, in its task, as another identity.
+
+        The acting identity is compared with :attr:`identity`, the one the scope opened with.
+
+        Raises:
+            NestedIdentityMismatch: When the scope writes, this task owns it
+                and the acting identity differs.
+        """
+        if not self.read_only and self.owned_here() and current_identity() != self.identity:
+            raise NestedIdentityMismatch.joining(use_case)
 
     def _ownership_problem(self) -> str | None:
         try:

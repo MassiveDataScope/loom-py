@@ -151,7 +151,7 @@ class TestAgentMarker:
         executor = RuntimeExecutor(compiler)
         use_case = TriageUseCase()
 
-        with pytest.raises(RuntimeError, match="agent resolver"):
+        with pytest.raises(RuntimeError, match="no 'agent' resolver is bound"):
             await executor.execute(use_case, identity=_ALICE)
 
     async def test_binding_a_resolver_twice_is_refused(self) -> None:

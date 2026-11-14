@@ -34,25 +34,29 @@ class Product:
 
 class _RecordingLogger:
     def __init__(self) -> None:
-        self.messages: list[str] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    @property
+    def messages(self) -> list[str]:
+        return [event for event, _ in self.calls]
 
     def bind(self, **fields: Any) -> _RecordingLogger:
         return self
 
     def debug(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def info(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def warning(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def error(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def exception(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +380,26 @@ class TestCompilationErrors:
         with pytest.raises(CompilationError, match="'cmd' not found"):
             compiler.compile(_BadRef)
 
+    @pytest.mark.parametrize(
+        ("marker", "wording"),
+        [
+            pytest.param(LoadById(User, by="missing"), r"LoadById\(\) User", id="load-by-id"),
+            pytest.param(
+                Load(User, from_param="missing", against="email"), r": Load\(\) User", id="load"
+            ),
+            pytest.param(
+                Exists(User, from_param="missing", against="email"), r"Exists\(\) User", id="exists"
+            ),
+        ],
+    )
+    def test_a_lookup_error_names_the_marker_as_written(self, marker: Any, wording: str) -> None:
+        class _BadLookup(UseCase[Any, str]):
+            async def execute(self, user: Any = marker) -> str:
+                return "ok"
+
+        with pytest.raises(CompilationError, match=wording):
+            UseCaseCompiler().compile(_BadLookup)
+
 
 # ---------------------------------------------------------------------------
 # Boot logging
@@ -383,38 +407,32 @@ class TestCompilationErrors:
 
 
 class TestCompilerLogging:
-    def test_logs_use_case_name(self) -> None:
+    """Compiling a use case logs one ``[BOOT] Compiled UseCase`` line with what it found."""
+
+    def test_logs_one_line_naming_the_use_case(self) -> None:
         log = _RecordingLogger()
         UseCaseCompiler(logger=log).compile(_NoMarkersUseCase)
-        assert any("_NoMarkersUseCase" in m for m in log.messages)
+        assert log.messages == ["[BOOT] Compiled UseCase: _NoMarkersUseCase (0 steps)"]
 
-    def test_logs_input_detection(self) -> None:
+    @pytest.mark.parametrize(
+        ("use_case", "detected"),
+        [
+            pytest.param(_WithInputUseCase, "Input: UserCommand", id="input"),
+            pytest.param(_WithLoadUseCase, "LoadById: User by user_id", id="load-by-id"),
+        ],
+    )
+    def test_lists_each_detected_marker(self, use_case: type[Any], detected: str) -> None:
         log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_WithInputUseCase)
-        assert any("Detected Input" in m and "UserCommand" in m for m in log.messages)
+        UseCaseCompiler(logger=log).compile(use_case)
+        [(_, fields)] = log.calls
+        assert detected in fields["detected"]
 
-    def test_logs_load_detection(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_WithLoadUseCase)
-        assert any(
-            "Detected LoadById" in m and "User" in m and "user_id" in m for m in log.messages
-        )
-
-    def test_logs_compute_count(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_WithAllUseCase)
-        assert any("Validated 1 compute steps" in m for m in log.messages)
-
-    def test_logs_rule_count(self) -> None:
+    def test_counts_the_computes_rules_and_steps(self) -> None:
         log = _RecordingLogger()
         UseCaseCompiler(logger=log).compile(_WithAllUseCase)
-        assert any("Validated 1 rules" in m for m in log.messages)
-
-    def test_logs_total_step_count(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_WithAllUseCase)
-        # 1 load + 1 compute + 1 rule = 3 steps
-        assert any("ExecutionPlan built (3 steps)" in m for m in log.messages)
+        [(event, fields)] = log.calls
+        assert "(3 steps)" in event
+        assert (fields["computes"], fields["rules"], fields["steps"]) == (1, 1, 3)
 
     def test_no_logs_on_cache_hit(self) -> None:
         log = _RecordingLogger()

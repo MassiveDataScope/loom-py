@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from loom.core.di.errors import DependencyUnresolvable, ResolutionError, describe_key
 from loom.core.di.introspection import (
-    ExecutionDependency,
     KeyDependency,
     RefusedDependency,
     RepoDependency,
@@ -23,7 +22,7 @@ from loom.core.di.introspection import (
     UnresolvableDependency,
 )
 from loom.core.di.scope import Scope
-from loom.core.execution import ExecutionKinds, Kind
+from loom.core.execution import ExecutionBinding, ExecutionKinds, Kind, UnboundKind
 
 if TYPE_CHECKING:
     from loom.core.di.container import _Binding
@@ -153,7 +152,7 @@ def _refuse_unsafe_kind(node: Node, path: DependencyPath, graph: DependencyGraph
     """A singleton holds a kind whose value belongs to one execution."""
     for name, dependency in graph.constructor(node):
         match dependency:
-            case ExecutionDependency(kind=kind) if not kind.singleton_safe:
+            case ExecutionBinding(kind=kind) if not kind.singleton_safe:
                 if graph.held_by_singleton(path):
                     return f"{name}: an APPLICATION binding cannot hold a {kind.name!r} value"
     return None
@@ -224,9 +223,9 @@ def refuse_unbound(kinds: ExecutionKinds, skip: Collection[Kind] = ()) -> Refusa
         if graph.scope(node) is not Scope.APPLICATION:
             return None
         unbound = (
-            f"{name}: no resolver is bound for {dependency.kind.name!r}"
+            f"{name}: {UnboundKind(dependency.kind)}"
             for name, dependency in graph.constructor(node)
-            if isinstance(dependency, ExecutionDependency)
+            if isinstance(dependency, ExecutionBinding)
             and dependency.kind not in skip
             and not kinds.is_bound(dependency.kind)
         )
@@ -239,7 +238,7 @@ def _refuse_ungranted_kind(node: Node, path: DependencyPath, graph: DependencyGr
     """A binding no root reaches declares a kind: nothing granted what it would resolve."""
     for name, dependency in graph.constructor(node):
         match dependency:
-            case ExecutionDependency(kind=kind):
+            case ExecutionBinding(kind=kind):
                 return f"{name}: declares a {kind.name!r} dependency no root reaches"
     return None
 
@@ -435,6 +434,6 @@ class DependencyGraph:
                         yield Edge(KeyNode(repository), name)
                     if contract is not None:
                         yield Edge(KeyNode(contract), name)
-                case ExecutionDependency(kind=kind, annotation=annotation):
+                case ExecutionBinding(kind=kind, annotation=annotation):
                     calls = kind.called_classes(annotation)
                     yield from (Edge(ClassNode(cls), name, True) for cls in calls)

@@ -13,15 +13,9 @@ from loom.core.use_case.markers import (
     _QueryMarker,
 )
 
-CALLER = Kind("caller", singleton_safe=False)
+CALLER = Kind("caller", singleton_safe=False, spelling=_CallerMarker.spelling)
 
-_INPUT_MARKERS = {
-    _InputMarker: "Input()",
-    _QueryMarker: "Query()",
-    _LoadByIdMarker: "LoadById()",
-    _LoadMarker: "Load()",
-    _ExistsMarker: "Exists()",
-}
+_INPUT_MARKERS = (_InputMarker, _QueryMarker, _LoadByIdMarker, _LoadMarker, _ExistsMarker)
 
 
 def declare_use_case_kinds(kinds: ExecutionKinds) -> None:
@@ -31,8 +25,8 @@ def declare_use_case_kinds(kinds: ExecutionKinds) -> None:
     constructor declaring one is refused.
     """
     kinds.declare_type(_CallerMarker, CALLER)
-    for marker, spelling in _INPUT_MARKERS.items():
-        kinds.refuse(marker, f"{spelling} declares an input of execute(), not a dependency")
+    for marker in _INPUT_MARKERS:
+        kinds.refuse(marker, f"{marker.spelling} declares an input of execute(), not a dependency")
 
 
 class CallerResolver:

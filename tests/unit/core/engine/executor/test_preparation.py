@@ -16,7 +16,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
 from loom.core.engine.plan import ParamBinding
-from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
+from loom.core.errors import MissingCaller, NotFound, RuleViolation, RuleViolations
 from loom.core.identity import ANONYMOUS
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
@@ -488,7 +488,9 @@ class TestMcpMarker:
     ) -> None:
         use_case = AcmeDocsSearchUseCase()
 
-        with pytest.raises(Unauthenticated, match="AcmeDocsSearchUseCase"):
+        with pytest.raises(
+            MissingCaller, match=r"AcmeDocsSearchUseCase.execute declares 'caller = Caller\(\)'"
+        ):
             await mcp_executor.execute(use_case)
 
     async def test_a_missing_identity_is_refused_by_the_mcp_step_itself(
@@ -502,9 +504,13 @@ class TestMcpMarker:
         """
         use_case = AcmeMcpOnlyUseCase()
 
-        with pytest.raises(Unauthenticated, match=r"AcmeMcpOnlyUseCase.*Mcp\(\) parameter"):
+        with pytest.raises(
+            MissingCaller, match=r"AcmeMcpOnlyUseCase.execute declares 'docs = Mcp\(\)'"
+        ) as refused:
             await mcp_executor.execute(use_case)
 
+        assert (refused.value.parameter, refused.value.marker) == ("docs", "Mcp()")
+        assert refused.value.use_case.endswith("AcmeMcpOnlyUseCase")
         assert mcp_calls == []
 
     async def test_no_resolver_bound_fails_with_a_named_error(

@@ -6,7 +6,8 @@ the parameters, the caller, the execution kinds (``Agent()``, ``Mcp()``) and
 the command bind the arguments; the loads and existence checks fetch from
 repositories; the computes and rules shape and check the command. Every step
 kind is one small function of the plan returning the step, or ``None`` when
-the plan does not declare it.
+the plan does not declare it. Each step records what it ran on the
+execution's :class:`~loom.core.engine.observation.StartedExecution`.
 """
 
 from __future__ import annotations
@@ -18,21 +19,14 @@ from typing import Any, TypeAlias, cast
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.kinds import AGENT, MCP
-from loom.core.engine.observation import Observer
-from loom.core.engine.plan import ExecutionBinding, ExecutionPlan, ExistsStep, LoadStep
-from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
-from loom.core.execution import ExecutionKinds
+from loom.core.engine.observation import StartedExecution
+from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep, ParameterBindingError
+from loom.core.errors import MissingCaller, RuleViolation, RuleViolations
+from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
-from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
+from loom.core.use_case.kinds import CALLER
 
-_KIND_WORDING = {
-    AGENT: ("Agent()", "agent", "bind_agent_resolver"),
-    MCP: ("Mcp()", "MCP", "bind_mcp_resolver"),
-}
-
-
-class ParameterBindingError(ValueError):
-    """Raised when a primitive execute parameter cannot be coerced to its declared type."""
+_BINDERS = {AGENT: "bind_agent_resolver", MCP: "bind_mcp_resolver"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +45,7 @@ class _Call:
 
     inputs: ExecutionInputs
     identity: Identity | None
+    started: StartedExecution
     bound: dict[str, Any] = field(default_factory=dict)
     fields_set: frozenset[str] = frozenset()
 
@@ -67,7 +62,7 @@ class _Steps:
     ``bind`` and ``check`` are each one step — the phase's only step, or all
     of them in order — or ``None`` when the plan declares none, so a plan
     with no steps goes straight to ``execute()`` and a one-step phase is a
-    direct call. ``fetches`` are rows ``Preparation.call`` awaits in order.
+    direct call. ``fetches`` are rows ``ArgumentBinder.call`` awaits in order.
     """
 
     plan: ExecutionPlan
@@ -76,27 +71,22 @@ class _Steps:
     check: Bind | None
 
 
-class Preparation:
+class ArgumentBinder:
     """Builds and makes the ``execute()`` call of each execution of one executor.
 
     Args:
         kinds: Resolve each ``Agent()`` / ``Mcp()`` parameter.
         repo_resolver: Resolves the repository of an entity type for the
             loads and existence checks the caller passed no dependency for.
-        observer: Logs each step and each broken rule.
     """
 
-    __slots__ = ("_kinds", "_observer", "_repo_resolver", "_tables")
+    __slots__ = ("_kinds", "_repo_resolver", "_tables")
 
     def __init__(
-        self,
-        kinds: ExecutionKinds,
-        repo_resolver: Callable[[type[Any]], Any] | None,
-        observer: Observer,
+        self, kinds: ExecutionKinds, repo_resolver: Callable[[type[Any]], Any] | None
     ) -> None:
         self._kinds = kinds
         self._repo_resolver = repo_resolver
-        self._observer = observer
         self._tables: dict[type[Any], _Steps] = {}
 
     async def call(
@@ -105,22 +95,23 @@ class Preparation:
         compilable: Compilable,
         inputs: ExecutionInputs,
         identity: Identity | None,
+        started: StartedExecution,
     ) -> Any:
         """Run *plan*'s steps over *inputs*, then call *compilable*'s ``execute()`` with them."""
         steps = self._tables.get(plan.use_case_type)
         if steps is None or steps.plan is not plan:
             steps = self._tables[plan.use_case_type] = self._compile(plan)
-        call = _Call(inputs, identity)
+        call = _Call(inputs, identity, started)
         if steps.bind is not None:
             steps.bind(call)
         if steps.fetches:
-            bound, log_step = call.bound, self._observer.step
+            bound, record_step = call.bound, started.step
             for fetch_one, step, label in steps.fetches:
                 bound[step.name] = await fetch_one(step, plan, call)
-                log_step(label)
+                record_step(label)
         if steps.check is not None:
             steps.check(call)
-        self._observer.step("Execute core logic")
+        started.step("Execute core logic")
         execute = compilable.execute
         if inspect.iscoroutinefunction(execute):
             return await execute(**call.bound)
@@ -132,7 +123,7 @@ class Preparation:
             _params(plan),
             _caller(plan),
             self._executions(plan),
-            _command(plan, self._observer),
+            _command(plan),
         )
         fetches: tuple[Fetch, ...] = (
             *((self._load, step, f"Load {step.entity_type.__name__}") for step in plan.load_steps),
@@ -141,7 +132,7 @@ class Preparation:
                 for step in plan.exists_steps
             ),
         )
-        checks = (_computes(plan, self._observer), _rules(plan, self._observer))
+        checks = (_computes(plan), _rules(plan))
         return _Steps(
             plan,
             _phase(binds),
@@ -152,51 +143,39 @@ class Preparation:
     def _executions(self, plan: ExecutionPlan) -> Bind | None:
         """Inject one value per execution binding, resolved in this execution.
 
-        Requires an identity for the reason :func:`_caller` does. An
-        explicitly anonymous one is accepted: the handle refuses it when
-        used, right before the network call, not before it is known whether
-        this execution makes one. A kind with no resolver bound fails loud,
-        naming the method that binds it, instead of handing the raw marker
-        to the use case. The resolvers read the execution the executor
-        entered, the one the constructor was built in.
+        Requires an identity, as :func:`_caller` does; an explicitly
+        anonymous one is accepted and the handle refuses it when used. A kind
+        with no resolver bound raises, naming the method that binds it. The
+        resolvers read the execution the executor entered, the one the
+        constructor was built in.
+
+        Raises:
+            MissingCaller: When the execution carried no identity.
         """
         bindings = plan.execution_bindings
         if not bindings:
             return None
         resolve_kind = self._kinds.resolve
-        refuse_unbound = self._refuse_unbound
+        use_case = plan.use_case_type.__qualname__
 
         def resolve(call: _Call) -> None:
             if call.identity is None:
-                marker = _KIND_WORDING[bindings[0].kind][0]
-                raise Unauthenticated(
-                    f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
-                    "parameter but this execution carried no identity. The transport "
-                    "must pass identity=... to the executor (pass ANONYMOUS explicitly "
-                    "to run without a caller)."
-                )
+                first = bindings[0]
+                raise MissingCaller(use_case, first.name, first.kind.spelling)
             bound = call.bound
             for binding in bindings:
                 try:
                     bound[binding.name] = resolve_kind(
                         binding.kind, binding.declaration, binding.annotation
                     )
-                except KeyError:
-                    refuse_unbound(plan, binding)
-                    raise
+                except UnboundKind:
+                    raise RuntimeError(
+                        f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
+                        f"no {binding.kind.name!r} resolver is bound on this executor. Call "
+                        f"RuntimeExecutor.{_BINDERS[binding.kind]}() once the AI runtime exists."
+                    ) from None
 
         return resolve
-
-    def _refuse_unbound(self, plan: ExecutionPlan, binding: ExecutionBinding) -> None:
-        """Raise the "no resolver bound" error when *binding*'s kind has none."""
-        if self._kinds.is_bound(binding.kind):
-            return
-        marker, resolver, method = _KIND_WORDING[binding.kind]
-        raise RuntimeError(
-            f"{plan.use_case_type.__qualname__}.execute declares an {marker} "
-            f"parameter but no {resolver} resolver is bound on this executor. "
-            f"Call RuntimeExecutor.{method}() once the AI runtime exists."
-        ) from None
 
     async def _load(self, step: LoadStep, plan: ExecutionPlan, call: _Call) -> Any:
         overrides = call.inputs.load_overrides
@@ -206,16 +185,16 @@ class Preparation:
         repo = None if dependencies is None else dependencies.get(step.entity_type)
         if repo is None:
             repo = self._repository(step.entity_type, dependencies, "LoadById")
-        value = _lookup_value(step.source_kind, step.source_name, plan, call.bound)
-        entity = await _get_entity(repo, step, value)
-        return _missing(step, value) if entity is None else entity
+        value = step.value(call.bound)
+        entity = await step.fetch(repo, value)
+        return step.on_missing.answer(step.entity_type, value) if entity is None else entity
 
     async def _exist(self, step: ExistsStep, plan: ExecutionPlan, call: _Call) -> bool:
         dependencies = call.inputs.dependencies
         repo = None if dependencies is None else dependencies.get(step.entity_type)
         if repo is None:
             repo = self._repository(step.entity_type, dependencies, "Exists")
-        value = _lookup_value(step.source_kind, step.source_name, plan, call.bound)
+        value = step.value(call.bound)
         exists_by = getattr(repo, "exists_by", None)
         if not callable(exists_by):
             raise RuntimeError(
@@ -225,9 +204,7 @@ class Preparation:
         exists_by_async = cast(Callable[[str, Any], Awaitable[bool]], exists_by)
         if await exists_by_async(step.against, value):
             return True
-        if step.on_missing is OnMissing.RAISE:
-            raise NotFound(step.entity_type.__name__, id=value)
-        return False
+        return bool(step.on_missing.answer(step.entity_type, value))
 
     def _repository(
         self, entity_type: type[Any], dependencies: dict[type[Any], Any] | None, marker: str
@@ -258,12 +235,7 @@ def _phase(steps: tuple[Bind | None, ...]) -> Bind | None:
 
 
 def _query(plan: ExecutionPlan) -> Bind | None:
-    """Refuse a ``Query()`` value that is not an instance of its type.
-
-    A generic coercion would call the type with the raw value: a struct
-    whose fields are positional would take a dict as its first field. The
-    message names the type received, never the value.
-    """
+    """Refuse a ``Query()`` value that is not an instance of its type, naming the type received."""
     binding = plan.query_binding
     if binding is None:
         return None
@@ -293,20 +265,16 @@ def _params(plan: ExecutionPlan) -> Bind | None:
         for binding in bindings:
             if binding.name not in params:
                 raise ValueError(f"{use_case}: missing required parameter '{binding.name}'")
-            call.bound[binding.name] = _coerce(
-                binding.name, binding.annotation, params[binding.name], use_case
-            )
+            call.bound[binding.name] = binding.coerce(params[binding.name], use_case)
 
     return bind
 
 
 def _caller(plan: ExecutionPlan) -> Bind | None:
-    """Inject the declared caller identity, refusing to invent one.
+    """Inject the declared caller identity; an execution with none is refused.
 
-    Substituting the anonymous identity for a missing one would turn a
-    transport that forgot to propagate the caller into a silently
-    unauthenticated execution. The transport must say ``ANONYMOUS``
-    explicitly for that to happen.
+    Raises:
+        MissingCaller: From the step, when the execution carried no identity.
     """
     binding = plan.caller_binding
     if binding is None:
@@ -314,18 +282,13 @@ def _caller(plan: ExecutionPlan) -> Bind | None:
 
     def bind(call: _Call) -> None:
         if call.identity is None:
-            raise Unauthenticated(
-                f"{plan.use_case_type.__qualname__}.execute declares "
-                f"'{binding.name}: Identity = Caller()' but this execution carried no "
-                "identity. The transport must pass identity=... to the executor "
-                "(pass ANONYMOUS explicitly to run without a caller)."
-            )
+            raise MissingCaller(plan.use_case_type.__qualname__, binding.name, CALLER.spelling)
         call.bound[binding.name] = call.identity
 
     return bind
 
 
-def _command(plan: ExecutionPlan, observer: Observer) -> Bind | None:
+def _command(plan: ExecutionPlan) -> Bind | None:
     binding = plan.input_binding
     if binding is None:
         return None
@@ -335,25 +298,20 @@ def _command(plan: ExecutionPlan, observer: Observer) -> Bind | None:
         payload = call.inputs.payload
         if payload is None:
             raise ValueError(f"{use_case}: payload is required for a UseCase with Input()")
-        command_type = binding.command_type
-        if not hasattr(command_type, "from_payload"):
-            raise TypeError(
-                f"{use_case}: command type {command_type!r} must implement from_payload()"
-            )
-        command, fields_set = command_type.from_payload(payload)
+        command, fields_set = binding.command_type.from_payload(payload)
         call.bound[binding.name] = command
         call.fields_set = cast(frozenset[str], fields_set)
-        observer.step("Bind Input")
+        call.started.step("Bind Input")
 
     return bind
 
 
-def _computes(plan: ExecutionPlan, observer: Observer) -> Bind | None:
+def _computes(plan: ExecutionPlan) -> Bind | None:
     binding = plan.input_binding
     if binding is None or not plan.compute_steps:
         return None
     computes = tuple(
-        (cast(Any, step.fn), step.accepts_context, f"Compute {_label(step.fn)}")
+        (cast(Any, step.fn), step.accepts_context, f"Compute {step.label}")
         for step in plan.compute_steps
     )
 
@@ -364,21 +322,20 @@ def _computes(plan: ExecutionPlan, observer: Observer) -> Bind | None:
                 command = fn(command, call.fields_set, call.bound)
             else:
                 command = fn(command, call.fields_set)
-            observer.step(label)
+            call.started.step(label)
         call.bound[binding.name] = command
 
     return apply
 
 
-def _rules(plan: ExecutionPlan, observer: Observer) -> Bind | None:
+def _rules(plan: ExecutionPlan) -> Bind | None:
     binding = plan.input_binding
     if binding is None or not plan.rule_steps:
         return None
     rules = tuple(
-        (step.fn, step.accepts_context, _label(step.fn), f"Rule {_label(step.fn)}")
+        (cast(Any, step.fn), step.accepts_context, step.label, f"Rule {step.label}")
         for step in plan.rule_steps
     )
-    use_case = plan.use_case_type.__qualname__
 
     def check(call: _Call) -> None:
         command = call.bound[binding.name]
@@ -389,61 +346,11 @@ def _rules(plan: ExecutionPlan, observer: Observer) -> Bind | None:
                     fn(command, call.fields_set, call.bound)
                 else:
                     fn(command, call.fields_set)
-                observer.step(step_label)
+                call.started.step(step_label)
             except RuleViolation as exc:
                 violations.append(exc)
-                observer.rule_failed(use_case, label, exc)
+                call.started.rule_failed(label, exc)
         if violations:
             raise RuleViolations(violations)
 
     return check
-
-
-def _coerce(name: str, annotation: Any, raw: Any, use_case: str) -> Any:
-    if annotation is Any or not isinstance(annotation, type) or isinstance(raw, annotation):
-        return raw
-    try:
-        return annotation(raw)
-    except (TypeError, ValueError) as exc:
-        raise ParameterBindingError(
-            f"{use_case}: invalid value for parameter '{name}': "
-            f"expected {annotation.__name__}, got {type(raw).__name__} ({raw!r})"
-        ) from exc
-
-
-def _lookup_value(
-    source_kind: SourceKind, source_name: str, plan: ExecutionPlan, bound: dict[str, Any]
-) -> Any:
-    if source_kind is SourceKind.PARAM:
-        return bound[source_name]
-    if plan.input_binding is None:
-        raise RuntimeError("from_command source requires Input() binding")
-    command = bound[plan.input_binding.name]
-    if not hasattr(command, source_name):
-        raise RuntimeError(f"Command '{type(command).__name__}' has no field '{source_name}'")
-    return getattr(command, source_name)
-
-
-async def _get_entity(repo: Any, step: LoadStep, value: Any) -> Any | None:
-    if step.lookup_kind is LookupKind.BY_ID:
-        return await repo.get_by_id(value, profile=step.profile)
-    get_by = getattr(repo, "get_by", None)
-    if not callable(get_by):
-        raise RuntimeError(
-            f"Repository for '{step.entity_type.__name__}' must implement get_by(field, value)"
-        )
-    get_by_async = cast(Callable[..., Awaitable[Any | None]], get_by)
-    return await get_by_async(step.against, value, profile=step.profile)
-
-
-def _missing(step: LoadStep, value: Any) -> Any:
-    """What a load that found no entity binds, by its ``on_missing`` policy."""
-    if step.on_missing is OnMissing.RETURN_NONE:
-        return None
-    if step.on_missing is OnMissing.RETURN_FALSE:
-        return False
-    raise NotFound(step.entity_type.__name__, id=value)
-
-
-def _label(fn: object) -> str:
-    return getattr(fn, "__name__", type(fn).__name__)

@@ -13,14 +13,10 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import FunctionType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from loom.core.di.errors import ResolutionError
-from loom.core.execution import ExecutionKinds, Kind
+from loom.core.execution import ExecutionBinding, ExecutionKinds
 from loom.core.model.introspection import resolve_type_hints
-
-if TYPE_CHECKING:
-    from loom.core.di.compiler import Supplier
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,40 +39,6 @@ class RepoDependency:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionDependency:
-    """A parameter of an execution kind, resolved per execution from ``declaration``."""
-
-    kind: Kind
-    declaration: object
-    annotation: object
-
-    def supplier(self, kinds: ExecutionKinds, where: str) -> Supplier:
-        """Return what resolves this dependency through its kind's resolver on each build.
-
-        Args:
-            kinds: The execution kinds whose resolver serves it, bound by then or not.
-            where: The path and parameter an unbound kind's error names.
-
-        Returns:
-            The supplier of the dependency's value.
-
-        Raises:
-            ResolutionError: From the supplier, when no resolver is bound for the kind.
-        """
-        kind, declaration, annotation = self.kind, self.declaration, self.annotation
-
-        def resolve() -> object:
-            try:
-                return kinds.resolve(kind, declaration, annotation)
-            except KeyError:
-                if kinds.is_bound(kind):
-                    raise
-                raise ResolutionError(f"{where}: no resolver is bound for {kind.name!r}") from None
-
-        return resolve
-
-
-@dataclass(frozen=True, slots=True)
 class RefusedDependency:
     """A parameter whose default no constructor may declare, and why."""
 
@@ -91,11 +53,7 @@ class UnresolvableDependency:
 
 
 Dependency = (
-    KeyDependency
-    | RepoDependency
-    | ExecutionDependency
-    | RefusedDependency
-    | UnresolvableDependency
+    KeyDependency | RepoDependency | ExecutionBinding | RefusedDependency | UnresolvableDependency
 )
 
 Constructor = tuple[tuple[str, Dependency], ...]
@@ -163,16 +121,16 @@ class SignatureReader:
         parameters = _parameters(init, first)
         hints = _annotations(init, parameters)
         dependencies = (
-            (p.name, self._dependency(p.default, hints.get(p.name))) for p in parameters
+            (p.name, self._dependency(p.name, p.default, hints.get(p.name))) for p in parameters
         )
         return tuple(
             (name, dependency) for name, dependency in dependencies if dependency is not None
         )
 
-    def _dependency(self, default: object, annotation: object) -> Dependency | None:
+    def _dependency(self, name: str, default: object, annotation: object) -> Dependency | None:
         kind = self.kinds.kind_for(default, annotation)
         if kind is not None:
-            return ExecutionDependency(kind, default, annotation)
+            return ExecutionBinding(name, kind, default, annotation)
         reason = self.kinds.refusal(default)
         if reason is not None:
             return RefusedDependency(reason)

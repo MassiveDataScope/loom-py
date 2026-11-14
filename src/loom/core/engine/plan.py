@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
-from dataclasses import dataclass
-from typing import Any
+import inspect
+from collections.abc import Awaitable, Callable, Collection
+from dataclasses import dataclass, field, replace
+from typing import Any, Self, cast
 
 from loom.core.engine.kinds import AGENT, MCP
-from loom.core.execution import Kind
+from loom.core.execution import ExecutionBinding
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey
+from loom.core.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
+
+
+class ParameterBindingError(ValueError):
+    """Raised when a primitive execute parameter cannot be coerced to its declared type."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,23 @@ class ParamBinding:
 
     name: str
     annotation: type[Any]
+
+    def coerce(self, raw: Any, use_case: str) -> Any:
+        """*raw* as the declared type: as is when it already is one or the type is open.
+
+        Raises:
+            ParameterBindingError: When the type rejects *raw*.
+        """
+        annotation = self.annotation
+        if annotation is Any or not isinstance(annotation, type) or isinstance(raw, annotation):
+            return raw
+        try:
+            return annotation(raw)
+        except (TypeError, ValueError) as exc:
+            raise ParameterBindingError(
+                f"{use_case}: invalid value for parameter '{self.name}': "
+                f"expected {annotation.__name__}, got {type(raw).__name__} ({raw!r})"
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -80,25 +103,6 @@ class CallerBinding:
 
 
 @dataclass(frozen=True)
-class ExecutionBinding:
-    """One parameter of an execution kind, resolved per execution through its kind's resolver.
-
-    A plan holds those of ``execute``.
-
-    Args:
-        name: Parameter name as declared in the signature.
-        kind: The kind whose resolver builds the value.
-        declaration: The parameter's default, the marker the resolver reads.
-        annotation: Resolved annotation of the parameter.
-    """
-
-    name: str
-    kind: Kind
-    declaration: Any
-    annotation: Any
-
-
-@dataclass(frozen=True)
 class AgentBinding:
     """One ``Agent(name)`` marker parameter declared in ``execute``.
 
@@ -133,8 +137,63 @@ class McpBinding:
     include: tuple[str, ...]
 
 
+_ABSENT = object()
+
+
 @dataclass(frozen=True)
-class LoadStep:
+class LookupStep:
+    """A step that looks an entity up by a value read from a parameter or the command.
+
+    Args:
+        name: Parameter name as declared in the signature.
+        entity_type: Domain entity type to look up.
+        source_kind: Where the lookup value is extracted from.
+        source_name: Name of param/command field used as lookup value.
+        command: Name of the ``Input()`` parameter a command-sourced value is
+            read from; ``None`` for a parameter-sourced one.
+        spelling: The marker that declared the step, as written.
+    """
+
+    name: str
+    entity_type: type[Any]
+    source_kind: SourceKind
+    source_name: str
+    command: str | None = field(default=None, kw_only=True)
+    spelling: str = field(default="LoadById()", kw_only=True)
+
+    def source_problem(self, param_names: Collection[str], has_input: bool) -> str | None:
+        """Why the lookup value cannot be read from *param_names* or the command, or ``None``."""
+        if self.source_kind is SourceKind.PARAM and self.source_name not in param_names:
+            return f"parameter '{self.source_name}' not found in execute signature"
+        if self.source_kind is SourceKind.COMMAND and not has_input:
+            return "from_command requires Input() parameter"
+        return None
+
+    def reading(self, command: str | None) -> Self:
+        """This step, reading a command-sourced value from the *command* parameter."""
+        if self.source_kind is SourceKind.COMMAND:
+            return replace(self, command=command)
+        return self
+
+    def value(self, bound: dict[str, Any]) -> Any:
+        """The lookup value among the arguments *bound* so far.
+
+        Raises:
+            RuntimeError: When the command has no field named ``source_name``.
+        """
+        if self.command is None:
+            return bound[self.source_name]
+        command = bound[self.command]
+        found = getattr(command, self.source_name, _ABSENT)
+        if found is _ABSENT:
+            raise RuntimeError(
+                f"Command '{type(command).__name__}' has no field '{self.source_name}'"
+            )
+        return found
+
+
+@dataclass(frozen=True)
+class LoadStep(LookupStep):
     """An entity prefetch step marked with ``LoadById`` or ``Load``.
 
     The executor resolves the entity from a repository before calling
@@ -152,62 +211,75 @@ class LoadStep:
         on_missing: Policy when no entity is found.
     """
 
-    name: str
-    entity_type: type[Any]
-    source_kind: SourceKind
-    source_name: str
     lookup_kind: LookupKind
     against: str
     profile: str = "default"
     on_missing: OnMissing = OnMissing.RAISE
 
+    async def fetch(self, repo: Any, value: Any) -> Any | None:
+        """The entity *repo* holds under *value*, by id or by ``against``; ``None`` if none.
+
+        Raises:
+            RuntimeError: When a field lookup's repository has no ``get_by``.
+        """
+        if self.lookup_kind is LookupKind.BY_ID:
+            return await repo.get_by_id(value, profile=self.profile)
+        get_by = getattr(repo, "get_by", None)
+        if not callable(get_by):
+            raise RuntimeError(
+                f"Repository for '{self.entity_type.__name__}' must implement get_by(field, value)"
+            )
+        get_by_async = cast(Callable[..., Awaitable[Any | None]], get_by)
+        return await get_by_async(self.against, value, profile=self.profile)
+
 
 @dataclass(frozen=True)
-class ExistsStep:
+class ExistsStep(LookupStep):
     """A boolean existence check step marked with ``Exists``."""
 
-    name: str
-    entity_type: type[Any]
-    source_kind: SourceKind
-    source_name: str
     against: str
     on_missing: OnMissing = OnMissing.RETURN_FALSE
+    spelling: str = field(default="Exists()", kw_only=True)
 
 
 @dataclass(frozen=True)
-class ComputeStep:
-    """A compute transformation step.
-
-    Holds a direct reference to the ``ComputeFn`` so the plan is
-    self-contained and requires no back-reference to the UseCase class.
+class CommandStep:
+    """One compute or rule function applied to the command.
 
     Args:
-        fn: The compute function to apply.
-        accepts_context: Pre-computed flag; ``True`` when ``fn`` accepts a
-            third positional ``context`` argument.  Resolved at compile time
-            to avoid per-request signature inspection.
+        fn: The compute or rule function.
+        accepts_context: Whether ``fn`` takes a third positional argument,
+            the arguments bound so far.
+        label: The function's name, as logs show it.
     """
 
-    fn: ComputeFn[Any]
+    fn: ComputeFn[Any] | RuleFn
     accepts_context: bool = False
+    label: str = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "label", getattr(self.fn, "__name__", type(self.fn).__name__))
+
+    @classmethod
+    def of(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
+        """The step of *fn*, reading once whether it takes the bound arguments.
+
+        A function taking three or more positional parameters, or ``*args``,
+        takes them.
+        """
+        try:
+            params = tuple(inspect.signature(fn).parameters.values())
+        except (TypeError, ValueError):
+            return cls(fn)
+        positional = [p for p in params if p.kind in _POSITIONAL]
+        variadic = any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params)
+        return cls(fn, len(positional) >= 3 or variadic)
 
 
-@dataclass(frozen=True)
-class RuleStep:
-    """A rule validation step.
+_POSITIONAL = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
 
-    Holds a direct reference to the ``RuleFn`` so the plan is
-    self-contained and requires no back-reference to the UseCase class.
-
-    Args:
-        fn: The rule function to evaluate.
-        accepts_context: Pre-computed flag; ``True`` when ``fn`` accepts a
-            third positional ``context`` argument.  Resolved at compile time
-            to avoid per-request signature inspection.
-    """
-
-    fn: RuleFn
-    accepts_context: bool = False
+ComputeStep = CommandStep
+RuleStep = CommandStep
 
 
 @dataclass(frozen=True)
@@ -267,18 +339,22 @@ class ExecutionPlan:
     input_binding: InputBinding | None
     load_steps: tuple[LoadStep, ...]
     exists_steps: tuple[ExistsStep, ...]
-    compute_steps: tuple[ComputeStep, ...]
-    rule_steps: tuple[RuleStep, ...]
+    compute_steps: tuple[CommandStep, ...]
+    rule_steps: tuple[CommandStep, ...]
     read_only: bool = False
     caller_binding: CallerBinding | None = None
     execution_bindings: tuple[ExecutionBinding, ...] = ()
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE
     joined: frozenset[StoreKey] = frozenset()
+    frame: Frame = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "frame", Frame(self.primary, self.joined))
 
     def model_reads(self) -> tuple[ModelRead, ...]:
         """The model each ``LoadById``, ``Load`` and ``Exists`` step reads, loads first."""
-        steps: tuple[LoadStep | ExistsStep, ...] = (*self.load_steps, *self.exists_steps)
+        steps: tuple[LookupStep, ...] = (*self.load_steps, *self.exists_steps)
         return tuple(ModelRead(self.use_case_type, step.name, step.entity_type) for step in steps)
 
     def refuse_autocommit_joined(self, transactional: Callable[[StoreKey], bool]) -> None:
@@ -290,7 +366,7 @@ class ExecutionPlan:
         Raises:
             JoinedAutocommitStore: For the first joined store, by name, that cannot.
         """
-        for key in sorted(self.joined):
+        for key in self.frame.stores[1:]:
             if not transactional(key):
                 issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                     component=self.use_case_type, store=key

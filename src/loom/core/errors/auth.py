@@ -116,6 +116,26 @@ class DelegationExpired(Unauthenticated):
         super().__init__(message)
 
 
+class MissingCaller(Unauthenticated):
+    """Raised when an execution declaring a caller-bound parameter carried no identity.
+
+    Args:
+        use_case: Qualified name of the use case.
+        parameter: Name of the declaring parameter of ``execute``.
+        marker: The marker it declares, as written (``Caller()``, ``Agent()``, ``Mcp()``).
+    """
+
+    def __init__(self, use_case: str, parameter: str, marker: str) -> None:
+        super().__init__(
+            f"{use_case}.execute declares '{parameter} = {marker}' but this execution carried "
+            "no identity. The transport must pass identity=... to the executor (pass "
+            "ANONYMOUS explicitly to run without a caller)."
+        )
+        self.use_case = use_case
+        self.parameter = parameter
+        self.marker = marker
+
+
 class Forbidden(DomainError):
     """Raised when an action is not permitted for the caller.
 

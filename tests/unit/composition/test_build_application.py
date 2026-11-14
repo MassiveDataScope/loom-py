@@ -19,6 +19,7 @@ from loom.composition import (
     load_source,
 )
 from loom.composition.resources import ResourceKind
+from loom.core.authz.elevation import ElevationSink
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
@@ -31,7 +32,7 @@ from loom.core.persistence.profile import (
 )
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.use_case.use_case import UseCase
-from tests.helpers.composition import ProjectFactory
+from tests.helpers.composition import ProjectFactory, coordinator_of
 
 
 class AcmeTransportFreeAdapter:
@@ -140,7 +141,7 @@ class TestTransportFreeComposition:
             fixture_project(), adapter=AcmeTransportFreeAdapter(), environment="test"
         )
 
-        assert application.kernel.executor._elevation_sink is None
+        assert application.kernel.container.resolve_or_none(ElevationSink) is None
 
     def test_the_rollback_deadline_comes_from_the_persistence_section(
         self,
@@ -152,7 +153,7 @@ class TestTransportFreeComposition:
             project, adapter=AcmeTransportFreeAdapter(), environment="test"
         )
 
-        assert application.kernel.executor._coordinator._rollback_timeout == 5.0
+        assert coordinator_of(application.kernel.executor)._rollback_timeout == 5.0  # noqa: SLF001
 
     @pytest.mark.parametrize(
         "timeout", [0, -1, math.inf, math.nan], ids=["zero", "negative", "infinite", "nan"]

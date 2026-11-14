@@ -2,18 +2,18 @@
 
 An execution runs in exactly one of four boundaries, chosen by
 :meth:`Boundaries.of` from the invocation scope it finds and whether it
-writes:
+writes; each runs the execution itself:
 
-- :class:`Owned`: a writer at top level with a coordinator opens an
+- :class:`OpensScope`: a writer at top level with a coordinator opens an
   invocation scope, commits it on success and rolls it back on any
   exception, cancellation included.
-- :class:`Joined`: a writer inside this task's scope pushes its frame on it
-  and never commits.
-- :class:`Unmanaged`: a writer at top level with no coordinator runs with no
-  unit of work.
-- :class:`ReadOnly`: an execution writing to no store pushes a read-only
-  frame on the scope of the task that owns it, else opens a read-only
-  invocation of its own.
+- :class:`JoinsScope`: an execution inside this task's scope pushes its
+  frame on it, a read-only frame for one writing to no store, and never
+  commits.
+- :class:`WithoutUnitOfWork`: a writer at top level with no coordinator runs
+  with no unit of work.
+- :class:`ReadsOnItsOwn`: an execution writing to no store, outside a scope
+  this task owns, opens a read-only invocation of its own.
 
 Post-commit actions (job dispatches, cache invalidations) are held by the
 store that owns them and, once the scope has closed, run on the
@@ -28,14 +28,13 @@ the execution it starts.
 
 from __future__ import annotations
 
-import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 
 from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
-from loom.core.engine.observation import COMMIT, Attempt
+from loom.core.engine.observation import StartedExecution
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.engine.post_commit import (
     PostCommitChannel,
@@ -44,13 +43,11 @@ from loom.core.engine.post_commit import (
     drain_after_failure,
     reset_channel,
 )
-from loom.core.errors import NestedElevation, NestedIdentityMismatch
-from loom.core.identity import current_identity
-from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
+from loom.core.errors import NestedElevation
+from loom.core.uow.coordinator import Coordinator, OrderedCommits
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
-    current_scope,
     invocation,
     invocation_error,
     unscoped,
@@ -62,43 +59,115 @@ Work: TypeAlias = Callable[[], Awaitable[Any]]
 
 
 @dataclass(frozen=True, slots=True)
-class Owned:
+class OpensScope:
     """A writer at top level: opens an invocation scope over ``coordinator`` and commits it."""
 
     coordinator: Coordinator
     owns_transaction: ClassVar[bool] = True
     read_only: ClassVar[bool] = False
 
+    async def run(
+        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+    ) -> Any:
+        """Open an invocation scope, run *work* in it, end it, raise what it ended with.
+
+        The scope is unpublished before this returns.
+
+        Raises:
+            JoinedAutocommitStore: When a joined store cannot roll back.
+        """
+        result: Any = None
+        error: BaseException | None = None
+        async with invocation(self.coordinator) as scope:
+            scope.post_commit = active_channel()
+            try:
+                async with scope.frame(plan.frame):
+                    if plan.joined:
+                        plan.refuse_autocommit_joined(scope.transactional)
+                    result = await work()
+            except BaseException as exc:
+                error = exc
+            try:
+                outcome = await started.committing(scope, error)
+            finally:
+                channel.settled = PostCommitChannel()
+                scope.settle_post_commit(channel.settled, error)
+        failure = invocation_error(outcome, error or scope.poisoned)
+        if failure is not None:
+            raise failure
+        return result
+
 
 @dataclass(frozen=True, slots=True)
-class Joined:
-    """A writer that pushes its frame on ``scope``, this task's, and never commits."""
+class JoinsScope:
+    """An execution that pushes *frame* on ``scope``, this task's, and never commits.
+
+    ``frame`` is the plan's for a writer, the read-only frame for an
+    execution writing to no store.
+    """
 
     scope: InvocationScope
+    frame: Frame
+    read_only: bool
     owns_transaction: ClassVar[bool] = False
-    read_only: ClassVar[bool] = False
+
+    async def run(
+        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+    ) -> Any:
+        """Run *work* under the frame, as the identity that opened the scope.
+
+        Raises:
+            NestedIdentityMismatch: When the execution acts as another identity.
+            JoinedAutocommitStore: When a joined store cannot roll back.
+        """
+        scope = self.scope
+        scope.refuse_other_identity(started.use_case_name)
+        async with scope.frame(self.frame):
+            if self.frame.joined:
+                plan.refuse_autocommit_joined(scope.transactional)
+            return await work()
 
 
 @dataclass(frozen=True, slots=True)
-class Unmanaged:
+class WithoutUnitOfWork:
     """A writer at top level with no coordinator: no unit of work."""
 
     owns_transaction: ClassVar[bool] = False
     read_only: ClassVar[bool] = False
 
+    async def run(
+        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+    ) -> Any:
+        """Run *work* as is."""
+        return await work()
+
 
 @dataclass(frozen=True, slots=True)
-class ReadOnly:
-    """An execution writing to no store, under ``scope`` if this task owns it, else on its own."""
+class ReadsOnItsOwn:
+    """An execution writing to no store, outside a scope this task owns.
 
-    scope: InvocationScope | None
+    It opens a read-only invocation over ``coordinator``, enlisting no store,
+    hiding the scope of another task when ``hides_scope``.
+    """
+
+    coordinator: Coordinator
+    hides_scope: bool
     owns_transaction: ClassVar[bool] = False
     read_only: ClassVar[bool] = True
 
+    async def run(
+        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+    ) -> Any:
+        """Run *work* under a read-only frame of an invocation of its own."""
+        with unscoped() if self.hides_scope else nullcontext():
+            async with (
+                invocation(self.coordinator, read_only=True) as own,
+                own.frame(_READ_ONLY),
+            ):
+                return await work()
 
-_UNMANAGED = Unmanaged()
 
-Boundary: TypeAlias = Owned | Joined | Unmanaged | ReadOnly
+Boundary: TypeAlias = OpensScope | JoinsScope | WithoutUnitOfWork | ReadsOnItsOwn
 
 
 class Boundaries:
@@ -111,88 +180,61 @@ class Boundaries:
             transaction grants.
     """
 
-    __slots__ = ("_coordinator", "_sink", "_top_level")
+    __slots__ = ("_hiding_reads", "_reads", "_sink", "_top_level")
 
     def __init__(self, coordinator: Coordinator | None, elevation_sink: ElevationSink | None):
-        self._coordinator = coordinator
-        self._top_level: Owned | Unmanaged = (
-            _UNMANAGED if coordinator is None else Owned(coordinator)
+        self._top_level: OpensScope | WithoutUnitOfWork = (
+            WithoutUnitOfWork() if coordinator is None else OpensScope(coordinator)
         )
+        reads_over = OrderedCommits({}) if coordinator is None else coordinator
+        self._reads = ReadsOnItsOwn(reads_over, hides_scope=False)
+        self._hiding_reads = ReadsOnItsOwn(reads_over, hides_scope=True)
         self._sink = elevation_sink
 
-    def of(self, scope: InvocationScope | None, read_only: bool) -> Boundary:
-        """The boundary of an execution finding *scope* published, writing unless *read_only*."""
-        if read_only:
-            return ReadOnly(scope)
+    def of(self, scope: InvocationScope | None, plan: ExecutionPlan, read_only: bool) -> Boundary:
+        """The boundary of a run of *plan* finding *scope* published, writing unless *read_only*."""
         if scope is None:
-            return self._top_level
-        return Joined(scope)
+            return self._reads if read_only else self._top_level
+        if not read_only:
+            return JoinsScope(scope, plan.frame, False)
+        if scope.owned_here():
+            return JoinsScope(scope, _READ_ONLY, True)
+        return self._hiding_reads
 
     async def run(
-        self, boundary: Boundary, plan: ExecutionPlan, attempt: Attempt, work: Work
+        self, boundary: Boundary, plan: ExecutionPlan, started: StartedExecution, work: Work
     ) -> Any:
-        """Run *work* in *boundary*, report its one outcome on *attempt*, then drain.
+        """Run *work* in *boundary*, report its one outcome on *started*, then drain.
 
         A failure drains what may be durable before it is reported; a
-        success is reported before its actions run, in a ``finally`` so a
-        failing metrics adapter never skips the actions of a committed
-        invocation.
+        success is reported before its actions run, and they run even when
+        reporting it raises.
+
+        Raises:
+            NestedElevation: Inside an execution that elevated a scope.
         """
         channel = _Channel(boundary.owns_transaction or active_channel() is None)
         try:
-            _refuse_nesting(attempt.use_case_name)
+            elevated = elevated_scopes()
+            if elevated:
+                raise NestedElevation.opening(started.use_case_name, elevated)
             async with elevation_scope(
                 owns_transaction=boundary.owns_transaction,
                 sink=self._sink,
                 read_only=boundary.read_only,
             ):
-                result = await self._enter(boundary, plan, attempt, channel, work)
+                result = await boundary.run(plan, started, channel, work)
         except BaseException as exc:
             await channel.after_failure()
-            attempt.failed(exc)
+            started.failed(exc)
             raise
         finally:
             channel.unbind()
         try:
-            attempt.succeeded()
+            started.succeeded()
         finally:
             await channel.after_success(committed=boundary.owns_transaction)
         return result
-
-    async def _enter(
-        self,
-        boundary: Boundary,
-        plan: ExecutionPlan,
-        attempt: Attempt,
-        channel: _Channel,
-        work: Work,
-    ) -> Any:
-        match boundary:
-            case Owned(coordinator):
-                return await _commit(coordinator, plan, attempt, channel, work)
-            case Joined(scope):
-                return await _in_frame(scope, plan, work)
-            case Unmanaged():
-                return await work()
-            case ReadOnly(scope):
-                async with self._read_only_frame(scope):
-                    return await work()
-
-    @asynccontextmanager
-    async def _read_only_frame(self, scope: InvocationScope | None) -> AsyncIterator[None]:
-        """Push a frame writing to no store: on ``scope`` in the task that owns it.
-
-        Anywhere else it opens a read-only invocation of its own, enlisting no
-        store, unpublished before the execution's post-commit actions run.
-        """
-        if scope is not None and scope.owned_here():
-            async with scope.frame(_READ_ONLY):
-                yield
-            return
-        coordinator = self._coordinator or OrderedCommits({})
-        with nullcontext() if scope is None else unscoped():
-            async with invocation(coordinator, read_only=True) as own, own.frame(_READ_ONLY):
-                yield
 
 
 @contextmanager
@@ -215,9 +257,7 @@ class _Channel:
 
     ``settled`` is set once the coordinator has ended the invocation scope
     this execution owns: the actions its stores' outcomes let run, drained
-    even on failure — a write already committed must never lose its queued
-    invalidations to another store's failure or an unrelated teardown one.
-    Without it, nothing durable happened and the opened channel is discarded.
+    even on failure. Without it the opened channel is discarded.
     """
 
     __slots__ = ("_token", "opened", "settled")
@@ -243,78 +283,3 @@ class _Channel:
         settled = self.settled if self.settled is not None else self.opened
         if settled is not None:
             await settled.drain(committed=committed)
-
-
-async def _commit(
-    coordinator: Coordinator,
-    plan: ExecutionPlan,
-    attempt: Attempt,
-    channel: _Channel,
-    work: Work,
-) -> Any:
-    """Open an invocation scope, run *work* in it, end it, raise what it ended with.
-
-    The scope is unpublished before this returns, so the drain that
-    follows (an inline job dispatch among its actions) opens its own.
-    """
-    result: Any = None
-    error: BaseException | None = None
-    async with invocation(coordinator) as scope:
-        scope.post_commit = active_channel()
-        try:
-            result = await _in_frame(scope, plan, work)
-        except BaseException as exc:  # NOSONAR S5754
-            error = exc
-        try:
-            outcome = await _finish(scope, error, attempt)
-        finally:
-            channel.settled = PostCommitChannel()
-            scope.settle_post_commit(channel.settled, error)
-    failure = invocation_error(outcome, error or scope.poisoned)
-    if failure is not None:
-        raise failure
-    return result
-
-
-async def _in_frame(scope: InvocationScope, plan: ExecutionPlan, work: Work) -> Any:
-    """Push *plan*'s frame on *scope* and run *work* under it.
-
-    Raises:
-        JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
-    """
-    async with scope.frame(Frame(plan.primary, plan.joined)):
-        if plan.joined:
-            plan.refuse_autocommit_joined(lambda key: scope.participants[key].transactional)
-        return await work()
-
-
-async def _finish(
-    scope: InvocationScope, error: BaseException | None, attempt: Attempt
-) -> InvocationOutcome:
-    """End every participant of ``scope``; from the flush on, the phase is the commit."""
-    if error is not None:
-        return await scope.coordinator.finish(scope, error)
-    attempt.phase = COMMIT
-    started = time.perf_counter()
-    try:
-        return await scope.coordinator.finish(scope, None)
-    finally:
-        attempt.commit_ms = (time.perf_counter() - started) * 1000
-
-
-def _refuse_nesting(use_case: str) -> None:
-    """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
-
-    Its identity is compared with the scope's identity, never the ambient one a parent set.
-    """
-    scopes = elevated_scopes()
-    if scopes:
-        raise NestedElevation.opening(use_case, scopes)
-    scope = current_scope()
-    if (
-        scope is not None
-        and not scope.read_only
-        and scope.owned_here()
-        and current_identity() != scope.identity
-    ):
-        raise NestedIdentityMismatch.joining(use_case)

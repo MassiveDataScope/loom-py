@@ -44,6 +44,7 @@ from loom.core.plugins import entrypoints as entrypoints_module
 from loom.core.use_case.keys import use_case_key
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.composition import coordinator_of
 from tests.integration.ai._entrypoints import fake_entry_points
 
 _MANIFEST_MODULE = "tests.integration.ai._agents_only_manifest"
@@ -274,4 +275,4 @@ class TestAgentsOnlyApp:
         assert executed == [PingUseCase]
         (engine,) = _EngineProvider.engines
         assert isinstance(engine.executor, RuntimeExecutor)
-        assert engine.executor._coordinator is None  # noqa: SLF001
+        assert coordinator_of(engine.executor) is None

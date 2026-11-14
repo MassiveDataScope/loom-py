@@ -742,7 +742,10 @@ async def _hundred_invocations() -> tuple[list[InvocationScope], Ledger, list[bo
 
 
 class TestJoinedStoreThatCannotRollBack:
-    async def test_it_is_refused_before_the_use_case_runs(self, ledger: Ledger) -> None:
+    @pytest.mark.parametrize("nested", [False, True], ids=["top-level", "nested"])
+    async def test_it_is_refused_before_the_use_case_runs(
+        self, ledger: Ledger, nested: bool
+    ) -> None:
         ran: list[str] = []
         audit = Factory(NonTransactionalStore(AUDIT, ledger))
         coordinator = OrderedCommits({DEFAULT_STORE: AcmeStores(ledger), AUDIT: audit})
@@ -751,10 +754,13 @@ class TestJoinedStoreThatCannotRollBack:
         async def body() -> None:
             ran.append("ran")
 
-        use_case = AcmeAudited(body, cast(Joined[RepoFor[AcmeAuditEntry]], None))
+        audited = AcmeAudited(body, cast(Joined[RepoFor[AcmeAuditEntry]], None))
+
+        async def outer() -> None:
+            await executor.execute(audited)
 
         with pytest.raises(JoinedAutocommitStore, match="store audit, which cannot roll back"):
-            await executor.execute(use_case)
+            await executor.execute(Run(outer) if nested else audited)
 
         assert ran == []
 

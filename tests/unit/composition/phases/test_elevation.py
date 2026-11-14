@@ -11,7 +11,7 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.persistence.elevation import ScopedElevationSink
-from tests.unit.core.authz._elevation_doubles import FakeSink
+from tests.unit.core.authz._elevation_doubles import FakeSink, elevations_through
 
 
 class AcmeSinkUser:
@@ -37,13 +37,13 @@ class TestElevationSink:
         monkeypatch.setattr(ScopedElevationSink, "of", lambda wirings: built)
         return built
 
-    def test_the_executors_sink_is_the_one_bound(
+    async def test_the_executors_sink_is_the_one_bound(
         self, overridden: Callable[..., Application], sink: FakeSink
     ) -> None:
         kernel = overridden().kernel
 
         assert kernel.container.resolve(ElevationSink) is sink
-        assert kernel.executor._elevation_sink is sink  # noqa: SLF001
+        assert await elevations_through(kernel.executor, sink) == ["editor"]
 
     def test_the_sink_is_bound_before_the_application_services_are_built(
         self, overridden: Callable[..., Application], sink: FakeSink

@@ -3,6 +3,17 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
+from typing import Any
+
+from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevate_scope
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.use_case.use_case import UseCase
+
+_WRITE = Permission("rows.write")
+_CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
+_BOUNDARY = Scope.of("b1")
+_DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=_BOUNDARY))
 
 
 async def _done() -> None:
@@ -61,3 +72,17 @@ class FakeSink:
         del scopes, cause
         self.invalidated += 1
         return _refused() if self.fail_on_invalidate else _done()
+
+
+class ElevatesEditor(UseCase[Any, None]):
+    """Elevates the ``editor`` scope once, through whatever sink its executor holds."""
+
+    async def execute(self) -> None:
+        await elevate_scope("editor", _DECISION, at=_BOUNDARY, permission=_WRITE, catalog=_CATALOG)
+
+
+async def elevations_through(executor: RuntimeExecutor, sink: FakeSink) -> list[str]:
+    """The scopes *sink* saw flagged while *executor* ran one elevating execution."""
+    sink.open = True
+    await executor.execute(ElevatesEditor())
+    return sink.set

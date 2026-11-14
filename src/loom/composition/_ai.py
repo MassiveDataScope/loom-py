@@ -13,11 +13,9 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, GraphAnalysis, Node
-from loom.core.di.introspection import ExecutionDependency
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.kinds import AGENT, MCP
-from loom.core.engine.plan import ExecutionBinding
-from loom.core.execution import Kind
+from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql import SqlConfig, SqlQueryService
@@ -288,9 +286,9 @@ class DeclarationWalk:
 
     def _declared(self, node: Node) -> list[ExecutionBinding]:
         declared = [
-            ExecutionBinding(name, dependency.kind, dependency.declaration, dependency.annotation)
-            for name, dependency in self.graph.constructor(node)
-            if isinstance(dependency, ExecutionDependency)
+            dependency
+            for _, dependency in self.graph.constructor(node)
+            if isinstance(dependency, ExecutionBinding)
         ]
         plan = self.compiler.get_plan(node.cls) if isinstance(node, ClassNode) else None
         if plan is not None:

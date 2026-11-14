@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.composition import build_application
 from loom.core.authz import Decision, Grant, Scope
-from loom.core.authz.elevation import elevated_scopes
+from loom.core.authz.elevation import ElevationSink, elevated_scopes
 from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.persistence.elevation import ScopedElevationSink
@@ -137,7 +137,7 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
             yield Composed(
                 app=cast(AppInvoker, built.kernel.app),
                 manager=built.kernel.container.resolve(SessionManager),
-                sink=built.kernel.executor._elevation_sink,
+                sink=built.kernel.container.resolve(ElevationSink),
                 bodies_sql=f"SELECT string_agg(body, ',' ORDER BY body) FROM {schema}.notes",
                 bypass=database.bypass,
             )

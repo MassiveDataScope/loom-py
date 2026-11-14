@@ -89,11 +89,17 @@ class Serving:
         return application
 
 
+def coordinator_of(executor: RuntimeExecutor) -> Any:
+    """The coordinator *executor* opens a top-level writer's scope over, if any."""
+    top_level = executor._boundaries._top_level  # noqa: SLF001
+    return getattr(top_level, "coordinator", None)
+
+
 def uow_factory(
     application: Application, key: StoreKey = DEFAULT_STORE
 ) -> UnitOfWorkFactory | None:
     """The unit-of-work factory *application* runs store *key*'s executions with, if any."""
-    coordinator: Any = application.kernel.executor._coordinator  # noqa: SLF001
+    coordinator = coordinator_of(application.kernel.executor)
     return None if coordinator is None else coordinator._factories.get(key)  # noqa: SLF001
 
 

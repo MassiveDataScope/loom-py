@@ -44,7 +44,7 @@ from celery.result import AsyncResult  # type: ignore[import-untyped]
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, RuntimeEvent, Status
 from loom.core.job.callback import callback_execution, run_on_failure, run_on_success
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
@@ -178,7 +178,7 @@ def _exhausted_event(
         use_case_name,
         trace_id,
         duration_ms=(time.monotonic() - started) * 1000,
-        status="exhausted",
+        status=Status.EXHAUSTED,
         error=error,
     )
 
@@ -292,7 +292,9 @@ def _make_job_task(
             countdown = backoff**task_self.request.retries
             _emit(
                 metrics,
-                _job_event(EventKind.JOB_RETRYING, name, trace_id, status="retrying", error=exc),
+                _job_event(
+                    EventKind.JOB_RETRYING, name, trace_id, status=Status.RETRYING, error=exc
+                ),
             )
             raise task_self.retry(exc=exc, countdown=countdown) from exc
         _emit(metrics, _exhausted_event(name, trace_id, started, exc))
@@ -335,7 +337,7 @@ def _make_job_task(
                     name,
                     trace_id,
                     duration_ms=(time.monotonic() - t0) * 1000,
-                    status="success",
+                    status=Status.SUCCESS,
                 ),
             )
             return result

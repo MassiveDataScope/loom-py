@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Generic, NoReturn, TypeVar
+from typing import Any, ClassVar, Generic, NoReturn, TypeVar
 
+from loom.core.errors import NotFound
 from loom.core.execution.errors import MarkerNotResolved
 
 EntityT = TypeVar("EntityT")
@@ -30,6 +31,21 @@ class OnMissing(StrEnum):
     RETURN_NONE = "return_none"
     RETURN_FALSE = "return_false"
 
+    def answer(self, entity_type: type, value: object) -> None | bool:
+        """What a lookup of *entity_type* by *value* that found nothing gives under this policy.
+
+        Returns:
+            ``None`` for :attr:`RETURN_NONE`, ``False`` for :attr:`RETURN_FALSE`.
+
+        Raises:
+            NotFound: For :attr:`RAISE`.
+        """
+        if self is OnMissing.RETURN_NONE:
+            return None
+        if self is OnMissing.RETURN_FALSE:
+            return False
+        raise NotFound(entity_type.__name__, id=value)
+
 
 class _InputMarker:
     """Marks a parameter as the command payload input.
@@ -43,6 +59,7 @@ class _InputMarker:
     """
 
     __slots__ = ()
+    spelling: ClassVar[str] = "Input()"
 
 
 def marks_input(default: object) -> bool:
@@ -82,13 +99,15 @@ class _CallerMarker(_ExecutionMarker):
     """
 
     __slots__ = ()
+    spelling: ClassVar[str] = "Caller()"
 
     def __repr__(self) -> str:
-        return "Caller()"
+        return self.spelling
 
 
 class _QueryMarker:
     __slots__ = ()
+    spelling: ClassVar[str] = "Query()"
 
 
 class _AgentMarker(_ExecutionMarker):
@@ -112,6 +131,7 @@ class _AgentMarker(_ExecutionMarker):
     """
 
     __slots__ = ("name",)
+    spelling: ClassVar[str] = "Agent()"
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -141,6 +161,7 @@ class _McpMarker(_ExecutionMarker):
     """
 
     __slots__ = ("server", "include")
+    spelling: ClassVar[str] = "Mcp()"
 
     def __init__(self, server: str, include: tuple[str, ...]) -> None:
         self.server = server
@@ -174,6 +195,7 @@ class _LoadByIdMarker(Generic[EntityT]):
     """
 
     __slots__ = ("entity_type", "by", "profile", "on_missing")
+    spelling: ClassVar[str] = "LoadById()"
 
     def __init__(
         self,
@@ -200,6 +222,7 @@ class _LoadMarker(Generic[EntityT]):
         "profile",
         "on_missing",
     )
+    spelling: ClassVar[str] = "Load()"
 
     def __init__(
         self,
@@ -223,6 +246,7 @@ class _ExistsMarker(Generic[EntityT]):
     """Marks a parameter as a boolean existence check."""
 
     __slots__ = ("entity_type", "from_kind", "from_name", "against", "on_missing")
+    spelling: ClassVar[str] = "Exists()"
 
     def __init__(
         self,

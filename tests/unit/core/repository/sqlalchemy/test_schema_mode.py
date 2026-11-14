@@ -13,7 +13,6 @@ from loom.core.bootstrap.kernel import create_kernel
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.di.container import LoomContainer
-from loom.core.engine.executor import RuntimeExecutor
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
@@ -220,7 +219,7 @@ class TestSchemaMode:
         with pytest.raises(ConfigError, match="unregistered_source"):
             wiring.prepare_models((Scoped,))
 
-    def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor(self) -> None:
+    def test_create_kernel_keeps_the_elevation_sink_a_module_registered(self) -> None:
         config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
         manager = SessionManager(
             "sqlite+aiosqlite://",
@@ -238,8 +237,8 @@ class TestSchemaMode:
         with_sink = create_kernel(config=config, use_cases=[], modules=[register])
         without_sink = create_kernel(config=config, use_cases=[], modules=[])
 
-        assert with_sink.container.resolve(RuntimeExecutor)._elevation_sink is sink
-        assert without_sink.container.resolve(RuntimeExecutor)._elevation_sink is None
+        assert with_sink.container.resolve(ElevationSink) is sink
+        assert without_sink.container.resolve_or_none(ElevationSink) is None
 
     def test_a_time_with_time_zone_column_is_refused_on_a_dialect_that_drops_its_offset(
         self,

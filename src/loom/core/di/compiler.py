@@ -32,6 +32,7 @@ from collections.abc import Callable
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from loom.core.di.errors import ResolutionError
 from loom.core.di.graph import (
     ClassNode,
     DependencyGraph,
@@ -43,12 +44,11 @@ from loom.core.di.graph import (
 )
 from loom.core.di.introspection import (
     Dependency,
-    ExecutionDependency,
     KeyDependency,
     RefusedDependency,
     RepoDependency,
 )
-from loom.core.execution import ExecutionKinds, per_execution
+from loom.core.execution import ExecutionBinding, ExecutionKinds, UnboundKind, per_execution
 
 if TYPE_CHECKING:
     from loom.core.di.container import _Binding
@@ -185,11 +185,34 @@ class SupplierCompiler:
                         f"{model.__qualname__}"
                     )
                 return self._compile(path.to(Edge(KeyNode(key), name)), key)
-            case ExecutionDependency():
-                return dependency.supplier(self._kinds, f"{path}: {name}")
+            case ExecutionBinding():
+                return self._resolving(dependency, f"{path}: {name}")
             case RefusedDependency(reason):
                 raise DependencyGraphError(f"{path}: {name}: {reason}")
         return None
+
+    def _resolving(self, binding: ExecutionBinding, where: str) -> Supplier:
+        """The supplier resolving *binding* through its kind's resolver on each build.
+
+        Args:
+            binding: The execution parameter to resolve.
+            where: The path and parameter an unbound kind's error names.
+
+        Returns:
+            The supplier of the parameter's value; it raises
+            :class:`~loom.core.di.errors.ResolutionError` when no resolver is
+            bound for the kind.
+        """
+        kinds = self._kinds
+        kind, declaration, annotation = binding.kind, binding.declaration, binding.annotation
+
+        def resolve() -> object:
+            try:
+                return kinds.resolve(kind, declaration, annotation)
+            except UnboundKind as exc:
+                raise ResolutionError(f"{where}: {exc}") from None
+
+        return resolve
 
 
 def _calling(

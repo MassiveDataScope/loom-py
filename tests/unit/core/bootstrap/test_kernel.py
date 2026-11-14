@@ -11,8 +11,10 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, ParticipantScope
 from loom.core.use_case.use_case import UseCase
+from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 
 class AcmeKernelConfig:
@@ -22,6 +24,16 @@ class AcmeKernelConfig:
 class _NoDepsUseCase(UseCase[Any, str]):
     async def execute(self, **kwargs: Any) -> str:
         return "ok"
+
+
+class _FinishCounting(OrderedCommits):
+    finished = 0
+
+    async def finish(
+        self, scope: ParticipantScope, error: BaseException | None
+    ) -> InvocationOutcome:
+        self.finished += 1
+        return await super().finish(scope, error)
 
 
 @pytest.fixture
@@ -50,14 +62,17 @@ class TestCreateKernel:
         )
         assert isinstance(runtime.container.resolve(_Token), _Token)
 
-    def test_create_kernel_runs_its_executor_through_the_coordinator_it_receives(self) -> None:
-        coordinator = OrderedCommits({})
+    async def test_create_kernel_runs_its_executor_through_the_coordinator_it_receives(
+        self,
+    ) -> None:
+        coordinator = _FinishCounting({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
 
         runtime = create_kernel(
             config=AcmeKernelConfig(), use_cases=[_NoDepsUseCase], coordinator=coordinator
         )
+        await runtime.executor.execute(_NoDepsUseCase())
 
-        assert runtime.executor._coordinator is coordinator
+        assert coordinator.finished == 1
 
     def test_create_kernel_registers_the_environment_it_receives(self) -> None:
         runtime = create_kernel(

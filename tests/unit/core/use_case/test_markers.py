@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import loom.core.use_case as use_case
+from loom.core.errors import NotFound
 from loom.core.use_case.markers import (
     Agent,
     Exists,
@@ -99,3 +100,23 @@ class TestExists:
     def test_default_on_missing(self) -> None:
         marker = Exists(FakeEntity, from_param="email", against="email")
         assert marker.on_missing is OnMissing.RETURN_FALSE
+
+
+class TestOnMissing:
+    @pytest.mark.parametrize(
+        ("policy", "answer"),
+        [
+            pytest.param(OnMissing.RETURN_NONE, None, id="return-none"),
+            pytest.param(OnMissing.RETURN_FALSE, False, id="return-false"),
+        ],
+    )
+    def test_a_returning_policy_answers_its_value(
+        self, policy: OnMissing, answer: bool | None
+    ) -> None:
+        assert policy.answer(FakeEntity, 7) is answer
+
+    def test_raise_refuses_with_the_entity_and_the_value(self) -> None:
+        with pytest.raises(NotFound) as caught:
+            OnMissing.RAISE.answer(FakeEntity, 7)
+
+        assert "FakeEntity" in str(caught.value) and "7" in str(caught.value)

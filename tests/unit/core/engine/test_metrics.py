@@ -98,10 +98,12 @@ class TestMetricsAdapterProtocol:
         adapter.on_event(event)
         assert len(adapter.events) == 1
 
-    def test_none_metrics_does_not_crash_executor(self) -> None:
+    async def test_none_metrics_does_not_crash_executor(self) -> None:
         compiler = _make_compiler()
+        compiler.compile(_SimpleUseCase)
         executor = _make_executor(compiler, adapter=None)
-        assert executor._metrics is None
+
+        assert await executor.execute(_SimpleUseCase(), payload={"value": "hi"}) == "hi"
 
 
 # ---------------------------------------------------------------------------
@@ -351,12 +353,12 @@ class _RecordingLogger:
 
 
 class TestStructuredLogs:
-    async def test_exec_start_has_usecase_field(self) -> None:
+    async def test_done_has_usecase_field(self) -> None:
         log = _RecordingLogger()
         compiler = UseCaseCompiler(logger=log)
         executor = RuntimeExecutor(compiler, logger=log)
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
-        fields = log.fields_for("[EXEC]")
+        fields = log.fields_for("[DONE]")
         assert fields.get("usecase") == "_SimpleUseCase"
 
     async def test_done_has_duration_ms_and_status(self) -> None:
@@ -381,5 +383,5 @@ class TestStructuredLogs:
     async def test_compile_log_has_usecase_field(self) -> None:
         log = _RecordingLogger()
         UseCaseCompiler(logger=log).compile(_SimpleUseCase)
-        fields = log.fields_for("[BOOT] Compiling UseCase")
+        fields = log.fields_for("[BOOT] Compiled UseCase")
         assert fields.get("usecase") == "_SimpleUseCase"

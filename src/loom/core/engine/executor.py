@@ -8,11 +8,12 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.engine.boundaries import Boundaries, detached
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.events import Phase
 from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter
-from loom.core.engine.observation import Observer
+from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.engine.preparation import ExecutionInputs, ParameterBindingError, Preparation
+from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs, ParameterBindingError
 from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
@@ -54,7 +55,7 @@ class RuntimeExecutor:
     - :mod:`~loom.core.engine.observation`: ``EXEC_START`` before the unit of
       work opens and exactly one terminal outcome, ``EXEC_DONE`` or
       ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
-      structured logs (``usecase``, ``duration_ms``, ``status``).
+      one structured log (``usecase``, ``duration_ms``, ``status``).
 
     One acting identity governs everything a request causes: row-level
     security, the jobs it dispatches, its nested executions
@@ -72,8 +73,8 @@ class RuntimeExecutor:
             When provided, each top-level :meth:`execute` call opens one
             invocation scope over it, which enlists the stores the use case
             declares. Nested executions in the same task join that scope.
-        debug_execution: When ``True``, emits ``[STEP]`` logs for every
-            pipeline stage. Defaults to ``False`` (summary logs only).
+        debug_execution: When ``True``, each execution's terminal log lists
+            the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
         metrics: Optional metrics adapter. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
@@ -86,8 +87,7 @@ class RuntimeExecutor:
         builder: Builds the instance :meth:`run` executes from its class,
             inside that execution; the kernel passes its factory's
             ``build``. ``None`` leaves :meth:`run` to the ``factory`` it is given.
-        agent_resolver: Bound as by :meth:`bind_agent_resolver`, which
-            explains why the kernel binds it after construction instead.
+        agent_resolver: Bound as by :meth:`bind_agent_resolver`.
         mcp_resolver: Bound as by :meth:`bind_mcp_resolver`.
 
     Example::
@@ -123,13 +123,10 @@ class RuntimeExecutor:
     ) -> None:
         self._compiler = compiler
         self._builder = builder
-        self._coordinator = coordinator
-        self._elevation_sink = elevation_sink
-        self._metrics = metrics
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
-        self._observer = Observer(logger or get_logger(__name__), metrics, debug_execution)
+        self._reporter = ExecutionReporter(logger or get_logger(__name__), metrics, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
-        self._preparation = Preparation(self._kinds, repo_resolver, self._observer)
+        self._binder = ArgumentBinder(self._kinds, repo_resolver)
         self._agent_resolver: object | None = None
         self._mcp_resolver: object | None = None
         if agent_resolver is not None:
@@ -142,19 +139,11 @@ class RuntimeExecutor:
     ) -> None:
         """Bind the resolver used by every ``Agent()`` marker parameter.
 
-        A separate step from construction because the resolver depends on the
-        AI runtime, and the AI pillar is optional and built later: the
-        composition root creates this executor first — so every other use
-        case can be compiled and served regardless of whether an ``ai:``
-        section exists — and wires this resolver in second, once that
-        runtime exists. A use case declaring ``Agent()`` before this is
-        called fails at its first execution with a clear error, not with a
-        missing-attribute crash.
-
-        The resolver is bound to :data:`~loom.core.engine.kinds.AGENT` on
-        this executor's registry: as is when it implements
-        :class:`~loom.core.execution.ExecutionResolver`, else wrapped to be
-        called with the execution identity at resolve time.
+        A use case declaring ``Agent()`` that runs before this is called
+        fails with an error naming this method. The resolver is bound to
+        :data:`~loom.core.engine.kinds.AGENT` on this executor's registry: as
+        is when it implements :class:`~loom.core.execution.ExecutionResolver`,
+        else wrapped to be called with the execution identity at resolve time.
 
         Args:
             resolver: An :class:`~loom.core.execution.ExecutionResolver` of
@@ -177,16 +166,8 @@ class RuntimeExecutor:
     ) -> None:
         """Bind the resolver used by every ``Mcp()`` marker parameter.
 
-        A second resolver, not an overload of :meth:`bind_agent_resolver`:
-        that one is typed to two arguments (the agent name and the verified
-        caller), this one to three (the server name, the marker's own
-        ``include`` and the verified caller). Serving both kinds through one
-        callable would need a discriminant argument telling them apart,
-        which is the multi-behaviour flag this project's engineering rules
-        forbid — so this is a distinct method, bound separately, the same
-        way :meth:`bind_agent_resolver` is bound separately from
-        construction: the AI runtime it depends on exists only once the AI
-        pillar has built it.
+        A use case declaring ``Mcp()`` that runs before this is called fails
+        with an error naming this method.
 
         Args:
             resolver: An :class:`~loom.core.execution.ExecutionResolver` of
@@ -255,14 +236,13 @@ class RuntimeExecutor:
                 "RuntimeExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )
-        plan = self._plan_for(use_case_type)
         return await self._execute(
-            plan,
+            use_case_type,
             build,
             use_case_type,
             ExecutionInputs(params, payload, dependencies, load_overrides),
             identity,
-            read_only or plan.read_only,
+            read_only,
         )
 
     @overload
@@ -384,19 +364,18 @@ class RuntimeExecutor:
             loom.core.errors.UndeclaredStoreWrite: If this execution
                 writes and a read-only execution encloses it.
         """
-        plan = self._plan_for(type(compilable))
         return await self._execute(
-            plan,
-            _given,
+            type(compilable),
+            _handed_instance,
             compilable,
             ExecutionInputs(params, payload, dependencies, load_overrides),
             identity,
-            read_only or plan.read_only,
+            read_only,
         )
 
     async def _execute(
         self,
-        plan: ExecutionPlan,
+        use_case_type: type[Compilable],
         build: Callable[[_TargetT], Compilable],
         target: _TargetT,
         inputs: ExecutionInputs,
@@ -405,12 +384,14 @@ class RuntimeExecutor:
     ) -> Any:
         """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
 
-        *read_only* is already the caller's flag or the plan's. The effective
-        identity is computed here, once: the one given, else the one acting
-        (``None`` for no caller). :func:`enter` fixes it before the instance
-        is built, reporting a switch and keeping or starting its delegation,
-        so the arguments, the acting identity and everything the execution
-        causes see the same value.
+        The run is read-only when *read_only* or its plan says so. The
+        effective identity is computed here, once: the one given, else the
+        one acting (``None`` for no caller). :func:`enter` fixes it before the
+        instance is built, reporting a switch and keeping or starting its
+        delegation, so the arguments, the acting identity and everything the
+        execution causes see the same value. A run failing before it starts
+        (its plan, its identity, the read-only check, its constructor) logs
+        its one ``[FAIL]`` line and raises.
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level, out
@@ -421,26 +402,35 @@ class RuntimeExecutor:
         scope = current_scope()
         if scope is not None and scope.closed:
             with detached():
-                return await self._execute(plan, build, target, inputs, identity, read_only)
-        if identity is None:
-            identity = current_caller()
-        use_case = plan.use_case_type.__qualname__
-        execution_token = enter(identity, use_case)
+                return await self._execute(
+                    use_case_type, build, target, inputs, identity, read_only
+                )
+        use_case = use_case_type.__qualname__
+        phase = Phase.BEGIN
+        execution_token = None
         try:
+            plan = self._plan_for(use_case_type)
+            read_only = read_only or plan.read_only
+            if identity is None:
+                identity = current_caller()
+            execution_token = enter(identity, use_case)
             if not read_only:
                 refuse_write_under_read_only(f"{use_case}, which writes,")
-            try:
-                compilable = build(target)
-            except Exception as exc:
-                self._observer.unbuilt(use_case, exc)
-                raise
-            attempt = self._observer.start(use_case)
-            call = self._preparation.call
+            phase = Phase.BUILD
+            compilable = build(target)
+        except Exception as exc:
+            self._reporter.not_started(use_case, exc, phase)
+            if execution_token is not None:
+                leave(execution_token)
+            raise
+        try:
+            started = self._reporter.start(use_case)
+            call = self._binder.call
             return await self._boundaries.run(
-                self._boundaries.of(scope, read_only),
+                self._boundaries.of(scope, plan, read_only),
                 plan,
-                attempt,
-                lambda: attempt.business(call(plan, compilable, inputs, identity)),
+                started,
+                lambda: started.business(call(plan, compilable, inputs, identity, started)),
             )
         finally:
             leave(execution_token)
@@ -457,7 +447,7 @@ class RuntimeExecutor:
         return self._compiler.compile(uc_type)
 
 
-def _given(compilable: Compilable) -> Compilable:
+def _handed_instance(compilable: Compilable) -> Compilable:
     """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
     return compilable
 

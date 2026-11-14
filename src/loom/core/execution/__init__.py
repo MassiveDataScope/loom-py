@@ -21,9 +21,16 @@ from loom.core.execution.context import (
     per_execution,
 )
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired, MarkerNotResolved
-from loom.core.execution.resolvers import ExecutionKinds, ExecutionResolver, Kind
+from loom.core.execution.kinds import (
+    ExecutionBinding,
+    ExecutionKinds,
+    ExecutionResolver,
+    Kind,
+    UnboundKind,
+)
 
 __all__ = [
+    "ExecutionBinding",
     "ExecutionClosed",
     "ExecutionContext",
     "ExecutionKinds",
@@ -33,6 +40,7 @@ __all__ = [
     "Kind",
     "MarkerNotResolved",
     "NoExecution",
+    "UnboundKind",
     "current_execution",
     "enter",
     "execution_ended",

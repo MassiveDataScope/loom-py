@@ -11,8 +11,8 @@ from __future__ import annotations
 from loom.core.execution import ExecutionKinds, Kind
 from loom.core.use_case.markers import _AgentMarker, _McpMarker
 
-AGENT = Kind("agent")
-MCP = Kind("mcp")
+AGENT = Kind("agent", spelling=_AgentMarker.spelling)
+MCP = Kind("mcp", spelling=_McpMarker.spelling)
 
 
 def declare_ai_kinds(kinds: ExecutionKinds) -> None:

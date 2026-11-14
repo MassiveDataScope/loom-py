@@ -5,6 +5,7 @@ from loom.core.errors.auth import (
     Forbidden,
     IdentityFixed,
     InsufficientAuthentication,
+    MissingCaller,
     Unauthenticated,
 )
 from loom.core.errors.base import DomainError, LoomError, SystemError
@@ -51,6 +52,7 @@ __all__ = [
     "JobTimeoutError",
     "LoomError",
     "MalformedJobMessage",
+    "MissingCaller",
     "MixedJobBackendsError",
     "NestedElevation",
     "NestedIdentityMismatch",

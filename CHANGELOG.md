@@ -435,9 +435,9 @@
 - **engine (execution plan bindings):** `ExecutionPlan.agent_bindings` and
   `ExecutionPlan.mcp_bindings` are read-only properties derived from
   `ExecutionPlan.execution_bindings`; they are no longer constructor fields.
-  Migration: build the plan with `execution_bindings` (`ExecutionBinding`
-  entries for the `agent` and `mcp` kinds); reading the two properties is
-  unchanged.
+  Migration: build the plan with `execution_bindings`
+  (`loom.core.execution.ExecutionBinding` entries for the `agent` and `mcp`
+  kinds); reading the two properties is unchanged.
 - **execution, identity (one acting identity):** the identity a request runs
   as governs everything that request causes, for its whole life: nested
   executions, the tasks it starts (even those that outlive it), the jobs and
@@ -832,19 +832,60 @@
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
   optional, and `run` raises `TypeError` when neither is given.
-- **engine (internal):** `RuntimeExecutor` is split by its reasons to change;
-  its public API, events, metrics, log lines and their order are unchanged.
+- **engine (internal):** `RuntimeExecutor` is split by its reasons to change.
   `loom.core.engine.boundaries` runs each execution in one unit of work
-  (`Owned`, `Joined` or `ReadOnly`) and settles its post-commit actions;
+  (`OpensScope`, `JoinsScope`, `WithoutUnitOfWork` or `ReadsOnItsOwn`) and
+  settles its post-commit actions;
   `loom.core.engine.preparation` compiles each plan once, on its first
   execution, into the steps it declares and builds the arguments of
   `execute()`; `loom.core.engine.observation` reports one terminal outcome
   per attempted run, a build failure included (`[FAIL]` with
-  `error_kind="build"`, no runtime event, as before). An execution makes
-  no more calls than before, fewer in most cases (a plan runs only the steps
-  it declares).
+  `error_kind="build"`, no runtime event, as before).
   `ParameterBindingError` is defined in `loom.core.engine.preparation` and
   still importable from `loom.core.engine.executor`.
+- **engine (steps):** `ComputeStep` and `RuleStep` are one class,
+  `loom.core.engine.plan.CommandStep`; both old names stay as aliases of it,
+  so `ComputeStep is RuleStep` and a compute step compares equal to a rule
+  step with the same function. **Migration:** tell the two apart by the plan
+  field holding them (`compute_steps` or `rule_steps`), not by type.
+- **engine (events):** `RuntimeEvent.status` is typed
+  `loom.core.engine.events.Status | None` and `RuntimeEvent.error_kind`
+  `loom.core.engine.events.Phase | None`, both string enums with the same
+  values as before (`"success"`, `"failure"`, `"rule_failure"`, `"begin"`,
+  `"build"`, ...). A plain string still works at run time; a type checker
+  flags code building `RuntimeEvent(status="success")`. **Migration:** pass
+  `Status.SUCCESS` (and the matching `Phase` member).
+- **engine (logs):** every attempted execution logs exactly one line, its
+  terminal outcome. The `[EXEC] <use case>` line logged when it started is
+  gone (the `EXEC_START` event stays); log pipelines keyed on `[EXEC]` must
+  key on `[DONE]` / `[FAIL]`. A run refused before its unit of work opens now
+  logs one `[FAIL]` with `error_kind="begin"` where it logged nothing: a plan
+  that fails to compile on demand, a caller past its delegation, a writer
+  under a read-only execution, and a metrics adapter raising on the start
+  event. With `debug_execution=True`, the `[STEP] <step>` lines are replaced
+  by a `steps` field on the `[DONE]` or `[FAIL]` line, listing the steps run
+  in order. A broken rule no longer logs its own
+  `[RULE] <rule> failed: <field>: <message>` warning: the `[FAIL]` warning of
+  a rule failure carries `broken_rules`, a list of
+  `{"rule", "field", "message"}` entries, `rule` null for violations raised
+  by `execute()` itself.
+- **engine (logs):** compiling a use case logs one info line,
+  `[BOOT] Compiled UseCase: <name> (<n> steps)`, with `usecase`, `detected`
+  (each marker parameter found, such as `"Input: CreateUser"` or
+  `"LoadById: User by user_id"`), `computes`, `rules` and `steps`. It replaces
+  the `[BOOT] Compiling UseCase: <name>`, `[BOOT]  - Detected ...`,
+  `[BOOT]  - Validated <n> compute steps`, `[BOOT]  - Validated <n> rules` and
+  `[BOOT]  - ExecutionPlan built (<n> steps)` lines.
+- **engine (errors):** an execution that declares `Caller()`, `Agent()` or
+  `Mcp()` and carries no identity raises `loom.core.errors.MissingCaller`, an
+  `Unauthenticated` naming the use case, the parameter and its marker
+  (`"Report.execute declares 'caller = Caller()' but ..."`), kept as its
+  `use_case`, `parameter` and `marker` attributes. A lookup error names the
+  marker as written (`Load() User`, no longer `LoadById() User`).
+- **execution:** `ExecutionKinds.resolve` raises
+  `loom.core.execution.UnboundKind` (a `LookupError` carrying `.kind`) for a
+  kind with no resolver bound; the no-resolver errors name the kind as
+  `'agent'` or `'mcp'`.
 - **engine:** a writing use case or job run under a read-only execution is
   refused with `UndeclaredStoreWrite` before it is built, so its constructor
   no longer runs first.

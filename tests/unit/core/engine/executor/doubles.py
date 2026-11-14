@@ -55,28 +55,32 @@ PROMOTED_ALICE = Identity(subject="acme-alice", mechanism="test", roles=("admin"
 
 
 class AcmeRecordingLogger:
-    """A logger keeping every message it is given, without fields."""
+    """A logger keeping every line it is given, with its fields."""
 
     def __init__(self) -> None:
-        self.messages: list[str] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    @property
+    def messages(self) -> list[str]:
+        return [event for event, _ in self.calls]
 
     def bind(self, **fields: Any) -> AcmeRecordingLogger:
         return self
 
     def debug(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def info(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def warning(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def error(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
     def exception(self, event: str, **fields: Any) -> None:
-        self.messages.append(event)
+        self.calls.append((event, fields))
 
 
 class AcmeErrorRecorder:

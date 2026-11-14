@@ -193,13 +193,13 @@ def _closed(read: str) -> ExecutionClosed:
 _BUILDING = object()
 """Tags the key of a per-execution build lock in the cache: ``(_BUILDING, key)``."""
 
-_OUTSIDE = ExecutionContext()
+_NO_EXECUTION = ExecutionContext()
 """The work of :class:`NoExecution` and of a closed context: no execution, and no caller, fixed."""
-_OUTSIDE_ACTING = Acting.delegated(None, work=_OUTSIDE)
-_CLOSED_ACTING = Acting.delegated(None, work=_OUTSIDE)
+_NO_EXECUTION_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
+_CLOSED_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
 """Installed after a token misuse: no execution, no caller, and never restored.
 
-A value of its own, not :data:`_OUTSIDE_ACTING`: no later ``leave`` or
+A value of its own, not :data:`_NO_EXECUTION_ACTING`: no later ``leave`` or
 :class:`NoExecution` exit can bring back an execution or a caller a misused
 token may have ended.
 """
@@ -216,7 +216,7 @@ def current_execution() -> ExecutionContext | None:
         The current :class:`ExecutionContext`, or ``None``.
     """
     context: Any = _acting_now().work
-    if context is None or context is _OUTSIDE or context._cache is _ENDED:
+    if context is None or context is _NO_EXECUTION or context._cache is _ENDED:
         return None
     return context
 
@@ -265,7 +265,7 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
         cache = context._cache
         if cache is not None and key in cache:
             return cache[key]
-        if context is _OUTSIDE:
+        if context is _NO_EXECUTION:
             return make()
         cache = context._allocated()
         lock: Any = cache.get(building)
@@ -385,7 +385,7 @@ def execution_identity() -> Identity:
         if context._cache is _ENDED:  # pyright: ignore[reportAttributeAccessIssue]
             acting.refuse_expired()
         return identity
-    if context is None or context is _OUTSIDE:
+    if context is None or context is _NO_EXECUTION:
         raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
     raise Unauthenticated(_NO_CALLER_MESSAGE)
 
@@ -456,7 +456,7 @@ class NoExecution:
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("This NoExecution is already open")
-        self._token = _acting.set(_OUTSIDE_ACTING)
+        self._token = _acting.set(_NO_EXECUTION_ACTING)
 
     def __exit__(
         self,
@@ -466,7 +466,7 @@ class NoExecution:
     ) -> None:
         token = cast("Token[Acting]", self._token)
         self._token = None
-        if _acting_now() is not _OUTSIDE_ACTING:
+        if _acting_now() is not _NO_EXECUTION_ACTING:
             _acting.set(_CLOSED_ACTING)
             raise RuntimeError(_LEFT_OPEN_MESSAGE)
         _acting.reset(token)

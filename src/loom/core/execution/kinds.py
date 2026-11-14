@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, TypeVar, get_origin, runtime_checkable
+from typing import Any, Protocol, TypeVar, get_origin, runtime_checkable
 
 _K = TypeVar("_K")
 _V = TypeVar("_V")
@@ -32,6 +32,8 @@ class Kind:
             because the value belongs to one execution (the caller does).
         called_classes: Returns the classes an annotation of this kind calls,
             as plain classes; ``()`` unless the kind calls another use case.
+        spelling: The marker declaring a parameter of this kind, as written
+            in a signature; empty when no marker declares it.
 
     Example::
 
@@ -41,6 +43,36 @@ class Kind:
     name: str
     singleton_safe: bool = True
     called_classes: Callable[[object], tuple[type, ...]] = _calls_nothing
+    spelling: str = ""
+
+
+class UnboundKind(LookupError):
+    """Raised when a kind with no resolver bound is resolved.
+
+    Args:
+        kind: The kind that has no resolver.
+    """
+
+    def __init__(self, kind: Kind) -> None:
+        super().__init__(f"no resolver is bound for {kind.name!r}")
+        self.kind = kind
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionBinding:
+    """One parameter of an execution kind, resolved per execution from its declaration.
+
+    Args:
+        name: Parameter name as declared in the signature.
+        kind: The kind whose resolver builds the value.
+        declaration: The parameter's default, the marker the resolver reads.
+        annotation: Resolved annotation of the parameter.
+    """
+
+    name: str
+    kind: Kind
+    declaration: Any
+    annotation: Any
 
 
 @runtime_checkable
@@ -122,9 +154,12 @@ class ExecutionKinds:
         """Resolve ``declaration: annotation`` through the resolver of ``kind``.
 
         Raises:
-            KeyError: When ``kind`` has no resolver (:meth:`is_bound` tells).
+            UnboundKind: When ``kind`` has no resolver.
         """
-        return self._resolvers[kind].resolve(declaration, annotation)
+        resolver = self._resolvers.get(kind)
+        if resolver is None:
+            raise UnboundKind(kind)
+        return resolver.resolve(declaration, annotation)
 
 
 def _claim(table: dict[_K, _V], key: _K, value: _V) -> None:

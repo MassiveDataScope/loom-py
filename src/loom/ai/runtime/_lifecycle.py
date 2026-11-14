@@ -132,7 +132,7 @@ class UseCaseMcpGrant:
     this binding's own ``include`` — read only by :meth:`_use_case_filter_issues`,
     to check it at start-up against the server's real tool list. At call
     time the resolver never reads this ``include`` back: it receives its own
-    from the resolving :class:`~loom.core.engine.plan.ExecutionBinding`, via the
+    from the resolving :class:`~loom.core.execution.ExecutionBinding`, via the
     executor, which is why one instance of this class exists per binding
     rather than per server, even though start-up and call time end up
     checking the same value on two different objects. The *shared*

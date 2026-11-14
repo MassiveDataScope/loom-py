@@ -33,3 +33,12 @@ class MetricsAdapter(Protocol):
                 optional step name, duration, status, and error.
         """
         ...
+
+
+class NoMetrics:
+    """A metrics adapter recording nothing, for an engine given none."""
+
+    __slots__ = ()
+
+    def on_event(self, event: RuntimeEvent) -> None:
+        """Ignore *event*."""
