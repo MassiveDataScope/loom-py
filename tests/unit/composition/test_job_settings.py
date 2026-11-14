@@ -72,47 +72,51 @@ _ORDERS = pytest.mark.parametrize(
 )
 
 
-@_ORDERS
-async def test_each_application_dispatches_with_its_own_job_section(
-    tmp_path: Path, configured_first: bool
-) -> None:
-    order = _in_order(configured_first)
-    applications = {name: _compose(tmp_path, name, jobs) for name, jobs in order}
+class TestJobSettings:
+    @_ORDERS
+    async def test_each_application_dispatches_with_its_own_job_section(
+        self, tmp_path: Path, configured_first: bool
+    ) -> None:
+        order = _in_order(configured_first)
+        applications = {name: _compose(tmp_path, name, jobs) for name, jobs in order}
 
-    sent = {name: await _sent(application) for name, application in applications.items()}
+        sent = {name: await _sent(application) for name, application in applications.items()}
 
-    assert sent == {
-        "configured": {"queue": "reports", "countdown": 5, "priority": 3, "soft_time_limit": 60},
-        "plain": _DECLARED,
-    }
-    assert (_ReportJob.__queue__, _ReportJob.__countdown__, _ReportJob.__timeout__) == (
-        "default",
-        0,
-        None,
-    )
+        assert sent == {
+            "configured": {
+                "queue": "reports",
+                "countdown": 5,
+                "priority": 3,
+                "soft_time_limit": 60,
+            },
+            "plain": _DECLARED,
+        }
+        assert (_ReportJob.__queue__, _ReportJob.__countdown__, _ReportJob.__timeout__) == (
+            "default",
+            0,
+            None,
+        )
 
+    @_ORDERS
+    async def test_each_application_routes_by_the_queue_of_its_own_job_section(
+        self, tmp_path: Path, configured_first: bool
+    ) -> None:
+        """``celery.queues`` sends ``reports`` to Celery; only the configured job is on it."""
+        celery = {**BROKER, "queues": ["default", "reports"]}
+        applications = {
+            name: _compose(tmp_path, name, jobs, celery=celery, job_service="inline")
+            for name, jobs in _in_order(configured_first)
+        }
 
-@_ORDERS
-async def test_each_application_routes_by_the_queue_of_its_own_job_section(
-    tmp_path: Path, configured_first: bool
-) -> None:
-    """``celery.queues`` sends ``reports`` to Celery; only the configured job is on it."""
-    celery = {**BROKER, "queues": ["default", "reports"]}
-    applications = {
-        name: _compose(tmp_path, name, jobs, celery=celery, job_service="inline")
-        for name, jobs in _in_order(configured_first)
-    }
+        sent = {name: await _sent(application) for name, application in applications.items()}
 
-    sent = {name: await _sent(application) for name, application in applications.items()}
+        assert sent["plain"] is None
+        assert sent["configured"] is not None
+        assert sent["configured"]["queue"] == "reports"
 
-    assert sent["plain"] is None
-    assert sent["configured"] is not None
-    assert sent["configured"]["queue"] == "reports"
+    def test_a_malformed_jobs_section_fails_the_composition(self, tmp_path: Path) -> None:
+        source = job_source(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
+        adapter = JobsAdapter(_ReportJob)
 
-
-def test_a_malformed_jobs_section_fails_the_composition(tmp_path: Path) -> None:
-    source = job_source(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
-    adapter = JobsAdapter(_ReportJob)
-
-    with pytest.raises(ConfigError, match="_ReportJob"):
-        compose_application(source, adapter)
+        with pytest.raises(ConfigError, match="_ReportJob"):
+            compose_application(source, adapter)

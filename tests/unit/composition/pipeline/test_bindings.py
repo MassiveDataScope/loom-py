@@ -37,19 +37,27 @@ def _recorded(container: LoomContainer, executors: list[RuntimeExecutor]) -> dic
     }
 
 
-@pytest.mark.parametrize("name", list(_EVERY_PATH))
-def test_each_path_binds_what_it_bound_before_the_pipeline(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executors: list[RuntimeExecutor]
-) -> None:
-    container = _EVERY_PATH[name](paths.Composition(), tmp_path, monkeypatch)
+class TestPathBindings:
+    @pytest.mark.parametrize("name", list(_EVERY_PATH))
+    def test_each_path_binds_what_it_bound_before_the_pipeline(
+        self,
+        name: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        executors: list[RuntimeExecutor],
+    ) -> None:
+        container = _EVERY_PATH[name](paths.Composition(), tmp_path, monkeypatch)
 
-    matches_snapshot(f"bindings/{name}", _recorded(container, executors))
+        matches_snapshot(f"bindings/{name}", _recorded(container, executors))
 
+    @pytest.mark.parametrize("name", list(paths.COMPOSED))
+    def test_each_composed_path_binds_a_second_store_as_before(
+        self,
+        name: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        executors: list[RuntimeExecutor],
+    ) -> None:
+        container = paths.COMPOSED[name](_TWO_STORES, tmp_path, monkeypatch)
 
-@pytest.mark.parametrize("name", list(paths.COMPOSED))
-def test_each_composed_path_binds_a_second_store_as_before(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executors: list[RuntimeExecutor]
-) -> None:
-    container = paths.COMPOSED[name](_TWO_STORES, tmp_path, monkeypatch)
-
-    matches_snapshot(f"bindings/{name}-two-stores", _recorded(container, executors))
+        matches_snapshot(f"bindings/{name}-two-stores", _recorded(container, executors))

@@ -83,7 +83,7 @@ class _EmptySession:
         raise AssertionError(f"no tool is called at Init, got {name}")
 
 
-class _Entry:
+class AcmeAgentEntryPoint:
     """An entry point hosting agents, with or without their HTTP endpoints."""
 
     def __init__(self, use_case: type[UseCase[Any, Any]], *, agent_endpoints: bool) -> None:
@@ -128,13 +128,6 @@ def _agent(name: str, capability: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def provider(monkeypatch: pytest.MonkeyPatch) -> _OpeningProvider:
-    opening = _OpeningProvider()
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: opening)
-    return opening
-
-
 def _compose(
     tmp_path: Path,
     a_capability: dict[str, Any],
@@ -153,7 +146,9 @@ def _compose(
     source = composition_source(
         ConfigContext.from_dict(document), code_path=tmp_path, config_root=tmp_path
     )
-    return compose_application(source, _Entry(use_case, agent_endpoints=agent_endpoints))
+    return compose_application(
+        source, AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints)
+    )
 
 
 def _init(application: Application) -> None:
@@ -171,40 +166,48 @@ def _plan_names(application: Application) -> list[str]:
 _MCP_A = {"kind": "mcp", "server": _SERVER_A}
 
 
-def test_without_endpoints_only_marker_named_agents_are_compiled_and_opened(
-    tmp_path: Path, provider: _OpeningProvider
-) -> None:
-    application = _compose(tmp_path, _MCP_A, agent_endpoints=False)
+class TestReachableAgents:
+    @pytest.fixture
+    def provider(self, monkeypatch: pytest.MonkeyPatch) -> _OpeningProvider:
+        opening = _OpeningProvider()
+        monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: opening)
+        return opening
 
-    _init(application)
+    def test_without_endpoints_only_marker_named_agents_are_compiled_and_opened(
+        self, tmp_path: Path, provider: _OpeningProvider
+    ) -> None:
+        application = _compose(tmp_path, _MCP_A, agent_endpoints=False)
 
-    assert _plan_names(application) == ["a"]
-    assert provider.opened == [_SERVER_A]
+        _init(application)
 
+        assert _plan_names(application) == ["a"]
+        assert provider.opened == [_SERVER_A]
 
-def test_with_endpoints_every_declared_agent_is_compiled_and_opened(
-    tmp_path: Path, provider: _OpeningProvider
-) -> None:
-    application = _compose(tmp_path, _MCP_A, agent_endpoints=True)
+    def test_with_endpoints_every_declared_agent_is_compiled_and_opened(
+        self, tmp_path: Path, provider: _OpeningProvider
+    ) -> None:
+        application = _compose(tmp_path, _MCP_A, agent_endpoints=True)
 
-    _init(application)
+        _init(application)
 
-    assert _plan_names(application) == ["a", "b"]
-    assert sorted(provider.opened) == [_SERVER_A, _SERVER_B]
+        assert _plan_names(application) == ["a", "b"]
+        assert sorted(provider.opened) == [_SERVER_A, _SERVER_B]
 
+    def test_an_a2a_capability_adds_no_local_agent(
+        self, tmp_path: Path, provider: _OpeningProvider
+    ) -> None:
+        application = _compose(tmp_path, {"kind": "a2a", "agent": "b"}, agent_endpoints=False)
 
-def test_an_a2a_capability_adds_no_local_agent(tmp_path: Path, provider: _OpeningProvider) -> None:
-    application = _compose(tmp_path, {"kind": "a2a", "agent": "b"}, agent_endpoints=False)
+        assert _plan_names(application) == ["a"]
+        assert provider.opened == []
 
-    assert _plan_names(application) == ["a"]
-    assert provider.opened == []
+    def test_a_marker_naming_a_missing_agent_still_fails_start_up(
+        self, tmp_path: Path, provider: _OpeningProvider
+    ) -> None:
+        with pytest.raises(AgentCompilationError) as raised:
+            _compose(tmp_path, _MCP_A, use_case=ReachesMissingUseCase, agent_endpoints=False)
 
-
-def test_a_marker_naming_a_missing_agent_still_fails_start_up(
-    tmp_path: Path, provider: _OpeningProvider
-) -> None:
-    with pytest.raises(AgentCompilationError) as raised:
-        _compose(tmp_path, _MCP_A, use_case=ReachesMissingUseCase, agent_endpoints=False)
-
-    assert {issue.code for issue in raised.value.issues} == {AgentErrorCode.AGENT_MARKER_UNKNOWN}
-    assert "missing" in str(raised.value)
+        assert {issue.code for issue in raised.value.issues} == {
+            AgentErrorCode.AGENT_MARKER_UNKNOWN
+        }
+        assert "missing" in str(raised.value)

@@ -128,27 +128,6 @@ _SCENARIOS: dict[str, _Precedence] = {
 }
 
 
-@pytest.mark.parametrize("scenario", list(_SCENARIOS))
-def test_the_earlier_refusal_reaches_the_caller_as_before(scenario: str, tmp_path: Path) -> None:
-    spec = _SCENARIOS[scenario]
-    caught = {
-        path: paths.refusal(paths.COMPOSED, path, spec.composition, tmp_path)
-        for path in paths.COMPOSED
-    }
-
-    unexpected = [
-        f"{path}: {error!r}"
-        for path, error in caught.items()
-        if not isinstance(error, refused := spec.on_path.get(path, spec.winner))
-        and not isinstance(error.__cause__, refused)
-    ]
-    assert unexpected == [], "\n".join(unexpected)
-    recorded = {
-        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
-    }
-    matches_path_snapshots(f"precedence/{scenario}", recorded, spec.variants)
-
-
 _VALIDATED_AT_SEAL_AFTER = (
     "job-backend",
     "job-backend-celery-extra",
@@ -178,26 +157,51 @@ def _representatives(family: str) -> tuple[str, ...]:
     return (paths_before_seal[0], *(_AI_MARKERS_ON_CELERY if markers else ()))
 
 
-@pytest.mark.parametrize("family", _VALIDATED_AT_SEAL_AFTER)
-def test_a_failing_provider_surfaces_after_the_refusals_before_seal(
-    family: str, tmp_path: Path
-) -> None:
-    refusal = REFUSALS[family]
-    composition = replace(
-        refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
-    )
-    caught = {
-        path: paths.refusal(paths.COMPOSED, path, composition, tmp_path, refusal.prepare)
-        for path in _representatives(family)
-    }
+class TestRefusalPrecedence:
+    @pytest.mark.parametrize("scenario", list(_SCENARIOS))
+    def test_the_earlier_refusal_reaches_the_caller_as_before(
+        self, scenario: str, tmp_path: Path
+    ) -> None:
+        spec = _SCENARIOS[scenario]
+        caught = {
+            path: paths.refusal(paths.COMPOSED, path, spec.composition, tmp_path)
+            for path in paths.COMPOSED
+        }
 
-    unexpected = [
-        f"{path}: {error!r}"
-        for path, error in caught.items()
-        if not isinstance(error, refusal.refused)
-    ]
-    assert unexpected == [], "\n".join(unexpected)
-    recorded = {
-        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
-    }
-    matches_path_snapshots(f"precedence/validated-at-seal-after-{family}", recorded)
+        unexpected = [
+            f"{path}: {error!r}"
+            for path, error in caught.items()
+            if not isinstance(error, refused := spec.on_path.get(path, spec.winner))
+            and not isinstance(error.__cause__, refused)
+        ]
+        assert unexpected == [], "\n".join(unexpected)
+        recorded = {
+            path: describe_refusal(error, tmp_path=tmp_path / path)
+            for path, error in caught.items()
+        }
+        matches_path_snapshots(f"precedence/{scenario}", recorded, spec.variants)
+
+    @pytest.mark.parametrize("family", _VALIDATED_AT_SEAL_AFTER)
+    def test_a_failing_provider_surfaces_after_the_refusals_before_seal(
+        self, family: str, tmp_path: Path
+    ) -> None:
+        refusal = REFUSALS[family]
+        composition = replace(
+            refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
+        )
+        caught = {
+            path: paths.refusal(paths.COMPOSED, path, composition, tmp_path, refusal.prepare)
+            for path in _representatives(family)
+        }
+
+        unexpected = [
+            f"{path}: {error!r}"
+            for path, error in caught.items()
+            if not isinstance(error, refusal.refused)
+        ]
+        assert unexpected == [], "\n".join(unexpected)
+        recorded = {
+            path: describe_refusal(error, tmp_path=tmp_path / path)
+            for path, error in caught.items()
+        }
+        matches_path_snapshots(f"precedence/validated-at-seal-after-{family}", recorded)

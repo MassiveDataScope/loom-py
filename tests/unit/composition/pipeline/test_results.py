@@ -41,37 +41,38 @@ def _binds_kernel_user(container: LoomContainer) -> None:
     )
 
 
-@pytest.mark.parametrize("name", list(paths.COMPOSED))
-def test_nothing_binds_after_the_registration_phase(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registered: list[Registered] = []
-    bound: dict[BindingKey, object] = {}
-    register = pipeline.register
+class TestRegistrationResults:
+    @pytest.mark.parametrize("name", list(paths.COMPOSED))
+    def test_nothing_binds_after_the_registration_phase(
+        self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registered: list[Registered] = []
+        bound: dict[BindingKey, object] = {}
+        register = pipeline.register
 
-    def snapshotting(*args: Any, **kwargs: Any) -> Registered:
-        result = register(*args, **kwargs)
-        registered.append(result)
-        bound.update(result.kernel.container.bindings())
-        return result
+        def snapshotting(*args: Any, **kwargs: Any) -> Registered:
+            result = register(*args, **kwargs)
+            registered.append(result)
+            bound.update(result.kernel.container.bindings())
+            return result
 
-    monkeypatch.setattr(pipeline, "register", snapshotting)
+        monkeypatch.setattr(pipeline, "register", snapshotting)
 
-    container = paths.COMPOSED[name](paths.Composition(), tmp_path, monkeypatch)
+        container = paths.COMPOSED[name](paths.Composition(), tmp_path, monkeypatch)
 
-    (result,) = registered
-    assert container is result.kernel.container
-    after = container.bindings()
-    assert after.keys() == bound.keys()
-    assert all(after[key] is binding for key, binding in bound.items())
+        (result,) = registered
+        assert container is result.kernel.container
+        after = container.bindings()
+        assert after.keys() == bound.keys()
+        assert all(after[key] is binding for key, binding in bound.items())
 
+    def test_an_application_service_built_at_start_up_gets_the_kernels_collaborators(
+        self,
+        overridden: Callable[..., Application],
+    ) -> None:
+        kernel = overridden(modules=(_binds_kernel_user,)).kernel
 
-def test_an_application_service_built_at_start_up_gets_the_kernels_collaborators(
-    overridden: Callable[..., Application],
-) -> None:
-    kernel = overridden(modules=(_binds_kernel_user,)).kernel
-
-    user = kernel.container.resolve(AcmeKernelUser)
-    assert user.executor is kernel.executor
-    assert user.invoker is kernel.app
-    assert user.registry is kernel.registry
+        user = kernel.container.resolve(AcmeKernelUser)
+        assert user.executor is kernel.executor
+        assert user.invoker is kernel.app
+        assert user.registry is kernel.registry

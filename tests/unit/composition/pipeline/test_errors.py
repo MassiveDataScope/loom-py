@@ -84,39 +84,6 @@ def _type(qualified: str) -> str:
     return qualified.rsplit(".", 1)[1]
 
 
-def test_the_recordings_cover_every_refusal() -> None:
-    recorded = {path.name.split(".")[0] for path in (SNAPSHOTS / "refusals").iterdir()}
-    assert recorded == {*_WRAPPED, *_RAW, "job-compilation"}
-
-
-@pytest.mark.parametrize("refusal", list(_WRAPPED))
-def test_a_wrapped_refusal_chains_its_cause(refusal: str) -> None:
-    for path, recorded in _recorded(refusal):
-        cause = recorded["cause"]
-        assert recorded["wrapped"], path
-        assert _type(cause["type"]) == _WRAPPED[refusal], path
-        assert recorded["message"] == f"Bootstrap failed: {cause['message']}", path
-
-
-@pytest.mark.parametrize("refusal", list(_RAW))
-def test_a_raw_refusal_keeps_its_type(refusal: str) -> None:
-    for path, recorded in _recorded(refusal):
-        assert not recorded["wrapped"], path
-        assert _type(recorded["type"]) == _RAW[refusal], path
-
-
-def test_a_bootstrap_error_subclass_passes_through_unwrapped() -> None:
-    assert issubclass(ReservedBindingError, BootstrapError)
-    assert all(recorded["cause"] is None for _, recorded in _recorded("reserved-binding"))
-
-
-def test_a_job_compilation_error_keeps_its_type_per_path() -> None:
-    for path, recorded in _recorded("job-compilation"):
-        assert recorded["wrapped"] == (path in _JOB_COMPILATION_WRAPPED), path
-        compilation = recorded["cause"] if recorded["wrapped"] else recorded
-        assert _type(compilation["type"]) == "CompilationError", path
-
-
 def _failing_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
     persist = pipeline.persist
 
@@ -139,40 +106,69 @@ def _unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     del monkeypatch
 
 
-@pytest.mark.parametrize(
-    ("overrides", "setup"),
-    [
-        ((raises_at_registration,), _unchanged),
-        ((), _failing_repositories),
-        ((), _failing_cache),
-    ],
-    ids=["override", "repository-module", "cache-module"],
-)
-def test_a_failing_registration_module_is_wrapped(
-    overrides: tuple[Callable[..., None], ...],
-    setup: Callable[[pytest.MonkeyPatch], None],
-    overridden: Callable[..., Application],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    setup(monkeypatch)
+class TestStartupErrors:
+    def test_the_recordings_cover_every_refusal(self) -> None:
+        recorded = {path.name.split(".")[0] for path in (SNAPSHOTS / "refusals").iterdir()}
+        assert recorded == {*_WRAPPED, *_RAW, "job-compilation"}
 
-    with pytest.raises(BootstrapError, match="Bootstrap failed: acme module failed") as caught:
-        overridden(*overrides)
+    @pytest.mark.parametrize("refusal", list(_WRAPPED))
+    def test_a_wrapped_refusal_chains_its_cause(self, refusal: str) -> None:
+        for path, recorded in _recorded(refusal):
+            cause = recorded["cause"]
+            assert recorded["wrapped"], path
+            assert _type(cause["type"]) == _WRAPPED[refusal], path
+            assert recorded["message"] == f"Bootstrap failed: {cause['message']}", path
 
-    assert type(caught.value) is BootstrapError
-    assert isinstance(caught.value.__cause__, RuntimeError)
+    @pytest.mark.parametrize("refusal", list(_RAW))
+    def test_a_raw_refusal_keeps_its_type(self, refusal: str) -> None:
+        for path, recorded in _recorded(refusal):
+            assert not recorded["wrapped"], path
+            assert _type(recorded["type"]) == _RAW[refusal], path
 
+    def test_a_bootstrap_error_subclass_passes_through_unwrapped(self) -> None:
+        assert issubclass(ReservedBindingError, BootstrapError)
+        assert all(recorded["cause"] is None for _, recorded in _recorded("reserved-binding"))
 
-def test_seal_validates_the_container_it_seals(source: CompositionSource) -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
-    planned = pipeline.plan(source, adapter)
-    registered = pipeline.register(
-        pipeline.persist(planned), modules=(binds_unbuildable,), logger=get_logger("tests.acme")
+    def test_a_job_compilation_error_keeps_its_type_per_path(self) -> None:
+        for path, recorded in _recorded("job-compilation"):
+            assert recorded["wrapped"] == (path in _JOB_COMPILATION_WRAPPED), path
+            compilation = recorded["cause"] if recorded["wrapped"] else recorded
+            assert _type(compilation["type"]) == "CompilationError", path
+
+    @pytest.mark.parametrize(
+        ("overrides", "setup"),
+        [
+            ((raises_at_registration,), _unchanged),
+            ((), _failing_repositories),
+            ((), _failing_cache),
+        ],
+        ids=["override", "repository-module", "cache-module"],
     )
+    def test_a_failing_registration_module_is_wrapped(
+        self,
+        overrides: tuple[Callable[..., None], ...],
+        setup: Callable[[pytest.MonkeyPatch], None],
+        overridden: Callable[..., Application],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        setup(monkeypatch)
 
-    with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:
-        pipeline.seal(registered)
+        with pytest.raises(BootstrapError, match="Bootstrap failed: acme module failed") as caught:
+            overridden(*overrides)
 
-    assert isinstance(caught.value.__cause__, ResolutionError)
-    with pytest.raises(ContainerSealed):
-        registered.kernel.container.register(AcmeRecord, AcmeRecord)
+        assert type(caught.value) is BootstrapError
+        assert isinstance(caught.value.__cause__, RuntimeError)
+
+    def test_seal_validates_the_container_it_seals(self, source: CompositionSource) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
+        planned = pipeline.plan(source, adapter)
+        registered = pipeline.register(
+            pipeline.persist(planned), modules=(binds_unbuildable,), logger=get_logger("tests.acme")
+        )
+
+        with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:
+            pipeline.seal(registered)
+
+        assert isinstance(caught.value.__cause__, ResolutionError)
+        with pytest.raises(ContainerSealed):
+            registered.kernel.container.register(AcmeRecord, AcmeRecord)

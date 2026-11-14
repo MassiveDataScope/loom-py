@@ -55,62 +55,63 @@ _SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
 }
 
 
-@pytest.fixture
-def ledger_source() -> CompositionSource:
-    """``acme`` over SQLite, beside a ``ledger`` store with no unit of work; jobs inline."""
-    return composition_source(ConfigContext.from_dict(_LEDGER))
+class TestLenientHarness:
+    @pytest.fixture
+    def ledger_source(self) -> CompositionSource:
+        """``acme`` over SQLite, beside a ``ledger`` store with no unit of work; jobs inline."""
+        return composition_source(ConfigContext.from_dict(_LEDGER))
 
+    @pytest.mark.parametrize("check", list(_SKIPPED))
+    def test_a_strict_recipe_refuses_what_a_lenient_one_skips(
+        self, check: str, ledger_source: CompositionSource
+    ) -> None:
+        components, refused = _SKIPPED[check]
 
-@pytest.mark.parametrize("check", list(_SKIPPED))
-def test_a_strict_recipe_refuses_what_a_lenient_one_skips(
-    check: str, ledger_source: CompositionSource
-) -> None:
-    components, refused = _SKIPPED[check]
+        with pytest.raises(refused):
+            compose_application(ledger_source, Serving(AcmeRecord, **components))
 
-    with pytest.raises(refused):
-        compose_application(ledger_source, Serving(AcmeRecord, **components))
+    @pytest.mark.parametrize("check", list(_SKIPPED))
+    def test_a_lenient_recipe_skips_the_check(
+        self, check: str, ledger_source: CompositionSource
+    ) -> None:
+        components, _ = _SKIPPED[check]
 
+        adapter = Serving(AcmeRecord, **components, lenient=True)
 
-@pytest.mark.parametrize("check", list(_SKIPPED))
-def test_a_lenient_recipe_skips_the_check(check: str, ledger_source: CompositionSource) -> None:
-    components, _ = _SKIPPED[check]
+        kernel = compose_application(ledger_source, adapter).kernel
 
-    adapter = Serving(AcmeRecord, **components, lenient=True)
+        assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
 
-    kernel = compose_application(ledger_source, adapter).kernel
+    def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
+        self,
+        ledger_source: CompositionSource,
+    ) -> None:
+        with pytest.raises(BootstrapError) as caught:
+            compose_application(
+                ledger_source,
+                Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
+                modules=(binds_unbuildable,),
+            )
 
-    assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
+        assert isinstance(caught.value.__cause__, ResolutionError)
 
-
-def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
-    ledger_source: CompositionSource,
-) -> None:
-    with pytest.raises(BootstrapError) as caught:
-        compose_application(
-            ledger_source,
-            Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
-            modules=(binds_unbuildable,),
+    def test_a_strict_recipe_runs_the_deploy_checks(self) -> None:
+        production = composition_source(
+            ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=Environment.PRODUCTION
         )
 
-    assert isinstance(caught.value.__cause__, ResolutionError)
+        with pytest.raises(DeployCheckError):
+            compose_application(production, Serving())
 
+    @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.TEST])
+    def test_a_lenient_recipe_runs_no_deploy_check(
+        self, environment: Environment, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        source = composition_source(
+            ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=environment
+        )
 
-def test_a_strict_recipe_runs_the_deploy_checks() -> None:
-    production = composition_source(
-        ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=Environment.PRODUCTION
-    )
+        with caplog.at_level(logging.DEBUG, logger="loom.core.checks"):
+            compose_application(source, Serving(lenient=True))
 
-    with pytest.raises(DeployCheckError):
-        compose_application(production, Serving())
-
-
-@pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.TEST])
-def test_a_lenient_recipe_runs_no_deploy_check(
-    environment: Environment, caplog: pytest.LogCaptureFixture
-) -> None:
-    source = composition_source(ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=environment)
-
-    with caplog.at_level(logging.DEBUG, logger="loom.core.checks"):
-        compose_application(source, Serving(lenient=True))
-
-    assert [r for r in caplog.records if r.name == "loom.core.checks"] == []
+        assert [r for r in caplog.records if r.name == "loom.core.checks"] == []

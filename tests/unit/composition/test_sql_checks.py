@@ -27,7 +27,7 @@ from tests.unit.core.sql._fakes import (
 )
 
 
-class _Bare:
+class AcmeProbeAdapter:
     def recipe(self, source: CompositionSource) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
@@ -52,7 +52,7 @@ def _application(tmp_path: Path) -> Application:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, _Bare())
+    return compose_application(source, AcmeProbeAdapter())
 
 
 def _factory(
@@ -72,62 +72,59 @@ def _probes(factory: RecordingClientFactory) -> int:
     )
 
 
-async def test_a_failing_role_probe_fails_the_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    factory = _factory(monkeypatch, FakeClickHouseClient(ignore_role=True))
-    application = _application(tmp_path)
+class TestClickHouseStartupProbe:
+    async def test_a_failing_role_probe_fails_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        factory = _factory(monkeypatch, FakeClickHouseClient(ignore_role=True))
+        application = _application(tmp_path)
 
-    with pytest.raises(ConfigError, match="sentinel role"):
+        with pytest.raises(ConfigError, match="sentinel role"):
+            await application.check()
+
+        assert [client.closed for client in factory.created] == [True]
+
+    async def test_the_check_probes_and_leaves_no_client_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        factory = _factory(monkeypatch)
+        application = _application(tmp_path)
+
         await application.check()
 
-    assert [client.closed for client in factory.created] == [True]
+        assert _probes(factory) == 1
+        assert [client.closed for client in factory.created] == [True]
 
+    async def test_opening_without_check_after_a_check_does_not_probe_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        factory = _factory(monkeypatch)
+        application = _application(tmp_path)
+        await application.check()
 
-async def test_the_check_probes_and_leaves_no_client_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    factory = _factory(monkeypatch)
-    application = _application(tmp_path)
-
-    await application.check()
-
-    assert _probes(factory) == 1
-    assert [client.closed for client in factory.created] == [True]
-
-
-async def test_opening_without_check_after_a_check_does_not_probe_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    factory = _factory(monkeypatch)
-    application = _application(tmp_path)
-    await application.check()
-
-    async with application.running(check=False):
-        assert application.sql.registry is not None
-        assert application.sql.registry.executor("analytics") is not None
-
-    assert (_probes(factory), len(factory.created)) == (1, 2)
-
-
-async def test_opening_with_check_probes_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    factory = _factory(monkeypatch)
-    application = _application(tmp_path)
-
-    async with application.running():
-        pass
-
-    assert _probes(factory) == 1
-
-
-async def test_opening_unchecked_still_probes_fail_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _factory(monkeypatch, FakeClickHouseClient(ignore_role=True))
-    application = _application(tmp_path)
-
-    with pytest.raises(ConfigError, match="sentinel role"):
         async with application.running(check=False):
+            assert application.sql.registry is not None
+            assert application.sql.registry.executor("analytics") is not None
+
+        assert (_probes(factory), len(factory.created)) == (1, 2)
+
+    async def test_opening_with_check_probes_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        factory = _factory(monkeypatch)
+        application = _application(tmp_path)
+
+        async with application.running():
             pass
+
+        assert _probes(factory) == 1
+
+    async def test_opening_unchecked_still_probes_fail_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _factory(monkeypatch, FakeClickHouseClient(ignore_role=True))
+        application = _application(tmp_path)
+
+        with pytest.raises(ConfigError, match="sentinel role"):
+            async with application.running(check=False):
+                pass

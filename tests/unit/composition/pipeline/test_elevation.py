@@ -29,26 +29,25 @@ def _binds_sink_user(container: LoomContainer) -> None:
     )
 
 
-@pytest.fixture
-def sink(monkeypatch: pytest.MonkeyPatch) -> FakeSink:
-    """The sink the composition builds from its stores."""
-    built = FakeSink()
-    monkeypatch.setattr(registration, "_elevation_sink", lambda wirings: built)
-    return built
+class TestElevationSink:
+    @pytest.fixture
+    def sink(self, monkeypatch: pytest.MonkeyPatch) -> FakeSink:
+        """The sink the composition builds from its stores."""
+        built = FakeSink()
+        monkeypatch.setattr(registration, "_elevation_sink", lambda wirings: built)
+        return built
 
+    def test_the_executors_sink_is_the_one_bound(
+        self, overridden: Callable[..., Application], sink: FakeSink
+    ) -> None:
+        kernel = overridden().kernel
 
-def test_the_executors_sink_is_the_one_bound(
-    overridden: Callable[..., Application], sink: FakeSink
-) -> None:
-    kernel = overridden().kernel
+        assert kernel.container.resolve(ElevationSink) is sink
+        assert kernel.executor._elevation_sink is sink  # noqa: SLF001
 
-    assert kernel.container.resolve(ElevationSink) is sink
-    assert kernel.executor._elevation_sink is sink  # noqa: SLF001
+    def test_the_sink_is_bound_before_the_application_services_are_built(
+        self, overridden: Callable[..., Application], sink: FakeSink
+    ) -> None:
+        kernel = overridden(modules=(_binds_sink_user,)).kernel
 
-
-def test_the_sink_is_bound_before_the_application_services_are_built(
-    overridden: Callable[..., Application], sink: FakeSink
-) -> None:
-    kernel = overridden(modules=(_binds_sink_user,)).kernel
-
-    assert kernel.container.resolve(AcmeSinkUser).sink is sink
+        assert kernel.container.resolve(AcmeSinkUser).sink is sink

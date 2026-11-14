@@ -29,14 +29,14 @@ from tests.unit.composition.pipeline.components import (
 )
 
 
-class AcmeAuditTrail:
+class AcmeCallbackTrail:
     pass
 
 
 class AcmeAuditCallback:
-    """A job callback injecting :class:`AcmeAuditTrail`."""
+    """A job callback injecting :class:`AcmeCallbackTrail`."""
 
-    def __init__(self, trail: AcmeAuditTrail) -> None:
+    def __init__(self, trail: AcmeCallbackTrail) -> None:
         self.trail = trail
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
@@ -88,94 +88,6 @@ def _binds(key: type, provider: type) -> Any:
     return module
 
 
-def test_the_roots_are_the_use_cases_jobs_and_callbacks(source: CompositionSource) -> None:
-    planned = pipeline.plan(source, _WithCallbacks(AcmeAuditCallback))
-    registered = pipeline.register(
-        pipeline.persist(planned),
-        modules=(_binds(AcmeAuditTrail, AcmeAuditTrail),),
-        logger=get_logger("tests.acme"),
-    )
-
-    analysis = registered.analysis
-    assert analysis.roots == tuple(map(ClassNode, (AcmePing, AcmeJob, AcmeAuditCallback)))
-    assert KeyNode(AcmeAuditTrail) in analysis.reachable
-    assert registered.kernel.compiler.get_plan(cast(Any, AcmeAuditCallback)) is None
-
-
-def test_a_callback_is_refused_like_any_root(source: CompositionSource) -> None:
-    with pytest.raises(BootstrapError, match="AcmeAuditCallback -> trail: AcmeAuditTrail"):
-        compose_application(source, _WithCallbacks(AcmeAuditCallback))
-
-
-def test_a_callback_injecting_an_unmapped_repository_is_refused_at_startup(
-    source: CompositionSource,
-) -> None:
-    with pytest.raises(BootstrapError) as caught:
-        compose_application(source, _WithCallbacks(AcmeUnservedCallback))
-
-    assert str(caught.value.__cause__) == (
-        "AcmeUnservedCallback: unserved: no repository mapping is registered for AcmeUnserved"
-    )
-
-
-def test_a_lenient_recipe_leaves_an_unmapped_callback_repository_to_the_first_build(
-    source: CompositionSource,
-) -> None:
-    application = compose_application(source, _WithCallbacks(AcmeUnservedCallback, lenient=True))
-
-    assert not application.kernel.container.has_repo_mapping(AcmeUnserved)
-
-
-def test_a_use_case_injecting_an_unmapped_repository_keeps_the_unserved_model_error(
-    source: CompositionSource,
-) -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeInjectsUnserved,))
-
-    with pytest.raises(UnservedModelError, match="AcmeInjectsUnserved injects unserved"):
-        compose_application(source, adapter)
-
-
-def test_a_lenient_recipe_leaves_a_missing_binding_to_the_first_build(
-    source: CompositionSource,
-) -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeNeedsService,), lenient=True)
-
-    application = compose_application(source, adapter)
-
-    assert not application.kernel.container.is_registered(AcmeUnregistered)
-
-
-def test_a_lenient_recipe_still_refuses_the_other_structural_refusals(
-    source: CompositionSource,
-) -> None:
-    adapter = Serving(AcmeRecord, use_cases=(AcmeNeedsCycle,), lenient=True)
-
-    with pytest.raises(BootstrapError, match="dependency cycle") as caught:
-        compose_application(source, adapter, modules=(binds_cycle,))
-
-    assert isinstance(caught.value.__cause__, DependencyGraphError)
-
-
-def test_an_unresolvable_parameter_of_a_reached_binding_is_refused(
-    source: CompositionSource,
-) -> None:
-    adapter = _WithCallbacks(AcmeAuditNames)
-
-    with pytest.raises(BootstrapError, match="AcmeNamedTrail: names: tuple") as caught:
-        compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
-
-    assert isinstance(caught.value.__cause__, DependencyGraphError)
-
-
-def test_a_lenient_recipe_only_warns_of_an_unresolvable_parameter_of_a_binding(
-    source: CompositionSource,
-) -> None:
-    adapter = _WithCallbacks(AcmeAuditNames, lenient=True)
-
-    with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
-        compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
-
-
 class AcmeListsRecords(UseCase[AcmeRecord, int, Listable[AcmeRecord]]):
     """Declares its main repository as listable."""
 
@@ -183,17 +95,110 @@ class AcmeListsRecords(UseCase[AcmeRecord, int, Listable[AcmeRecord]]):
         return 0
 
 
-def test_a_use_case_reaches_its_main_repository_and_capability(source: CompositionSource) -> None:
-    planned = pipeline.plan(source, Serving(AcmeRecord, use_cases=(AcmeListsRecords,)))
-    registered = pipeline.register(
-        pipeline.persist(planned), modules=(), logger=get_logger("tests.acme")
-    )
+class TestRegistrationAnalysis:
+    def test_the_roots_are_the_use_cases_jobs_and_callbacks(
+        self, source: CompositionSource
+    ) -> None:
+        planned = pipeline.plan(source, _WithCallbacks(AcmeAuditCallback))
+        registered = pipeline.register(
+            pipeline.persist(planned),
+            modules=(_binds(AcmeCallbackTrail, AcmeCallbackTrail),),
+            logger=get_logger("tests.acme"),
+        )
 
-    container, analysis = registered.kernel.container, registered.analysis
-    repository = KeyNode(container._repo_bindings[AcmeRecord])  # noqa: SLF001 - the mapped key
-    assert set(analysis.graph.edges(ClassNode(AcmeListsRecords))) == {
-        Edge(repository, "main_repo"),
-        Edge(KeyNode(Listable[AcmeRecord]), "main_repo"),
-    }
-    assert {repository, KeyNode(Listable[AcmeRecord])} <= analysis.reachable
-    assert analysis.graph is registered.kernel.factory.graph
+        analysis = registered.analysis
+        assert analysis.roots == tuple(map(ClassNode, (AcmePing, AcmeJob, AcmeAuditCallback)))
+        assert KeyNode(AcmeCallbackTrail) in analysis.reachable
+        assert registered.kernel.compiler.get_plan(cast(Any, AcmeAuditCallback)) is None
+
+    def test_a_callback_is_refused_like_any_root(self, source: CompositionSource) -> None:
+        with pytest.raises(BootstrapError, match="AcmeAuditCallback -> trail: AcmeCallbackTrail"):
+            compose_application(source, _WithCallbacks(AcmeAuditCallback))
+
+    def test_a_callback_injecting_an_unmapped_repository_is_refused_at_startup(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        with pytest.raises(BootstrapError) as caught:
+            compose_application(source, _WithCallbacks(AcmeUnservedCallback))
+
+        assert str(caught.value.__cause__) == (
+            "AcmeUnservedCallback: unserved: no repository mapping is registered for AcmeUnserved"
+        )
+
+    def test_a_lenient_recipe_leaves_an_unmapped_callback_repository_to_the_first_build(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        application = compose_application(
+            source, _WithCallbacks(AcmeUnservedCallback, lenient=True)
+        )
+
+        assert not application.kernel.container.has_repo_mapping(AcmeUnserved)
+
+    def test_a_use_case_injecting_an_unmapped_repository_keeps_the_unserved_model_error(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeInjectsUnserved,))
+
+        with pytest.raises(UnservedModelError, match="AcmeInjectsUnserved injects unserved"):
+            compose_application(source, adapter)
+
+    def test_a_lenient_recipe_leaves_a_missing_binding_to_the_first_build(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeNeedsService,), lenient=True)
+
+        application = compose_application(source, adapter)
+
+        assert not application.kernel.container.is_registered(AcmeUnregistered)
+
+    def test_a_lenient_recipe_still_refuses_the_other_structural_refusals(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        adapter = Serving(AcmeRecord, use_cases=(AcmeNeedsCycle,), lenient=True)
+
+        with pytest.raises(BootstrapError, match="dependency cycle") as caught:
+            compose_application(source, adapter, modules=(binds_cycle,))
+
+        assert isinstance(caught.value.__cause__, DependencyGraphError)
+
+    def test_an_unresolvable_parameter_of_a_reached_binding_is_refused(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        adapter = _WithCallbacks(AcmeAuditNames)
+
+        with pytest.raises(BootstrapError, match="AcmeNamedTrail: names: tuple") as caught:
+            compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+
+        assert isinstance(caught.value.__cause__, DependencyGraphError)
+
+    def test_a_lenient_recipe_only_warns_of_an_unresolvable_parameter_of_a_binding(
+        self,
+        source: CompositionSource,
+    ) -> None:
+        adapter = _WithCallbacks(AcmeAuditNames, lenient=True)
+
+        with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
+            compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+
+    def test_a_use_case_reaches_its_main_repository_and_capability(
+        self, source: CompositionSource
+    ) -> None:
+        planned = pipeline.plan(source, Serving(AcmeRecord, use_cases=(AcmeListsRecords,)))
+        registered = pipeline.register(
+            pipeline.persist(planned), modules=(), logger=get_logger("tests.acme")
+        )
+
+        container, analysis = registered.kernel.container, registered.analysis
+        repository = KeyNode(container._repo_bindings[AcmeRecord])  # noqa: SLF001 - the mapped key
+        assert set(analysis.graph.edges(ClassNode(AcmeListsRecords))) == {
+            Edge(repository, "main_repo"),
+            Edge(KeyNode(Listable[AcmeRecord]), "main_repo"),
+        }
+        assert {repository, KeyNode(Listable[AcmeRecord])} <= analysis.reachable
+        assert analysis.graph is registered.kernel.factory.graph

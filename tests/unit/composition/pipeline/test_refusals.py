@@ -233,35 +233,6 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
 }
 
 
-@pytest.mark.parametrize("refusal", list(REFUSALS))
-def test_each_refusal_reaches_the_caller_as_before(refusal: str, tmp_path: Path) -> None:
-    spec = REFUSALS[refusal]
-    caught = {
-        path: paths.refusal(_PATHS, path, spec.composition, tmp_path, spec.prepare)
-        for path in spec.paths
-    }
-
-    unrelated = [
-        f"{path}: {error!r}"
-        for path, error in caught.items()
-        if not (isinstance(error, spec.refused) or isinstance(error.__cause__, spec.refused))
-    ]
-    assert unrelated == [], "\n".join(unrelated)
-    recorded = {
-        path: describe_refusal(error, tmp_path=tmp_path / path) for path, error in caught.items()
-    }
-    matches_path_snapshots(f"refusals/{refusal}", recorded, spec.variants)
-
-
-@pytest.mark.parametrize("path", list(paths.UNCOMPOSED))
-def test_an_unbound_dependency_is_accepted_where_it_was_before(
-    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    container = paths.UNCOMPOSED[path](_NEEDS_SERVICE, tmp_path, monkeypatch)
-
-    matches_snapshot(f"accepted/unbound-dependency/{path}", describe_container(container))
-
-
 _UNCOMPILABLE_JOB = """
 
 from loom.core.command import Command
@@ -279,23 +250,52 @@ class AcmeUncompilableJob(Job[None]):
 """
 
 
-def test_a_job_discovered_from_modules_reaches_the_api_as_before(
-    fixture_project: Callable[..., str], tmp_path: Path
-) -> None:
-    pytest.importorskip("fastapi")
-    from loom.rest.fastapi.adapter import FastAPIAdapter
+class TestStartupRefusals:
+    @pytest.mark.parametrize("refusal", list(REFUSALS))
+    def test_each_refusal_reaches_the_caller_as_before(self, refusal: str, tmp_path: Path) -> None:
+        spec = REFUSALS[refusal]
+        caught = {
+            path: paths.refusal(_PATHS, path, spec.composition, tmp_path, spec.prepare)
+            for path in spec.paths
+        }
 
-    config_path = Path(fixture_project("pipeline_modules_job"))
-    config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    module = config["app"]["discovery"]["interfaces"]["modules"][0]
-    with (config_path.parent / f"{module}.py").open("a", encoding="utf-8") as written:
-        written.write(_UNCOMPILABLE_JOB)
-    config["app"]["discovery"] = {"mode": "modules", "modules": {"include": [module]}}
-    config["app"]["job_service"] = "inline"
-    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        unrelated = [
+            f"{path}: {error!r}"
+            for path, error in caught.items()
+            if not (isinstance(error, spec.refused) or isinstance(error.__cause__, spec.refused))
+        ]
+        assert unrelated == [], "\n".join(unrelated)
+        recorded = {
+            path: describe_refusal(error, tmp_path=tmp_path / path)
+            for path, error in caught.items()
+        }
+        matches_path_snapshots(f"refusals/{refusal}", recorded, spec.variants)
 
-    with pytest.raises(CompilationError) as caught:
-        build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
+    @pytest.mark.parametrize("path", list(paths.UNCOMPOSED))
+    def test_an_unbound_dependency_is_accepted_where_it_was_before(
+        self, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        container = paths.UNCOMPOSED[path](_NEEDS_SERVICE, tmp_path, monkeypatch)
 
-    recorded = describe_refusal(caught.value, tmp_path=tmp_path)
-    matches_snapshot("refusals/job-compilation.http", recorded)
+        matches_snapshot(f"accepted/unbound-dependency/{path}", describe_container(container))
+
+    def test_a_job_discovered_from_modules_reaches_the_api_as_before(
+        self, fixture_project: Callable[..., str], tmp_path: Path
+    ) -> None:
+        pytest.importorskip("fastapi")
+        from loom.rest.fastapi.adapter import FastAPIAdapter
+
+        config_path = Path(fixture_project("pipeline_modules_job"))
+        config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        module = config["app"]["discovery"]["interfaces"]["modules"][0]
+        with (config_path.parent / f"{module}.py").open("a", encoding="utf-8") as written:
+            written.write(_UNCOMPILABLE_JOB)
+        config["app"]["discovery"] = {"mode": "modules", "modules": {"include": [module]}}
+        config["app"]["job_service"] = "inline"
+        config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+        with pytest.raises(CompilationError) as caught:
+            build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
+
+        recorded = describe_refusal(caught.value, tmp_path=tmp_path)
+        matches_snapshot("refusals/job-compilation.http", recorded)

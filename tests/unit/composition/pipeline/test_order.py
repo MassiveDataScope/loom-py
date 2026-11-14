@@ -67,31 +67,6 @@ def _binds_module_service(container: LoomContainer) -> None:
     container.register(AcmeModuleService, AcmeModuleService, scope=Scope.APPLICATION)
 
 
-@pytest.fixture
-def events(monkeypatch: pytest.MonkeyPatch) -> list[Event]:
-    """Each binding a container makes and each compilation, in order."""
-    recorded: list[Event] = []
-    bind = LoomContainer._bind  # noqa: SLF001 - every register* binds through it
-    build_plan = UseCaseCompiler._build_plan  # noqa: SLF001
-
-    def binding(
-        self: LoomContainer,
-        interface: BindingKey,
-        provider: Callable[[], Any] | type[Any],
-        scope: Scope,
-    ) -> None:
-        recorded.append(("bind", interface))
-        bind(self, interface, provider, scope)
-
-    def compiling(self: UseCaseCompiler, use_case_type: type[Any]) -> Any:
-        recorded.append(("compile", use_case_type))
-        return build_plan(self, use_case_type)
-
-    monkeypatch.setattr(LoomContainer, "_bind", binding)
-    monkeypatch.setattr(UseCaseCompiler, "_build_plan", compiling)
-    return recorded
-
-
 def _steps(recorded: list[Event]) -> list[str]:
     """The step ``_STEPS`` names for each recorded event, consecutive repeats collapsed."""
     steps: list[str] = []
@@ -102,36 +77,60 @@ def _steps(recorded: list[Event]) -> list[str]:
     return steps
 
 
-def test_registration_binds_in_the_fixed_order(
-    overridden: Callable[..., Application], events: list[Event]
-) -> None:
-    container = overridden(
-        overrides_repository_and_jobs, modules=(_binds_module_service,)
-    ).kernel.container
+class TestRegistrationOrder:
+    @pytest.fixture
+    def events(self, monkeypatch: pytest.MonkeyPatch) -> list[Event]:
+        """Each binding a container makes and each compilation, in order."""
+        recorded: list[Event] = []
+        bind = LoomContainer._bind  # noqa: SLF001 - every register* binds through it
+        build_plan = UseCaseCompiler._build_plan  # noqa: SLF001
 
-    assert _steps(events) == [
-        "seed",
-        "module",
-        "override",
-        "repositories",
-        "framework",
-        "compile",
-        "framework",
-        "jobs",
-    ]
-    # Neither the repository module nor the job service default replaced the override.
-    assert container.resolve_repo(AcmeRecord) is FAKE_RECORDS
-    assert container.resolve(JobService) is FAKE_JOBS
-    assert events.count(("bind", RepositoryToken(AcmeRecord))) == 1
-    assert events.count(("bind", JobService)) == 1
+        def binding(
+            self: LoomContainer,
+            interface: BindingKey,
+            provider: Callable[[], Any] | type[Any],
+            scope: Scope,
+        ) -> None:
+            recorded.append(("bind", interface))
+            bind(self, interface, provider, scope)
 
+        def compiling(self: UseCaseCompiler, use_case_type: type[Any]) -> Any:
+            recorded.append(("compile", use_case_type))
+            return build_plan(self, use_case_type)
 
-@pytest.mark.parametrize("name", list(paths.COMPOSED))
-def test_each_use_case_and_job_compiles_once(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[Event]
-) -> None:
-    paths.COMPOSED[name](paths.Composition(), tmp_path, monkeypatch)
+        monkeypatch.setattr(LoomContainer, "_bind", binding)
+        monkeypatch.setattr(UseCaseCompiler, "_build_plan", compiling)
+        return recorded
 
-    compiled = Counter(subject for kind, subject in events if kind == "compile")
-    assert compiled[AcmePing] == 1
-    assert set(compiled.values()) == {1}
+    def test_registration_binds_in_the_fixed_order(
+        self, overridden: Callable[..., Application], events: list[Event]
+    ) -> None:
+        container = overridden(
+            overrides_repository_and_jobs, modules=(_binds_module_service,)
+        ).kernel.container
+
+        assert _steps(events) == [
+            "seed",
+            "module",
+            "override",
+            "repositories",
+            "framework",
+            "compile",
+            "framework",
+            "jobs",
+        ]
+        # Neither the repository module nor the job service default replaced the override.
+        assert container.resolve_repo(AcmeRecord) is FAKE_RECORDS
+        assert container.resolve(JobService) is FAKE_JOBS
+        assert events.count(("bind", RepositoryToken(AcmeRecord))) == 1
+        assert events.count(("bind", JobService)) == 1
+
+    @pytest.mark.parametrize("name", list(paths.COMPOSED))
+    def test_each_use_case_and_job_compiles_once(
+        self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[Event]
+    ) -> None:
+        paths.COMPOSED[name](paths.Composition(), tmp_path, monkeypatch)
+
+        compiled = Counter(subject for kind, subject in events if kind == "compile")
+        assert compiled[AcmePing] == 1
+        assert set(compiled.values()) == {1}

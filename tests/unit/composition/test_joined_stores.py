@@ -27,28 +27,28 @@ from tests.helpers.composition import Serving, composition_source
 pytestmark = pytest.mark.timeout(30)
 
 
-class _Invoice(BaseModel):
+class AcmeJoinedInvoice(BaseModel):
     __tablename__ = "joined_stores_invoices"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-class _AuditEntry(BaseModel):
+class AcmeJoinedAuditEntry(BaseModel):
     __tablename__ = "joined_stores_audit_entries"
     __store__ = "audit"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-class _Audited(UseCase[_Invoice, None]):
-    def __init__(self, entries: Joined[RepoFor[_AuditEntry]]) -> None:
+class _Audited(UseCase[AcmeJoinedInvoice, None]):
+    def __init__(self, entries: Joined[RepoFor[AcmeJoinedAuditEntry]]) -> None:
         self.entries = entries
 
     async def execute(self) -> None:
         return None
 
 
-class _Audit(UseCase[_AuditEntry, None]):
+class AcmePrimaryAudit(UseCase[AcmeJoinedAuditEntry, None]):
     """A use case whose primary store is ``audit``."""
 
     async def execute(self) -> None:
@@ -56,7 +56,7 @@ class _Audit(UseCase[_AuditEntry, None]):
 
 
 class _AuditJob(Job[None]):
-    def __init__(self, entries: Joined[RepoFor[_AuditEntry]]) -> None:
+    def __init__(self, entries: Joined[RepoFor[AcmeJoinedAuditEntry]]) -> None:
         self.entries = entries
 
     async def execute(self) -> None:
@@ -80,49 +80,50 @@ def _compose(
         config_root=tmp_path,
     )
     if issubclass(component, Job):
-        return compose_application(source, Serving(_Invoice, jobs=(component,)))
-    return compose_application(source, Serving(_Invoice, use_cases=(component,)))
+        return compose_application(source, Serving(AcmeJoinedInvoice, jobs=(component,)))
+    return compose_application(source, Serving(AcmeJoinedInvoice, use_cases=(component,)))
 
 
-@pytest.mark.parametrize("component", [_Audited, _AuditJob], ids=["use-case", "job"])
-@pytest.mark.parametrize(
-    "audit",
-    [
-        pytest.param({"backend": "mongo", "url": "mongodb://audit"}, id="mongo-no-transactions"),
-        pytest.param({"backend": "dynamodb"}, id="dynamodb"),
-    ],
-)
-def test_joined_on_a_store_that_cannot_roll_back_fails_the_composition(
-    tmp_path: Path, audit: dict[str, Any], component: type[object]
-) -> None:
-    with pytest.raises(JoinedAutocommitStore) as caught:
-        _compose(tmp_path, audit, component)
-
-    issue = caught.value.issue
-    assert (issue.code, issue.component, issue.field) == (
-        UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE,
-        component.__qualname__,
+class TestJoinedStores:
+    @pytest.mark.parametrize("component", [_Audited, _AuditJob], ids=["use-case", "job"])
+    @pytest.mark.parametrize(
         "audit",
+        [
+            pytest.param(
+                {"backend": "mongo", "url": "mongodb://audit"}, id="mongo-no-transactions"
+            ),
+            pytest.param({"backend": "dynamodb"}, id="dynamodb"),
+        ],
     )
+    def test_joined_on_a_store_that_cannot_roll_back_fails_the_composition(
+        self, tmp_path: Path, audit: dict[str, Any], component: type[object]
+    ) -> None:
+        with pytest.raises(JoinedAutocommitStore) as caught:
+            _compose(tmp_path, audit, component)
 
+        issue = caught.value.issue
+        assert (issue.code, issue.component, issue.field) == (
+            UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE,
+            component.__qualname__,
+            "audit",
+        )
 
-@pytest.mark.parametrize("component", [_Audited, _Audit], ids=["joined", "primary"])
-def test_a_written_store_without_a_unit_of_work_fails_the_composition(
-    tmp_path: Path, component: type[object]
-) -> None:
-    audit = {"backend": "mongo", "url": "mongodb://audit", "transactions": True}
+    @pytest.mark.parametrize("component", [_Audited, AcmePrimaryAudit], ids=["joined", "primary"])
+    def test_a_written_store_without_a_unit_of_work_fails_the_composition(
+        self, tmp_path: Path, component: type[object]
+    ) -> None:
+        audit = {"backend": "mongo", "url": "mongodb://audit", "transactions": True}
 
-    with pytest.raises(UncomposedWriteStore) as caught:
-        _compose(tmp_path, audit, component)
+        with pytest.raises(UncomposedWriteStore) as caught:
+            _compose(tmp_path, audit, component)
 
-    issue = caught.value.issue
-    assert (issue.code, issue.component, issue.field) == (
-        UseCaseErrorCode.UNCOMPOSED_WRITE_STORE,
-        component.__qualname__,
-        "audit",
-    )
+        issue = caught.value.issue
+        assert (issue.code, issue.component, issue.field) == (
+            UseCaseErrorCode.UNCOMPOSED_WRITE_STORE,
+            component.__qualname__,
+            "audit",
+        )
 
-
-def test_joined_on_an_undeclared_store_fails_the_composition(tmp_path: Path) -> None:
-    with pytest.raises(ConfigError, match=r"Joined in _Audited needs stores\.audit"):
-        _compose(tmp_path, None)
+    def test_joined_on_an_undeclared_store_fails_the_composition(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match=r"Joined in _Audited needs stores\.audit"):
+            _compose(tmp_path, None)

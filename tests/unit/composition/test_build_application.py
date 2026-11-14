@@ -33,7 +33,7 @@ from loom.core.use_case.use_case import UseCase
 from tests.helpers.composition import ProjectFactory
 
 
-class _Bare:
+class AcmeTransportFreeAdapter:
     """No transport at all: what a script or a test composes."""
 
     def recipe(self, source: CompositionSource) -> Recipe:
@@ -47,86 +47,13 @@ class _Bare:
         return application
 
 
-def test_load_source_requires_app_name_with_or_without_app_section(tmp_path: Path) -> None:
-    config = tmp_path / "config.yaml"
-    options = {
-        "config_dir": None,
-        "environment": "test",
-        "code_path": None,
-        "resolvers": (),
-        "caller": "create_app",
-    }
-
-    config.write_text("celery: {}\n", encoding="utf-8")
-    with pytest.raises(ConfigError, match="app.name is required"):
-        load_source(str(config), **options)
-
-    config.write_text("app:\n  code_path: .\n", encoding="utf-8")
-    with pytest.raises(ConfigError, match="app.name is required"):
-        load_source(str(config), **options)
-
-
-def test_load_source_needs_only_the_config_paths(tmp_path: Path) -> None:
-    config = tmp_path / "config.yaml"
-    config.write_text("app:\n  name: acme\n", encoding="utf-8")
-
-    source = load_source(str(config))
-
-    assert source.app.name == "acme"
-
-
 def _bootstrap_worker(*paths: str, config_dir: str) -> object:
     celery_bootstrap = pytest.importorskip("loom.celery.bootstrap")
     return celery_bootstrap.bootstrap_worker(*paths, config_dir=config_dir)
 
 
-@pytest.mark.parametrize(
-    ("entry", "name"),
-    [
-        (
-            lambda *p, config_dir: create_app(*p, adapter=_Bare(), config_dir=config_dir),
-            "create_app",
-        ),
-        (
-            lambda *p, config_dir: build_application(*p, adapter=_Bare(), config_dir=config_dir),
-            "build_application",
-        ),
-        (_bootstrap_worker, "bootstrap_worker"),
-    ],
-    ids=["create_app", "build_application", "bootstrap_worker"],
-)
-def test_each_entry_point_names_itself_when_paths_conflict(
-    tmp_path: Path, entry: Any, name: str
-) -> None:
-    config = tmp_path / "config.yaml"
-    config.write_text("app:\n  name: acme\n", encoding="utf-8")
-
-    with pytest.raises(ConfigError, match=rf"^{name} takes config files"):
-        entry(str(config), config_dir=str(tmp_path))
-
-
 class _CreateRecord(Command, frozen=True):
     name: str
-
-
-async def test_composes_and_serves_without_any_transport(
-    fixture_project: ProjectFactory,
-) -> None:
-    application = build_application(fixture_project(), adapter=_Bare(), environment="test")
-    (record,) = application.discovered.models
-    (ping,) = application.discovered.use_cases
-
-    assert not application.is_open
-    assert [r.kind for r in application.resources] == [ResourceKind.STORE]
-    async with application.running():
-        repository = application.kernel.container.resolve_repo(record)
-        created = await repository.create(_CreateRecord(name="first"))
-        found = await repository.get_by_id(created.id)
-        answer = await application.kernel.app.invoke(ping)
-
-    assert found is not None
-    assert found.name == "first"
-    assert answer == "pong"
 
 
 _TINY = RuntimeProfile(
@@ -138,25 +65,6 @@ _TINY = RuntimeProfile(
 class _Answer(UseCase[Any, int]):
     async def execute(self, **_: Any) -> int:
         return 42
-
-
-@pytest.fixture
-def runtimes(monkeypatch: pytest.MonkeyPatch) -> list[BackendRuntime]:
-    """Record the runtime the composition hands the SQLAlchemy backend."""
-    recorded: list[BackendRuntime] = []
-    build = SQLAlchemyBackend.build
-
-    def recording(
-        self: SQLAlchemyBackend,
-        ctx: ConfigContext,
-        models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
-        recorded.append(runtime)
-        return build(self, ctx, models, runtime)
-
-    monkeypatch.setattr(SQLAlchemyBackend, "build", recording)
-    return recorded
 
 
 class _Handler:
@@ -180,52 +88,153 @@ class _TinyAdapter:
         return _Handler(application)
 
 
-async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
-    fixture_project: ProjectFactory, runtimes: list[BackendRuntime]
-) -> None:
-    config = fixture_project()
+class TestTransportFreeComposition:
+    async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
+        self, fixture_project: ProjectFactory, runtimes: list[BackendRuntime]
+    ) -> None:
+        config = fixture_project()
 
-    handler = create_app(config, adapter=_TinyAdapter(), environment="test")
+        handler = create_app(config, adapter=_TinyAdapter(), environment="test")
 
-    assert_type(handler, _Handler)
-    assert [runtime.profile for runtime in runtimes] == [_TINY]
-    async with handler.application.running():
-        assert await handler() == 42
+        assert_type(handler, _Handler)
+        assert [runtime.profile for runtime in runtimes] == [_TINY]
+        async with handler.application.running():
+            assert await handler() == 42
+
+    async def test_composes_and_serves_without_any_transport(
+        self,
+        fixture_project: ProjectFactory,
+    ) -> None:
+        application = build_application(
+            fixture_project(), adapter=AcmeTransportFreeAdapter(), environment="test"
+        )
+        (record,) = application.discovered.models
+        (ping,) = application.discovered.use_cases
+
+        assert not application.is_open
+        assert [r.kind for r in application.resources] == [ResourceKind.STORE]
+        async with application.running():
+            repository = application.kernel.container.resolve_repo(record)
+            created = await repository.create(_CreateRecord(name="first"))
+            found = await repository.get_by_id(created.id)
+            answer = await application.kernel.app.invoke(ping)
+
+        assert found is not None
+        assert found.name == "first"
+        assert answer == "pong"
+
+    def test_the_adapter_under_test_stays_under_thirty_lines(self) -> None:
+        source = Path(__file__).read_text(encoding="utf-8")
+        start = source.index("class _TinyAdapter:")
+        end = source.index("async def test_an_adapter_of_its_own")
+        lines = [line for line in source[start:end].splitlines() if line.strip()]
+
+        assert len(lines) < 30
+
+    def test_the_composition_registers_no_elevation_sink_without_a_store_that_elevates(
+        self,
+        fixture_project: ProjectFactory,
+    ) -> None:
+        application = build_application(
+            fixture_project(), adapter=AcmeTransportFreeAdapter(), environment="test"
+        )
+
+        assert application.kernel.executor._elevation_sink is None
+
+    def test_the_rollback_deadline_comes_from_the_persistence_section(
+        self,
+        fixture_project: ProjectFactory,
+    ) -> None:
+        project = fixture_project(persistence={"rollback_timeout": 5})
+
+        application = build_application(
+            project, adapter=AcmeTransportFreeAdapter(), environment="test"
+        )
+
+        assert application.kernel.executor._coordinator._rollback_timeout == 5.0
+
+    @pytest.mark.parametrize("timeout", [0, -1])
+    def test_a_rollback_deadline_not_above_zero_is_refused(
+        self, fixture_project: ProjectFactory, timeout: int
+    ) -> None:
+        project = fixture_project(persistence={"rollback_timeout": timeout})
+        adapter = AcmeTransportFreeAdapter()
+
+        with pytest.raises(ConfigError, match="persistence.rollback_timeout must be above zero"):
+            build_application(project, adapter=adapter, environment="test")
+
+    @pytest.fixture
+    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[BackendRuntime]:
+        """Record the runtime the composition hands the SQLAlchemy backend."""
+        recorded: list[BackendRuntime] = []
+        build = SQLAlchemyBackend.build
+
+        def recording(
+            self: SQLAlchemyBackend,
+            ctx: ConfigContext,
+            models: Sequence[type[BaseModel]],
+            runtime: BackendRuntime,
+        ) -> PersistenceWiring:
+            recorded.append(runtime)
+            return build(self, ctx, models, runtime)
+
+        monkeypatch.setattr(SQLAlchemyBackend, "build", recording)
+        return recorded
 
 
-def test_the_adapter_under_test_stays_under_thirty_lines() -> None:
-    source = Path(__file__).read_text(encoding="utf-8")
-    start = source.index("class _TinyAdapter:")
-    end = source.index("async def test_an_adapter_of_its_own")
-    lines = [line for line in source[start:end].splitlines() if line.strip()]
+class TestLoadSource:
+    def test_load_source_requires_app_name_with_or_without_app_section(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "config.yaml"
+        options = {
+            "config_dir": None,
+            "environment": "test",
+            "code_path": None,
+            "resolvers": (),
+            "caller": "create_app",
+        }
 
-    assert len(lines) < 30
+        config.write_text("celery: {}\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="app.name is required"):
+            load_source(str(config), **options)
 
+        config.write_text("app:\n  code_path: .\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="app.name is required"):
+            load_source(str(config), **options)
 
-def test_the_composition_registers_no_elevation_sink_without_a_store_that_elevates(
-    fixture_project: ProjectFactory,
-) -> None:
-    application = build_application(fixture_project(), adapter=_Bare(), environment="test")
+    def test_load_source_needs_only_the_config_paths(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yaml"
+        config.write_text("app:\n  name: acme\n", encoding="utf-8")
 
-    assert application.kernel.executor._elevation_sink is None
+        source = load_source(str(config))
 
+        assert source.app.name == "acme"
 
-def test_the_rollback_deadline_comes_from_the_persistence_section(
-    fixture_project: ProjectFactory,
-) -> None:
-    project = fixture_project(persistence={"rollback_timeout": 5})
+    @pytest.mark.parametrize(
+        ("entry", "name"),
+        [
+            (
+                lambda *p, config_dir: create_app(
+                    *p, adapter=AcmeTransportFreeAdapter(), config_dir=config_dir
+                ),
+                "create_app",
+            ),
+            (
+                lambda *p, config_dir: build_application(
+                    *p, adapter=AcmeTransportFreeAdapter(), config_dir=config_dir
+                ),
+                "build_application",
+            ),
+            (_bootstrap_worker, "bootstrap_worker"),
+        ],
+        ids=["create_app", "build_application", "bootstrap_worker"],
+    )
+    def test_each_entry_point_names_itself_when_paths_conflict(
+        self, tmp_path: Path, entry: Any, name: str
+    ) -> None:
+        config = tmp_path / "config.yaml"
+        config.write_text("app:\n  name: acme\n", encoding="utf-8")
 
-    application = build_application(project, adapter=_Bare(), environment="test")
-
-    assert application.kernel.executor._coordinator._rollback_timeout == 5.0
-
-
-@pytest.mark.parametrize("timeout", [0, -1])
-def test_a_rollback_deadline_not_above_zero_is_refused(
-    fixture_project: ProjectFactory, timeout: int
-) -> None:
-    project = fixture_project(persistence={"rollback_timeout": timeout})
-    adapter = _Bare()
-
-    with pytest.raises(ConfigError, match="persistence.rollback_timeout must be above zero"):
-        build_application(project, adapter=adapter, environment="test")
+        with pytest.raises(ConfigError, match=rf"^{name} takes config files"):
+            entry(str(config), config_dir=str(tmp_path))

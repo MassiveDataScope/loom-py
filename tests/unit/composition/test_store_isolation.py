@@ -30,7 +30,7 @@ from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
 from tests.helpers.composition import composition_source, uow_factory
 
 
-class _Invoice(BaseModel):
+class AcmeIsolatedInvoice(BaseModel):
     __tablename__ = "isolation_invoices"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
@@ -44,7 +44,7 @@ class _Shipment(BaseModel):
     carrier: str = ColumnField(length=20)
 
 
-class _AuditEntry(BaseModel):
+class AcmeIsolatedAuditEntry(BaseModel):
     __tablename__ = "isolation_audit_entries"
     __store__ = "audit"
 
@@ -92,78 +92,86 @@ def _tables(database: Path) -> set[str]:
         return {name for (name,) in rows}
 
 
-async def test_a_second_application_neither_drops_nor_adds_to_the_first_ones_models(
-    tmp_path: Path,
-) -> None:
-    invoices, shipments = tmp_path / "invoices.db", tmp_path / "shipments.db"
-    first = _compose(invoices, _Invoice)
-    second = _compose(shipments, _Shipment)
+class TestStoreIsolation:
+    async def test_a_second_application_neither_drops_nor_adds_to_the_first_ones_models(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        invoices, shipments = tmp_path / "invoices.db", tmp_path / "shipments.db"
+        first = _compose(invoices, AcmeIsolatedInvoice)
+        second = _compose(shipments, _Shipment)
 
-    async with first.running(), second.running():
-        repository = first.kernel.container.resolve_repo(_Invoice)
-        created = await repository.create(_NewInvoice(number="F-1"))
-        found = await repository.get_by_id(created.id)
+        async with first.running(), second.running():
+            repository = first.kernel.container.resolve_repo(AcmeIsolatedInvoice)
+            created = await repository.create(_NewInvoice(number="F-1"))
+            found = await repository.get_by_id(created.id)
 
-    assert found is not None
-    assert found.number == "F-1"
-    assert _tables(invoices) == {"isolation_invoices"}
-    assert _tables(shipments) == {"isolation_shipments"}
+        assert found is not None
+        assert found.number == "F-1"
+        assert _tables(invoices) == {"isolation_invoices"}
+        assert _tables(shipments) == {"isolation_shipments"}
 
+    async def test_one_model_composed_twice_serves_each_application_from_its_own_store(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        left, right = tmp_path / "left.db", tmp_path / "right.db"
+        first = _compose(left, AcmeIsolatedInvoice)
+        second = _compose(right, AcmeIsolatedInvoice)
 
-async def test_one_model_composed_twice_serves_each_application_from_its_own_store(
-    tmp_path: Path,
-) -> None:
-    left, right = tmp_path / "left.db", tmp_path / "right.db"
-    first = _compose(left, _Invoice)
-    second = _compose(right, _Invoice)
+        async with first.running(), second.running():
+            await first.kernel.container.resolve_repo(AcmeIsolatedInvoice).create(
+                _NewInvoice(number="L-1")
+            )
+            page = await second.kernel.container.resolve_repo(AcmeIsolatedInvoice).list_paginated(
+                PageParams()
+            )
 
-    async with first.running(), second.running():
-        await first.kernel.container.resolve_repo(_Invoice).create(_NewInvoice(number="L-1"))
-        page = await second.kernel.container.resolve_repo(_Invoice).list_paginated(PageParams())
+        assert page.items == ()
+        assert _tables(left) == _tables(right) == {"isolation_invoices"}
 
-    assert page.items == ()
-    assert _tables(left) == _tables(right) == {"isolation_invoices"}
+    async def test_a_repository_never_writes_through_another_applications_unit_of_work(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Fail closed: B's repository inside A's unit of work would use A's engine and settings."""
+        invoices, shipments = tmp_path / "a.db", tmp_path / "b.db"
+        first = _compose(invoices, AcmeIsolatedInvoice)
+        second = _compose(shipments, AcmeIsolatedInvoice)
 
+        async with first.running(), second.running():
+            foreign = second.kernel.container.resolve_repo(AcmeIsolatedInvoice)
+            factory = uow_factory(first)
+            assert factory is not None
+            invoice = _NewInvoice(number="B-1")
+            async with factory.create():
+                with pytest.raises(
+                    ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
+                ):
+                    await foreign.create(invoice)
 
-async def test_a_repository_never_writes_through_another_applications_unit_of_work(
-    tmp_path: Path,
-) -> None:
-    """Fail closed: B's repository inside A's unit of work would use A's engine and settings."""
-    invoices, shipments = tmp_path / "a.db", tmp_path / "b.db"
-    first = _compose(invoices, _Invoice)
-    second = _compose(shipments, _Invoice)
+        with sqlite3.connect(invoices) as a, sqlite3.connect(shipments) as b:
+            counts = [
+                db.execute("SELECT COUNT(*) FROM isolation_invoices").fetchone() for db in (a, b)
+            ]
+        assert counts == [(0,), (0,)]
 
-    async with first.running(), second.running():
-        foreign = second.kernel.container.resolve_repo(_Invoice)
-        factory = uow_factory(first)
-        assert factory is not None
-        invoice = _NewInvoice(number="B-1")
-        async with factory.create():
-            with pytest.raises(
-                ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
-            ):
-                await foreign.create(invoice)
+    async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backend(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        application = _compose(tmp_path / "ready.db", AcmeIsolatedInvoice)
 
-    with sqlite3.connect(invoices) as a, sqlite3.connect(shipments) as b:
-        counts = [db.execute("SELECT COUNT(*) FROM isolation_invoices").fetchone() for db in (a, b)]
-    assert counts == [(0,), (0,)]
+        stores = [r.name for r in application.resources if r.kind is ResourceKind.STORE]
+        async with application.running():
+            ready = {key: await probe() for key, probe in application.readiness_probes().items()}
 
+        assert stores == ["default"]
+        assert ready == {"sqlalchemy": True}
 
-async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backend(
-    tmp_path: Path,
-) -> None:
-    application = _compose(tmp_path / "ready.db", _Invoice)
-
-    stores = [r.name for r in application.resources if r.kind is ResourceKind.STORE]
-    async with application.running():
-        ready = {key: await probe() for key, probe in application.readiness_probes().items()}
-
-    assert stores == ["default"]
-    assert ready == {"sqlalchemy": True}
-
-
-def test_a_model_of_a_store_the_configuration_does_not_declare_is_refused(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(ConfigError, match=r"model _AuditEntry needs stores\.audit"):
-        _compose(tmp_path / "refused.db", _Invoice, _AuditEntry)
+    def test_a_model_of_a_store_the_configuration_does_not_declare_is_refused(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        with pytest.raises(ConfigError, match=r"model AcmeIsolatedAuditEntry needs stores\.audit"):
+            _compose(tmp_path / "refused.db", AcmeIsolatedInvoice, AcmeIsolatedAuditEntry)

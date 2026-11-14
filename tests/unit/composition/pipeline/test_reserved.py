@@ -46,48 +46,47 @@ def _sql_bound() -> LoomContainer:
     return container
 
 
-def test_a_module_adding_a_reserved_key_is_refused_with_its_message() -> None:
-    with pytest.raises(ReservedBindingError) as caught:
-        _run(binds_sql_service, LoomContainer())
+class TestReservedBindings:
+    def test_a_module_adding_a_reserved_key_is_refused_with_its_message(self) -> None:
+        with pytest.raises(ReservedBindingError) as caught:
+            _run(binds_sql_service, LoomContainer())
 
-    assert str(caught.value) == str(
-        ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
-    )
+        assert str(caught.value) == str(
+            ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
+        )
 
+    def test_a_module_replacing_a_reserved_key_is_refused(self) -> None:
+        with pytest.raises(ReservedBindingError, match="SqlQueryService"):
+            _run(binds_sql_service, _sql_bound())
 
-def test_a_module_replacing_a_reserved_key_is_refused() -> None:
-    with pytest.raises(ReservedBindingError, match="SqlQueryService"):
-        _run(binds_sql_service, _sql_bound())
+    @pytest.mark.parametrize("module", [_leaves_everything, _defaults_sql_service])
+    def test_a_module_leaving_a_bound_reserved_key_alone_passes(self, module: Module) -> None:
+        container = _sql_bound()
+        before = container.bindings()[SqlQueryService]
 
+        _run(module, container)
 
-@pytest.mark.parametrize("module", [_leaves_everything, _defaults_sql_service])
-def test_a_module_leaving_a_bound_reserved_key_alone_passes(module: Module) -> None:
-    container = _sql_bound()
-    before = container.bindings()[SqlQueryService]
+        assert container.bindings()[SqlQueryService] is before
 
-    _run(module, container)
+    def test_an_override_of_the_sql_service_is_refused_unwrapped(
+        self,
+        overridden: Callable[..., Application],
+    ) -> None:
+        with pytest.raises(ReservedBindingError) as caught:
+            overridden(binds_sql_service)
 
-    assert container.bindings()[SqlQueryService] is before
+        assert type(caught.value) is ReservedBindingError
+        assert str(caught.value) == str(
+            ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
+        )
 
+    def test_a_module_replacing_a_seeded_reserved_key_is_refused(
+        self,
+        overridden: Callable[..., Application],
+    ) -> None:
+        with pytest.raises(ReservedBindingError) as caught:
+            overridden(modules=(_binds_observability,))
 
-def test_an_override_of_the_sql_service_is_refused_unwrapped(
-    overridden: Callable[..., Application],
-) -> None:
-    with pytest.raises(ReservedBindingError) as caught:
-        overridden(binds_sql_service)
-
-    assert type(caught.value) is ReservedBindingError
-    assert str(caught.value) == str(
-        ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
-    )
-
-
-def test_a_module_replacing_a_seeded_reserved_key_is_refused(
-    overridden: Callable[..., Application],
-) -> None:
-    with pytest.raises(ReservedBindingError) as caught:
-        overridden(modules=(_binds_observability,))
-
-    assert str(caught.value) == str(
-        ReservedBindingError.for_key(_binds_observability, ObservabilityRuntime)
-    )
+        assert str(caught.value) == str(
+            ReservedBindingError.for_key(_binds_observability, ObservabilityRuntime)
+        )
