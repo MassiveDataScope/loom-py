@@ -8,8 +8,7 @@ nothing.
 
 An application seals its container once it has started
 (:meth:`LoomContainer.seal`): its singletons are built then, and registering
-into it afterwards still works but warns with
-:class:`~loom.core.di.errors.ContainerSealedWarning`.
+into it afterwards raises :class:`~loom.core.di.errors.ContainerSealed`.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ from loom.core.di.compiler import (
     compile_key,
 )
 from loom.core.di.errors import (
-    ContainerSealedWarning,
+    ContainerSealed,
     DependencyWarning,
     ResolutionError,
     describe_key,
@@ -125,7 +124,8 @@ class LoomContainer:
         on this container calls this, and they all get the one graph: a
         ``register*`` forgets what it read for its key, and :meth:`seal`
         refuses the analysis of any other graph. The first call compiles
-        again anything compiled before; a built singleton is kept.
+        again anything compiled before; a built singleton is kept. Asking a
+        sealed container for the way it already reads returns its graph.
 
         Args:
             classify_key: How a constructor annotation becomes a key.
@@ -134,10 +134,13 @@ class LoomContainer:
 
         Raises:
             ValueError: When constructors are already read another way.
+            ContainerSealed: When the container is sealed and has not read
+                constructors this way yet.
         """
         reading = (classify_key, implicit)
         with COLD_PATH:
             if self._reading is None:
+                self._refuse_if_sealed(DependencyGraph)  # how it reads constructors
                 self._reading = reading
                 self._graph = DependencyGraph(self, classify_key=classify_key, implicit=implicit)
                 self._drop_compiled()
@@ -160,12 +163,16 @@ class LoomContainer:
                 ``interface``, or a concrete class to instantiate directly.
             scope: Lifetime scope. Defaults to :attr:`~Scope.REQUEST`.
 
+        Raises:
+            ContainerSealed: When the container is sealed.
+
         Example::
 
             container.register(UserRepository, SQLAlchemyUserRepository)
             container.register(AppConfig, lambda: load_config(MyCfg), scope=Scope.APPLICATION)
         """
-        self._bind(interface, provider, scope)
+        with COLD_PATH:
+            self._bind(interface, provider, scope)
 
     def register_default(
         self,
@@ -179,7 +186,8 @@ class LoomContainer:
         registered after the caller's modules uses this instead, so the
         caller's own binding — through :meth:`register` or
         :meth:`register_instance` — is kept and *provider* is never called.
-        After :meth:`seal` it warns only when it binds.
+        The check and the binding are one operation under the container's
+        lock, so two threads never both bind a default.
 
         Args:
             interface: A hashable DI key used as the resolution key.
@@ -187,15 +195,20 @@ class LoomContainer:
             scope: Lifetime scope of the default. Defaults to
                 :attr:`~Scope.REQUEST`; ignored when a binding is kept.
 
+        Raises:
+            ContainerSealed: When the container is sealed, even if a
+                binding is already there.
+
         Example::
 
             container.register(JobService, MyJobService, scope=Scope.APPLICATION)
             container.register_default(JobService, InlineJobService)
             assert isinstance(container.resolve(JobService), MyJobService)
         """
-        if interface in self._bindings:
-            return
-        self._bind(interface, provider, scope)
+        with COLD_PATH:
+            self._refuse_if_sealed(interface)
+            if interface not in self._bindings:
+                self._bind(interface, provider, scope)
 
     def register_instance(self, interface: BindingKey, instance: Any) -> None:
         """Register an already-constructed singleton instance.
@@ -212,12 +225,16 @@ class LoomContainer:
             interface: A hashable DI key used as the resolution key.
             instance: The singleton instance to bind.
 
+        Raises:
+            ContainerSealed: When the container is sealed.
+
         Example::
 
             container.register_instance(SessionManager, session_manager)
             assert container.resolve(SessionManager) is session_manager
         """
-        self._bind(interface, lambda: instance, Scope.APPLICATION)
+        with COLD_PATH:
+            self._bind(interface, lambda: instance, Scope.APPLICATION)
 
     def resolve(self, interface: BindingKey) -> Any:
         """Return an instance bound to ``interface``.
@@ -298,11 +315,9 @@ class LoomContainer:
         and fails with the reason whenever resolved. Without *analysis*, no
         binding is reached.
 
-        Every ``register*`` afterwards warns with
-        :class:`~loom.core.di.errors.ContainerSealedWarning` naming the key,
-        then replaces that key's binding; every binding is compiled again at
-        its next resolve. Only that key's built instance is dropped: every
-        other built instance, and whatever already holds one, is kept.
+        Every ``register*`` afterwards raises
+        :class:`~loom.core.di.errors.ContainerSealed` naming the key and
+        changes nothing: to reconfigure, build a new container.
 
         Raises:
             ValueError: When *analysis* analysed another dependency graph
@@ -401,34 +416,27 @@ class LoomContainer:
     ) -> None:
         """Bind *provider* under *interface*, replacing its binding and its built instance.
 
-        Every compiled closure is stale then, so all are dropped and each is
-        compiled again at its next resolve. Built instances live on their
-        bindings and per-execution ones are keyed by binding, so they stay.
-
-        Every ``register*`` but :meth:`register_repo` binds through here, so
-        the sealed-container warning names the caller of that ``register*``.
+        Called under :data:`COLD_PATH`. Every compiled closure is stale then,
+        so all are dropped and each is compiled again at its next resolve.
+        Built instances live on their bindings and per-execution ones are
+        keyed by binding, so they stay.
         """
-        self._warn_if_sealed(interface, stacklevel=4)
-        with COLD_PATH:
-            self._bindings[interface] = _Binding(provider, scope)
-            self._graph.forget(interface)
-            self._drop_compiled()
+        self._refuse_if_sealed(interface)
+        self._bindings[interface] = _Binding(provider, scope)
+        self._graph.forget(interface)
+        self._drop_compiled()
 
     def _drop_compiled(self) -> None:
         """Every compiled closure and plan is stale: each compiles again on its next use."""
         self._compiled.clear()
         self._plans.clear()
 
-    def _warn_if_sealed(self, interface: BindingKey, *, stacklevel: int) -> None:
-        """Warn that *interface* is registered into a sealed container, *stacklevel* frames up."""
+    def _refuse_if_sealed(self, key: object) -> None:
+        """Refuse changing *key* once the container is sealed; it is described only then."""
         if self._sealed:
-            warnings.warn(
-                ContainerSealedWarning(
-                    f"{describe_key(interface)} registered into a sealed container: only "
-                    "that key changes, and this becomes an error in the next major "
-                    "version; bind it in a module passed to the application instead"
-                ),
-                stacklevel=stacklevel,
+            raise ContainerSealed(
+                f"{describe_key(key)} cannot change: the container is sealed. Bind it in a module "
+                "passed to the application, or build a new container to reconfigure"
             )
 
     def bindings(self) -> Mapping[BindingKey, object]:
@@ -455,9 +463,12 @@ class LoomContainer:
         Args:
             model: Domain/struct model type.
             interface: DI key previously bound via :meth:`register`.
+
+        Raises:
+            ContainerSealed: When the container is sealed.
         """
-        self._warn_if_sealed(model, stacklevel=3)
         with COLD_PATH:
+            self._refuse_if_sealed(model)
             self._repo_bindings[model] = interface
             self._graph.forget_edges()
             self._drop_compiled()

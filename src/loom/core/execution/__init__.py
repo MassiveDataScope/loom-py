@@ -4,9 +4,9 @@ Every use case, job or agent run happens inside an execution. This package
 publishes that execution so code can ask who it runs as
 (:func:`execution_identity`) and share what it built once per execution
 (:class:`ExecutionContext`), and it keeps which declarations resolve per
-execution (:class:`ExecutionKinds`). It imports only :mod:`loom.core.identity` and
-:mod:`loom.core.errors`; the container, the engine, the use cases and the AI
-pillar build on it, never the reverse.
+execution (:class:`ExecutionKinds`). It imports only :mod:`loom.core.identity`,
+:mod:`loom.core.errors` and :mod:`loom.core.logger`; the container, the
+engine, the use cases and the AI pillar build on it, never the reverse.
 """
 
 from loom.core.execution.context import (
@@ -18,11 +18,13 @@ from loom.core.execution.context import (
     execution_identity,
     leave,
     per_execution,
+    refuse_ended_execution,
 )
-from loom.core.execution.errors import ExecutionRequired, MarkerNotResolved
+from loom.core.execution.errors import ExecutionClosed, ExecutionRequired, MarkerNotResolved
 from loom.core.execution.resolvers import ExecutionKinds, ExecutionResolver, Kind
 
 __all__ = [
+    "ExecutionClosed",
     "ExecutionContext",
     "ExecutionKinds",
     "ExecutionResolver",
@@ -36,4 +38,5 @@ __all__ = [
     "execution_identity",
     "leave",
     "per_execution",
+    "refuse_ended_execution",
 ]

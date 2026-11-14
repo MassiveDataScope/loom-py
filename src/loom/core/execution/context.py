@@ -6,16 +6,27 @@ while it runs. Handles read its identity through :func:`execution_identity`
 when they are called, never when they are built (spec 011, D2), and a
 ``REQUEST`` binding is built once per execution through its cache (D4). The
 rules live where they apply: inheritance and fresh contexts in :func:`enter`,
-the token pair in :func:`leave`, failing closed in :func:`execution_identity`,
-singleton construction in :class:`NoExecution`.
+the token pair and closing in :func:`leave`, failing closed in
+:func:`execution_identity`, singleton construction in :class:`NoExecution`.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
-    (each child of an ``asyncio.gather`` included) copies the context, so it
-    sees the same identity and shares the same cache, and keeps both if it
-    outlives the execution. ``asyncio.to_thread`` copies the context too;
+    (each child of an ``asyncio.gather`` or a ``TaskGroup`` included) copies
+    the context, so it sees the same identity and shares the same cache while
+    the execution runs. ``asyncio.to_thread`` copies the context too;
     ``loop.run_in_executor`` does not, so a handle called there fails closed
     with :class:`ExecutionRequired`.
+
+Lifetime:
+    The execution owns its context: :func:`leave` closes it. A task or a
+    thread still holding a copy afterwards reads neither its identity nor a
+    per-execution value, nor dispatch a job (:func:`refuse_ended_execution`):
+    each raises :class:`ExecutionClosed` and logs the supported paths for
+    background work: dispatch a job from inside the execution, or call
+    ``executor.run(UseCase, identity=...)`` from the task, which opens its
+    own execution (an ended execution is no execution, so
+    :func:`current_execution` returns ``None`` there). Work awaited inside
+    the execution has ended before it closes.
 """
 
 from __future__ import annotations
@@ -27,8 +38,11 @@ from types import TracebackType
 from typing import Any, cast
 
 from loom.core.errors import Unauthenticated
-from loom.core.execution.errors import ExecutionRequired
+from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Identity
+from loom.core.logger import get_logger
+
+_log = get_logger(__name__)
 
 _NO_EXECUTION_MESSAGE = (
     "The execution identity was read outside an execution. Call this from a use case, "
@@ -36,7 +50,8 @@ _NO_EXECUTION_MESSAGE = (
 )
 _NO_CALLER_MESSAGE = (
     "Authentication required: the execution in progress runs with no caller "
-    "(such as a job callback)."
+    "(such as a job callback, or executor.run given no identity=... from a task "
+    "whose execution ended)."
 )
 _MISUSED_TOKEN_MESSAGE = (
     "Execution token misuse: a token must be left once, in reverse order of entering; "
@@ -44,6 +59,15 @@ _MISUSED_TOKEN_MESSAGE = (
 )
 _LEFT_OPEN_MESSAGE = (
     "An execution was left open or misused inside NoExecution; the execution context was closed."
+)
+_BACKGROUND_WORK = (
+    "Background work runs in an execution of its own: dispatch a job from inside the "
+    "execution (JobService.dispatch), or call executor.run(UseCase, identity=...) from "
+    "the task, which opens its own execution."
+)
+_ENDED_MESSAGE = (
+    "The execution this task or thread copied its context from has ended: its identity "
+    "and per-execution values are gone. " + _BACKGROUND_WORK
 )
 
 
@@ -56,7 +80,8 @@ class ExecutionContext:
     what :meth:`store` and :func:`per_execution` keep, each value under its
     key, and, for each key :func:`per_execution` has built, the reentrant
     lock it builds under, keyed ``(_BUILDING, key)`` with a private tag no
-    caller's key can equal.
+    caller's key can equal. :func:`leave` closes it: the identity, the cache
+    and every read of either are gone (:class:`ExecutionClosed`).
 
     Example::
 
@@ -82,8 +107,14 @@ class ExecutionContext:
         Read-only: it is fixed by :func:`enter`, and every task copied from
         this execution shares this object, so a reassignment would change the
         caller of all of them.
+
+        Raises:
+            ExecutionClosed: Once the execution has ended.
         """
-        return self._identity
+        identity = self._identity
+        if identity is None and self._cache is _ENDED:
+            raise _closed("identity")
+        return identity
 
     def get(self, key: Hashable, default: object = None) -> object:
         """Return what this execution stored under ``key``.
@@ -95,20 +126,26 @@ class ExecutionContext:
 
         Returns:
             The stored value, or ``default``.
+
+        Raises:
+            ExecutionClosed: Once the execution has ended.
         """
         cache = self._cache
         return default if cache is None else cache.get(key, default)
 
     def store(self, key: Hashable, value: object) -> None:
-        """Keep ``value`` under ``key`` until this execution's context is gone.
+        """Keep ``value`` under ``key`` until this execution ends.
 
-        The value is shared with every task copied from this execution,
-        including one that outlives it.
+        The value is shared with every task copied from this execution while
+        it runs.
 
         Args:
             key: A binding-key object (a type or a private key instance),
                 never a bare string another library could also pick.
             value: The value to keep.
+
+        Raises:
+            ExecutionClosed: Once the execution has ended.
         """
         self._allocated()[key] = value
 
@@ -127,6 +164,35 @@ _ALLOCATING = threading.Lock()
 """Taken only to allocate an execution's cache, once per execution that stores anything."""
 
 
+class _EndedCache(dict[Hashable, object]):
+    """The cache of every execution that ended: any read or write raises :class:`ExecutionClosed`.
+
+    :func:`leave` installs the one instance, :data:`_ENDED`, in place of the
+    cache, so a closed execution is refused by the reads it already does:
+    the hit path of :func:`per_execution` checks nothing more than before.
+    """
+
+    __slots__ = ()
+
+    def __contains__(self, key: object) -> bool:
+        raise _closed("per-execution value")
+
+    def get(self, key: Hashable, default: object = None) -> object:  # type: ignore[override]
+        raise _closed("per-execution value")
+
+    def __setitem__(self, key: Hashable, value: object) -> None:
+        raise _closed("per-execution value")
+
+
+_ENDED = _EndedCache()
+
+
+def _closed(read: str) -> ExecutionClosed:
+    """Log the supported paths for background work and return the error to raise."""
+    _log.warning("execution_closed", read=read, guidance=_BACKGROUND_WORK)
+    return ExecutionClosed(_ENDED_MESSAGE)
+
+
 _BUILDING = object()
 """Tags the key of a per-execution build lock in the cache: ``(_BUILDING, key)``."""
 
@@ -138,13 +204,17 @@ _CLOSED = ExecutionContext(None)
 def current_execution() -> ExecutionContext | None:
     """Return the execution in progress, or ``None`` outside any execution.
 
-    A context closed by a token misuse also returns ``None``.
+    A context closed by a token misuse, and an execution that ended (seen
+    from a task that outlived it), also return ``None``: neither is an
+    execution in progress.
 
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
     context = _current.get()
-    return None if context is _CLOSED else context
+    if context is None or context is _CLOSED or context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
+        return None
+    return context
 
 
 def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], object]:
@@ -152,8 +222,10 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
 
     Inside an execution the value is built once, kept in its cache and
     returned to everything that execution runs, its tasks and copied threads
-    included; outside any execution, or in a closed context, each call builds
-    a fresh one. The cache is read directly, with no call on the hit path.
+    included; outside any execution, or in a context closed by a token
+    misuse, each call builds a fresh one. A task or thread calling it after
+    its execution ended gets :class:`ExecutionClosed`. The cache is read
+    directly, with no call on the hit path.
 
     A miss builds under a reentrant lock of this execution and *key*, kept
     in the cache from the key's first build, so threads sharing one
@@ -170,6 +242,9 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
         key: A binding-key object (a type or a private key instance), never
             a bare string another library could also pick.
         make: Builds the value.
+
+    Raises:
+        ExecutionClosed: From the callable, once its execution has ended.
 
     Example::
 
@@ -238,7 +313,9 @@ def leave(token: Token[ExecutionContext | None]) -> None:
 
     Leave every token exactly once, in reverse order of entering, in the
     :mod:`contextvars` context that entered it: a ``finally`` block does all
-    three.
+    three. The execution's identity and cache are dropped: a task or thread
+    that copied its context and reads either afterwards gets
+    :class:`ExecutionClosed`.
 
     Args:
         token: The token returned by the matching :func:`enter`.
@@ -258,6 +335,25 @@ def leave(token: Token[ExecutionContext | None]) -> None:
         raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
     _current.reset(token)
     context._token = None  # pyright: ignore[reportPrivateUsage]
+    context._identity = None  # pyright: ignore[reportPrivateUsage]
+    context._cache = _ENDED  # pyright: ignore[reportPrivateUsage]
+
+
+def refuse_ended_execution(what: str) -> None:
+    """Refuse *what* in a task or thread whose execution has ended, logging the guidance.
+
+    For work that would land on what the ended execution owned, such as a
+    job dispatch queued on its drained post-commit channel.
+
+    Args:
+        what: What is refused, for the log (``"job dispatch"``).
+
+    Raises:
+        ExecutionClosed: When the execution this context copied has ended.
+    """
+    context = _current.get()
+    if context is not None and context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
+        raise _closed(what)
 
 
 def execution_identity() -> Identity:
@@ -273,6 +369,7 @@ def execution_identity() -> Identity:
         ExecutionRequired: Outside any execution, even while
             :func:`~loom.core.identity.set_identity` is active, and in a
             context closed by a token misuse.
+        ExecutionClosed: In a task or thread whose execution has ended.
         Unauthenticated: When the execution runs with no caller. Refusing
             ``ANONYMOUS`` is the consumer's rule.
     """
@@ -281,9 +378,11 @@ def execution_identity() -> Identity:
         raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
     identity = context._identity  # pyright: ignore[reportPrivateUsage]
     if identity is None:
-        # The closed sentinel has no identity: checked here, off the success path.
+        # Closed and ended contexts have no identity: checked here, off the success path.
         if context is _CLOSED:
             raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
+        if context._cache is _ENDED:  # pyright: ignore[reportPrivateUsage]
+            raise _closed("identity")
         raise Unauthenticated(_NO_CALLER_MESSAGE)
     return identity
 

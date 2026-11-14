@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.di import ContainerSealed
 from loom.core.di.container import LoomContainer
 from loom.core.di.errors import DependencyWarning
 from loom.core.di.graph import DependencyGraphError
@@ -99,12 +100,13 @@ def test_an_unreachable_refusable_singleton_is_skipped_and_fails_at_first_resolv
     assert reason in str(failed.value)
 
 
-def test_a_re_registered_skipped_singleton_is_built_again() -> None:
+def test_a_skipped_singleton_cannot_be_registered_again_after_seal() -> None:
     container = _bound(AcmeCaptive)
     with pytest.warns(DependencyWarning):
         container.seal(acme.analysed(container, AcmeRoot))
 
-    with pytest.warns(DeprecationWarning):
+    with pytest.raises(ContainerSealed, match="AcmeCaptive"):
         container.register(AcmeCaptive, AcmeRoot, scope=Scope.APPLICATION)
 
-    assert isinstance(container.resolve(AcmeCaptive), AcmeRoot)
+    with pytest.raises(DependencyGraphError):
+        container.resolve(AcmeCaptive)

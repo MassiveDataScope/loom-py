@@ -21,6 +21,7 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core._async import held_task
 from loom.core.errors import PostCommitError
+from loom.core.execution import refuse_ended_execution
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -275,11 +276,11 @@ async def _run_one(action: PostCommitAction) -> None:
         await result
 
 
-def bind_channel(channel: PostCommitChannel) -> Token[PostCommitChannel | None]:
+def bind_channel(channel: PostCommitChannel | None) -> Token[PostCommitChannel | None]:
     """Make ``channel`` the active channel for the current context.
 
     Args:
-        channel: Channel that receives subsequent enqueues.
+        channel: Channel that receives subsequent enqueues; ``None`` binds none.
 
     Returns:
         Token to pass to :func:`reset_channel`.
@@ -316,9 +317,12 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
             the running execution.
 
     Raises:
+        ExecutionClosed: For a job dispatch from a task whose execution
+            ended: it would land on that execution's drained channel.
         UndeclaredStoreWrite: For a job dispatch while a read-only execution runs.
     """
     if store is None:
+        refuse_ended_execution("job dispatch")
         refuse_write_under_read_only("a job dispatch")
     scope = current_scope()
     owners = None if scope is None else scope.owners_of(store)

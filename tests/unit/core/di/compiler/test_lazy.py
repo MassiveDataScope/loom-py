@@ -35,10 +35,9 @@ class AcmeBranch:
 
 def test_a_cycle_compiled_lazily_after_seal_is_refused_raw_with_its_path() -> None:
     container = LoomContainer()
-    container.seal()
     for key in (AcmeFirst, AcmeSecond, AcmeThird):
-        with pytest.warns(DeprecationWarning):
-            container.register(key, key)
+        container.register(key, key)
+    container.seal()
 
     with pytest.raises(DependencyGraphError) as caught:
         container.resolve(AcmeSecond)

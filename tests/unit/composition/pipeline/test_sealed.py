@@ -1,19 +1,17 @@
-"""A started application's container is sealed: a later ``register*`` warns and changes one key.
+"""A started application's container is sealed: a later ``register*`` raises and changes nothing.
 
-The registration still replaces that key's binding and drops only that key's
-built instance, so no singleton splits: whatever was built at start-up keeps
-being served. Reading a sealed container never warns.
+Every ``register*`` on a sealed container, its message and the fact that it
+leaves the bindings untouched are pinned in ``tests/unit/core/di/seal/test_boundary.py``.
 """
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 
 import pytest
 
 from loom.composition import Application
-from loom.core.di import ContainerSealedWarning
+from loom.core.di import ContainerSealed
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
@@ -38,62 +36,36 @@ _REGISTERS: dict[str, Callable[[LoomContainer], None]] = {
 }
 
 
-@pytest.mark.parametrize("name", list(_REGISTERS))
-def test_each_register_after_seal_warns_naming_the_key_at_its_caller(name: str) -> None:
-    container = LoomContainer()
-    container.seal()
-
-    with pytest.warns(ContainerSealedWarning, match="AcmeUnregistered registered into") as caught:
-        _REGISTERS[name](container)
-
-    assert [warning.filename for warning in caught] == [__file__]
-
-
-@pytest.mark.parametrize("name", list(_REGISTERS))
-def test_a_register_before_seal_does_not_warn(name: str) -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", ContainerSealedWarning)
+class TestContainerBeforeSeal:
+    @pytest.mark.parametrize("name", list(_REGISTERS), ids=list(_REGISTERS))
+    def test_a_register_is_accepted(self, name: str) -> None:
         _REGISTERS[name](LoomContainer())
 
 
-def test_reading_a_sealed_container_does_not_warn() -> None:
-    container = LoomContainer()
-    container.register_instance(AcmeUnregistered, AcmeUnregistered())
-    container.register_repo(AcmeRecord, AcmeUnregistered)
-    container.seal()
+class TestSealedContainer:
+    def test_reading_it_is_accepted(self) -> None:
+        container = LoomContainer()
+        container.register_instance(AcmeUnregistered, AcmeUnregistered())
+        container.register_repo(AcmeRecord, AcmeUnregistered)
+        container.seal()
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", ContainerSealedWarning)
         container.resolve(AcmeUnregistered)
         container.resolve_repo(AcmeRecord)
         container.validate()
 
 
-def test_a_register_after_seal_drops_only_its_own_instance() -> None:
-    container = LoomContainer()
-    container.register(AcmeUnregistered, AcmeUnregistered, scope=Scope.APPLICATION)
-    container.register(JobService, AcmeOtherJobs, scope=Scope.APPLICATION)
-    service, jobs = container.resolve(AcmeUnregistered), container.resolve(JobService)
-    container.seal()
+class TestStartedApplicationContainer:
+    def test_a_register_is_refused_and_no_singleton_changes(
+        self, overridden: Callable[..., Application]
+    ) -> None:
+        application = overridden()
+        container = application.kernel.container
+        before = application_singletons(container)
 
-    with pytest.warns(ContainerSealedWarning):
-        container.register(AcmeUnregistered, AcmeUnregistered, scope=Scope.APPLICATION)
+        with pytest.raises(ContainerSealed, match="JobService"):
+            container.register(JobService, AcmeOtherJobs, scope=Scope.APPLICATION)
 
-    assert container.resolve(AcmeUnregistered) is not service
-    assert container.resolve(JobService) is jobs
-
-
-def test_no_singleton_splits_when_the_application_container_is_registered_into(
-    overridden: Callable[..., Application],
-) -> None:
-    application = overridden()
-    container = application.kernel.container
-    before = application_singletons(container)
-
-    with pytest.warns(ContainerSealedWarning, match="JobService"):
-        container.register(JobService, AcmeOtherJobs, scope=Scope.APPLICATION)
-
-    after = application_singletons(container)
-    assert container.resolve(RuntimeExecutor) is application.kernel.executor
-    assert isinstance(after.pop(JobService), AcmeOtherJobs)
-    assert all(after[key] is instance for key, instance in before.items() if key is not JobService)
+        after = application_singletons(container)
+        assert container.resolve(RuntimeExecutor) is application.kernel.executor
+        assert not isinstance(after[JobService], AcmeOtherJobs)
+        assert all(after[key] is instance for key, instance in before.items())

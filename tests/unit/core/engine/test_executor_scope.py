@@ -9,7 +9,7 @@ point and no leak across invocations.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -19,7 +19,15 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
-from loom.core.errors import ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
+from loom.core.errors import (
+    ScopeOwnershipError,
+    StoresNotCommitted,
+    Unauthenticated,
+    UndeclaredStoreWrite,
+)
+from loom.core.execution import ExecutionClosed, execution_identity, per_execution
+from loom.core.identity import ANONYMOUS, Identity, current_identity
+from loom.core.job.context import add_pending_dispatch
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import RepoFor
@@ -33,8 +41,9 @@ from loom.core.uow.coordinator import (
     Uncertain,
 )
 from loom.core.uow.scope import Frame, InvocationScope, current_scope
-from loom.core.use_case import Joined
+from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import JoinedAutocommitStore
+from loom.core.use_case.factory import UseCaseFactory
 
 from ..uow._coordinator_fakes import (
     Boom,
@@ -100,6 +109,49 @@ async def _write_joined(store: PhasedStore, row: str) -> None:
     async with scope.frame(Frame(DEFAULT_STORE, frozenset({store.key}))):
         scope.participant_for(store.key, store.owner, write=True)
         store.write(row)
+
+
+_ANA = Identity(subject="acme-ana", mechanism="test")
+_BOB = Identity(subject="acme-bob", mechanism="test")
+
+
+class _AcmeSession:
+    """A per-execution value."""
+
+
+_SESSION = per_execution(_AcmeSession, _AcmeSession)
+
+
+class _AsCaller(UseCase[Any, Any]):
+    """Reports who it runs as, its per-execution session and its scope."""
+
+    def __init__(self) -> None:
+        self._session = _SESSION()
+
+    async def execute(self) -> Any:
+        return execution_identity(), self._session, current_scope()
+
+
+class _Building:
+    """A factory building a use case with no dependencies."""
+
+    def build(self, cls: type[Any]) -> Any:
+        return cls()
+
+
+_BUILDING = cast(UseCaseFactory, _Building())
+
+
+async def _identity() -> Any:
+    return execution_identity()
+
+
+async def _ambient() -> Any:
+    return current_identity()
+
+
+async def _channel() -> Any:
+    return active_channel()
 
 
 def _done(value: Any = "ok") -> Body:
@@ -376,7 +428,7 @@ class TestOwnership:
         with pytest.raises(ScopeOwnershipError, match="thread"):
             await executor.execute(use_case)
 
-    async def test_a_task_that_outlives_its_use_case_is_refused(self) -> None:
+    async def test_a_task_that_outlives_its_use_case_cannot_join_its_closed_scope(self) -> None:
         stores = _Stores(Ledger())
         executor = _executor(stores)
         go = asyncio.Event()
@@ -384,7 +436,7 @@ class TestOwnership:
 
         async def late() -> Any:
             await go.wait()
-            return await executor.execute(Run(_done()))
+            return _scope().participant_for(DEFAULT_STORE, stores.last.owner, write=False)
 
         async def outer() -> None:
             survivors.append(asyncio.create_task(late()))
@@ -395,24 +447,151 @@ class TestOwnership:
         with pytest.raises(ScopeOwnershipError, match="already closed"):
             await survivors[0]
 
-    async def test_a_task_that_outlives_its_use_case_opens_no_unit_of_work(self) -> None:
+
+Outliving = Callable[..., Awaitable["asyncio.Task[Any]"]]
+
+
+class TestATaskOutlivingItsExecution:
+    """An ended execution is no execution: the executor opens a new one, as at top level.
+
+    Nothing of the departed caller survives in it: identity, scope or channel.
+    """
+
+    @pytest.fixture
+    def outliving(self) -> Outliving:
+        """Run ``late`` in a task created by an execution as bob, once that execution ended.
+
+        ``inside`` runs in that execution first; what it returns is appended to ``seen``.
+        """
+
+        async def start(
+            executor: RuntimeExecutor,
+            late: Callable[[], Awaitable[Any]],
+            inside: Callable[[], object] = lambda: None,
+            seen: list[object] | None = None,
+        ) -> asyncio.Task[Any]:
+            go = asyncio.Event()
+            survivors: list[asyncio.Task[Any]] = []
+
+            async def after_the_end() -> Any:
+                await go.wait()
+                return await late()
+
+            async def outer() -> None:
+                if seen is not None:
+                    seen.append(inside())
+                survivors.append(asyncio.create_task(after_the_end()))
+
+            await executor.execute(Run(outer), identity=_BOB)
+            go.set()
+            return survivors[0]
+
+        return start
+
+    async def test_runs_a_use_case_as_the_given_identity_in_its_own_execution(
+        self, outliving: Outliving
+    ) -> None:
         stores = _Stores(Ledger())
         executor = _executor(stores)
-        go = asyncio.Event()
-        survivors: list[asyncio.Task[Any]] = []
+        seen: list[object] = []
 
-        async def late() -> Any:
-            await go.wait()
-            return await executor.execute(Run(_done()))
+        task = await outliving(
+            executor,
+            lambda: executor.run(_AsCaller, factory=_BUILDING, identity=_ANA),
+            inside=lambda: (_SESSION(), current_scope()),
+            seen=seen,
+        )
+        identity, session, scope = await task
 
-        async def outer() -> None:
-            survivors.append(asyncio.create_task(late()))
+        [outer] = seen
+        outer_session, outer_scope = cast(tuple[object, object], outer)
+        assert identity is _ANA
+        assert session is not outer_session
+        assert scope is not None and scope is not outer_scope
+        assert len(stores.created) == 2
 
-        await executor.execute(Run(outer))
-        go.set()
-        await asyncio.gather(*survivors, return_exceptions=True)
+    async def test_given_no_identity_runs_with_no_caller(self, outliving: Outliving) -> None:
+        executor = _executor(_Stores(Ledger()))
 
-        assert len(stores.created) == 1
+        task = await outliving(executor, lambda: executor.execute(Run(_identity)))
+
+        with pytest.raises(Unauthenticated, match="identity="):
+            await task
+
+    async def test_given_no_identity_the_ambient_identity_is_not_the_departed_caller(
+        self, outliving: Outliving
+    ) -> None:
+        executor = _executor(_Stores(Ledger()))
+
+        task = await outliving(executor, lambda: executor.execute(Run(_ambient)))
+
+        assert await task is ANONYMOUS
+
+    async def test_given_an_identity_the_ambient_identity_is_that_one(
+        self, outliving: Outliving
+    ) -> None:
+        executor = _executor(_Stores(Ledger()))
+
+        task = await outliving(executor, lambda: executor.execute(Run(_ambient), identity=_ANA))
+
+        assert await task is _ANA
+
+    async def test_does_not_reuse_the_departed_post_commit_channel(
+        self, outliving: Outliving
+    ) -> None:
+        executor = _executor(_Stores(Ledger()))
+        seen: list[object] = []
+
+        task = await outliving(
+            executor,
+            lambda: executor.execute(Run(_channel), identity=_ANA, read_only=True),
+            inside=active_channel,
+            seen=seen,
+        )
+        channel = await task
+
+        assert seen[0] is not None
+        assert channel is not seen[0]
+
+    async def test_a_job_dispatched_inside_it_runs(self, outliving: Outliving) -> None:
+        executor = _executor(_Stores(Ledger()))
+        sent: list[str] = []
+
+        async def dispatch() -> None:
+            add_pending_dispatch(lambda: sent.append("acme-job"))
+
+        task = await outliving(executor, lambda: executor.execute(Run(dispatch), identity=_ANA))
+        await task
+
+        assert sent == ["acme-job"]
+
+    async def test_reading_the_identity_directly_still_raises_execution_closed(
+        self, outliving: Outliving
+    ) -> None:
+        executor = _executor(_Stores(Ledger()))
+
+        async def read() -> Any:
+            return execution_identity()
+
+        task = await outliving(executor, read)
+
+        with pytest.raises(ExecutionClosed, match="executor.run"):
+            await task
+
+    async def test_dispatching_a_job_directly_raises_execution_closed(
+        self, outliving: Outliving
+    ) -> None:
+        executor = _executor(_Stores(Ledger()))
+        sent: list[str] = []
+
+        async def dispatch() -> None:
+            add_pending_dispatch(lambda: sent.append("acme-job"))
+
+        task = await outliving(executor, dispatch)
+
+        with pytest.raises(ExecutionClosed, match="dispatch a job from inside the execution"):
+            await task
+        assert sent == []
 
 
 class TestOneStoreRaisesAsToday:

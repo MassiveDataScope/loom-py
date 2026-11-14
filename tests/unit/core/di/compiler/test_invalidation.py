@@ -1,156 +1,112 @@
-"""F8: re-registering a key recompiles what depends on it; after seal, built singletons stay."""
+"""F8: re-registering a key recompiles what depends on it; a sealed container refuses it."""
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 
-from loom.core.di import ContainerSealedWarning
+from loom.core.di import ContainerSealed
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.repository.abc import RepoFor
 from loom.core.repository.dependency import classify_key
+from tests.unit.core.di.compiler.doubles import (
+    AcmeAudit,
+    AcmeAuditReport,
+    AcmeClock,
+    AcmeFrozenClock,
+    AcmeQuotes,
+    AcmeRates,
+    AcmeTenant,
+)
 
 
-class AcmeClock:
-    pass
+class TestRegisteringBeforeSeal:
+    def test_a_re_registered_key_reaches_its_dependents_transitively(
+        self, bound: LoomContainer
+    ) -> None:
+        bound.resolve(AcmeQuotes)
+
+        bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
+
+        assert type(bound.resolve(AcmeQuotes).rates.clock) is AcmeFrozenClock
+        assert type(bound.resolve(AcmeRates).clock) is AcmeFrozenClock
+
+    def test_a_re_registered_key_drops_its_own_instance(self, bound: LoomContainer) -> None:
+        clock = bound.resolve(AcmeClock)
+
+        bound.register(AcmeClock, AcmeClock, scope=Scope.APPLICATION)
+
+        assert bound.resolve(AcmeClock) is not clock
+
+    def test_nothing_unrelated_is_dropped(self, bound: LoomContainer) -> None:
+        audit, tenant = bound.resolve(AcmeAudit), bound.resolve(AcmeTenant)
+
+        bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
+        bound.register(AcmeRates, AcmeRates)
+
+        assert bound.resolve(AcmeAudit) is audit
+        assert bound.resolve(AcmeTenant) is tenant
+
+    def test_a_remapped_repository_reaches_its_dependents(self) -> None:
+        container = LoomContainer(classify_key=classify_key)
+        container.register(AcmeClock, AcmeClock)
+        container.register(AcmeFrozenClock, AcmeFrozenClock)
+        container.register_repo(AcmeAudit, AcmeClock)
+        container.register(AcmeAuditReport, AcmeAuditReport)
+        assert type(container.resolve(AcmeAuditReport).audits) is AcmeClock
+
+        container.register_repo(AcmeAudit, AcmeFrozenClock)
+
+        assert type(container.resolve(AcmeAuditReport).audits) is AcmeFrozenClock
 
 
-class AcmeFrozenClock(AcmeClock):
-    pass
+class TestRegisteringAfterSeal:
+    def test_is_refused_and_dependents_and_built_singletons_stay(
+        self, bound: LoomContainer
+    ) -> None:
+        bound.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
+        bound.seal()
+        rates, audit, tenant = (
+            bound.resolve(AcmeRates),
+            bound.resolve(AcmeAudit),
+            bound.resolve(AcmeTenant),
+        )
+        bound.resolve(AcmeQuotes)
 
+        with pytest.raises(ContainerSealed):
+            bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
 
-class AcmeRates:
-    def __init__(self, clock: AcmeClock) -> None:
-        self.clock = clock
+        assert type(bound.resolve(AcmeClock)) is AcmeClock
+        assert bound.resolve(AcmeRates) is rates
+        assert type(rates.clock) is AcmeClock
+        assert bound.resolve(AcmeAudit) is audit
+        assert bound.resolve(AcmeTenant) is tenant
 
+    def test_a_per_execution_dependent_keeps_the_sealed_key(self, bound: LoomContainer) -> None:
+        bound.seal()
+        bound.resolve(AcmeRates)
 
-class AcmeQuotes:
-    def __init__(self, rates: AcmeRates) -> None:
-        self.rates = rates
+        with pytest.raises(ContainerSealed):
+            bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
 
+        assert type(bound.resolve(AcmeRates).clock) is AcmeClock
+        assert type(bound.resolve(AcmeQuotes).rates.clock) is AcmeClock
 
-class AcmeAudit:
-    """Unrelated to the clock."""
+    def test_a_registered_instance_is_refused(self, bound: LoomContainer) -> None:
+        bound.seal()
 
+        with pytest.raises(ContainerSealed):
+            bound.register_instance(AcmeClock, AcmeFrozenClock())
 
-class AcmeTenant:
-    """Registered as an instance."""
+        assert type(bound.resolve(AcmeClock)) is AcmeClock
 
+    def test_a_built_dependent_is_still_served_as_a_constant(self, bound: LoomContainer) -> None:
+        bound.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
+        bound.seal()
+        rates = bound.resolve(AcmeRates)
 
-def _bound() -> LoomContainer:
-    container = LoomContainer()
-    container.register(AcmeClock, AcmeClock, scope=Scope.APPLICATION)
-    container.register(AcmeRates, AcmeRates)
-    container.register(AcmeQuotes, AcmeQuotes)
-    container.register(AcmeAudit, AcmeAudit, scope=Scope.APPLICATION)
-    container.register_instance(AcmeTenant, AcmeTenant())
-    return container
+        with pytest.raises(ContainerSealed):
+            bound.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
+        assert bound.resolve(AcmeRates) is rates
 
-
-def test_before_seal_a_re_registered_key_reaches_its_dependents_transitively() -> None:
-    container = _bound()
-    container.resolve(AcmeQuotes)
-
-    container.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-
-    assert type(container.resolve(AcmeQuotes).rates.clock) is AcmeFrozenClock
-    assert type(container.resolve(AcmeRates).clock) is AcmeFrozenClock
-
-
-def test_before_seal_a_re_registered_key_drops_its_own_instance() -> None:
-    container = _bound()
-    clock = container.resolve(AcmeClock)
-
-    container.register(AcmeClock, AcmeClock, scope=Scope.APPLICATION)
-
-    assert container.resolve(AcmeClock) is not clock
-
-
-def test_before_seal_nothing_unrelated_is_dropped() -> None:
-    container = _bound()
-    audit, tenant = container.resolve(AcmeAudit), container.resolve(AcmeTenant)
-
-    container.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-    container.register(AcmeRates, AcmeRates)
-
-    assert container.resolve(AcmeAudit) is audit
-    assert container.resolve(AcmeTenant) is tenant
-
-
-class AcmeAuditReport:
-    def __init__(self, audits: RepoFor[AcmeAudit]) -> None:
-        self.audits = audits
-
-
-def test_before_seal_a_remapped_repository_reaches_its_dependents() -> None:
-    container = LoomContainer(classify_key=classify_key)
-    container.register(AcmeClock, AcmeClock)
-    container.register(AcmeFrozenClock, AcmeFrozenClock)
-    container.register_repo(AcmeAudit, AcmeClock)
-    container.register(AcmeAuditReport, AcmeAuditReport)
-    assert type(container.resolve(AcmeAuditReport).audits) is AcmeClock
-
-    container.register_repo(AcmeAudit, AcmeFrozenClock)
-
-    assert type(container.resolve(AcmeAuditReport).audits) is AcmeFrozenClock
-
-
-def test_after_seal_dependents_see_the_new_key_and_built_singletons_stay() -> None:
-    container = _bound()
-    container.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
-    container.seal()
-    rates, audit, tenant = (
-        container.resolve(AcmeRates),
-        container.resolve(AcmeAudit),
-        container.resolve(AcmeTenant),
-    )
-    container.resolve(AcmeQuotes)
-
-    with pytest.warns(ContainerSealedWarning):
-        container.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-
-    assert type(container.resolve(AcmeClock)) is AcmeFrozenClock
-    assert container.resolve(AcmeRates) is rates
-    assert type(rates.clock) is AcmeClock
-    assert container.resolve(AcmeAudit) is audit
-    assert container.resolve(AcmeTenant) is tenant
-
-
-def test_after_seal_a_per_execution_dependent_sees_the_new_key() -> None:
-    container = _bound()
-    container.seal()
-    container.resolve(AcmeRates)
-
-    with pytest.warns(ContainerSealedWarning):
-        container.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-
-    assert type(container.resolve(AcmeRates).clock) is AcmeFrozenClock
-    assert type(container.resolve(AcmeQuotes).rates.clock) is AcmeFrozenClock
-
-
-def test_after_seal_a_registered_instance_is_served_at_once() -> None:
-    container = _bound()
-    container.seal()
-    frozen = AcmeFrozenClock()
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ContainerSealedWarning)
-        container.register_instance(AcmeClock, frozen)
-
-    assert container.resolve(AcmeClock) is frozen
-
-
-def test_after_seal_a_built_dependent_is_served_as_a_constant_again() -> None:
-    container = _bound()
-    container.register(AcmeRates, AcmeRates, scope=Scope.APPLICATION)
-    container.seal()
-    rates = container.resolve(AcmeRates)
-
-    with pytest.warns(ContainerSealedWarning):
-        container.register(AcmeClock, AcmeFrozenClock, scope=Scope.APPLICATION)
-    assert container.resolve(AcmeRates) is rates
-
-    served = container._compiled[AcmeRates]  # pyright: ignore[reportPrivateUsage]
-    assert type(served).__name__ == "method-wrapper"  # repeat(rates).__next__, no Python frame
+        served = bound._compiled[AcmeRates]  # pyright: ignore[reportPrivateUsage]
+        assert type(served).__name__ == "method-wrapper"  # repeat(rates).__next__, no Python frame

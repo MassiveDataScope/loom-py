@@ -23,7 +23,7 @@ from loom.composition.errors import ReservedBindingError
 from loom.composition.pipeline import persistence, registration
 from loom.composition.source import CompositionSource
 from loom.core.bootstrap import BootstrapError
-from loom.core.di import ContainerSealedWarning
+from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
 from loom.core.logger import get_logger
 from tests.helpers.composition import Serving
@@ -174,5 +174,5 @@ def test_seal_validates_the_container_it_seals(source: CompositionSource) -> Non
         pipeline.seal(registered)
 
     assert isinstance(caught.value.__cause__, ResolutionError)
-    with pytest.warns(ContainerSealedWarning):
+    with pytest.raises(ContainerSealed):
         registered.kernel.container.register(AcmeRecord, AcmeRecord)

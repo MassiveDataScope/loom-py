@@ -3,8 +3,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import (
+    AbstractAsyncContextManager,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -41,7 +46,7 @@ from loom.core.execution import (
     execution_identity,
     leave,
 )
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.tracing import get_trace_id
 from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
@@ -354,12 +359,13 @@ class RuntimeExecutor:
                 "RuntimeExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )
+        plan = self._plan_for(use_case_type)
         return await self._execute(
-            self._plan_for(use_case_type),
+            plan,
             build,
             use_case_type,
             _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
-            read_only,
+            read_only or plan.read_only,
         )
 
     @overload
@@ -478,12 +484,13 @@ class RuntimeExecutor:
             loom.core.errors.UndeclaredStoreWrite: If this execution
                 writes and a read-only execution encloses it.
         """
+        plan = self._plan_for(type(compilable))
         return await self._execute(
-            self._plan_for(type(compilable)),
+            plan,
             _given,
             compilable,
             _ExecutionInputs(params, payload, dependencies, load_overrides, identity),
-            read_only,
+            read_only or plan.read_only,
         )
 
     async def _execute(
@@ -496,19 +503,26 @@ class RuntimeExecutor:
     ) -> Any:
         """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
 
-        The effective identity is computed here, once (NS2): the one given,
-        else the enclosing execution's (:func:`_inherited`), else ``None``.
-        That value reaches the inputs, the ambient identity and the execution
-        context, which are installed before the instance is built and reset
-        after the drain.
+        *read_only* is already the caller's flag or the plan's. The effective
+        identity is computed here, once (NS2): the one given, else the
+        enclosing execution's (:func:`_inherited`), else ``None``. That value
+        reaches the inputs, the ambient identity and the execution context,
+        which are installed before the instance is built and reset after the
+        drain.
+
+        An execution that ended is no execution: a task that outlived it,
+        seen here by its closed invocation scope, runs as at top level
+        (:func:`_as_top_level`).
         """
+        scope = current_scope()
+        if scope is not None and scope.closed:
+            with _as_top_level(inputs.identity):
+                return await self._execute(plan, build, target, inputs, read_only)
         if inputs.identity is None:
             inputs = _inherited(inputs, plan)
         identity = inputs.identity
-        scope = current_scope()
         identity_token = None if identity is None else set_identity(identity)
         execution_token = enter(identity)
-        read_only = read_only or plan.read_only
         try:
             if not read_only:
                 refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
@@ -1216,6 +1230,25 @@ class RuntimeExecutor:
     def _log_step(self, label: str) -> None:
         if self._debug:
             self._logger.info(f"[STEP] {label}")
+
+
+@contextmanager
+def _as_top_level(identity: Identity | None) -> Iterator[None]:
+    """Hide what a departed execution left in this task, for one execution started from it.
+
+    No invocation scope, no post-commit channel, and the ambient identity
+    *identity*, else :data:`~loom.core.identity.ANONYMOUS`: nothing of the
+    departed caller survives. Its execution context needs no hiding: an
+    ended one is no execution (:func:`~loom.core.execution.current_execution`).
+    """
+    identity_token = set_identity(ANONYMOUS if identity is None else identity)
+    channel_token = bind_channel(None)
+    try:
+        with unscoped():
+            yield
+    finally:
+        reset_channel(channel_token)
+        reset_identity(identity_token)
 
 
 def _inherited(inputs: _ExecutionInputs, plan: ExecutionPlan) -> _ExecutionInputs:

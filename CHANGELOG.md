@@ -386,6 +386,50 @@
   takes `(reason, *, backend=None, model=None)` and its message names the
   model and the reason, never the backend.
 
+### di
+
+- **di:** a sealed container refuses every change. A composed application's
+  container is sealed once it has started; `register`, `register_default`,
+  `register_instance` and `register_repo` on it (through
+  `Application.kernel.container`, `WorkerBootstrapResult.container` or any
+  container after `seal()`), and `read_with` asking it to read constructors a
+  new way, raise `loom.core.di.ContainerSealed` (a `ResolutionError`) naming
+  the key and change nothing. `register_default` raises even when the key is
+  already bound, and its check and binding are now one locked step.
+  `ContainerSealedWarning` is removed. **Migration:** bind every key in a
+  module passed to the application (`create_app(..., modules=[...])`,
+  `compose_application(..., modules=...)`); to reconfigure, build a new
+  container (in tests, a new application).
+
+### execution
+
+- **execution:** an execution owns its context and closes it when it ends. A
+  task or thread created during an execution that is still running after it
+  ended (fire-and-forget `asyncio.create_task`, a thread left behind by a
+  cancelled caller) can no longer read the execution's identity
+  (`execution_identity()`, `ExecutionContext.identity`, a `Caller()` handle,
+  an executor call given no identity) or a per-execution value (a `REQUEST`
+  binding, `ExecutionContext.get` / `store`): each read raises
+  `loom.core.execution.ExecutionClosed` (an `ExecutionRequired`) and logs an
+  `execution_closed` warning with the guidance, never the caller. The ended
+  execution's cached values are released. Work awaited inside the execution
+  (`gather`, `TaskGroup`, an awaited task, `asyncio.to_thread`) is unaffected.
+  Queuing a job dispatch (`JobService.dispatch`) from such a task raises
+  `ExecutionClosed` too, instead of landing silently on the ended execution's
+  drained post-commit channel. An ended execution is no execution:
+  `current_execution()` returns `None` there, and the executor called from
+  such a task runs as at top level, with nothing of the departed caller: its
+  own invocation scope and post-commit channel, no inherited identity, and the
+  ambient identity set to the one given or `ANONYMOUS` for that run (a
+  `Caller()` given none raises `Unauthenticated`, whose message names
+  `identity=...`). Touching the ended execution's closed invocation scope by
+  hand is still refused with `ScopeOwnershipError`. The ambient
+  `current_identity()` of the outliving task itself, outside such a run, is
+  still the departed caller's (handles never read it). **Migration:** dispatch
+  a job from inside the execution (`JobService.dispatch`), or call
+  `executor.run(UseCase, identity=...)` from the task, which opens its own
+  execution, unit of work, post-commit channel and `REQUEST` instances.
+
 ## ⚠ Behaviour changes
 
 ### composition
@@ -439,19 +483,10 @@
   servable is refused the same way (it failed at the binding's first build,
   Python leaving the argument out); `HttpTestHarness` only warns with
   `loom.core.di.errors.DependencyUnresolvable`.
-- **composition:** a composed application's container is sealed once it has
-  started. Registering into it afterwards (`register`, `register_default`,
-  `register_instance`, `register_repo`, through `Application.kernel.container`
-  or `WorkerBootstrapResult.container`) still replaces that one key, dropping
-  only that key's built instance, but warns with
-  `loom.core.di.ContainerSealedWarning`, a `DeprecationWarning`: it becomes an
-  error in the next major. Bind the key in a module passed to the application.
-  Python's default filters hide a `DeprecationWarning` outside `__main__`;
-  test runners such as pytest show it, and `-W error::DeprecationWarning`
-  turns it into an error.
 - **di (behaviour change, D4):** `Scope.REQUEST` (and `Scope.TRANSACTION`)
   means one instance per execution: everything one execution resolves shares
-  it, and so does a task the execution creates, even one that outlives it; a
+  it, and so do the tasks it creates while it runs (see the breaking note on
+  closed executions); a
   nested execution gets its own. Outside any execution each `resolve` still
   builds a fresh one. The executor builds the use case inside its execution,
   so the use case, its adapters and the post-commit drain share them.

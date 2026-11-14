@@ -12,7 +12,6 @@ import pytest
 
 from loom.composition import AppConfig
 from loom.core.bootstrap import bootstrap_app, create_kernel
-from loom.core.di import ContainerSealedWarning
 from loom.core.engine.executor import RuntimeExecutor
 from tests.unit.composition.pipeline.components import AcmePing, AcmeRecord, AcmeUnregistered
 
@@ -45,8 +44,6 @@ def test_neither_seals_its_container() -> None:
         bootstrapped = bootstrap_app(config=AppConfig(name="acme"), use_cases=[AcmePing])
     kernel = create_kernel(config=AppConfig(name="acme"), use_cases=[AcmePing])
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", ContainerSealedWarning)
-        for container in (bootstrapped.container, kernel.container):
-            container.register(AcmeUnregistered, AcmeUnregistered)
-            container.register_repo(AcmeRecord, AcmeUnregistered)
+    for container in (bootstrapped.container, kernel.container):
+        container.register(AcmeUnregistered, AcmeUnregistered)
+        container.register_repo(AcmeRecord, AcmeUnregistered)

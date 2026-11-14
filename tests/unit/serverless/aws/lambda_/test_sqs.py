@@ -586,11 +586,16 @@ def test_bind_reports_inline_dispatch(
 
 
 def test_bind_warns_for_non_inline_service(
-    built: tuple[LambdaAdapter, Application, list[str]],
+    source: CompositionSource,
+    probe: tuple[type[Job[None]], Probe],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    adapter, application, _ = built
-    application.kernel.container.register(JobService, _OtherJobService)
+    adapter = LambdaAdapter(jobs=[probe[0]])
+    application = compose_application(
+        source,
+        adapter,
+        modules=(lambda container: container.register(JobService, _OtherJobService),),
+    )
     adapter.bind(application)
     try:
         assert any(

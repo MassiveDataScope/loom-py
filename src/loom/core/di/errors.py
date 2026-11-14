@@ -23,12 +23,12 @@ class ResolutionError(Exception):
 ResolutionError.__module__ = "loom.core.di.container"
 
 
-class ContainerSealedWarning(DeprecationWarning):
+class ContainerSealed(ResolutionError):
     """A binding was registered into a container after the application sealed it.
 
-    The registration still replaces that key's binding, dropping only that
-    key's built instance; it becomes an error in the next major version.
-    Register through a module passed to the application instead.
+    A sealed container is complete: its singletons are built and its graph
+    analysed, so nothing may change it. Register every binding in a module
+    passed to the application; to reconfigure, build a new container.
     """
 
 
