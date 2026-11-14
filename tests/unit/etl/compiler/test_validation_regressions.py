@@ -119,30 +119,29 @@ class InvalidFileTemplate(ETLStep[Params]):
         return None
 
 
-@pytest.mark.parametrize(
-    ("pipeline", "code"),
-    [
-        (NestedProcesses, ETLErrorCode.INVALID_PROCESS_ITEM),
-        (NestedSteps, ETLErrorCode.INVALID_STEP_ITEM),
-        (ParallelStrict, ETLErrorCode.DUPLICATE_TEMP_NAME),
-        (ParallelMixed, ETLErrorCode.INVALID_TEMP_APPEND_MIX),
-        (PriorThenParallelSteps, ETLErrorCode.DUPLICATE_TEMP_NAME),
-    ],
-)
-def test_invalid_parallel_declarations_raise_typed_errors(
-    pipeline: type[ETLPipeline[Params]], code: ETLErrorCode
-) -> None:
-    with pytest.raises(ETLCompilationError) as exc_info:
+class TestValidationRegressions:
+    @pytest.mark.parametrize(
+        ("pipeline", "code"),
+        [
+            (NestedProcesses, ETLErrorCode.INVALID_PROCESS_ITEM),
+            (NestedSteps, ETLErrorCode.INVALID_STEP_ITEM),
+            (ParallelStrict, ETLErrorCode.DUPLICATE_TEMP_NAME),
+            (ParallelMixed, ETLErrorCode.INVALID_TEMP_APPEND_MIX),
+            (PriorThenParallelSteps, ETLErrorCode.DUPLICATE_TEMP_NAME),
+        ],
+    )
+    def test_invalid_parallel_declarations_raise_typed_errors(
+        self, pipeline: type[ETLPipeline[Params]], code: ETLErrorCode
+    ) -> None:
+        with pytest.raises(ETLCompilationError) as exc_info:
+            ETLCompiler().compile(pipeline)
+        assert exc_info.value.code is code
+
+    @pytest.mark.parametrize("pipeline", [ParallelFanIn, ParallelFanInSteps])
+    def test_parallel_fan_in_remains_valid(self, pipeline: type[ETLPipeline[Params]]) -> None:
         ETLCompiler().compile(pipeline)
-    assert exc_info.value.code is code
 
-
-@pytest.mark.parametrize("pipeline", [ParallelFanIn, ParallelFanInSteps])
-def test_parallel_fan_in_remains_valid(pipeline: type[ETLPipeline[Params]]) -> None:
-    ETLCompiler().compile(pipeline)
-
-
-def test_file_template_is_checked_by_compiler() -> None:
-    with pytest.raises(ETLCompilationError) as exc_info:
-        ETLCompiler().compile_step(InvalidFileTemplate)
-    assert exc_info.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
+    def test_file_template_is_checked_by_compiler(self) -> None:
+        with pytest.raises(ETLCompilationError) as exc_info:
+            ETLCompiler().compile_step(InvalidFileTemplate)
+        assert exc_info.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD

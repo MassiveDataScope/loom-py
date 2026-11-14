@@ -216,47 +216,47 @@ class TestInsertAndUpdateMaps:
         assert builder(columns, alias) == expected
 
 
-def test_merge_plan_without_delete_flag_matches_the_pre_flag_clauses() -> None:
-    """Pin the MERGE shape produced when delete_flag is unset."""
-    spec = _upsert_spec(keys=("id",), partition_cols=("year",), exclude=("created_at",))
-    plan = _build_merge_plan(
-        combos=[{"year": 2024}],
-        spec=spec,
-        df_columns=("id", "year", "name", "created_at"),
-        target_alias=TARGET_ALIAS,
-        source_alias=SOURCE_ALIAS,
-    )
+class TestMergePlanDeleteFlag:
+    def test_merge_plan_without_delete_flag_matches_the_pre_flag_clauses(self) -> None:
+        """Pin the MERGE shape produced when delete_flag is unset."""
+        spec = _upsert_spec(keys=("id",), partition_cols=("year",), exclude=("created_at",))
+        plan = _build_merge_plan(
+            combos=[{"year": 2024}],
+            spec=spec,
+            df_columns=("id", "year", "name", "created_at"),
+            target_alias=TARGET_ALIAS,
+            source_alias=SOURCE_ALIAS,
+        )
 
-    assert plan == _MergePlan(
-        predicate="((t.year = 2024)) AND (t.id = s.id AND t.year = s.year)",
-        update_set={"name": "s.name"},
-        insert_values={
-            "id": "s.id",
-            "year": "s.year",
-            "name": "s.name",
-            "created_at": "s.created_at",
-        },
-    )
+        assert plan == _MergePlan(
+            predicate="((t.year = 2024)) AND (t.id = s.id AND t.year = s.year)",
+            update_set={"name": "s.name"},
+            insert_values={
+                "id": "s.id",
+                "year": "s.year",
+                "name": "s.name",
+                "created_at": "s.created_at",
+            },
+        )
 
+    def test_merge_plan_delete_flag_drops_the_column_and_sets_predicates(self) -> None:
+        """A delete flag stays out of the column maps and gates every MERGE action."""
+        spec = UpsertSpec(
+            table_ref=TableRef("test.table"),
+            upsert_keys=("id",),
+            delete_flag="_deleted",
+        )
+        plan = _build_merge_plan(
+            combos=[],
+            spec=spec,
+            df_columns=("id", "name", "_deleted"),
+            target_alias=TARGET_ALIAS,
+            source_alias=SOURCE_ALIAS,
+        )
 
-def test_merge_plan_delete_flag_drops_the_column_and_sets_predicates() -> None:
-    """A delete flag stays out of the column maps and gates every MERGE action."""
-    spec = UpsertSpec(
-        table_ref=TableRef("test.table"),
-        upsert_keys=("id",),
-        delete_flag="_deleted",
-    )
-    plan = _build_merge_plan(
-        combos=[],
-        spec=spec,
-        df_columns=("id", "name", "_deleted"),
-        target_alias=TARGET_ALIAS,
-        source_alias=SOURCE_ALIAS,
-    )
-
-    assert plan.predicate == "t.id = s.id"
-    assert plan.update_set == {"name": "s.name"}
-    assert plan.insert_values == {"id": "s.id", "name": "s.name"}
-    assert plan.matched_delete_predicate == "coalesce(s._deleted, false)"
-    assert plan.matched_update_predicate == "NOT coalesce(s._deleted, false)"
-    assert plan.not_matched_insert_predicate == "NOT coalesce(s._deleted, false)"
+        assert plan.predicate == "t.id = s.id"
+        assert plan.update_set == {"name": "s.name"}
+        assert plan.insert_values == {"id": "s.id", "name": "s.name"}
+        assert plan.matched_delete_predicate == "coalesce(s._deleted, false)"
+        assert plan.matched_update_predicate == "NOT coalesce(s._deleted, false)"
+        assert plan.not_matched_insert_predicate == "NOT coalesce(s._deleted, false)"

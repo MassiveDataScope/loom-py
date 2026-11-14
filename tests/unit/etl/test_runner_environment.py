@@ -43,95 +43,89 @@ def _yaml(tmp_path: Path, check: FailingCheckModule) -> str:
     return str(path)
 
 
-@pytest.mark.parametrize("environment", ["production", "staging"])
-def test_a_deployed_runner_from_yaml_runs_the_deploy_checks(
-    tmp_path: Path, check: FailingCheckModule, environment: str
-) -> None:
-    path = _yaml(tmp_path, check)
+class TestRunnerEnvironment:
+    @pytest.mark.parametrize("environment", ["production", "staging"])
+    def test_a_deployed_runner_from_yaml_runs_the_deploy_checks(
+        self, tmp_path: Path, check: FailingCheckModule, environment: str
+    ) -> None:
+        path = _yaml(tmp_path, check)
 
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        ETLRunner.from_yaml(path, environment=environment)
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            ETLRunner.from_yaml(path, environment=environment)
 
+    def test_the_selector_variable_reaches_the_runner(
+        self, tmp_path: Path, check: FailingCheckModule, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _yaml(tmp_path, check)
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
 
-def test_the_selector_variable_reaches_the_runner(
-    tmp_path: Path, check: FailingCheckModule, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = _yaml(tmp_path, check)
-    monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            ETLRunner.from_yaml(path)
 
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        ETLRunner.from_yaml(path)
+    def test_a_local_runner_runs_no_check(self, tmp_path: Path, check: FailingCheckModule) -> None:
+        runner = ETLRunner.from_yaml(_yaml(tmp_path, check), environment="development")
 
+        assert isinstance(runner, ETLRunner)
 
-def test_a_local_runner_runs_no_check(tmp_path: Path, check: FailingCheckModule) -> None:
-    runner = ETLRunner.from_yaml(_yaml(tmp_path, check), environment="development")
+    def test_the_logger_takes_the_environment_of_the_runner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            "loom.core.observability.runtime.configure_logging_from_values",
+            lambda **kwargs: captured.update(kwargs),
+        )
+        ETLRunner.from_dict(
+            _storage(tmp_path),
+            {"log": {"enabled": True, "config": {"level": "INFO"}}},
+            environment="test",
+        )
 
-    assert isinstance(runner, ETLRunner)
+        assert captured["environment"] is Environment.TEST
 
+    def test_an_override_variable_reaches_the_storage_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "etl.yaml"
+        path.write_text(yaml.safe_dump({"storage": _storage(tmp_path)}), encoding="utf-8")
+        overridden = str(tmp_path / "overridden")
+        monkeypatch.setenv("LOOM__STORAGE__DEFAULTS__TABLE_PATH__URI", overridden)
 
-def test_the_logger_takes_the_environment_of_the_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        "loom.core.observability.runtime.configure_logging_from_values",
-        lambda **kwargs: captured.update(kwargs),
-    )
-    ETLRunner.from_dict(
-        _storage(tmp_path),
-        {"log": {"enabled": True, "config": {"level": "INFO"}}},
-        environment="test",
-    )
+        with patch.object(ETLRunner, "_assemble") as assemble:
+            ETLRunner.from_yaml(str(path), environment="development")
 
-    assert captured["environment"] is Environment.TEST
+        assert assemble.call_args.args[0].defaults.table_path.uri == overridden
 
+    def test_a_config_directory_layers_the_overlay_of_the_environment(
+        self, tmp_path: Path, check: FailingCheckModule
+    ) -> None:
+        area, key = check.trigger.split(".")
+        base = {"storage": _storage(tmp_path), "checks": check.checks_section()}
+        (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
+        overlay = {area: {key: True}}
+        (tmp_path / "staging.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
 
-def test_an_override_variable_reaches_the_storage_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "etl.yaml"
-    path.write_text(yaml.safe_dump({"storage": _storage(tmp_path)}), encoding="utf-8")
-    overridden = str(tmp_path / "overridden")
-    monkeypatch.setenv("LOOM__STORAGE__DEFAULTS__TABLE_PATH__URI", overridden)
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            ETLRunner.from_yaml(str(tmp_path), environment="staging")
 
-    with patch.object(ETLRunner, "_assemble") as assemble:
-        ETLRunner.from_yaml(str(path), environment="development")
+    def test_a_config_directory_without_the_overlay_loads_the_base(
+        self, tmp_path: Path, check: FailingCheckModule
+    ) -> None:
+        base = {"storage": _storage(tmp_path), "checks": check.checks_section()}
+        (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
 
-    assert assemble.call_args.args[0].defaults.table_path.uri == overridden
+        runner = ETLRunner.from_yaml(str(tmp_path), environment="production")
 
+        assert isinstance(runner, ETLRunner)
 
-def test_a_config_directory_layers_the_overlay_of_the_environment(
-    tmp_path: Path, check: FailingCheckModule
-) -> None:
-    area, key = check.trigger.split(".")
-    base = {"storage": _storage(tmp_path), "checks": check.checks_section()}
-    (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
-    overlay = {area: {key: True}}
-    (tmp_path / "staging.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+    def test_the_checks_run_before_the_agent_runner_is_built(
+        self, tmp_path: Path, check: FailingCheckModule, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _yaml(tmp_path, check)
+        make_agent_runner = MagicMock()
+        monkeypatch.setattr("loom.etl.runner.core.make_agent_runner", make_agent_runner)
 
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        ETLRunner.from_yaml(str(tmp_path), environment="staging")
+        with pytest.raises(DeployCheckError):
+            ETLRunner.from_yaml(path, environment="production")
 
-
-def test_a_config_directory_without_the_overlay_loads_the_base(
-    tmp_path: Path, check: FailingCheckModule
-) -> None:
-    base = {"storage": _storage(tmp_path), "checks": check.checks_section()}
-    (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
-
-    runner = ETLRunner.from_yaml(str(tmp_path), environment="production")
-
-    assert isinstance(runner, ETLRunner)
-
-
-def test_the_checks_run_before_the_agent_runner_is_built(
-    tmp_path: Path, check: FailingCheckModule, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = _yaml(tmp_path, check)
-    make_agent_runner = MagicMock()
-    monkeypatch.setattr("loom.etl.runner.core.make_agent_runner", make_agent_runner)
-
-    with pytest.raises(DeployCheckError):
-        ETLRunner.from_yaml(path, environment="production")
-
-    make_agent_runner.assert_not_called()
+        make_agent_runner.assert_not_called()

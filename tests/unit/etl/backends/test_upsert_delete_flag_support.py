@@ -114,14 +114,18 @@ class _UnsupportedWriter(_WritePolicy[list[int], list[int], dict[str, Any]]):
         return None
 
 
-def test_write_policy_refuses_upsert_delete_flag_when_the_writer_does_not_implement_it() -> None:
-    writer = _UnsupportedWriter()
-    spec = UpsertSpec(
-        table_ref=TableRef("test.orders"),
-        upsert_keys=("id",),
-        delete_flag="_deleted",
-    )
-    with pytest.raises(
-        UnsupportedUpsertDeleteFlagError, match=r"does not support upsert\(delete_flag='_deleted'\)"
-    ):
-        writer._do_upsert([1], MagicMock(spec=ResolvedTarget), spec, False)
+class TestWritePolicyUpsertDeleteFlag:
+    def test_write_policy_refuses_upsert_delete_flag_when_the_writer_does_not_implement_it(
+        self,
+    ) -> None:
+        writer = _UnsupportedWriter()
+        spec = UpsertSpec(
+            table_ref=TableRef("test.orders"),
+            upsert_keys=("id",),
+            delete_flag="_deleted",
+        )
+        with pytest.raises(
+            UnsupportedUpsertDeleteFlagError,
+            match=r"does not support upsert\(delete_flag='_deleted'\)",
+        ):
+            writer._do_upsert([1], MagicMock(spec=ResolvedTarget), spec, False)

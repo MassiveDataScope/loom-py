@@ -25,7 +25,7 @@ from loom.etl.io.sources._mongo_predicate import materialize_filter, predicate_t
 
 
 @dataclass
-class RunParams:
+class StatusYearParams:
     status: str = "active"
     year: int = 2024
 
@@ -125,14 +125,14 @@ class TestParamResolution:
         from loom.etl.declarative.expr import params as P
 
         node = col("status") == P.status
-        result = predicate_to_mongo(node, RunParams(status="shipped"))
+        result = predicate_to_mongo(node, StatusYearParams(status="shipped"))
         assert result == {"status": "shipped"}
 
     def test_gte_with_param(self) -> None:
         from loom.etl.declarative.expr import params as P
 
         node = col("year") >= P.year
-        result = predicate_to_mongo(node, RunParams(year=2023))
+        result = predicate_to_mongo(node, StatusYearParams(year=2023))
         assert result == {"year": {"$gte": 2023}}
 
 

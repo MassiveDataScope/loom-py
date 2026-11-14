@@ -7,19 +7,14 @@ from datetime import date
 
 import pytest
 
-from loom.etl import ETLParams
 from loom.etl.declarative.expr._params import ParamExpr, _ParamProxy, params, resolve_param_expr
 from loom.etl.declarative.expr._predicate import EqPred, InPred
-
-
-class RunParams(ETLParams):  # type: ignore[misc]
-    run_date: date
-    countries: tuple[str, ...]
+from tests.unit.etl.doubles import RunDateCountriesParams
 
 
 @pytest.fixture
-def run_params() -> RunParams:
-    return RunParams(run_date=date(2024, 1, 5), countries=("ES", "FR"))
+def run_params() -> RunDateCountriesParams:
+    return RunDateCountriesParams(run_date=date(2024, 1, 5), countries=("ES", "FR"))
 
 
 class TestParamsProxy:
@@ -79,13 +74,13 @@ class TestResolveParamExpr:
     )
     def test_resolve_success(
         self,
-        run_params: RunParams,
+        run_params: RunDateCountriesParams,
         expr: ParamExpr,
         expected: object,
     ) -> None:
         assert resolve_param_expr(expr, run_params) == expected
 
-    def test_resolve_missing_field_raises(self, run_params: RunParams) -> None:
+    def test_resolve_missing_field_raises(self, run_params: RunDateCountriesParams) -> None:
         expr = ParamExpr(("nonexistent",))
         with pytest.raises(AttributeError):
             resolve_param_expr(expr, run_params)

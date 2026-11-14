@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
 
 import pytest
 
-from loom.etl import ETLParams, ETLStep, IntoTable
+from loom.etl import ETLParams
 from loom.etl.compiler import ETLCompilationError
 from loom.etl.compiler._errors import ETLErrorCode
 from loom.etl.compiler._plan import SourceBinding, TargetBinding
@@ -17,17 +16,8 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import AppendSpec
-
-
-class _P(ETLParams):
-    run_date: date
-
-
-class _Step(ETLStep[_P]):
-    target = IntoTable("t.out").append()
-
-    def execute(self, params: _P) -> Any:
-        return None
+from tests.unit.etl.compiler.doubles import AppendOutStep
+from tests.unit.etl.doubles import RunDateETLParams
 
 
 def _file_source(path: str, *, is_alias: bool = False) -> SourceBinding:
@@ -41,38 +31,42 @@ def _table_target() -> TargetBinding:
     return TargetBinding(spec=AppendSpec(table_ref=TableRef("t.out")))
 
 
-def test_known_field_in_source_path_passes() -> None:
-    validate_file_path_templates(
-        _Step, _P, (_file_source("s3://raw/{run_date:%Y%m%d}.csv"),), _table_target()
-    )
+class TestLiteralFilePathTemplates:
+    def test_known_field_in_source_path_passes(self) -> None:
+        validate_file_path_templates(
+            AppendOutStep,
+            RunDateETLParams,
+            (_file_source("s3://raw/{run_date:%Y%m%d}.csv"),),
+            _table_target(),
+        )
 
+    def test_unknown_field_in_source_path_raises(self) -> None:
+        sources = (_file_source("s3://raw/{nope}.csv"),)
+        target = _table_target()
 
-def test_unknown_field_in_source_path_raises() -> None:
-    sources = (_file_source("s3://raw/{nope}.csv"),)
-    target = _table_target()
+        with pytest.raises(ETLCompilationError) as excinfo:
+            validate_file_path_templates(AppendOutStep, RunDateETLParams, sources, target)
+        assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
+        assert excinfo.value.field == "nope"
 
-    with pytest.raises(ETLCompilationError) as excinfo:
-        validate_file_path_templates(_Step, _P, sources, target)
-    assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
-    assert excinfo.value.field == "nope"
+    def test_unknown_field_in_target_path_raises(self) -> None:
+        target = TargetBinding(spec=FileSpec(path="s3://out/{nope}.csv", format=Format.CSV))
+        with pytest.raises(ETLCompilationError) as excinfo:
+            validate_file_path_templates(AppendOutStep, RunDateETLParams, (), target)
+        assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
 
+    def test_known_field_in_target_path_passes(self) -> None:
+        target = TargetBinding(spec=FileSpec(path="s3://out/{run_date}.csv", format=Format.CSV))
+        validate_file_path_templates(AppendOutStep, RunDateETLParams, (), target)
 
-def test_unknown_field_in_target_path_raises() -> None:
-    target = TargetBinding(spec=FileSpec(path="s3://out/{nope}.csv", format=Format.CSV))
-    with pytest.raises(ETLCompilationError) as excinfo:
-        validate_file_path_templates(_Step, _P, (), target)
-    assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
-
-
-def test_known_field_in_target_path_passes() -> None:
-    target = TargetBinding(spec=FileSpec(path="s3://out/{run_date}.csv", format=Format.CSV))
-    validate_file_path_templates(_Step, _P, (), target)
-
-
-def test_alias_paths_are_not_validated_at_compile_time() -> None:
-    """Alias URIs live in storage config; template check happens at runtime."""
-    target = TargetBinding(spec=FileSpec(path="exports_daily", format=Format.CSV, is_alias=True))
-    validate_file_path_templates(_Step, _P, (_file_source("events_raw", is_alias=True),), target)
+    def test_alias_paths_are_not_validated_at_compile_time(self) -> None:
+        """Alias URIs live in storage config; template check happens at runtime."""
+        target = TargetBinding(
+            spec=FileSpec(path="exports_daily", format=Format.CSV, is_alias=True)
+        )
+        validate_file_path_templates(
+            AppendOutStep, RunDateETLParams, (_file_source("events_raw", is_alias=True),), target
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +74,7 @@ def test_alias_paths_are_not_validated_at_compile_time() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _PWithProperty(ETLParams):
+class PartitionDayParams(ETLParams):
     run_date: date
 
     @property
@@ -88,17 +82,20 @@ class _PWithProperty(ETLParams):
         return self.run_date
 
 
-def test_property_in_source_path_passes() -> None:
-    validate_file_path_templates(
-        _Step, _PWithProperty, (_file_source("s3://raw/{partition_day}.csv"),), _table_target()
-    )
+class TestPropertyFilePathTemplates:
+    def test_property_in_source_path_passes(self) -> None:
+        validate_file_path_templates(
+            AppendOutStep,
+            PartitionDayParams,
+            (_file_source("s3://raw/{partition_day}.csv"),),
+            _table_target(),
+        )
 
+    def test_unknown_field_still_raises_with_property_params(self) -> None:
+        sources = (_file_source("s3://raw/{nope}.csv"),)
+        target = _table_target()
 
-def test_unknown_field_still_raises_with_property_params() -> None:
-    sources = (_file_source("s3://raw/{nope}.csv"),)
-    target = _table_target()
-
-    with pytest.raises(ETLCompilationError) as excinfo:
-        validate_file_path_templates(_Step, _PWithProperty, sources, target)
-    assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
-    assert excinfo.value.field == "nope"
+        with pytest.raises(ETLCompilationError) as excinfo:
+            validate_file_path_templates(AppendOutStep, PartitionDayParams, sources, target)
+        assert excinfo.value.code is ETLErrorCode.UNKNOWN_TEMPLATE_FIELD
+        assert excinfo.value.field == "nope"

@@ -64,64 +64,66 @@ def memfs() -> Iterator[Any]:
     fs.pseudo_dirs[:] = [""]
 
 
-# ---------------------------------------------------------------------------
-# SC-001 — split tree equals the original, from disk and from memory://
-# ---------------------------------------------------------------------------
+class TestSplitStorageTree:
+    # ---------------------------------------------------------------------------
+    # SC-001 — split tree equals the original, from disk and from memory://
+    # ---------------------------------------------------------------------------
 
+    def test_original_fixture_declares_the_expected_routes(self) -> None:
+        original = _load(str(_FIXTURE / "original.yaml"))
 
-def test_original_fixture_declares_the_expected_routes() -> None:
-    original = _load(str(_FIXTURE / "original.yaml"))
+        assert tuple(route.name for route in original.tables) == _EXPECTED_TABLES
+        assert tuple(route.name for route in original.files) == (
+            "billing.statements",
+            "sales.exports",
+        )
+        assert original.profiles == {}
 
-    assert tuple(route.name for route in original.tables) == _EXPECTED_TABLES
-    assert tuple(route.name for route in original.files) == ("billing.statements", "sales.exports")
-    assert original.profiles == {}
+    def test_split_tree_on_disk_equals_the_original(self) -> None:
+        original = _load(str(_FIXTURE / "original.yaml"))
+        split = _load(str(_FIXTURE / "storage.yaml"))
 
+        assert set(split.profiles) == {"standard", "large"}
+        assert _routes(split) == original
 
-def test_split_tree_on_disk_equals_the_original() -> None:
-    original = _load(str(_FIXTURE / "original.yaml"))
-    split = _load(str(_FIXTURE / "storage.yaml"))
+    def test_split_tree_on_memory_equals_the_original(self, memfs: Any) -> None:
+        for name in _SPLIT_FILES:
+            memfs.pipe(f"cfg/{name}", (_FIXTURE / name).read_bytes())
 
-    assert set(split.profiles) == {"standard", "large"}
-    assert _routes(split) == original
+        split = _load("memory://cfg/storage.yaml")
 
+        assert _routes(split) == _load(str(_FIXTURE / "original.yaml"))
 
-def test_split_tree_on_memory_equals_the_original(memfs: Any) -> None:
-    for name in _SPLIT_FILES:
-        memfs.pipe(f"cfg/{name}", (_FIXTURE / name).read_bytes())
+    # ---------------------------------------------------------------------------
+    # SC-002 — removing one table and duplicating one across files
+    # ---------------------------------------------------------------------------
 
-    split = _load("memory://cfg/storage.yaml")
+    def test_removing_one_table_from_one_file_drops_exactly_that_route(
+        self, split_tree: Path
+    ) -> None:
+        before = _load(str(split_tree / "storage.yaml"))
+        _rewrite_tables(split_tree / "tables" / "sales.yaml", lambda t: t.pop("sales.customers"))
 
-    assert _routes(split) == _load(str(_FIXTURE / "original.yaml"))
+        after = _load(str(split_tree / "storage.yaml"))
 
+        kept = tuple(route for route in before.tables if route.name != "sales.customers")
+        assert after.tables == kept
+        assert msgspec.structs.replace(after, tables=before.tables) == before
 
-# ---------------------------------------------------------------------------
-# SC-002 — removing one table and duplicating one across files
-# ---------------------------------------------------------------------------
+    def test_declaring_one_table_in_two_files_names_key_and_both_files(
+        self, split_tree: Path
+    ) -> None:
+        duplicate = {"path": {"uri": "s3://lake/billing/customers", "profile": "standard"}}
+        _rewrite_tables(
+            split_tree / "tables" / "billing.yaml",
+            lambda t: t.__setitem__("sales.customers", duplicate),
+        )
 
+        with pytest.raises(ConfigError, match=r"storage\.tables\['sales\.customers'\]") as info:
+            _load(str(split_tree / "storage.yaml"))
 
-def test_removing_one_table_from_one_file_drops_exactly_that_route(split_tree: Path) -> None:
-    before = _load(str(split_tree / "storage.yaml"))
-    _rewrite_tables(split_tree / "tables" / "sales.yaml", lambda t: t.pop("sales.customers"))
-
-    after = _load(str(split_tree / "storage.yaml"))
-
-    kept = tuple(route for route in before.tables if route.name != "sales.customers")
-    assert after.tables == kept
-    assert msgspec.structs.replace(after, tables=before.tables) == before
-
-
-def test_declaring_one_table_in_two_files_names_key_and_both_files(split_tree: Path) -> None:
-    duplicate = {"path": {"uri": "s3://lake/billing/customers", "profile": "standard"}}
-    _rewrite_tables(
-        split_tree / "tables" / "billing.yaml",
-        lambda t: t.__setitem__("sales.customers", duplicate),
-    )
-
-    with pytest.raises(ConfigError, match=r"storage\.tables\['sales\.customers'\]") as info:
-        _load(str(split_tree / "storage.yaml"))
-
-    assert "sales.yaml" in str(info.value)
-    assert "billing.yaml" in str(info.value)
+        assert "sales.yaml" in str(info.value)
+        assert "billing.yaml" in str(info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -151,25 +153,26 @@ def _write_generated_tree(root: Path, domains: int, tables_per_domain: int) -> P
     return storage
 
 
-def test_two_hundred_tables_across_four_files_parse_each_file_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every file is parsed once, though ``common.yaml`` is reached from all five files.
+class TestLargeSplitStorage:
+    def test_two_hundred_tables_across_four_files_parse_each_file_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every file is parsed once, though ``common.yaml`` is reached from all five files.
 
-    Counted rather than timed: a wall-clock budget measured the CI runner as
-    much as the loader.
-    """
-    storage = _write_generated_tree(tmp_path, domains=4, tables_per_domain=50)
-    parse = OmegaConf.load
-    parsed: list[Path] = []
+        Counted rather than timed: a wall-clock budget measured the CI runner as
+        much as the loader.
+        """
+        storage = _write_generated_tree(tmp_path, domains=4, tables_per_domain=50)
+        parse = OmegaConf.load
+        parsed: list[Path] = []
 
-    def counting_parse(file: str) -> Any:
-        parsed.append(Path(file).resolve())
-        return parse(file)
+        def counting_parse(file: str) -> Any:
+            parsed.append(Path(file).resolve())
+            return parse(file)
 
-    monkeypatch.setattr(OmegaConf, "load", counting_parse)
+        monkeypatch.setattr(OmegaConf, "load", counting_parse)
 
-    config = _load(str(storage))
+        config = _load(str(storage))
 
-    assert len(config.tables) == 200
-    assert sorted(parsed) == sorted(path.resolve() for path in tmp_path.rglob("*.yaml"))
+        assert len(config.tables) == 200
+        assert sorted(parsed) == sorted(path.resolve() for path in tmp_path.rglob("*.yaml"))

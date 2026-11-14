@@ -26,50 +26,49 @@ class _RecordingWriter:
         self.calls.append((record, ref))
 
 
-def test_table_lineage_store_prefixes_database_and_forwards_records() -> None:
-    writer = _RecordingWriter()
-    store = TableLineageStore(writer, database="ops")
-    record = PipelineRunRecord(
-        event=EventName.PIPELINE_END,
-        run_id="run-1",
-        correlation_id=None,
-        attempt=1,
-        pipeline="DailyPipeline",
-        started_at=datetime(2024, 1, 1, tzinfo=UTC),
-        status=RunStatus.SUCCESS,
-        duration_ms=1,
-        error=None,
-    )
+class TestTableLineageStore:
+    def test_table_lineage_store_prefixes_database_and_forwards_records(self) -> None:
+        writer = _RecordingWriter()
+        store = TableLineageStore(writer, database="ops")
+        record = PipelineRunRecord(
+            event=EventName.PIPELINE_END,
+            run_id="run-1",
+            correlation_id=None,
+            attempt=1,
+            pipeline="DailyPipeline",
+            started_at=datetime(2024, 1, 1, tzinfo=UTC),
+            status=RunStatus.SUCCESS,
+            duration_ms=1,
+            error=None,
+        )
 
-    store.write_record(record)
-
-    assert writer.calls == [(record, TableRef("ops.pipeline_runs"))]
-
-
-def test_table_lineage_store_uses_table_name_without_database() -> None:
-    writer = _RecordingWriter()
-    store = TableLineageStore(writer)
-    record = PipelineRunRecord(
-        event=EventName.PIPELINE_END,
-        run_id="run-1",
-        correlation_id=None,
-        attempt=1,
-        pipeline="DailyPipeline",
-        started_at=datetime(2024, 1, 1, tzinfo=UTC),
-        status=RunStatus.SUCCESS,
-        duration_ms=1,
-        error=None,
-    )
-
-    store.write_record(record)
-
-    assert writer.calls == [(record, TableRef("pipeline_runs"))]
-
-
-def test_table_lineage_store_rejects_unknown_record_types() -> None:
-    writer = _RecordingWriter()
-    store = TableLineageStore(writer)
-
-    record = cast(Any, _UnknownRecord())
-    with pytest.raises(TypeError, match="unrecognised record type"):
         store.write_record(record)
+
+        assert writer.calls == [(record, TableRef("ops.pipeline_runs"))]
+
+    def test_table_lineage_store_uses_table_name_without_database(self) -> None:
+        writer = _RecordingWriter()
+        store = TableLineageStore(writer)
+        record = PipelineRunRecord(
+            event=EventName.PIPELINE_END,
+            run_id="run-1",
+            correlation_id=None,
+            attempt=1,
+            pipeline="DailyPipeline",
+            started_at=datetime(2024, 1, 1, tzinfo=UTC),
+            status=RunStatus.SUCCESS,
+            duration_ms=1,
+            error=None,
+        )
+
+        store.write_record(record)
+
+        assert writer.calls == [(record, TableRef("pipeline_runs"))]
+
+    def test_table_lineage_store_rejects_unknown_record_types(self) -> None:
+        writer = _RecordingWriter()
+        store = TableLineageStore(writer)
+
+        record = cast(Any, _UnknownRecord())
+        with pytest.raises(TypeError, match="unrecognised record type"):
+            store.write_record(record)

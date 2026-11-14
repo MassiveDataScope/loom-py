@@ -19,11 +19,13 @@ from tests.helpers.version_limited_extras import require_pyspark
 _WARNING_EVENT = "write_produced_no_rows"
 
 
-def _writer() -> PolarsTargetWriter:
+@pytest.fixture
+def writer() -> PolarsTargetWriter:
     return PolarsTargetWriter("/tmp/loom-empty-write-test")
 
 
-def _target() -> PathTarget:
+@pytest.fixture
+def target() -> PathTarget:
     return PathTarget(
         logical_ref=TableRef("silver.players"),
         location=TableLocation(uri="/tmp/players"),
@@ -31,51 +33,55 @@ def _target() -> PathTarget:
 
 
 class TestRowCountIfCheap:
-    def test_a_collected_frame_reports_its_height(self) -> None:
-        assert _writer()._row_count_if_cheap(pl.DataFrame({"a": [1, 2, 3]})) == 3
+    def test_a_collected_frame_reports_its_height(self, writer: PolarsTargetWriter) -> None:
+        assert writer._row_count_if_cheap(pl.DataFrame({"a": [1, 2, 3]})) == 3
 
-    def test_an_empty_frame_reports_zero(self) -> None:
-        assert _writer()._row_count_if_cheap(pl.DataFrame({"a": []}, schema={"a": pl.Int64})) == 0
+    def test_an_empty_frame_reports_zero(self, writer: PolarsTargetWriter) -> None:
+        assert writer._row_count_if_cheap(pl.DataFrame({"a": []}, schema={"a": pl.Int64})) == 0
 
 
 class TestMaterializeChecked:
-    def test_an_empty_frame_warns_naming_the_target(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_an_empty_frame_warns_naming_the_target(
+        self, writer: PolarsTargetWriter, target: PathTarget, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Asserted through stdlib logging, which is where a configured app emits.
 
         Reading stdout instead only worked while structlog was left
         unconfigured and fell back to printing — a pipeline no application
         ever runs.
         """
-        writer = _writer()
         empty = pl.DataFrame({"a": []}, schema={"a": pl.Int64}).lazy()
 
         with caplog.at_level(logging.WARNING):
-            writer._materialize_checked(empty, _target(), streaming=False)
+            writer._materialize_checked(empty, target, streaming=False)
 
         emitted = " ".join(record.getMessage() for record in caplog.records)
         assert _WARNING_EVENT in emitted
         assert "silver.players" in emitted
 
-    def test_a_populated_frame_stays_quiet(self, caplog: pytest.LogCaptureFixture) -> None:
-        writer = _writer()
+    def test_a_populated_frame_stays_quiet(
+        self, writer: PolarsTargetWriter, target: PathTarget, caplog: pytest.LogCaptureFixture
+    ) -> None:
         populated = pl.DataFrame({"a": [1]}).lazy()
 
         with caplog.at_level(logging.WARNING):
-            writer._materialize_checked(populated, _target(), streaming=False)
+            writer._materialize_checked(populated, target, streaming=False)
 
         assert _WARNING_EVENT not in " ".join(r.getMessage() for r in caplog.records)
 
-    def test_the_frame_is_returned_unchanged(self) -> None:
-        writer = _writer()
+    def test_the_frame_is_returned_unchanged(
+        self, writer: PolarsTargetWriter, target: PathTarget
+    ) -> None:
         frame = pl.DataFrame({"a": [1, 2]}).lazy()
 
-        materialized = writer._materialize_checked(frame, _target(), streaming=False)
+        materialized = writer._materialize_checked(frame, target, streaming=False)
 
         assert materialized.to_dicts() == [{"a": 1}, {"a": 2}]
 
-    def test_the_frame_is_collected_exactly_once(self) -> None:
+    def test_the_frame_is_collected_exactly_once(
+        self, writer: PolarsTargetWriter, target: PathTarget
+    ) -> None:
         """The check reads an already collected frame; it never re-runs the plan."""
-        writer = _writer()
         collected: list[int] = []
 
         class _CountingFrame:
@@ -83,7 +89,7 @@ class TestMaterializeChecked:
                 collected.append(1)
                 return pl.DataFrame({"a": []}, schema={"a": pl.Int64})
 
-        writer._materialize_checked(_CountingFrame(), _target(), streaming=False)  # type: ignore[arg-type]
+        writer._materialize_checked(_CountingFrame(), target, streaming=False)  # type: ignore[arg-type]
 
         assert collected == [1]
 
@@ -94,17 +100,20 @@ class TestBackendsThatCannotCountCheaply:
         assert _WritePolicy._row_count_if_cheap(object(), object()) is None  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    ("module", "writer"),
-    [
-        ("loom.etl.backends.polars", "PolarsTargetWriter"),
-        ("loom.etl.backends.spark", "SparkTargetWriter"),
-    ],
-)
-def test_every_concrete_writer_implements_the_abstract_hooks(module: str, writer: str) -> None:
-    if module.endswith("spark"):
-        require_pyspark()
-    writer_type = getattr(importlib.import_module(module), writer)
+class TestConcreteWriterHooks:
+    @pytest.mark.parametrize(
+        ("module", "writer"),
+        [
+            ("loom.etl.backends.polars", "PolarsTargetWriter"),
+            ("loom.etl.backends.spark", "SparkTargetWriter"),
+        ],
+    )
+    def test_every_concrete_writer_implements_the_abstract_hooks(
+        self, module: str, writer: str
+    ) -> None:
+        if module.endswith("spark"):
+            require_pyspark()
+        writer_type = getattr(importlib.import_module(module), writer)
 
-    assert issubclass(writer_type, _WritePolicy)
-    assert not getattr(writer_type, "__abstractmethods__", frozenset())
+        assert issubclass(writer_type, _WritePolicy)
+        assert not getattr(writer_type, "__abstractmethods__", frozenset())

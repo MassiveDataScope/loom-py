@@ -69,8 +69,8 @@ def _fake_scd2_transform(
     return [*frame, -1], ops.report
 
 
-@pytest.fixture(autouse=True)
-def _fake_transform(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def fake_scd2_transform(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_write_policy, "scd2_transform", _fake_scd2_transform)
 
 
@@ -211,26 +211,26 @@ def _spec(
 
 
 class TestHistorifyDispatch:
-    def test_historify_spec_routes_to_do_historify(self) -> None:
+    def test_historify_spec_routes_to_do_historify(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1, 2, 3], _spec(), object())
         assert len(writer.historify_calls) == 1
 
-    def test_historify_receives_materialized_frame(self) -> None:
+    def test_historify_receives_materialized_frame(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         frame = [10, 20]
         writer.write(frame, _spec(), None)
         received_frame, _, _ = writer.historify_calls[0]
         assert received_frame == [10, 20]
 
-    def test_historify_receives_spec(self) -> None:
+    def test_historify_receives_spec(self, fake_scd2_transform: None) -> None:
         spec = _spec()
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], spec, None)
         _, received_spec, _ = writer.historify_calls[0]
         assert received_spec is spec
 
-    def test_historify_receives_params_instance(self) -> None:
+    def test_historify_receives_params_instance(self, fake_scd2_transform: None) -> None:
         params_obj = object()
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], _spec(), params_obj)
@@ -251,7 +251,9 @@ class TestHistorifyDispatch:
 
 
 class TestHistorifyMissingTablePolicy:
-    def test_missing_table_with_overwrite_schema_allows_creation(self) -> None:
+    def test_missing_table_with_overwrite_schema_allows_creation(
+        self, fake_scd2_transform: None
+    ) -> None:
         writer = _StubWritePolicy(
             schema_exists=False,
             missing_table_policy=MissingTablePolicy.SCHEMA_MODE,
@@ -261,7 +263,9 @@ class TestHistorifyMissingTablePolicy:
         # No error raised — _historify is called
         assert len(writer.historify_calls) == 1
 
-    def test_missing_table_with_create_policy_allows_creation(self) -> None:
+    def test_missing_table_with_create_policy_allows_creation(
+        self, fake_scd2_transform: None
+    ) -> None:
         writer = _StubWritePolicy(
             schema_exists=False,
             missing_table_policy=MissingTablePolicy.CREATE,
@@ -288,7 +292,7 @@ class TestHistorifyMissingTablePolicy:
             with pytest.raises(SchemaNotFoundError):
                 writer.write([1], spec, None)
 
-    def test_existing_table_always_delegates_to_historify(self) -> None:
+    def test_existing_table_always_delegates_to_historify(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], _spec(), None)
         assert len(writer.historify_calls) == 1
@@ -315,13 +319,13 @@ class TestHistorifyDoesNotAffectTempDispatch:
 
 
 class TestHistorifyRepairReportPassthrough:
-    def test_none_returned_when_historify_returns_none(self) -> None:
+    def test_none_returned_when_historify_returns_none(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         result = writer._do_historify([1], writer._resolver.resolve(None), _spec(), None)
         assert result is None
 
     def test_repair_report_returned_and_logged_when_transform_reports(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, fake_scd2_transform: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         report = HistorifyRepairReport(
             affected_keys=frozenset({("player_id", 42)}),
@@ -355,7 +359,7 @@ class _Existing:
 
 
 class TestHistorifyResultWrite:
-    def test_first_run_creates_table_with_partition_scope(self) -> None:
+    def test_first_run_creates_table_with_partition_scope(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(
             schema_exists=False, missing_table_policy=MissingTablePolicy.CREATE
         )
@@ -363,17 +367,19 @@ class TestHistorifyResultWrite:
         assert writer.create_calls == [([1, -1], SchemaMode.STRICT, ("season",))]
         assert writer.replace_calls == writer.replace_partitions_calls == []
 
-    def test_existing_table_is_replaced(self) -> None:
+    def test_existing_table_is_replaced(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], _spec(), None)
         assert writer.replace_calls == [([1, -1], SchemaMode.STRICT)]
 
-    def test_existing_table_with_partition_scope_replaces_partitions(self) -> None:
+    def test_existing_table_with_partition_scope_replaces_partitions(
+        self, fake_scd2_transform: None
+    ) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], _spec(partition_scope=("season",)), None)
         assert writer.replace_partitions_calls == [([1, -1], ("season",), SchemaMode.STRICT)]
 
-    def test_existing_frame_is_released_before_the_write(self) -> None:
+    def test_existing_frame_is_released_before_the_write(self, fake_scd2_transform: None) -> None:
         class _TrackingWriter(_StubWritePolicy):
             existing_ref: weakref.ref[_Existing]
             alive_at_write: bool | None = None
@@ -440,7 +446,7 @@ def _recorder(log: list[str], name: str) -> Callable[..., None]:
 class TestWriteModeRouting:
     @pytest.mark.parametrize(("spec", "hook"), _WRITE_MODES)
     def test_a_write_mode_reaches_only_its_own_hook(
-        self, spec: Any, hook: str, monkeypatch: pytest.MonkeyPatch
+        self, spec: Any, hook: str, fake_scd2_transform: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         reached: list[str] = []

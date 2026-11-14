@@ -645,24 +645,24 @@ class TestHistorifyRepairReport:
         assert len(report.dates_requiring_rerun) == 0
 
 
-# ---------------------------------------------------------------------------
-# Public API surface
-# ---------------------------------------------------------------------------
+class TestPublicHistoryApi:
+    # ---------------------------------------------------------------------------
+    # Public API surface
+    # ---------------------------------------------------------------------------
 
+    @pytest.mark.parametrize(
+        "module,symbol",
+        [
+            ("loom.etl", "IntoHistory"),
+            ("loom.etl", "HistorifySpec"),
+            ("loom.etl", "DeletePolicy"),
+            ("loom.etl", "HistorifyDateCollisionError"),
+            ("loom.etl", "HistorifyDeleteMarkerError"),
+            ("loom.etl.declarative.target", "IntoHistory"),
+        ],
+    )
+    def test_public_api_importable(self, module: str, symbol: str) -> None:
+        import importlib
 
-@pytest.mark.parametrize(
-    "module,symbol",
-    [
-        ("loom.etl", "IntoHistory"),
-        ("loom.etl", "HistorifySpec"),
-        ("loom.etl", "DeletePolicy"),
-        ("loom.etl", "HistorifyDateCollisionError"),
-        ("loom.etl", "HistorifyDeleteMarkerError"),
-        ("loom.etl.declarative.target", "IntoHistory"),
-    ],
-)
-def test_public_api_importable(module: str, symbol: str) -> None:
-    import importlib
-
-    mod = importlib.import_module(module)
-    assert hasattr(mod, symbol)
+        mod = importlib.import_module(module)
+        assert hasattr(mod, symbol)

@@ -109,7 +109,7 @@ class _FakeClient:
 # ---------------------------------------------------------------------------
 
 
-class OrderDoc:
+class OrderIdStatusDoc:
     order_id: str
     status: str
 

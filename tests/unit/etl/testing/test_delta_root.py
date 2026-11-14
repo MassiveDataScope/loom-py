@@ -24,63 +24,63 @@ from loom.etl.schema._schema import LoomDtype, SchemaError  # noqa: E402
 from loom.etl.testing import ETLScenario, MergeMetrics, PolarsStepRunner  # noqa: E402
 
 
-class P(ETLParams):  # type: ignore[misc]
+class YearParams(ETLParams):  # type: ignore[misc]
     year: int = 2024
 
 
-class UpsertOrders(ETLStep[P]):
+class UpsertOrders(ETLStep[YearParams]):
     sources = Sources(cdc=FromTable("raw.cdc"))
     target = IntoTable("silver.orders").upsert(keys=("id",), delete_flag="_deleted")
 
-    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, cdc: Any) -> Any:  # type: ignore[override]
         return cdc
 
 
-class BuildSales(ETLStep[P]):
+class BuildSales(ETLStep[YearParams]):
     sources = Sources(raw=FromTable("raw.sales"))
     target = IntoTable("silver.sales").replace_partitions("year")
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class FixYear(ETLStep[P]):
+class FixYear(ETLStep[YearParams]):
     sources = Sources(fix=FromTable("raw.sales_fix").where(col("year") == params.year))
     target = IntoTable("silver.sales").replace_where(col("year") == params.year)
 
-    def execute(self, params: P, *, fix: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, fix: Any) -> Any:  # type: ignore[override]
         return fix
 
 
-class ReplaceSales(ETLStep[P]):
+class ReplaceSales(ETLStep[YearParams]):
     sources = Sources(fix=FromTable("raw.sales_fix"))
     target = IntoTable("silver.sales").replace()
 
-    def execute(self, params: P, *, fix: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, fix: Any) -> Any:  # type: ignore[override]
         return fix
 
 
-class UpdateOrders(ETLStep[P]):
+class UpdateOrders(ETLStep[YearParams]):
     sources = Sources(cdc=FromTable("raw.cdc"))
     target = IntoTable("silver.orders").update(keys=("id",))
 
-    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, cdc: Any) -> Any:  # type: ignore[override]
         return cdc.drop("_deleted")
 
 
-class EagerReplace(ETLStep[P]):
+class EagerReplace(ETLStep[YearParams]):
     sources = Sources(raw=FromTable("raw.sales"))
     target = IntoTable("silver.sales").replace()
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw.collect()
 
 
-class AppendEvent(ETLStep[P]):
+class AppendEvent(ETLStep[YearParams]):
     sources = Sources(raw=FromTable("raw.events"))
     target = IntoTable("silver.events").append()
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: YearParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
@@ -111,10 +111,10 @@ class TestUpsertWithDeleteFlag:
     def test_tombstone_deletes_the_row_and_a_second_run_is_idempotent(
         self, delta_runner: PolarsStepRunner
     ) -> None:
-        first = delta_runner.run(UpsertOrders, P())
+        first = delta_runner.run(UpsertOrders, YearParams())
         after_first = delta_runner.table("silver.orders").to_polars().sort("id")
 
-        second = delta_runner.run(UpsertOrders, P())
+        second = delta_runner.run(UpsertOrders, YearParams())
         after_second = delta_runner.table("silver.orders").to_polars().sort("id")
 
         assert first.deletes == 1
@@ -127,7 +127,7 @@ class TestUpsertWithDeleteFlag:
     def test_merged_is_unavailable_for_a_replace(self, tmp_path: Path) -> None:
         runner = PolarsStepRunner(SALES, delta_root=tmp_path)
 
-        result = runner.run(BuildSales, P())
+        result = runner.run(BuildSales, YearParams())
 
         with pytest.raises(RuntimeError, match=r"table\(ref\)\.assert_count"):
             _ = result.merged
@@ -141,7 +141,7 @@ class TestUpsertWithDeleteFlag:
         )
         runner = PolarsStepRunner(SILVER_ORDERS + cdc, delta_root=tmp_path)
 
-        result = runner.run(UpsertOrders, P())
+        result = runner.run(UpsertOrders, YearParams())
 
         assert result.merged == MergeMetrics(inserted=1, updated=1, deleted=0)
         assert result.deletes == 0
@@ -155,14 +155,14 @@ class TestUpsertWithDeleteFlag:
         )
         runner = PolarsStepRunner(SILVER_ORDERS + cdc, delta_root=tmp_path)
 
-        result = runner.run(UpdateOrders, P())
+        result = runner.run(UpdateOrders, YearParams())
 
         assert result.merged == MergeMetrics(inserted=0, updated=1, deleted=0)
 
     def test_merged_is_unavailable_when_the_upsert_creates_the_table(self, tmp_path: Path) -> None:
         runner = PolarsStepRunner(RAW_CDC, delta_root=tmp_path)
 
-        result = runner.run(UpsertOrders, P())
+        result = runner.run(UpsertOrders, YearParams())
 
         with pytest.raises(RuntimeError, match="created by this write"):
             _ = result.merged
@@ -182,14 +182,14 @@ class TestReplaceOnPartitionedTable:
         self, tmp_path: Path
     ) -> None:
         runner = PolarsStepRunner(SALES + SALES_FIX, delta_root=tmp_path)
-        runner.run(BuildSales, P())
+        runner.run(BuildSales, YearParams())
         table_uri = tmp_path / "silver" / "sales"
         assert DeltaTable(str(table_uri)).metadata().partition_columns == ["year"]
 
-        runner.run(FixYear, P(year=2024))
+        runner.run(FixYear, YearParams(year=2024))
         fixed = runner.table("silver.sales").to_polars().sort("year")
 
-        runner.run(ReplaceSales, P())
+        runner.run(ReplaceSales, YearParams())
         replaced = runner.table("silver.sales").to_polars().sort("year")
 
         assert fixed.to_dict(as_series=False) == {"year": [2023, 2024], "amount": [1.0, 20.0]}
@@ -204,7 +204,7 @@ class TestReplaceOnPartitionedTable:
 class TestRealWriterContract:
     def test_eager_frame_into_a_table_fails_like_production(self, tmp_path: Path) -> None:
         runner = PolarsStepRunner(SALES, delta_root=tmp_path)
-        params = P()
+        params = YearParams()
 
         with pytest.raises(AttributeError, match="collect"):
             runner.run(EagerReplace, params)
@@ -217,7 +217,7 @@ class TestIsolation:
             "raw.events", [(event_id,)], ["id"], schema={"id": LoomDtype.INT64}
         )
 
-        runner.run(AppendEvent, P())
+        runner.run(AppendEvent, YearParams())
 
         frame = runner.table("silver.events").to_polars()
         assert frame["id"].to_list() == [event_id]

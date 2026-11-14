@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,6 @@ import pytest
 
 from loom.etl import (
     CheckpointScope,
-    ETLParams,
     ETLPipeline,
     ETLProcess,
     ETLStep,
@@ -25,33 +23,30 @@ from loom.etl.checkpoint import CheckpointStore
 from loom.etl.compiler import ETLCompilationError, ETLCompiler
 from loom.etl.declarative.source import SourceKind
 from loom.etl.testing import StubCatalog, StubSourceReader, StubTargetWriter
+from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
-class P(ETLParams):  # type: ignore[misc]
-    run_date: date
-
-
-class ProduceStep(ETLStep[P]):
+class NormalizedProduceStep(ETLStep[RunDateIgnoredParams]):
     sources = Sources(raw=FromTable("raw.orders"))
     target = IntoTemp("normalized")
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class ConsumeStep(ETLStep[P]):
+class NormalizedConsumeStep(ETLStep[RunDateIgnoredParams]):
     normalized = FromTemp("normalized")
     target = IntoTable("mart.summary").replace()
 
-    def execute(self, params: P, *, normalized: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, normalized: Any) -> Any:  # type: ignore[override]
         return normalized
 
 
-class TempProcess(ETLProcess[P]):
-    steps = [ProduceStep, ConsumeStep]
+class TempProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [NormalizedProduceStep, NormalizedConsumeStep]
 
 
-class TempPipeline(ETLPipeline[P]):
+class TempPipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [TempProcess]
 
 
@@ -85,11 +80,11 @@ class TestCompilerTempValidation:
         "step_type,check",
         [
             (
-                ProduceStep,
+                NormalizedProduceStep,
                 lambda plan: plan.target_binding.spec.temp_name == "normalized",
             ),
             (
-                ConsumeStep,
+                NormalizedConsumeStep,
                 lambda plan: (
                     len(plan.source_bindings) == 1
                     and plan.source_bindings[0].alias == "normalized"
@@ -101,7 +96,7 @@ class TestCompilerTempValidation:
     )
     def test_compile_step_temp_bindings(
         self,
-        step_type: type[ETLStep[P]],
+        step_type: type[ETLStep[RunDateIgnoredParams]],
         check: Callable[[Any], bool],
     ) -> None:
         assert check(ETLCompiler().compile_step(step_type))
@@ -125,7 +120,7 @@ class TestCompilerTempValidation:
     def test_compile_pipeline_temp_errors(
         self,
         catalog: StubCatalog,
-        pipeline_builder: Callable[[], type[ETLPipeline[P]]],
+        pipeline_builder: Callable[[], type[ETLPipeline[RunDateIgnoredParams]]],
         error: str,
     ) -> None:
         compiler = ETLCompiler(catalog)
@@ -207,45 +202,45 @@ class TestRunnerTempCleanup:
             runner.cleanup_correlation("job-123")
 
 
-def _build_orphan_pipeline() -> type[ETLPipeline[P]]:
-    class OrphanProcess(ETLProcess[P]):
-        steps = [ConsumeStep]
+def _build_orphan_pipeline() -> type[ETLPipeline[RunDateIgnoredParams]]:
+    class OrphanProcess(ETLProcess[RunDateIgnoredParams]):
+        steps = [NormalizedConsumeStep]
 
-    class OrphanPipeline(ETLPipeline[P]):
+    class OrphanPipeline(ETLPipeline[RunDateIgnoredParams]):
         processes = [OrphanProcess]
 
     return OrphanPipeline
 
 
-def _build_parallel_same_group_pipeline() -> type[ETLPipeline[P]]:
-    class ParallelProcess(ETLProcess[P]):
-        steps = [[ProduceStep, ConsumeStep]]
+def _build_parallel_same_group_pipeline() -> type[ETLPipeline[RunDateIgnoredParams]]:
+    class ParallelProcess(ETLProcess[RunDateIgnoredParams]):
+        steps = [[NormalizedProduceStep, NormalizedConsumeStep]]
 
-    class ParallelPipeline(ETLPipeline[P]):
+    class ParallelPipeline(ETLPipeline[RunDateIgnoredParams]):
         processes = [ParallelProcess]
 
     return ParallelPipeline
 
 
-def _build_parallel_then_consume_pipeline() -> type[ETLPipeline[P]]:
-    class ProduceA(ETLStep[P]):
+def _build_parallel_then_consume_pipeline() -> type[ETLPipeline[RunDateIgnoredParams]]:
+    class ProduceA(ETLStep[RunDateIgnoredParams]):
         sources = Sources(raw=FromTable("raw.orders"))
         target = IntoTemp("norm_a")
 
-        def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+        def execute(self, params: RunDateIgnoredParams, *, raw: Any) -> Any:  # type: ignore[override]
             return raw
 
-    class ConsumeA(ETLStep[P]):
+    class ConsumeA(ETLStep[RunDateIgnoredParams]):
         norm_a = FromTemp("norm_a")
         target = IntoTable("mart.summary").replace()
 
-        def execute(self, params: P, *, norm_a: Any) -> Any:  # type: ignore[override]
+        def execute(self, params: RunDateIgnoredParams, *, norm_a: Any) -> Any:  # type: ignore[override]
             return norm_a
 
-    class Proc(ETLProcess[P]):
+    class Proc(ETLProcess[RunDateIgnoredParams]):
         steps = [[ProduceA], ConsumeA]
 
-    class Pipeline(ETLPipeline[P]):
+    class Pipeline(ETLPipeline[RunDateIgnoredParams]):
         processes = [Proc]
 
     return Pipeline

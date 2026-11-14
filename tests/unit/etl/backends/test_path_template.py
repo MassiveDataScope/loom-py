@@ -21,12 +21,12 @@ from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target._file import FileSpec
 
 
-class _Params(msgspec.Struct, frozen=True):
+class RunDateCountryParams(msgspec.Struct, frozen=True):
     run_date: date
     country: str
 
 
-PARAMS = _Params(run_date=date(2026, 8, 3), country="es")
+PARAMS = RunDateCountryParams(run_date=date(2026, 8, 3), country="es")
 
 
 class TestExtractTemplateFields:

@@ -23,7 +23,7 @@ from loom.etl.io.sources._dynamodb_predicate import (
 
 
 @dataclass
-class RunParams:
+class StatusYearStatusesParams:
     status: str = "active"
     year: int = 2024
     statuses: tuple[str, ...] = ("active", "pending")
@@ -127,7 +127,7 @@ class TestInExpr:
 
     def test_in_param_expr(self) -> None:
         node = col("status").isin(params.statuses)
-        result = predicate_to_dynamo(node, RunParams())
+        result = predicate_to_dynamo(node, StatusYearStatusesParams())
         assert result.expression == "#n0 IN (:v0, :v1)"
         assert result.attribute_values == {":v0": {"S": "active"}, ":v1": {"S": "pending"}}
 
@@ -179,12 +179,12 @@ class TestBooleanComposition:
 class TestParamResolution:
     def test_param_expr_resolved(self) -> None:
         node = col("status") == params.status
-        result = predicate_to_dynamo(node, RunParams())
+        result = predicate_to_dynamo(node, StatusYearStatusesParams())
         assert result.attribute_values == {":v0": {"S": "active"}}
 
     def test_param_expr_int(self) -> None:
         node = col("year") >= params.year
-        result = predicate_to_dynamo(node, RunParams())
+        result = predicate_to_dynamo(node, StatusYearStatusesParams())
         assert result.attribute_values == {":v0": {"N": "2024"}}
 
 

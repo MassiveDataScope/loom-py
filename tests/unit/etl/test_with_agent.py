@@ -20,7 +20,6 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.etl import (
     AgentMapper,
-    ETLParams,
     ETLPipeline,
     ETLProcess,
     ETLStep,
@@ -38,27 +37,24 @@ from loom.etl.runtime import AgentIssue, AgentIssueKind
 from loom.etl.storage._config import StorageConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.unit.ai.etl._types import Reply as StrictReply
-
-
-class RunParams(ETLParams):  # type: ignore[misc]
-    run_date: date
+from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
 class Reply(msgspec.Struct, frozen=True):
     answer: str
 
 
-_PARAMS = RunParams(run_date=date(2026, 10, 9))
+_PARAMS = RunDateIgnoredParams(run_date=date(2026, 10, 9))
 _BUDGET = Decimal("2.00")
 
 
-class LabelStep(ETLStep[RunParams]):
+class LabelStep(ETLStep[RunDateIgnoredParams]):
     messages = FromTable("raw.messages")
     labeller = WithAgent("seller_reply", output=Reply, max_usd=_BUDGET)
     target = IntoTable("fact.labels").replace()
 
     def execute(  # type: ignore[override]
-        self, params: RunParams, *, messages: Any, labeller: AgentMapper
+        self, params: RunDateIgnoredParams, *, messages: Any, labeller: AgentMapper
     ) -> Any:
         return (labeller.version, labeller.map(messages, keys=["id"], prompt="text"))
 
@@ -189,11 +185,11 @@ class TestCompileStructure:
         )
 
     def test_missing_execute_param_is_rejected(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             labeller = WithAgent("seller_reply", output=Reply)
             target = IntoTable("fact.labels").replace()
 
-            def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams) -> Any:  # type: ignore[override]
                 return None
 
         error = _compile_error(_Step, _FakeAgents())
@@ -202,18 +198,18 @@ class TestCompileStructure:
         assert "WithAgent" in str(error)
 
     def test_alias_shared_with_a_source_is_rejected(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             sources = Sources(labeller=FromTable("raw.messages"))
             labeller = WithAgent("seller_reply", output=Reply)
             target = IntoTable("fact.labels").replace()
 
-            def execute(self, params: RunParams, *, labeller: Any) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, labeller: Any) -> Any:  # type: ignore[override]
                 return labeller
 
         assert _compile_error(_Step, _FakeAgents()).code is ETLErrorCode.CONFIG_ALIAS_CONFLICT
 
     def test_sql_step_cannot_receive_an_agent(self) -> None:
-        class _Sql(StepSQL[RunParams, Any]):
+        class _Sql(StepSQL[RunDateIgnoredParams, Any]):
             orders = FromTable("raw.orders")
             labeller = WithAgent("seller_reply", output=Reply)
             target = IntoTable("staging.sql").replace()
@@ -296,19 +292,21 @@ class TestExecutorInjection:
             executor.run_step(plan, _PARAMS)
 
 
-def test_the_etl_pillar_never_imports_the_ai_pillar() -> None:
-    script = (
-        "import sys\n"
-        "import loom.etl, loom.etl.compiler, loom.etl.executor, loom.etl.runner\n"
-        "leaked = sorted(m for m in sys.modules if m == 'loom.ai' or m.startswith('loom.ai.'))\n"
-        "print(','.join(leaked))\n"
-    )
+class TestEtlPillarDoesNotImportAi:
+    def test_the_etl_pillar_never_imports_the_ai_pillar(self) -> None:
+        script = (
+            "import sys\n"
+            "import loom.etl, loom.etl.compiler, loom.etl.executor, loom.etl.runner\n"
+            "leaked = sorted(m for m in sys.modules if m == 'loom.ai' "
+            "or m.startswith('loom.ai.'))\n"
+            "print(','.join(leaked))\n"
+        )
 
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=True
-    )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
 
-    assert result.stdout.strip() == ""
+        assert result.stdout.strip() == ""
 
 
 _AGENT_YAML = """\
@@ -321,35 +319,35 @@ output: {kind: type_ref, ref: "tests.unit.ai.etl._types:Reply"}
 """
 
 
-class StrictReplyStep(ETLStep[RunParams]):
+class StrictReplyStep(ETLStep[RunDateIgnoredParams]):
     labeller = WithAgent("seller_reply", output=StrictReply)
     target = IntoTable("fact.agent_version").replace()
 
-    def execute(self, params: RunParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
         return pl.LazyFrame({"agent_version": [labeller.version]})
 
 
-class UnknownAgentStep(ETLStep[RunParams]):
+class UnknownAgentStep(ETLStep[RunDateIgnoredParams]):
     labeller = WithAgent("nobody", output=StrictReply)
     target = IntoTable("fact.agent_version").replace()
 
-    def execute(self, params: RunParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
         return pl.LazyFrame({"agent_version": [labeller.version]})
 
 
-class _VersionProcess(ETLProcess[RunParams]):
+class _VersionProcess(ETLProcess[RunDateIgnoredParams]):
     steps = [StrictReplyStep]
 
 
-class _VersionPipeline(ETLPipeline[RunParams]):
+class _VersionPipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [_VersionProcess]
 
 
-class _UnknownProcess(ETLProcess[RunParams]):
+class _UnknownProcess(ETLProcess[RunDateIgnoredParams]):
     steps = [UnknownAgentStep]
 
 
-class _UnknownPipeline(ETLPipeline[RunParams]):
+class _UnknownPipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [_UnknownProcess]
 
 
@@ -499,20 +497,22 @@ class TestSparkEngine:
         assert "AGENT_SPECS_ESCAPE_ROOT" in str(error.value)
 
 
-def test_from_yaml_without_ai_never_imports_the_ai_pillar(tmp_path: Path) -> None:
-    script = (
-        "import sys\n"
-        "from loom.etl.runner import ETLRunner\n"
-        "ETLRunner.from_yaml(sys.argv[1])\n"
-        "leaked = sorted(m for m in sys.modules if m == 'loom.ai' or m.startswith('loom.ai.'))\n"
-        "print(','.join(leaked))\n"
-    )
+class TestFromYamlWithoutAi:
+    def test_from_yaml_without_ai_never_imports_the_ai_pillar(self, tmp_path: Path) -> None:
+        script = (
+            "import sys\n"
+            "from loom.etl.runner import ETLRunner\n"
+            "ETLRunner.from_yaml(sys.argv[1])\n"
+            "leaked = sorted(m for m in sys.modules if m == 'loom.ai' "
+            "or m.startswith('loom.ai.'))\n"
+            "print(','.join(leaked))\n"
+        )
 
-    result = subprocess.run(
-        [sys.executable, "-c", script, _pipeline_yaml(tmp_path, with_ai=False)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+        result = subprocess.run(
+            [sys.executable, "-c", script, _pipeline_yaml(tmp_path, with_ai=False)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
-    assert result.stdout.strip() == ""
+        assert result.stdout.strip() == ""

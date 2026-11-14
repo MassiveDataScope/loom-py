@@ -15,13 +15,13 @@ from loom.etl.declarative.expr._refs import col
 
 
 @dataclass(frozen=True)
-class _Params:
+class RunDateCountriesFrozenParams:
     run_date: date
     countries: tuple[str, ...]
 
 
-def _params() -> _Params:
-    return _Params(run_date=date(2024, 3, 1), countries=("ES", "FR"))
+def _params() -> RunDateCountriesFrozenParams:
+    return RunDateCountriesFrozenParams(run_date=date(2024, 3, 1), countries=("ES", "FR"))
 
 
 class _TraceDialect(PredicateDialect[str]):
@@ -65,35 +65,36 @@ class _TraceDialect(PredicateDialect[str]):
 _DIALECT = _TraceDialect()
 
 
-@pytest.mark.parametrize(
-    ("node", "expected"),
-    [
-        (col("a") == 1, "EQ(C[a],L[1])"),
-        (col("a") != 1, "NE(C[a],L[1])"),
-        (col("a") > 1, "GT(C[a],L[1])"),
-        (col("a") >= 1, "GE(C[a],L[1])"),
-        (col("a") < 1, "LT(C[a],L[1])"),
-        (col("a") <= 1, "LE(C[a],L[1])"),
-        (col("a").isin((1, 2)), "IN(C[a],(1, 2))"),
-    ],
-)
-def test_fold_predicate_binary_and_in(node: PredicateNode, expected: str) -> None:
-    assert fold_predicate(node, _params(), _DIALECT) == expected
-
-
-def test_fold_predicate_composition_and_param_resolution() -> None:
-    node = ((col("year") == params.run_date.year) & (col("country").isin(params.countries))) | ~(
-        col("is_deleted") == True  # noqa: E712
+class TestFoldPredicate:
+    @pytest.mark.parametrize(
+        ("node", "expected"),
+        [
+            (col("a") == 1, "EQ(C[a],L[1])"),
+            (col("a") != 1, "NE(C[a],L[1])"),
+            (col("a") > 1, "GT(C[a],L[1])"),
+            (col("a") >= 1, "GE(C[a],L[1])"),
+            (col("a") < 1, "LT(C[a],L[1])"),
+            (col("a") <= 1, "LE(C[a],L[1])"),
+            (col("a").isin((1, 2)), "IN(C[a],(1, 2))"),
+        ],
     )
-    result = fold_predicate(node, _params(), _DIALECT)
+    def test_fold_predicate_binary_and_in(self, node: PredicateNode, expected: str) -> None:
+        assert fold_predicate(node, _params(), _DIALECT) == expected
 
-    assert "EQ(C[year],L[2024])" in result
-    assert "IN(C[country],('ES', 'FR'))" in result
-    assert "NOT(EQ(C[is_deleted],L[True]))" in result
-    assert result.startswith("OR(")
+    def test_fold_predicate_composition_and_param_resolution(self) -> None:
+        node = (
+            (col("year") == params.run_date.year) & (col("country").isin(params.countries))
+        ) | ~(
+            col("is_deleted") == True  # noqa: E712
+        )
+        result = fold_predicate(node, _params(), _DIALECT)
 
+        assert "EQ(C[year],L[2024])" in result
+        assert "IN(C[country],('ES', 'FR'))" in result
+        assert "NOT(EQ(C[is_deleted],L[True]))" in result
+        assert result.startswith("OR(")
 
-def test_fold_predicate_unsupported_node_raises() -> None:
-    params = _params()
-    with pytest.raises(TypeError, match="unsupported node type"):
-        fold_predicate(object(), params, _DIALECT)  # type: ignore[arg-type]
+    def test_fold_predicate_unsupported_node_raises(self) -> None:
+        params = _params()
+        with pytest.raises(TypeError, match="unsupported node type"):
+            fold_predicate(object(), params, _DIALECT)  # type: ignore[arg-type]

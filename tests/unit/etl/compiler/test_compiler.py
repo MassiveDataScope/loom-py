@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 from typing import Any
 
 import pytest
@@ -26,56 +25,52 @@ from loom.etl.compiler import (
 )
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.testing import StubCatalog
+from tests.unit.etl.doubles import RunDateCountriesParams, RunDateIgnoredParams
 
 
-class RunParams(ETLParams):  # type: ignore[misc]
-    run_date: date
-    countries: tuple[str, ...]
-
-
-class ExtractStep(ETLStep[RunParams]):
+class ExtractStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("raw.orders"))
     target = IntoTable("staging.orders").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class EnrichAStep(ETLStep[RunParams]):
+class EnrichAStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("staging.orders"))
     target = IntoTable("staging.enriched_a").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class EnrichBStep(ETLStep[RunParams]):
+class EnrichBStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("staging.orders"))
     target = IntoTable("staging.enriched_b").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class AggStep(ETLStep[RunParams]):
+class AggStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(
         enriched_a=FromTable("staging.enriched_a"),
         enriched_b=FromTable("staging.enriched_b"),
     )
     target = IntoTable("mart.summary").replace()
 
-    def execute(self, params: RunParams, *, enriched_a: Any, enriched_b: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, enriched_a: Any, enriched_b: Any) -> Any:  # type: ignore[override]
         return enriched_a
 
 
-class NoSourceStep(ETLStep[RunParams]):
+class NoSourceStep(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.calendar").replace()
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class UntypedStep(ETLStep[RunParams]):
+class UntypedStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("raw.x"))
     target = IntoTable("staging.x").replace()
 
@@ -83,43 +78,43 @@ class UntypedStep(ETLStep[RunParams]):
         return orders
 
 
-class NoTarget(ETLStep[RunParams]):
+class NoTarget(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("raw.orders"))
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class MissingFrame(ETLStep[RunParams]):
+class MissingFrame(ETLStep[RunDateCountriesParams]):
     sources = Sources(
         orders=FromTable("raw.orders"),
         customers=FromTable("raw.customers"),
     )
     target = IntoTable("staging.x").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class ExtraFrame(ETLStep[RunParams]):
+class ExtraFrame(ETLStep[RunDateCountriesParams]):
     sources = Sources(orders=FromTable("raw.orders"))
     target = IntoTable("staging.x").replace()
 
-    def execute(self, params: RunParams, *, orders: Any, ghost: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, orders: Any, ghost: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class NoParams(ETLStep[RunParams]):
+class ParamsOmittedStep(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.x").replace()
 
     def execute(self) -> Any:  # type: ignore[override]
         return None
 
 
-class StringTarget(ETLStep[RunParams]):
+class StringTarget(ETLStep[RunDateCountriesParams]):
     target = "staging.out"  # type: ignore[assignment]
 
-    def execute(self, params: RunParams) -> Any:
+    def execute(self, params: RunDateCountriesParams) -> Any:
         return None
 
 
@@ -130,7 +125,7 @@ class BareStep(ETLStep):  # type: ignore[type-arg]
         return None
 
 
-class _UnresolvableReturnStep(ETLStep[RunParams]):
+class _UnresolvableReturnStep(ETLStep[RunDateCountriesParams]):
     """Step whose execute return annotation references an undefined name.
 
     With ``from __future__ import annotations``, annotations are stored as
@@ -141,176 +136,172 @@ class _UnresolvableReturnStep(ETLStep[RunParams]):
 
     target = IntoTable("staging.unresolvable").replace()
 
-    def execute(self, params: RunParams) -> _UndefinedType:  # type: ignore[name-defined]  # noqa: F821
+    def execute(self, params: RunDateCountriesParams) -> _UndefinedType:  # type: ignore[name-defined]  # noqa: F821
         return None  # type: ignore[return-value]
 
 
-class StagingProcess(ETLProcess[RunParams]):
+class StagingProcess(ETLProcess[RunDateCountriesParams]):
     steps = [ExtractStep, [EnrichAStep, EnrichBStep], AggStep]
 
 
-class BadProcess(ETLProcess[RunParams]):
+class BadProcess(ETLProcess[RunDateCountriesParams]):
     steps = ["not_a_step"]
 
 
-class DailyPipeline(ETLPipeline[RunParams]):
+class DailyPipeline(ETLPipeline[RunDateCountriesParams]):
     processes = [StagingProcess]
 
 
-class ParallelPipeline(ETLPipeline[RunParams]):
+class ParallelPipeline(ETLPipeline[RunDateCountriesParams]):
     processes = [[StagingProcess, StagingProcess]]
 
 
-class BadPipeline(ETLPipeline[RunParams]):
+class BadPipeline(ETLPipeline[RunDateCountriesParams]):
     processes = ["not_a_process"]
 
 
-class NarrowParams(ETLParams):  # type: ignore[misc]
-    run_date: date
-
-
-class NarrowStep(ETLStep[NarrowParams]):
+class NarrowStep(ETLStep[RunDateIgnoredParams]):
     target = IntoTable("staging.narrow").replace()
 
-    def execute(self, params: NarrowParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class NarrowProcess(ETLProcess[NarrowParams]):
+class NarrowProcess(ETLProcess[RunDateIgnoredParams]):
     steps = [NarrowStep]
 
 
-class WideProcess(ETLProcess[RunParams]):
+class WideProcess(ETLProcess[RunDateCountriesParams]):
     steps = [NarrowStep]
 
 
-class WidePipeline(ETLPipeline[RunParams]):
+class WidePipeline(ETLPipeline[RunDateCountriesParams]):
     processes = [NarrowProcess]
 
 
-class UnrelatedParams(ETLParams):  # type: ignore[misc]
+class RegionParams(ETLParams):  # type: ignore[misc]
     region: str
 
 
-class UnrelatedStep(ETLStep[UnrelatedParams]):
+class UnrelatedStep(ETLStep[RegionParams]):
     target = IntoTable("staging.unrelated").replace()
 
-    def execute(self, params: UnrelatedParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RegionParams) -> Any:  # type: ignore[override]
         return None
 
 
-class UnrelatedProcess(ETLProcess[UnrelatedParams]):
+class UnrelatedProcess(ETLProcess[RegionParams]):
     steps = [UnrelatedStep]
 
 
-class MixedProcess(ETLProcess[RunParams]):
+class MixedProcess(ETLProcess[RunDateCountriesParams]):
     steps = [UnrelatedStep]
 
 
-class MixedPipeline(ETLPipeline[RunParams]):
+class MixedPipeline(ETLPipeline[RunDateCountriesParams]):
     processes = [UnrelatedProcess]
 
 
-class ParallelMixedProcess(ETLProcess[RunParams]):
+class ParallelMixedProcess(ETLProcess[RunDateCountriesParams]):
     steps = [[NarrowStep, UnrelatedStep]]
 
 
-class CreateStep(ETLStep[RunParams]):
+class CreateStep(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.new").replace(schema=SchemaMode.OVERWRITE)
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class AppendWarningStep(ETLStep[RunParams]):
+class AppendWarningStep(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.append_warn").append()
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class ConsumeStep(ETLStep[RunParams]):
+class StagingNewConsumeStep(ETLStep[RunDateCountriesParams]):
     sources = Sources(data=FromTable("staging.new"))
     target = IntoTable("mart.out").replace()
 
-    def execute(self, params: RunParams, *, data: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, data: Any) -> Any:  # type: ignore[override]
         return data
 
 
-class CreateThenConsumePipeline(ETLPipeline[RunParams]):
-    class _Proc(ETLProcess[RunParams]):
-        steps = [CreateStep, ConsumeStep]
+class CreateThenConsumePipeline(ETLPipeline[RunDateCountriesParams]):
+    class _Proc(ETLProcess[RunDateCountriesParams]):
+        steps = [CreateStep, StagingNewConsumeStep]
 
     processes = [_Proc]
 
 
-class MissingSourcePipeline(ETLPipeline[RunParams]):
-    class _Proc(ETLProcess[RunParams]):
-        steps = [ConsumeStep]
+class MissingSourcePipeline(ETLPipeline[RunDateCountriesParams]):
+    class _Proc(ETLProcess[RunDateCountriesParams]):
+        steps = [StagingNewConsumeStep]
 
     processes = [_Proc]
 
 
-class NonOverwriteStep(ETLStep[RunParams]):
+class NonOverwriteStep(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.missing").replace()
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class NonOverwritePipeline(ETLPipeline[RunParams]):
-    class _Proc(ETLProcess[RunParams]):
+class NonOverwritePipeline(ETLPipeline[RunDateCountriesParams]):
+    class _Proc(ETLProcess[RunDateCountriesParams]):
         steps = [NonOverwriteStep]
 
     processes = [_Proc]
 
 
-class ParallelCreate(ETLStep[RunParams]):
+class ParallelCreate(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.parallel_new").replace(schema=SchemaMode.OVERWRITE)
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class ParallelConsume(ETLStep[RunParams]):
+class ParallelConsume(ETLStep[RunDateCountriesParams]):
     sources = Sources(data=FromTable("staging.parallel_new"))
     target = IntoTable("mart.parallel_out").replace()
 
-    def execute(self, params: RunParams, *, data: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, data: Any) -> Any:  # type: ignore[override]
         return data
 
 
-class PipelineParallelCreateConsume(ETLPipeline[RunParams]):
-    class _Proc(ETLProcess[RunParams]):
+class PipelineParallelCreateConsume(ETLPipeline[RunDateCountriesParams]):
+    class _Proc(ETLProcess[RunDateCountriesParams]):
         steps = [[ParallelCreate, ParallelConsume]]
 
     processes = [_Proc]
 
 
-class ParallelNewA(ETLStep[RunParams]):
+class ParallelNewA(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.pa").replace(schema=SchemaMode.OVERWRITE)
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class ParallelNewB(ETLStep[RunParams]):
+class ParallelNewB(ETLStep[RunDateCountriesParams]):
     target = IntoTable("staging.pb").replace(schema=SchemaMode.OVERWRITE)
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams) -> Any:  # type: ignore[override]
         return None
 
 
-class ConsumeAB(ETLStep[RunParams]):
+class ConsumeAB(ETLStep[RunDateCountriesParams]):
     sources = Sources(a=FromTable("staging.pa"), b=FromTable("staging.pb"))
     target = IntoTable("mart.agg").replace()
 
-    def execute(self, params: RunParams, *, a: Any, b: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateCountriesParams, *, a: Any, b: Any) -> Any:  # type: ignore[override]
         return a
 
 
-class PipelineAfterParallelCreate(ETLPipeline[RunParams]):
-    class _Proc(ETLProcess[RunParams]):
+class PipelineAfterParallelCreate(ETLPipeline[RunDateCountriesParams]):
+    class _Proc(ETLProcess[RunDateCountriesParams]):
         steps = [[ParallelNewA, ParallelNewB], ConsumeAB]
 
     processes = [_Proc]
@@ -328,13 +319,13 @@ class TestCompileStep:
     )
     def test_compile_step_shape(
         self,
-        step_type: type[ETLStep[RunParams]],
+        step_type: type[ETLStep[RunDateCountriesParams]],
         expected_aliases: set[str],
         target_ref: str,
     ) -> None:
         plan = ETLCompiler().compile_step(step_type)
         assert plan.step_type is step_type
-        assert plan.params_type is RunParams
+        assert plan.params_type is RunDateCountriesParams
         assert {binding.alias for binding in plan.source_bindings} == expected_aliases
         assert plan.target_binding.spec.table_ref is not None
         assert plan.target_binding.spec.table_ref.ref == target_ref
@@ -373,7 +364,7 @@ class TestCompileStep:
             (NoTarget, "target.*required", ETLErrorCode.MISSING_TARGET),
             (MissingFrame, "customers", ETLErrorCode.MISSING_SOURCE_PARAMS),
             (ExtraFrame, "ghost", ETLErrorCode.EXTRA_SOURCE_PARAMS),
-            (NoParams, "params", ETLErrorCode.INVALID_PARAMS_TYPE),
+            (ParamsOmittedStep, "params", ETLErrorCode.INVALID_PARAMS_TYPE),
             (BareStep, "missing generic parameter", ETLErrorCode.MISSING_GENERIC_PARAM),
             (StringTarget, "must be IntoTable", ETLErrorCode.INVALID_TARGET_TYPE),
         ],
@@ -415,12 +406,12 @@ class TestCompileProcessAndPipeline:
     )
     def test_compile_pipeline_shapes(
         self,
-        pipeline_type: type[ETLPipeline[RunParams]],
+        pipeline_type: type[ETLPipeline[RunDateCountriesParams]],
         is_parallel: bool,
     ) -> None:
         plan = ETLCompiler().compile(pipeline_type)
         assert plan.pipeline_type is pipeline_type
-        assert plan.params_type is RunParams
+        assert plan.params_type is RunDateCountriesParams
         assert len(plan.nodes) == 1
         assert isinstance(plan.nodes[0], ParallelProcessGroup) is is_parallel
 
@@ -437,7 +428,9 @@ class TestParamsCompatibility:
         "process_type",
         [StagingProcess, WideProcess],
     )
-    def test_process_params_compatible(self, process_type: type[ETLProcess[RunParams]]) -> None:
+    def test_process_params_compatible(
+        self, process_type: type[ETLProcess[RunDateCountriesParams]]
+    ) -> None:
         assert ETLCompiler().compile_process(process_type) is not None
 
     def test_pipeline_params_compatible(self) -> None:
@@ -453,7 +446,7 @@ class TestParamsCompatibility:
     )
     def test_process_params_incompatible(
         self,
-        process_type: type[ETLProcess[RunParams]],
+        process_type: type[ETLProcess[RunDateCountriesParams]],
         error: str,
     ) -> None:
         compiler = ETLCompiler()
@@ -506,7 +499,7 @@ class TestCatalogValidation:
     )
     def test_catalog_validation_scenarios(
         self,
-        pipeline_type: type[ETLPipeline[RunParams]],
+        pipeline_type: type[ETLPipeline[RunDateCountriesParams]],
         catalog_tables: dict[str, tuple[str, ...]],
         error: str | None,
     ) -> None:

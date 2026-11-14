@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import msgspec
 import pytest
 
 from loom.core.expr.nodes import AndExpr, EqExpr, InExpr
@@ -10,12 +9,7 @@ from loom.etl.declarative.expr import col
 from loom.etl.declarative.source import FromDynamoDb, SourceRef
 from loom.etl.declarative.source._specs import DynamoDbSourceSpec, SourceKind
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
-
-
-class OrderDoc(msgspec.Struct):
-    id: str
-    status: str | None = None
-
+from tests.unit.etl.io.sources.doubles import OptionalStatusOrderDoc
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -129,7 +123,7 @@ class TestProject:
 
 class TestWithSchema:
     def test_schema_stored_in_spec(self) -> None:
-        spec = FromDynamoDb("orders").with_schema(OrderDoc)._to_spec("orders")
+        spec = FromDynamoDb("orders").with_schema(OptionalStatusOrderDoc)._to_spec("orders")
         assert spec.schema == (
             ColumnSchema("id", LoomDtype.UTF8, nullable=True),
             ColumnSchema("status", LoomDtype.UTF8, nullable=True),
@@ -137,7 +131,7 @@ class TestWithSchema:
 
     def test_with_schema_is_immutable(self) -> None:
         base = FromDynamoDb("orders")
-        with_schema = base.with_schema(OrderDoc)
+        with_schema = base.with_schema(OptionalStatusOrderDoc)
         assert base._schema == ()
         assert with_schema._schema != ()
 

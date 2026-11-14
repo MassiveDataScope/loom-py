@@ -109,59 +109,58 @@ def _parent_span_id(span: ReadableSpan) -> int | None:
     return None if span.parent is None else span.parent.span_id
 
 
-def test_a_sequential_pipeline_exports_one_tree() -> None:
-    executor, exporter = _executor()
-    plan = ETLCompiler().compile(DailySales)
+class TestExecutorTracing:
+    def test_a_sequential_pipeline_exports_one_tree(self) -> None:
+        executor, exporter = _executor()
+        plan = ETLCompiler().compile(DailySales)
 
-    executor.run_pipeline(plan, TracingParams(run_date=date(2024, 1, 5)))
+        executor.run_pipeline(plan, TracingParams(run_date=date(2024, 1, 5)))
 
-    spans = exporter.get_finished_spans()
-    assert {span.name for span in spans} == {
-        "pipeline:DailySales",
-        "process:Staging",
-        "step:LoadOrders",
-    }
-    pipeline = _by_name(spans, "pipeline:DailySales")
-    process = _by_name(spans, "process:Staging")
-    step = _by_name(spans, "step:LoadOrders")
+        spans = exporter.get_finished_spans()
+        assert {span.name for span in spans} == {
+            "pipeline:DailySales",
+            "process:Staging",
+            "step:LoadOrders",
+        }
+        pipeline = _by_name(spans, "pipeline:DailySales")
+        process = _by_name(spans, "process:Staging")
+        step = _by_name(spans, "step:LoadOrders")
 
-    assert _parent_span_id(step) == _span_id(process)
-    assert _parent_span_id(process) == _span_id(pipeline)
-    assert _parent_span_id(pipeline) is None
-    assert len({_trace_id(span) for span in spans}) == 1
+        assert _parent_span_id(step) == _span_id(process)
+        assert _parent_span_id(process) == _span_id(pipeline)
+        assert _parent_span_id(pipeline) is None
+        assert len({_trace_id(span) for span in spans}) == 1
 
+    def test_a_parallel_group_nests_its_steps_under_the_process(self) -> None:
+        executor, exporter = _executor()
+        plan = ETLCompiler().compile(ParallelSales)
 
-def test_a_parallel_group_nests_its_steps_under_the_process() -> None:
-    executor, exporter = _executor()
-    plan = ETLCompiler().compile(ParallelSales)
+        executor.run_pipeline(plan, TracingParams(run_date=date(2024, 1, 5)))
 
-    executor.run_pipeline(plan, TracingParams(run_date=date(2024, 1, 5)))
+        spans = exporter.get_finished_spans()
+        process = _by_name(spans, "process:ParallelStaging")
+        for name in ("step:LoadOrders", "step:LoadReturns"):
+            assert _parent_span_id(_by_name(spans, name)) == _span_id(process)
+        assert len({_trace_id(span) for span in spans}) == 1
 
-    spans = exporter.get_finished_spans()
-    process = _by_name(spans, "process:ParallelStaging")
-    for name in ("step:LoadOrders", "step:LoadReturns"):
-        assert _parent_span_id(_by_name(spans, name)) == _span_id(process)
-    assert len({_trace_id(span) for span in spans}) == 1
+    def test_a_failing_step_marks_its_whole_branch_as_an_error(self) -> None:
+        executor, exporter = _executor()
+        plan = ETLCompiler().compile(FailingSales)
 
+        params = TracingParams(run_date=date(2024, 1, 5))
 
-def test_a_failing_step_marks_its_whole_branch_as_an_error() -> None:
-    executor, exporter = _executor()
-    plan = ETLCompiler().compile(FailingSales)
+        with pytest.raises(ValueError):
+            executor.run_pipeline(plan, params)
 
-    params = TracingParams(run_date=date(2024, 1, 5))
-
-    with pytest.raises(ValueError):
-        executor.run_pipeline(plan, params)
-
-    spans = exporter.get_finished_spans()
-    assert {span.name for span in spans} == {
-        "pipeline:FailingSales",
-        "process:FailingStaging",
-        "step:FailingLoad",
-    }
-    for span in spans:
-        assert span.status.status_code is StatusCode.ERROR
-        assert span.status.description == "intentional failure"
-    assert _parent_span_id(_by_name(spans, "step:FailingLoad")) == _span_id(
-        _by_name(spans, "process:FailingStaging")
-    )
+        spans = exporter.get_finished_spans()
+        assert {span.name for span in spans} == {
+            "pipeline:FailingSales",
+            "process:FailingStaging",
+            "step:FailingLoad",
+        }
+        for span in spans:
+            assert span.status.status_code is StatusCode.ERROR
+            assert span.status.description == "intentional failure"
+        assert _parent_span_id(_by_name(spans, "step:FailingLoad")) == _span_id(
+            _by_name(spans, "process:FailingStaging")
+        )
