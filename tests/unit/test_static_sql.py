@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.source_tree import parsed
+
 SRC = Path(__file__).resolve().parents[2] / "src"
 LOOM = SRC / "loom"
 SQLALCHEMY = LOOM / "core" / "repository" / "sqlalchemy"
@@ -68,7 +70,7 @@ def _modules() -> list[Path]:
 
 
 def _parse(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(encoding="utf-8"))
+    return parsed(path)
 
 
 def _is_final(annotation: ast.expr) -> bool:

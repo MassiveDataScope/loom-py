@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from tests.helpers.imports import imported_roots
+from tests.helpers.source_tree import parsed
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -103,7 +104,7 @@ def test_a_driver_sdk_is_imported_only_by_its_islands() -> None:
     offenders = []
     for path in sorted((_SRC / "loom").rglob("*.py")):
         relative = path.relative_to(_SRC / "loom").as_posix()
-        for sdk in imported_roots(ast.parse(path.read_text(encoding="utf-8"))) & set(_ISLANDS):
+        for sdk in imported_roots(parsed(path)) & set(_ISLANDS):
             if relative not in _ISLANDS[sdk]:
                 offenders.append(f"{relative} imports {sdk}")
 

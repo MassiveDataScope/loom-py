@@ -104,7 +104,7 @@ async def test_a_silent_service_fails_within_the_declared_bounds(
             "url": silent_endpoint,
             "connect_timeout": 1,
             "read_timeout": 1,
-            "max_attempts": 2,
+            "max_attempts": 1,
         },
         DynamoDBRepositoryConfig,
         strict=True,
@@ -119,5 +119,6 @@ async def test_a_silent_service_fails_within_the_declared_bounds(
     elapsed = time.perf_counter() - started
 
     # (connect + read) x attempts plus at most one second of standard backoff jitter.
-    assert elapsed < (1 + 1) * 2 + 1
+    # One attempt keeps the test short; test_declared_values_reach_the_client pins retries.
+    assert elapsed < (1 + 1) * 1 + 1
     assert "timeout" in type(raised.value).__name__.lower() or "timed out" in str(raised.value)

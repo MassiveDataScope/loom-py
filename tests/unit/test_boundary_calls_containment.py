@@ -10,6 +10,8 @@ import ast
 from collections import Counter
 from pathlib import Path
 
+from tests.helpers.source_tree import parsed
+
 _SRC = Path(__file__).resolve().parents[2] / "src" / "loom"
 _PACKAGES = ("ai", "serverless", "core/cache", "core/command", "rest")
 _TARGETS = frozenset(
@@ -93,7 +95,7 @@ def _resolved_call_name(node: ast.Call, bindings: dict[str, str]) -> str | None:
 
 
 def _count_target_calls(path: Path) -> Counter[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parsed(path)
     bindings = _import_bindings(tree)
     counts: Counter[str] = Counter()
     for node in ast.walk(tree):

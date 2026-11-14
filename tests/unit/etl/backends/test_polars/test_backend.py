@@ -329,6 +329,12 @@ def test_writer_warns_on_polars_uc_first_create(
     monkeypatch.setattr(polars_writer_module, "write_deltalake", _fake_write_deltalake)
     monkeypatch.setattr(polars_writer_module, "read_delta_physical_schema", lambda *_args: None)
 
+    def _unreachable(*_args: object, **_kwargs: object) -> None:
+        raise OSError("the fake workspace is unreachable")
+
+    # The commit log opens the table after the write: unpatched, it calls the workspace.
+    monkeypatch.setattr(polars_writer_module, "DeltaTable", _unreachable)
+
     locator = MappingLocator(
         mapping={
             "raw.uc_orders": TableLocation(

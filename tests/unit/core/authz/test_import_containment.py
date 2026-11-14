@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.source_tree import parsed
+
 _PACKAGE = Path(__file__).resolve().parents[4] / "src" / "loom" / "core" / "authz"
 
 
@@ -44,7 +46,7 @@ def test_imports_only_the_standard_library() -> None:
     foreign = {
         (path.name, name)
         for path in _modules()
-        for name in _imported(ast.parse(path.read_text()))
+        for name in _imported(parsed(path))
         if not _is_allowed(name)
     }
 

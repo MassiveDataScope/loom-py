@@ -453,7 +453,9 @@ testpaths = [
 pythonpath = [
     "src",
 ]
-addopts = "-ra --log-disable=aiosqlite"
+# `slow` tests are deselected by default, as CI's fast lane does; CI runs them in its
+# slow lane with an explicit `-m`. Run them locally with `-m slow`, or everything with `-m ""`.
+addopts = "-ra --log-disable=aiosqlite -m 'not slow'"
 asyncio_mode = "auto"
 timeout = 300
 log_cli = true
@@ -464,7 +466,7 @@ markers = [
     "kafka: tests that exercise Kafka transport and codecs",
     "mongo: tests that need a real MongoDB replica set (tests/integration/persistence/mongo)",
     "integration: end-to-end streaming flow tests",
-    "slow: long-running tests that should be opt-in in CI",
+    "slow: long-running tests, deselected by default; run them with -m slow",
     "live: tests that call a real model provider; skipped without credentials",
 ]
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests.helpers.source_tree import parsed
+
 _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 
 # The keys that identify each engine's connection, and the one type declaring them.
@@ -40,8 +42,7 @@ _BUILDERS = frozenset(
 
 def _modules() -> list[tuple[str, ast.Module]]:
     return [
-        (path.relative_to(_SRC).as_posix(), ast.parse(path.read_text(encoding="utf-8")))
-        for path in sorted(_SRC.rglob("*.py"))
+        (path.relative_to(_SRC).as_posix(), parsed(path)) for path in sorted(_SRC.rglob("*.py"))
     ]
 
 

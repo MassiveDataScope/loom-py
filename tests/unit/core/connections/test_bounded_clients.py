@@ -18,7 +18,9 @@ from loom.core.model.redaction import Dsn
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 # (connect + read) x attempts plus at most one second of standard backoff jitter.
-_BOUND = (1 + 1) * 2 + 1
+# One attempt at the smallest timeouts keeps the test short; the declared
+# retries reaching botocore are pinned without a network by test_client_options.
+_BOUND = (1 + 1) * 1 + 1
 
 
 def _elapsed(call: Callable[[], Any]) -> float:
@@ -46,7 +48,7 @@ def test_the_etl_dynamodb_client_fails_within_its_bounds(silent_endpoint: str) -
             url=Dsn(silent_endpoint),
             connect_timeout=1,
             read_timeout=1,
-            max_attempts=2,
+            max_attempts=1,
         )
     )
 

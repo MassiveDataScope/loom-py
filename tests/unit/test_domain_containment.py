@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.source_tree import parsed
+
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src" / "loom"
 
@@ -253,7 +255,7 @@ _ENVIRONMENT_LABELS = re.compile(r"^(prod|production|staging|dev|development)$",
 
 
 def _environment_labels(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text())
+    tree = parsed(path)
     relative = path.relative_to(_SRC).as_posix()
     return [
         f"{relative}:{node.lineno}: {node.value!r}"

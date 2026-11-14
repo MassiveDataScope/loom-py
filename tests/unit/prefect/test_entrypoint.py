@@ -100,20 +100,36 @@ def test_flow_package_never_imports_the_deploy_package() -> None:
     assert result.stdout.strip() == "[]"
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        "loom.prefect.flow",
-        "loom.prefect.deploy",
-        "loom.prefect.deploy.entrypoint",
-        "loom.prefect.flow._assemble",
-    ],
+_FIRST_IMPORTS = (
+    "loom.prefect.flow",
+    "loom.prefect.deploy",
+    "loom.prefect.deploy.entrypoint",
+    "loom.prefect.flow._assemble",
 )
-def test_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", f"import {module}"],
+
+_IMPORT_EACH_FIRST = textwrap.dedent(
+    """\
+    import importlib, sys, traceback
+    failed = {}
+    for module in sys.argv[1:]:
+        for name in [m for m in sys.modules if m == "loom" or m.startswith("loom.")]:
+            del sys.modules[name]
+        try:
+            importlib.import_module(module)
+        except BaseException:
+            failed[module] = traceback.format_exc()
+    print(failed or "")
+    """
+)
+
+
+def test_each_module_imports_first_with_no_loom_module_loaded() -> None:
+    """One interpreter: loom is unloaded before each import, so each one runs first."""
+    result = subprocess.run(  # noqa: S603 - fixed probe, fixed module names
+        [sys.executable, "-c", _IMPORT_EACH_FIRST, *_FIRST_IMPORTS],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", result.stdout

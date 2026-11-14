@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.source_tree import parsed
+
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src" / "loom"
 _SELECTOR_MODULE = _SRC / "core" / "environment.py"
@@ -47,7 +49,7 @@ _GETENV = frozenset({"os.getenv", "getenv"})
 
 
 def _selector_literals(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parsed(path)
     return [
         f"{path.relative_to(_SRC)}:{node.lineno}: {node.value!r}"
         for node in ast.walk(tree)
@@ -165,14 +167,14 @@ def test_every_access_outside_the_environment_module_reads_one_literal_variable(
         f"{path.relative_to(_SRC)}:{hit}"
         for path in sorted(_SRC.rglob("*.py"))
         if path != _SELECTOR_MODULE and path.relative_to(_SRC).as_posix() not in _DYNAMIC_READERS
-        for hit in _environ_violations(ast.parse(path.read_text(encoding="utf-8")))
+        for hit in _environ_violations(parsed(path))
     ]
 
     assert offenders == []
 
 
 def _owned_names() -> frozenset[str]:
-    tree = ast.parse(_SELECTOR_MODULE.read_text(encoding="utf-8"))
+    tree = parsed(_SELECTOR_MODULE)
     return frozenset(
         node.value
         for node in ast.walk(tree)

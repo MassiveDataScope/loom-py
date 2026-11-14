@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.imports import imported_modules
+from tests.helpers.source_tree import parsed
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -69,7 +70,7 @@ def test_a_layer_imports_nothing_outside_it(
     offenders = []
     for path in sorted((_SRC / Path(*layer.split("."))).rglob("*.py")):
         module, package = _module_of(path)
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parsed(path)
         for imported in sorted(imported_modules(tree, package=package)):
             if any(_within(imported, banned) for banned in forbidden) and not any(
                 _within(imported, kept) for kept in allowed

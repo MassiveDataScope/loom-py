@@ -19,6 +19,8 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
+from tests.helpers.source_tree import parsed
+
 _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 _ERRORS_PACKAGE = _SRC / "core" / "errors"
 _ERRORS_MODULES = frozenset({"errors.py", "_errors.py"})
@@ -38,7 +40,7 @@ def _base_name(base: ast.expr) -> str | None:
 
 def _classes(path: Path) -> Iterator[ast.ClassDef]:
     """Every class definition in *path*, nested ones included."""
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(parsed(path)):
         if isinstance(node, ast.ClassDef):
             yield node
 
@@ -92,7 +94,7 @@ def _web_imports_in_core() -> list[str]:
     """``path:line module`` for every import of a web package under ``loom/core``."""
     found: list[str] = []
     for path in sorted((_SRC / "core").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parsed(path)):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
