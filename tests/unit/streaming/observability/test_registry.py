@@ -14,12 +14,12 @@ from loom.streaming.bytewax._adapter import _NODE_HANDLERS  # noqa: E402
 from loom.streaming.nodes._step import RecordStep  # noqa: E402
 
 
-def test_node_handlers_is_immutable() -> None:
-    assert isinstance(_NODE_HANDLERS, MappingProxyType)
+class TestNodeHandlerRegistry:
+    def test_node_handlers_is_immutable(self) -> None:
+        assert isinstance(_NODE_HANDLERS, MappingProxyType)
 
-    with pytest.raises(TypeError):
-        _NODE_HANDLERS[object] = lambda *a: None  # type: ignore[index]
+        with pytest.raises(TypeError):
+            _NODE_HANDLERS[object] = lambda *a: None  # type: ignore[index]
 
-
-def test_node_handlers_cover_step_handlers() -> None:
-    assert RecordStep in _NODE_HANDLERS
+    def test_node_handlers_cover_step_handlers(self) -> None:
+        assert RecordStep in _NODE_HANDLERS

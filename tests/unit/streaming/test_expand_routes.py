@@ -19,22 +19,22 @@ class _StoreEvent(LoomStruct):
     name: str
 
 
-class _StoreRow(LoomStruct):
+class AcmeExpandStoreRow(LoomStruct):
     store_id: str
 
 
-class _AuditRow(LoomStruct):
+class AcmeExpandAuditRow(LoomStruct):
     name: str
 
 
 class _StoreExpander(PayloadExpander[_StoreEvent]):
-    outputs: ClassVar[tuple[type, ...]] = (_StoreRow, _AuditRow)
+    outputs: ClassVar[tuple[type, ...]] = (AcmeExpandStoreRow, AcmeExpandAuditRow)
 
     @classmethod
     def expand(cls, event: _StoreEvent) -> dict[type, list[Any]]:
         return {
-            _StoreRow: [_StoreRow(store_id=event.store_id)],
-            _AuditRow: [_AuditRow(name=event.name)],
+            AcmeExpandStoreRow: [AcmeExpandStoreRow(store_id=event.store_id)],
+            AcmeExpandAuditRow: [AcmeExpandAuditRow(name=event.name)],
         }
 
 
@@ -42,51 +42,48 @@ def _drain_process() -> Process[Any, Any]:
     return Process(Drain())
 
 
-def test_expand_routes_requires_routes_or_default() -> None:
-    with pytest.raises(ValueError, match="at least one route"):
-        ExpandRoutes(expander=_StoreExpander, routes={}, default=None)
+class TestExpandRoutes:
+    def test_expand_routes_requires_routes_or_default(self) -> None:
+        with pytest.raises(ValueError, match="at least one route"):
+            ExpandRoutes(expander=_StoreExpander, routes={}, default=None)
 
+    def test_expand_routes_with_default_only(self) -> None:
+        default = _drain_process()
+        node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
+            expander=_StoreExpander,
+            routes={},
+            default=default,
+        )
+        assert node.default is default
+        assert len(node.routes) == 0
 
-def test_expand_routes_with_default_only() -> None:
-    default = _drain_process()
-    node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
-        expander=_StoreExpander,
-        routes={},
-        default=default,
-    )
-    assert node.default is default
-    assert len(node.routes) == 0
+    def test_expand_routes_routes_are_frozen(self) -> None:
+        node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
+            expander=_StoreExpander,
+            routes={AcmeExpandStoreRow: _drain_process()},
+        )
+        assert isinstance(node.routes, MappingProxyType)
+        with pytest.raises((TypeError, AttributeError)):
+            node.routes[AcmeExpandAuditRow] = _drain_process()  # type: ignore[index]
 
+    def test_expand_routes_stores_expander_and_routes(self) -> None:
+        store_process = _drain_process()
+        audit_process = _drain_process()
+        node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
+            expander=_StoreExpander,
+            routes={AcmeExpandStoreRow: store_process, AcmeExpandAuditRow: audit_process},
+        )
+        assert node.expander is _StoreExpander
+        assert node.routes[AcmeExpandStoreRow] is store_process
+        assert node.routes[AcmeExpandAuditRow] is audit_process
+        assert node.default is None
 
-def test_expand_routes_routes_are_frozen() -> None:
-    node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
-        expander=_StoreExpander,
-        routes={_StoreRow: _drain_process()},
-    )
-    assert isinstance(node.routes, MappingProxyType)
-    with pytest.raises((TypeError, AttributeError)):
-        node.routes[_AuditRow] = _drain_process()  # type: ignore[index]
-
-
-def test_expand_routes_stores_expander_and_routes() -> None:
-    store_process = _drain_process()
-    audit_process = _drain_process()
-    node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
-        expander=_StoreExpander,
-        routes={_StoreRow: store_process, _AuditRow: audit_process},
-    )
-    assert node.expander is _StoreExpander
-    assert node.routes[_StoreRow] is store_process
-    assert node.routes[_AuditRow] is audit_process
-    assert node.default is None
-
-
-def test_expand_routes_expander_outputs_accessible_via_node() -> None:
-    node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
-        expander=_StoreExpander,
-        routes={_StoreRow: _drain_process()},
-        default=_drain_process(),
-    )
-    outputs = node.expander.outputs
-    assert _StoreRow in outputs
-    assert _AuditRow in outputs
+    def test_expand_routes_expander_outputs_accessible_via_node(self) -> None:
+        node: ExpandRoutes[_StoreEvent] = ExpandRoutes(
+            expander=_StoreExpander,
+            routes={AcmeExpandStoreRow: _drain_process()},
+            default=_drain_process(),
+        )
+        outputs = node.expander.outputs
+        assert AcmeExpandStoreRow in outputs
+        assert AcmeExpandAuditRow in outputs

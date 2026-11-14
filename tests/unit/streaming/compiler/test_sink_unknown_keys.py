@@ -51,65 +51,73 @@ def _config(base: DictConfig, section: dict[str, object]) -> ConfigContext:
     return ConfigContext(cast(DictConfig, merged))
 
 
-@pytest.mark.parametrize("backend", list(_SECTIONS))
-def test_a_known_section_compiles(streaming_kafka_config: DictConfig, backend: Backend) -> None:
-    plan = compile_flow(_flow(backend), config=_config(streaming_kafka_config, _SECTIONS[backend]))
+class TestSinkSectionKeys:
+    @pytest.mark.parametrize("backend", list(_SECTIONS))
+    def test_a_known_section_compiles(
+        self, streaming_kafka_config: DictConfig, backend: Backend
+    ) -> None:
+        plan = compile_flow(
+            _flow(backend), config=_config(streaming_kafka_config, _SECTIONS[backend])
+        )
 
-    assert plan.name == "sink_flow"
+        assert plan.name == "sink_flow"
 
+    @pytest.mark.parametrize("backend", list(_SECTIONS))
+    def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
+        self, streaming_kafka_config: DictConfig, backend: Backend
+    ) -> None:
+        section = {**_SECTIONS[backend], "chunk_sise": 10}
+        flow = _flow(backend)
+        context = _config(streaming_kafka_config, section)
 
-@pytest.mark.parametrize("backend", list(_SECTIONS))
-def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
-    streaming_kafka_config: DictConfig, backend: Backend
-) -> None:
-    section = {**_SECTIONS[backend], "chunk_sise": 10}
-    flow = _flow(backend)
-    context = _config(streaming_kafka_config, section)
+        with pytest.raises(CompilationError) as failure:
+            compile_flow(flow, config=context)
 
-    with pytest.raises(CompilationError) as failure:
-        compile_flow(flow, config=context)
+        issues = [
+            issue
+            for issue in failure.value.issues
+            if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert "'chunk_sise'" in issues[0].message
 
-    issues = [
-        issue
-        for issue in failure.value.issues
-        if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
-    ]
-    assert len(issues) == 1
-    assert "'chunk_sise'" in issues[0].message
+    @pytest.mark.parametrize(
+        ("backend", "key", "database", "remedy"),
+        [
+            (
+                Backend.SQLALCHEMY,
+                "store",
+                "warehouse",
+                "set 'store' for a stores.<name> section or 'url' inline, not both",
+            ),
+            (
+                Backend.CLICKHOUSE,
+                "store",
+                "clickhouse",
+                "the url comes from stores.<name>, so set 'store' only",
+            ),
+        ],
+    )
+    def test_a_section_with_both_url_and_database_is_refused(
+        self,
+        streaming_kafka_config: DictConfig,
+        backend: Backend,
+        key: str,
+        database: str,
+        remedy: str,
+    ) -> None:
+        section = {"url": "sqlite+aiosqlite:///:memory:", key: database}
+        flow = _flow(backend)
+        context = _config(streaming_kafka_config, section)
 
+        with pytest.raises(CompilationError) as failure:
+            compile_flow(flow, config=context)
 
-@pytest.mark.parametrize(
-    ("backend", "key", "database", "remedy"),
-    [
-        (
-            Backend.SQLALCHEMY,
-            "store",
-            "warehouse",
-            "set 'store' for a stores.<name> section or 'url' inline, not both",
-        ),
-        (
-            Backend.CLICKHOUSE,
-            "store",
-            "clickhouse",
-            "the url comes from stores.<name>, so set 'store' only",
-        ),
-    ],
-)
-def test_a_section_with_both_url_and_database_is_refused(
-    streaming_kafka_config: DictConfig, backend: Backend, key: str, database: str, remedy: str
-) -> None:
-    section = {"url": "sqlite+aiosqlite:///:memory:", key: database}
-    flow = _flow(backend)
-    context = _config(streaming_kafka_config, section)
-
-    with pytest.raises(CompilationError) as failure:
-        compile_flow(flow, config=context)
-
-    issues = [
-        issue
-        for issue in failure.value.issues
-        if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
-    ]
-    assert len(issues) == 1
-    assert f"both 'url' and '{key}'" in issues[0].message
-    assert remedy in issues[0].message
+        issues = [
+            issue
+            for issue in failure.value.issues
+            if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert f"both 'url' and '{key}'" in issues[0].message
+        assert remedy in issues[0].message

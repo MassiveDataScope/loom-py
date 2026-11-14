@@ -18,7 +18,7 @@ from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import build_compiled_source  # noqa: E402
-from tests.unit.streaming.kafka.fakes import (  # noqa: E402
+from tests.unit.streaming.kafka.doubles import (  # noqa: E402
     PartitionClientInstaller,
     PartitionClientStub,
 )

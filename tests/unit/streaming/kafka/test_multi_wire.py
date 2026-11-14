@@ -17,15 +17,12 @@ from loom.streaming.kafka import (
     build_message,
     try_decode_multi_record,
 )
+from tests.unit.streaming.doubles import AcmeOrderEvent
 
 pytestmark = pytest.mark.kafka
 
 
-class _OrderEvent(LoomFrozenStruct, frozen=True):
-    order_id: str
-
-
-class _ProductEvent(LoomFrozenStruct, frozen=True):
+class AcmeProductEvent(LoomFrozenStruct, frozen=True):
     sku: str
     stock: int
 
@@ -73,16 +70,16 @@ class TestTryDecodeMultiRecord:
         ("payload", "message_type", "expected_type", "expected_field", "expected_value"),
         [
             (
-                _OrderEvent(order_id="o-1"),
+                AcmeOrderEvent(order_id="o-1"),
                 _ORDER_MT,
-                _OrderEvent,
+                AcmeOrderEvent,
                 "order_id",
                 "o-1",
             ),
             (
-                _ProductEvent(sku="sku-1", stock=10),
+                AcmeProductEvent(sku="sku-1", stock=10),
                 _PRODUCT_MT,
-                _ProductEvent,
+                AcmeProductEvent,
                 "sku",
                 "sku-1",
             ),
@@ -97,7 +94,7 @@ class TestTryDecodeMultiRecord:
         expected_value: str,
     ) -> None:
         dispatch = DispatchTable(
-            plain={_ORDER_MT: _OrderEvent, _PRODUCT_MT: _ProductEvent},
+            plain={_ORDER_MT: AcmeOrderEvent, _PRODUCT_MT: AcmeProductEvent},
             error={},
             wire={},
         )
@@ -114,7 +111,7 @@ class TestTryDecodeMultiRecord:
         ("record", "expected_reason"),
         [
             (
-                _record(_encode_plain(_ProductEvent(sku="sku-1", stock=5), _PRODUCT_MT)),
+                _record(_encode_plain(AcmeProductEvent(sku="sku-1", stock=5), _PRODUCT_MT)),
                 _PRODUCT_MT,
             ),
             (
@@ -128,7 +125,7 @@ class TestTryDecodeMultiRecord:
         record: KafkaRecord[bytes],
         expected_reason: str,
     ) -> None:
-        dispatch = DispatchTable(plain={_ORDER_MT: _OrderEvent}, error={}, wire={})
+        dispatch = DispatchTable(plain={_ORDER_MT: AcmeOrderEvent}, error={}, wire={})
         codec: MsgspecCodec[LoomFrozenStruct] = MsgspecCodec()
 
         result = try_decode_multi_record(record, dispatch, codec)
@@ -147,7 +144,7 @@ class TestTryDecodeMultiRecord:
 
         logger = _LoggerProbe()
         monkeypatch.setattr("loom.streaming.kafka._wire.logger", logger)
-        dispatch = DispatchTable(plain={_ORDER_MT: _OrderEvent}, error={}, wire={})
+        dispatch = DispatchTable(plain={_ORDER_MT: AcmeOrderEvent}, error={}, wire={})
         codec: MsgspecCodec[LoomFrozenStruct] = MsgspecCodec()
 
         result = try_decode_multi_record(_record(b"not-msgpack"), dispatch, codec)
@@ -158,8 +155,8 @@ class TestTryDecodeMultiRecord:
     @pytest.mark.parametrize(
         ("payload", "inner_message_type"),
         [
-            (_OrderEvent(order_id="o-2"), _ORDER_MT),
-            (_ProductEvent(sku="s-1", stock=3), _PRODUCT_MT),
+            (AcmeOrderEvent(order_id="o-2"), _ORDER_MT),
+            (AcmeProductEvent(sku="s-1", stock=3), _PRODUCT_MT),
         ],
     )
     def test_dispatches_error_envelope_by_inner_payload_type(
@@ -170,8 +167,8 @@ class TestTryDecodeMultiRecord:
         dispatch = DispatchTable(
             plain={},
             error={
-                _ORDER_MT: ErrorEnvelope[_OrderEvent],
-                _PRODUCT_MT: ErrorEnvelope[_ProductEvent],
+                _ORDER_MT: ErrorEnvelope[AcmeOrderEvent],
+                _PRODUCT_MT: ErrorEnvelope[AcmeProductEvent],
             },
             wire={},
         )
@@ -189,12 +186,12 @@ class TestTryDecodeMultiRecord:
     def test_error_envelope_with_unknown_inner_type_returns_wire_error(self) -> None:
         dispatch = DispatchTable(
             plain={},
-            error={_ORDER_MT: ErrorEnvelope[_OrderEvent]},
+            error={_ORDER_MT: ErrorEnvelope[AcmeOrderEvent]},
             wire={},
         )
         codec: MsgspecCodec[LoomFrozenStruct] = MsgspecCodec()
         record = _record(
-            _encode_error(_ProductEvent(sku="s-1", stock=1), _PRODUCT_MT), topic="errors.all"
+            _encode_error(AcmeProductEvent(sku="s-1", stock=1), _PRODUCT_MT), topic="errors.all"
         )
 
         result = try_decode_multi_record(record, dispatch, codec)
@@ -209,7 +206,7 @@ class TestTryDecodeMultiRecord:
                 KafkaRecord(
                     topic="events.all",
                     key=b"tenant-1",
-                    value=_encode_plain(_OrderEvent(order_id="o-4"), _ORDER_MT),
+                    value=_encode_plain(AcmeOrderEvent(order_id="o-4"), _ORDER_MT),
                     partition=2,
                     offset=5,
                     timestamp_ms=9999,
@@ -234,7 +231,7 @@ class TestTryDecodeMultiRecord:
         record: KafkaRecord[bytes],
         expect_ok: bool,
     ) -> None:
-        dispatch = DispatchTable(plain={_ORDER_MT: _OrderEvent}, error={}, wire={})
+        dispatch = DispatchTable(plain={_ORDER_MT: AcmeOrderEvent}, error={}, wire={})
         codec: MsgspecCodec[LoomFrozenStruct] = MsgspecCodec()
 
         result = try_decode_multi_record(record, dispatch, codec)
@@ -256,7 +253,7 @@ class TestTryDecodeMultiRecord:
 
     def test_dispatches_wire_decode_error_by_message_type(self) -> None:
         dispatch = DispatchTable(
-            plain={_ORDER_MT: _OrderEvent},
+            plain={_ORDER_MT: AcmeOrderEvent},
             error={},
             wire={DecodeError.loom_message_type(): DecodeError},
         )

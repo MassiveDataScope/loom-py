@@ -23,24 +23,24 @@ _BROKER = "localhost:9092"
 _ORDERS_IN_TOPIC = "orders.in"
 
 
-class Order(LoomFrozenStruct, frozen=True):
+class AcmeOrder(LoomFrozenStruct, frozen=True):
     """Canonical order payload used across Bytewax tests."""
 
     order_id: str
 
 
-class Result(LoomFrozenStruct, frozen=True):
+class AcmeResult(LoomFrozenStruct, frozen=True):
     """Canonical result payload used across Bytewax tests."""
 
     value: str
 
 
-class DoubleStep(RecordStep[Order, Result]):
+class DoubleStep(RecordStep[AcmeOrder, AcmeResult]):
     """Duplicate an order id into the output payload."""
 
-    def execute(self, message: Message[Order], **kwargs: object) -> Result:
+    def execute(self, message: Message[AcmeOrder], **kwargs: object) -> AcmeResult:
         del kwargs
-        return Result(value=message.payload.order_id * 2)
+        return AcmeResult(value=message.payload.order_id * 2)
 
 
 class Item(LoomStruct):
@@ -57,15 +57,15 @@ class UpperItem(RecordStep[Item, Item]):
         return Item(value=message.payload.value.upper())
 
 
-class SuffixStep(RecordStep[Result, Result]):
+class SuffixStep(RecordStep[AcmeResult, AcmeResult]):
     """Append a suffix to the transformed payload."""
 
-    def execute(self, message: Message[Result], **kwargs: object) -> Result:
+    def execute(self, message: Message[AcmeResult], **kwargs: object) -> AcmeResult:
         del kwargs
-        return Result(value=f"{message.payload.value}:ok")
+        return AcmeResult(value=f"{message.payload.value}:ok")
 
 
-def build_message(payload: Order, *, message_id: str = "msg-1") -> Message[Order]:
+def build_message(payload: AcmeOrder, *, message_id: str = "msg-1") -> Message[AcmeOrder]:
     """Build a typed Bytewax message for tests."""
 
     return Message(payload=payload, meta=MessageMeta(message_id=message_id))
@@ -103,7 +103,7 @@ def build_compiled_plan(
                 delivery="at_most_once",
             ),
             topics=("in",),
-            payload_type=Order,
+            payload_type=AcmeOrder,
             decode_strategy="record",
             settings_key="kafka.consumer",
         ),
@@ -134,7 +134,7 @@ def build_compiled_source(
             commit_keepalive_ms=commit_keepalive_ms,
         ),
         topics=topics or (_ORDERS_IN_TOPIC,),
-        payload_type=Order,
+        payload_type=AcmeOrder,
         decode_strategy="record",
         settings_key=settings_key,
     )
@@ -165,10 +165,10 @@ def build_order_message(
     message_id: str = "msg-1",
     partition: int | None = None,
     offset: int | None = None,
-) -> Message[Order]:
+) -> Message[AcmeOrder]:
     """Build a reusable Bytewax order message with transport metadata."""
     return Message(
-        payload=Order(order_id=order_id),
+        payload=AcmeOrder(order_id=order_id),
         meta=MessageMeta(
             message_id=message_id,
             topic=_ORDERS_IN_TOPIC,

@@ -28,13 +28,13 @@ from loom.streaming.kafka._wire import DecodeError  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
 from loom.streaming.mongo._bytewax_source import MongoCDCSource  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
-    Order,
+    AcmeOrder,
     build_compiled_plan,
     build_compiled_sink,
     build_compiled_source,
     build_order_message,
 )
-from tests.unit.streaming.kafka.fakes import (  # noqa: E402
+from tests.unit.streaming.kafka.doubles import (  # noqa: E402
     ConsumerBackendStub,
     PartitionClientInstaller,
     PartitionClientStub,
@@ -173,7 +173,7 @@ class TestRuntimeIOBuilders:
         )
 
         message = Message(
-            payload=Order(order_id="123"),
+            payload=AcmeOrder(order_id="123"),
             meta=MessageMeta(
                 message_id="m-1",
                 trace_id="parent-trace",
@@ -187,7 +187,7 @@ class TestRuntimeIOBuilders:
         )
         sink.build("step", 0, 1).write_batch([message])
 
-        error_envelope = ErrorEnvelope[Order](
+        error_envelope = ErrorEnvelope[AcmeOrder](
             kind=ErrorKind.TASK,
             reason="boom",
             original_message=snapshot_message(message),
@@ -197,13 +197,13 @@ class TestRuntimeIOBuilders:
             error_sinks[ErrorKind.TASK].build("step", 0, 1),
         ).write_batch([error_envelope])
 
-        codec = MsgspecCodec[Order]()
+        codec = MsgspecCodec[AcmeOrder]()
         assert len(fake_raw.sent) >= 2
         first_record, second_record = fake_raw.sent[:2]
-        decoded_message = codec.decode(first_record.value, Order)
-        decoded_error = MsgspecCodec[ErrorEnvelope[Order]]().decode(
+        decoded_message = codec.decode(first_record.value, AcmeOrder)
+        decoded_error = MsgspecCodec[ErrorEnvelope[AcmeOrder]]().decode(
             second_record.value,
-            ErrorEnvelope[Order],
+            ErrorEnvelope[AcmeOrder],
         )
 
         assert decoded_message.meta.trace_id == "child-trace"
@@ -227,7 +227,7 @@ class TestRuntimeIOBuilders:
             error_sinks[ErrorKind.TASK].build("step", 0, 1),
         )
         original = build_order_message("123", b"tenant-a")
-        envelope: ErrorEnvelope[Order] = ErrorEnvelope(
+        envelope: ErrorEnvelope[AcmeOrder] = ErrorEnvelope(
             kind=ErrorKind.TASK,
             reason="boom",
             original_message=snapshot_message(original),

@@ -17,7 +17,6 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.errors import RuleViolation  # noqa: E402
-from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax._error_boundary import ErrorBoundary  # noqa: E402
@@ -41,6 +40,7 @@ from loom.streaming.nodes._step import (  # noqa: E402
     RecordStep,
 )
 from loom.streaming.nodes._with import WithAsync  # noqa: E402
+from tests.unit.streaming.doubles import AcmePayload  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -48,10 +48,6 @@ pytestmark = pytest.mark.bytewax
 def _boundary() -> ErrorBoundary:
     """Build the error boundary the production wiring passes to scoped nodes."""
     return ErrorBoundary(observer=ObservabilityRuntime.noop(), flow="orders")
-
-
-class _Payload(LoomStruct):
-    value: str
 
 
 class _FakeNode:
@@ -65,9 +61,9 @@ def _message(
     topic: str = "t",
     partition: int = 0,
     offset: int = 0,
-) -> Message[_Payload]:
+) -> Message[AcmePayload]:
     return Message(
-        payload=_Payload(value=value),
+        payload=AcmePayload(value=value),
         meta=MessageMeta(
             message_id=message_id,
             topic=topic,
@@ -77,7 +73,7 @@ def _message(
     )
 
 
-class _RecordingObserver:
+class RecordingNodeEventObserver:
     def __init__(self) -> None:
         self.events: list[tuple[str, str, int, str | None]] = []
 
@@ -121,19 +117,19 @@ class _RecordingObserver:
         self.emit(event)
 
 
-class _UpperRecordStep(RecordStep[_Payload, _Payload]):
-    def execute(self, message: Message[StreamPayload], **kwargs: object) -> _Payload:
+class _UpperRecordStep(RecordStep[AcmePayload, AcmePayload]):
+    def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del kwargs
         payload = _message_payload(message)
-        return _Payload(value=payload.value.upper())
+        return AcmePayload(value=payload.value.upper())
 
 
-class _MessageReturningRecordStep(RecordStep[_Payload, _Payload]):
-    def execute(self, message: Message[StreamPayload], **kwargs: object) -> Message[_Payload]:
+class _MessageReturningRecordStep(RecordStep[AcmePayload, AcmePayload]):
+    def execute(self, message: Message[StreamPayload], **kwargs: object) -> Message[AcmePayload]:
         del kwargs
         payload = _message_payload(message)
         return Message(
-            payload=_Payload(value=payload.value.upper()),
+            payload=AcmePayload(value=payload.value.upper()),
             meta=MessageMeta(
                 message_id="override",
                 topic=message.meta.topic,
@@ -143,40 +139,40 @@ class _MessageReturningRecordStep(RecordStep[_Payload, _Payload]):
         )
 
 
-class _BoomRecordStep(RecordStep[_Payload, _Payload]):
-    def execute(self, message: Message[StreamPayload], **kwargs: object) -> _Payload:
+class _BoomRecordStep(RecordStep[AcmePayload, AcmePayload]):
+    def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del message, kwargs
         raise RuleViolation("value", "boom")
 
 
-class _AsyncUpperRecordStep(RecordStep[_Payload, _Payload]):
+class _AsyncUpperRecordStep(RecordStep[AcmePayload, AcmePayload]):
     def __init__(self, probe: _ConcurrencyProbe | None = None) -> None:
         self._probe = probe
 
-    async def execute(self, message: Message[StreamPayload], **kwargs: object) -> _Payload:
+    async def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del kwargs
         payload = _message_payload(message)
         if self._probe is not None:
             self._probe.enter()
         try:
             await anyio.sleep(0.01)
-            return _Payload(value=payload.value.upper())
+            return AcmePayload(value=payload.value.upper())
         finally:
             if self._probe is not None:
                 self._probe.exit()
 
 
-class _ConditionalAsyncRecordStep(RecordStep[_Payload, _Payload]):
-    async def execute(self, message: Message[StreamPayload], **kwargs: object) -> _Payload:
+class _ConditionalAsyncRecordStep(RecordStep[AcmePayload, AcmePayload]):
+    async def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del kwargs
         payload = _message_payload(message)
         await anyio.sleep(0.001)
         if payload.value == "bad":
             raise RuleViolation("value", "boom")
-        return _Payload(value=payload.value.upper())
+        return AcmePayload(value=payload.value.upper())
 
 
-class _UpperBatchStep(BatchStep[_Payload, _Payload]):
+class UppercasingBatchStep(BatchStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         messages: list[Message[StreamPayload]],
@@ -184,12 +180,12 @@ class _UpperBatchStep(BatchStep[_Payload, _Payload]):
     ) -> list[StreamPayload]:
         del kwargs
         return [
-            cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))
+            cast(StreamPayload, AcmePayload(value=_message_payload(message).value.upper()))
             for message in messages
         ]
 
 
-class _UpperExpandStep(ExpandStep[_Payload, _Payload]):
+class _UpperExpandStep(ExpandStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         message: Message[StreamPayload],
@@ -198,22 +194,22 @@ class _UpperExpandStep(ExpandStep[_Payload, _Payload]):
         del kwargs
         payload = _message_payload(message)
         return [
-            cast(StreamPayload, _Payload(value=payload.value.upper())),
-            cast(StreamPayload, _Payload(value=payload.value.lower())),
+            cast(StreamPayload, AcmePayload(value=payload.value.upper())),
+            cast(StreamPayload, AcmePayload(value=payload.value.lower())),
         ]
 
 
-class _MessageReturningExpandStep(ExpandStep[_Payload, _Payload]):
+class _MessageReturningExpandStep(ExpandStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         message: Message[StreamPayload],
         **kwargs: object,
-    ) -> list[Message[_Payload]]:
+    ) -> list[Message[AcmePayload]]:
         del kwargs
         payload = _message_payload(message)
         return [
             Message(
-                payload=_Payload(value=payload.value.upper()),
+                payload=AcmePayload(value=payload.value.upper()),
                 meta=MessageMeta(
                     message_id="override",
                     topic=message.meta.topic,
@@ -224,7 +220,7 @@ class _MessageReturningExpandStep(ExpandStep[_Payload, _Payload]):
         ]
 
 
-class _UpperBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+class _UpperBatchExpandStep(BatchExpandStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         messages: list[Message[StreamPayload]],
@@ -232,12 +228,12 @@ class _UpperBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
     ) -> list[list[StreamPayload]]:
         del kwargs
         return [
-            [cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))]
+            [cast(StreamPayload, AcmePayload(value=_message_payload(message).value.upper()))]
             for message in messages
         ]
 
 
-class _InvalidBatchStep(BatchStep[_Payload, _Payload]):
+class _InvalidBatchStep(BatchStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         messages: list[Message[StreamPayload]],
@@ -245,10 +241,10 @@ class _InvalidBatchStep(BatchStep[_Payload, _Payload]):
     ) -> Any:
         del kwargs
         del messages
-        return _Payload(value="bad")
+        return AcmePayload(value="bad")
 
 
-class _InvalidExpandStep(ExpandStep[_Payload, _Payload]):
+class _InvalidExpandStep(ExpandStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         message: Message[StreamPayload],
@@ -256,10 +252,10 @@ class _InvalidExpandStep(ExpandStep[_Payload, _Payload]):
     ) -> Any:
         del kwargs
         del message
-        return _Payload(value="bad")
+        return AcmePayload(value="bad")
 
 
-class _ResultBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+class _ResultBatchExpandStep(BatchExpandStep[AcmePayload, AcmePayload]):
     def __init__(self, result: object) -> None:
         self.result = result
 
@@ -272,7 +268,7 @@ class _ResultBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
         return self.result
 
 
-class _InvalidBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+class _InvalidBatchExpandStep(BatchExpandStep[AcmePayload, AcmePayload]):
     def execute(
         self,
         messages: list[Message[StreamPayload]],
@@ -280,14 +276,14 @@ class _InvalidBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
     ) -> Any:
         del kwargs
         del messages
-        return _Payload(value="bad")
+        return AcmePayload(value="bad")
 
 
-class _ContextAwareRecordStep(RecordStep[_Payload, _Payload]):
+class _ContextAwareRecordStep(RecordStep[AcmePayload, AcmePayload]):
     def __init__(self) -> None:
         self.context: dict[str, object] | None = None
 
-    def execute(self, message: Message[StreamPayload], **kwargs: object) -> _Payload:
+    def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del kwargs
         self.context = dict(get_contextvars())
         return _message_payload(message)
@@ -363,450 +359,457 @@ class _ConditionalFailingSinkPartition:
         self.writes.append(items)
 
 
-def test_require_message_rejects_non_message() -> None:
-    with pytest.raises(TypeError, match="Expected Message"):
-        _shared._require_message(object())
+class TestRequireMessage:
+    def test_require_message_rejects_non_message(self) -> None:
+        with pytest.raises(TypeError, match="Expected Message"):
+            _shared._require_message(object())
 
 
-def test_replace_payloads_rejects_mismatched_lengths() -> None:
-    messages: list[Message[StreamPayload]] = [_message("a")]
-    with pytest.raises(RuntimeError, match="must match input length"):
-        _shared._replace_payloads(messages, [])
+class TestReplacePayloads:
+    def test_replace_payloads_rejects_mismatched_lengths(self) -> None:
+        messages: list[Message[StreamPayload]] = [_message("a")]
+        with pytest.raises(RuntimeError, match="must match input length"):
+            _shared._replace_payloads(messages, [])
 
 
-def test_wire_node_dispatches_registered_handler(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[object, object, int, object]] = []
-    node = _FakeNode()
-    ctx: Any = SimpleNamespace()
+class TestWireNode:
+    def test_wire_node_dispatches_registered_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[tuple[object, object, int, object]] = []
+        node = _FakeNode()
+        ctx: Any = SimpleNamespace()
 
-    def _handler(stream: object, node: object, idx: int, ctx: object) -> object:
-        seen.append((stream, node, idx, ctx))
-        return "wired"
+        def _handler(stream: object, node: object, idx: int, ctx: object) -> object:
+            seen.append((stream, node, idx, ctx))
+            return "wired"
 
-    monkeypatch.setattr(_dispatcher, "_NODE_HANDLERS", {_FakeNode: _handler})
+        monkeypatch.setattr(_dispatcher, "_NODE_HANDLERS", {_FakeNode: _handler})
 
-    result = _dispatcher._wire_node("input-stream", node, 7, ctx)
+        result = _dispatcher._wire_node("input-stream", node, 7, ctx)
 
-    assert result == "wired"
-    assert seen == [("input-stream", node, 7, ctx)]
-
-
-def test_apply_collect_batch_default_wires_timeout_and_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-    node = CollectBatch(max_records=3, timeout_ms=250)
-
-    def _key_on(step_id: str, stream: object, fn: object) -> object:
-        calls["key_on"] = (step_id, stream, fn)
-        return "keyed-stream"
-
-    def _collect(
-        step_id: str,
-        keyed: object,
-        *,
-        timeout: timedelta,
-        max_size: int,
-    ) -> object:
-        calls["collect"] = (step_id, keyed, timeout, max_size)
-        return "collected-stream"
-
-    def _key_rm(step_id: str, collected: object) -> object:
-        calls["key_rm"] = (step_id, collected)
-        return "result-stream"
-
-    monkeypatch.setattr(_shapes, "key_on", _key_on)
-    monkeypatch.setattr(_shapes, "collect", _collect)
-    monkeypatch.setattr(_shapes, "key_rm", _key_rm)
-
-    result = _shapes._apply_collect_batch_default(
-        "input-stream",
-        node,
-        "step-1",
-    )
-
-    assert result == "result-stream"
-    assert calls["key_on"] == ("collect_key_step-1", "input-stream", _shapes._batch_key)
-    assert calls["collect"] == (
-        "collect_step-1",
-        "keyed-stream",
-        timedelta(milliseconds=250),
-        3,
-    )
-    assert calls["key_rm"] == ("collect_unkey_step-1", "collected-stream")
+        assert result == "wired"
+        assert seen == [("input-stream", node, 7, ctx)]
 
 
-def test_execute_record_step_replaces_payload_and_observes() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_record_step(
-        runtime,
-        "orders",
-        0,
-        "Upper",
-        _UpperRecordStep(),
-        _message("abc"),
-    )
+class TestCollectBatchDefault:
+    def test_apply_collect_batch_default_wires_timeout_and_size(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: dict[str, Any] = {}
+        node = CollectBatch(max_records=3, timeout_ms=250)
 
-    payload = _message_payload(result)
-    assert payload.value == "ABC"
-    assert observer.events == [
-        ("start", "orders", 0, "Upper"),
-        ("end", "orders", 0, "Upper:success"),
-    ]
+        def _key_on(step_id: str, stream: object, fn: object) -> object:
+            calls["key_on"] = (step_id, stream, fn)
+            return "keyed-stream"
 
+        def _collect(
+            step_id: str,
+            keyed: object,
+            *,
+            timeout: timedelta,
+            max_size: int,
+        ) -> object:
+            calls["collect"] = (step_id, keyed, timeout, max_size)
+            return "collected-stream"
 
-def test_execute_record_step_accepts_replacement_message() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_record_step(
-        runtime,
-        "orders",
-        0,
-        "Upper",
-        _MessageReturningRecordStep(),
-        _message("abc"),
-    )
+        def _key_rm(step_id: str, collected: object) -> object:
+            calls["key_rm"] = (step_id, collected)
+            return "result-stream"
 
-    assert isinstance(result, Message)
-    assert _message_payload(result).value == "ABC"
-    assert result.meta.message_id == "override"
+        monkeypatch.setattr(_shapes, "key_on", _key_on)
+        monkeypatch.setattr(_shapes, "collect", _collect)
+        monkeypatch.setattr(_shapes, "key_rm", _key_rm)
 
-
-def test_execute_record_step_binds_flow_context() -> None:
-    step = _ContextAwareRecordStep()
-
-    _steps._execute_record_step(
-        ObservabilityRuntime.noop(),
-        "orders",
-        3,
-        "ContextAware",
-        step,
-        _message("abc"),
-    )
-
-    assert step.context == {
-        "flow_name": "orders",
-        "node_idx": 3,
-        "node_type": "ContextAware",
-        "method": "execute",
-    }
-
-
-def test_execute_record_step_propagates_business_error_and_observes() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    step = _BoomRecordStep()
-    message = _message("abc")
-    with pytest.raises(RuleViolation, match="value: boom"):
-        _steps._execute_record_step(
-            runtime,
-            "orders",
-            1,
-            "Boom",
-            step,
-            message,
+        result = _shapes._apply_collect_batch_default(
+            "input-stream",
+            node,
+            "step-1",
         )
 
-    assert observer.events == [
-        ("start", "orders", 1, "Boom"),
-        ("error", "orders", 1, "Boom:RuleViolation"),
-    ]
+        assert result == "result-stream"
+        assert calls["key_on"] == ("collect_key_step-1", "input-stream", _shapes._batch_key)
+        assert calls["collect"] == (
+            "collect_step-1",
+            "keyed-stream",
+            timedelta(milliseconds=250),
+            3,
+        )
+        assert calls["key_rm"] == ("collect_unkey_step-1", "collected-stream")
 
 
-def test_execute_batch_step_replaces_payloads_and_observes() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_batch_step(
-        runtime,
-        "orders",
-        2,
-        "UpperBatch",
-        _UpperBatchStep(),
-        [_message("a"), _message("b")],
-    )
+class TestExecuteRecordStep:
+    def test_execute_record_step_replaces_payload_and_observes(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_record_step(
+            runtime,
+            "orders",
+            0,
+            "Upper",
+            _UpperRecordStep(),
+            _message("abc"),
+        )
 
-    assert [_message_payload(item).value for item in result] == ["A", "B"]
-    assert observer.events == [
-        ("start", "orders", 2, "UpperBatch"),
-        ("end", "orders", 2, "UpperBatch:success"),
-    ]
+        payload = _message_payload(result)
+        assert payload.value == "ABC"
+        assert observer.events == [
+            ("start", "orders", 0, "Upper"),
+            ("end", "orders", 0, "Upper:success"),
+        ]
+
+    def test_execute_record_step_accepts_replacement_message(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_record_step(
+            runtime,
+            "orders",
+            0,
+            "Upper",
+            _MessageReturningRecordStep(),
+            _message("abc"),
+        )
+
+        assert isinstance(result, Message)
+        assert _message_payload(result).value == "ABC"
+        assert result.meta.message_id == "override"
+
+    def test_execute_record_step_binds_flow_context(self) -> None:
+        step = _ContextAwareRecordStep()
+
+        _steps._execute_record_step(
+            ObservabilityRuntime.noop(),
+            "orders",
+            3,
+            "ContextAware",
+            step,
+            _message("abc"),
+        )
+
+        assert step.context == {
+            "flow_name": "orders",
+            "node_idx": 3,
+            "node_type": "ContextAware",
+            "method": "execute",
+        }
+
+    def test_execute_record_step_propagates_business_error_and_observes(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        step = _BoomRecordStep()
+        message = _message("abc")
+        with pytest.raises(RuleViolation, match="value: boom"):
+            _steps._execute_record_step(
+                runtime,
+                "orders",
+                1,
+                "Boom",
+                step,
+                message,
+            )
+
+        assert observer.events == [
+            ("start", "orders", 1, "Boom"),
+            ("error", "orders", 1, "Boom:RuleViolation"),
+        ]
 
 
-def test_execute_batch_step_rejects_non_list_result() -> None:
-    noop = ObservabilityRuntime.noop()
-    step = _InvalidBatchStep()
-    messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
-    with pytest.raises(TypeError, match="UpperBatch must return a list of payloads."):
-        _steps._execute_batch_step(
-            noop,
+class TestExecuteBatchStep:
+    def test_execute_batch_step_replaces_payloads_and_observes(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_batch_step(
+            runtime,
             "orders",
             2,
             "UpperBatch",
-            step,
-            messages,
+            UppercasingBatchStep(),
+            [_message("a"), _message("b")],
         )
 
+        assert [_message_payload(item).value for item in result] == ["A", "B"]
+        assert observer.events == [
+            ("start", "orders", 2, "UpperBatch"),
+            ("end", "orders", 2, "UpperBatch:success"),
+        ]
 
-def test_execute_expand_step_replaces_payloads_and_observes() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_expand_step(
-        runtime,
-        "orders",
-        3,
-        "UpperExpand",
-        _UpperExpandStep(),
-        _message("ab"),
-    )
-
-    assert [_message_payload(item).value for item in result] == ["AB", "ab"]
-    assert observer.events == [
-        ("start", "orders", 3, "UpperExpand"),
-        ("end", "orders", 3, "UpperExpand:success"),
-    ]
+    def test_execute_batch_step_rejects_non_list_result(self) -> None:
+        noop = ObservabilityRuntime.noop()
+        step = _InvalidBatchStep()
+        messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
+        with pytest.raises(TypeError, match="UpperBatch must return a list of payloads."):
+            _steps._execute_batch_step(
+                noop,
+                "orders",
+                2,
+                "UpperBatch",
+                step,
+                messages,
+            )
 
 
-def test_execute_expand_step_rejects_non_iterable_result() -> None:
-    noop = ObservabilityRuntime.noop()
-    step = _InvalidExpandStep()
-    message = _message("ab")
-    with pytest.raises(TypeError, match="UpperExpand must return an iterable of payloads."):
-        _steps._execute_expand_step(
-            noop,
+class TestExecuteExpandStep:
+    def test_execute_expand_step_replaces_payloads_and_observes(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_expand_step(
+            runtime,
             "orders",
             3,
             "UpperExpand",
-            step,
-            message,
+            _UpperExpandStep(),
+            _message("ab"),
         )
 
+        assert [_message_payload(item).value for item in result] == ["AB", "ab"]
+        assert observer.events == [
+            ("start", "orders", 3, "UpperExpand"),
+            ("end", "orders", 3, "UpperExpand:success"),
+        ]
 
-def test_execute_expand_step_accepts_replacement_messages() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_expand_step(
-        runtime,
-        "orders",
-        3,
-        "UpperExpand",
-        _MessageReturningExpandStep(),
-        _message("ab"),
-    )
+    def test_execute_expand_step_rejects_non_iterable_result(self) -> None:
+        noop = ObservabilityRuntime.noop()
+        step = _InvalidExpandStep()
+        message = _message("ab")
+        with pytest.raises(TypeError, match="UpperExpand must return an iterable of payloads."):
+            _steps._execute_expand_step(
+                noop,
+                "orders",
+                3,
+                "UpperExpand",
+                step,
+                message,
+            )
 
-    assert len(result) == 1
-    assert isinstance(result[0], Message)
-    assert _message_payload(result[0]).value == "AB"
-    assert result[0].meta.message_id == "override"
+    def test_execute_expand_step_accepts_replacement_messages(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_expand_step(
+            runtime,
+            "orders",
+            3,
+            "UpperExpand",
+            _MessageReturningExpandStep(),
+            _message("ab"),
+        )
 
-
-def test_execute_batch_expand_step_replaces_payloads_and_observes() -> None:
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _steps._execute_batch_expand_step(
-        runtime,
-        "orders",
-        4,
-        "UpperBatchExpand",
-        _UpperBatchExpandStep(),
-        [_message("a"), _message("b")],
-    )
-
-    assert [_message_payload(item).value for item in result] == ["A", "B"]
-    assert observer.events == [
-        ("start", "orders", 4, "UpperBatchExpand"),
-        ("end", "orders", 4, "UpperBatchExpand:success"),
-    ]
+        assert len(result) == 1
+        assert isinstance(result[0], Message)
+        assert _message_payload(result[0]).value == "AB"
+        assert result[0].meta.message_id == "override"
 
 
-def test_execute_batch_expand_step_rejects_non_iterable_result() -> None:
-    noop = ObservabilityRuntime.noop()
-    step = _InvalidBatchExpandStep()
-    messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
-    with pytest.raises(
-        TypeError,
-        match="UpperBatchExpand must return one list of payloads per message.",
-    ):
-        _steps._execute_batch_expand_step(
-            noop,
+class TestExecuteBatchExpandStep:
+    def test_execute_batch_expand_step_replaces_payloads_and_observes(self) -> None:
+        observer = RecordingNodeEventObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _steps._execute_batch_expand_step(
+            runtime,
             "orders",
             4,
             "UpperBatchExpand",
-            step,
-            messages,
+            _UpperBatchExpandStep(),
+            [_message("a"), _message("b")],
         )
 
+        assert [_message_payload(item).value for item in result] == ["A", "B"]
+        assert observer.events == [
+            ("start", "orders", 4, "UpperBatchExpand"),
+            ("end", "orders", 4, "UpperBatchExpand:success"),
+        ]
 
-def test_execute_batch_expand_step_gives_each_output_the_metadata_of_its_message() -> None:
-    messages: list[Message[StreamPayload]] = [
-        _message("a", offset=0),
-        _message("b", offset=1),
-        _message("c", offset=2),
-    ]
-    step = _ResultBatchExpandStep(
-        [[_Payload(value="a1"), _Payload(value="a2")], [], [_Payload(value="c1")]]
-    )
+    def test_execute_batch_expand_step_rejects_non_iterable_result(self) -> None:
+        noop = ObservabilityRuntime.noop()
+        step = _InvalidBatchExpandStep()
+        messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
+        with pytest.raises(
+            TypeError,
+            match="UpperBatchExpand must return one list of payloads per message.",
+        ):
+            _steps._execute_batch_expand_step(
+                noop,
+                "orders",
+                4,
+                "UpperBatchExpand",
+                step,
+                messages,
+            )
 
-    result = _steps._execute_batch_expand_step(
-        ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", step, messages
-    )
-
-    assert [(_message_payload(item).value, item.meta.offset) for item in result] == [
-        ("a1", 0),
-        ("a2", 0),
-        ("c1", 2),
-    ]
-
-
-def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing() -> None:
-    result = _steps._execute_batch_expand_step(
-        ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", _ResultBatchExpandStep([]), []
-    )
-
-    assert result == []
-
-
-@pytest.mark.parametrize(
-    ("result", "error"),
-    [
-        (
-            [[_Payload(value="a1")], [_Payload(value="b1")]],
-            "UpperBatchExpand returned 2 output lists for 3 messages",
-        ),
-        (
-            [_Payload(value="a1"), _Payload(value="b1"), _Payload(value="c1")],
-            "UpperBatchExpand must return one list of payloads per message",
-        ),
-        (
-            [[_message("a1")], [], []],
-            "UpperBatchExpand must return payloads, not messages",
-        ),
-        (["ab", [], []], "UpperBatchExpand must return one list of payloads per message"),
-        (["", [], []], "UpperBatchExpand must return one list of payloads per message"),
-        ([b"", [], []], "UpperBatchExpand must return one list of payloads per message"),
-        ([bytearray(), [], []], "UpperBatchExpand must return one list of payloads per message"),
-        ([{}, [], []], "UpperBatchExpand must return one list of payloads per message"),
-        ("abc", "UpperBatchExpand must return one list of payloads per message"),
-        (
-            {"a": [], "b": [], "c": []},
-            "UpperBatchExpand must return one list of payloads per message",
-        ),
-    ],
-    ids=[
-        "outer_length",
-        "flat_payloads",
-        "message_output",
-        "str_list",
-        "empty_str_list",
-        "bytes_list",
-        "bytearray_list",
-        "mapping_list",
-        "str_result",
-        "mapping_result",
-    ],
-)
-def test_execute_batch_expand_step_rejects_a_result_not_aligned_with_the_batch(
-    result: object, error: str
-) -> None:
-    messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
-    observability = ObservabilityRuntime.noop()
-    step = _ResultBatchExpandStep(result)
-    with pytest.raises(TypeError, match=error):
-        _steps._execute_batch_expand_step(
-            observability, "orders", 4, "UpperBatchExpand", step, messages
+    def test_execute_batch_expand_step_gives_each_output_the_metadata_of_its_message(self) -> None:
+        messages: list[Message[StreamPayload]] = [
+            _message("a", offset=0),
+            _message("b", offset=1),
+            _message("c", offset=2),
+        ]
+        step = _ResultBatchExpandStep(
+            [[AcmePayload(value="a1"), AcmePayload(value="a2")], [], [AcmePayload(value="c1")]]
         )
 
+        result = _steps._execute_batch_expand_step(
+            ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", step, messages
+        )
 
-def test_execute_with_step_does_not_fork_commit_tracker_for_inline_sink() -> None:
-    tracker = _CommitTracker()
+        assert [(_message_payload(item).value, item.meta.offset) for item in result] == [
+            ("a1", 0),
+            ("a2", 0),
+            ("c1", 2),
+        ]
 
-    class _Lifecycle:
-        def open_worker(self) -> dict[str, object]:
-            return {}
+    def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing(self) -> None:
+        result = _steps._execute_batch_expand_step(
+            ObservabilityRuntime.noop(),
+            "orders",
+            4,
+            "UpperBatchExpand",
+            _ResultBatchExpandStep([]),
+            [],
+        )
 
-        def open_batch(self) -> dict[str, object]:
-            return {}
+        assert result == []
 
-        def close_batch(self) -> None:
-            return None
-
-        def shutdown(self) -> None:
-            return None
-
-    class _SinkPartition:
-        def __init__(self) -> None:
-            self.writes: list[list[Message[StreamPayload]]] = []
-
-        def write_batch(self, items: list[Message[StreamPayload]]) -> None:
-            self.writes.append(items)
-
-    sink_partition = _SinkPartition()
-    result = _scopes._execute_with_step(
-        ObservabilityRuntime.noop(),
-        "orders",
-        5,
-        "With",
-        _Lifecycle(),
-        {},
-        [_UpperRecordStep()],
-        sink_partition,
-        [_message("abc", message_id="m-1"), _message("def", message_id="m-2")],
+    @pytest.mark.parametrize(
+        ("result", "error"),
+        [
+            (
+                [[AcmePayload(value="a1")], [AcmePayload(value="b1")]],
+                "UpperBatchExpand returned 2 output lists for 3 messages",
+            ),
+            (
+                [AcmePayload(value="a1"), AcmePayload(value="b1"), AcmePayload(value="c1")],
+                "UpperBatchExpand must return one list of payloads per message",
+            ),
+            (
+                [[_message("a1")], [], []],
+                "UpperBatchExpand must return payloads, not messages",
+            ),
+            (["ab", [], []], "UpperBatchExpand must return one list of payloads per message"),
+            (["", [], []], "UpperBatchExpand must return one list of payloads per message"),
+            ([b"", [], []], "UpperBatchExpand must return one list of payloads per message"),
+            (
+                [bytearray(), [], []],
+                "UpperBatchExpand must return one list of payloads per message",
+            ),
+            ([{}, [], []], "UpperBatchExpand must return one list of payloads per message"),
+            ("abc", "UpperBatchExpand must return one list of payloads per message"),
+            (
+                {"a": [], "b": [], "c": []},
+                "UpperBatchExpand must return one list of payloads per message",
+            ),
+        ],
+        ids=[
+            "outer_length",
+            "flat_payloads",
+            "message_output",
+            "str_list",
+            "empty_str_list",
+            "bytes_list",
+            "bytearray_list",
+            "mapping_list",
+            "str_result",
+            "mapping_result",
+        ],
     )
+    def test_execute_batch_expand_step_rejects_a_result_not_aligned_with_the_batch(
+        self, result: object, error: str
+    ) -> None:
+        messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
+        observability = ObservabilityRuntime.noop()
+        step = _ResultBatchExpandStep(result)
+        with pytest.raises(TypeError, match=error):
+            _steps._execute_batch_expand_step(
+                observability, "orders", 4, "UpperBatchExpand", step, messages
+            )
 
-    assert [_message_payload(item).value for item in result] == ["ABC", "DEF"]
-    assert tracker.forks == []
-    assert len(sink_partition.writes) == 1
 
+class TestExecuteWithStep:
+    def test_execute_with_step_does_not_fork_commit_tracker_for_inline_sink(self) -> None:
+        tracker = _CommitTracker()
 
-def test_execute_inner_process_writes_to_the_inline_sink() -> None:
-    """The record is written inline and keeps flowing to its real terminal.
+        class _Lifecycle:
+            def open_worker(self) -> dict[str, object]:
+                return {}
 
-    Completion is that terminal's job. This used to complete here, releasing
-    the offset while the message was still in flight — a data-loss window on
-    any intermediate WithAsync. The guarantee is now structural rather than
-    asserted: the function has no tracker parameter to complete through.
-    """
-    sink_partition = _RecordingSinkPartition()
+            def open_batch(self) -> dict[str, object]:
+                return {}
 
-    asyncio.run(
-        _scopes._execute_inner_process(
-            _message("abc", message_id="m-1"),
+            def close_batch(self) -> None:
+                return None
+
+            def shutdown(self) -> None:
+                return None
+
+        class _SinkPartition:
+            def __init__(self) -> None:
+                self.writes: list[list[Message[StreamPayload]]] = []
+
+            def write_batch(self, items: list[Message[StreamPayload]]) -> None:
+                self.writes.append(items)
+
+        sink_partition = _SinkPartition()
+        result = _scopes._execute_with_step(
+            ObservabilityRuntime.noop(),
+            "orders",
+            5,
+            "With",
+            _Lifecycle(),
+            {},
             [_UpperRecordStep()],
             sink_partition,
-            {},
-            None,
+            [_message("abc", message_id="m-1"), _message("def", message_id="m-2")],
         )
-    )
 
-    assert [_message_payload(item).value for item in sink_partition.writes[0]] == ["ABC"]
+        assert [_message_payload(item).value for item in result] == ["ABC", "DEF"]
+        assert tracker.forks == []
+        assert len(sink_partition.writes) == 1
 
 
-def test_execute_inner_process_runs_without_a_sink_partition() -> None:
-    """An inner process with no inline sink still applies its steps."""
-    result = asyncio.run(
-        _scopes._execute_inner_process(
+class TestExecuteInnerProcess:
+    def test_execute_inner_process_writes_to_the_inline_sink(self) -> None:
+        """The record is written inline and keeps flowing to its real terminal.
+
+        Completion is that terminal's job. This used to complete here, releasing
+        the offset while the message was still in flight — a data-loss window on
+        any intermediate WithAsync. The guarantee is now structural rather than
+        asserted: the function has no tracker parameter to complete through.
+        """
+        sink_partition = _RecordingSinkPartition()
+
+        asyncio.run(
+            _scopes._execute_inner_process(
+                _message("abc", message_id="m-1"),
+                [_UpperRecordStep()],
+                sink_partition,
+                {},
+                None,
+            )
+        )
+
+        assert [_message_payload(item).value for item in sink_partition.writes[0]] == ["ABC"]
+
+    def test_execute_inner_process_runs_without_a_sink_partition(self) -> None:
+        """An inner process with no inline sink still applies its steps."""
+        result = asyncio.run(
+            _scopes._execute_inner_process(
+                _message("abc", message_id="m-1"),
+                [_UpperRecordStep()],
+                None,
+                {},
+                None,
+            )
+        )
+
+        assert _message_payload(result).value == "ABC"
+
+    def test_execute_inner_process_propagates_a_sink_failure(self) -> None:
+        """An inline sink failure must surface, never be swallowed."""
+        process = _scopes._execute_inner_process(
             _message("abc", message_id="m-1"),
             [_UpperRecordStep()],
-            None,
+            _FailingSinkPartition(),
             {},
             None,
         )
-    )
-
-    assert _message_payload(result).value == "ABC"
-
-
-def test_execute_inner_process_propagates_a_sink_failure() -> None:
-    """An inline sink failure must surface, never be swallowed."""
-    process = _scopes._execute_inner_process(
-        _message("abc", message_id="m-1"),
-        [_UpperRecordStep()],
-        _FailingSinkPartition(),
-        {},
-        None,
-    )
-    with pytest.raises(RuntimeError, match="sink-boom"):
-        asyncio.run(process)
+        with pytest.raises(RuntimeError, match="sink-boom"):
+            asyncio.run(process)
 
 
 class TestWithAsyncBatch:
@@ -819,8 +822,8 @@ class TestWithAsyncBatch:
         return _WithAsyncBridge()
 
     @pytest.fixture
-    def observer(self) -> _RecordingObserver:
-        return _RecordingObserver()
+    def observer(self) -> RecordingNodeEventObserver:
+        return RecordingNodeEventObserver()
 
     @pytest.fixture
     def tracker(self) -> _CommitTracker:
@@ -849,7 +852,7 @@ class TestWithAsyncBatch:
     def with_async_ctx(
         self,
         bridge: _WithAsyncBridge,
-        observer: _RecordingObserver,
+        observer: RecordingNodeEventObserver,
         tracker: _CommitTracker,
         lifecycle: _WithAsyncLifecycle,
     ) -> Any:
@@ -1058,92 +1061,98 @@ class TestWithAsyncBatch:
         assert probe.max_active == 1
 
 
-@pytest.mark.parametrize(
-    ("node", "expected_value"),
-    [
-        (_UpperRecordStep(), "ABC"),
-        (_UpperBatchStep(), "ABC"),
-    ],
-)
-def test_execute_router_node_supports_allowed_branch_nodes(
-    node: object,
-    expected_value: str,
-) -> None:
-    result = _routing._execute_router_node(node, _message("abc"))
-
-    assert _message_payload(result).value == expected_value
-
-
-def test_apply_broadcast_increments_commit_tracker_for_fanout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tracker = _CommitTracker()
-    branch_calls: list[tuple[str, object, tuple[object, ...], tuple[int, ...]]] = []
-
-    def _bw_map(step_id: str, stream: object, fn: Callable[[object], object]) -> object:
-        assert step_id == "1_broadcast_5_fanout"
-        assert callable(fn)
-        result = fn(_message("abc"))
-        assert _message_payload(cast(Message[_Payload], result)).value == "abc"
-        return "tracked-stream"
-
-    def _wire_branch(
-        step_id: str, stream: object, nodes: tuple[object, ...], path: tuple[int, ...]
+class TestExecuteRouterNode:
+    @pytest.mark.parametrize(
+        ("node", "expected_value"),
+        [
+            (_UpperRecordStep(), "ABC"),
+            (UppercasingBatchStep(), "ABC"),
+        ],
+    )
+    def test_execute_router_node_supports_allowed_branch_nodes(
+        self,
+        node: object,
+        expected_value: str,
     ) -> None:
-        branch_calls.append((step_id, stream, nodes, path))
+        result = _routing._execute_router_node(node, _message("abc"))
 
-    monkeypatch.setattr(_routing, "bw_map", _bw_map)
-
-    node: Broadcast[Any] = Broadcast(
-        BroadcastRoute(
-            process=Process(Drain()),
-            output=IntoTopic("a", payload=_Payload),
-        ),
-        BroadcastRoute(
-            process=Process(Drain()),
-            output=IntoTopic("b", payload=_Payload),
-        ),
-    )
-    ctx: Any = SimpleNamespace(
-        current_path=(1,),
-        commit_tracker=tracker,
-        wire_branch=_wire_branch,
-    )
-
-    result = _routing._apply_broadcast("input-stream", node, 5, ctx)
-
-    assert result is None, "a Broadcast ends the path; each route's stream ends on its own"
-    assert tracker.forks == [("t", 0, 0, 1)]
-    assert [(call[0], call[1], call[3]) for call in branch_calls] == [
-        ("broadcast_5_out_0", "tracked-stream", (1, 0)),
-        ("broadcast_5_out_1", "tracked-stream", (1, 1)),
-    ]
-    assert all(len(call[2]) == 1 and isinstance(call[2][0], Drain) for call in branch_calls)
+        assert _message_payload(result).value == expected_value
 
 
-def test_apply_drain_completes_commit_tracker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tracker = _CommitTracker()
+class TestApplyBroadcast:
+    def test_apply_broadcast_increments_commit_tracker_for_fanout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tracker = _CommitTracker()
+        branch_calls: list[tuple[str, object, tuple[object, ...], tuple[int, ...]]] = []
 
-    def _flat_map(step_id: str, stream: object, fn: Callable[[object], object]) -> object:
-        assert step_id == "drain_7"
-        assert callable(fn)
-        assert fn(_message("abc")) == ()
-        return "dropped-stream"
+        def _bw_map(step_id: str, stream: object, fn: Callable[[object], object]) -> object:
+            assert step_id == "1_broadcast_5_fanout"
+            assert callable(fn)
+            result = fn(_message("abc"))
+            assert _message_payload(cast(Message[AcmePayload], result)).value == "abc"
+            return "tracked-stream"
 
-    monkeypatch.setattr(_shapes, "flat_map", _flat_map)
+        def _wire_branch(
+            step_id: str, stream: object, nodes: tuple[object, ...], path: tuple[int, ...]
+        ) -> None:
+            branch_calls.append((step_id, stream, nodes, path))
 
-    result = _shapes._apply_drain(
-        "input-stream",
-        object(),
-        7,
-        cast(Any, SimpleNamespace(current_path=(), commit_tracker=tracker)),
-    )
+        monkeypatch.setattr(_routing, "bw_map", _bw_map)
 
-    assert result is None, "a Drain ends the path; nothing continues after it"
-    assert tracker.completes == [("t", 0, 0)]
+        node: Broadcast[Any] = Broadcast(
+            BroadcastRoute(
+                process=Process(Drain()),
+                output=IntoTopic("a", payload=AcmePayload),
+            ),
+            BroadcastRoute(
+                process=Process(Drain()),
+                output=IntoTopic("b", payload=AcmePayload),
+            ),
+        )
+        ctx: Any = SimpleNamespace(
+            current_path=(1,),
+            commit_tracker=tracker,
+            wire_branch=_wire_branch,
+        )
+
+        result = _routing._apply_broadcast("input-stream", node, 5, ctx)
+
+        assert result is None, "a Broadcast ends the path; each route's stream ends on its own"
+        assert tracker.forks == [("t", 0, 0, 1)]
+        assert [(call[0], call[1], call[3]) for call in branch_calls] == [
+            ("broadcast_5_out_0", "tracked-stream", (1, 0)),
+            ("broadcast_5_out_1", "tracked-stream", (1, 1)),
+        ]
+        assert all(len(call[2]) == 1 and isinstance(call[2][0], Drain) for call in branch_calls)
 
 
-def _message_payload(message: Message[StreamPayload]) -> _Payload:
-    return cast(_Payload, message.payload)
+class TestApplyDrain:
+    def test_apply_drain_completes_commit_tracker(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tracker = _CommitTracker()
+
+        def _flat_map(step_id: str, stream: object, fn: Callable[[object], object]) -> object:
+            assert step_id == "drain_7"
+            assert callable(fn)
+            assert fn(_message("abc")) == ()
+            return "dropped-stream"
+
+        monkeypatch.setattr(_shapes, "flat_map", _flat_map)
+
+        result = _shapes._apply_drain(
+            "input-stream",
+            object(),
+            7,
+            cast(Any, SimpleNamespace(current_path=(), commit_tracker=tracker)),
+        )
+
+        assert result is None, "a Drain ends the path; nothing continues after it"
+        assert tracker.completes == [("t", 0, 0)]
+
+
+def _message_payload(message: Message[StreamPayload]) -> AcmePayload:
+    return cast(AcmePayload, message.payload)

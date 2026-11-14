@@ -7,7 +7,7 @@ ids, parents, links, and counts.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from random import Random
 from typing import Any, cast
 
@@ -42,6 +42,7 @@ from tests.helpers.spans import (  # noqa: E402
     span_ids,
 )
 from tests.unit.streaming.compiler.cases import Order, Result  # noqa: E402
+from tests.unit.streaming.doubles import RecordingSinkPartition  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -53,21 +54,6 @@ _TRACES = (
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2",
     "ccccccccccccccccccccccccccccccc3",
 )
-
-
-class _RecordingPartition:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.batches: list[Sequence[Any]] = []
-        self._fail = fail
-
-    def write_batch(self, items: Sequence[Any]) -> int:
-        self.batches.append(list(items))
-        if self._fail:
-            raise RuntimeError("sink down")
-        return len(items)
-
-    def close(self) -> int:
-        return 0
 
 
 class _UpperStep:
@@ -128,7 +114,7 @@ class TestOneTracePerMessage:
             ):
                 pass
         # Death.
-        _sink(recorder, _RecordingPartition()).write_batch([message])
+        _sink(recorder, RecordingSinkPartition()).write_batch([message])
 
         message_trace = {
             name: ids for name, ids in recorder.traces().items() if "terminal:sink_write" in ids
@@ -243,7 +229,7 @@ class TestBatchNPlusOne:
                 recorder.runtime, "orders", index, "Upper", trace_id=message.meta.trace_id
             ):
                 pass
-        _sink(recorder, _RecordingPartition()).write_batch(messages)
+        _sink(recorder, RecordingSinkPartition()).write_batch(messages)
 
         traces = recorder.traces()
         assert len(traces) == 4, f"expected 3 message traces plus 1 batch trace, got {traces}"
@@ -273,7 +259,7 @@ class TestBatchNPlusOne:
         recorder = build_recorder(max_span_links=2)
         messages = [_message(i, trace_id=_TRACES[i]) for i in range(3)]
 
-        _sink(recorder, _RecordingPartition()).write_batch(messages)
+        _sink(recorder, RecordingSinkPartition()).write_batch(messages)
 
         batch = recorder.one("write:orders:results_sink")
         assert len(batch.links) == 2
@@ -349,7 +335,7 @@ class TestSampling:
         # flip — which the module docstring documents as a real caveat.
         monkeypatch.setattr(_batch_spans_mod, "generate_trace_id", lambda: _ALWAYS_SAMPLED)
 
-        _sink(recorder, _RecordingPartition()).write_batch(messages)
+        _sink(recorder, RecordingSinkPartition()).write_batch(messages)
 
         participations = recorder.named("terminal:sink_write")
         assert 0 < len(participations) < len(messages), (
@@ -365,7 +351,7 @@ class TestSampling:
         self,
     ) -> None:
         recorder, messages = self._sampled_split(0.05)
-        sink = _sink(recorder, _RecordingPartition())
+        sink = _sink(recorder, RecordingSinkPartition())
 
         for index, message in enumerate(messages):
             with _shared_mod._observe_node(
@@ -423,7 +409,7 @@ class TestFailedBatch:
         recorder = build_recorder()
         messages = [_message(i, trace_id=_TRACES[i]) for i in range(2)]
 
-        sink = _sink(recorder, _RecordingPartition(fail=True))
+        sink = _sink(recorder, RecordingSinkPartition(fail=True))
 
         with pytest.raises(RuntimeError, match="sink down"):
             sink.write_batch(messages)
@@ -445,7 +431,7 @@ class TestNoopRuntimeControl:
     def test_a_span_on_the_noop_runtime_never_reaches_the_exporter(self) -> None:
         recorder = build_recorder()
 
-        _sink(recorder, _RecordingPartition()).write_batch([_message(0, trace_id=_TRACES[0])])
+        _sink(recorder, RecordingSinkPartition()).write_batch([_message(0, trace_id=_TRACES[0])])
         with ObservabilityRuntime.noop().span(Scope.NODE, "orders:0", trace_id=_TRACES[0]):
             pass
 

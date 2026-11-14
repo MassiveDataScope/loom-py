@@ -27,18 +27,19 @@ raise SystemExit("loom.streaming.bytewax imported without bytewax")
 """
 
 
-def test_importing_the_backend_without_bytewax_names_the_extra_and_the_versions() -> None:
-    env = {**os.environ, "PYTHONPATH": str(_SRC)}
-    result = subprocess.run(
-        [sys.executable, "-c", _IMPORT_WITHOUT_BYTEWAX],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+class TestBytewaxImportGuard:
+    def test_importing_the_backend_without_bytewax_names_the_extra_and_the_versions(self) -> None:
+        env = {**os.environ, "PYTHONPATH": str(_SRC)}
+        result = subprocess.run(
+            [sys.executable, "-c", _IMPORT_WITHOUT_BYTEWAX],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
 
-    assert result.returncode == 0, result.stderr
-    message = result.stdout
-    assert "'streaming' extra" in message
-    assert "Python < 3.13" in message
-    assert f"Python {sys.version_info.major}.{sys.version_info.minor}." in message
+        assert result.returncode == 0, result.stderr
+        message = result.stdout
+        assert "'streaming' extra" in message
+        assert "Python < 3.13" in message
+        assert f"Python {sys.version_info.major}.{sys.version_info.minor}." in message

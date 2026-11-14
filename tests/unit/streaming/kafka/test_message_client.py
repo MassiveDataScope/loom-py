@@ -19,7 +19,7 @@ from loom.streaming.kafka import (
     MsgspecCodec,
 )
 from tests.unit.streaming.kafka.cases import OrderCreated
-from tests.unit.streaming.kafka.fakes import RawConsumerStub, RawProducerStub
+from tests.unit.streaming.kafka.doubles import RawConsumerStub, RawProducerStub
 
 pytestmark = pytest.mark.kafka
 

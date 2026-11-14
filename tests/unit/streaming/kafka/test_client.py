@@ -19,7 +19,7 @@ from loom.streaming.kafka import (
     KafkaRecord,
     ProducerSettings,
 )
-from tests.unit.streaming.kafka.fakes import (
+from tests.unit.streaming.kafka.doubles import (
     ConsumerBackendStub,
     FakeDeliveryError,
     FakeKafkaMessage,

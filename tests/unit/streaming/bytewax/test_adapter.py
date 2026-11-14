@@ -25,9 +25,9 @@ from loom.streaming.nodes._boundary import IntoTopic  # noqa: E402
 from loom.streaming.nodes._shape import Drain  # noqa: E402
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
+    AcmeOrder,
+    AcmeResult,
     DoubleStep,
-    Order,
-    Result,
     SuffixStep,
     build_compiled_plan,
 )
@@ -41,7 +41,7 @@ class TestStepNodeExecution:
     def test_single_task_produces_transformed_output(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_message: Message[Order],
+        bytewax_message: Message[AcmeOrder],
     ) -> None:
         plan = build_compiled_plan(bytewax_double_step)
         runner = StreamingTestRunner(plan).with_messages([bytewax_message])
@@ -50,14 +50,14 @@ class TestStepNodeExecution:
 
         assert len(results) == 1
         assert isinstance(results[0], Message)
-        assert results[0].payload == Result(value="AA")
+        assert results[0].payload == AcmeResult(value="AA")
         assert results[0].meta.message_id == "msg-1"
 
     def test_task_chain_passes_message_to_next_task(
         self,
         bytewax_double_step: DoubleStep,
         bytewax_suffix_step: SuffixStep,
-        bytewax_message: Message[Order],
+        bytewax_message: Message[AcmeOrder],
     ) -> None:
         plan = build_compiled_plan(bytewax_double_step, bytewax_suffix_step)
         runner = StreamingTestRunner(plan).with_messages([bytewax_message])
@@ -73,10 +73,10 @@ class TestSourceDecode:
     def test_kafka_record_source_decodes_envelope_before_task_execution(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_order: Order,
+        bytewax_order: AcmeOrder,
     ) -> None:
         plan = build_compiled_plan(bytewax_double_step)
-        codec = MsgspecCodec[Order]()
+        codec = MsgspecCodec[AcmeOrder]()
         envelope = build_message(
             bytewax_order,
             MessageDescriptor(message_type="order.created", message_version=1),
@@ -98,7 +98,7 @@ class TestSourceDecode:
         results = runner.output
 
         assert len(results) == 1
-        assert results[0].payload == Result(value="AA")
+        assert results[0].payload == AcmeResult(value="AA")
         assert results[0].meta.message_id == "orders.in:0:3"
         assert results[0].meta.message_type == "order.created"
         assert results[0].meta.message_version == 1
@@ -157,9 +157,9 @@ class TestTerminalNodes:
     def test_into_topic_node_wires_terminal_sink(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_message: Message[Order],
+        bytewax_message: Message[AcmeOrder],
     ) -> None:
-        target = IntoTopic("out", payload=Result)
+        target = IntoTopic("out", payload=AcmeResult)
         plan = build_compiled_plan(bytewax_double_step, output=target)
         runner = StreamingTestRunner(plan).with_messages([bytewax_message])
         runner.run()
@@ -170,7 +170,7 @@ class TestTerminalNodes:
     def test_drain_node_swallows_stream(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_message: Message[Order],
+        bytewax_message: Message[AcmeOrder],
     ) -> None:
         plan = build_compiled_plan(bytewax_double_step, Drain())
         runner = StreamingTestRunner(plan).with_messages([bytewax_message])
@@ -182,7 +182,7 @@ class TestTerminalNodes:
     def test_payload_helper_builds_default_test_metadata(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_order: Order,
+        bytewax_order: AcmeOrder,
     ) -> None:
         plan = build_compiled_plan(bytewax_double_step)
         runner = StreamingTestRunner(plan).with_payloads([bytewax_order])
@@ -197,9 +197,9 @@ class TestTerminalNodes:
     def test_into_topic_node_does_not_duplicate_flow_output(
         self,
         bytewax_double_step: DoubleStep,
-        bytewax_message: Message[Order],
+        bytewax_message: Message[AcmeOrder],
     ) -> None:
-        target = IntoTopic("out", payload=Result)
+        target = IntoTopic("out", payload=AcmeResult)
         plan = build_compiled_plan(bytewax_double_step, output=target)
         runner = StreamingTestRunner(plan).with_messages([bytewax_message])
 
@@ -226,10 +226,10 @@ class TestOutputAndErrorWiring:
             topic="orders.dlq",
             partition_policy=None,
         )
-        target = IntoTopic("out", payload=Result)
-        codec = MsgspecCodec[Order]()
+        target = IntoTopic("out", payload=AcmeResult)
+        codec = MsgspecCodec[AcmeOrder]()
         envelope = build_message(
-            Order(order_id="A"),
+            AcmeOrder(order_id="A"),
             MessageDescriptor(message_type="order.created", message_version=1),
         )
         valid_record = KafkaRecord(
@@ -309,7 +309,7 @@ class TestDropSinkCompletion:
             ErrorMessageMeta,
         )
         from loom.streaming.kafka._wire import DecodeError
-        from tests.unit.streaming.bytewax.cases import Order, build_order_message
+        from tests.unit.streaming.bytewax.cases import AcmeOrder, build_order_message
 
         completed: list[tuple[str, int, int]] = []
 
@@ -328,11 +328,11 @@ class TestDropSinkCompletion:
                 completed.append((topic, partition, offset))
 
         message = build_order_message("1", None, partition=0, offset=7)
-        envelope: ErrorEnvelope[Order] = ErrorEnvelope(
+        envelope: ErrorEnvelope[AcmeOrder] = ErrorEnvelope(
             kind=ErrorKind.BUSINESS,
             reason="boom",
             original_message=ErrorMessage(
-                payload=Order(order_id="2"),
+                payload=AcmeOrder(order_id="2"),
                 meta=ErrorMessageMeta(message_id="m2", topic="orders.in", partition=1, offset=8),
             ),
         )

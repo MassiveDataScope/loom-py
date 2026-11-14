@@ -154,7 +154,7 @@ class _FakeConfluentProducer:
             raise self.flush_error
 
 
-class _RecordingTracker:
+class RecordingCompletedOffsetTracker:
     """Commit tracker that records the records a batch completed."""
 
     def __init__(self) -> None:
@@ -222,7 +222,7 @@ def _terminal_sink(
     recorder: SpanRecorder | None,
     *,
     dlq_topic: str | None = None,
-    tracker: _RecordingTracker | None = None,
+    tracker: RecordingCompletedOffsetTracker | None = None,
 ) -> _KafkaMessageSink:
     """Build the production sink for one terminal path, optionally traced."""
     sinks = build_runtime_terminal_sinks({(0,): _compiled_sink(dlq_topic=dlq_topic)}, tracker)
@@ -518,7 +518,7 @@ class TestDivertedExit:
         fake = install_fake_producer(monkeypatch)
         fake.flush_errors = [RuntimeError("broker down")]
         recorder = build_recorder()
-        tracker = _RecordingTracker()
+        tracker = RecordingCompletedOffsetTracker()
         sink = _terminal_sink(recorder, dlq_topic=_DLQ_TOPIC, tracker=tracker)
 
         sink.build("step", 0, 1).write_batch(_messages())

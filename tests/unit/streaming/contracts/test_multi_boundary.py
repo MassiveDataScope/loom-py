@@ -9,37 +9,32 @@ from loom.core.routing import LogicalRef
 from loom.streaming import FromMultiTypeTopic
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.kafka import DecodeError
-
-
-class _OrderEvent(LoomFrozenStruct, frozen=True):
-    order_id: str
-
-
-class _ProductEvent(LoomFrozenStruct, frozen=True):
-    sku: str
+from tests.unit.streaming.doubles import AcmeOrderEvent, AcmeSkuProductEvent
 
 
 class TestFromMultiTypeTopicBoundary:
     def test_holds_payloads_tuple_name_and_logical_ref(self) -> None:
-        source: FromMultiTypeTopic[_OrderEvent | _ProductEvent] = FromMultiTypeTopic(
-            "events.all", payloads=(_OrderEvent, _ProductEvent)
+        source: FromMultiTypeTopic[AcmeOrderEvent | AcmeSkuProductEvent] = FromMultiTypeTopic(
+            "events.all", payloads=(AcmeOrderEvent, AcmeSkuProductEvent)
         )
 
         assert source.name == "events.all"
-        assert source.payloads == (_OrderEvent, _ProductEvent)
+        assert source.payloads == (AcmeOrderEvent, AcmeSkuProductEvent)
         assert source.logical_ref == LogicalRef("events.all")
 
     def test_rejects_single_payload(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            FromMultiTypeTopic("events.all", payloads=(_OrderEvent,))
+            FromMultiTypeTopic("events.all", payloads=(AcmeOrderEvent,))
 
     def test_accepts_three_or_more_payloads(self) -> None:
         class _ThirdEvent(LoomFrozenStruct, frozen=True):
             ref: str
 
-        source: FromMultiTypeTopic[_OrderEvent | _ProductEvent | _ThirdEvent] = FromMultiTypeTopic(
-            "events.all",
-            payloads=(_OrderEvent, _ProductEvent, _ThirdEvent),
+        source: FromMultiTypeTopic[AcmeOrderEvent | AcmeSkuProductEvent | _ThirdEvent] = (
+            FromMultiTypeTopic(
+                "events.all",
+                payloads=(AcmeOrderEvent, AcmeSkuProductEvent, _ThirdEvent),
+            )
         )
 
         assert len(source.payloads) == 3

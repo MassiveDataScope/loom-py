@@ -7,30 +7,30 @@ import pytest
 from loom.streaming import FromTopic, IntoTopic, Process, StreamFlow
 from loom.streaming.core._message import Message
 from tests.unit.streaming.bytewax.cases import (
+    AcmeOrder,
+    AcmeResult,
     DoubleStep,
-    Order,
-    Result,
     SuffixStep,
     build_message,
 )
 
 
 @pytest.fixture
-def bytewax_order() -> Order:
+def bytewax_order() -> AcmeOrder:
     """Return the canonical Bytewax order payload."""
 
-    return Order(order_id="A")
+    return AcmeOrder(order_id="A")
 
 
 @pytest.fixture
-def bytewax_result() -> Result:
+def bytewax_result() -> AcmeResult:
     """Return the canonical Bytewax result payload."""
 
-    return Result(value="AA")
+    return AcmeResult(value="AA")
 
 
 @pytest.fixture
-def bytewax_message(bytewax_order: Order) -> Message[Order]:
+def bytewax_message(bytewax_order: AcmeOrder) -> Message[AcmeOrder]:
     """Return the canonical Bytewax message."""
 
     return build_message(bytewax_order)
@@ -95,12 +95,12 @@ def bytewax_runtime_config_dict() -> dict[str, object]:
 
 
 @pytest.fixture
-def bytewax_stream_flow() -> StreamFlow[Order, Result]:
+def bytewax_stream_flow() -> StreamFlow[AcmeOrder, AcmeResult]:
     """Return a canonical Bytewax flow used by runner tests."""
 
     return StreamFlow(
         name="runner_flow",
-        source=FromTopic("orders.in", payload=Order),
+        source=FromTopic("orders.in", payload=AcmeOrder),
         process=Process(DoubleStep()),
-        output=IntoTopic("orders.out", payload=Result),
+        output=IntoTopic("orders.out", payload=AcmeResult),
     )

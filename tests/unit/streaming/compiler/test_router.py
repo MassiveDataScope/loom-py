@@ -212,41 +212,42 @@ class _OrderRows(PayloadExpander[Order]):
         return {Result: [Result(value=event.order_id)]}
 
 
-@pytest.mark.parametrize(
-    "node",
-    [
-        With(process=Process(FakeStep())),
-        WithAsync(process=Process(FakeStep())),
-        Router.by(msg.payload.order_id, routes={"vip": Process(FakeStep())}),
-        CollectBatch(max_records=2, timeout_ms=10),
-        ForEach(),
-        Explode(_OrderRows),
-    ],
-    ids=lambda node: type(node).__name__,
-)
-def test_a_router_branch_rejects_a_node_it_cannot_run_inline(
-    node: Any, streaming_kafka_config: DictConfig
-) -> None:
-    """A Router runs its branches inside one map; these nodes need their own operators."""
-    flow: StreamFlow[Order, Result] = StreamFlow(
-        name="test",
-        source=FromTopic("in", payload=Order),
-        process=Process(
-            Router.when(
-                routes=[Route(when=msg.payload.order_id != "", process=Process(node))],
-            ),
-            IntoTopic("out", payload=Result),
-        ),
+class TestRouterBranchInlineRejection:
+    @pytest.mark.parametrize(
+        "node",
+        [
+            With(process=Process(FakeStep())),
+            WithAsync(process=Process(FakeStep())),
+            Router.by(msg.payload.order_id, routes={"vip": Process(FakeStep())}),
+            CollectBatch(max_records=2, timeout_ms=10),
+            ForEach(),
+            Explode(_OrderRows),
+        ],
+        ids=lambda node: type(node).__name__,
     )
+    def test_a_router_branch_rejects_a_node_it_cannot_run_inline(
+        self, node: Any, streaming_kafka_config: DictConfig
+    ) -> None:
+        """A Router runs its branches inside one map; these nodes need their own operators."""
+        flow: StreamFlow[Order, Result] = StreamFlow(
+            name="test",
+            source=FromTopic("in", payload=Order),
+            process=Process(
+                Router.when(
+                    routes=[Route(when=msg.payload.order_id != "", process=Process(node))],
+                ),
+                IntoTopic("out", payload=Result),
+            ),
+        )
 
-    with pytest.raises(CompilationError) as exc_info:
-        compile_flow(flow, config=streaming_kafka_config)
+        with pytest.raises(CompilationError) as exc_info:
+            compile_flow(flow, config=streaming_kafka_config)
 
-    unsafe = [
-        issue.message
-        for issue in exc_info.value.issues
-        if issue.code is StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE
-    ]
-    assert unsafe == [
-        f"router branch predicate[0]: node {type(node).__name__} is not router-branch safe"
-    ]
+        unsafe = [
+            issue.message
+            for issue in exc_info.value.issues
+            if issue.code is StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE
+        ]
+        assert unsafe == [
+            f"router branch predicate[0]: node {type(node).__name__} is not router-branch safe"
+        ]

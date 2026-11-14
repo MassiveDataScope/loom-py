@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from loom.core.model import LoomStruct
 from loom.streaming import Message, RecordStep
+from tests.unit.streaming.doubles import Order
 
 
-class Order(LoomStruct):
-    order_id: str
-
-
-class ValidatedOrder(LoomStruct):
+class AcmeContractValidatedOrder(LoomStruct):
     order_id: str
 
 
@@ -35,13 +32,13 @@ class Context:
         return self._resource
 
 
-class ValidateOrder(RecordStep[Order, ValidatedOrder]):
-    def execute(self, message: Message[Order], **kwargs: object) -> ValidatedOrder:
-        return ValidatedOrder(order_id=message.payload.order_id)
+class AcmeContractValidateOrder(RecordStep[Order, AcmeContractValidatedOrder]):
+    def execute(self, message: Message[Order], **kwargs: object) -> AcmeContractValidatedOrder:
+        return AcmeContractValidatedOrder(order_id=message.payload.order_id)
 
 
-class NamedValidateOrder(RecordStep[Order, ValidatedOrder]):
+class NamedValidateOrder(RecordStep[Order, AcmeContractValidatedOrder]):
     name = "custom"
 
-    def execute(self, message: Message[Order], **kwargs: object) -> ValidatedOrder:
-        return ValidatedOrder(order_id=message.payload.order_id)
+    def execute(self, message: Message[Order], **kwargs: object) -> AcmeContractValidatedOrder:
+        return AcmeContractValidatedOrder(order_id=message.payload.order_id)

@@ -5,10 +5,7 @@ from __future__ import annotations
 from loom.core.model import LoomStruct
 from loom.streaming import RecordStep
 from loom.streaming.core._message import Message
-
-
-class Order(LoomStruct):
-    order_id: str
+from tests.unit.streaming.doubles import Order
 
 
 class Result(LoomStruct):
