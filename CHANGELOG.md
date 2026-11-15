@@ -44,6 +44,8 @@
   `schedule` triggers: a trigger without one fails to load, so no automatic
   change runs without an actor. An `identity.attributes` key under the
   reserved `loom:` prefix fails to load too.
+  **Migration:** add an `identity` block to each such trigger, and rename
+  any `identity.attributes` key that starts with `loom:`.
 
 - **lambda:** the deploy manifest reuses the loader: `served_routes(source,
   select_interfaces=None)` reads and validates `app.rest.interfaces` and
@@ -54,6 +56,9 @@
   the removed `Route`, `HttpEvent`, `QueueEvent`, `OnFailure` and `DirectEvent`
   structs encoded. The JSON does not change. `omegaconf` is bound to `<2.4`:
   the manifest reads its generated grammar (`loom.core.config._interpolations`).
+  **Migration:** call `served_routes(source)` without building the interface
+  list first, and read `FunctionManifest.event` as a `dict` with the keys of
+  the removed structs.
 
 - **lambda:** one adapter, `LambdaAdapter`, serves every Lambda function: it
   binds the handler of the trigger the deployed function declares. Nothing
@@ -87,6 +92,55 @@
 - **config:** a `config.overridable` entry reaching `lambda.handler`,
   `app.discovery` or `lambda.functions.*.trigger` stops every load, as one
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
+  **Migration:** remove such an entry from `config.overridable` and set the
+  key in the deployed configuration.
+
+### errors
+
+- **errors:** `loom.core.errors` is a package split by area (`base`, `domain`,
+  `auth`, `model`, `jobs`, `stores`, `codes`) and re-exports every error, so
+  `from loom.core.errors import X` is unchanged. The errors below are
+  importable only from `loom.core.errors`; their old paths, and the package
+  re-exports that pointed at them, are gone:
+
+  | Old path | New path |
+  |---|---|
+  | every class of the removed `errors` submodule of `loom.core.errors` | `loom.core.errors` |
+  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommitted` (also `loom.core.uow.*`) | `loom.core.errors` |
+  | `loom.core.uow.coordinator.UncomposedStore` | `loom.core.errors` |
+  | `loom.core.job.handle.JobTimeoutError`, `JobFailedError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.job.router.MixedJobBackendsError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.engine.post_commit.PostCommitError` (also `loom.core.engine.*`) | `loom.core.errors` |
+  | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
+  | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
+  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
+  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
+  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
+  | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
+
+- **errors:** a `LoomError` code is a catalogue member, never a literal
+  string: `LoomError(message, code=)` is typed `StrEnum`, `ErrorCode` gains
+  `JOB_TIMEOUT`, `JOB_FAILED`, `JOB_BACKENDS_MIXED` and
+  `BOUNDARY_TYPE_UNSUPPORTED` (same string values, mapped to 500 explicitly),
+  and the SQS adapters' `sqs_*` codes are the members of
+  `loom.jobs.aws.errors.SQSErrorCode`, which `SQSDispatchError(message, code=)`
+  now requires. An application catalogue is its own `StrEnum`.
+  `AuthenticationUnavailable` is a `SystemError`, so the generic retry and
+  circuit-breaker handlers see the outage it reports.
+  **Migration:** `LoomError(message, code="my_code")` →
+  `LoomError(message, code=MyCodes.MY_CODE)` with `class MyCodes(StrEnum)`;
+  `SQSDispatchError(message)` takes `code=SQSErrorCode.<member>`.
+
+- **errors:** every error belongs to a family. `BoundaryValidationError` and
+  `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
+  `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
+  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
+  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
+  `DomainError` is never retryable: Celery and the SQS consumers consume a
+  job that raises one instead of requeuing it, and the streaming boundary
+  files a `BoundaryValidationError` as a business error. `UnsupportedQuery`
+  takes `(reason, *, backend=None, model=None)` and its message names the
+  model and the reason, never the backend.
 
 ### rest
 
@@ -105,6 +159,300 @@
   `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p,
   dependencies={User: users}))` → `await adapter.handle(CreateUser,
   AdapterRequest(params=p))`, with `users` bound in the container.
+
+### di
+
+- **di:** a sealed container refuses every change. A composed application's
+  container is sealed once it has started; `register`, `register_default`,
+  `register_instance` and `register_repo` on it (through
+  `Application.kernel.container`, `WorkerBootstrapResult.container` or any
+  container after `seal()`), and a `UseCaseFactory` over a sealed container
+  that does not read constructors as loom builds a use case, raise
+  `loom.core.di.ContainerSealed` (a `ResolutionError`) naming
+  the key and change nothing. `register_default` raises even when the key is
+  already bound, and its check and binding are now one locked step.
+  **Migration:** move a `register*` made after start-up
+  (`application.kernel.container.register(Port, Impl)`,
+  `worker.container.register(...)`) into a module passed to the application
+  (`create_app(..., modules=[...])`, `compose_application(...,
+  modules=...)`); to reconfigure, build a new container (in tests, a new
+  application).
+- **core:** `create_kernel` refuses a module that binds a key the kernel binds
+  itself (`loom.core.bootstrap.kernel.KERNEL_KEYS`: `UseCaseFactory`,
+  `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
+  `BootstrapError` naming the module and the key, where the kernel used to
+  replace that binding without a word. A composed application also refuses a
+  module binding `UseCaseFactory`, with `ReservedBindingError`, as it already
+  did for the other three. The container `create_kernel` returns stays
+  unsealed, so a key can still be registered after it returns.
+  **Migration:** drop the binding from the module; the kernel's own instance
+  is the one served.
+
+### execution
+
+- **engine (execution plan bindings):** `ExecutionPlan.agent_bindings` and
+  `ExecutionPlan.mcp_bindings` are read-only properties derived from
+  `ExecutionPlan.execution_bindings`; they are no longer constructor fields.
+  **Migration:** `ExecutionPlan(agent_bindings=..., mcp_bindings=...)` →
+  `ExecutionPlan(execution_bindings=...)` with
+  `loom.core.execution.ExecutionBinding` entries for the `agent` and `mcp`
+  kinds; reading the two properties is unchanged.
+- **execution, identity (one acting identity):** the identity a request runs
+  as governs everything that request causes, for its whole life: nested
+  executions, the tasks it starts (even those that outlive it), the jobs and
+  callbacks it dispatches, row-level security and audit. `loom.core.identity`
+  holds the one carrier: the caller, the deadline of its delegation, and the
+  work (the execution) that fixed it. `current_caller()` (new) returns the
+  caller, `None` for no caller, and `current_identity()` still returns
+  `ANONYMOUS` for none. The new `loom.core.execution` package holds the
+  execution's resources: an execution opens with
+  `ExecutionContext.entered(identity, what="execution")` (`what` names the
+  work in a switch report) and ends with its `close()`; `ended` says whether
+  it was closed, and `execution_ended()` whether the current one was.
+  - `set_identity` inside an execution, or in a task it started, raises
+    `loom.core.identity.IdentityFixed`. A transport installing a caller (the
+    HTTP middleware, the job worker) never fixes it, so transports may nest.
+    The only way to act as someone else is an explicit switch, which opens
+    work of its own: `executor.run(UseCase, identity=X)`,
+    `invoker.for_identity(X)` or `ExecutionScope(X)`, inside work or under a
+    transport's caller alike. Outside work, a transport replacing a different
+    caller (`set_identity`, e.g. from a FastAPI dependency) is logged as one,
+    with `use_case="transport"`. A switch to the same subject with other
+    roles or attributes keeps the delegation's deadline; another subject
+    starts a delegation of its own.
+    Each is logged at `WARNING` as `identity_switched` (`from_subject`,
+    `to_subject`, `from_roles`, `to_roles`, `attributes_changed`,
+    `use_case`, `trace_id`; never attribute values or credentials), with
+    `from_subject=None` for a switch inside work that had no caller, and
+    recorded on the current span (`loom.identity.switched_from`,
+    `loom.identity.switched_to`). A switched identity never joins its
+    parent's unit of work (`NestedIdentityMismatch`). **Migration:** replace
+    `set_identity(X)` followed by a call inside a use case with
+    `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`.
+  - An execution given no `identity` acts as the identity acting: the
+    enclosing execution's, the transport's, or the one a task inherited; with
+    nothing acting it has no caller (`current_identity()` reads `ANONYMOUS`,
+    a `Caller()` raises `Unauthenticated`). A bare `ApplicationInvoker`, and
+    `InlineJobService.run` / `CeleryJobService.run`, called from a route act
+    as the request's caller; called with nothing acting they have no caller
+    (they used to pass `ANONYMOUS`). **Migration:** where a nested use case
+    must not run as the caller, replace `invoker.invoke(UseCase, ...)` with
+    `invoker.for_identity(system_identity).invoke(UseCase, ...)`.
+  - A task that outlives its execution keeps acting as its caller
+    (`execution_identity()`, `Caller()`, `current_identity()`, row-level
+    security), but the execution's resources are gone: a `REQUEST` binding or
+    `ExecutionContext.get` / `store` raises
+    `loom.core.execution.ExecutionClosed` (an `ExecutionRequired`) and logs an
+    `execution_closed` warning with the guidance. `executor.run(UseCase)`
+    from such a task acts as the same caller in an execution, unit of work,
+    post-commit channel and `REQUEST` instances of its own, and
+    `JobService.dispatch` from it goes out at once, detached, carrying the
+    caller. Work awaited inside the execution (`gather`, `TaskGroup`,
+    `asyncio.to_thread`) is unaffected.
+    **Migration:** a background task that needs `REQUEST` bindings runs its
+    work through `executor.run(UseCase)`, which opens an execution of its
+    own.
+  - Delegation window: work a request causes acts as its caller for at most
+    `identity.max_delegation_seconds` (default 3600) from the request's
+    start. The composition reads it with `ConfigContext.positive_seconds`
+    (new; `persistence.rollback_timeout` is read the same way, both checked
+    against `loom.core.model.types.PositiveSeconds`): a value that is not a
+    finite number above zero is a `ConfigError`. It sets it for the process
+    with `loom.core.identity.configure_delegation(seconds)`, which refuses
+    the same values (`inf`, `nan`, zero, negative) with a `ConfigError`
+    naming `identity.max_delegation_seconds`.
+    No constructor takes it, two kernels in one process share it, and a kernel
+    built with `create_kernel` outside the composition uses the default. A caller always has a
+    deadline: `set_identity(identity)` starts one (`now + window`, the HTTP
+    request), `set_identity(identity, until=...)` resumes one (a job
+    envelope, a queued dispatch), clamped to `now + window`, so a tampered or
+    skewed deadline never extends past one window. Expiry is checked where work starts (an
+    execution, a job, a callback, `ExecutionScope`, a queued dispatch's job:
+    `loom.core.errors.DelegationExpired`, an `Unauthenticated`;
+    `delegation_expired` warning), once at the start of
+    every SQLAlchemy transaction (any store, row-level security or not), and
+    by `execution_identity()` read from a task whose execution ended (an
+    Agent or MCP handle); never by `current_identity()`, so work started
+    before the deadline may finish. A queued inline dispatch run past its
+    deadline fails as a job whose execution is refused, and its failure
+    callback, acting as the same caller, is refused too. **Migration:** run
+    long background work as a system identity, switching explicitly with
+    `executor.run(UseCase, identity=...)`; a custom transport calls
+    `set_identity(identity)`, which starts the delegation.
+  - Wire: the encoded identity in a job envelope gains `until`, the deadline
+    of the caller's delegation (a Unix time), so a deadline never travels
+    without a caller (the new `loom.core.identity.Delegation(caller, until)`
+    value: `.encoded()` writes it, `Delegation.decoded(payload)` reads it;
+    `encode_identity(identity)` keeps its shape and writes no `until`). Celery callback links carry `identity` too. A caller
+    without `until` (a message queued by an earlier version, or built with
+    `LambdaEvent.jobs`) gets `now + window` at the worker, so in-flight
+    messages keep running after a deploy; an infinite, `nan`, `null`,
+    non-numeric or out-of-range `until` has expired
+    (`loom.core.identity.wire.EXPIRED`), and a non-finite deadline is encoded
+    as `EXPIRED`, never as `null`. Links from earlier versions decode to no caller, so
+    a callback declaring `Caller()` fails closed.
+    **Migration:** nothing for loom's own job backends; a custom producer
+    writes the identity with `Delegation.of(caller, until).encoded()`.
+  - Signatures: `encode_job_message(..., identity=)` also takes a
+    `Delegation`, whose deadline it writes; `job_context(trace_id, identity)`
+    reads it from the encoded identity.
+    `loom.core.job.callback.notify(factory, callback_type, outcome,
+    **arguments)` builds a callback and calls its hook for a
+    `CallbackOutcome` (`SUCCESS`, `FAILURE`): the callback acts as the
+    caller acting where it runs, which the inline dispatch and the Celery
+    link install. `ExecutionScope(identity, what=...)` names what runs in
+    the switch report.
+    `loom.core.identity` adds `Acting` (the value behind the tokens of
+    `set_identity` and `ExecutionContext.entered`;
+    `Acting.resumed(delegation)` returns what queued work installs to resume
+    a dispatcher's delegation, its deadline the sooner of the captured one
+    and the caller's; `Acting.current().refuse_expired()` refuses
+    a caller past its deadline), `Delegation` (`Delegation.of(caller,
+    until)` keeps only an authenticated caller), `NO_DELEGATION`,
+    `current_caller`,
+    `configure_delegation`, `captured_delegation`, `IdentityFixed` (also in
+    `loom.core.errors`) and `DEFAULT_MAX_DELEGATION_SECONDS`;
+    `loom.core.identity.wire` adds `Delegation` and `EXPIRED`.
+  - A dispatched job captures the authenticated caller acting and its
+    deadline (`loom.core.identity.captured_delegation()`) in every backend (inline,
+    Celery, SQS); an anonymous caller is captured as no caller, as the wire
+    always carried it. `RecordingJobService` records the same capture:
+    `DispatchedJob.identity` is `Identity | None`, `None` for an anonymous
+    caller. A dispatch with no caller
+    runs the job with no caller inline as on Celery. A queued inline
+    dispatch drained inside work acting as anyone but its dispatcher is
+    refused (`IdentityFixed`).
+    **Migration:** a test asserting `DispatchedJob.identity == ANONYMOUS`
+    asserts `DispatchedJob.identity is None`.
+  - `NoExecution` (singleton construction) acts as no one, fixed: a
+    singleton built lazily inside a request reads `ANONYMOUS`, never that
+    request's caller, and cannot install one.
+    **Migration:** a singleton that needs the caller becomes a `REQUEST`
+    binding, or the use case declares `Caller()`.
+  - Known limits: a caller revoked after its request started keeps acting for
+    the work it caused until the window ends (no revocation check); the
+    identity and deadline in a job envelope are not signed; deadlines compare
+    wall clocks across processes; the transaction check covers SQLAlchemy ORM
+    sessions, not `manager.engine` or Core connections.
+
+### ai
+
+- **ai (call-time handles):** an `Agent()` or `Mcp()` handle, and the `mcp()`
+  and `sql()` grant views an agent handle returns, hold no identity. Every
+  call acts as the execution identity of that moment
+  (`execution_identity()`), so one handle serves each caller as itself.
+  - A handle kept by a task that outlives its request keeps acting as that
+    request's caller until the delegation deadline. After it, every call
+    raises `Unauthenticated` (`delegation_expired`) before reaching the
+    model, the MCP server or the database. Called outside any execution, a
+    handle raises `ExecutionRequired`. **Migration:** call a handle only
+    inside an execution (a use case, job, callback or agent run); a script
+    that drove one outside wraps the calls in `with ExecutionScope(identity):`.
+  - An adapter or factory may declare `Agent()` or `Mcp()` as a constructor
+    default; a singleton one is built at start-up, and by a standalone
+    `create_kernel(agent_resolver=..., mcp_resolver=...)` given
+    `ExecutionResolver`s.
+  - Each declaration resolves to one handle, built on its first resolve; the
+    `Mcp()` handle looks its server's grant up on every call. A server that
+    no `Mcp()` declaration reached at start-up raises the new
+    `AgentRunErrorCode.MCP_SERVER_NOT_GRANTED` (authorization class), and so
+    does `AgentRuntime.use_case_mcp_grant(server)`, which returned `None`
+    for it before. It still returns `None` for a server tolerated as
+    unreachable, whose calls keep raising `TOOL_UNAVAILABLE`. A caller with
+    no subject keeps `UNAUTHORIZED`, on the `Mcp()` handle too (its
+    `tools()` included), before the grant is looked up, so it never learns
+    whether a server is granted or reachable, and no call is made.
+    **Migration:** code testing `use_case_mcp_grant(server) is None` for a
+    server no declaration reached catches `AgentRunError` with
+    `MCP_SERVER_NOT_GRANTED` instead.
+  - An agent run (`run`, `run_stream`) is an execution acting as the run's
+    caller: tools, hooks and marker handles inside it read that caller from
+    `execution_identity()`. The guard of a hand-driven `native()` run opens
+    no execution: it acts as the identity acting where it is entered, no
+    longer the caller of `native()`. Entered outside any execution it raises
+    `ExecutionRequired`; entered past the caller's deadline it raises
+    `DelegationExpired`, so a retained carrier never re-pins its builder.
+    A run for another subject than the one acting is logged as an
+    `identity_switched`, like `ExecutionScope`. The agent HTTP and A2A
+    endpoints open no execution of their own. The A2A
+    `message/stream` response sends heartbeats from when the run starts, as
+    the HTTP stream does, so none is sent while the run loads its
+    conversation (admission refuses at once and never waits).
+    **Migration:** drive a `native()` carrier inside an execution, for
+    example `with ExecutionScope(identity):` around the run.
+  - Every agent tool checks the identity acting where it runs
+    (`execution_identity()`), not the caller its dependency bundle was built
+    for. A `NativeAgent` kept past its caller's delegation raises
+    `Unauthenticated` at the first tool call and runs no tool. Driven
+    outside any execution it raises `ExecutionRequired`, and driven by an
+    execution acting as no one it is refused with `UNAUTHORIZED`. The
+    tools of a carrier driven inside another caller's execution act as that
+    caller: the tool span's subject, the `sql` roles and the use case a
+    `usecase` tool invokes. The check is
+    `loom.ai.errors.require_authenticated(who)`: the identity of the
+    execution in progress, refused outside one (`ExecutionRequired`), past
+    its deadline (`DelegationExpired`) or unauthenticated (`UNAUTHORIZED`).
+    `loom.core.execution.live_execution_identity()` returns that identity
+    with the deadline checked in the same read.
+  - The AI dependency bundle needs only `container`. `usecase` tools, the
+    output hook and the conversation loader resolve the container's
+    `ApplicationInvoker` and act as the identity acting in the run's
+    execution. `AgentDeps` drops `identity`; an `identity` or `invoker` on a
+    custom bundle is not read. Start-up refuses an agent declaring a hook
+    (`ON_OUTPUT_INVOKER_MISSING`) or a loader
+    (`CONVERSATION_INVOKER_MISSING`) when the container holds no
+    `ApplicationInvoker`.
+    **Migration:** drop `identity=` from `AgentDeps(...)`; a custom bundle
+    or tool reads the caller with `execution_identity()`.
+  - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
+    `bind_mcp_resolver` and the `agent_resolver=` and `mcp_resolver=`
+    arguments of `RuntimeExecutor` (and, new, of `create_kernel`) also
+    take a `loom.core.execution.ExecutionResolver`. A legacy
+    `(name, identity)` or `(server, include, identity)` callable is
+    deprecated: binding one emits a `DeprecationWarning`. It still works,
+    but it captures the identity when it resolves, so the handles it returns
+    are not bounded by the delegation window and it cannot serve a
+    singleton. Migrate `bind_agent_resolver(lambda name, identity: ...)` to an
+    object whose `resolve(declaration, annotation)` returns the handle and
+    reads the caller at call time. In the private `loom.ai.runtime._handle` module, the
+    `agent_marker_resolver(runtime, ...)` and `mcp_marker_resolver(runtime,
+    ...)` functions are replaced by the `AgentMarkerResolver` and
+    `McpMarkerResolver` classes, which take the same arguments and accept
+    both resolver shapes. Inside an execution, an identity passed to the
+    legacy shape must be the execution identity, or `IdentityFixed` is
+    raised. `_UnavailableMcpHandle` is removed.
+    `loom.ai.runtime._grants.McpGrantView` and `SqlGrantView` lose their
+    `identity=` argument.
+
+- **ai:** `HealthState` is a `StrEnum` (`OK`, `DEGRADED`, `UNAVAILABLE`)
+  instead of a `Literal` alias. Its members compare and encode as the same
+  strings, so `status == "ok"` and the `/health` JSON do not change; code
+  that annotates a bare string as `HealthState` uses the members for a type
+  checker. `HealthState.worst(states)` returns the worst of several states;
+  a state that is no member (an engine reporting its own string) ranks as
+  `UNAVAILABLE`, as the `/health` aggregate did before, instead of failing
+  the probe. **Migration:** for a type checker, replace a string literal typed
+  as `HealthState` (`"ok"`) with its member (`HealthState.OK`).
+- **ai (private modules):** `loom.ai.runtime._hooks`, `_conversation` and
+  `_bounded` merge into `loom.ai.runtime._turn`: `TurnCallbacks(plan,
+  identity, interaction_id, conversation_id, invoker)` runs the conversation
+  loader (`conversation()`) and the output hook (`events()`, `terminal()`),
+  and builds both commands (`command()`, `hook_command()`).
+  `CompiledOutputHook.step` and `CompiledConversation.step` name the step in
+  logs and errors. The fixed client texts and the denial table live in
+  `loom.ai.errors` (`HOOK_FAILED_MESSAGE`, `NO_TERMINAL_MESSAGE`,
+  `DENIED_MESSAGE`, `DENIALS`).
+  `loom.ai.runtime._health` merges into `_lifecycle` (`AgentHealth` is still
+  exported by `loom.ai.runtime`). `loom.ai._roles.bound_query_roles` becomes
+  `CompiledSqlCapability.roles_of(identity)`. In the pydantic-ai engine,
+  `build_capabilities(plan)` drops `container`, `native_capability(capability)`
+  drops `context`, `capability_deps` becomes `bundle_container` (read by the
+  `sql` tool only) and `CapabilityDeps` is removed,
+  `_failures.classify` becomes `Outcome.of`, and
+  `loom.ai.runtime._grants.INTERRUPTED_CALL_CODE` is removed
+  (`AgentRunErrorCode.MCP_CALL_INTERRUPTED` is the code). **Migration:** code
+  importing these private names (tests patching them included) imports the
+  new owner listed above.
 
 ## ✨ Features
 
@@ -249,6 +597,10 @@
   and `.via_sqs()` for the queue in between; `RecordingJobService`
   (`app.job_service: loom.testing:RecordingJobService`) records each dispatch
   after the commit. The `testing` extra now includes `httpx`.
+- **testing:** `GoldenHarness.register` and `register_instance` bind
+  adapters and fake ports, and `with_agent` and `with_mcp` bind `Agent()` and
+  `Mcp()` doubles, so a use case whose adapter declares a marker runs under
+  the harness; an adapter marker with no double fails closed.
 
 ### stores
 
@@ -363,319 +715,13 @@
   before, and the specs they build carry the member; an unknown value raises
   the same `ValueError`.
 
-## 💥 Breaking
+### docs
 
-### errors
-
-- **errors:** `loom.core.errors` is a package split by area (`base`, `domain`,
-  `auth`, `model`, `jobs`, `stores`, `codes`) and re-exports every error, so
-  `from loom.core.errors import X` is unchanged. The errors below are
-  importable only from `loom.core.errors`; their old paths, and the package
-  re-exports that pointed at them, are gone:
-
-  | Old path | New path |
-  |---|---|
-  | every class of the removed `errors` submodule of `loom.core.errors` | `loom.core.errors` |
-  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommitted` (also `loom.core.uow.*`) | `loom.core.errors` |
-  | `loom.core.uow.coordinator.UncomposedStore` | `loom.core.errors` |
-  | `loom.core.job.handle.JobTimeoutError`, `JobFailedError` (also `loom.core.job.*`) | `loom.core.errors` |
-  | `loom.core.job.router.MixedJobBackendsError` (also `loom.core.job.*`) | `loom.core.errors` |
-  | `loom.core.engine.post_commit.PostCommitError` (also `loom.core.engine.*`) | `loom.core.errors` |
-  | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
-  | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
-  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
-  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
-  | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
-  | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
-
-- **errors:** a `LoomError` code is a catalogue member, never a literal
-  string: `LoomError(message, code=)` is typed `StrEnum`, `ErrorCode` gains
-  `JOB_TIMEOUT`, `JOB_FAILED`, `JOB_BACKENDS_MIXED` and
-  `BOUNDARY_TYPE_UNSUPPORTED` (same string values, mapped to 500 explicitly),
-  and the SQS adapters' `sqs_*` codes are the members of
-  `loom.jobs.aws.errors.SQSErrorCode`, which `SQSDispatchError(message, code=)`
-  now requires. An application catalogue is its own `StrEnum`.
-  `AuthenticationUnavailable` is a `SystemError`, so the generic retry and
-  circuit-breaker handlers see the outage it reports.
-
-- **errors:** every error belongs to a family. `BoundaryValidationError` and
-  `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
-  `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
-  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
-  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
-  `DomainError` is never retryable: Celery and the SQS consumers consume a
-  job that raises one instead of requeuing it, and the streaming boundary
-  files a `BoundaryValidationError` as a business error. `UnsupportedQuery`
-  takes `(reason, *, backend=None, model=None)` and its message names the
-  model and the reason, never the backend.
-
-### di
-
-- **di:** a sealed container refuses every change. A composed application's
-  container is sealed once it has started; `register`, `register_default`,
-  `register_instance` and `register_repo` on it (through
-  `Application.kernel.container`, `WorkerBootstrapResult.container` or any
-  container after `seal()`), and a `UseCaseFactory` over a sealed container
-  that does not read constructors as loom builds a use case, raise
-  `loom.core.di.ContainerSealed` (a `ResolutionError`) naming
-  the key and change nothing. `register_default` raises even when the key is
-  already bound, and its check and binding are now one locked step.
-  `ContainerSealedWarning` is removed. **Migration:** bind every key in a
-  module passed to the application (`create_app(..., modules=[...])`,
-  `compose_application(..., modules=...)`); to reconfigure, build a new
-  container (in tests, a new application).
-- **core:** `create_kernel` refuses a module that binds a key the kernel binds
-  itself (`loom.core.bootstrap.kernel.KERNEL_KEYS`: `UseCaseFactory`,
-  `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
-  `BootstrapError` naming the module and the key, where the kernel used to
-  replace that binding without a word. A composed application also refuses a
-  module binding `UseCaseFactory`, with `ReservedBindingError`, as it already
-  did for the other three. The container `create_kernel` returns stays
-  unsealed, so a key can still be registered after it returns.
-  **Migration:** drop the binding from the module; the kernel's own instance
-  is the one served.
-
-### execution
-
-- **engine (execution plan bindings):** `ExecutionPlan.agent_bindings` and
-  `ExecutionPlan.mcp_bindings` are read-only properties derived from
-  `ExecutionPlan.execution_bindings`; they are no longer constructor fields.
-  Migration: build the plan with `execution_bindings`
-  (`loom.core.execution.ExecutionBinding` entries for the `agent` and `mcp`
-  kinds); reading the two properties is unchanged.
-- **execution, identity (one acting identity):** the identity a request runs
-  as governs everything that request causes, for its whole life: nested
-  executions, the tasks it starts (even those that outlive it), the jobs and
-  callbacks it dispatches, row-level security and audit. `loom.core.identity`
-  holds the one carrier: the caller, the deadline of its delegation, and the
-  work (the execution) that fixed it. `current_caller()` (new) returns the
-  caller, `None` for no caller, and `current_identity()` still returns
-  `ANONYMOUS` for none. `ExecutionContext` holds the execution's resources
-  only: `ExecutionContext.identity` is removed, an execution opens with
-  `ExecutionContext.entered(identity, what="execution")` (`what` names the
-  work in a switch report) and ends with its `close()`, `ended` says whether
-  it was closed, and `refuse_ended_execution` is replaced by
-  `execution_ended()`.
-  - `set_identity` inside an execution, or in a task it started, raises
-    `loom.core.identity.IdentityFixed`. A transport installing a caller (the
-    HTTP middleware, the job worker) never fixes it, so transports may nest.
-    The only way to act as someone else is an explicit switch, which opens
-    work of its own: `executor.run(UseCase, identity=X)`,
-    `invoker.for_identity(X)` or `ExecutionScope(X)`, inside work or under a
-    transport's caller alike. Outside work, a transport replacing a different
-    caller (`set_identity`, e.g. from a FastAPI dependency) is logged as one,
-    with `use_case="transport"`. A switch to the same subject with other
-    roles or attributes keeps the delegation's deadline; another subject
-    starts a delegation of its own.
-    Each is logged at `WARNING` as `identity_switched` (`from_subject`,
-    `to_subject`, `from_roles`, `to_roles`, `attributes_changed`,
-    `use_case`, `trace_id`; never attribute values or credentials), with
-    `from_subject=None` for a switch inside work that had no caller, and
-    recorded on the current span (`loom.identity.switched_from`,
-    `loom.identity.switched_to`). A switched identity never joins its
-    parent's unit of work (`NestedIdentityMismatch`). **Migration:** replace
-    `set_identity(X)` followed by a call inside a use case with
-    `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`.
-  - An execution given no `identity` acts as the identity acting: the
-    enclosing execution's, the transport's, or the one a task inherited; with
-    nothing acting it has no caller (`current_identity()` reads `ANONYMOUS`,
-    a `Caller()` raises `Unauthenticated`). A bare `ApplicationInvoker`, and
-    `InlineJobService.run` / `CeleryJobService.run`, called from a route act
-    as the request's caller; called with nothing acting they have no caller
-    (they used to pass `ANONYMOUS`).
-  - A task that outlives its execution keeps acting as its caller
-    (`execution_identity()`, `Caller()`, `current_identity()`, row-level
-    security), but the execution's resources are gone: a `REQUEST` binding or
-    `ExecutionContext.get` / `store` raises
-    `loom.core.execution.ExecutionClosed` (an `ExecutionRequired`) and logs an
-    `execution_closed` warning with the guidance. `executor.run(UseCase)`
-    from such a task acts as the same caller in an execution, unit of work,
-    post-commit channel and `REQUEST` instances of its own, and
-    `JobService.dispatch` from it goes out at once, detached, carrying the
-    caller. Work awaited inside the execution (`gather`, `TaskGroup`,
-    `asyncio.to_thread`) is unaffected.
-  - Delegation window: work a request causes acts as its caller for at most
-    `identity.max_delegation_seconds` (default 3600) from the request's
-    start. The composition reads it with `ConfigContext.positive_seconds`
-    (new; `persistence.rollback_timeout` is read the same way, both checked
-    against `loom.core.model.types.PositiveSeconds`): a value that is not a
-    finite number above zero is a `ConfigError`. It sets it for the process
-    with `loom.core.identity.configure_delegation(seconds)`, which refuses
-    the same values (`inf`, `nan`, zero, negative) with a `ConfigError`
-    naming `identity.max_delegation_seconds`.
-    No constructor takes it, two kernels in one process share it, and a kernel
-    built with `create_kernel` outside the composition uses the default. A caller always has a
-    deadline: `set_identity(identity)` starts one (`now + window`, the HTTP
-    request), `set_identity(identity, until=...)` resumes one (a job
-    envelope, a queued dispatch), clamped to `now + window`, so a tampered or
-    skewed deadline never extends past one window. Expiry is checked where work starts (an
-    execution, a job, a callback, `ExecutionScope`, a queued dispatch's job:
-    `loom.core.errors.DelegationExpired`, an `Unauthenticated`;
-    `delegation_expired` warning), once at the start of
-    every SQLAlchemy transaction (any store, row-level security or not), and
-    by `execution_identity()` read from a task whose execution ended (an
-    Agent or MCP handle); never by `current_identity()`, so work started
-    before the deadline may finish. A queued inline dispatch run past its
-    deadline fails as a job whose execution is refused, and its failure
-    callback, acting as the same caller, is refused too. **Migration:** run
-    long background work as a system identity, switching explicitly with
-    `executor.run(UseCase, identity=...)`; a custom transport calls
-    `set_identity(identity)`, which starts the delegation.
-  - Wire: the encoded identity in a job envelope gains `until`, the deadline
-    of the caller's delegation (a Unix time), so a deadline never travels
-    without a caller (the new `loom.core.identity.Delegation(caller, until)`
-    value: `.encoded()` writes it, `Delegation.decoded(payload)` reads it;
-    `encode_identity(identity)` keeps its shape and writes no `until`). Celery callback links carry `identity` too. A caller
-    without `until` (a message queued by an earlier version, or built with
-    `LambdaEvent.jobs`) gets `now + window` at the worker, so in-flight
-    messages keep running after a deploy; an infinite, `nan`, `null`,
-    non-numeric or out-of-range `until` has expired
-    (`loom.core.identity.wire.EXPIRED`), and a non-finite deadline is encoded
-    as `EXPIRED`, never as `null`. Links from earlier versions decode to no caller, so
-    a callback declaring `Caller()` fails closed.
-  - Signatures: `encode_job_message(..., until=None)` writes the deadline;
-    `job_context(trace_id, identity)` reads it from the identity.
-    `loom.core.job.callback.notify(factory, callback_type, outcome,
-    **arguments)` builds a callback and calls its hook for a
-    `CallbackOutcome` (`SUCCESS`, `FAILURE`): the callback acts as the
-    caller acting where it runs, which the inline dispatch and the Celery
-    link install. `ExecutionScope(identity, what=...)` names what runs in
-    the switch report.
-    `loom.core.identity` adds `Acting` (the value behind the tokens of
-    `set_identity` and `ExecutionContext.entered`;
-    `Acting.resumed(delegation)` returns what queued work installs to resume
-    a dispatcher's delegation, its deadline the sooner of the captured one
-    and the caller's; `Acting.current().refuse_expired()` refuses
-    a caller past its deadline), `Delegation` (`Delegation.of(caller,
-    until)` keeps only an authenticated caller), `NO_DELEGATION`,
-    `current_caller`,
-    `configure_delegation`, `captured_delegation`, `IdentityFixed` (also in
-    `loom.core.errors`) and `DEFAULT_MAX_DELEGATION_SECONDS`;
-    `loom.core.identity.wire` adds `Delegation` and `EXPIRED`.
-  - A dispatched job captures the authenticated caller acting and its
-    deadline (`loom.core.identity.captured_delegation()`) in every backend (inline,
-    Celery, SQS); an anonymous caller is captured as no caller, as the wire
-    always carried it. `RecordingJobService` records the same capture:
-    `DispatchedJob.identity` is `Identity | None`, `None` for an anonymous
-    caller. A dispatch with no caller
-    runs the job with no caller inline as on Celery. A queued inline
-    dispatch drained inside work acting as anyone but its dispatcher is
-    refused (`IdentityFixed`).
-  - `persistence.rollback_timeout` is refused when infinite or `nan`, like
-    zero and negative values (`ConfigError`).
-  - `NoExecution` (singleton construction) acts as no one, fixed: a
-    singleton built lazily inside a request reads `ANONYMOUS`, never that
-    request's caller, and cannot install one.
-  - Known limits: a caller revoked after its request started keeps acting for
-    the work it caused until the window ends (no revocation check); the
-    identity and deadline in a job envelope are not signed; deadlines compare
-    wall clocks across processes; the transaction check covers SQLAlchemy ORM
-    sessions, not `manager.engine` or Core connections.
-
-### ai
-
-- **ai (call-time handles):** an `Agent()` or `Mcp()` handle, and the `mcp()`
-  and `sql()` grant views an agent handle returns, hold no identity. Every
-  call acts as the execution identity of that moment
-  (`execution_identity()`), so one handle serves each caller as itself.
-  - A handle kept by a task that outlives its request keeps acting as that
-    request's caller until the delegation deadline. After it, every call
-    raises `Unauthenticated` (`delegation_expired`) before reaching the
-    model, the MCP server or the database. Called outside any execution, a
-    handle raises `ExecutionRequired`.
-  - A singleton adapter or factory holding `Agent()` or `Mcp()` is now built
-    at start-up, and by a standalone
-    `create_kernel(agent_resolver=..., mcp_resolver=...)` given the AI
-    resolvers. Before, building it failed with `ExecutionRequired`.
-  - Each declaration resolves to one handle, built on its first resolve; the
-    `Mcp()` handle looks its server's grant up on every call. A server that
-    no `Mcp()` declaration reached at start-up raises the new
-    `AgentRunErrorCode.MCP_SERVER_NOT_GRANTED` (authorization class), and so
-    does `AgentRuntime.use_case_mcp_grant(server)`, which returned `None`
-    for it before. It still returns `None` for a server tolerated as
-    unreachable, whose calls keep raising `TOOL_UNAVAILABLE`. A caller with
-    no subject keeps `UNAUTHORIZED`, on the `Mcp()` handle too (its
-    `tools()` included), before the grant is looked up, so it never learns
-    whether a server is granted or reachable, and no call is made.
-  - An agent run (`run`, `run_stream`) is an execution acting as the run's
-    caller: tools, hooks and marker handles inside it read that caller from
-    `execution_identity()`. The guard of a hand-driven `native()` run opens
-    no execution: it acts as the identity acting where it is entered, no
-    longer the caller of `native()`. Entered outside any execution it raises
-    `ExecutionRequired`; entered past the caller's deadline it raises
-    `DelegationExpired`, so a retained carrier never re-pins its builder.
-    A run for another subject than the one acting is logged as an
-    `identity_switched`, like `ExecutionScope`. The agent HTTP and A2A
-    endpoints open no execution of their own. The A2A
-    `message/stream` response sends heartbeats from when the run starts, as
-    the HTTP stream does, so none is sent while the run loads its
-    conversation (admission refuses at once and never waits).
-  - Every agent tool checks the identity acting where it runs
-    (`execution_identity()`), not the caller its dependency bundle was built
-    for. A `NativeAgent` kept past its caller's delegation raises
-    `Unauthenticated` at the first tool call and runs no tool. Driven
-    outside any execution it raises `ExecutionRequired`, and driven by an
-    execution acting as no one it is refused with `UNAUTHORIZED`. The
-    tools of a carrier driven inside another caller's execution act as that
-    caller: the tool span's subject, the `sql` roles and the use case a
-    `usecase` tool invokes. The check is
-    `loom.ai.errors.require_authenticated(who)`: the identity of the
-    execution in progress, refused outside one (`ExecutionRequired`), past
-    its deadline (`DelegationExpired`) or unauthenticated (`UNAUTHORIZED`).
-    `loom.core.execution.live_execution_identity()` returns that identity
-    with the deadline checked in the same read.
-  - The AI dependency bundle needs only `container`. `usecase` tools, the
-    output hook and the conversation loader resolve the container's
-    `ApplicationInvoker` and act as the identity acting in the run's
-    execution. `AgentDeps` drops `identity`; an `identity` or `invoker` on a
-    custom bundle is not read. Start-up refuses an agent declaring a hook
-    (`ON_OUTPUT_INVOKER_MISSING`) or a loader
-    (`CONVERSATION_INVOKER_MISSING`) when the container holds no
-    `ApplicationInvoker`.
-  - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
-    `bind_mcp_resolver`, and the `agent_resolver=` and `mcp_resolver=`
-    arguments of `RuntimeExecutor` and `create_kernel` also
-    take a `loom.core.execution.ExecutionResolver`. A legacy
-    `(name, identity)` or `(server, include, identity)` callable is
-    deprecated: binding one emits a `DeprecationWarning`. It still works,
-    but it captures the identity when it resolves, so the handles it returns
-    are not bounded by the delegation window and it cannot serve a
-    singleton. In the private `loom.ai.runtime._handle` module, the
-    `agent_marker_resolver(runtime, ...)` and `mcp_marker_resolver(runtime,
-    ...)` functions are replaced by the `AgentMarkerResolver` and
-    `McpMarkerResolver` classes, which take the same arguments and accept
-    both resolver shapes. Inside an execution, an identity passed to the
-    legacy shape must be the execution identity, or `IdentityFixed` is
-    raised. `_UnavailableMcpHandle` is removed.
-    `loom.ai.runtime._grants.McpGrantView` and `SqlGrantView` lose their
-    `identity=` argument.
-
-- **ai:** `HealthState` is a `StrEnum` (`OK`, `DEGRADED`, `UNAVAILABLE`)
-  instead of a `Literal` alias. Its members compare and encode as the same
-  strings, so `status == "ok"` and the `/health` JSON do not change; code
-  that annotates a bare string as `HealthState` uses the members for a type
-  checker. `HealthState.worst(states)` returns the worst of several states;
-  a state that is no member (an engine reporting its own string) ranks as
-  `UNAVAILABLE`, as the `/health` aggregate did before, instead of failing
-  the probe.
-- **ai (private modules):** `loom.ai.runtime._hooks`, `_conversation` and
-  `_bounded` merge into `loom.ai.runtime._turn`: `TurnCallbacks(plan,
-  identity, interaction_id, conversation_id, invoker)` runs the conversation
-  loader (`conversation()`) and the output hook (`events()`, `terminal()`),
-  and builds both commands (`command()`, `hook_command()`).
-  `CompiledOutputHook.step` and `CompiledConversation.step` name the step in
-  logs and errors. The fixed client texts and the denial table live in
-  `loom.ai.errors` (`HOOK_FAILED_MESSAGE`, `NO_TERMINAL_MESSAGE`,
-  `DENIED_MESSAGE`, `DENIALS`).
-  `loom.ai.runtime._health` merges into `_lifecycle` (`AgentHealth` is still
-  exported by `loom.ai.runtime`). `loom.ai._roles.bound_query_roles` becomes
-  `CompiledSqlCapability.roles_of(identity)`. In the pydantic-ai engine,
-  `build_capabilities(plan)` drops `container`, `native_capability(capability)`
-  drops `context`, `capability_deps` becomes `bundle_container` (read by the
-  `sql` tool only) and `CapabilityDeps` is removed,
-  `_failures.classify` becomes `Outcome.of`, and
-  `loom.ai.runtime._grants.INTERRUPTED_CALL_CODE` is removed
-  (`AgentRunErrorCode.MCP_CALL_INTERRUPTED` is the code).
+- **docs:** a ports and adapters guide (`docs/guides/ports-and-adapters.md`):
+  ports in use-case constructors, adapters declaring agents and MCP servers,
+  autowiring and start-up refusals, the composition pipeline, call-time
+  identity and the delegation window, testing with doubles, and a migration
+  table for this release.
 
 ## ⚠ Behaviour changes
 
@@ -698,11 +744,6 @@
   its `[BOOT] Registering module` line for every module it runs: the
   caller's, the overrides, each store's repository module and the cache
   module. It no longer logs the validation and completion lines.
-- **composition:** when no agent runtime is built (an entry point without
-  agents, or one hosting agents with no `ai:` section), an unknown `Agent()`
-  and an unknown `Mcp()` declaration are reported in one
-  `AgentCompilationError`, agents first. Before, the first reported only the
-  agents and the second only the MCP servers.
 - **composition (new API):** `CompositionSource.load(*config_paths, ...)`
   loads a source as `load_source` does; `load_source` stays. `AiWiring.ABSENT`
   is the wiring of an application without agents, `AiWiring.hosted(config,
@@ -747,13 +788,16 @@
   servable is refused the same way (it failed at the binding's first build,
   Python leaving the argument out); `HttpTestHarness` only warns with
   `loom.core.di.errors.DependencyUnresolvable`.
-- **di (behaviour change, D4):** `Scope.REQUEST` (and `Scope.TRANSACTION`)
+- **di (behaviour change):** `Scope.REQUEST` (and `Scope.TRANSACTION`)
   means one instance per execution: everything one execution resolves shares
   it, and so do the tasks it creates while it runs (see the breaking note on
-  closed executions); a
-  nested execution gets its own. Outside any execution each `resolve` still
-  builds a fresh one. The executor builds the use case inside its execution,
-  so the use case, its adapters and the post-commit drain share them.
+  closed executions); a nested execution (the invoker, an inline job) gets
+  its own. Outside any execution each `resolve` still builds a fresh one. The
+  executor builds the use case inside its execution, so the use case, its
+  adapters and the post-commit drain share them. **Migration:** a `REQUEST`
+  binding that relied on a fresh instance per `resolve` inside one execution
+  (mutable per-call state) becomes a factory the caller calls, or keeps that
+  state in method locals.
 - **di:** a class bound with `register(Port, Impl)` gets its required
   constructor parameters from the container (autowiring): a key, a
   `RepoFor[Model]` through the repository mapping, or an execution kind
@@ -828,12 +872,16 @@
   would be refused, or that declares an execution kind, is not built: it
   warns with `loom.core.di.errors.DependencyWarning` and fails with the reason
   when first resolved. `DependencyUnresolvable` is now a `DependencyWarning`.
-- **di (behaviour change, F8):** registering a key drops that key's built
-  instance, and every binding's compiled construction is rebuilt once at its
-  next resolve, so a binding built per execution or per resolve gets the new
-  binding from then on, before or after seal. Every other built instance is
-  kept, so a singleton already built on the key keeps what it holds. After
-  seal, a `register*` thus recompiles every key once, on the start-up path.
+- **di (behaviour change):** before seal, registering a key again drops
+  only that key's built instance, and every binding's compiled construction
+  is rebuilt once at its next resolve, so a binding built per execution or
+  per resolve gets the new binding from then on. Every other built instance
+  is kept, so a singleton already built that holds the old binding keeps it.
+  After seal, a `register*` raises `ContainerSealed`. **Migration:** register
+  every replacement (an override, a fake) before anything resolves the
+  singletons that depend on it, for example in `Recipe.overrides` or a module
+  passed to the application, instead of re-registering after a first
+  resolve.
 - **engine (behaviour change):** each execution opens one execution context,
   and `RuntimeExecutor.run` builds the use case or job inside it, before
   `EXEC_START`: a constructor's `Caller()`, a per-execution adapter declaring
@@ -852,11 +900,7 @@
   when it ends, so a use case that enters an execution
   (`ExecutionContext.entered`) and never closes it now makes that end raise
   `RuntimeError` (misuse) and closes the context.
-- **rest:** `LoomRestAdapter.handle` runs the use case as the request's caller
-  (the ambient identity the transport installed, passed explicitly), so a
-  `Caller()` in `execute()` now receives it instead of raising
-  `Unauthenticated`.
-- **jobs (behaviour change, D7):** job callbacks (`on_success`, `on_failure`;
+- **jobs (behaviour change):** job callbacks (`on_success`, `on_failure`;
   inline, Celery sync and async) are built and called inside an execution
   acting as the identity captured when the job was dispatched, which the
   inline dispatch and the Celery link install
@@ -865,13 +909,17 @@
   link's caller installed there too (no context variable needs to cross
   the bridge): a
   constructor `Caller()`, a handle, row-level security and a job the callback
-  dispatches see the dispatcher, where a constructor `Caller()` raised
-  `ExecutionRequired`. A dispatch with no caller gives its callbacks none
-  (`Caller()` raises `Unauthenticated`). `REQUEST` bindings of a callback are
-  built once per callback run.
+  dispatches see the dispatcher, where a callback used to run with no
+  caller. A dispatch with no caller gives its callbacks none (`Caller()`
+  raises `Unauthenticated`). `REQUEST` bindings of a callback are built once
+  per callback run. **Migration:** a callback that must not act as the
+  dispatcher runs its work with `executor.run(UseCase, identity=...)`.
 - **testing:** `GoldenHarness.run` builds the use case inside its execution,
   so a constructor `Caller()` receives the `identity` given (and raises
   `Unauthenticated` without one).
+- **testing:** `UseCaseTest` binds its `Agent()` and `Mcp()` doubles through
+  execution resolvers, so it emits no legacy-resolver `DeprecationWarning`
+  and serves doubles to adapters declaring the markers too.
 - **engine (new API):** `RuntimeExecutor(builder=...)` builds the class
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
@@ -936,12 +984,8 @@
   no longer runs first.
 - **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
   on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
-  bind them, so a standalone kernel serves a per-execution adapter declaring
-  `Agent()` or `Mcp()`. An `APPLICATION` adapter holding `Agent()` or `Mcp()`
-  still cannot be built until T12, with or without these resolvers: they build
-  a handle for the identity of the execution in progress, a singleton is built
-  with none, so `create_kernel` fails with `BootstrapError` (cause
-  `ExecutionRequired`).
+  bind them, so a standalone kernel serves an adapter declaring `Agent()` or
+  `Mcp()` (a singleton one only with `ExecutionResolver`s).
 - **composition:** a use case built through `UseCase.__init__` reaches its
   main repository in the start-up graph: the repository mapped to its model
   and, when it declares a standard capability (`Listable[Order]`), that
@@ -959,20 +1003,18 @@
   now have a readable `repr` (`Mcp('acme-crm', include=['find_*'])`).
 - **use cases (behaviour change):** `UseCaseFactory` builds a use case or a job
   through its compiled plan, compiled once from the container's graph (and
-  again after any `register*`), as a binding is: `UseCaseFactory.compiled(type)`
-  and `LoomContainer.compiled(type)` return it. Inside an execution a build
+  again after any `register*`), as a binding is: `LoomContainer.compiled(type)`
+  returns it. Inside an execution a build
   shares that execution's `REQUEST` instances; outside one each is built
   fresh, as before. A constructor's `Agent()`, `Mcp()` or `Caller()` default
   is resolved at build instead of passed through as the raw marker, so a
   `Caller()` one raises `ExecutionRequired` when built outside an execution
-  (the executor builds inside its execution from T08). An `Agent()` or
-  `Mcp()` one with no resolver bound passes start-up and every build raises
-  `ResolutionError` (no resolver is bound); with a resolver it still needs an
-  execution, which the request path gives from T08 and a singleton from T12.
+  (the executor builds inside its execution). An `Agent()` or `Mcp()` one
+  with no resolver bound fails every build with `ResolutionError`.
   An input marker (`Input()`, `Query()`, `LoadById()`, `Load()`, `Exists()`)
-  as a constructor default now fails `verify()` with the refusal-5 message
-  (the composed pipeline already refused it at start-up), and every build on
-  a standalone `create_kernel`. `register(type)` raises `DependencyGraphError` for a required
+  as a constructor default now fails `verify()` with the start-up refusal
+  message (the composed pipeline already refused it at start-up), and every
+  build on a standalone `create_kernel`. `register(type)` raises `DependencyGraphError` for a required
   parameter that names nothing the container serves (`X: p: tuple[str, ...]
   names nothing the container can serve`), which failed the first build with
   a `TypeError`; `create_kernel` and `bootstrap_app` thus fail at start-up
@@ -990,7 +1032,9 @@
   raises the same path form (was `No binding registered for: K` /
   `No repository mapping registered for model: M`). Removed
   `loom.core.use_case.factory.DepToken`; new `DependencyGraph.unresolvable(node)`
-  and `loom.core.di.graph.BINDING_REFUSALS` (refusals 1 and 2).
+  and `loom.core.di.graph.BINDING_REFUSALS` (the missing-binding and cycle
+  refusals). **Migration:** match the new error text, and replace
+  `DepToken` with the key itself.
 - **core:** `create_kernel` builds one `RuntimeExecutor`, not a throwaway one
   first, and validates its container once, with the kernel's keys bound: an
   `APPLICATION` provider resolving `RuntimeExecutor` while it validates gets
@@ -1001,7 +1045,9 @@
   `loom.composition.create_app`, or build a kernel with `create_kernel`, which
   is not deprecated. Its result is unchanged. Like any `DeprecationWarning`
   it is hidden under Python's default filters outside `__main__` and shown by
-  test runners.
+  test runners. **Migration:** `bootstrap_app(config, use_cases=...,
+  modules=...)` → `create_kernel(config=config, use_cases=...,
+  modules=...)` for a bare kernel, or `create_app(...)` for an application.
 - **deprecation:** `UseCaseFactory(container)` over a container still on the
   default reading (`LoomContainer()`) warns with a `DeprecationWarning` and
   adopts the use-case reading and the execution kinds once
@@ -1011,8 +1057,9 @@
   marker object itself. The deprecated `bootstrap_app` builds the same
   container. Over a container that reads another way it
   raises `ValueError`; over a sealed bare container, `ContainerSealed`.
-  **Migration:** build the kernel with `create_kernel` or the application with
-  `loom.composition.create_app`.
+  **Migration:** `UseCaseFactory(LoomContainer())` →
+  `create_kernel(config=..., use_cases=[...], modules=[...]).factory`, or
+  the application's factory from `loom.composition.create_app`.
 - **cache:** a deployment that binds its own `RepositoryDecorator` without a
   `cache:` section now logs `CacheDecoratorAlreadyRegistered` naming it, as
   it already did with the section; the binding is kept either way.
@@ -1058,13 +1105,11 @@
 
 ### ai
 
-- **ai:** start-up checks `Mcp()` declarations when it compiles their grants
-  and `Agent()` declarations after the agents are built, each in an error of
-  its own: a deployment where both an agent and a server are unknown reports
-  the servers (`MCP_MARKER_UNKNOWN`) first and the agents
-  (`AGENT_MARKER_UNKNOWN`) once those are fixed, where one error listed both.
-  `MarkerDeclarations.verify(plans)` checks agents only; `mcp_grants(servers)`
-  refuses unknown servers.
+- **ai:** every entry point checks `Mcp()` declarations before `Agent()`
+  ones, each in an error of its own: where both a server and an agent are
+  unknown, start-up reports the servers (`MCP_MARKER_UNKNOWN`) first and the
+  agents (`AGENT_MARKER_UNKNOWN`) once those are fixed. An entry point without
+  agents (a Celery worker) used to report the agents first.
 - **ai:** `StateShape` computes its `defaults` (the decode of an empty
   object, read-only) when it is built, and `StateShape.resolve(agent, state)`
   returns the caller's state or those defaults. A run of a shape with a field
@@ -1171,6 +1216,9 @@
   response carries no usage) is classified `COST_NOT_MEASURABLE`, like the
   other unmeasured-spend warnings, instead of a retriable
   `PROVIDER_UNAVAILABLE`.
+- **ai:** a `5xx` `/run` body carries the fixed message `An unexpected error
+  occurred` instead of the run error's, `HOOK_FAILED` and `CONVERSATION_LOAD_FAILED` included; `code`
+  and `interaction_id` stay, and the error is logged at `ERROR`.
 
 ### jobs
 
@@ -1181,14 +1229,14 @@
   `JobPostCommitFailed`.
 - **jobs:** an inline dispatch drained outside any work while its
   dispatcher acts again resumes the captured delegation, ending at the
-  earlier of the captured deadline and the deadline of the caller acting;
-  before, it ran under the deadline of the caller acting, so a later
-  delegation of the same caller extended it.
+  earlier of the captured deadline and the deadline of the caller acting, so
+  a later delegation of the same caller never extends it. Drained inside work
+  already acting as its dispatcher, it is refused (`DelegationExpired`) once
+  the captured deadline has passed, even when that work started the
+  dispatcher afresh.
 - **jobs:** an inline callback whose sync `on_success` or `on_failure`
   returns an awaitable has it awaited inside the callback's execution.
-- **jobs:** a Celery async callback installs its link's trace and caller in
-  the coroutine the worker's async bridge runs, not only in the task
-  thread. A Celery failure callback reads the failed job's exception from
+- **jobs:** a Celery failure callback reads the failed job's exception from
   the result backend inside its span, once its link's caller has passed the
   deadline check: a link past its deadline reads nothing.
 - **jobs:** a dispatch that attaches `on_success` or `on_failure` refuses,
@@ -1205,9 +1253,6 @@
   `context` holds.
 - **jobs:** a Celery callback whose plain `def` hook returns an awaitable
   raises `TypeError` and closes it, instead of dropping it unawaited.
-- **jobs:** an inline dispatch drained inside work already acting as its
-  dispatcher is refused (`DelegationExpired`) once the captured deadline has
-  passed, even when that work started the dispatcher afresh.
 - **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,
   so the API process now honours them too; before, only the Celery and Lambda
   SQS workers did.
@@ -1269,6 +1314,9 @@
   `get_pending_mutations` are removed: `record_mutation` records on
   `InvocationScope.mutations` while an outermost `@transactional` collects
   them.
+- **stores:** the unit-of-work log events are the members of
+  `loom.core.uow.abc.UowEvent` (`UoWBegin`, `UoWCommit`, `UoWRollback`, ...,
+  `InvocationOutcome`); the logged strings do not change.
 - **stores:** `clear_pending_dispatches()` drops the job dispatches and
   publishes of every store of the running invocation, and never a cache
   invalidation.
@@ -1365,13 +1413,6 @@
   `The service is temporarily unavailable`), also for an `HTTPException`
   whose detail is a string. The message is logged at `ERROR` under the same
   `trace_id`. FastAPI and Lambda answer the same; `4xx` bodies are unchanged.
-
-### ai
-
-- **ai:** a `5xx` `/run` body carries the same fixed message instead of the
-  run error's, `HOOK_FAILED` and `CONVERSATION_LOAD_FAILED` included; `code`
-  and `interaction_id` stay, and the error is logged at `ERROR`.
-
 
 ### use_case
 

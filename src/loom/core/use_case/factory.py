@@ -109,7 +109,8 @@ class UseCaseFactory:
     def build(self, use_case_type: type[_T]) -> _T:
         """Construct an instance with dependencies injected from the container.
 
-        Runs the plan of ``use_case_type`` (:meth:`compiled`); outside an
+        Runs the plan of ``use_case_type``
+        (:meth:`~loom.core.di.container.LoomContainer.compiled`); outside an
         execution each per-execution dependency is built fresh. Accepts any
         class whose constructor dependencies are resolvable from the
         container — both :class:`~loom.core.use_case.use_case.UseCase`
