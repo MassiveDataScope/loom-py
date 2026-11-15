@@ -12,7 +12,7 @@ from loom.composition import compose_application
 from loom.composition.source import CompositionSource
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
-from loom.core.di.errors import DependencyWarning
+from loom.core.di.errors import ContainerSealed, DependencyWarning
 from loom.core.di.graph import (
     ClassNode,
     DependencyGraphError,
@@ -21,7 +21,6 @@ from loom.core.di.graph import (
 from loom.core.di.scope import Scope
 from loom.core.execution import Kind
 from loom.core.use_case import Mcp, UseCase
-from loom.core.use_case.kinds import MCP
 from tests.helpers.composition import Serving, composition_source
 from tests.unit.composition.phases.components import AcmeMcpUser, AcmeRecord
 from tests.unit.composition.phases.paths import SQLITE
@@ -84,16 +83,15 @@ class TestUnboundKind:
         with pytest.raises(DependencyGraphError, match="crm: no resolver is bound for 'acme-crm'"):
             container.seal(acme.analysed(container, AcmeUsesCrm))
 
-    def test_seal_defers_an_unbound_kind_it_is_told_to_and_a_later_resolver_serves_it(self) -> None:
+    def test_seal_defers_an_unbound_kind_it_is_told_to_and_refuses_a_later_resolver(self) -> None:
         container = _bound(Scope.APPLICATION)
 
         with pytest.warns(DependencyWarning, match="AcmeCrmAdapter is not built"):
             container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
         with pytest.raises(ResolutionError, match="no resolver is bound for 'acme-crm'"):
             container.resolve(AcmeCrmAdapter)
-        container.kinds.bind(ACME_CRM, acme_resolver())
-
-        assert container.resolve(AcmeCrmAdapter).crm == "acme-crm-handle"
+        with pytest.raises(ContainerSealed, match="the container is sealed"):
+            container.kinds.bind(ACME_CRM, acme_resolver())
 
 
 class AcmeCrmPort:
@@ -148,10 +146,9 @@ class TestUnboundMcpAdapter:
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
             application = compose_application(_source(), adapter, modules=(_binds_crm,))
-        container = application.kernel.container
-        container.kinds.bind(MCP, acme_resolver())
 
-        assert container.resolve(AcmeCrmPort).crm == "acme-crm-handle"
+        with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
+            application.kernel.container.resolve(AcmeCrmPort)
 
     def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)

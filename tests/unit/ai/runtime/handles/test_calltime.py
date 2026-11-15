@@ -86,12 +86,12 @@ class TestTheLegacyCall:
 
 
 class TestBindingAResolver:
-    def test_warns_that_a_legacy_callable_is_not_bounded_by_the_window(self) -> None:
+    def test_refuses_positional_resolvers(self) -> None:
         executor = RuntimeExecutor(UseCaseCompiler())
 
-        with pytest.warns(DeprecationWarning, match="not bounded by the delegation window"):
+        with pytest.raises(TypeError, match=r"resolve\(declaration, annotation\)"):
             executor.bind_agent_resolver(lambda name, identity: name)
-        with pytest.warns(DeprecationWarning, match=r"\(server, include, identity\)"):
+        with pytest.raises(TypeError, match=r"resolve\(declaration, annotation\)"):
             executor.bind_mcp_resolver(lambda server, include, identity: server)
 
     def test_binds_the_call_time_resolvers_without_a_warning(

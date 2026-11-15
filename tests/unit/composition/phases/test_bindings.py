@@ -46,7 +46,10 @@ class TestPathBindings:
         monkeypatch: pytest.MonkeyPatch,
         executors: list[RuntimeExecutor],
     ) -> None:
-        container = _EVERY_PATH[name](paths.Composition(), tmp_path, monkeypatch)
+        composition = (
+            paths.Composition(use_cases=()) if name == "create_kernel" else paths.Composition()
+        )
+        container = _EVERY_PATH[name](composition, tmp_path, monkeypatch)
 
         matches_snapshot(f"bindings/{name}", _recorded(container, executors))
 

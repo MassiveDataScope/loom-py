@@ -8,7 +8,8 @@ nothing.
 
 An application seals its container once it has started
 (:meth:`LoomContainer.seal`): its singletons are built then, and registering
-into it afterwards raises :class:`~loom.core.di.errors.ContainerSealed`.
+into it, or declaring an execution kind or binding its resolver, afterwards
+raises :class:`~loom.core.di.errors.ContainerSealed`.
 """
 
 from __future__ import annotations
@@ -100,7 +101,7 @@ class LoomContainer:
 
     Attributes:
         kinds: The execution kinds of this application, shared with its
-            executor; empty until the kernel declares them.
+            executor; empty until the kernel declares them, frozen by :meth:`seal`.
 
     Example::
 
@@ -329,8 +330,8 @@ class LoomContainer:
         the analysis); otherwise it fails at its first resolve. A singleton
         *analysis* reaches that declares a kind with no resolver bound is
         refused, unless the kind is in *deferred*; then it warns with
-        :class:`~loom.core.di.errors.DependencyWarning` and is not built, but
-        keeps its binding, so a resolver bound later serves it. A singleton
+        :class:`~loom.core.di.errors.DependencyWarning`, is not built and
+        fails at its first resolve. A singleton
         no root reaches whose construction a construction refusal refuses,
         or that declares an execution kind, warns the same way and fails with
         the reason whenever resolved. Without *analysis*, no binding is
@@ -338,7 +339,8 @@ class LoomContainer:
 
         Every ``register*`` afterwards raises
         :class:`~loom.core.di.errors.ContainerSealed` naming the key and
-        changes nothing: to reconfigure, build a new container.
+        changes nothing: to reconfigure, build a new container. So does
+        declaring a kind on :attr:`kinds` or binding its resolver.
 
         Raises:
             ValueError: When *analysis* analysed another dependency graph
@@ -353,6 +355,11 @@ class LoomContainer:
             if analysis is not None:
                 reached = self._reached(analysis, deferred)
             self._sealed = True
+            self.kinds.freeze(
+                "the container is sealed. Declare execution kinds and bind their resolvers "
+                "before the container is sealed: pass agent_resolver= and mcp_resolver= to "
+                "create_kernel, or bind them before the application seals it"
+            )
             self._compile_reached(reached, strict=strict)
             buildable, unbuilt = self._buildable(reached)
         for message in unbuilt:

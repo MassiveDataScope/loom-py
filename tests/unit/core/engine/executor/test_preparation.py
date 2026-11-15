@@ -445,13 +445,9 @@ class TestComputesAndRules:
 
 
 class TestMcpMarker:
-    """``Mcp()`` resolves to a handle closed over the verified caller.
+    """``Mcp()`` resolves through the MCP ``ExecutionResolver`` the AI pillar binds.
 
-    The executor resolves it through a callable the AI pillar supplies, never
-    through a parameter the caller could pass. ``bind_mcp_resolver`` is a
-    second, differently-typed method from ``bind_agent_resolver`` (T301): the
-    agent resolver is ``(name, identity)``, the MCP one ``(server, include,
-    identity)``.
+    The caller can never pass the handle as a parameter.
     """
 
     async def test_the_resolved_handle_is_bound_to_the_verified_caller(

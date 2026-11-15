@@ -25,7 +25,6 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
-from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.repository.registration import classify_key
 from loom.core.uow.coordinator import Coordinator
@@ -71,16 +70,17 @@ def create_kernel(
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
-    agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None,
-    mcp_resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any] | None = None,
+    agent_resolver: ExecutionResolver | None = None,
+    mcp_resolver: ExecutionResolver | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
     Registers *config* and the environment in a new container, runs
-    *modules*, adds the kernel (:meth:`KernelRecipe.install`) and validates
-    every ``APPLICATION`` binding. A module may not bind a key of
-    :data:`KERNEL_KEYS`. The container stays unsealed: a key, the kernel's
-    included, can still be registered once this returns.
+    *modules*, adds the kernel (:meth:`KernelRecipe.install`), validates
+    every ``APPLICATION`` binding and verifies the use cases
+    (:meth:`~loom.core.use_case.factory.UseCaseFactory.verify`). A module may
+    not bind a key of :data:`KERNEL_KEYS`. The container stays unsealed: a
+    key, the kernel's included, can still be registered once this returns.
 
     Args:
         config: Application config object registered in DI at ``APPLICATION``
@@ -98,14 +98,10 @@ def create_kernel(
             Registered at ``APPLICATION`` scope before the modules run, so a
             module's service or a use case can inject
             :class:`~loom.core.environment.Environment`.
-        agent_resolver: Bound on the executor as by
-            :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
-            A singleton holding ``Agent()`` is built only with an
-            :class:`~loom.core.execution.ExecutionResolver`; a legacy callable
-            reads the identity when it resolves, so it cannot build one.
-        mcp_resolver: Bound as by
-            :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`;
-            the same holds for a singleton holding ``Mcp()``.
+        agent_resolver: An :class:`~loom.core.execution.ExecutionResolver`
+            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
+        mcp_resolver: An :class:`~loom.core.execution.ExecutionResolver`
+            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`.
 
     Returns:
         Fully built :class:`KernelRuntime`.
@@ -113,9 +109,14 @@ def create_kernel(
     Raises:
         ConfigError: When *environment* is not an environment; raised as is.
         BootstrapError: Wrapping a module's failure, a use case's
-            compilation error or an ``APPLICATION`` binding that cannot be
-            built; raised directly, naming the module, when a module binds a
-            key of :data:`KERNEL_KEYS`.
+            compilation error, an ``APPLICATION`` binding that cannot be
+            built or a use case's dependency the container cannot provide
+            (:class:`~loom.core.di.graph.DependencyGraphError`, naming its
+            path, or :class:`~loom.core.use_case.errors.UnservedModelError` for a use
+            case whose main model has no repository), or an agent or MCP
+            resolver without ``resolve(declaration, annotation)``; raised
+            directly, naming the module, when a module binds a key of
+            :data:`KERNEL_KEYS`.
     """
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
@@ -134,6 +135,7 @@ def create_kernel(
         kernel = recipe.install(container)
         log.info("[BOOT] Validating container bindings")
         container.validate()
+        kernel.factory.verify()
     log.info("[BOOT] Bootstrap complete")
     return kernel
 
@@ -212,8 +214,8 @@ class KernelRecipe:
     metrics: MetricsAdapter | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
-    agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None
-    mcp_resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any] | None = None
+    agent_resolver: ExecutionResolver | None = None
+    mcp_resolver: ExecutionResolver | None = None
 
     @staticmethod
     def container() -> LoomContainer:

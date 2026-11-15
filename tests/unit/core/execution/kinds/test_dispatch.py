@@ -36,6 +36,16 @@ class AcmeRecordingResolver:
         return "acme-handle"
 
 
+class AcmeNamedResolver:
+    def __init__(self, calls: list[str], field: str) -> None:
+        self.calls, self.field = calls, field
+
+    def resolve(self, declaration: object, annotation: object) -> object:
+        name = getattr(declaration, self.field)
+        self.calls.append(name)
+        return name
+
+
 class AcmeMixedUseCase(UseCase[object, list[str]]):
     async def execute(
         self, docs: Any = Mcp("acme-docs", include=["search"]), triage: Any = Agent("acme-triage")
@@ -126,8 +136,8 @@ class TestTheKindsRegistry:
         compiler = UseCaseCompiler()
         plan = compiler.compile(AcmeMixedUseCase)
         executor = RuntimeExecutor(compiler)
-        executor.bind_agent_resolver(lambda name, identity: calls.append(name) or name)
-        executor.bind_mcp_resolver(lambda server, include, identity: calls.append(server) or server)
+        executor.bind_agent_resolver(AcmeNamedResolver(calls, "name"))
+        executor.bind_mcp_resolver(AcmeNamedResolver(calls, "server"))
 
         result = await executor.execute(AcmeMixedUseCase(), identity=_ACME)
 

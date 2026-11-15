@@ -202,10 +202,15 @@ class TestResolversBindOnlyWithAnAiRuntime:
 
         assert result.container.kinds.is_bound(AGENT)
         assert result.container.kinds.is_bound(MCP)
+
+        class AnotherResolver:
+            def resolve(self, declaration: object, annotation: object) -> object:
+                return object()
+
         with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_agent_resolver(lambda name, identity: object())
+            result.executor.bind_agent_resolver(AnotherResolver())
         with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_mcp_resolver(lambda server, include, identity: object())
+            result.executor.bind_mcp_resolver(AnotherResolver())
 
     @pytest.mark.parametrize("registered", [True, False], ids=["registered", "unregistered"])
     def test_the_handle_opens_spans_on_the_registered_observability_runtime(

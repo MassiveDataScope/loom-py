@@ -18,7 +18,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.execution import ExecutionContext, current_execution
-from loom.core.identity import ANONYMOUS, Identity
+from loom.core.identity import ANONYMOUS
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.factory import UseCaseFactory
@@ -159,13 +159,15 @@ class TestBuiltInsideTheExecution:
     async def test_execute_markers_resolve_in_the_execution_itself(self) -> None:
         seen: list[ExecutionContext | None] = []
 
-        def resolve(*declaration: Any) -> ExecutionContext | None:
-            identity: Identity = declaration[-1]
-            assert identity is ALICE
-            seen.append(current_execution())
-            return seen[-1]
+        class Resolver:
+            def resolve(self, declaration: object, annotation: object) -> ExecutionContext | None:
+                assert current_execution() is not None
+                seen.append(current_execution())
+                return seen[-1]
 
-        executor = RuntimeExecutor(UseCaseCompiler(), agent_resolver=resolve, mcp_resolver=resolve)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), agent_resolver=Resolver(), mcp_resolver=Resolver()
+        )
 
         ran_in = await executor.execute(AcmeAssistant(), identity=ALICE)
 

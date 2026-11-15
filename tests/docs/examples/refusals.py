@@ -1,4 +1,4 @@
-"""Bindings that the kernel refuses when it starts."""
+"""An unbound use-case port refused when create_kernel verifies at start-up."""
 
 from __future__ import annotations
 

@@ -69,3 +69,16 @@ class TestStartedApplicationContainer:
         assert container.resolve(RuntimeExecutor) is application.kernel.executor
         assert not isinstance(after[JobService], AcmeOtherJobs)
         assert all(after[key] is instance for key, instance in before.items())
+
+    def test_binding_an_agent_resolver_is_refused(
+        self, overridden: Callable[..., Application]
+    ) -> None:
+        executor = overridden().kernel.executor
+
+        with pytest.raises(ContainerSealed, match="before the container is sealed"):
+            executor.bind_agent_resolver(_AcmeAgents())
+
+
+class _AcmeAgents:
+    def resolve(self, declaration: object, annotation: object) -> object:
+        return declaration

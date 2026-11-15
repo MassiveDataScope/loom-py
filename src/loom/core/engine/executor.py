@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
@@ -18,7 +17,6 @@ from loom.core.execution import (
     ExecutionKinds,
     ExecutionResolver,
     Kind,
-    execution_identity,
 )
 from loom.core.identity import Identity, current_caller
 from loom.core.logger import LoggerPort, get_logger
@@ -115,10 +113,8 @@ class RuntimeExecutor:
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
-        agent_resolver: ExecutionResolver | Callable[[str, Identity], Any] | None = None,
-        mcp_resolver: ExecutionResolver
-        | Callable[[str, tuple[str, ...], Identity], Any]
-        | None = None,
+        agent_resolver: ExecutionResolver | None = None,
+        mcp_resolver: ExecutionResolver | None = None,
         elevation_sink: ElevationSink | None = None,
     ) -> None:
         self._compiler = compiler
@@ -132,30 +128,23 @@ class RuntimeExecutor:
         if mcp_resolver is not None:
             self.bind_mcp_resolver(mcp_resolver)
 
-    def bind_agent_resolver(
-        self, resolver: ExecutionResolver | Callable[[str, Identity], Any]
-    ) -> None:
+    def bind_agent_resolver(self, resolver: ExecutionResolver) -> None:
         """Bind the resolver used by every ``Agent()`` marker parameter.
 
         A use case declaring ``Agent()`` that runs before this is called
         fails with an error naming this method. The resolver is bound to
-        :data:`~loom.core.use_case.kinds.AGENT` on this executor's registry: as
-        is when it implements :class:`~loom.core.execution.ExecutionResolver`,
-        else wrapped to be called with the execution identity at resolve time.
+        :data:`~loom.core.use_case.kinds.AGENT` on this executor's registry.
 
         Args:
             resolver: An :class:`~loom.core.execution.ExecutionResolver` of
-                ``Agent()`` declarations, or a callable building one agent
-                handle from the agent's name and the caller of one execution.
+                ``Agent()`` declarations.
 
         Raises:
             RuntimeError: If a resolver is already bound.
         """
-        self._bind(AGENT, resolver, ("name",))
+        self._bind(AGENT, resolver)
 
-    def bind_mcp_resolver(
-        self, resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any]
-    ) -> None:
+    def bind_mcp_resolver(self, resolver: ExecutionResolver) -> None:
         """Bind the resolver used by every ``Mcp()`` marker parameter.
 
         A use case declaring ``Mcp()`` that runs before this is called fails
@@ -163,31 +152,23 @@ class RuntimeExecutor:
 
         Args:
             resolver: An :class:`~loom.core.execution.ExecutionResolver` of
-                ``Mcp()`` declarations, or a callable building one MCP handle
-                from the marker's server name, its own ``include`` and the
-                caller of one execution.
+                ``Mcp()`` declarations.
 
         Raises:
             RuntimeError: If a resolver is already bound.
         """
-        self._bind(MCP, resolver, ("server", "include"))
+        self._bind(MCP, resolver)
 
-    def _bind(
-        self, kind: Kind, resolver: ExecutionResolver | Callable[..., Any], fields: tuple[str, ...]
-    ) -> None:
-        """Bind *resolver* to *kind*, wrapping a positional one called with *fields*.
+    def _bind(self, kind: Kind, resolver: ExecutionResolver) -> None:
+        """Bind *resolver* to *kind*.
 
         Raises:
+            TypeError: If *resolver* does not implement ``resolve(declaration, annotation)``.
             RuntimeError: If *kind* already has a resolver.
         """
         if self._kinds.is_bound(kind):
             raise RuntimeError(f"RuntimeExecutor.bind_{kind.name}_resolver() called more than once")
-        self._kinds.bind(
-            kind,
-            resolver
-            if isinstance(resolver, ExecutionResolver)
-            else _PositionalResolver(resolver, fields),
-        )
+        self._kinds.bind(kind, resolver)
 
     async def run(
         self,
@@ -452,27 +433,3 @@ class RuntimeExecutor:
 def _handed_instance(compilable: Compilable) -> Compilable:
     """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
     return compilable
-
-
-class _PositionalResolver:
-    """Calls a positional resolver with the declaration's *fields*, then the execution identity.
-
-    Building one emits a :class:`DeprecationWarning`.
-    """
-
-    __slots__ = ("_fields", "_resolver")
-
-    def __init__(self, resolver: Callable[..., Any], fields: tuple[str, ...]) -> None:
-        warnings.warn(
-            f"a legacy ({', '.join(fields)}, identity) resolver captures the execution "
-            "identity when it resolves, so its handles are not bounded by the delegation "
-            "window; bind a loom.core.execution.ExecutionResolver instead",
-            DeprecationWarning,
-            stacklevel=4,
-        )
-        self._resolver = resolver
-        self._fields = fields
-
-    def resolve(self, declaration: object, annotation: object) -> object:
-        arguments = [getattr(declaration, field) for field in self._fields]
-        return self._resolver(*arguments, execution_identity())

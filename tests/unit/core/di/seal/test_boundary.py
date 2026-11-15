@@ -11,6 +11,7 @@ import pytest
 from loom.core.di import ContainerSealed, ResolutionError
 from loom.core.di.compiler import STRUCTURE_LOCK
 from loom.core.di.container import LoomContainer
+from loom.core.execution import ExecutionKinds, Kind
 from loom.core.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.seal.doubles import AcmeBoundLedger, AcmeLateLedger
@@ -64,6 +65,62 @@ class TestSealedContainer:
         container.seal()
 
         assert UseCaseFactory(container).graph is container.graph
+
+
+_ACME = Kind("acme")
+
+
+class _AcmeMarker:
+    pass
+
+
+class _AcmeResolver:
+    def resolve(self, declaration: object, annotation: object) -> object:
+        return declaration
+
+
+_KIND_CHANGES: dict[str, Callable[[ExecutionKinds], None]] = {
+    "declare_type": lambda kinds: kinds.declare_type(_AcmeMarker, _ACME),
+    "declare_origin": lambda kinds: kinds.declare_origin(list, _ACME),
+    "refuse": lambda kinds: kinds.refuse(_AcmeMarker, "acme declares an input"),
+    "bind": lambda kinds: kinds.bind(_ACME, _AcmeResolver()),
+}
+
+
+class TestSealedKinds:
+    @pytest.mark.parametrize("name", list(_KIND_CHANGES), ids=list(_KIND_CHANGES))
+    def test_each_change_raises_saying_how_to_fix_it(
+        self, sealed: LoomContainer, name: str
+    ) -> None:
+        with pytest.raises(ContainerSealed) as caught:
+            _KIND_CHANGES[name](sealed.kinds)
+
+        assert "the container is sealed" in str(caught.value)
+        assert "before the container is sealed" in str(caught.value)
+
+    @pytest.mark.parametrize("name", list(_KIND_CHANGES), ids=list(_KIND_CHANGES))
+    def test_a_refused_change_changes_nothing(self, sealed: LoomContainer, name: str) -> None:
+        with pytest.raises(ContainerSealed):
+            _KIND_CHANGES[name](sealed.kinds)
+
+        assert sealed.kinds.kind_for(_AcmeMarker(), list[int]) is None
+        assert sealed.kinds.refusal_for(_AcmeMarker()) is None
+        assert not sealed.kinds.is_bound(_ACME)
+
+    def test_sealing_again_is_allowed(self, sealed: LoomContainer) -> None:
+        sealed.seal()
+
+        with pytest.raises(ContainerSealed):
+            sealed.kinds.bind(_ACME, _AcmeResolver())
+
+    def test_a_declaration_made_before_seal_still_resolves(self) -> None:
+        container = LoomContainer()
+        container.kinds.declare_type(_AcmeMarker, _ACME)
+        container.kinds.bind(_ACME, _AcmeResolver())
+        container.seal()
+
+        marker = _AcmeMarker()
+        assert container.kinds.resolve(_ACME, marker, object) is marker
 
 
 class TestSealRegisterDefault:

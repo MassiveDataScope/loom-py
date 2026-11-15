@@ -618,11 +618,17 @@ class AcmeMcpHandle:
 
 
 def mcp_resolver(calls: McpCalls) -> Any:
-    def resolve(server: str, include: tuple[str, ...], identity: Identity) -> AcmeMcpHandle:
-        calls.append((server, include, identity))
-        return AcmeMcpHandle(server, include, identity)
+    class Resolver:
+        def resolve(self, declaration: object, annotation: object) -> AcmeMcpHandle:
+            server, include, identity = (
+                declaration.server,
+                declaration.include,
+                execution_identity(),
+            )
+            calls.append((server, include, identity))
+            return AcmeMcpHandle(server, include, identity)
 
-    return resolve
+    return Resolver()
 
 
 class AcmeDocsSearchUseCase(UseCase[object, tuple[str, str]]):

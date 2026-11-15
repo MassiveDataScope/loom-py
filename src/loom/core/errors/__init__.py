@@ -9,6 +9,7 @@ from loom.core.errors.auth import (
     Unauthenticated,
 )
 from loom.core.errors.base import DomainError, LoomError, SystemError
+from loom.core.errors.container import ContainerSealed, ResolutionError
 from loom.core.errors.domain import (
     BODY_FIELD,
     Conflict,
@@ -42,6 +43,7 @@ __all__ = [
     "BODY_FIELD",
     "BoundaryValidationError",
     "Conflict",
+    "ContainerSealed",
     "DelegationExpired",
     "DomainError",
     "Forbidden",
@@ -57,6 +59,7 @@ __all__ = [
     "NestedElevation",
     "NestedIdentityMismatch",
     "NotFound",
+    "ResolutionError",
     "PostCommitError",
     "RateLimited",
     "RuleViolation",

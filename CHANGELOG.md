@@ -2,6 +2,21 @@
 
 ## 💥 Breaking
 
+- **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
+  Before: a use case with a missing binding, a dependency cycle or a main
+  model with no repository failed at its first invocation. Now: it fails at
+  start-up with `BootstrapError`, caused by `DependencyGraphError` (naming the
+  path) or `UnservedModelError`. **Migration:** register
+  required ports in a module passed to `create_kernel`; handle start-up failure
+  where the kernel is created rather than waiting for the first invocation.
+- **core:** `RuntimeExecutor.bind_agent_resolver`, `bind_mcp_resolver`, their
+  constructor arguments, and `create_kernel(agent_resolver=, mcp_resolver=)`
+  require an `ExecutionResolver` with `resolve(declaration, annotation)`.
+  Before: positional `(name, identity)` or `(server, include, identity)`
+  callables emitted `DeprecationWarning`. Now: they raise `TypeError`.
+  **Migration:** wrap the resolver in an object implementing `resolve` and
+  read the execution identity when the returned handle is called.
+
 ### security
 
 - **security:** JWT hardening aligned with ISO/IEC 27001:2022 A.8.5 and A.8.24.
@@ -177,6 +192,18 @@
   (`create_app(..., modules=[...])`, `compose_application(...,
   modules=...)`); to reconfigure, build a new container (in tests, a new
   application).
+- **di:** sealing a container freezes its execution kinds. Before: a resolver
+  could be bound after start-up. Now: after `seal()`,
+  declaring a kind on `container.kinds` (`declare_type`, `declare_origin`,
+  `refuse`) or binding its resolver (`container.kinds.bind`,
+  `RuntimeExecutor.bind_agent_resolver`, `bind_mcp_resolver`) raises
+  `ContainerSealed` and changes nothing. A singleton a lenient composition
+  left unbuilt for an unbound `Agent()` or `Mcp()` kind therefore fails at
+  every resolve; no resolver can be bound for it later.
+  **Migration:** bind a resolver made after start-up
+  (`application.kernel.executor.bind_agent_resolver(resolver)`) before the
+  container is sealed: pass it to `create_kernel(agent_resolver=...,
+  mcp_resolver=...)`, or let the composed application's AI phase bind it.
 - **core:** `create_kernel` refuses a module that binds a key the kernel binds
   itself (`loom.core.bootstrap.kernel.KERNEL_KEYS`: `UseCaseFactory`,
   `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
@@ -406,15 +433,9 @@
     or tool reads the caller with `execution_identity()`.
   - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
     `bind_mcp_resolver` and the `agent_resolver=` and `mcp_resolver=`
-    arguments of `RuntimeExecutor` (and, new, of `create_kernel`) also
-    take a `loom.core.execution.ExecutionResolver`. A legacy
-    `(name, identity)` or `(server, include, identity)` callable is
-    deprecated: binding one emits a `DeprecationWarning`. It still works,
-    but it captures the identity when it resolves, so the handles it returns
-    are not bounded by the delegation window and it cannot serve a
-    singleton. Migrate `bind_agent_resolver(lambda name, identity: ...)` to an
-    object whose `resolve(declaration, annotation)` returns the handle and
-    reads the caller at call time. In the private `loom.ai.runtime._handle` module, the
+    arguments of `RuntimeExecutor` and `create_kernel` now require a
+    `loom.core.execution.ExecutionResolver`, as described in the breaking
+    change above. In the private `loom.ai.runtime._handle` module, the
     `agent_marker_resolver(runtime, ...)` and `mcp_marker_resolver(runtime,
     ...)` functions are replaced by the `AgentMarkerResolver` and
     `McpMarkerResolver` classes, which take the same arguments and accept
@@ -918,8 +939,7 @@
   so a constructor `Caller()` receives the `identity` given (and raises
   `Unauthenticated` without one).
 - **testing:** `UseCaseTest` binds its `Agent()` and `Mcp()` doubles through
-  execution resolvers, so it emits no legacy-resolver `DeprecationWarning`
-  and serves doubles to adapters declaring the markers too.
+  execution resolvers and serves doubles to adapters declaring the markers too.
 - **engine (new API):** `RuntimeExecutor(builder=...)` builds the class
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now

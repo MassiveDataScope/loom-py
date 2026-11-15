@@ -34,7 +34,7 @@ class TestCompositionShims:
     ) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
-            kernel = create_kernel(config=AppConfig(name="acme"), use_cases=[AcmePing])
+            kernel = create_kernel(config=AppConfig(name="acme"), use_cases=[])
 
         assert executors == [kernel.executor]
         assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
@@ -43,7 +43,7 @@ class TestCompositionShims:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             bootstrapped = bootstrap_app(config=AppConfig(name="acme"), use_cases=[AcmePing])
-        kernel = create_kernel(config=AppConfig(name="acme"), use_cases=[AcmePing])
+        kernel = create_kernel(config=AppConfig(name="acme"), use_cases=[])
 
         for container in (bootstrapped.container, kernel.container):
             container.register(AcmeUnregistered, AcmeUnregistered)

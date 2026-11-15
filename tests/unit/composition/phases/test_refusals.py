@@ -23,6 +23,7 @@ import yaml
 from loom.ai.errors import AgentCompilationError
 from loom.composition import JobBackendError, build_application
 from loom.composition.errors import ReservedBindingError
+from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
 from loom.core.di.container import ResolutionError
@@ -271,13 +272,19 @@ class TestStartupRefusals:
         }
         matches_path_snapshots(f"refusals/{refusal}", recorded, spec.variants)
 
-    @pytest.mark.parametrize("path", list(paths.UNCOMPOSED))
-    def test_an_unbound_dependency_is_accepted_where_it_was_before(
+    @pytest.mark.parametrize("path", ["harness", "bootstrap_app"])
+    def test_an_unbound_dependency_is_accepted_by_paths_without_verification(
         self, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         container = paths.UNCOMPOSED[path](_NEEDS_SERVICE, tmp_path, monkeypatch)
 
         matches_snapshot(f"accepted/unbound-dependency/{path}", describe_container(container))
+
+    def test_standalone_kernel_refuses_an_unserved_model_at_start_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(BootstrapError, match="AcmePing injects main_repo"):
+            paths.standalone_kernel(_NEEDS_SERVICE, tmp_path, monkeypatch)
 
     def test_a_job_discovered_from_modules_reaches_the_api_as_before(
         self, fixture_project: Callable[..., str], tmp_path: Path

@@ -99,7 +99,8 @@ port.
   `AgentCompilationError`, and each `include` is checked against the server's
   tool list. An
   entry point that does not host agents refuses any such declaration, unless
-  its recipe is lenient, which defers those kinds to their first use.
+  its recipe is lenient: then those declarations are not checked and fail
+  when first used.
 - A standalone kernel takes the resolvers as
   `create_kernel(agent_resolver=..., mcp_resolver=...)`, or later through
   `RuntimeExecutor.bind_agent_resolver` and `bind_mcp_resolver`. A resolver is
@@ -123,6 +124,14 @@ path from the root, as a `BootstrapError` wrapping
 - a job callback asking for a `RepoFor[Model]` whose model has no repository
   mapping. A use case, job or adapter asking for one fails when it is compiled.
 
+The graph reads constructor signatures of classes with ordinary `__new__` and
+metaclass `__call__`, and signatures of plain functions. A lambda is a plain
+function, but dependencies hidden in its body or closure contribute no graph
+edges; a bound method or another callable whose signature is not read also
+contributes none. Those dependencies are not checked at start-up and fail at
+first build. Bind a class or a plain function with explicit parameters to keep
+its dependencies inside this guarantee.
+
 When the container is sealed, its singletons are built with no execution. A
 singleton the graph reaches that declares an `Agent()`, `Mcp()` or other kind
 with no resolver bound is refused at start-up with its path. A singleton
@@ -130,19 +139,17 @@ nothing reaches is not built: it warns with
 `loom.core.di.errors.DependencyWarning` and fails with the reason when first
 resolved.
 
-A standalone `create_kernel` validates its `APPLICATION` bindings only.
-`kernel.factory.verify()` runs the missing-binding and cycle checks over its
-use cases:
+A standalone `create_kernel` validates its `APPLICATION` bindings and runs
+`kernel.factory.verify()` over its use cases at start-up. Missing bindings and
+cycles therefore stop kernel creation:
 
 ```{literalinclude} ../../tests/docs/examples/refusals.py
 :language: python
 :pyobject: ScheduleReminder
 ```
 
-`kernel.factory.verify()` raises
+`create_kernel` raises `BootstrapError` caused by
 `DependencyGraphError: ScheduleReminder -> clock: ReminderClock: no binding is registered for it`.
-Without the call, the first run of `ScheduleReminder` fails with the same
-message.
 
 ## Overrides and reserved keys
 
@@ -172,8 +179,10 @@ defaults, which leave what they bound alone.
 
 A composed application's container is sealed once it has started:
 `register`, `register_default`, `register_instance` and `register_repo` on it
-raise `loom.core.di.ContainerSealed`. Bind every key in a module. The container
-`create_kernel` returns stays unsealed.
+raise `loom.core.di.ContainerSealed`, and so do declaring an execution kind on
+`container.kinds` and binding a resolver (`bind_agent_resolver`,
+`bind_mcp_resolver`). Bind every key in a module, and every resolver before the
+seal. The container `create_kernel` returns stays unsealed.
 
 ## The composition pipeline
 
@@ -358,7 +367,7 @@ Known debt:
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |
 | Long background work | Ran as the request's caller indefinitely | Runs as the caller for at most `identity.max_delegation_seconds`; switch to a system identity with `executor.run(UseCase, identity=...)`. |
 | Job wire | `encode_identity(identity)` only | `Delegation(caller, until).encoded()` and `Delegation.decoded(payload)` carry the deadline; `encode_job_message(..., identity=)` also takes a `Delegation`. Messages without `until` get a fresh window at the worker. |
-| Agent and MCP resolvers | `(name, identity)` and `(server, include, identity)` callables | An `ExecutionResolver` (`resolve(declaration, annotation)`); the legacy callables emit `DeprecationWarning` and cannot build a singleton. |
+| Agent and MCP resolvers | `(name, identity)` and `(server, include, identity)` callables | Bind an `ExecutionResolver` with `resolve(declaration, annotation)`; positional callables raise `TypeError`. |
 | AI dependency bundle | Tools acted as the `identity` of the dependency bundle | The bundle needs only `container`; an `identity` or `invoker` on a custom bundle is not read. Tools act as `execution_identity()`. |
 | Execution plan | `ExecutionPlan(agent_bindings=..., mcp_bindings=...)` | `ExecutionPlan(execution_bindings=...)` with `ExecutionBinding` entries; the two properties still read. |
 | `Scope.REQUEST` | A new instance per `resolve` | One instance per execution, shared by its tasks; a nested execution gets its own. |

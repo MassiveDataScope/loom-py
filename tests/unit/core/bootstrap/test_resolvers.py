@@ -6,10 +6,10 @@ import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.core.bootstrap import BootstrapError, create_kernel
-from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.execution import ExecutionRequired, ExecutionScope
-from loom.core.identity import ANONYMOUS, Identity
+from loom.core.execution import ExecutionScope
+from loom.core.identity import ANONYMOUS
 from loom.core.use_case import Agent, Mcp
 
 
@@ -24,14 +24,6 @@ class AcmeCrm:
         triage: AgentHandle[str] = Agent("acme-triage"),
     ) -> None:
         self.crm, self.triage = crm, triage
-
-
-def _mcp(server: str, include: tuple[str, ...], identity: Identity) -> object:
-    return ("mcp", server, include, identity)
-
-
-def _agent(name: str, identity: Identity) -> object:
-    return ("agent", name, identity)
 
 
 class AcmeCallTimeResolver:
@@ -54,15 +46,16 @@ class TestKernelResolvers:
             config=AcmeResolverConfig(),
             use_cases=(),
             modules=(_binds(Scope.REQUEST),),  # type: ignore[arg-type]
-            agent_resolver=_agent,
-            mcp_resolver=_mcp,
+            agent_resolver=AcmeCallTimeResolver(),
+            mcp_resolver=AcmeCallTimeResolver(),
         )
 
         with ExecutionScope(ANONYMOUS):
             crm = kernel.container.resolve(AcmeCrm)
 
-        assert crm.crm == ("mcp", "acme-crm", ("find_*",), ANONYMOUS)
-        assert crm.triage == ("agent", "acme-triage", ANONYMOUS)
+        assert crm.crm[0] == crm.triage[0] == "call-time"
+        assert repr(crm.crm[1]) == "Mcp('acme-crm', include=['find_*'])"
+        assert repr(crm.triage[1]) == "Agent('acme-triage')"
 
     def test_a_singleton_holding_call_time_handles_is_built_at_startup(self) -> None:
         kernel = create_kernel(
@@ -77,16 +70,18 @@ class TestKernelResolvers:
         assert crm.crm[0] == crm.triage[0] == "call-time"
         assert crm is kernel.container.resolve(AcmeCrm)
 
-    def test_a_singleton_holding_legacy_handles_cannot_be_built(self) -> None:
-        with pytest.raises(BootstrapError) as caught:
+    @pytest.mark.parametrize("field", ["agent_resolver", "mcp_resolver"])
+    def test_positional_resolvers_are_refused(self, field: str) -> None:
+        legacy = {
+            "agent_resolver": lambda name, identity: name,
+            "mcp_resolver": lambda server, include, identity: server,
+        }
+        with pytest.raises(BootstrapError, match=r"resolve\(declaration, annotation\)") as caught:
             create_kernel(
                 config=AcmeResolverConfig(),
                 use_cases=(),
                 modules=(_binds(Scope.APPLICATION),),  # type: ignore[arg-type]
-                agent_resolver=_agent,
-                mcp_resolver=_mcp,
+                **{field: legacy[field]},
             )
 
-        cause = caught.value.__cause__
-        assert isinstance(cause, ResolutionError)
-        assert isinstance(cause.__cause__, ExecutionRequired)
+        assert isinstance(caught.value.__cause__, TypeError)

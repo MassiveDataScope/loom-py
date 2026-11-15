@@ -435,8 +435,8 @@ def seal(
 
     The container refuses a singleton the analysed graph reaches that
     declares a kind no resolver is bound for. A lenient recipe defers the
-    agent and MCP kinds (such a singleton is built by its first resolve once
-    a resolver is bound) and stops after building the singletons. The model
+    agent and MCP kinds (such a singleton is not built and fails at its first
+    resolve) and stops after building the singletons. The model
     reads verified are those of the use cases; a job's are not.
 
     Args:

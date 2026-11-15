@@ -109,11 +109,13 @@ class TestMarkers:
 
 
 class TestRefusals:
-    def test_an_unbound_port_names_its_path(self) -> None:
-        kernel = create_kernel(config=AcmeConfig(), use_cases=[ScheduleReminder])
+    def test_an_unbound_port_stops_start_up_naming_its_path(self) -> None:
+        with pytest.raises(
+            BootstrapError, match="ScheduleReminder -> clock: ReminderClock"
+        ) as caught:
+            create_kernel(config=AcmeConfig(), use_cases=[ScheduleReminder])
 
-        with pytest.raises(DependencyGraphError, match="ScheduleReminder -> clock: ReminderClock"):
-            kernel.factory.verify()
+        assert isinstance(caught.value.__cause__, DependencyGraphError)
 
     def test_a_module_binding_a_kernel_key_is_refused(self) -> None:
         with pytest.raises(BootstrapError, match="binds UseCaseFactory"):

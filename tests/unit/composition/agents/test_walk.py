@@ -27,6 +27,11 @@ from tests.unit.composition.agents.doubles import (
 from tests.unit.core.di.graph.acme import CALL
 
 
+class AcmeMcpResolver:
+    def resolve(self, declaration: object, annotation: object) -> object:
+        return f"handle:{declaration.server}"
+
+
 class TestReachedDeclarations:
     @pytest.mark.parametrize(
         ("root", "declared"),
@@ -69,7 +74,7 @@ class TestReachedAtStartupOnly:
             config=object(),
             use_cases=[AcmeQuiet],
             modules=[lambda container: container.register(AcmeQueries, AcmeGatewayQueries)],
-            mcp_resolver=lambda server, include, identity: f"handle:{server}",
+            mcp_resolver=AcmeMcpResolver(),
         )
         root = ClassNode(AcmeQuiet)
         walked = DeclarationWalk(kernel.container.graph, kernel.compiler).reached([root])

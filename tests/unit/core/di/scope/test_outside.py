@@ -10,7 +10,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.execution import ExecutionRequired, ExecutionScope
+from loom.core.execution import ExecutionRequired, ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Agent
 from loom.core.use_case.kinds import declare_kinds
@@ -23,21 +23,23 @@ class AcmeTriage:
         self.agent = agent
 
 
-def _legacy(name: str, identity: Identity) -> tuple[str, Identity]:
-    """A legacy agent resolver: it takes the caller, which the shim reads per resolve."""
-    return name, identity
+class AcmeIdentityResolver:
+    def resolve(self, declaration: object, annotation: object) -> tuple[str, Identity]:
+        return declaration.name, execution_identity()
 
 
 def _bound(scope: Scope) -> LoomContainer:
     container = LoomContainer()
     declare_kinds(container.kinds)
-    RuntimeExecutor(UseCaseCompiler(), resolvers=container.kinds, agent_resolver=_legacy)
+    RuntimeExecutor(
+        UseCaseCompiler(), resolvers=container.kinds, agent_resolver=AcmeIdentityResolver()
+    )
     container.register(AcmeTriage, AcmeTriage, scope=scope)
     return container
 
 
 class TestResolutionOutsideAnExecution:
-    def test_a_singleton_first_resolved_inside_an_execution_through_a_legacy_resolver_fails(
+    def test_a_singleton_first_resolved_inside_an_execution_through_an_identity_resolver_fails(
         self,
     ) -> None:
         container = _bound(Scope.APPLICATION)

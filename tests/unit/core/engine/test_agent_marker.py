@@ -15,6 +15,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
+from loom.core.execution import execution_identity
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case.markers import Agent, Caller
 from loom.core.use_case.use_case import UseCase
@@ -60,11 +61,14 @@ class NoAgentUseCase(UseCase[object, str]):
 
 
 def _resolver(calls: list[tuple[str, Identity]]) -> Any:
-    def _resolve(name: str, identity: Identity) -> _FakeHandle:
-        calls.append((name, identity))
-        return _FakeHandle(name, identity)
+    class Resolver:
+        def resolve(self, declaration: object, annotation: object) -> _FakeHandle:
+            name = declaration.name
+            identity = execution_identity()
+            calls.append((name, identity))
+            return _FakeHandle(name, identity)
 
-    return _resolve
+    return Resolver()
 
 
 # ---------------------------------------------------------------------------

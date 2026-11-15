@@ -4,29 +4,8 @@ from __future__ import annotations
 
 from typing import get_args, get_origin
 
-
-class ResolutionError(Exception):
-    """Raised when a dependency cannot be resolved from the container.
-
-    Args:
-        message: Human-readable description of the resolution failure.
-
-    Example::
-
-        raise ResolutionError("No binding registered for: UserRepository")
-    """
-
-
-ResolutionError.__module__ = "loom.core.di.container"
-
-
-class ContainerSealed(ResolutionError):
-    """A binding was registered into a container after the application sealed it.
-
-    A sealed container is complete: its singletons are built and its graph
-    analysed, so nothing may change it. Register every binding in a module
-    passed to the application; to reconfigure, build a new container.
-    """
+from loom.core.errors.container import ContainerSealed as ContainerSealed
+from loom.core.errors.container import ResolutionError as ResolutionError
 
 
 class DependencyWarning(UserWarning):

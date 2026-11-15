@@ -1,4 +1,4 @@
-"""The legacy ``bind_*`` resolvers bound to the ``AGENT`` and ``MCP`` kinds."""
+"""The ``bind_*`` resolvers bound to the ``AGENT`` and ``MCP`` kinds."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.execution import ExecutionKinds, ExecutionRequired, ExecutionScope
+from loom.core.execution import ExecutionKinds
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import AGENT, MCP
-from loom.core.use_case.markers import Agent, Mcp
+from loom.core.use_case.markers import Agent
 from loom.core.use_case.use_case import UseCase
 
 _ACME = Identity(subject="acme-alice", mechanism="test")
@@ -32,7 +32,7 @@ class AcmeCallTimeResolver:
         return ("call-time", declaration)
 
 
-class TestLegacyResolverBinding:
+class TestResolverBinding:
     async def test_a_call_time_resolver_is_bound_as_is(self) -> None:
         resolver = AcmeCallTimeResolver()
         compiler = UseCaseCompiler()
@@ -42,30 +42,19 @@ class TestLegacyResolverBinding:
 
         assert await executor.execute(AcmeTriageUseCase(), identity=_ACME) == ("call-time", marker)
 
-    def test_a_plain_callable_reads_the_execution_identity_at_resolve_time(self) -> None:
-        kinds = ExecutionKinds()
-        calls: list[tuple[str, tuple[str, ...], Identity]] = []
-
-        def legacy(server: str, include: tuple[str, ...], identity: Identity) -> str:
-            calls.append((server, include, identity))
-            return server
-
-        RuntimeExecutor(UseCaseCompiler(), resolvers=kinds, mcp_resolver=legacy)
-        marker = Mcp("acme-docs", include=["search"])
-
-        with pytest.raises(ExecutionRequired):
-            kinds.resolve(MCP, marker, Any)
-        with ExecutionScope(_ACME):
-            assert kinds.resolve(MCP, marker, Any) == "acme-docs"
-        assert calls == [("acme-docs", ("search",), _ACME)]
+    def test_a_plain_callable_is_refused(self) -> None:
+        with pytest.raises(TypeError, match=r"resolve\(declaration, annotation\)"):
+            RuntimeExecutor(
+                UseCaseCompiler(), mcp_resolver=lambda server, include, identity: server
+            )
 
     def test_the_constructor_kwargs_bind_write_once_like_the_methods(self) -> None:
         kinds = ExecutionKinds()
         executor = RuntimeExecutor(
-            UseCaseCompiler(), resolvers=kinds, agent_resolver=lambda name, identity: name
+            UseCaseCompiler(), resolvers=kinds, agent_resolver=AcmeCallTimeResolver()
         )
 
         assert kinds.is_bound(AGENT)
         assert not kinds.is_bound(MCP)
         with pytest.raises(RuntimeError, match="more than once"):
-            executor.bind_agent_resolver(lambda name, identity: name)
+            executor.bind_agent_resolver(AcmeCallTimeResolver())
