@@ -449,6 +449,7 @@ testpaths = [
     "tests/unit",
     "tests/integration",
     "tests/contract",
+    "tests/docs",
 ]
 pythonpath = [
     "src",

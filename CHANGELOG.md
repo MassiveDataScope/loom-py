@@ -1021,9 +1021,10 @@
   `load_application_config` or `add_code_path`. A test that patched them there
   patches the module that calls them instead:
   `loom.composition.phases.configure_job_service`,
-  `loom.composition.phases.reject_manifest_agents_without_ai_section`,
   `loom.composition.source.load_application_config` and
-  `loom.composition.source.add_code_path`.
+  `loom.composition.source.add_code_path`. The manifest-agents check has no
+  patch target any more: it runs inside the AI wiring and raises
+  `ConfigError`.
 - **testing:** `HttpTestHarness.build_app` composes its application through
   the same pipeline as `create_app`, with the new `Recipe.lenient` flag: as
   before, it runs no deploy check, does not verify use-case dependencies,

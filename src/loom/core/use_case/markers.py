@@ -323,9 +323,9 @@ def Agent(name: str) -> Any:
     """Factory returning the runtime marker for a named agent handle parameter.
 
     The executor resolves *name* against the agents compiled for this
-    deployment and injects an ``AgentHandle`` bound to this execution's
-    verified caller — the only way a use case reaches an agent (constructor
-    injection is not offered for this resource). The output type the handle
+    deployment and injects an ``AgentHandle``. The handle holds no identity:
+    each call acts as the execution identity of that moment, so the same
+    marker also works as a constructor default of an adapter. The output type the handle
     carries is read from the parameter's own ``AgentHandle[...]`` annotation,
     never from this factory, and is checked at start-up against the named
     agent's declared output.
@@ -354,9 +354,9 @@ def Mcp(server: str, *, include: Sequence[str]) -> Any:
     """Factory returning the runtime marker for a named MCP server handle parameter.
 
     The executor resolves *server* against the MCP servers compiled for
-    this deployment and injects an ``McpHandle`` bound to this execution's
-    verified caller — the only way a use case reaches an MCP server
-    (constructor injection is not offered for this resource). Names in
+    this deployment and injects an ``McpHandle``. The handle holds no
+    identity: each call acts as the execution identity of that moment, so
+    the same marker also works as a constructor default of an adapter. Names in
     *include* are globs, matched by the same ``select_names``/``admits`` the
     model's own toolset filter uses; there is no ``exclude`` in this version
     because no caller has asked for one and a short allow-list already
