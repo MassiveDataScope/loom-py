@@ -23,6 +23,7 @@ from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_
 from loom.core.errors import PostCommitError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.repository import FilterParams, PageParams, PageResult, Repository
+from loom.core.repository.abc import OnConflict
 from loom.core.repository.abc.query import (
     CursorResult,
     PaginationMode,
@@ -621,8 +622,15 @@ class _CreateWithNote(msgspec.Struct):
 
 
 class _BulkFakeRepository(_FakeRepository):
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[_EntityOut, ...]:
+    """Bulk double whose ``IGNORE`` skips the names it already holds."""
+
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[_EntityOut, ...]:
         names = [str(msgspec.to_builtins(item)["name"]) for item in data]
+        if on_conflict is OnConflict.IGNORE:
+            held = {row.name for row in self.storage.values()}
+            names = [name for name in names if name not in held]
         return tuple([await self.create(_Create(name=name)) for name in names])
 
 
@@ -673,6 +681,34 @@ class TestCreateMany:
         wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
 
         assert await wrapped.create_many([]) == ()
+        assert resolver.events == []
+
+    @pytest.mark.asyncio
+    async def test_ignore_reaches_the_repository_and_the_event_lists_only_inserted_ids(
+        self, cache_config: CacheConfig
+    ) -> None:
+        wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
+        await wrapped.create_many([_Create(name="a")])
+        resolver.events.clear()
+
+        created = await wrapped.create_many(
+            [_Create(name="a"), _Create(name="b")], on_conflict=OnConflict.IGNORE
+        )
+
+        assert [row.name for row in created] == ["b"]
+        assert [event.ids for event in resolver.events] == [(2,)]
+
+    @pytest.mark.asyncio
+    async def test_ignore_inserting_nothing_bumps_no_generation(
+        self, cache_config: CacheConfig
+    ) -> None:
+        wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
+        await wrapped.create_many([_Create(name="a")])
+        resolver.events.clear()
+
+        created = await wrapped.create_many([_Create(name="a")], on_conflict=OnConflict.IGNORE)
+
+        assert created == ()
         assert resolver.events == []
 
     def test_access_fails_when_the_wrapped_repository_has_no_create_many(

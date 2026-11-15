@@ -33,7 +33,7 @@ from loom.core.repository.abc.query import (
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.abc.repo_for import Listable, Readable
+from loom.core.repository.abc.repo_for import Listable, OnConflict, Readable
 from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, invocation
@@ -353,8 +353,10 @@ class WritableRepository(CountingRepository[RowT], Generic[RowT]):
         self.storage[self.key_of(row)] = row
         return row
 
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[RowT, ...]:
-        """Persist every payload in *data*, in order."""
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[RowT, ...]:
+        """Persist every payload in *data*, in order, whatever *on_conflict* says."""
         created = [
             await self.create(msgspec.convert(msgspec.to_builtins(item), WidgetCreate))
             for item in data

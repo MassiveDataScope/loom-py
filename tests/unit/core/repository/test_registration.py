@@ -17,6 +17,7 @@ from loom.core.repository.abc import (
     Creatable,
     Deletable,
     Listable,
+    OnConflict,
     Readable,
     Updatable,
 )
@@ -51,7 +52,7 @@ class _BulkWidgetRepository(
         raise AssertionError("not exercised")
 
     async def create_many(
-        self, data: Sequence[msgspec.Struct]
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
     ) -> tuple[AcmeRegistrationWidget, ...]:  # pragma: no cover - never invoked
         raise AssertionError("not exercised")
 
@@ -79,6 +80,7 @@ class TestCapabilitiesOf:
         assert set(capabilities_of(RepositoryDynamoDB)) == {
             Readable,
             Creatable,
+            BulkCreatable,
             Updatable,
             Deletable,
         }

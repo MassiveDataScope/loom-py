@@ -34,7 +34,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
 from loom.core.config import ConfigError
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
@@ -58,6 +58,7 @@ from loom.core.repository.abc import (
     FilterSpec,
     IdT,
     Listable,
+    OnConflict,
     OutputT,
     PageParams,
     PageResult,
@@ -316,35 +317,109 @@ class RepositoryMongo(
             raise self._conflict(document[_ID]) from exc
         return self._to_output(document)
 
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
-        """Insert every struct with one ordered ``insert_many``.
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
+        """Insert every struct with one ``insert_many``.
 
-        A duplicate key persists nothing: the documents the ordered write
-        stored before the failing one are deleted again, unless a
-        transaction is active, in which case its abort discards them. When
-        that compensating delete itself fails, the driver error surfaces
-        instead of ``Conflict`` (with a note naming it) and the store may
-        hold the partial batch. An empty ``data`` returns ``()`` without a
-        round trip.
+        With ``ERROR`` the write is ordered and a duplicate key persists
+        nothing: the documents the ordered write stored before the failing
+        one are deleted again, unless a transaction is active, in which case
+        its abort discards them. When that compensating delete itself fails,
+        the driver error surfaces instead of ``Conflict`` (with a note naming
+        it) and the store may hold the partial batch. With ``IGNORE`` the
+        write is unordered and a document whose ``_id`` already exists is
+        skipped; any other write error leaves the other documents written.
+        ``IGNORE`` is refused inside a transaction, which a duplicate-key
+        error aborts. An empty ``data`` returns ``()`` without a round trip.
+
+        Args:
+            data: Command structs to persist.
+            on_conflict: Whether an existing key raises (``ERROR``) or skips
+                its document (``IGNORE``).
+
+        Returns:
+            The inserted output structs in input order: one per input with
+            ``ERROR``, only the inserted documents with ``IGNORE``.
 
         Raises:
-            Conflict: If a document with the same key already exists.
+            Conflict: If a document with the same key already exists, with
+                ``ERROR``; with ``IGNORE``, on a duplicate in another unique
+                index.
+            BulkWriteError: On a write error other than a duplicate key.
+            UnsupportedQuery: With ``IGNORE`` inside a transaction.
         """
         documents = [self._new_document(item) for item in data]
         if not documents:
             return ()
+        if on_conflict is OnConflict.IGNORE:
+            documents = await self._insert_new(documents)
+        else:
+            await self._insert_all(documents)
+        return tuple(self._to_output(document) for document in documents)
+
+    async def _insert_all(self, documents: list[Document]) -> None:
+        """Insert *documents* in order, persisting none of them when a key already exists.
+
+        Raises:
+            Conflict: If a document with the same key already exists.
+        """
         session = self._write_session()
         try:
             await self._collection.insert_many(documents, ordered=True, session=session)
         except BulkWriteError as exc:
-            index = _duplicate_index(exc)
-            if index is None:
-                raise
+            index = self._duplicate_indexes(exc)[0]
             conflict = self._conflict(documents[index][_ID])
             if session is None:
                 await self._undo_inserts(documents[:index], conflict)
             raise conflict from exc
-        return tuple(self._to_output(document) for document in documents)
+
+    async def _insert_new(self, documents: list[Document]) -> list[Document]:
+        """Insert *documents* unordered and return those whose ``_id`` did not exist yet.
+
+        Raises:
+            UnsupportedQuery: Inside a transaction.
+            Conflict: On a duplicate in a unique index other than ``_id``.
+            BulkWriteError: On a write error other than a duplicate key.
+        """
+        session = self._write_session()
+        if session is not None:
+            raise UnsupportedQuery(
+                "create_many(on_conflict=IGNORE) cannot run inside a transaction: "
+                "a duplicate key aborts it",
+                backend=self.backend_name,
+                model=self._model.__qualname__,
+            )
+        try:
+            await self._collection.insert_many(documents, ordered=False, session=session)
+        except BulkWriteError as exc:
+            skipped = set(self._duplicate_indexes(exc))
+            secondary = next(
+                (
+                    error["keyValue"]
+                    for error in exc.details["writeErrors"]
+                    if _ID not in error.get("keyPattern", {_ID: 1})
+                ),
+                None,
+            )
+            if secondary is not None:
+                values = ", ".join(f"{name}={value!r}" for name, value in secondary.items())
+                raise Conflict(f"{self._model.__qualname__} with {values} already exists.") from exc
+            return [document for index, document in enumerate(documents) if index not in skipped]
+        return documents
+
+    @staticmethod
+    def _duplicate_indexes(exc: BulkWriteError) -> list[int]:
+        """Return the indexes of the documents *exc* refused as duplicate keys.
+
+        Raises:
+            BulkWriteError: *exc* itself, when it lists no write error or one
+                that is not a duplicate key.
+        """
+        errors = exc.details.get("writeErrors", [])
+        if not errors or any(error.get("code") != _DUPLICATE_KEY for error in errors):
+            raise exc
+        return [int(error["index"]) for error in errors]
 
     async def _undo_inserts(self, documents: list[Document], conflict: Conflict) -> None:
         """Delete the documents an ordered ``insert_many`` stored before it failed.
@@ -594,14 +669,6 @@ def _stamp(fields: frozenset[str]) -> Document:
         return {}
     now = to_storage_datetime(_utc_now())
     return dict.fromkeys(fields, now)
-
-
-def _duplicate_index(exc: BulkWriteError) -> int | None:
-    """Return the index of the first duplicate-key write error, if any."""
-    for error in exc.details.get("writeErrors", []):
-        if error.get("code") == _DUPLICATE_KEY:
-            return int(error["index"])
-    return None
 
 
 __all__ = ["MongoCollection", "MongoFindCursor", "RepositoryMongo", "SessionProvider"]

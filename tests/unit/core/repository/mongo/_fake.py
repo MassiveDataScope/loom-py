@@ -129,8 +129,9 @@ class FakeCollection:
 
     Documents are keyed by ``_id``; inserting a duplicate raises a real
     :class:`pymongo.errors.DuplicateKeyError` (``insert_one``) or
-    :class:`pymongo.errors.BulkWriteError` (``insert_many``, ordered: earlier
-    documents stay inserted), exactly as the driver does. ``session``
+    :class:`pymongo.errors.BulkWriteError` (``insert_many``: ordered stops at
+    the first duplicate, unordered goes on and lists every duplicate; inserted
+    documents stay), exactly as the driver does. ``session``
     arguments are accepted and ignored.
     """
 
@@ -148,14 +149,25 @@ class FakeCollection:
         self, documents: Iterable[_Document], ordered: bool = True, session: object | None = None
     ) -> InsertManyResult:
         self.last_session = session
-        if not ordered:
-            raise NotImplementedError("fake insert_many supports ordered inserts only")
         inserted: list[Any] = []
+        write_errors: list[dict[str, Any]] = []
         for index, document in enumerate(documents):
             try:
                 inserted.append(self._store(document))
             except DuplicateKeyError as exc:
-                raise self._bulk_error(index, exc, inserted) from exc
+                write_errors.append(
+                    {
+                        "index": index,
+                        "code": _DUPLICATE_KEY,
+                        "errmsg": str(exc),
+                        "keyPattern": {"_id": 1},
+                        "keyValue": {"_id": document["_id"]},
+                    }
+                )
+                if ordered:
+                    break
+        if write_errors:
+            raise BulkWriteError({"nInserted": len(inserted), "writeErrors": write_errors})
         return InsertManyResult(inserted, acknowledged=True)
 
     async def find_one(
@@ -225,11 +237,6 @@ class FakeCollection:
             raise DuplicateKeyError(f"E11000 duplicate key error: _id {key!r}", code=_DUPLICATE_KEY)
         self.documents[key] = document
         return key
-
-    @staticmethod
-    def _bulk_error(index: int, exc: DuplicateKeyError, inserted: list[Any]) -> BulkWriteError:
-        write_error = {"index": index, "code": _DUPLICATE_KEY, "errmsg": str(exc)}
-        return BulkWriteError({"nInserted": len(inserted), "writeErrors": [write_error]})
 
 
 class FakeSession:

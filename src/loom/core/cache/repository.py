@@ -55,7 +55,7 @@ from loom.core.repository.abc.query import (
     PaginationMode,
     QuerySpec,
 )
-from loom.core.repository.abc.repo_for import BulkCreatable
+from loom.core.repository.abc.repo_for import BulkCreatable, OnConflict
 from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
 from loom.core.repository.abc.session_scope import (
     SupportsCacheScope,
@@ -700,11 +700,15 @@ class CachedRepository(
             return None
         return values[0] if len(values) == 1 else values
 
-    async def _create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
+    async def _create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
         if not data:
             return ()
         bulk = cast(BulkCreatable[OutputT], self._repository)
-        created = await bulk.create_many(data)
+        created = await bulk.create_many(data, on_conflict=on_conflict)
+        if not created:
+            return created
         ids = tuple(
             entity_id
             for item in created

@@ -24,6 +24,7 @@ from loom.core.repository.abc import (
     FilterOp,
     FilterParams,
     FilterSpec,
+    OnConflict,
     PageParams,
     PageResult,
     PaginationMode,
@@ -528,6 +529,74 @@ class TestCreateMany:
                 raise AssertionError("insert_many must not be called")
 
         assert await _articles(ExplodingCollection()).create_many([]) == ()
+
+
+class RaisingCollection(FakeCollection):
+    """Collection whose ``insert_many`` raises a given ``BulkWriteError`` and records its order."""
+
+    def __init__(self, error: BulkWriteError | None = None) -> None:
+        super().__init__()
+        self.error = error
+        self.orders: list[bool] = []
+
+    async def insert_many(
+        self,
+        documents: Iterable[dict[str, Any]],
+        ordered: bool = True,
+        session: object | None = None,
+    ) -> InsertManyResult:
+        self.orders.append(ordered)
+        if self.error is not None:
+            raise self.error
+        return await super().insert_many(documents, ordered, session)
+
+
+def _write_error(index: int, code: int, key: str = "_id") -> dict[str, Any]:
+    return {"index": index, "code": code, "keyPattern": {key: 1}, "keyValue": {key: "A"}}
+
+
+class TestCreateManyIgnore:
+    async def test_writes_unordered(self) -> None:
+        collection = RaisingCollection()
+
+        await _articles(collection).create_many(
+            [ArticleCreate(slug="a", title="A")], on_conflict=OnConflict.IGNORE
+        )
+
+        assert collection.orders == [False]
+
+    async def test_is_refused_inside_a_transaction(self) -> None:
+        collection = RaisingCollection()
+        session = FakeMongoClient().start_session()
+        provider = cast(SessionProvider, lambda write: session)
+        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
+
+        with pytest.raises(UnsupportedQuery, match="on Article: .*inside a transaction") as refused:
+            await repo.create_many(
+                [ArticleCreate(slug="a", title="A")], on_conflict=OnConflict.IGNORE
+            )
+
+        assert refused.value.backend == "mongo"
+
+        assert collection.orders == []
+
+    @pytest.mark.parametrize(
+        ("details", "raised"),
+        [
+            ({"writeErrors": [_write_error(0, 11000), _write_error(1, 121)]}, BulkWriteError),
+            ({"writeErrors": [], "writeConcernErrors": [{"code": 64}]}, BulkWriteError),
+            ({"writeErrors": [_write_error(1, 11000, key="title")]}, Conflict),
+        ],
+        ids=["non-duplicate-error", "write-concern-only", "secondary-unique-index"],
+    )
+    async def test_an_error_other_than_an_existing_id_is_raised(
+        self, details: dict[str, Any], raised: type[Exception]
+    ) -> None:
+        payload = [ArticleCreate(slug="a", title="A"), ArticleCreate(slug="b", title="A")]
+        repo = _articles(RaisingCollection(BulkWriteError(details)))
+
+        with pytest.raises(raised):
+            await repo.create_many(payload, on_conflict=OnConflict.IGNORE)
 
 
 class TestListing:

@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 import msgspec
 from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import get_compiled, get_compiled_core
+from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
@@ -25,6 +27,7 @@ from loom.core.repository.abc import (
     CursorResult,
     FilterParams,
     IdT,
+    OnConflict,
     OutputT,
     PageParams,
     PageResult,
@@ -327,39 +330,67 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
     """Mixin providing the ``create_many`` operation for SQLAlchemy repositories."""
 
     @handle_integrity_errors
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
-        """Persist every entity in *data* and return them in input order.
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
+        """Persist the entities in *data*, all in one transaction.
 
-        The batch is written with one multi-row INSERT. A row that omits a
-        column supplied by another row gets that column's Python-side default
-        when it has one and ``NULL`` otherwise; when such a column has only a
-        server default, the batch is inserted row by row instead so the server
-        default applies, then re-selected in one query. Dialects with
-        ``INSERT ... RETURNING`` read the rows back from the same statement,
+        The batch is written with multi-row INSERTs, as many rows per
+        statement as the dialect's ``insertmanyvalues_max_parameters`` allows,
+        one parameter per table column and row. A row that omits a column
+        supplied by another row gets that column's Python-side default when
+        it has one and ``NULL`` otherwise; when such a column has only a
+        server default, the batch is inserted row by row instead so the
+        server default applies, then re-selected in one query. Dialects with
+        ``INSERT ... RETURNING`` read the rows back from the same statements,
         relying on the database returning them in ``VALUES`` order (SQLite and
         PostgreSQL do); the others flush the rows and re-select them by
-        primary key. SQLite caps the bound parameters of one statement, so
-        very large batches must be split by the caller. An empty *data*
-        returns ``()`` without touching the database.
+        primary key. With ``IGNORE`` the statement is ``INSERT ... ON CONFLICT
+        (<primary key>) DO NOTHING``, so any other constraint still raises.
+        An empty *data* returns ``()`` without touching the database.
 
         Args:
             data: Command structs to persist.
+            on_conflict: Whether a primary key that already exists raises
+                (``ERROR``) or skips its row (``IGNORE``).
 
         Returns:
-            The output structs, one per input and in the same order.
+            The inserted output structs in input order: one per input with
+            ``ERROR``, only the inserted rows with ``IGNORE``.
+
+        Raises:
+            Conflict: On a constraint violation, including an existing
+                primary key with ``ERROR``.
+            UnsupportedQuery: With ``IGNORE``, on a dialect other than
+                PostgreSQL and SQLite or when the batch needs the row-by-row
+                path.
         """
         rows = [self._insert_values(item) for item in data]
         if not rows:
             return ()
         partial = self._partial_keys(rows)
         async with self._session_scope(write=True) as scoped_session:
-            if self._single_statement_applies(scoped_session, partial):
+            dialect_name = scoped_session.get_bind().dialect.name
+            statement = (
+                self._insert_statement(dialect_name, on_conflict)
+                if self._single_statement_applies(scoped_session, partial)
+                else None
+            )
+            if statement is not None:
                 objs = await self._insert_returning(
-                    scoped_session, self._normalize_rows(rows, partial)
+                    scoped_session, statement, self._normalize_rows(rows, partial)
+                )
+            elif on_conflict is OnConflict.IGNORE:
+                raise UnsupportedQuery(
+                    "create_many(on_conflict=IGNORE) needs INSERT ... ON CONFLICT DO NOTHING "
+                    "RETURNING and no omitted column that only has a server default",
+                    backend=self.backend_name,
+                    model=self.model.__qualname__,
                 )
             else:
                 objs = await self._insert_and_reselect(scoped_session, rows)
-            self._record_bulk_create(objs, rows)
+            if objs:
+                self._record_bulk_create(objs, rows)
             return tuple(cast(OutputT, self._to_output(obj)) for obj in objs)
 
     def _insert_values(self, item: msgspec.Struct) -> dict[str, Any]:
@@ -397,12 +428,37 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         return [{**gaps, **row} for row in rows]
 
     async def _insert_returning(
-        self, session: AsyncSession, rows: list[dict[str, Any]]
+        self, session: AsyncSession, statement: Any, rows: list[dict[str, Any]]
     ) -> list[Any]:
+        """Insert *rows* with *statement*, chunk by chunk, and return the inserted rows."""
+        budget = session.get_bind().dialect.insertmanyvalues_max_parameters
+        size = max(1, budget // len(self._effective_sa_model.__table__.c))
+        objs: list[Any] = []
+        for start in range(0, len(rows), size):
+            result = await session.execute(statement.values(rows[start : start + size]))
+            objs.extend(result.scalars().all())
+        return objs
+
+    def _insert_statement(self, dialect_name: str, on_conflict: OnConflict) -> Any | None:
+        """Return the ``INSERT ... RETURNING`` statement, without values, *on_conflict* uses.
+
+        Returns:
+            The statement, or ``None`` when *on_conflict* is ``IGNORE`` and the
+            dialect has no ``ON CONFLICT DO NOTHING``.
+        """
         sa_model = self._effective_sa_model
-        stmt = insert(sa_model).values(rows).returning(sa_model)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        ignoring: Any
+        match on_conflict, dialect_name:
+            case OnConflict.ERROR, _:
+                return insert(sa_model).returning(sa_model)
+            case OnConflict.IGNORE, "postgresql":
+                ignoring = postgresql.insert(sa_model)
+            case OnConflict.IGNORE, "sqlite":
+                ignoring = sqlite.insert(sa_model)
+            case _:
+                return None
+        key = list(sa_model.__table__.primary_key.columns)
+        return ignoring.on_conflict_do_nothing(index_elements=key).returning(sa_model)
 
     async def _insert_and_reselect(
         self, session: AsyncSession, rows: list[dict[str, Any]]

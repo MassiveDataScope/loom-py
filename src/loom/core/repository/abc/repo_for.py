@@ -13,6 +13,7 @@ the complete standard CRUD interface.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import Any, Protocol, TypeVar
 
 import msgspec
@@ -68,11 +69,40 @@ class Creatable(Protocol[ModelT]):
         ...
 
 
-class BulkCreatable(Protocol[ModelT]):
-    """Repository capability: persist several new entities in one round trip."""
+class OnConflict(StrEnum):
+    """What ``create_many`` does with a row whose primary key already exists."""
 
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[ModelT, ...]:
-        """Persist every entity in *data* and return them in input order."""
+    ERROR = "error"
+    IGNORE = "ignore"
+
+
+class BulkCreatable(Protocol[ModelT]):
+    """Repository capability: persist several new entities in one call."""
+
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[ModelT, ...]:
+        """Persist the entities in *data*.
+
+        The batch may run as several statements in the same transaction.
+
+        Args:
+            data: Command structs to persist.
+            on_conflict: ``ERROR`` persists every row; a primary key that
+                already exists raises ``Conflict`` and nothing is persisted,
+                up to the backend's transaction limit (DynamoDB: 100 items
+                per chunk, earlier chunks stay written). ``IGNORE`` skips the
+                rows whose primary key already exists.
+
+        Returns:
+            With ``ERROR``, every persisted entity in input order. With
+            ``IGNORE``, only the inserted entities, in input order; its length
+            is the number of rows inserted.
+
+        Raises:
+            Conflict: With ``ERROR``, on a primary key that already exists;
+                with either mode, on any other constraint violation.
+        """
         ...
 
 

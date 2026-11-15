@@ -2,11 +2,11 @@
 
 DynamoDB is a key-value / document store, not a relational engine. This
 repository implements faithfully only what DynamoDB supports natively through
-the item primary key: ``get_by_id``, ``create``, ``update``, ``delete`` and the
-key-scoped ``get_by`` / ``exists_by``. Listing and counting need a full table
-scan or a secondary index, so the class declares neither ``Listable`` nor
-``Countable``: the auto-CRUD gate mounts no list route over it and the DI
-container binds no such capability. A lookup on a field other than the key
+the item primary key: ``get_by_id``, ``create``, ``create_many``, ``update``,
+``delete`` and the key-scoped ``get_by`` / ``exists_by``. Listing and counting
+need a full table scan or a secondary index, so the class declares neither
+``Listable`` nor ``Countable``: the auto-CRUD gate mounts no list route over it
+and the DI container binds no such capability. A lookup on a field other than the key
 raises :class:`~loom.core.errors.UnsupportedQuery`.
 
 Model-to-table mapping is intentionally simple: every model is stored in the
@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
 from decimal import Decimal
 from typing import Any, ClassVar, Generic, TypeVar, cast
@@ -28,23 +28,37 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 import msgspec
 
 from loom.core.config import ConfigError
+from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
 from loom.core.persistence.stores import store_of
-from loom.core.repository.abc import Creatable, Deletable, IdT, OutputT, Readable, Updatable
+from loom.core.repository.abc import (
+    BulkCreatable,
+    Creatable,
+    Deletable,
+    IdT,
+    OnConflict,
+    OutputT,
+    Readable,
+    Updatable,
+)
 from loom.core.uow.coordinator import Participant
 from loom.core.uow.scope import InvocationScope, current_scope
 
 _ResultT = TypeVar("_ResultT")
 
 _CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailedException"
+_CONDITION_FAILED_REASON = "ConditionalCheckFailed"
+_NOTHING_WRITTEN = frozenset({_CONDITIONAL_CHECK_FAILED, "TransactionCanceledException"})
+_TRANSACTION_LIMIT = 100
 
 
 class RepositoryDynamoDB(
     Readable[OutputT],
     Creatable[OutputT],
+    BulkCreatable[OutputT],
     Updatable[OutputT],
     Deletable[OutputT],
     Generic[OutputT, IdT],
@@ -66,8 +80,8 @@ class RepositoryDynamoDB(
 
     Args:
         client: A boto3 low-level ``dynamodb`` client (or a compatible object
-            exposing ``get_item`` / ``put_item`` / ``delete_item`` with the
-            client-shaped ``TableName`` + ``AttributeValue`` API).
+            exposing ``get_item`` / ``put_item`` / ``delete_item`` /
+            ``transact_write_items`` with the client-shaped ``TableName`` + ``AttributeValue`` API).
         table_name: Name of the DynamoDB table backing this repository.
         model: The Loom struct model this repository is bound to. Its
             ``primary_key`` field becomes the DynamoDB partition key.
@@ -159,22 +173,50 @@ class RepositoryDynamoDB(
         :class:`~loom.core.errors.Conflict`.
         """
         internal = self._to_internal(data)
-        try:
-            await self._write(
-                self._client.put_item,
-                TableName=self._table_name,
-                Item=self._encode_item(internal),
-                ConditionExpression="attribute_not_exists(#pk)",
-                ExpressionAttributeNames={"#pk": self._id_attr},
-            )
-        except self._client_error as exc:
-            if _is_conditional_check_failure(exc):
-                raise Conflict(
-                    f"{self._model.__name__} with {self._id_attr}="
-                    f"{internal.get(self._id_attr)!r} already exists."
-                ) from exc
-            raise
+        await self._put_new(internal)
         return self._to_output(internal)
+
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
+        """Persist new items, each conditioned on its key not existing yet.
+
+        With ``ERROR`` the items are written with ``TransactWriteItems`` in
+        chunks of 100: each chunk is atomic, the batch as a whole is not, so
+        a conflict in a later chunk leaves the earlier chunks written. A key
+        repeated in *data* raises before anything is written. With
+        ``IGNORE`` every item is written with its own conditional
+        ``PutItem`` and an item whose key exists is skipped. An empty *data*
+        returns ``()`` without a call.
+
+        Args:
+            data: Command structs to persist.
+            on_conflict: Whether an existing key raises (``ERROR``) or skips
+                its item (``IGNORE``).
+
+        Returns:
+            The written output structs in input order: one per input with
+            ``ERROR``, only the written items with ``IGNORE``.
+
+        Raises:
+            Conflict: With ``ERROR``, on a key that already exists or is
+                repeated in *data*.
+        """
+        items = [self._to_internal(item) for item in data]
+        if on_conflict is OnConflict.IGNORE:
+            written = []
+            for item in items:
+                try:
+                    await self._put_new(item)
+                except Conflict:
+                    continue
+                written.append(item)
+        else:
+            self._refuse_repeated_keys(items)
+            for start in range(0, len(items), _TRANSACTION_LIMIT):
+                await self._put_all_new(items[start : start + _TRANSACTION_LIMIT])
+            written = items
+        return tuple(self._to_output(item) for item in written)
 
     async def update(self, obj_id: IdT, data: msgspec.Struct) -> OutputT | None:
         """Apply a partial update by read-merge-write, keyed on the partition key.
@@ -206,7 +248,7 @@ class RepositoryDynamoDB(
                 ExpressionAttributeNames={"#pk": self._id_attr},
             )
         except self._client_error as exc:
-            if _is_conditional_check_failure(exc):
+            if aws_error_code(exc) == _CONDITIONAL_CHECK_FAILED:
                 return None
             raise
         return self._to_output(merged)
@@ -222,10 +264,74 @@ class RepositoryDynamoDB(
                 ExpressionAttributeNames={"#pk": self._id_attr},
             )
         except self._client_error as exc:
-            if _is_conditional_check_failure(exc):
+            if aws_error_code(exc) == _CONDITIONAL_CHECK_FAILED:
                 return False
             raise
         return True
+
+    def _new_item_put(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Return the ``PutItem`` arguments that write *item* only when its key is absent."""
+        return {
+            "TableName": self._table_name,
+            "Item": self._encode_item(item),
+            "ConditionExpression": "attribute_not_exists(#pk)",
+            "ExpressionAttributeNames": {"#pk": self._id_attr},
+        }
+
+    async def _put_new(self, item: dict[str, Any]) -> None:
+        """Write *item* with a ``PutItem`` conditioned on its key not existing.
+
+        Raises:
+            Conflict: If an item with the same key already exists.
+        """
+        try:
+            await self._write(self._client.put_item, **self._new_item_put(item))
+        except self._client_error as exc:
+            if aws_error_code(exc) == _CONDITIONAL_CHECK_FAILED:
+                raise self._conflict(item.get(self._id_attr)) from exc
+            raise
+
+    async def _put_all_new(self, items: list[dict[str, Any]]) -> None:
+        """Write *items* in one transaction that is cancelled when any key exists.
+
+        Raises:
+            Conflict: Naming the first key that already exists.
+        """
+        try:
+            await self._write(
+                self._client.transact_write_items,
+                TransactItems=[{"Put": self._new_item_put(item)} for item in items],
+            )
+        except self._client_error as exc:
+            reasons = exc.response.get("CancellationReasons", [])
+            existing = next(
+                (
+                    item
+                    for item, reason in zip(items, reasons, strict=False)
+                    if reason.get("Code") == _CONDITION_FAILED_REASON
+                ),
+                None,
+            )
+            if existing is not None:
+                raise self._conflict(existing.get(self._id_attr)) from exc
+            raise
+
+    def _refuse_repeated_keys(self, items: list[dict[str, Any]]) -> None:
+        """Raise on the first key *items* carry twice.
+
+        Raises:
+            Conflict: Naming the repeated key.
+        """
+        seen: set[Any] = set()
+        for item in items:
+            key = item.get(self._id_attr)
+            if key in seen:
+                raise self._conflict(key)
+            seen.add(key)
+
+    def _conflict(self, key: Any) -> Conflict:
+        """Build the error for a key that already exists."""
+        return Conflict(f"{self._model.__name__} with {self._id_attr}={key!r} already exists.")
 
     def _check_write(self) -> tuple[InvocationScope | None, Participant | None]:
         """Pass a write through the invocation scope's checkpoint, on the event loop."""
@@ -237,15 +343,15 @@ class RepositoryDynamoDB(
     async def _write(self, call: Callable[..., object], **kwargs: Any) -> None:
         """Run one client write, checked before the call and recorded once it may have landed.
 
-        A failed condition wrote nothing and is not recorded; a timeout or
-        any other failure may have written, and is.
+        A failed condition or a cancelled transaction wrote nothing and is
+        not recorded; a timeout or any other failure may have written, and is.
         """
         scope, participant = self._check_write()
         landed = True
         try:
             await run_in_executor(self._executor, call, **kwargs)
         except self._client_error as exc:
-            landed = not _is_conditional_check_failure(exc)
+            landed = aws_error_code(exc) not in _NOTHING_WRITTEN
             raise
         finally:
             if landed and scope is not None and participant is not None:
@@ -337,15 +443,6 @@ def _single_id_attribute(model: type) -> str:
         "the repository keys each item by one partition key, so declare a single "
         "primary key"
     )
-
-
-def _is_conditional_check_failure(exc: Exception) -> bool:
-    """Return whether *exc* is a DynamoDB conditional-check failure."""
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return False
-    error = response.get("Error", {})
-    return isinstance(error, dict) and error.get("Code") == _CONDITIONAL_CHECK_FAILED
 
 
 def _floats_to_decimal(value: Any) -> Any:

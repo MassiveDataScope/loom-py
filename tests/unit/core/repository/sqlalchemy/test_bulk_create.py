@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Iterator
 from typing import Any
 
@@ -8,8 +9,9 @@ import pytest
 from sqlalchemy import event
 
 from loom.core.command import Command
+from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, ServerDefault
-from loom.core.repository.abc import CursorCodec
+from loom.core.repository.abc import CursorCodec, OnConflict
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -41,6 +43,14 @@ class _CreateItem(Command, frozen=True):
     created_at: str | None = None
 
 
+class _CreateKeyedItem(Command, frozen=True):
+    sku: str | None = None
+    id: int | None = None
+
+
+_COLUMNS = len(_Item.__struct_fields__)
+
+
 @pytest.fixture
 async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionManager:
     return await sqlite_manager_for(_Item)
@@ -68,6 +78,40 @@ def statements(session_manager: SessionManager) -> Iterator[list[str]]:
         conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
     ) -> None:
         captured.append(statement)
+
+    sync_engine = session_manager.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _capture)
+    yield captured
+    event.remove(sync_engine, "before_cursor_execute", _capture)
+
+
+@pytest.fixture
+def transactions(session_manager: SessionManager) -> Iterator[list[str]]:
+    captured: list[str] = []
+
+    def _begin(conn: Any) -> None:
+        captured.append("BEGIN")
+
+    def _commit(conn: Any) -> None:
+        captured.append("COMMIT")
+
+    sync_engine = session_manager.engine.sync_engine
+    event.listen(sync_engine, "begin", _begin)
+    event.listen(sync_engine, "commit", _commit)
+    yield captured
+    event.remove(sync_engine, "begin", _begin)
+    event.remove(sync_engine, "commit", _commit)
+
+
+@pytest.fixture
+def inserts(session_manager: SessionManager) -> Iterator[list[str]]:
+    captured: list[str] = []
+
+    def _capture(
+        conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+    ) -> None:
+        if statement.startswith("INSERT"):
+            captured.append(statement)
 
     sync_engine = session_manager.engine.sync_engine
     event.listen(sync_engine, "before_cursor_execute", _capture)
@@ -170,3 +214,136 @@ class TestCreateMany:
         stored = await repository.get_by_id(created[1].id)
         assert stored is not None
         assert stored.created_at == created[1].created_at
+
+
+class TestCreateManyOrder:
+    @pytest.mark.parametrize("on_conflict", list(OnConflict))
+    async def test_generated_and_explicit_keys_keep_input_order(
+        self, repository: RepositorySQLAlchemy[_Item, int], on_conflict: OnConflict
+    ) -> None:
+        created = await repository.create_many(
+            [
+                _CreateKeyedItem(sku="a"),
+                _CreateKeyedItem(sku="b", id=100),
+                _CreateKeyedItem(sku="c"),
+            ],
+            on_conflict=on_conflict,
+        )
+
+        assert [item.sku for item in created] == ["a", "b", "c"]
+        assert created[1].id == 100
+
+
+class TestCreateManyIgnore:
+    @pytest.mark.parametrize(
+        ("keys", "recorded"),
+        [((4, 1, 3), [(4, 3)]), ((1,), [])],
+        ids=["some-new", "none-new"],
+    )
+    async def test_the_event_lists_only_inserted_ids(
+        self,
+        repository: RepositorySQLAlchemy[_Item, int],
+        mutations: list[MutationEvent],
+        keys: tuple[int, ...],
+        recorded: list[tuple[int, ...]],
+    ) -> None:
+        await repository.create_many([_CreateKeyedItem(sku="s1", id=1)])
+        mutations.clear()
+
+        await repository.create_many(
+            [_CreateKeyedItem(sku=f"s{key}", id=key) for key in keys],
+            on_conflict=OnConflict.IGNORE,
+        )
+
+        assert [event.ids for event in mutations] == recorded
+
+    async def test_skips_only_the_primary_key_conflict(
+        self, repository: RepositorySQLAlchemy[_Item, int], inserts: list[str]
+    ) -> None:
+        await repository.create_many(
+            [_CreateKeyedItem(sku="a", id=1)], on_conflict=OnConflict.IGNORE
+        )
+
+        assert "ON CONFLICT (id) DO NOTHING" in inserts[0]
+
+    @pytest.mark.parametrize(
+        "batch",
+        [
+            [_CreateKeyedItem(sku="e", id=5), _CreateKeyedItem(id=6)],
+            [_CreateKeyedItem(sku="a", id=5)],
+        ],
+        ids=["not-null", "other-unique"],
+    )
+    async def test_other_constraint_violation_raises_conflict(
+        self, repository: RepositorySQLAlchemy[_Item, int], batch: list[_CreateKeyedItem]
+    ) -> None:
+        await repository.create_many([_CreateKeyedItem(sku="a", id=1)])
+
+        with pytest.raises(Conflict):
+            await repository.create_many(batch, on_conflict=OnConflict.IGNORE)
+
+        assert await repository.count() == 1
+
+    @pytest.mark.parametrize(
+        ("attribute", "value"),
+        [("insert_returning", False), ("name", "acmedb")],
+        ids=["reselect-path", "unsupported-dialect"],
+    )
+    async def test_is_refused_without_on_conflict_do_nothing_returning(
+        self,
+        repository: RepositorySQLAlchemy[_Item, int],
+        session_manager: SessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+        attribute: str,
+        value: object,
+    ) -> None:
+        monkeypatch.setattr(session_manager.engine.dialect, attribute, value)
+
+        with pytest.raises(UnsupportedQuery, match="on _Item: create_many") as refused:
+            await repository.create_many(
+                [_CreateKeyedItem(sku="a", id=1)], on_conflict=OnConflict.IGNORE
+            )
+
+        assert refused.value.backend == "sqlalchemy"
+
+        assert await repository.count() == 0
+
+
+class TestCreateManyChunks:
+    async def test_small_batch_emits_the_plain_multi_row_insert(
+        self, repository: RepositorySQLAlchemy[_Item, int], inserts: list[str]
+    ) -> None:
+        await repository.create_many([_CreateItem(sku="a"), _CreateItem(sku="b")])
+
+        assert inserts == [
+            "INSERT INTO bulk_items (sku, qty, token) VALUES (?, ?, ?), (?, ?, ?) "
+            "RETURNING id, sku, qty, note, token, created_at"
+        ]
+
+    @pytest.mark.parametrize("on_conflict", list(OnConflict))
+    @pytest.mark.parametrize(
+        ("budget", "rows_per_statement"),
+        [(2 * _COLUMNS, 2), (1, 1)],
+        ids=["two-rows", "below-one-row"],
+    )
+    async def test_batch_above_the_chunk_emits_one_insert_per_chunk_in_one_transaction(
+        self,
+        repository: RepositorySQLAlchemy[_Item, int],
+        session_manager: SessionManager,
+        inserts: list[str],
+        transactions: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        on_conflict: OnConflict,
+        budget: int,
+        rows_per_statement: int,
+    ) -> None:
+        monkeypatch.setattr(
+            session_manager.engine.dialect, "insertmanyvalues_max_parameters", budget
+        )
+        batch = [_CreateKeyedItem(sku=f"sku-{key}", id=key) for key in (5, 3, 9, 1, 7)]
+
+        created = await repository.create_many(batch, on_conflict=on_conflict)
+
+        assert [item.id for item in created] == [5, 3, 9, 1, 7]
+        assert len(inserts) == math.ceil(len(batch) / rows_per_statement)
+        assert transactions == ["BEGIN", "COMMIT"]

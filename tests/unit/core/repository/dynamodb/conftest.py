@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, NoReturn
 
 import pytest
 
@@ -34,3 +34,15 @@ def product_model() -> type[Product]:
 @pytest.fixture
 def fake_client() -> FakeClient:
     return FakeClient(key_name="id")
+
+
+@pytest.fixture
+def refusing_client(fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch) -> FakeClient:
+    """The fake client with every item call failing the test."""
+
+    def _refuse(**kwargs: Any) -> NoReturn:
+        raise AssertionError(f"the client was called with {kwargs}")
+
+    for method in ("get_item", "put_item", "delete_item", "transact_write_items"):
+        monkeypatch.setattr(fake_client, method, _refuse)
+    return fake_client

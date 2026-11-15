@@ -228,10 +228,33 @@ repository the DI module builds, and it is the same class.
 
 ### `BulkCreatable`
 
-`create_many(data) -> tuple[Model, ...]` persists a sequence and returns the
-entities in input order. SQLAlchemy writes the batch with one multi-row
-`INSERT`; a backend whose store has no multi-row write declares the protocol
-only if it can honour the order and document its atomicity.
+`create_many(data, *, on_conflict=OnConflict.ERROR) -> tuple[Model, ...]`
+persists a sequence and returns the entities in input order. With
+`OnConflict.ERROR` a primary key that already exists raises `Conflict`; with
+`OnConflict.IGNORE` the rows whose primary key exists are skipped and only the
+inserted rows come back, so the length of the result is the number inserted.
+Any other constraint violation still raises `Conflict`.
+
+- SQLAlchemy writes multi-row `INSERT ... RETURNING` statements, as many rows
+  per statement as the dialect's `insertmanyvalues_max_parameters` allows, all
+  in one transaction. `IGNORE` adds `ON CONFLICT (<primary key>) DO NOTHING`
+  and is refused with `UnsupportedQuery` on a dialect other than
+  PostgreSQL and SQLite, or when the batch must be inserted row by row (no
+  `RETURNING`, or an omitted column with only a server default).
+- Mongo writes one `insert_many`: ordered with a compensating delete for
+  `ERROR` (see below), unordered for `IGNORE`, which skips only duplicate-key
+  errors (code 11000) on `_id`; a duplicate in another unique index raises
+  `Conflict` and any other write error leaves the other documents written.
+  `IGNORE` is refused with `UnsupportedQuery` inside a transaction, which a
+  duplicate key aborts.
+- DynamoDB writes `ERROR` batches with `TransactWriteItems` in chunks of 100,
+  each conditioned on the key not existing: every chunk is atomic, the batch
+  is not, so a conflict leaves earlier chunks written. A key repeated in the
+  input raises before anything is written. `IGNORE` writes one conditional
+  `PutItem` per item.
+
+A backend whose store has no multi-row write declares the protocol only if it
+can honour the order and document its atomicity.
 
 ### `UnsupportedQuery`
 

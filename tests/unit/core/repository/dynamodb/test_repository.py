@@ -4,8 +4,9 @@ from uuid import UUID
 
 import pytest
 
-from loom.core.errors import UnsupportedQuery
+from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import OnConflict
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 
 from .conftest import FakeClient, Product, ProductCreate, ProductUpdate
@@ -163,3 +164,52 @@ class TestDynamoUuidPrimaryKey:
         assert after["blob"] == {"B": b"\x00\x01"}
         assert sorted(after["tags"]["SS"]) == ["a", "b"]
         assert sorted(after["sizes"]["NS"]) == ["1", "2.5"]
+
+
+class TestDynamoCreateMany:
+    async def test_error_writes_every_item_in_input_order_one_transaction_per_hundred(
+        self, fake_client: FakeClient
+    ) -> None:
+        keys = list(range(250, 0, -1))
+
+        created = await _repo(fake_client).create_many([ProductCreate(id=key) for key in keys])
+
+        assert [item.id for item in created] == keys
+        assert fake_client.transactions == [100, 100, 50]
+        assert len(fake_client.items["products"]) == 250
+
+    async def test_error_on_an_existing_key_raises_conflict_and_cancels_only_its_chunk(
+        self, fake_client: FakeClient
+    ) -> None:
+        repo = _repo(fake_client)
+        await repo.create(ProductCreate(id=500))
+        batch = [ProductCreate(id=key) for key in range(1, 101)] + [
+            ProductCreate(id=101),
+            ProductCreate(id=500),
+        ]
+
+        with pytest.raises(Conflict, match="Product with id=500 already exists"):
+            await repo.create_many(batch)
+
+        assert fake_client.transactions == [100]
+        assert "101" not in fake_client.items["products"]
+
+    async def test_error_on_a_key_repeated_in_the_input_raises_conflict_and_writes_nothing(
+        self, fake_client: FakeClient
+    ) -> None:
+        batch = [ProductCreate(id=1), ProductCreate(id=2), ProductCreate(id=1)]
+
+        with pytest.raises(Conflict, match="Product with id=1 already exists"):
+            await _repo(fake_client).create_many(batch)
+
+        assert fake_client.items["products"] == {}
+
+    async def test_ignore_writes_one_put_per_item_and_no_transaction(
+        self, fake_client: FakeClient
+    ) -> None:
+        created = await _repo(fake_client).create_many(
+            [ProductCreate(id=key) for key in range(150)], on_conflict=OnConflict.IGNORE
+        )
+
+        assert len(created) == 150
+        assert fake_client.transactions == []

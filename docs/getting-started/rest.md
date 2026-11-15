@@ -405,7 +405,7 @@ section:
 | `stores.default.backend` | Reads | What the app gets |
 |---|---|---|
 | `sqlalchemy` | `stores.default` (`url`, `pool`, `schema`, ...) | unit of work, repositories with every capability (`create_many` included) and compiled tables for every discovered model; needs the `sqlalchemy` extra, a driver and a reachable database even with zero models |
-| `dynamodb` | `stores.default` (`region`, `table`, ...) | key-value repositories (`Readable`, `Creatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and `get_by` / `exists_by` on a non-key field raise `UnsupportedQuery`; no relational tables |
+| `dynamodb` | `stores.default` (`region`, `table`, ...) | key-value repositories (`Readable`, `Creatable`, `BulkCreatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and `get_by` / `exists_by` on a non-key field raise `UnsupportedQuery`; no relational tables |
 | `mongo` | `stores.default` (`url`, `database`, ...) | one collection per model in one database, repositories with every capability (`create_many` included), offset and cursor pagination, `QuerySpec` filters and sorts; unit of work is a no-op unless `transactions: true` (needs a replica set); ids minted by loom (`uuid4`, or `objectid` per config), `autoincrement` refused at startup; needs the `mongo` extra |
 | `none` | nothing | no unit of work, no repositories; discovered models are accepted but not compiled, the rest of the section is ignored, deferred job dispatch never fires, and an interface with `auto_crud_model` refuses to boot |
 

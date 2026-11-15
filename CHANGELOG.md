@@ -475,6 +475,17 @@
   importing these private names (tests patching them included) imports the
   new owner listed above.
 
+### stores
+
+- **stores:** `BulkCreatable.create_many` takes a keyword-only
+  `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
+  always passes it to the repository it wraps. Before: a custom repository
+  declaring `BulkCreatable` implemented `create_many(data)`. Now: calling it
+  through the cache raises `TypeError`. **Migration:** add
+  `*, on_conflict: OnConflict = OnConflict.ERROR` to the custom
+  `create_many` (`OnConflict` from `loom.core.repository.abc`) and honour or
+  refuse `OnConflict.IGNORE`.
+
 ## ✨ Features
 
 ### ai
@@ -635,6 +646,17 @@
 
 ### stores
 
+- **stores:** `create_many(data, *, on_conflict=OnConflict.ERROR)` on the
+  SQLAlchemy, Mongo and DynamoDB repositories (`OnConflict` from
+  `loom.core.repository.abc`). `OnConflict.IGNORE` skips the rows whose primary
+  key already exists and returns only the inserted ones, in input order; any
+  other constraint violation still raises `Conflict`. SQLAlchemy splits every
+  batch by the dialect's `insertmanyvalues_max_parameters`, one statement per
+  chunk inside the same transaction, so callers no longer split large
+  batches; `IGNORE` needs PostgreSQL or SQLite. Mongo refuses `IGNORE` inside
+  a transaction. A refused `IGNORE` raises `UnsupportedQuery`. DynamoDB now declares `BulkCreatable`: `ERROR` writes
+  `TransactWriteItems` chunks of 100 items, atomic per chunk and not across
+  chunks; `IGNORE` writes one conditional `PutItem` per item.
 - **stores:** an application composes `stores.default` and every store that
   holds a model (`__store__`). Each store gets its own backend, engine,
   repositories, unit of work and readiness probe; its `SessionManager` or

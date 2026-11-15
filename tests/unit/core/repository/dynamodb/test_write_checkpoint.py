@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from loom.core.errors import Conflict, ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
 from loom.core.model import BaseModel, Field, Integer, String
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.repository.abc import OnConflict
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.uow.coordinator import NonTransactional, OrderedCommits
@@ -36,6 +37,11 @@ WRITES = [
     pytest.param(lambda repo: repo.create(ProductCreate(id=2)), id="create"),
     pytest.param(lambda repo: repo.update(1, ProductUpdate(name="n")), id="update"),
     pytest.param(lambda repo: repo.delete(1), id="delete"),
+    pytest.param(lambda repo: repo.create_many([ProductCreate(id=2)]), id="create_many"),
+    pytest.param(
+        lambda repo: repo.create_many([ProductCreate(id=2)], on_conflict=OnConflict.IGNORE),
+        id="create_many-ignore",
+    ),
 ]
 
 
@@ -51,23 +57,16 @@ class TestDynamoUndeclaredStoreWrite:
     async def test_a_write_to_an_undeclared_store_calls_no_client_method(
         self,
         coordinator: OrderedCommits,
-        fake_client: FakeClient,
+        refusing_client: FakeClient,
         write: Write,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        for method in ("get_item", "put_item", "delete_item"):
-            monkeypatch.setattr(fake_client, method, _refuse_call)
         audit: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
-            fake_client, "products", AuditEntry
+            refusing_client, "products", AuditEntry
         )
 
         async with invocation(coordinator) as scope, scope.frame(Frame(DEFAULT_STORE)):
             with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
                 await write(audit)
-
-
-def _refuse_call(**kwargs: Any) -> NoReturn:
-    raise AssertionError(f"the client was called with {kwargs}")
 
 
 class TestDynamoDeclaredWrite:
@@ -162,3 +161,25 @@ class TestDynamoFailedWriteCheckpoint:
 
         assert isinstance(invocation_error(outcome, failed.value), raised)
         assert NonTransactional(DEFAULT_STORE, wrote=wrote) in outcome.stores
+
+    async def test_a_cancelled_bulk_transaction_beside_a_transactional_store_is_a_conflict(
+        self, fake_client: FakeClient
+    ) -> None:
+        audit = PhasedStore(AUDIT, Ledger())
+        coordinator = OrderedCommits(
+            {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: Factory(audit)}
+        )
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            fake_client, "products", Product
+        )
+        await products.create(ProductCreate(id=1))
+
+        async with invocation(coordinator) as scope:
+            async with scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))):
+                scope.participant_for(AUDIT, audit.owner, write=True)
+                with pytest.raises(Conflict) as failed:
+                    await products.create_many([ProductCreate(id=2), ProductCreate(id=1)])
+            outcome = await coordinator.finish(scope, failed.value)
+
+        assert isinstance(invocation_error(outcome, failed.value), Conflict)
+        assert NonTransactional(DEFAULT_STORE, wrote=False) in outcome.stores
