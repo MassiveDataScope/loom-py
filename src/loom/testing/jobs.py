@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.identity import Identity, captured_delegation
+from loom.core.job.callback import CallbackOutcome
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.handle import JobGroup, JobHandle
@@ -98,11 +99,19 @@ class RecordingJobService:
         priority: int | None = None,
         eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Record *job_type* once the current execution commits."""
-        _ = (on_success, on_failure, countdown, priority, eta)
+        """Record *job_type* once the current execution commits.
+
+        Raises:
+            ValueError: When a callback is attached and *payload* holds
+                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+        """
+        _ = (countdown, priority, eta)
+        payload = payload or {}
+        if on_success is not None or on_failure is not None:
+            CallbackOutcome.refuse_reserved(payload)
         record = DispatchedJob(
             job_type=job_type,
-            payload=copy.deepcopy(payload or {}),
+            payload=copy.deepcopy(payload),
             params=copy.deepcopy(params),
             queue=queue or self._settings.of(job_type).queue,
             identity=captured_delegation().caller,

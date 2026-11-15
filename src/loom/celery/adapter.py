@@ -56,7 +56,6 @@ from loom.celery._discovery import (
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
 from loom.celery.runner import (
     _CeleryAsyncRuntime,
-    _make_callback_error_task,
     _make_callback_task,
     _make_job_task,
 )
@@ -78,6 +77,7 @@ from loom.core.discovery.worker import (
     use_cases_from_interfaces,
 )
 from loom.core.engine.compilable import Compilable
+from loom.core.job.callback import CallbackOutcome
 from loom.core.persistence import WORKER_PROFILE
 from loom.core.runner import shutdown_runner
 
@@ -260,7 +260,7 @@ def _register_tasks(
     async_runtime: _CeleryAsyncRuntime,
     metrics: MetricsAdapter | None,
 ) -> None:
-    """Register one task per job and two per callback class."""
+    """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
     for job_type in declared.jobs:
         _make_job_task(
@@ -274,20 +274,15 @@ def _register_tasks(
             settings=application.job_settings,
         )
     for callback_type in declared.callbacks:
-        _make_callback_task(
-            celery_app,
-            callback_type,
-            kernel.factory,
-            async_runtime,
-            observability_runtime=observability,
-        )
-        _make_callback_error_task(
-            celery_app,
-            callback_type,
-            kernel.factory,
-            async_runtime,
-            observability_runtime=observability,
-        )
+        for outcome in CallbackOutcome:
+            _make_callback_task(
+                celery_app,
+                callback_type,
+                outcome,
+                kernel.factory,
+                async_runtime,
+                observability_runtime=observability,
+            )
 
 
 @dataclass(frozen=True)

@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from contextvars import Token
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from loom.core.identity import (
     NO_DELEGATION,
+    Acting,
     Delegation,
     captured_delegation,
     reset_identity,
     set_identity,
 )
-from loom.core.job.callback import JobCallback, run_on_failure, run_on_success
+from loom.core.job.callback import CallbackOutcome, JobCallback, notify
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import JobGroup, JobHandle
@@ -28,12 +30,7 @@ ResultT = TypeVar("ResultT")
 
 @dataclass
 class _PendingDispatch:
-    """Encapsulates a single inline dispatch ready to run after UoW commit.
-
-    Avoids nested function definitions (closures) by capturing all context
-    as explicit dataclass fields.  The ``run`` method is enqueued on the
-    post-commit channel and called when the executor drains it.
-    """
+    """One inline dispatch, run by the post-commit channel once the unit of work has closed."""
 
     job_type: type[Job[Any]]
     task_id: str
@@ -48,21 +45,8 @@ class _PendingDispatch:
     """The dispatcher's caller and deadline (:func:`~loom.core.identity.captured_delegation`)."""
 
     async def run(self) -> None:
-        """Run the job, then its callback, as the dispatcher, within the captured delegation.
-
-        Where its dispatcher acts (drained by the work that dispatched it), it
-        runs as is. Elsewhere it resumes the captured delegation, refused
-        past its deadline when the job's execution starts; inside work acting
-        as anyone else, resuming it raises
-        :class:`~loom.core.identity.IdentityFixed`: it fails closed.
-        """
-        caller = self.captured.caller
-        acting = captured_delegation().caller
-        token = (
-            None
-            if acting is caller or acting == caller
-            else set_identity(caller, until=self.captured.until)
-        )
+        """Run the job, then its callback, as the dispatcher, within the captured delegation."""
+        token = self._resume()
         try:
             result: Any = await self.executor.run(
                 self.job_type,
@@ -72,22 +56,61 @@ class _PendingDispatch:
             )
             self.result_holder.append(result)
             if self.on_success is not None:
-                await run_on_success(
-                    self.factory, self.on_success, self.task_id, result, self.payload
+                await notify(
+                    self.factory,
+                    self.on_success,
+                    CallbackOutcome.SUCCESS,
+                    job_id=self.task_id,
+                    result=result,
+                    **self.payload,
                 )
         except Exception as exc:
             if self.on_failure is not None:
-                await run_on_failure(
+                await notify(
                     self.factory,
                     self.on_failure,
-                    self.task_id,
-                    type(exc).__qualname__,
-                    str(exc),
-                    self.payload,
+                    CallbackOutcome.FAILURE,
+                    job_id=self.task_id,
+                    exc_type=type(exc).__qualname__,
+                    exc_msg=str(exc),
+                    **self.payload,
                 )
         finally:
             if token is not None:
                 reset_identity(token)
+
+    def _resume(self) -> Token[Acting] | None:
+        """Install the captured delegation where the dispatcher does not act already.
+
+        Outside work it resumes the captured delegation, ending at the
+        deadline of the caller acting instead when that caller is the
+        dispatcher and its deadline comes first; the job's execution is
+        refused past it. Inside work acting as the dispatcher it installs
+        nothing, the job running within that work's delegation, and is
+        refused when the captured deadline has passed. A dispatch with no
+        caller runs as no one, and is refused inside work acting as someone.
+
+        Returns:
+            The token to reset, or ``None`` when nothing was installed.
+
+        Raises:
+            IdentityFixed: Inside work acting as anyone else.
+            DelegationExpired: Inside work acting as the dispatcher, past the
+                captured deadline.
+        """
+        caller, until = self.captured
+        acting = Acting.current()
+        if caller is None:
+            return set_identity(None) if acting.effective.is_authenticated else None
+        if caller != acting.caller:
+            return set_identity(caller, until=until)
+        if acting.work is not None:
+            if until is not None and until < acting.deadline:
+                Acting(caller, caller, until, acting.work).refuse_expired()
+            return None
+        return set_identity(
+            caller, until=acting.deadline if until is None else min(until, acting.deadline)
+        )
 
 
 class JobService(Protocol):
@@ -157,6 +180,10 @@ class JobService(Protocol):
 
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
+
+        Raises:
+            ValueError: When a callback is attached and *payload* holds
+                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         ...
 
@@ -278,14 +305,21 @@ class InlineJobService:
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
             returns the result once the queue is flushed.
+
+        Raises:
+            ValueError: When a callback is attached and *payload* holds
+                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         _ = (countdown, priority, eta)
+        payload = payload or {}
+        if on_success is not None or on_failure is not None:
+            CallbackOutcome.refuse_reserved(payload)
         task_id = str(uuid.uuid4())
         result_holder: list[Any] = []
         pending = _PendingDispatch(
             job_type=job_type,
             task_id=task_id,
-            payload=payload or {},
+            payload=payload,
             params=params,
             on_success=on_success,
             on_failure=on_failure,

@@ -19,6 +19,7 @@ from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.metrics import NoMetrics
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.identity import captured_delegation
 from loom.core.job.config import JobSettings
@@ -277,7 +278,7 @@ class SQSJobService:
         self._settings = settings or JobSettings()
         self._new_batch = functools.partial(_PendingSQSBatch, client, config)
         self._inline = InlineJobService(factory, executor, settings=self._settings)
-        self._metrics = metrics
+        self._metrics = NoMetrics() if metrics is None else metrics
 
     async def run(
         self,
@@ -343,14 +344,13 @@ class SQSJobService:
             pending_publish_group(self, self._new_batch).sends.append(send)
         else:
             add_pending_publish(send)
-        if self._metrics is not None:
-            self._metrics.on_event(
-                RuntimeEvent(
-                    kind=EventKind.JOB_DISPATCHED,
-                    use_case_name=job_type.__qualname__,
-                    trace_id=trace_id,
-                )
+        self._metrics.on_event(
+            RuntimeEvent(
+                kind=EventKind.JOB_DISPATCHED,
+                use_case_name=job_type.__qualname__,
+                trace_id=trace_id,
             )
+        )
         return JobHandle(job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC))
 
     def dispatch_parallel(

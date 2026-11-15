@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from loom.core.execution import enter, leave
+from loom.core.execution import ExecutionScope
 from loom.core.identity import current_caller
 
 if TYPE_CHECKING:
@@ -79,73 +79,66 @@ class NullJobCallback:
         """Accept failure notification and do nothing."""
 
 
-@contextmanager
-def callback_execution() -> Iterator[None]:
-    """Run a job callback's construction and call in an execution acting as its dispatcher.
-
-    A callback is work its job's dispatch caused, so it acts as the caller
-    acting where it runs: the inline dispatch installs the identity captured
-    at dispatch, and the Celery callback worker the one its link envelope
-    carries. A constructor ``Caller()``, a handle (which reads the execution
-    identity at call time), row-level security and a job the callback
-    dispatches all see it; with no caller captured they fail closed. It is
-    refused once that caller's delegation has expired.
-
-    Enter it in the thread or coroutine that builds and calls the callback:
-    a coroutine handed to another event loop does not carry it.
-    """
-    execution_token = enter(current_caller(), "job callback")
-    try:
-        yield
-    finally:
-        leave(execution_token)
+_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})
 
 
-async def run_on_success(
-    factory: UseCaseFactory,
-    callback_type: type[Any],
-    job_id: str,
-    result: Any,
-    context: dict[str, Any],
+class CallbackOutcome(StrEnum):
+    """How a job ended, naming the :class:`JobCallback` hook it calls."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+    def hook(self, callback: object) -> Callable[..., Any]:
+        """Return the hook of *callback*, an instance or its class, that this outcome calls.
+
+        Args:
+            callback: A :class:`JobCallback` or its class.
+
+        Returns:
+            Its ``on_success`` or ``on_failure``.
+        """
+        return getattr(callback, f"on_{self}")
+
+    @staticmethod
+    def refuse_reserved(payload: Mapping[str, object]) -> None:
+        """Refuse a dispatch payload naming an argument a callback hook receives.
+
+        The payload reaches the hooks as keyword arguments beside ``job_id``,
+        ``result``, ``exc_type`` and ``exc_msg``.
+
+        Args:
+            payload: The payload of a dispatch that attaches a callback.
+
+        Raises:
+            ValueError: Naming each reserved key the payload holds.
+        """
+        reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
+        if reserved:
+            raise ValueError(
+                f"A job payload with a callback cannot hold {', '.join(reserved)}: "
+                "the callback hooks receive these arguments"
+            )
+
+
+async def notify(
+    factory: UseCaseFactory, callback_type: type[Any], outcome: CallbackOutcome, **arguments: Any
 ) -> None:
-    """Build ``callback_type`` and call its ``on_success``, both in a :func:`callback_execution`.
+    """Build *callback_type* and call its hook for *outcome* in one execution as the caller acting.
+
+    With no caller, a constructor ``Caller()`` and a handle fail closed.
 
     Args:
         factory: Builds the callback with its dependencies.
         callback_type: The :class:`JobCallback` class to build.
-        job_id: Identifier of the job that succeeded.
-        result: Value the job returned.
-        context: The dispatch payload, forwarded as keyword arguments.
+        outcome: How the job ended.
+        **arguments: The hook's keyword arguments: ``job_id``, then
+            ``result`` or ``exc_type`` and ``exc_msg``, then the dispatch
+            payload.
+
+    Raises:
+        DelegationExpired: Past the caller's deadline.
     """
-    with callback_execution():
-        callback = factory.build(callback_type)
-        if inspect.iscoroutinefunction(callback.on_success):
-            await callback.on_success(job_id=job_id, result=result, **context)
-        else:
-            callback.on_success(job_id=job_id, result=result, **context)
-
-
-async def run_on_failure(
-    factory: UseCaseFactory,
-    callback_type: type[Any],
-    job_id: str,
-    exc_type: str,
-    exc_msg: str,
-    context: dict[str, Any],
-) -> None:
-    """Build ``callback_type`` and call its ``on_failure``, both in a :func:`callback_execution`.
-
-    Args:
-        factory: Builds the callback with its dependencies.
-        callback_type: The :class:`JobCallback` class to build.
-        job_id: Identifier of the job that failed.
-        exc_type: Class name of the exception the job raised.
-        exc_msg: Its message.
-        context: The dispatch payload, forwarded as keyword arguments.
-    """
-    with callback_execution():
-        callback = factory.build(callback_type)
-        if inspect.iscoroutinefunction(callback.on_failure):
-            await callback.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
-        else:
-            callback.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
+    with ExecutionScope(current_caller(), what=callback_type.__qualname__):
+        reply = outcome.hook(factory.build(callback_type))(**arguments)
+        if reply is not None and inspect.isawaitable(reply):
+            await reply

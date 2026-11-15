@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import Coroutine, Generator
 from contextlib import contextmanager
 from typing import Any
@@ -11,26 +12,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from celery import Celery
 
-from loom.celery.constants import (
-    TASK_CALLBACK_ERROR_PREFIX,
-    TASK_CALLBACK_PREFIX,
-    TASK_JOB_PREFIX,
-)
+from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.runner import (
-    _emit,
-    _job_event,
-    _make_callback_error_task,
+    _CeleryAsyncRuntime,
     _make_callback_task,
     _make_job_task,
     _resolve_error_info,
 )
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
     StoresNotCommitted,
     UnitOfWorkInsideScope,
 )
+from loom.core.job.callback import CallbackOutcome
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
@@ -744,29 +740,6 @@ class TestMakeJobTaskRetry:
 
 
 # ---------------------------------------------------------------------------
-# _emit / _job_event helpers
-# ---------------------------------------------------------------------------
-
-
-class TestEmitHelpers:
-    def test_emit_calls_on_event_when_metrics_present(self) -> None:
-        metrics = MagicMock()
-        event = RuntimeEvent(kind=EventKind.JOB_STARTED, use_case_name="TestJob")
-        _emit(metrics, event)
-        metrics.on_event.assert_called_once_with(event)
-
-    def test_emit_is_noop_when_metrics_is_none(self) -> None:
-        _emit(None, RuntimeEvent(kind=EventKind.JOB_STARTED, use_case_name="X"))
-
-    def test_job_event_returns_runtime_event_with_correct_kind(self) -> None:
-        event = _job_event(EventKind.JOB_SUCCEEDED, "MyJob", "tid-1", status="success")
-        assert event.kind == EventKind.JOB_SUCCEEDED
-        assert event.use_case_name == "MyJob"
-        assert event.trace_id == "tid-1"
-        assert event.status == "success"
-
-
-# ---------------------------------------------------------------------------
 # _resolve_error_info
 # ---------------------------------------------------------------------------
 
@@ -777,33 +750,67 @@ class TestResolveErrorInfo:
         mock_result = MagicMock()
         mock_result.result = ValueError("bad")
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result) as result:
-            assert _resolve_error_info("some-task-id", app) == ("ValueError", "bad")
+            assert _resolve_error_info("some-task-id", app) == {
+                "exc_type": "ValueError",
+                "exc_msg": "bad",
+            }
         result.assert_called_once_with("some-task-id", app=app)
-
-    def test_returns_qualname_and_message_for_exception(self) -> None:
-        mock_result = MagicMock()
-        mock_result.result = ValueError("something went wrong")
-        with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
-        assert exc_type == "ValueError"
-        assert exc_msg == "something went wrong"
 
     def test_returns_unknown_when_result_is_not_exception(self) -> None:
         mock_result = MagicMock()
         mock_result.result = None
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
-        assert exc_type == "Unknown"
-        assert exc_msg == ""
+            details = _resolve_error_info("some-task-id", Celery(set_as_current=False))
+        assert details == {"exc_type": "Unknown", "exc_msg": ""}
 
 
 # ---------------------------------------------------------------------------
-# _make_callback_task (on_success)
+# _make_callback_task
 # ---------------------------------------------------------------------------
 
+_BACKEND_ERROR = {"exc_type": "ValueError", "exc_msg": "bad input"}
 
+OUTCOMES = pytest.mark.parametrize(
+    ("outcome", "job_result", "details"),
+    [
+        (CallbackOutcome.SUCCESS, ("acme",), {"result": "acme"}),
+        (CallbackOutcome.FAILURE, (), _BACKEND_ERROR),
+    ],
+    ids=["success", "failure"],
+)
+"""Each outcome: what Celery passes positionally, and the hook's details."""
+
+
+@pytest.fixture
+def backend_error() -> Generator[None]:
+    """The result backend holds the failed job's exception."""
+    with patch("loom.celery.runner._resolve_error_info", return_value=_BACKEND_ERROR):
+        yield
+
+
+@pytest.fixture
+def celery_app() -> Celery:
+    return Celery("acme", set_as_current=False)
+
+
+class _CoroutineFromDef:
+    """A callback whose plain ``def`` hooks return a coroutine."""
+
+    def on_success(self, job_id: str, result: object, **ctx: object) -> Coroutine[Any, Any, None]:
+        return asyncio.sleep(0)
+
+    def on_failure(
+        self, job_id: str, exc_type: str, exc_msg: str, **ctx: object
+    ) -> Coroutine[Any, Any, None]:
+        return asyncio.sleep(0)
+
+
+@pytest.mark.usefixtures("backend_error")
+@OUTCOMES
 class TestMakeCallbackTask:
-    def test_task_registered_with_correct_name(self) -> None:
+    def test_task_registered_under_its_callback_task_name(
+        self, outcome: CallbackOutcome, job_result: tuple[Any, ...], details: Any
+    ) -> None:
         app = MagicMock()
         registered_name: list[str] = []
 
@@ -812,102 +819,65 @@ class TestMakeCallbackTask:
             return lambda fn: fn
 
         app.task = MagicMock(side_effect=_register)
-        _make_callback_task(app, _SyncCallback, MagicMock(), _mock_runtime())
-        task_name = next(iter(registered_name), None)
-        assert task_name == f"{TASK_CALLBACK_PREFIX}.{_SyncCallback.__qualname__}"
+        _make_callback_task(app, _SyncCallback, outcome, MagicMock(), _mock_runtime())
+        assert registered_name == [callback_task_name(_SyncCallback, outcome)]
 
-    def test_sync_on_success_called_with_result_and_job_id(self) -> None:
+    def test_sync_hook_called_with_job_id_details_and_context(
+        self,
+        celery_app: Celery,
+        outcome: CallbackOutcome,
+        job_result: tuple[Any, ...],
+        details: Any,
+    ) -> None:
         cb = MagicMock(spec=_SyncCallback)
-        factory = _mock_factory(cb)
-        task_fn = _make_callback_task(_mock_celery_app(), _SyncCallback, factory, _mock_runtime())
-        task_fn("result_value", job_id="uuid-1", context={})
-        cb.on_success.assert_called_once_with(job_id="uuid-1", result="result_value")
-
-    def test_sync_on_success_forwards_context_as_kwargs(self) -> None:
-        cb = MagicMock(spec=_SyncCallback)
-        factory = _mock_factory(cb)
-        task_fn = _make_callback_task(_mock_celery_app(), _SyncCallback, factory, _mock_runtime())
-        task_fn("r", job_id="uuid-2", context={"order_id": 99})
-        _, kwargs = cb.on_success.call_args
-        assert kwargs["order_id"] == 99
-
-    def test_async_on_success_is_run_via_async_runtime(self) -> None:
-        cb = MagicMock()
-        cb.on_success = AsyncMock()
-        factory = _mock_factory(cb)
-        runtime = _mock_runtime()
-        task_fn = _make_callback_task(_mock_celery_app(), _AsyncCallback, factory, runtime)
-        task_fn("r", job_id="x", context={})
-        runtime.run.assert_called_once()
-
-    def test_async_on_success_marks_eager_fallback(self) -> None:
-        cb = MagicMock()
-        cb.on_success = AsyncMock()
-        app = _mock_celery_app()
-        app.conf.task_always_eager = True
-        factory = _mock_factory(cb)
-        runtime = _mock_runtime()
-        task_fn = _make_callback_task(app, _AsyncCallback, factory, runtime)
-        task_fn("r", job_id="x", context={})
-        runtime.run.assert_called_once()
-        _, kwargs = runtime.run.call_args
-        assert kwargs["eager_fallback"] is True
-
-
-# ---------------------------------------------------------------------------
-# _make_callback_error_task (on_failure)
-# ---------------------------------------------------------------------------
-
-
-class TestMakeCallbackErrorTask:
-    def test_task_registered_with_correct_name(self) -> None:
-        app = MagicMock()
-        registered_name: list[str] = []
-
-        def _register(**kw: object) -> object:
-            registered_name.append(str(kw["name"]))
-            return lambda fn: fn
-
-        app.task = MagicMock(side_effect=_register)
-        _make_callback_error_task(app, _SyncCallback, MagicMock(), _mock_runtime())
-        task_name = next(iter(registered_name), None)
-        assert task_name == f"{TASK_CALLBACK_ERROR_PREFIX}.{_SyncCallback.__qualname__}"
-
-    def test_on_failure_called_with_exc_info_from_backend(self) -> None:
-        cb = MagicMock(spec=_SyncCallback)
-        factory = _mock_factory(cb)
-        task_fn = _make_callback_error_task(
-            _mock_celery_app(), _SyncCallback, factory, _mock_runtime()
+        outcome.hook(cb).return_value = None
+        task = _make_callback_task(
+            celery_app, _SyncCallback, outcome, _mock_factory(cb), _mock_runtime()
         )
-        with patch(
-            "loom.celery.runner._resolve_error_info",
-            return_value=("ValueError", "bad input"),
-        ):
-            task_fn(job_id="uuid-3", context={})
-        cb.on_failure.assert_called_once_with(
-            job_id="uuid-3", exc_type="ValueError", exc_msg="bad input"
+        task.apply(args=job_result, kwargs={"job_id": "uuid-1", "context": {"order_id": 99}}).get()
+        outcome.hook(cb).assert_called_once_with(job_id="uuid-1", **details, order_id=99)
+
+    def test_a_plain_def_hook_returning_an_awaitable_is_refused_and_closed(
+        self,
+        celery_app: Celery,
+        outcome: CallbackOutcome,
+        job_result: tuple[Any, ...],
+        details: Any,
+    ) -> None:
+        task = _make_callback_task(
+            celery_app,
+            _CoroutineFromDef,
+            outcome,
+            _mock_factory(_CoroutineFromDef()),
+            _mock_runtime(),
         )
 
-    def test_on_failure_forwards_context_as_kwargs(self) -> None:
-        cb = MagicMock(spec=_SyncCallback)
-        factory = _mock_factory(cb)
-        task_fn = _make_callback_error_task(
-            _mock_celery_app(), _SyncCallback, factory, _mock_runtime()
-        )
-        with patch("loom.celery.runner._resolve_error_info", return_value=("E", "m")):
-            task_fn(job_id="uuid-4", context={"user_id": 7})
-        _, kwargs = cb.on_failure.call_args
-        assert kwargs["user_id"] == 7
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            result = task.apply(args=job_result, kwargs={"job_id": "j", "context": {}})
+            with pytest.raises(TypeError, match="async def"):
+                result.get()
 
-    def test_async_on_failure_is_run_via_async_runtime(self) -> None:
+    @pytest.mark.parametrize("eager", [False, True], ids=["worker", "eager"])
+    def test_async_hook_runs_on_the_runtime_eagerly_only_for_an_eager_request(
+        self,
+        celery_app: Celery,
+        outcome: CallbackOutcome,
+        job_result: tuple[Any, ...],
+        details: Any,
+        eager: bool,
+    ) -> None:
         cb = MagicMock()
-        cb.on_failure = AsyncMock()
-        factory = _mock_factory(cb)
+        setattr(cb, f"on_{outcome}", AsyncMock())
         runtime = _mock_runtime()
-        task_fn = _make_callback_error_task(_mock_celery_app(), _AsyncCallback, factory, runtime)
-        with patch("loom.celery.runner._resolve_error_info", return_value=("E", "m")):
-            task_fn(job_id="uuid-5", context={})
+        task = _make_callback_task(celery_app, _AsyncCallback, outcome, _mock_factory(cb), runtime)
+        kwargs = {"job_id": "x", "context": {}}
+        if eager:
+            task.apply(args=job_result, kwargs=kwargs).get()
+        else:
+            task(*job_result, **kwargs)
         runtime.run.assert_called_once()
+        assert runtime.run.call_args.kwargs["eager_fallback"] is eager
 
 
 # ---------------------------------------------------------------------------
@@ -967,27 +937,60 @@ class TestTwoApplicationsInOneProcess:
         assert first.tasks[name].apply().get() == 1
         assert second.tasks[name].apply().get() == 2
 
-    def test_each_success_callback_builds_from_its_own_factory(self) -> None:
+    @pytest.mark.usefixtures("backend_error")
+    @OUTCOMES
+    def test_each_callback_builds_from_its_own_factory(
+        self, outcome: CallbackOutcome, job_result: tuple[Any, ...], details: Any
+    ) -> None:
         first, second = _two_apps()
         factories = (_mock_factory(MagicMock()), _mock_factory(MagicMock()))
-        for app, factory in zip((first, second), factories, strict=True):
-            _make_callback_task(app, _TwinCallback, factory, _mock_runtime())
-        name = f"{TASK_CALLBACK_PREFIX}.{_TwinCallback.__qualname__}"
+        tasks = [
+            _make_callback_task(app, _TwinCallback, outcome, factory, _mock_runtime())
+            for app, factory in zip((first, second), factories, strict=True)
+        ]
 
-        for app, factory in zip((first, second), factories, strict=True):
-            app.tasks[name].apply(args=(None,), kwargs={"job_id": "j", "context": {}}).get()
+        assert tasks[0] is not tasks[1]
+        for task, factory in zip(tasks, factories, strict=True):
+            task.apply(args=job_result, kwargs={"job_id": "j", "context": {}}).get()
 
             factory.build.assert_called_once_with(_TwinCallback)
 
-    def test_each_failure_callback_builds_from_its_own_factory(self) -> None:
-        first, second = _two_apps()
-        factories = (_mock_factory(MagicMock()), _mock_factory(MagicMock()))
-        for app, factory in zip((first, second), factories, strict=True):
-            _make_callback_error_task(app, _TwinCallback, factory, _mock_runtime())
-        name = f"{TASK_CALLBACK_ERROR_PREFIX}.{_TwinCallback.__qualname__}"
 
-        for app, factory in zip((first, second), factories, strict=True):
-            with patch("loom.celery.runner._resolve_error_info", return_value=("E", "m")):
-                app.tasks[name].apply(kwargs={"job_id": "j", "context": {}}).get()
+class _SyncSeen:
+    seen: list[tuple[str, object]] = []
 
-            factory.build.assert_called_once_with(_TwinCallback)
+    def on_success(self, job_id: str, result: object, **context: object) -> None:
+        self.seen.append((job_id, result))
+
+    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: object) -> None:
+        raise AssertionError
+
+
+class _AsyncSeen(_SyncSeen):
+    async def on_success(self, job_id: str, result: object, **context: object) -> None:  # type: ignore[override]
+        self.seen.append((job_id, result))
+
+
+class _Builds:
+    def build(self, callback_type: type[Any]) -> Any:
+        return callback_type()
+
+
+class TestLinkContextOnTheWorker:
+    @pytest.mark.parametrize("callback", [_SyncSeen, _AsyncSeen], ids=["sync", "async"])
+    def test_a_link_context_cannot_replace_the_reserved_arguments(
+        self, callback: type[_SyncSeen]
+    ) -> None:
+        app = Celery("acme")
+        app.conf.task_always_eager = True
+        callback.seen = []
+        task = _make_callback_task(
+            app, callback, CallbackOutcome.SUCCESS, _Builds(), _CeleryAsyncRuntime()
+        )
+
+        task.apply(
+            args=("acme-result",),
+            kwargs={"job_id": "acme-job", "context": {"job_id": "forged", "result": "forged"}},
+        ).get()
+
+        assert callback.seen == [("acme-job", "acme-result")]

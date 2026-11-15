@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.celery.service import CeleryJobService, _build_failure_link, _build_success_link
+from loom.celery.service import CeleryJobService
 from loom.core.engine.events import EventKind
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
@@ -241,86 +241,49 @@ class TestDispatchCallbacks:
 
 
 # ---------------------------------------------------------------------------
-# _build_success_link / _build_failure_link
+# Callback links
 # ---------------------------------------------------------------------------
 
 
-class TestLinkBuilders:
-    def test_success_link_uses_callback_qualname(self) -> None:
-        mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {}, "uuid-123")
-        name_arg = mock_app.signature.call_args.args[0]
-        assert name_arg == "loom.callback._SuccessCallback"
+@pytest.mark.parametrize(
+    ("hook", "callback", "task", "immutable"),
+    [
+        ("on_success", _SuccessCallback, "loom.callback._SuccessCallback", False),
+        ("on_failure", _FailureCallback, "loom.callback_error._FailureCallback", True),
+    ],
+    ids=["success", "failure"],
+)
+class TestCallbackLinks:
+    """Each callback rides on a signature naming its outcome's task, and carrying the dispatch."""
 
-    def test_success_link_is_not_immutable(self) -> None:
+    def test_names_the_outcome_task_mutable_only_for_success(
+        self, hook: str, callback: type[object], task: str, immutable: bool
+    ) -> None:
         mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {}, "uuid-123")
-        kwargs = mock_app.signature.call_args.kwargs
-        assert kwargs["immutable"] is False
+        CeleryJobService(mock_app).dispatch(_EmailJob, **{hook: callback})
 
-    def test_failure_link_uses_callback_error_prefix(self) -> None:
-        mock_app = MagicMock()
-        _build_failure_link(mock_app, _FailureCallback, {}, "uuid-456")
-        name_arg = mock_app.signature.call_args.args[0]
-        assert name_arg == "loom.callback_error._FailureCallback"
+        assert mock_app.signature.call_args.args == (task,)
+        assert mock_app.signature.call_args.kwargs["immutable"] is immutable
 
-    def test_failure_link_is_immutable(self) -> None:
+    @pytest.mark.parametrize("trace_id", [None, "acme-trace"], ids=["no-trace", "trace"])
+    def test_carries_the_job_id_payload_trace_and_no_caller(
+        self, hook: str, callback: type[object], task: str, immutable: bool, trace_id: str | None
+    ) -> None:
         mock_app = MagicMock()
-        _build_failure_link(mock_app, _FailureCallback, {}, "uuid-456")
-        kwargs = mock_app.signature.call_args.kwargs
-        assert kwargs["immutable"] is True
-
-    def test_link_kwargs_contain_job_id(self) -> None:
-        mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {"key": "val"}, "my-uuid")
-        kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert kwargs["job_id"] == "my-uuid"
-
-    def test_link_kwargs_contain_context(self) -> None:
-        mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {"order_id": 99}, "uuid")
-        kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert kwargs["context"] == {"order_id": 99}
-
-    def test_success_link_includes_trace_id(self) -> None:
-        mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {}, "uuid", "trace-abc")
-        kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert kwargs["trace_id"] == "trace-abc"
-
-    def test_failure_link_includes_trace_id(self) -> None:
-        mock_app = MagicMock()
-        _build_failure_link(mock_app, _FailureCallback, {}, "uuid", "trace-xyz")
-        kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert kwargs["trace_id"] == "trace-xyz"
-
-    def test_success_link_trace_id_defaults_to_none(self) -> None:
-        mock_app = MagicMock()
-        _build_success_link(mock_app, _SuccessCallback, {}, "uuid")
-        kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert kwargs["trace_id"] is None
-
-    def test_dispatch_propagates_trace_id_to_success_link(self) -> None:
-        mock_app = MagicMock()
-        service = CeleryJobService(mock_app)
-        token = set_trace_id("my-trace-123")
+        token = set_trace_id(trace_id)
         try:
-            service.dispatch(_EmailJob, on_success=_SuccessCallback)
+            handle = CeleryJobService(mock_app).dispatch(
+                _EmailJob, payload={"order_id": 99}, **{hook: callback}
+            )
         finally:
             reset_trace_id(token)
-        sig_kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert sig_kwargs["trace_id"] == "my-trace-123"
 
-    def test_dispatch_propagates_trace_id_to_failure_link(self) -> None:
-        mock_app = MagicMock()
-        service = CeleryJobService(mock_app)
-        token = set_trace_id("err-trace-456")
-        try:
-            service.dispatch(_EmailJob, on_failure=_FailureCallback)
-        finally:
-            reset_trace_id(token)
-        sig_kwargs = mock_app.signature.call_args.kwargs["kwargs"]
-        assert sig_kwargs["trace_id"] == "err-trace-456"
+        assert mock_app.signature.call_args.kwargs["kwargs"] == {
+            "job_id": handle.job_id,
+            "context": {"order_id": 99},
+            "trace_id": trace_id,
+            "identity": None,
+        }
 
 
 # ---------------------------------------------------------------------------

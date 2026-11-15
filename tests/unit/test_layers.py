@@ -139,7 +139,6 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         "loom.core.execution",
         _EXECUTION,
         "loom.core.engine.executor",
-        "loom.core.job.callback",
     ),
     "configure_delegation": (
         _IDENTITY,

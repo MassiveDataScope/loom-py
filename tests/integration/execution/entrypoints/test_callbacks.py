@@ -15,7 +15,7 @@ import pytest
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.execution import current_execution
-from loom.core.job.callback import run_on_failure, run_on_success
+from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.use_case.factory import UseCaseFactory
@@ -78,11 +78,11 @@ class TestInlineCallbacks:
         assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
 
-class TestCallbackRunners:
-    """``run_on_success`` / ``run_on_failure``: the one way loom builds and calls a callback.
+class TestNotify:
+    """``notify``: how loom builds and calls a callback, as the caller acting where it runs.
 
-    They act as the caller acting where they run: the one the inline dispatch
-    or the Celery link envelope installed, the dispatcher's.
+    That caller is the one the inline dispatch or the Celery link envelope
+    installed, the dispatcher's.
     """
 
     @CALLBACKS
@@ -90,8 +90,15 @@ class TestCallbackRunners:
         self, factory: UseCaseFactory, callback_log: CallbackLog, callback: type[AcmeCallback]
     ) -> None:
         with acting_as(ALICE):
-            await run_on_success(factory, callback, "acme-job", None, {})
-            await run_on_failure(factory, callback, "acme-job", "LookupError", "acme", {})
+            await notify(factory, callback, CallbackOutcome.SUCCESS, job_id="acme-job", result=None)
+            await notify(
+                factory,
+                callback,
+                CallbackOutcome.FAILURE,
+                job_id="acme-job",
+                exc_type="LookupError",
+                exc_msg="acme",
+            )
             assert current_execution() is None
 
         assert callback_log == [
@@ -105,7 +112,9 @@ class TestCallbackRunners:
         self, factory: UseCaseFactory, callback_log: CallbackLog
     ) -> None:
         with acting_as(ALICE):
-            await run_on_success(factory, AcmeCallerCallback, "acme-job", None, {})
+            await notify(
+                factory, AcmeCallerCallback, CallbackOutcome.SUCCESS, job_id="acme-job", result=None
+            )
 
         assert callback_log == [("caller", AS_ALICE)]
 
@@ -113,7 +122,9 @@ class TestCallbackRunners:
         self, factory: UseCaseFactory
     ) -> None:
         with pytest.raises(Unauthenticated, match="identity="):
-            await run_on_success(factory, AcmeCallerCallback, "acme-job", None, {})
+            await notify(
+                factory, AcmeCallerCallback, CallbackOutcome.SUCCESS, job_id="acme-job", result=None
+            )
 
     async def test_past_the_dispatcher_s_deadline_nothing_is_built(
         self, factory: UseCaseFactory, callback_log: CallbackLog
@@ -122,6 +133,8 @@ class TestCallbackRunners:
             acting_as(ALICE, until=time.time() - 1),
             pytest.raises(Unauthenticated, match="system identity"),
         ):
-            await run_on_success(factory, AcmeCallback, "acme-job", None, {})
+            await notify(
+                factory, AcmeCallback, CallbackOutcome.SUCCESS, job_id="acme-job", result=None
+            )
 
         assert callback_log == []

@@ -3,21 +3,21 @@
 Use cases and jobs are built by ``RuntimeExecutor.run``, which receives the
 factory's ``build`` and calls it inside the execution it opens; no adapter
 calls ``factory.build(...)`` itself. The one other builder is a job callback,
-built inside ``callback_execution()`` (D7). Any other ``.build(`` call on a
-factory is a site that builds before the execution exists (spec 011 S1).
+built inside ``with ExecutionScope(...)``. Any other ``.build(`` call on a
+factory is a site that builds before the execution exists.
 
 What the scan sees: a call ``<receiver>.build(...)`` whose receiver ends in a
 name containing ``factory`` (``factory``, ``self._factory``,
 ``application.kernel.factory``, ``use_case_factory``, ``UseCaseFactory``,
-``make_factory()``), unless it is lexically inside ``with
-callback_execution()``, plain or attribute-qualified
-(``callback.callback_execution()``). ``.build(`` on anything else (a registry, a
-span identity, a repository builder) is not a factory and is ignored.
+``make_factory()``), unless it is lexically inside ``with ExecutionScope(...)``,
+plain or attribute-qualified (``execution.ExecutionScope(...)``). ``.build(`` on
+anything else (a registry, a span identity, a repository builder) is not a
+factory and is ignored.
 
 Limits: a factory reached under a name without ``factory`` in it, a bound
 method stored and called later (``build = factory.build; build(X)``, which is
 how the executor receives it, on purpose), ``getattr(factory, "build")`` and a
-``with`` entered through a variable (``scope = callback_execution(); with
+``with`` entered through a variable (``scope = ExecutionScope(caller); with
 scope:``) are not followed.
 """
 
@@ -56,19 +56,19 @@ def _is_factory_build(node: ast.AST) -> bool:
     return name is not None and "factory" in name.lower()
 
 
-def _opens_callback_execution(node: ast.With) -> bool:
+def _opens_an_execution(node: ast.With) -> bool:
     return any(
         isinstance(item.context_expr, ast.Call)
-        and _last_name(item.context_expr.func) == "callback_execution"
+        and _last_name(item.context_expr.func) == "ExecutionScope"
         for item in node.items
     )
 
 
 def _builds_outside(node: ast.AST, *, inside: bool) -> Iterator[int]:
-    """Line of each factory ``.build(`` call not lexically inside ``with callback_execution()``."""
+    """Line of each factory ``.build(`` call not lexically inside ``with ExecutionScope(...)``."""
     if _is_factory_build(node) and not inside:
         yield node.lineno  # type: ignore[attr-defined]
-    opened = inside or (isinstance(node, ast.With) and _opens_callback_execution(node))
+    opened = inside or (isinstance(node, ast.With) and _opens_an_execution(node))
     for child in ast.iter_child_nodes(node):
         yield from _builds_outside(child, inside=opened)
 
@@ -89,7 +89,7 @@ class TestBuildCallSites:
     def test_every_factory_build_runs_inside_an_execution(self, offending: list[str]) -> None:
         assert offending == []
 
-    def test_the_scan_flags_a_build_on_any_factory_outside_a_callback_execution(self) -> None:
+    def test_the_scan_flags_a_build_on_any_factory_outside_an_execution_scope(self) -> None:
         sample = ast.parse(
             "factory.build(A)\n"
             "self._factory.build(B)\n"
@@ -101,13 +101,13 @@ class TestBuildCallSites:
 
         assert list(_builds_outside(sample, inside=False)) == [1, 2, 3, 4, 5, 6]
 
-    def test_the_scan_accepts_a_build_inside_a_plain_or_qualified_callback_execution(
+    def test_the_scan_accepts_a_build_inside_a_plain_or_qualified_execution_scope(
         self,
     ) -> None:
         sample = ast.parse(
-            "with callback_execution():\n"
+            "with ExecutionScope(caller, what='A'):\n"
             "    self._factory.build(A)\n"
-            "with callback.callback_execution():\n"
+            "with lock, execution.ExecutionScope(caller):\n"
             "    factory.build(B)\n"
         )
 

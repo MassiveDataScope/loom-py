@@ -529,9 +529,12 @@
     a callback declaring `Caller()` fails closed.
   - Signatures: `encode_job_message(..., until=None)` writes the deadline;
     `job_context(trace_id, identity)` reads it from the identity.
-    `run_on_success`, `run_on_failure` and `callback_execution()`
-    keep their signatures: the callback acts as the caller acting where it
-    runs, which the inline dispatch and the Celery link install.
+    `loom.core.job.callback.notify(factory, callback_type, outcome,
+    **arguments)` builds a callback and calls its hook for a
+    `CallbackOutcome` (`SUCCESS`, `FAILURE`): the callback acts as the
+    caller acting where it runs, which the inline dispatch and the Celery
+    link install. `ExecutionScope(identity, what=...)` names what runs in
+    the switch report.
     `loom.core.identity` adds `Acting` (the value behind the tokens of
     `set_identity` and `enter`; `Acting.current().refuse_expired()` refuses
     a caller past its deadline), `Delegation` (`Delegation.of(caller,
@@ -818,8 +821,10 @@
   inline, Celery sync and async) are built and called inside an execution
   acting as the identity captured when the job was dispatched, which the
   inline dispatch and the Celery link install
-  (`loom.core.job.callback.callback_execution()`), opened in the
-  task thread or inside the coroutine the worker's async bridge runs: a
+  (`loom.core.job.callback.notify`), in the task thread for a sync hook or
+  inside the coroutine the worker's async bridge runs for an async one, the
+  link's caller installed there too (no context variable needs to cross
+  the bridge): a
   constructor `Caller()`, a handle, row-level security and a job the callback
   dispatches see the dispatcher, where a constructor `Caller()` raised
   `ExecutionRequired`. A dispatch with no caller gives its callbacks none
@@ -1081,6 +1086,35 @@
 
 ### jobs
 
+- **jobs:** an inline dispatch drained outside any work while its
+  dispatcher acts again resumes the captured delegation, ending at the
+  earlier of the captured deadline and the deadline of the caller acting;
+  before, it ran under the deadline of the caller acting, so a later
+  delegation of the same caller extended it.
+- **jobs:** an inline callback whose sync `on_success` or `on_failure`
+  returns an awaitable has it awaited inside the callback's execution.
+- **jobs:** a Celery async callback installs its link's trace and caller in
+  the coroutine the worker's async bridge runs, not only in the task
+  thread. A Celery failure callback reads the failed job's exception from
+  the result backend inside its span, once its link's caller has passed the
+  deadline check: a link past its deadline reads nothing.
+- **jobs:** a dispatch that attaches `on_success` or `on_failure` refuses,
+  with `ValueError` naming the key, a payload holding `job_id`, `result`,
+  `exc_type` or `exc_msg`, in `InlineJobService`, `CeleryJobService` and
+  `RecordingJobService`. Before, the payload overwrote the arguments of a
+  Celery callback, and an inline success callback raised `TypeError` and
+  then ran `on_failure` for a job that succeeded.
+- **jobs:** a Celery callback task decides whether an async hook may fall
+  back to `asyncio.run` per request, like the job task: `request.is_eager`
+  first, then `task_always_eager`. `task.apply()` now falls back without
+  `task_always_eager` set. On the worker, the link's `job_id`, `result`,
+  `exc_type` and `exc_msg` always reach the hook, whatever the link's
+  `context` holds.
+- **jobs:** a Celery callback whose plain `def` hook returns an awaitable
+  raises `TypeError` and closes it, instead of dropping it unawaited.
+- **jobs:** an inline dispatch drained inside work already acting as its
+  dispatcher is refused (`DelegationExpired`) once the captured deadline has
+  passed, even when that work started the dispatcher afresh.
 - **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,
   so the API process now honours them too; before, only the Celery and Lambda
   SQS workers did.

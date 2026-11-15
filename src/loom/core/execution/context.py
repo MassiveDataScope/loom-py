@@ -7,15 +7,11 @@ published as the ``work`` of the acting identity of :mod:`loom.core.identity`,
 beside who it acts as: :func:`enter` fixes both, for the execution and every
 task it starts, in one value. Handles read the identity through
 :func:`execution_identity` when they are called, never when they are built.
-The rules live where they apply: fresh contexts and the
-switch rule in :func:`enter`, closing in :func:`leave`, failing closed in
-:func:`execution_identity`, singleton construction in :class:`NoExecution`.
 
 This module writes the carrier of :mod:`loom.core.identity` (``_acting``)
 itself: to enter an execution with
 :meth:`~loom.core.identity.Acting.pinned_for`, to leave it, to act as no one
 in :class:`NoExecution`, and to close a context after a token misuse.
-``tests/unit/test_layers.py`` restricts that write to this module.
 
 Concurrency:
     The context follows :mod:`contextvars`: a task created during an execution
@@ -401,6 +397,7 @@ class ExecutionScope:
 
     Args:
         identity: The identity the body runs as; ``None`` for no caller.
+        what: What the body runs, for the switch report.
 
     Example::
 
@@ -408,16 +405,17 @@ class ExecutionScope:
             reply = acme_agent.ask("Summarise invoice 42")
     """
 
-    __slots__ = ("_identity", "_token")
+    __slots__ = ("_identity", "_token", "_what")
 
-    def __init__(self, identity: Identity | None) -> None:
+    def __init__(self, identity: Identity | None, *, what: str = "ExecutionScope") -> None:
         self._identity = identity
+        self._what = what
         self._token: Token[Acting] | None = None
 
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("This ExecutionScope is already open")
-        self._token = enter(self._identity, "ExecutionScope")
+        self._token = enter(self._identity, self._what)
 
     def __exit__(
         self,

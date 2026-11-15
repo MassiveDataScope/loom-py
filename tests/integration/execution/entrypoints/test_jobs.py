@@ -6,6 +6,7 @@ The job runner is the transport-neutral body the Celery worker and the Lambda
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable
@@ -16,7 +17,7 @@ import pytest
 
 from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import PostCommitError, Unauthenticated
+from loom.core.errors import DelegationExpired, PostCommitError, Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
 from loom.core.identity.wire import encode_identity
@@ -189,6 +190,51 @@ class TestAQueuedDispatch:
         assert isinstance(failure, Unauthenticated)
         assert callback_log == []
 
+    async def test_flushed_under_a_later_delegation_of_its_dispatcher_keeps_the_captured_deadline(
+        self,
+        factory: UseCaseFactory,
+        executor: RuntimeExecutor,
+        callback_log: CallbackLog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Alice acting again with a fresh window does not extend the dispatch's delegation."""
+        soon = time.time() + 5
+        with acting_as(ALICE, until=soon):
+            InlineJobService(factory, executor).dispatch(
+                AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
+            )
+        monkeypatch.setattr(time, "time", lambda: soon + 1)
+
+        with acting_as(ALICE), pytest.raises(PostCommitError) as refused:
+            await flush_pending_dispatches()
+
+        [failure] = refused.value.failures
+        assert isinstance(failure, Unauthenticated)
+        assert callback_log == []
+
+    async def test_flushed_by_a_task_outliving_work_switched_back_to_its_dispatcher_is_refused(
+        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+    ) -> None:
+        """Alice's expired dispatch stays expired inside work that started her afresh."""
+        with acting_as(ALICE, until=time.time() - 1):
+            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_failure=AcmeCallback)
+        released = asyncio.Event()
+
+        async def flush_later() -> None:
+            await released.wait()
+            await flush_pending_dispatches()
+
+        with ExecutionScope(BOB), ExecutionScope(ALICE):
+            outlived = asyncio.create_task(flush_later())
+        released.set()
+
+        with pytest.raises(PostCommitError) as refused:
+            await outlived
+
+        [failure] = refused.value.failures
+        assert isinstance(failure, DelegationExpired)
+        assert callback_log == []
+
     async def test_drained_inside_work_acting_as_its_dispatcher_runs(
         self, pending: list[Callable[[], Awaitable[None]]], callback_log: CallbackLog
     ) -> None:
@@ -225,6 +271,23 @@ class TestADispatchWithNoCaller:
         await kept[0]()
 
         assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
+
+    async def test_drained_inside_work_acting_as_someone_never_runs_as_them(
+        self,
+        factory: UseCaseFactory,
+        executor: RuntimeExecutor,
+        callback_log: CallbackLog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
+        kept: list[Callable[[], Awaitable[None]]] = []
+        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+        InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_success=AcmeCallback)
+
+        with ExecutionScope(ALICE), pytest.raises(IdentityFixed):
+            await kept[0]()
+
+        assert callback_log == []
 
     async def test_inline_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
