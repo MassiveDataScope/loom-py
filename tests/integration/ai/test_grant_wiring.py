@@ -35,7 +35,8 @@ from loom.ai.declarative import (
     JsonSchemaOutput,
     McpCapability,
 )
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _capabilities
+from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.inference import InferenceTarget
 from loom.ai.runtime import AgentRuntime
 from loom.core.di import LoomContainer
@@ -191,7 +192,7 @@ class TestGrantMcp:
         from pydantic_ai.toolsets import FunctionToolset
 
         monkeypatch.setattr(
-            _capabilities, "_mcp_server", lambda capability, context: FunctionToolset([])
+            SharedMcpToolsets, "for_build", lambda shared, capability, agent: FunctionToolset([])
         )
 
     async def test_the_runtime_starts_when_the_artifact_grants_mcp(self) -> None:
@@ -220,7 +221,7 @@ class TestCombinedGrants:
         from pydantic_ai.toolsets import FunctionToolset
 
         monkeypatch.setattr(
-            _capabilities, "_mcp_server", lambda capability, context: FunctionToolset([])
+            SharedMcpToolsets, "for_build", lambda shared, capability, agent: FunctionToolset([])
         )
 
     async def test_the_runtime_starts_when_the_artifact_grants_both(self) -> None:

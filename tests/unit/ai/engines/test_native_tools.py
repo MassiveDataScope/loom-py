@@ -87,7 +87,7 @@ class TestBuildingNativeCapabilities:
 
         # The plan doubles are structural, not subclasses.
         # Pre-existing: the AI test tree is not under pyright (task A7).
-        built = build_capabilities(_Plan("web_search", "code_execution"), LoomContainer())  # pyright: ignore[reportArgumentType]
+        built = build_capabilities(_Plan("web_search", "code_execution"))  # pyright: ignore[reportArgumentType]
 
         assert [type(capability.tool) for capability in built] == [  # pyright: ignore[reportAttributeAccessIssue]
             WebSearchTool,
@@ -96,7 +96,7 @@ class TestBuildingNativeCapabilities:
 
     def test_builds_nothing_when_the_plan_grants_none(self) -> None:
         """A plan without native grants leaves the engine call untouched."""
-        assert build_capabilities(_Plan(), LoomContainer()) == ()  # pyright: ignore[reportArgumentType]
+        assert build_capabilities(_Plan()) == ()  # pyright: ignore[reportArgumentType]
 
     def test_the_native_grant_produces_no_toolset_and_arrives_as_a_capability(self) -> None:
         """A native grant is served as an engine capability, never as a toolset."""
@@ -109,7 +109,7 @@ class TestBuildingNativeCapabilities:
         plan = _NativePlan()
 
         assert build_toolsets(plan, LoomContainer(), mcp=SharedMcpToolsets()) == ()  # pyright: ignore[reportArgumentType]
-        assert len(build_capabilities(plan, LoomContainer())) == 1  # pyright: ignore[reportArgumentType]
+        assert len(build_capabilities(plan)) == 1  # pyright: ignore[reportArgumentType]
 
 
 class TestTheNativeToolOracle:
@@ -182,10 +182,9 @@ class TestAnnouncedCapabilityKinds:
             capabilities = (cast("CompiledCapability", _Unserved()),)
 
         plan = _PlanWithUnserved()
-        container = LoomContainer()
 
         with pytest.raises(AgentCompilationError, match="telepathy") as failure:
-            build_capabilities(plan, container)  # type: ignore[arg-type]
+            build_capabilities(plan)  # type: ignore[arg-type]
 
         assert [issue.code for issue in failure.value.issues] == [
             AgentErrorCode.CAPABILITY_KIND_NO_BUILDER

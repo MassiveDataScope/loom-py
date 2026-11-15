@@ -173,7 +173,6 @@ class CeleryJobService:
 
         service = CeleryJobService(celery_app, factory=factory, executor=executor)
         handle = service.dispatch(SendEmailJob, payload={"user_id": 1})
-        # actual send_task happens after UoW commit via flush
     """
 
     def __init__(

@@ -29,14 +29,14 @@ from loom.ai.errors import (
     run_error_class,
 )
 from loom.ai.runtime import AgentRunError, AgentRuntime
-from loom.ai.runtime._bounded import RunContext
-from loom.ai.runtime._conversation import load_conversation
+from loom.ai.runtime._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.use_case import Caller, Input, UseCase
+from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.keys import use_case_key
 from tests.integration.ai.conftest import (
     DEFAULT_USAGE,
@@ -356,15 +356,16 @@ class TestLoaderExecution:
     ) -> None:
         """A run context retained for one caller loads its conversation as whoever acts."""
         other = Identity(subject="acme-other", roles=("analyst",), mechanism="test")
-        run = RunContext(
+        turn = TurnCallbacks(
             plan=_plan(),
             identity=identity,
             interaction_id="acme-interaction",
             conversation_id="c-42",
+            invoker=container.resolve(ApplicationInvoker),
         )
 
         with ExecutionScope(other):
-            conversation = await load_conversation(run, container)
+            conversation = await turn.conversation()
 
         assert conversation == Conversation(conversation_id="c-42", history=_HISTORY)
         assert [call.caller for call in loader.calls] == [other]
@@ -625,7 +626,7 @@ class TestLoaderFailures:
 
         async with runtime:
             with (
-                caplog.at_level(logging.ERROR, logger="loom.ai.runtime._bounded"),
+                caplog.at_level(logging.ERROR, logger="loom.ai.runtime._turn"),
                 pytest.raises(AgentRunError) as failure,
             ):
                 await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
@@ -639,7 +640,7 @@ class TestLoaderFailures:
         records = [
             record
             for record in caplog.records
-            if record.name == "loom.ai.runtime._bounded" and record.levelno == logging.ERROR
+            if record.name == "loom.ai.runtime._turn" and record.levelno == logging.ERROR
         ]
         assert len(records) == 1
         assert records[0].exc_text is not None

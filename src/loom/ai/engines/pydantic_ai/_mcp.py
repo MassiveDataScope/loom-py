@@ -50,7 +50,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 
 from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
-from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome, classify
+from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
@@ -91,13 +91,7 @@ def _sdk() -> _McpSdk:
 
 
 DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
-"""Fallback handshake deadline, seconds, matching
-:attr:`~loom.ai.config.AiConfig.startup_timeout_ms`'s own default. Production
-never relies on this: the composition root always hands
-:class:`SharedMcpToolsets` the deployment's real ``ai.startup_timeout_ms``.
-Used only by a direct construction — a test, a diagnostic — so it still
-carries a deadline rather than falling through to
-:class:`~pydantic_ai.mcp.MCPToolset`'s own ``5``-second default."""
+"""Handshake deadline, seconds, of a :class:`SharedMcpToolsets` built without one."""
 
 
 @dataclass(eq=False)
@@ -131,43 +125,63 @@ class _OpenToolset:
         transport = getattr(getattr(toolset, "client", None), "transport", None)
         return cls(toolset, getattr(transport, "pool", None), held=held)
 
+    async def shut(self) -> None:
+        """Release the session's entry of the toolset and its pool; calls still in flight are cut.
+
+        A close never raises: a toolset whose transport died raises from its
+        force-close or its exit, and neither stops the steps after it.
+        """
+        try:
+            try:
+                if self.in_flight:
+                    await self.toolset.client.close()  # type: ignore[no-untyped-call]
+            finally:
+                if self.held:
+                    await self.toolset.__aexit__(None, None, None)
+        except Exception:
+            _logger.warning("an mcp session did not close cleanly", exc_info=True)
+        await self._release()
+
+    @classmethod
+    async def entered(cls, toolset: MCPToolset[Any]) -> _OpenToolset:
+        """Enter a freshly built toolset and hold it.
+
+        Args:
+            toolset: The toolset to connect.
+
+        Returns:
+            The held toolset.
+
+        Raises:
+            BaseException: Whatever entering raised, after the pool it made is released.
+        """
+        held = cls.of(toolset)
+        try:
+            await toolset.__aenter__()
+        except BaseException:
+            await held._release()
+            raise
+        return held
+
+    async def _release(self) -> None:
+        if self.pool is None:
+            return
+        try:
+            await self.pool.release()
+        except Exception:
+            _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
+
 
 class _ToolsetSession(ConcurrentMcpSession):
-    """Adapts a connected ``MCPToolset`` to the runtime's session contract.
+    """Adapts a connected ``MCPToolset`` to a concurrent :class:`~loom.ai.abc.McpSession`.
 
-    The runtime asks a session for two things only — the tool names a server
-    exposes, and one tool call — so the adapter is the narrowing of the
-    toolset's much wider surface down to
-    :class:`~loom.ai.runtime.McpSession`. It subclasses
-    :class:`~loom.ai.abc.ConcurrentMcpSession` because the underlying
-    ``fastmcp`` client multiplexes concurrent calls by request id rather
-    than writing straight through a single unmatched stream, so the runtime
-    does not need to serialise calls made through this adapter with a second
-    lock. ``MCPToolset`` itself only reference-counts ``__aenter__`` /
-    ``__aexit__`` to decide when the connection opens and closes; that is a
-    connection-lifecycle concern, not what makes concurrent calls safe.
-
-    A failed call is classified (:func:`~._failures.classify`). One the
-    server answered passes through unchanged. One that provably never ran — the
-    server no longer knows the session — is sent once more on a renewed
-    toolset. Any other may have run on the server: it is raised as
-    :class:`~._failures.McpCallInterrupted`, never repeated, and the next call
-    renews first.
-
-    A renewal retires the toolset it replaces rather than closing it under a
-    call still in flight there; the last such call to return hands its close
-    off, so the call's own result and deadline are never touched by it. At
-    most two toolsets are open: a renewal that finds an earlier one still
-    draining closes it first, cutting the calls left on it. Every close runs in
-    a task of its own, so a caller cancelled while waiting for one never
-    leaves it half done, and :meth:`aclose` waits for all of them. A closed
-    session refuses every later call. The freeze check lives in the toolset's
-    pool (:class:`~._transport.EvictableTransport`), which sees every caller.
-
-    A session that does not hold its toolset -- one over a connection start-up
-    could not open -- keeps nothing connected: each use enters the toolset and
-    leaves it, so its first use connects, and a renewal swaps in a toolset it
-    does not hold either.
+    A failed call the server answered passes through unchanged; one that
+    provably never ran is sent once more on a renewed toolset; any other is
+    raised as :class:`~._failures.McpCallInterrupted` and the next call renews
+    first.  A renewal retires the toolset it replaces, which closes once its
+    last call in flight returns; at most two toolsets are open.  A closed
+    session refuses every later call.  A session that does not hold its
+    toolset enters and leaves it on each use.
 
     Args:
         toolset: The toolset speaking to one server. When *held*, it is already
@@ -196,12 +210,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         """Return the toolset to speak through, replacing a suspect one at most once.
 
         A renewal that cannot connect raises and leaves the suspect in place,
-        so the next call tries again. The session may close while a call waits
-        for the renewal, so it is checked again before the toolset is handed out.
-
-        No ``client.is_connected()`` check runs first: over streamable HTTP it
-        stays true through a server restart, so it would never catch the dead
-        connection it is meant for; the pool's freeze drop and the safe retry do.
+        so the next call tries again.
 
         Raises:
             RuntimeError: When the session is closed.
@@ -243,7 +252,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
     async def _listed(self, toolset: MCPToolset[Any]) -> _OpenToolset:
         """Enter *toolset* and list its tools; one that cannot is closed again."""
-        fresh = await _entered_toolset(toolset)
+        fresh = await _OpenToolset.entered(toolset)
         try:
             await fresh.toolset.list_tools()
         except BaseException:
@@ -253,7 +262,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
     def _close(self, held: _OpenToolset) -> asyncio.Task[None]:
         """Close *held* in a task of its own, tracked until it is done."""
-        task = asyncio.create_task(_shut(held))
+        task = asyncio.create_task(held.shut())
         self._closing.add(task)
         task.add_done_callback(self._closing.discard)
         return task
@@ -328,7 +337,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
         Every caller goes through here -- a grant view's call, a listing, the
         model's own tool call -- so they share one renewal, one in-flight count
-        and one classification (:func:`~._failures.classify`). A failure the
+        and one classification (:meth:`~._failures.Outcome.of`). A failure the
         server answered passes through unchanged; one that never ran is sent
         once more on a renewed toolset; any other may have run, and is raised
         as :class:`~._failures.McpCallInterrupted`.
@@ -348,7 +357,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            outcome = classify(exc)
+            outcome = Outcome.of(exc)
             if self._rebuild is None or outcome is not Outcome.SAFE:
                 _raise_failure(held, exc, name, outcome)
             held.suspect = True
@@ -356,7 +365,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            _raise_failure(held, exc, name, classify(exc))
+            _raise_failure(held, exc, name, Outcome.of(exc))
 
     async def tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """The live toolset's tools for an agent run; a listing never renews.
@@ -468,44 +477,6 @@ def _raise_failure(
         raise exc
     held.suspect = True
     raise McpCallInterrupted(name) from exc
-
-
-async def _entered_toolset(toolset: MCPToolset[Any]) -> _OpenToolset:
-    """Enter a freshly built toolset; one that cannot connect releases the pool it made."""
-    held = _OpenToolset.of(toolset)
-    try:
-        await toolset.__aenter__()
-    except BaseException:
-        await _released(held)
-        raise
-    return held
-
-
-async def _shut(held: _OpenToolset) -> None:
-    """Release a session's entry of a toolset and its pool; calls still in flight are cut.
-
-    A close never raises: a toolset whose transport died raises from its
-    force-close or its exit, and neither stops the steps after it.
-    """
-    try:
-        try:
-            if held.in_flight:
-                await held.toolset.client.close()  # type: ignore[no-untyped-call]
-        finally:
-            if held.held:
-                await held.toolset.__aexit__(None, None, None)
-    except Exception:
-        _logger.warning("an mcp session did not close cleanly", exc_info=True)
-    await _released(held)
-
-
-async def _released(held: _OpenToolset) -> None:
-    if held.pool is None:
-        return
-    try:
-        await held.pool.release()
-    except Exception:
-        _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
 
 
 def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float) -> MCPToolset[Any]:
@@ -885,7 +856,7 @@ async def _entered(
     toolset: MCPToolset[Any], *, rebuild: Callable[[], MCPToolset[Any]] | None = None
 ) -> AsyncIterator[_ToolsetSession]:
     """Enter *toolset* and hand that entry to a session, which closes all it holds on exit."""
-    await _entered_toolset(toolset)
+    await _OpenToolset.entered(toolset)
     session = _ToolsetSession(toolset, rebuild=rebuild)
     try:
         yield session

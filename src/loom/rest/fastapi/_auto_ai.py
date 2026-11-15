@@ -100,7 +100,7 @@ def _agents_bound_to_a_verified_caller(ai_cfg: AiConfig) -> tuple[str, ...]:
     http = {
         name
         for name, endpoint in ai_cfg.endpoints.items()
-        if endpoint.enabled and endpoint.auth.strip() and not endpoint.allow_anonymous
+        if endpoint.active and not endpoint.allow_anonymous
     }
     a2a = {name for name in _a2a_exposed(ai_cfg) if not _a2a_allows_anonymous(ai_cfg, name)}
     return tuple(sorted(http | a2a))
@@ -117,7 +117,5 @@ def _a2a_allows_anonymous(ai_cfg: AiConfig, name: str) -> bool:
     a disabled or unnamed-``auth`` stanza grants nothing, so its
     ``allow_anonymous`` does not travel to the A2A surface either.
     """
-    endpoint = ai_cfg.endpoints.get(name)
-    if endpoint is None or not endpoint.enabled or not endpoint.auth.strip():
-        return False
-    return endpoint.allow_anonymous
+    endpoint = ai_cfg.active_endpoint(name)
+    return endpoint is not None and endpoint.allow_anonymous

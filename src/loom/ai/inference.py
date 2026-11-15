@@ -42,7 +42,7 @@ OUTPUT_MODES: Final[tuple[OutputMode, ...]] = get_args(OutputMode)
 """Values ``InferenceTarget.output_mode`` accepts, derived from :data:`OutputMode`."""
 
 _REDACTED: Final = "<redacted>"
-"""Placeholder shown in place of a secret-bearing value (FR-018)."""
+"""Placeholder shown in place of a secret-bearing value."""
 
 
 class _RedactedRef(str):

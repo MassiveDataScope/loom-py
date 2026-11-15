@@ -156,7 +156,9 @@ class RuntimeExecutor:
         if self._agent_resolver is not None:
             raise RuntimeError("RuntimeExecutor.bind_agent_resolver() called more than once")
         bound = (
-            resolver if isinstance(resolver, ExecutionResolver) else _Legacy(resolver, ("name",))
+            resolver
+            if isinstance(resolver, ExecutionResolver)
+            else _PositionalResolver(resolver, ("name",))
         )
         self._kinds.bind(AGENT, bound)
         self._agent_resolver = resolver
@@ -183,7 +185,7 @@ class RuntimeExecutor:
         bound = (
             resolver
             if isinstance(resolver, ExecutionResolver)
-            else _Legacy(resolver, ("server", "include"))
+            else _PositionalResolver(resolver, ("server", "include"))
         )
         self._kinds.bind(MCP, bound)
         self._mcp_resolver = resolver
@@ -452,8 +454,8 @@ def _handed_instance(compilable: Compilable) -> Compilable:
     return compilable
 
 
-class _Legacy:
-    """Calls a legacy resolver with the declaration's *fields*, then the execution identity.
+class _PositionalResolver:
+    """Calls a positional resolver with the declaration's *fields*, then the execution identity.
 
     Building one emits a :class:`DeprecationWarning`.
     """

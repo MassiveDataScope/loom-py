@@ -43,7 +43,6 @@ from loom.ai.engines.pydantic_ai._guards import BuildContext
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE
 from loom.ai.runtime._handle import McpMarkerResolver, _AgentHandle
 from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
@@ -547,8 +546,11 @@ class TestTheGrantViews:
                 with pytest.raises(AgentRunError) as from_handle:
                     await handle.call_untyped("echo", {"text": "handle"})
 
-        assert from_marker.value.code is from_handle.value.code is INTERRUPTED_CALL_CODE
-        assert INTERRUPTED_CALL_CODE is AgentRunErrorCode.MCP_CALL_INTERRUPTED  # owner, decision A
+        assert (
+            from_marker.value.code
+            is from_handle.value.code
+            is AgentRunErrorCode.MCP_CALL_INTERRUPTED
+        )
         assert server.runs["echo"] == 2
 
 

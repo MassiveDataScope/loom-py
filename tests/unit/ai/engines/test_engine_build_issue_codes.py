@@ -6,9 +6,12 @@ import pytest
 
 from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.compiler._plan import CompiledUsecaseCapability
-from loom.ai.engines.pydantic_ai._capabilities import _grant
+from loom.ai.engines.pydantic_ai._capabilities import build_toolsets
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._schemas import reject_unusable_names
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.core.di import LoomContainer
+from tests.integration.ai.conftest import make_plan
 
 _AGENT = "searcher"
 
@@ -53,7 +56,19 @@ class TestEngineBuildIssueCodes:
             __execution_plan__ = None
 
         with pytest.raises(AgentCompilationError) as failure:
-            _grant("orders.create", _NeverCompiled)  # type: ignore[arg-type]
+            build_toolsets(
+                make_plan(
+                    _AGENT,
+                    capabilities=(
+                        CompiledUsecaseCapability(
+                            keys=("orders.create",),
+                            use_cases=(_NeverCompiled,),  # type: ignore[arg-type]
+                        ),
+                    ),
+                ),
+                LoomContainer(),
+                mcp=SharedMcpToolsets(),
+            )
 
         assert _only_issue(failure) == (
             AgentErrorCode.USECASE_NOT_COMPILED,

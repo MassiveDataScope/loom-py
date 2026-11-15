@@ -23,6 +23,7 @@ from loom.ai.abc import (
     Conversation,
     ErrorEvent,
     FinalEvent,
+    HealthState,
     HealthStatus,
     Prompt,
     TextDeltaEvent,
@@ -181,7 +182,7 @@ class FakeAgentEngine:
         Returns:
             Always ``"ok"``: the fake has no dependency that could degrade.
         """
-        return HealthStatus(status="ok")
+        return HealthStatus(status=HealthState.OK)
 
     @asynccontextmanager
     async def _stream(self) -> AsyncIterator[AsyncIterator[AgentEvent]]:

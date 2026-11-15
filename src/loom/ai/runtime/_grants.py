@@ -1,37 +1,10 @@
 """The grant views an :class:`~loom.ai.abc.AgentHandle` exposes.
 
-``McpGrantView`` and ``SqlGrantView`` reach exactly what the artefact already
-grants and what the runtime already opened — never a second connection and
-never a second filter:
-
-* :class:`McpGrantView` filters the tools this server's shared session
-  advertises with the same include/exclude rule
-  :func:`~loom.ai.engines.pydantic_ai._capabilities._tool_predicate` applies
-  to the model's own toolset, over the same
-  :class:`~loom.ai.abc.McpSession` :class:`~loom.ai.runtime.AgentRuntime`
-  opened at start-up — serialised behind
-  :class:`~loom.ai.runtime._mcp.SharedMcpSession` unless it declares itself
-  already safe for concurrent calls (see
-  :func:`~loom.ai.runtime._mcp.mcp_session_for`). There is no second filter
-  that could diverge from the model's, because there is no second filter.
-* :class:`SqlGrantView` runs under the grant's own row and byte bounds, with
-  roles resolved from the verified caller through
-  :func:`~loom.ai._roles.bound_query_roles` — the one place that binding
-  lives, called by the model's own ``sql`` capability too, with no
-  caller-supplied role.
-
-Both bound one call by a deadline, inside a span — the agent path by the
-plan's own ``tool_timeout_ms``, the ``Mcp()`` marker path by the
-server's own ``timeout_ms``, since a marker-driven call has no plan for
-``tool_timeout_ms`` to belong to. The span carries ``agent`` or
-``mcp_server`` depending on which path resolved the view
-(``span_attributes``), never both — the neutral counterpart of
-:func:`~loom.ai.engines.pydantic_ai._guards.capability_call`, since this
-package stays free of any one engine. What is deliberately **not** carried
-over from the model-facing path is turning a failure into a refusal *value*
-(:func:`~loom.ai.engines.pydantic_ai._guards.guarded`): that exists so a model
-can read a refusal and try again, and the consumer of a grant view is
-application code, which reads an exception instead.
+:class:`McpGrantView` calls the server's shared session through the grant's
+own include/exclude filter; :class:`SqlGrantView` queries under the grant's
+row and byte bounds with roles resolved from the identity acting.  Both bound
+one call by a deadline, inside a ``Scope.TOOL`` span, and raise their
+failures.
 """
 
 from __future__ import annotations
@@ -40,12 +13,11 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import msgspec
 
 from loom.ai._filters import admits
-from loom.ai._roles import bound_query_roles
 from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
@@ -58,17 +30,6 @@ from loom.core.sql.abc import SqlQueryResult
 from loom.core.sql.service import SqlQueryService
 
 _T = TypeVar("_T")
-
-INTERRUPTED_CALL_CODE: Final = AgentRunErrorCode.MCP_CALL_INTERRUPTED
-"""The code an interrupted call reaches a use case's ``Mcp()`` marker or ``handle.mcp`` with.
-
-The same code an agent run fails with, so every path reports it alike: the call
-may have run, so no caller retries it (owner decision A, 2026-11-12)."""
-
-
-def _tool_allowed(name: str, *, include: tuple[str, ...], exclude: tuple[str, ...]) -> bool:
-    """Same include-then-exclude rule the model's own toolset filter applies."""
-    return admits(name, include=include, exclude=exclude)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,33 +74,12 @@ class AgentGrants:
 
     @property
     def names(self) -> tuple[str, ...]:
-        """Every ``mcp`` server and ``sql`` connection this agent declares.
-
-        Every ``mcp`` server first, then every ``sql`` connection, each group
-        in declaration order. Grouped rather than interleaved so a server and a
-        connection sharing a name stay distinguishable by position, which a
-        single interleaved list cannot promise. This is the shape
-        :meth:`~loom.ai.abc.AgentHandle.grants` returns, computed rather than
-        stored, so the two underlying lists cannot drift apart from it.
-        """
+        """Every ``mcp`` server, then every ``sql`` connection, each in declaration order."""
         return (*self.mcp_names, *self.sql)
 
 
 class McpGrantView:
     """The concrete :class:`~loom.ai.abc.McpHandle` both paths return.
-
-    ``include``/``exclude`` are taken as explicit arguments rather than read
-    off ``capability`` — even though ``capability`` carries its own
-    ``include``/``exclude`` fields — because the two callers of this
-    constructor do not agree on which capability's filter applies. The
-    agent path's capability *is* the filter: it was compiled from the
-    artefact's own declaration. The use-case path's capability is the
-    shared, server-keyed substrate every ``Mcp()`` binding on that server
-    reads its session and catalogue from; its own ``include`` is
-    explicitly empty, and the caller's actual filter lives on its own
-    binding instead. Reading ``capability.include`` here would silently
-    admit the full catalogue for a use case that declared a narrower one,
-    so this view always states the filter.
 
     Args:
         span_attributes: The one caller-identifying attribute this view's
@@ -148,7 +88,7 @@ class McpGrantView:
             both.
         capability: Compiled ``mcp`` capability this view calls through;
             only its ``server`` name and ``timeout_ms`` are read here, never
-            its own ``include``/``exclude`` (see above).
+            its own ``include``/``exclude``.
         include: Glob patterns naming the tools this view admits.
         exclude: Glob patterns naming the tools this view refuses even if
             ``include`` would otherwise admit them.
@@ -184,11 +124,21 @@ class McpGrantView:
         self._tools: dict[str, McpToolInfo] = {
             info.name: info
             for info in catalogue
-            if _tool_allowed(info.name, include=include, exclude=exclude)
+            if admits(info.name, include=include, exclude=exclude)
         }
 
     def tools(self) -> tuple[str, ...]:
-        """Return the tool names this grant's own filter admits."""
+        """Return the tool names this grant's own filter admits, to the identity acting.
+
+        Returns:
+            The admitted tool names.
+
+        Raises:
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no subject.
+        """
+        require_authenticated(self._who)
         return tuple(self._tools)
 
     async def call(self, tool: str, arguments: Mapping[str, Any], *, expect: type[_T]) -> _T:
@@ -292,12 +242,7 @@ class McpGrantView:
 
     @asynccontextmanager
     async def _guard(self, tool: str, caller: Identity) -> AsyncIterator[None]:
-        """Bound one call by this view's own tool timeout, inside its own span.
-
-        A call the session reports ``MCP_CALL_INTERRUPTED`` (it may have run,
-        or was never sent, and is not repeated) reaches the use case under
-        :data:`INTERRUPTED_CALL_CODE`, with the session's own account of it.
-        """
+        """Bound one call by this view's own tool timeout, inside its own span."""
         with self._span(tool, caller):
             try:
                 async with asyncio.timeout(self._timeout_s):
@@ -307,12 +252,6 @@ class McpGrantView:
                     AgentRunErrorCode.TOOL_TIMEOUT,
                     f"tool {tool!r} of mcp server {self._capability.server!r} exceeded "
                     f"the {self._timeout_s:.3f}s tool timeout",
-                ) from exc
-            except AgentRunError as exc:
-                if exc.code is not AgentRunErrorCode.MCP_CALL_INTERRUPTED:
-                    raise
-                raise AgentRunError(
-                    INTERRUPTED_CALL_CODE, f"mcp server {self._capability.server!r}: {exc}"
                 ) from exc
 
     def _span(self, tool: str, caller: Identity) -> AbstractContextManager[None]:
@@ -370,7 +309,7 @@ class SqlGrantView:
                 or holds no role this grant allows.
         """
         caller = require_authenticated(f"sql grant {self._capability.connection!r}")
-        roles = bound_query_roles(self._capability, caller)
+        roles = self._capability.roles_of(caller)
         with self._span(roles, caller):
             result = await self._sql_query_service.execute(
                 statement,
@@ -402,21 +341,7 @@ one byte for the ``,`` joining it to the previous one."""
 def _bounded_rows(
     capability: CompiledSqlCapability, result: SqlQueryResult
 ) -> tuple[Mapping[str, Any], ...]:
-    """Turn tabular rows into mappings, truncated to the grant's byte bound.
-
-    The row bound is already enforced upstream, by passing
-    ``limit=capability.max_rows`` into the query itself; this only trims
-    trailing rows so the encoded payload never exceeds ``max_result_bytes`` —
-    the same "truncate, don't refuse" contract
-    :meth:`~loom.ai.abc.SqlGrantHandle.query` documents.
-
-    Each row is encoded exactly once and its size accumulated, rather than
-    re-encoding the whole kept list on every row: the running total is
-    arithmetically identical to ``len(msgspec.json.encode(kept))`` for a
-    compact JSON array (no whitespace between elements), so the bound this
-    reaches is the same one the naive re-encode would have found, at O(n)
-    instead of O(n^2) in the number of rows.
-    """
+    """Turn tabular rows into mappings, dropping trailing rows above ``max_result_bytes``."""
     columns = tuple(column.name for column in result.columns)
     kept: list[Mapping[str, Any]] = []
     total = _JSON_ARRAY_OVERHEAD

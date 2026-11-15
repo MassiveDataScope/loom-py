@@ -42,9 +42,7 @@ class _AlwaysStreams(AbstractCapability[Any]):
 class TestStreamingCapabilityConflict:
     @pytest.fixture
     def streaming_capability(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            _provider, "build_capabilities", lambda plan, container: (_AlwaysStreams(),)
-        )
+        monkeypatch.setattr(_provider, "build_capabilities", lambda plan: (_AlwaysStreams(),))
 
     def test_a_whole_binding_with_a_streaming_capability_fails_at_build(
         self, streaming_capability: None

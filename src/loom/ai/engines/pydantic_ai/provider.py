@@ -93,7 +93,7 @@ class PydanticAIEngineProvider:
 
     a2a_client_factory = staticmethod(create_a2a_client)
     """Client factory for ``a2a`` grants, read off the provider by the
-    composition root so it never imports this engine (FR-016, FR-051)."""
+    composition root so it never imports this engine."""
 
     def __init__(self, *, model_resolver: ModelResolver | None = None) -> None:
         self._resolve_model: ModelResolver = model_resolver or resolve_model
@@ -165,7 +165,7 @@ class PydanticAIEngineProvider:
         ensure_templating_available(plan)
         model = _with_price(self._resolve_model(plan.inference), plan)
         toolsets = build_toolsets(plan, container, mcp=self._mcp)
-        capabilities = build_capabilities(plan, container)
+        capabilities = build_capabilities(plan)
         if not plan.inference.streaming and any(
             capability.has_wrap_run_event_stream for capability in capabilities
         ):

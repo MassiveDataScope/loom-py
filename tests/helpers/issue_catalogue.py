@@ -42,6 +42,12 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
         "tests/unit/ai/compiler/test_state_phase.py::"
         "test_an_invalid_deps_schema_reports_schema_invalid",
     ),
+    "ai/runtime/_lifecycle.py::_refuse_plans_needing_an_invoker": (
+        "tests/integration/ai/test_conversation.py::"
+        "test_reports_both_codes_when_the_plan_declares_a_hook_and_a_loader",
+        "tests/integration/ai/test_capabilities.py::"
+        "test_refuses_a_plan_granting_use_cases_when_the_container_holds_no_invoker",
+    ),
     "ai/config.py::_validate_remote_url": (
         "tests/unit/ai/test_config.py::test_fails_with_mcp_url_invalid_when_the_url_is_not_safe",
         "tests/unit/ai/test_config.py::test_fails_with_a2a_url_invalid_when_the_url_is_not_safe",

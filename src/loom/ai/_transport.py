@@ -40,7 +40,7 @@ BODY_OVERHEAD_BYTES: Final[int] = 64 * 1024
 """Headroom over the declared field caps for the JSON envelope around them.
 
 The agent surface's body cap is ``max_prompt_bytes + max_state_bytes +
-BODY_OVERHEAD_BYTES`` (FR-015); anything larger is refused before buffering
+BODY_OVERHEAD_BYTES``; anything larger is refused before buffering
 beyond the cap. Every other surface using this constant has no ``state``
 field, so its own cap stays ``max_prompt_bytes + BODY_OVERHEAD_BYTES``.
 """

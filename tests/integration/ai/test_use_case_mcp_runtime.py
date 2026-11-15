@@ -143,7 +143,8 @@ class TestServerDeclaredOnlyByAUseCase:
                 timeout_s=1.0,
                 observability=None,
             )
-            assert view.tools() == ("search",)
+            with ExecutionScope(identity):
+                assert view.tools() == ("search",)
             with ExecutionScope(identity):
                 result = await view.call_untyped("search", {})
             assert result == {"hits": 3}
@@ -263,7 +264,8 @@ class TestServerSharedWithAnAgent:
                 timeout_s=1.0,
                 observability=None,
             )
-            assert agent_view.tools() == ("search",)
+            with ExecutionScope(identity):
+                assert agent_view.tools() == ("search",)
 
             use_case_grant = runtime.use_case_mcp_grant(_SERVER_A)
             assert use_case_grant is not None
@@ -279,7 +281,8 @@ class TestServerSharedWithAnAgent:
                 timeout_s=1.0,
                 observability=None,
             )
-            assert use_case_view.tools() == ("delete",)
+            with ExecutionScope(identity):
+                assert use_case_view.tools() == ("delete",)
             with ExecutionScope(identity):
                 result = await use_case_view.call_untyped("delete", {})
             assert result == {"ok": True}

@@ -31,7 +31,7 @@ _MAX_TOOL_NAME = 64
 """Longest tool name providers accept (``^[a-zA-Z0-9_-]{1,64}$``)."""
 
 _NON_TOOL_NAME = re.compile(r"\W", re.ASCII)
-"""Every character a tool name may not carry (design R2).
+"""Every character a tool name may not carry.
 
 ``re.ASCII`` keeps ``\\W`` restricted to non-``[A-Za-z0-9_]`` characters —
 provider tool names are ASCII-only, so the concise class must not treat

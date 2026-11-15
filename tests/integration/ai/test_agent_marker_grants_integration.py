@@ -330,7 +330,8 @@ class TestAgentPathIncludeIsWiredToo:
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
             handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
-            assert handle.mcp(_MCP_SERVER).tools() == ("read_orders",)
+            with ExecutionScope(_ALICE):
+                assert handle.mcp(_MCP_SERVER).tools() == ("read_orders",)
 
     async def test_the_agent_tool_span_still_says_agent_not_mcp_server(
         self, deps: StubDepsFactory, container: LoomContainer

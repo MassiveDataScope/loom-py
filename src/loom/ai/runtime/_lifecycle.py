@@ -55,6 +55,7 @@ from loom.ai.compiler._plan import (
 from loom.ai.config import AiConfig
 from loom.ai.errors import (
     INVOKER_MISSING_REASON,
+    NO_TERMINAL_MESSAGE,
     AgentCompilationError,
     AgentCompilationIssue,
     AgentErrorCode,
@@ -62,12 +63,8 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
-from loom.ai.runtime._bounded import RunContext
 from loom.ai.runtime._chain import enter_agent_call, exit_agent_call
-from loom.ai.runtime._conversation import load_conversation
 from loom.ai.runtime._grants import AgentGrants, McpGrant
-from loom.ai.runtime._health import AgentHealth, worst
-from loom.ai.runtime._hooks import hooked_events, no_terminal_message
 from loom.ai.runtime._limits import cancel_task, supervised_events
 from loom.ai.runtime._mcp import (
     FilterTarget,
@@ -79,11 +76,12 @@ from loom.ai.runtime._mcp import (
     mcp_key,
     mcp_session_for,
 )
+from loom.ai.runtime._turn import TurnCallbacks
 from loom.core.di import LoomContainer
 from loom.core.errors import BoundaryValidationError
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.model import LoomType
+from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.sql.config import SqlConfig
 from loom.core.use_case.invoker import ApplicationInvoker
 
@@ -93,7 +91,28 @@ _logger = logging.getLogger(__name__)
 A2AClientFactory = Callable[[CompiledA2ACapability], AbstractAsyncContextManager[object]]
 """Builds the (not yet opened) client of one compiled A2A capability."""
 
-_PROBING = AgentHealth(status="degraded", detail="probing")
+_EMPTY_CHECKS: Mapping[str, HealthState] = MappingProxyType({})
+
+
+class AgentHealth(LoomFrozenStruct, frozen=True, kw_only=True):
+    """Cached health of one agent and of its live dependencies.
+
+    Attributes:
+        status: Aggregate state, the worst of every check.
+        checks: Per-dependency state, keyed ``"model"``, ``"mcp:<server>"``,
+            ``"a2a:<agent>"`` or ``"sql:<connection>"``, always by the name the
+            deployment registered rather than by URL. Internal topology: only
+            an authenticated caller ever sees it.
+        detail: Optional explanation, ``"probing"`` until the first probe of
+            the background refresher completes.
+    """
+
+    status: HealthState
+    checks: Mapping[str, HealthState] = _EMPTY_CHECKS
+    detail: str | None = None
+
+
+_PROBING = AgentHealth(status=HealthState.DEGRADED, detail="probing")
 
 _PROBE_FAILED = "the health probe failed; the detail is recorded server-side"
 """Detail of an agent whose engine probe raised. No exception text: the probe
@@ -150,17 +169,6 @@ class UseCaseMcpGrant:
     capability: CompiledMcpCapability
     usecase: str
     parameter: str
-
-
-def _dependency_key(capability: object) -> str | None:
-    """Return the health-check key of a capability with a live dependency."""
-    if type(capability) is CompiledMcpCapability:
-        return mcp_key(capability)
-    if type(capability) is CompiledA2ACapability:
-        return _a2a_key(capability)
-    if type(capability) is CompiledSqlCapability:
-        return f"sql:{capability.connection}"
-    return None
 
 
 class AgentRuntime:
@@ -242,6 +250,7 @@ class AgentRuntime:
         self._engine_provider = engine_provider
         self._deps = deps
         self._container = container
+        self._invoker: ApplicationInvoker | None = None
         self._sql_config = sql_config
         self._mcp_client_factory = mcp_client_factory
         self._a2a_client_factory = a2a_client_factory
@@ -276,7 +285,7 @@ class AgentRuntime:
         deadline = self._startup_deadline()
         try:
             self._verify_sql_readonly()
-            self._verify_invoker()
+            self._invoker = self._resolve_invoker()
             self._verify_mcp_connections()
             tolerated = await self._open_clients(stack, deadline)
             await self._verify_tool_filters(self._startup_deadline() if tolerated else deadline)
@@ -403,15 +412,8 @@ class AgentRuntime:
                 artifact declares one, and is copied verbatim into the output
                 hook's command.  Never read by loom.
             output_type: When given, decode this run's answer into this type
-                instead of the plan's own declared output; the plan's
-                own output check does not run. ``None`` — the default — runs
-                the plan's declared shape exactly as before this parameter
-                existed. Not part of :class:`~loom.ai.abc.AgentEngine`'s own
-                ``run``/``run_stream``, whose signature is pinned to exactly
-                ``prompt``, ``identity`` and ``conversation``: an engine opts
-                into shape overrides through the separate, optional
-                ``run_stream_shaped`` capability instead (see
-                :mod:`~loom.ai.runtime._grants`).
+                instead of the plan's own declared output, without the plan's
+                output check; ``None`` runs the plan's declared shape.
             state: This run's state, already decoded by whichever boundary
                 received it and passed as a normalised mapping, or ``None``.
                 Resolved against *name*'s declared shape before this call
@@ -466,7 +468,9 @@ class AgentRuntime:
                         provider_details=event.provider_details,
                     )
         if result is None:
-            raise AgentRunError(AgentRunErrorCode.PROVIDER_UNAVAILABLE, no_terminal_message(name))
+            raise AgentRunError(
+                AgentRunErrorCode.PROVIDER_UNAVAILABLE, NO_TERMINAL_MESSAGE.format(agent=name)
+            )
         return result
 
     def run_stream(
@@ -554,16 +558,8 @@ class AgentRuntime:
         """Open every live client concurrently, before the start-up deadline.
 
         Under ``ai.remote_clients: optional`` a client that does not connect is
-        logged and dropped instead of aborting start-up: the runtime serves the
-        agents whose other dependencies are live, and the health probe reports
-        the missing key ``unavailable`` for every server an agent declares
-        (``_probe_forever`` iterates compiled plans only — a server named
-        solely by a use case's ``Mcp()`` marker is outside its reach; see the
-        ``use_case_mcp`` parameter of :class:`AgentRuntime`). A client that was
-        never wired --- no factory for a declared grant --- is a deployment
-        bug rather than an offline network, so it is collected apart, at the
-        point the factory is found ``None``, and stays fatal under both
-        values.
+        logged and dropped; a declared grant with no client factory is fatal
+        under both values.
 
         Returns:
             Whether a connection failure was tolerated, so the caller knows the
@@ -597,33 +593,44 @@ class AgentRuntime:
             raise AgentCompilationError([*unwired, *unreachable])
         return tolerated
 
-    def _verify_invoker(self) -> None:
-        """Abort start-up when a hook or a loader is declared but the container holds no invoker.
+    def _resolve_invoker(self) -> ApplicationInvoker | None:
+        """Resolve the application's invoker once; refuse start-up when it cannot serve the plans.
+
+        Returns:
+            The container's invoker, or ``None`` when it holds none and no plan
+            declares a hook, a loader or a use case.
 
         Raises:
-            AgentCompilationError: ``ON_OUTPUT_INVOKER_MISSING`` and
-                ``CONVERSATION_INVOKER_MISSING``, naming the agents that
-                declare each.
+            AgentCompilationError: ``INVOKER_BOUND`` when the invoker is bound
+                to an identity; ``ON_OUTPUT_INVOKER_MISSING``,
+                ``CONVERSATION_INVOKER_MISSING`` and ``USECASE_INVOKER_MISSING``
+                naming the agents that need the missing invoker.
         """
-        if self._container.is_registered(ApplicationInvoker):
-            return
-        hooked = [name for name, plan in self._plans.items() if plan.on_output is not None]
-        conversational = [
-            name for name, plan in self._plans.items() if plan.conversation is not None
+        invoker = self._container.resolve_or_none(ApplicationInvoker)
+        if invoker is None:
+            self._refuse_plans_needing_an_invoker()
+        elif getattr(invoker, "identity", None) is not None:
+            raise AgentCompilationError([AgentErrorCode.INVOKER_BOUND.issue()])
+        return invoker
+
+    def _refuse_plans_needing_an_invoker(self) -> None:
+        plans = self._plans.items()
+        needs = {
+            AgentErrorCode.ON_OUTPUT_INVOKER_MISSING: [
+                name for name, plan in plans if plan.on_output is not None
+            ],
+            AgentErrorCode.CONVERSATION_INVOKER_MISSING: [
+                name for name, plan in plans if plan.conversation is not None
+            ],
+            AgentErrorCode.USECASE_INVOKER_MISSING: [
+                name for name, plan in plans if plan.grants_use_cases
+            ],
+        }
+        issues = [
+            code.issue(agents=agents, reason=INVOKER_MISSING_REASON)
+            for code, agents in needs.items()
+            if agents
         ]
-        issues: list[AgentCompilationIssue] = []
-        if hooked:
-            issues.append(
-                AgentErrorCode.ON_OUTPUT_INVOKER_MISSING.issue(
-                    agents=hooked, reason=INVOKER_MISSING_REASON
-                )
-            )
-        if conversational:
-            issues.append(
-                AgentErrorCode.CONVERSATION_INVOKER_MISSING.issue(
-                    agents=conversational, reason=INVOKER_MISSING_REASON
-                )
-            )
         if issues:
             raise AgentCompilationError(issues)
 
@@ -868,22 +875,31 @@ class AgentRuntime:
             return await self._probe(name)
         except Exception:
             _logger.exception("Health probe of agent %r failed", name)
-            return AgentHealth(status="unavailable", detail=_PROBE_FAILED)
+            return AgentHealth(status=HealthState.UNAVAILABLE, detail=_PROBE_FAILED)
 
     async def _probe(self, name: str) -> AgentHealth:
         slot = self._slots[name]
         engine_status = await slot.engine.health()
-        checks: dict[str, str] = {"model": engine_status.status}
+        checks: dict[str, HealthState] = {"model": engine_status.status}
         for capability in slot.plan.capabilities:
-            key = _dependency_key(capability)
-            if key is not None:
-                checks[key] = self._dependency_state(key)
-        return AgentHealth(status=worst(checks.values()), checks=MappingProxyType(checks))
+            check = self._dependency_check(capability)
+            if check is not None:
+                checks[check[0]] = check[1]
+        return AgentHealth(
+            status=HealthState.worst(checks.values()), checks=MappingProxyType(checks)
+        )
 
-    def _dependency_state(self, key: str) -> HealthState:
-        if key.startswith("sql:"):
-            return "ok"
-        return "ok" if key in self._live else "unavailable"
+    def _dependency_check(self, capability: object) -> tuple[str, HealthState] | None:
+        """Return the health-check key and state of a capability with a live dependency."""
+        if type(capability) is CompiledSqlCapability:
+            return f"sql:{capability.connection}", HealthState.OK
+        if type(capability) is CompiledMcpCapability:
+            key = mcp_key(capability)
+        elif type(capability) is CompiledA2ACapability:
+            key = _a2a_key(capability)
+        else:
+            return None
+        return key, HealthState.OK if key in self._live else HealthState.UNAVAILABLE
 
     @asynccontextmanager
     async def _run_stream(
@@ -901,13 +917,14 @@ class AgentRuntime:
         resolved_state = _resolve_state(name, slot.plan.state, state)
         async with self._chain_bound(name), self._admitted(name):
             with ExecutionScope(identity):
-                run = RunContext(
+                callbacks = TurnCallbacks(
                     plan=slot.plan,
                     identity=identity,
                     interaction_id=uuid4().hex,
                     conversation_id=conversation_id,
+                    invoker=self._invoker,
                 )
-                conversation = await load_conversation(run, self._container)
+                conversation = await callbacks.conversation()
                 engine_stream = _open_engine_stream(
                     slot.engine,
                     prompt,
@@ -918,7 +935,7 @@ class AgentRuntime:
                 )
                 async with engine_stream as events:
                     supervised = supervised_events(events, slot.plan.policies)
-                    hooked = hooked_events(supervised, run, self._container)
+                    hooked = callbacks.events(supervised)
                     try:
                         yield hooked
                     finally:
@@ -927,15 +944,7 @@ class AgentRuntime:
 
     @asynccontextmanager
     async def _chain_bound(self, name: str) -> AsyncIterator[None]:
-        """Enter *name* on the call chain for the body, and always leave it after.
-
-        Entered before :meth:`_admitted`: a run refused for a cycle or for
-        exceeding ``max_agent_depth`` must never occupy a concurrency permit
-        it will just give back. The default depth of one means this push
-        alone already consumes the whole budget the top-level run gets — a
-        use case nested underneath (an output hook, most concretely) that
-        declares its own ``Agent()`` marker finds no depth left, by design.
-        """
+        """Enter *name* on the call chain for the body, and always leave it after."""
         prior_chain = enter_agent_call(name, max_depth=self._config.max_agent_depth)
         try:
             yield
@@ -1268,14 +1277,13 @@ def _resolve_state(
     if shape is None or shape.loom_type is None:
         return None
     try:
-        decoded = shape.loom_type.decode_json(b"{}")
+        return shape.decode(b"{}")
     except BoundaryValidationError as exc:
         raise AgentRunError(
             AgentRunErrorCode.STATE_REQUIRED,
             f"agent {name!r} declares a state field with no default ({exc}); "
             "pass 'state' explicitly for this run",
         ) from exc
-    return cast(Mapping[str, Any], shape.loom_type.to_builtins(decoded))
 
 
 def _check_conversation_id(conversation_id: str | None) -> None:

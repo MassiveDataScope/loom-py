@@ -16,8 +16,7 @@ output side compiles a ``type_ref``: :func:`~loom.core.model.loom_type`
 decides the library and checks strictness once. A symbol that is not a class
 — a container or alias a hand-authored ``deps_type`` may still resolve to,
 such as ``dict[str, int]`` — falls back to ``msgspec.json.schema()`` plus
-:func:`~loom.core.model.msgspec_type`, exactly as before this train, so no
-``deps_type`` that compiled before it stops compiling. Either way
+:func:`~loom.core.model.msgspec_type`. Either way
 state forbids unknown fields exactly as the output side does:
 :func:`_schema_admits_unknown_fields` checks the derived schema's own
 ``additionalProperties`` verdict for the fallback path, and ``loom_type``
@@ -102,7 +101,7 @@ def _compile_type_ref(ref: str, component: str) -> _CompileResult:
                 ref=ref,
                 reason="the struct must declare forbid_unknown_fields=True: state decoded from a "
                 "caller's request body must reject a field the artifact did not declare, "
-                "exactly as the output side already requires (FR-017)",
+                "exactly as the output side already requires",
             )
         ]
     return StateShape(schema=MappingProxyType(schema), loom_type=lt), []

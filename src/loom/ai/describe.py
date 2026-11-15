@@ -1,4 +1,4 @@
-"""Public projection of compiled agents (US7).
+"""Public projection of compiled agents.
 
 The AI pillar's contribution to
 :func:`~loom.core.introspection.describe_app`: it turns each compiled

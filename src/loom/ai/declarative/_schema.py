@@ -584,7 +584,7 @@ def _v1_schema() -> dict[str, Any]:
         "title": "Loom AgentSpec v1",
         "description": (
             "Declarative, engine-agnostic and vendor-agnostic agent definition. "
-            "Published per spec version (FR-009) so generators and editors can "
+            "Published per spec version so generators and editors can "
             "validate without the platform runtime."
         ),
         "type": "object",

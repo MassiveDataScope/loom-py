@@ -26,12 +26,16 @@ import msgspec
 from loom.ai.abc import OutputCheck, StateShape
 from loom.ai.compiler._fingerprint import plan_fingerprint
 from loom.ai.declarative import PolicySpec
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.engine.compilable import Compilable
+from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.model.redaction import Secret
+from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
 from loom.core.sql.config import SqlConnectionConfig
+from loom.core.sql.roles import resolve_query_roles
 
 
 class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -93,6 +97,39 @@ class CompiledSqlCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     config: SqlConnectionConfig
     max_rows: int
     max_result_bytes: int
+
+    def roles_of(self, identity: Identity) -> tuple[str, ...]:
+        """Resolve one caller's roles on this connection, bound to the caller and never empty.
+
+        Args:
+            identity: Verified caller whose roles are resolved.
+
+        Returns:
+            The caller's roles allowlisted on this connection.
+
+        Raises:
+            AgentRunError: With ``UNAUTHORIZED`` when the caller carries no role
+                bound to this connection, or none of its roles is allowlisted.
+        """
+        try:
+            roles = resolve_query_roles(
+                identity,
+                connection=self.connection,
+                roles_bound=True,
+                allowed_roles=frozenset(self.config.allowed_roles),
+                requested_roles=None,
+            )
+        except (RolesNotBoundError, RoleNotAllowedError) as exc:
+            raise AgentRunError(
+                AgentRunErrorCode.UNAUTHORIZED,
+                f"the caller may not query the {self.connection!r} connection",
+            ) from exc
+        if not roles:
+            raise AgentRunError(
+                AgentRunErrorCode.UNAUTHORIZED,
+                f"no role of the caller is allowlisted on the {self.connection!r} connection",
+            )
+        return roles
 
 
 class CompiledRemoteAuth(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -320,47 +357,46 @@ CONVERSATION_CONTEXT_FIELDS: Final[tuple[str, ...]] = (
 """Run-context names the conversation loader offers to its use case's Input."""
 
 
-class CompiledOutputHook(LoomFrozenStruct, frozen=True, kw_only=True):
+class CompiledUseCaseCall(LoomFrozenStruct, frozen=True, kw_only=True):
+    """A use case a run executes, resolved, with the Input names it accepts.
+
+    Attributes:
+        step: Name of the step in log lines and errors.
+        usecase: Use-case key as written in the artifact, for messages.
+        use_case: Registered use-case type, as
+            :attr:`CompiledUsecaseCapability.use_cases` carries them.
+        accepted: Internal names the Input declares; the run-time filter,
+            computed once from ``msgspec.structs.fields``.
+    """
+
+    step: ClassVar[str]
+    usecase: str
+    use_case: type[Compilable]
+    accepted: frozenset[str]
+
+
+class CompiledOutputHook(CompiledUseCaseCall, frozen=True, kw_only=True):
     """Use case executed once per completed run, resolved and proven feedable.
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`HOOK_OUTPUT_FIELD` or
     :data:`HOOK_CONTEXT_FIELDS`, so the runtime never discovers a missing
-    field at the end of a run.  ``accepted`` is computed here, once, from
-    ``msgspec.structs.fields``: the runtime filters the offered dict to it
-    before ``from_payload`` so a strict Command works without per-run
-    reflection.
-
-    Attributes:
-        usecase: Use-case key as written in the artifact, for messages.
-        use_case: Registered use-case type, as
-            :attr:`CompiledUsecaseCapability.use_cases` carries them.
-        accepted: Internal names the Input declares; the run-time filter.
+    field at the end of a run.
     """
 
-    usecase: str
-    use_case: type[Compilable]
-    accepted: frozenset[str]
+    step: ClassVar[str] = "on_output hook"
 
 
-class CompiledConversation(LoomFrozenStruct, frozen=True, kw_only=True):
+class CompiledConversation(CompiledUseCaseCall, frozen=True, kw_only=True):
     """Use case executed before a run that carries a ``conversation_id``.
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`CONVERSATION_CONTEXT_FIELDS` and that the
     Input declares ``conversation_id``, so the loader always knows which
-    conversation to load.  ``accepted`` is the run-time filter, computed once
-    as :attr:`CompiledOutputHook.accepted` is.
-
-    Attributes:
-        usecase: Use-case key as written in the artifact, for messages.
-        use_case: Registered use-case type.
-        accepted: Internal names the Input declares; the run-time filter.
+    conversation to load.
     """
 
-    usecase: str
-    use_case: type[Compilable]
-    accepted: frozenset[str]
+    step: ClassVar[str] = "conversation loader"
 
 
 class CompiledInstruction(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -408,6 +444,11 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         metadata: Free-form string labels carried alongside the agent.
         source_path: Artifact provenance for error messages, when known.
     """
+
+    @property
+    def grants_use_cases(self) -> bool:
+        """Whether the plan holds a ``usecase`` capability."""
+        return any(type(grant) is CompiledUsecaseCapability for grant in self.capabilities)
 
     @property
     def fingerprint(self) -> str:

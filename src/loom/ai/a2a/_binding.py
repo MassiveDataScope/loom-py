@@ -95,26 +95,11 @@ def published_agents(
                 name=name,
                 card=card,
                 max_steps=plan.policies.max_iterations,
-                endpoint=_active_endpoint(config.endpoints.get(name)),
+                endpoint=config.active_endpoint(name),
                 conversational=plan.conversation is not None,
             )
         )
     return tuple(published)
-
-
-def _active_endpoint(endpoint: AgentEndpointConfig | None) -> AgentEndpointConfig | None:
-    """Return the HTTP opt-in only when it is actually in force.
-
-    ``allow_anonymous`` lives in the HTTP stanza, whose mount is a double
-    opt-in — ``enabled`` **and** a named ``auth``. A stanza failing
-    either grants nothing, so A2A must not inherit its anonymity opt-out:
-    otherwise switching the HTTP surface off while leaving
-    ``allow_anonymous: true`` behind would keep anonymous invocation alive on
-    the one surface published to the internet.
-    """
-    if endpoint is None or not endpoint.enabled or not endpoint.auth.strip():
-        return None
-    return endpoint
 
 
 def _allows_anonymous(agent: PublishedAgent) -> bool:

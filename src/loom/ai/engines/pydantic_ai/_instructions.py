@@ -40,7 +40,7 @@ BlockBuilder: TypeAlias = Callable[
 Every entry in :data:`_BLOCK_BUILDERS` takes the same four positions: the
 block, the artifact's declared state shape (``None`` when it declares none),
 the artifact name (for a compilation failure's message) and the block's own
-label — its ``name`` when it has one, its position otherwise (FR-034).
+label — its ``name`` when it has one, its position otherwise.
 """
 
 

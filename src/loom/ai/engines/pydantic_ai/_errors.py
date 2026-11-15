@@ -26,7 +26,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
 )
 
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import DENIALS, AgentRunError, AgentRunErrorCode
 
 _UNMEASURED_SPEND_WARNINGS: tuple[type[Warning], ...] = tuple(
     warning
@@ -59,6 +59,7 @@ _EXCEPTION_CODES: Mapping[type[Exception], AgentRunErrorCode] = MappingProxyType
         UnexpectedModelBehavior: AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION,
         ModelAPIError: AgentRunErrorCode.PROVIDER_UNAVAILABLE,
         TimeoutError: AgentRunErrorCode.RUN_TIMEOUT,
+        **dict.fromkeys(DENIALS, AgentRunErrorCode.UNAUTHORIZED),
         **dict.fromkeys(_UNMEASURED_SPEND_WARNINGS, AgentRunErrorCode.COST_NOT_MEASURABLE),
     }
 )

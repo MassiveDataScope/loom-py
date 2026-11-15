@@ -16,21 +16,25 @@ artifact format they serve is not.  See :mod:`loom.ai` for the distinction.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
+from enum import StrEnum
+from types import MappingProxyType
 from typing import (
     Any,
     ClassVar,
     Final,
     Generic,
-    Literal,
     Protocol,
     TypeAlias,
     TypeVar,
+    cast,
     overload,
     runtime_checkable,
 )
+
+import msgspec
 
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
@@ -75,6 +79,24 @@ class StateShape(LoomFrozenStruct, frozen=True, kw_only=True):
 
     schema: Mapping[str, Any] | None
     loom_type: LoomType | None
+
+    def decode(self, body: bytes) -> Mapping[str, Any]:
+        """Decode JSON state bytes against this shape and return them as builtins.
+
+        Args:
+            body: The state as JSON bytes.
+
+        Returns:
+            The normalised mapping: :attr:`loom_type`'s decode turned to
+            builtins, or the plain JSON value under the open form.
+
+        Raises:
+            BoundaryValidationError: When *body* does not fit :attr:`loom_type`.
+            msgspec.DecodeError: When *body* is not JSON under the open form.
+        """
+        if self.loom_type is None:
+            return cast(Mapping[str, Any], msgspec.json.decode(body))
+        return cast(Mapping[str, Any], self.loom_type.to_builtins(self.loom_type.decode_json(body)))
 
 
 class AgentUsage(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -699,12 +721,12 @@ class FinalEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="final", tag_f
 
 
 AgentEvent = TextDeltaEvent | ToolCallEvent | ToolResultEvent | ErrorEvent | FinalEvent
-"""Closed five-member tagged union of streaming events (FR-030).
+"""Closed five-member tagged union of streaming events.
 
-Exactly one of ``final`` or ``error`` terminates every stream (SC-011), and
+Exactly one of ``final`` or ``error`` terminates every stream, and
 ``final`` is the only variant carrying usage.
 
-Adding a variant requires two independent real consumers (FR-035): a single
+Adding a variant requires two independent real consumers: a single
 engine wanting a richer event is not grounds to widen a union every SSE
 client, test fake and contract suite must understand.
 """
@@ -819,16 +841,36 @@ class NativeCapableEngine(Protocol):
         ...
 
 
-HealthState = Literal["ok", "degraded", "unavailable"]
-"""The three health states. Defined beside the struct that carries it so the alias
-and the field cannot drift apart."""
+class HealthState(StrEnum):
+    """The three health states, best first."""
+
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+
+    @classmethod
+    def worst(cls, states: Iterable[HealthState]) -> HealthState:
+        """Return the worst of *states*, ``OK`` when there are none.
+
+        Args:
+            states: Health states.
+
+        Returns:
+            The worst state.
+        """
+        return cls(max(states, key=_HEALTH_RANK.__getitem__, default=cls.OK))
+
+
+_HEALTH_RANK: Final[Mapping[str, int]] = MappingProxyType(
+    {state: rank for rank, state in enumerate(HealthState)}
+)
 
 
 class HealthStatus(LoomFrozenStruct, frozen=True, kw_only=True):
     """Health of one agent engine, shared by every engine.
 
     Attributes:
-        status: ``"ok"``, ``"degraded"`` or ``"unavailable"``.
+        status: The engine's health state.
         detail: Optional human-readable explanation.
     """
 
@@ -912,10 +954,7 @@ class ConcurrentMcpSession:
     unwrapped.
 
     This class carries no members: subclassing it *is* the declaration. A
-    session that does not subclass it is treated exactly as every
-    :class:`McpSession` was before this class existed — wrapped and
-    serialised — because not declaring the guarantee is the safe default,
-    never a failure.
+    session that does not subclass it is wrapped and serialised.
 
     A subclass keeping this promise must (a) tolerate overlapping calls by
     matching each response back to its own request id — the multiplexing
@@ -1029,7 +1068,7 @@ OutputCheck: TypeAlias = Callable[[Mapping[str, Any]], str | None]
 Called once per attempt inside the engine's own output-retry loop. For a
 ``msgspec.Struct`` output the mapping is the one the engine parsed from the
 model's answer — never loom's decoded object, so nothing is decoded twice.
-For a pydantic output (D7, FR-012) the check still receives a
+For a pydantic output the check still receives a
 ``Mapping[str, Any]``: the engine calls it with
 ``loom_type.to_builtins(instance)`` of pydantic-ai's own validated instance,
 so a check written once serves both libraries. Returns ``None`` to accept the

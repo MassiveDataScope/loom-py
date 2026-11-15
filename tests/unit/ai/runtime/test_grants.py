@@ -17,7 +17,7 @@ from loom.ai.abc import McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime._grants import McpGrantView, SqlGrantView
-from loom.core.execution import ExecutionScope
+from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
@@ -123,17 +123,32 @@ class TestTheMcpGrantsFilter:
             "tools this grant admits: search_incident"
         )
 
-    def test_tools_lists_only_what_the_filter_admits(self) -> None:
+    @pytest.fixture
+    def filtered(self) -> McpGrantView:
         capability = make_mcp_capability(include=("read_*",))
         catalogue = (
             McpToolInfo(name="read_orders", has_output_schema=True),
             McpToolInfo(name="write_orders", has_output_schema=True),
         )
-        view = _view(
+        return _view(
             capability=capability, session=FakeSession(tools=catalogue), catalogue=catalogue
         )
 
-        assert view.tools() == ("read_orders",)
+    def test_tools_lists_only_what_the_filter_admits(self, filtered: McpGrantView) -> None:
+        with ExecutionScope(_CALLER):
+            tools = filtered.tools()
+
+        assert tools == ("read_orders",)
+
+    def test_tools_refuses_an_anonymous_caller(self, filtered: McpGrantView) -> None:
+        with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
+            filtered.tools()
+
+        assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
+
+    def test_tools_refuses_outside_any_execution(self, filtered: McpGrantView) -> None:
+        with pytest.raises(ExecutionRequired):
+            filtered.tools()
 
 
 class TestTypedCall:

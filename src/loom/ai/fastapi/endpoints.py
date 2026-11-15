@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Annotated, Any, Final, cast
+from typing import Annotated, Any, Final
 
 import msgspec
 from fastapi import FastAPI
@@ -47,6 +47,7 @@ from loom.ai.abc import (
     AgentResult,
     ErrorEvent,
     FinalEvent,
+    HealthState,
     StateShape,
 )
 from loom.ai.config import AgentEndpointConfig, AiConfig
@@ -177,17 +178,10 @@ def _decode_state(
             f"agent {name!r} declares no state (no 'deps_type' or 'deps_schema'); "
             "remove 'state' from the request or declare a state shape on the artefact",
         )
-    body = bytes(raw)
-    if state_shape.loom_type is None:
-        try:
-            return cast(Mapping[str, Any], msgspec.json.decode(body))
-        except msgspec.DecodeError as exc:
-            raise TransportError(422, "INVALID_STATE", str(exc)) from exc
     try:
-        decoded = state_shape.loom_type.decode_json(body)
-    except BoundaryValidationError as exc:
+        return state_shape.decode(bytes(raw))
+    except (BoundaryValidationError, msgspec.DecodeError) as exc:
         raise TransportError(422, "INVALID_STATE", str(exc)) from exc
-    return cast(Mapping[str, Any], state_shape.loom_type.to_builtins(decoded))
 
 
 async def _read_request(
@@ -486,7 +480,7 @@ def _make_health_handler(
             payload["detail"] = health.detail
         if current_identity().is_authenticated:
             payload["checks"] = dict(health.checks)
-        status_code = 503 if health.status == "unavailable" else 200
+        status_code = 503 if health.status == HealthState.UNAVAILABLE else 200
         return AgentJSONResponse(content=payload, status_code=status_code)
 
     return agent_health
@@ -503,7 +497,7 @@ def _exposed_agents(
     """
     exposed: dict[str, AgentEndpointConfig] = {}
     for name, endpoint in config.endpoints.items():
-        if not endpoint.enabled or not endpoint.auth.strip():
+        if not endpoint.active:
             continue
         _require_usable_authenticator(name, endpoint, authenticator)
         exposed[name] = endpoint

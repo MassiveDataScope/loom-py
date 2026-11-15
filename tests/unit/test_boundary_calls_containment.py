@@ -29,6 +29,7 @@ _TARGETS = frozenset(
 
 _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/a2a/_rpc.py", "msgspec.json.Decoder"): 1,
+    ("ai/abc.py", "msgspec.json.decode"): 1,
     ("ai/compiler/_fingerprint.py", "msgspec.json.encode"): 1,
     ("ai/declarative/_envelope.py", "msgspec.json.decode"): 1,
     ("ai/etl/_columns.py", "msgspec.json.encode"): 1,
@@ -36,7 +37,6 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/engines/pydantic_ai/_events.py", "msgspec.json.decode"): 1,
     ("ai/engines/pydantic_ai/_returns.py", "msgspec.json.encode"): 1,
     ("ai/fastapi/endpoints.py", "msgspec.json.Decoder"): 1,
-    ("ai/fastapi/endpoints.py", "msgspec.json.decode"): 1,
     ("ai/fastapi/response.py", "msgspec.json.Encoder"): 1,
     ("ai/remote_auth.py", "msgspec.convert"): 1,
     ("ai/runtime/_grants.py", "msgspec.json.encode"): 1,

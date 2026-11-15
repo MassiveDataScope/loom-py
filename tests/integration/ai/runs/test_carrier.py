@@ -12,6 +12,7 @@ import pytest
 
 from loom.ai.compiler import CompiledMcpCapability, CompiledUsecaseCapability
 from loom.ai.engines.pydantic_ai import NativeAgent, _capabilities
+from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.di import LoomContainer
 from loom.core.errors import Unauthenticated
@@ -51,7 +52,7 @@ def _python(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[Any, str
 
 
 def _mcp(calls: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[Any, str]:
-    monkeypatch.setattr(_capabilities, "_mcp_server", stub_mcp_server(calls))
+    monkeypatch.setattr(SharedMcpToolsets, "for_build", stub_mcp_server(calls))
     return CompiledMcpCapability(server="tools", url="https://tools.internal/mcp"), "remote_ping"
 
 

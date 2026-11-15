@@ -177,7 +177,7 @@ class TestWithoutTheMcpClient:
     ) -> None:
         import sys
 
-        from loom.ai.engines.pydantic_ai._failures import Outcome, classify
+        from loom.ai.engines.pydantic_ai._failures import Outcome
 
         monkeypatch.setitem(sys.modules, "mcp", None)
-        assert classify(ConnectionError("Connection closed")) is Outcome.UNSAFE
+        assert Outcome.of(ConnectionError("Connection closed")) is Outcome.UNSAFE

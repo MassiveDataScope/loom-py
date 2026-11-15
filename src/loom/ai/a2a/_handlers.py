@@ -40,7 +40,7 @@ from loom.ai.a2a._rpc import (
     task_not_found_error,
     unsupported_error,
 )
-from loom.ai.a2a.events import A2AEventProjector
+from loom.ai.a2a.events import A2AEventProjector, TaskState
 from loom.ai.abc import CONVERSATION_ID_MAX_LENGTH, AgentResult
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
@@ -191,7 +191,7 @@ def _task(task_id: str, context_id: str, status: Mapping[str, object]) -> Mappin
 
 
 def _completed_task(task_id: str, context_id: str, output: object) -> Mapping[str, object]:
-    task = dict(_task(task_id, context_id, {"state": "completed"}))
+    task = dict(_task(task_id, context_id, {"state": TaskState.COMPLETED}))
     task["artifacts"] = [
         {"artifactId": _OUTPUT_ARTIFACT_ID, "parts": [{"kind": "data", "data": output}]}
     ]
@@ -295,7 +295,9 @@ def _run_frames(
                 yield _sse_frame(call.request_id, projected)
 
     async def _frames() -> AsyncIterator[bytes]:
-        yield _sse_frame(call.request_id, _task(task_id, context_id, {"state": "submitted"}))
+        yield _sse_frame(
+            call.request_id, _task(task_id, context_id, {"state": TaskState.SUBMITTED})
+        )
         try:
             async with runtime.run_stream(
                 call.agent.name, prompt, identity=call.identity, conversation_id=context_id

@@ -30,9 +30,11 @@ from enum import StrEnum, unique
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, TypeAlias
 
+from loom.core.errors import Forbidden, Unauthenticated
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.execution import execution_identity
 from loom.core.identity import Acting
+from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
 
 if TYPE_CHECKING:
     from loom.ai.abc import AgentUsage
@@ -55,7 +57,7 @@ _AGENT_MARKER_FIELD_TEMPLATE: Final = "parameters.{parameter}"
 """Field of every issue about a use case's ``Agent()`` or ``Mcp()`` marker."""
 
 INVOKER_MISSING_REASON: Final[str] = "no use-case invoker is configured"
-"""``reason`` of the invoker-missing issues when the deps bundle carries no invoker."""
+"""``reason`` of the invoker-missing issues when the container holds no invoker."""
 
 
 @unique
@@ -144,6 +146,23 @@ class AgentErrorCode(IssueCode):
             "agents declare an output hook but {reason}: {agents}",
             component="ai",
             field="on_output",
+        ),
+    )
+
+    USECASE_INVOKER_MISSING = (
+        "USECASE_INVOKER_MISSING",
+        Template(
+            "agents grant use cases but {reason}: {agents}",
+            component="ai",
+            field=_FIELD_CAPABILITIES,
+        ),
+    )
+    INVOKER_BOUND = (
+        "INVOKER_BOUND",
+        Template(
+            "the container's ApplicationInvoker is bound to an identity; agents need the "
+            "unbound invoker so every use case acts as the identity acting",
+            component="ai",
         ),
     )
 
@@ -879,14 +898,28 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
 CONVERSATION_LOAD_FAILED_MESSAGE: Final[str] = (
     "the conversation could not be loaded; the detail is recorded server-side"
 )
-"""Client text of every ``CONVERSATION_LOAD_FAILED`` error (D8).
-
-Defined once here because both the runtime loader and an engine's history
-decoder raise the code; the loader's own detail is logged, never returned.
-"""
+"""Client text of every ``CONVERSATION_LOAD_FAILED`` error, the runtime loader's
+and an engine's history decoder's alike; the loader's own detail is logged."""
 
 CONVERSATION_LOAD_TIMEOUT_MESSAGE: Final[str] = "the conversation loader exceeded its time limit"
-"""Client text of every ``CONVERSATION_LOAD_TIMEOUT`` error (FR-063)."""
+"""Client text of every ``CONVERSATION_LOAD_TIMEOUT`` error."""
+
+HOOK_FAILED_MESSAGE: Final[str] = "the output hook failed; the detail is recorded server-side"
+"""Client text of every ``HOOK_FAILED`` error."""
+
+NO_TERMINAL_MESSAGE: Final[str] = "agent {agent!r} produced no terminal event"
+"""Client text of the ``PROVIDER_UNAVAILABLE`` error closing a stream with no terminal event."""
+
+DENIED_MESSAGE: Final[str] = "the caller is not allowed to perform this operation"
+"""Client text of every ``UNAUTHORIZED`` error mapped from an application denial."""
+
+DENIALS: Final[tuple[type[Exception], ...]] = (
+    Forbidden,
+    Unauthenticated,
+    RoleNotAllowedError,
+    RolesNotBoundError,
+)
+"""Application denials mapped to ``UNAUTHORIZED``."""
 
 
 def run_error_class(code: AgentRunErrorCode) -> AgentRunErrorClass:

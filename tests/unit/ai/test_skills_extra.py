@@ -10,7 +10,6 @@ from loom.ai.compiler._plan import CompiledSkillsCapability
 from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai._capabilities import build_capabilities
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.core.di import LoomContainer
 from tests.helpers.extras import ENGINE_EXTRAS, without_extra
 
 
@@ -21,10 +20,9 @@ class TestMissingHarnessExtra:
         """The message names ``ai-harness``, not the missing module."""
         without_extra(monkeypatch, ["pydantic_ai_harness"], [f"{ENGINE_EXTRAS}.skills"])
         plan = _plan_with_skills(tmp_path)
-        container = LoomContainer()
 
         with pytest.raises(AgentCompilationError) as failure:
-            build_capabilities(plan, container)
+            build_capabilities(plan)
 
         issue = failure.value.issues[0]
         assert issue.code is AgentErrorCode.PROVIDER_NOT_INSTALLED

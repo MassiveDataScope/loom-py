@@ -19,8 +19,8 @@ from loom.ai.abc import McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _ToolsetSession
-from loom.ai.errors import AgentRunError
-from loom.ai.runtime._grants import INTERRUPTED_CALL_CODE, McpGrantView
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.runtime._grants import McpGrantView
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.unit.ai.engines.doubles import AcmeToolsetFactory
@@ -249,8 +249,8 @@ class TestASafeFailure:
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
-        assert raised.value.code is INTERRUPTED_CALL_CODE
-        assert isinstance(raised.value.__cause__, McpCallInterrupted)
+        assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
+        assert isinstance(raised.value, McpCallInterrupted)
         assert len(first.reached) + len(second.reached) == 2
         assert factory.built == 1
         assert (await session.call_tool("write_orders", {})).structured == {"by": "third"}
@@ -297,7 +297,7 @@ class TestAnUnsafeFailure:
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
-        assert raised.value.code is INTERRUPTED_CALL_CODE
+        assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
         assert first.reached == ["write_orders"]
         assert factory.built == 0
 
@@ -795,7 +795,7 @@ class TestTheMarkersView:
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
             await _view(session).call_untyped("write_orders", {})
 
-        assert raised.value.code is INTERRUPTED_CALL_CODE
+        assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
         assert "not sent" in str(raised.value)
         assert "may have run" not in str(raised.value)
 

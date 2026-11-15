@@ -24,8 +24,9 @@ connection the model's own capabilities use.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from collections.abc import Hashable, Mapping
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from loom.ai.abc import AgentAnswer, AgentHandle, McpHandle, Prompt, SqlGrantHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
@@ -43,6 +44,9 @@ from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.sql.service import SqlQueryService
+
+_K = TypeVar("_K", bound=Hashable)
+_H = TypeVar("_H")
 
 
 class _AgentHandle:
@@ -291,7 +295,69 @@ class _AgentHandle:
         span.fail(exc)
 
 
-class AgentMarkerResolver:
+class _MarkerResolver(ABC, Generic[_K, _H]):
+    """One handle per marker declaration, built on its first resolve or call."""
+
+    def __init__(self) -> None:
+        self._handles: dict[_K, _H] = {}
+
+    def resolve(self, declaration: Any, annotation: object) -> _H:
+        """Return the handle of *declaration*, built on its first resolve.
+
+        Args:
+            declaration: The marker of the parameter.
+            annotation: The parameter's annotation; not read.
+
+        Returns:
+            The declaration's handle.
+        """
+        key = self._key(declaration)
+        handle = self._handles.get(key)
+        return self._built(key) if handle is None else handle
+
+    def _handle(self, key: _K, identity: Identity | None, what: str) -> _H:
+        """Return the handle of *key*, refusing an identity other than the execution's.
+
+        Args:
+            key: The declaration's key.
+            identity: The identity the caller gave, or ``None``.
+            what: The declaration the handle serves, named in the error.
+
+        Returns:
+            The declaration's handle.
+
+        Raises:
+            IdentityFixed: When *identity* is given inside an execution acting
+                as another identity.
+        """
+        if (
+            identity is not None
+            and current_execution() is not None
+            and identity != execution_identity()
+        ):
+            raise IdentityFixed(
+                f"{what} acts as the execution identity of each call, not as the "
+                "identity given; act as another caller with executor.run(UseCase, "
+                "identity=...) or ExecutionScope(...)"
+            )
+        handle = self._handles.get(key)
+        return self._built(key) if handle is None else handle
+
+    def _built(self, key: _K) -> _H:
+        handle = self._handles[key] = self._build(key)
+        return handle
+
+    @staticmethod
+    @abstractmethod
+    def _key(declaration: Any) -> _K:
+        """Return the key of a marker declaration."""
+
+    @abstractmethod
+    def _build(self, key: _K) -> _H:
+        """Build the handle of *key*."""
+
+
+class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
     """Resolves each ``Agent(name)`` declaration to its one handle, in either resolver shape.
 
     Args:
@@ -308,10 +374,10 @@ class AgentMarkerResolver:
         sql_query_service: SqlQueryService,
         observability: ObservabilityRuntime | None,
     ) -> None:
+        super().__init__()
         self._runtime = runtime
         self._sql_query_service = sql_query_service
         self._observability = observability
-        self._handles: dict[str, _AgentHandle] = {}
 
     def __call__(self, name: str, identity: Identity | None = None) -> AgentHandle[Any]:
         """Return the handle of agent *name*, built on its first call.
@@ -329,37 +395,19 @@ class AgentMarkerResolver:
             IdentityFixed: When *identity* is given inside an execution acting
                 as another identity.
         """
-        if (
-            identity is not None
-            and current_execution() is not None
-            and identity != execution_identity()
-        ):
-            raise IdentityFixed(
-                f"agent {name!r} acts as the execution identity of each call, not as the "
-                "identity given; act as another caller with executor.run(UseCase, "
-                "identity=...) or ExecutionScope(...)"
-            )
-        handle = self._handles.get(name)
-        if handle is None:
-            handle = self._handles[name] = _AgentHandle(
-                name=name,
-                runtime=self._runtime,
-                observability=self._observability,
-                sql_query_service=self._sql_query_service,
-            )
-        return handle
+        return self._handle(name, identity, f"agent {name!r}")
 
-    def resolve(self, declaration: Any, annotation: object) -> AgentHandle[Any]:
-        """Return the handle of *declaration*, built on its first resolve.
+    @staticmethod
+    def _key(declaration: Any) -> str:
+        return declaration.name
 
-        Args:
-            declaration: The ``Agent(name)`` marker of the parameter.
-            annotation: The parameter's annotation; not read.
-
-        Returns:
-            The declaration's handle.
-        """
-        return self._handles.get(declaration.name) or self(declaration.name)
+    def _build(self, key: str) -> _AgentHandle:
+        return _AgentHandle(
+            name=key,
+            runtime=self._runtime,
+            observability=self._observability,
+            sql_query_service=self._sql_query_service,
+        )
 
 
 class _McpHandle:
@@ -464,7 +512,7 @@ class _McpHandle:
         )
 
 
-class McpMarkerResolver:
+class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle"]):
     """Resolves each ``Mcp(server, include=...)`` declaration to its one handle, in either shape.
 
     A ``Scope.TOOL`` span of a call carries ``mcp_server``, never ``agent``.
@@ -477,9 +525,9 @@ class McpMarkerResolver:
     def __init__(
         self, runtime: AgentRuntime, *, observability: ObservabilityRuntime | None
     ) -> None:
+        super().__init__()
         self._runtime = runtime
         self._observability = observability
-        self._handles: dict[tuple[str, tuple[str, ...]], _McpHandle] = {}
 
     def __call__(
         self, server: str, include: tuple[str, ...], identity: Identity | None = None
@@ -500,38 +548,19 @@ class McpMarkerResolver:
             IdentityFixed: When *identity* is given inside an execution acting
                 as another identity.
         """
-        if (
-            identity is not None
-            and current_execution() is not None
-            and identity != execution_identity()
-        ):
-            raise IdentityFixed(
-                f"mcp server {server!r} acts as the execution identity of each call, not as the "
-                "identity given; act as another caller with executor.run(UseCase, "
-                "identity=...) or ExecutionScope(...)"
-            )
-        handle = self._handles.get((server, include))
-        if handle is None:
-            handle = self._handles[server, include] = _McpHandle(
-                server=server,
-                include=include,
-                runtime=self._runtime,
-                observability=self._observability,
-            )
-        return handle
+        return self._handle((server, include), identity, f"mcp server {server!r}")
 
-    def resolve(self, declaration: Any, annotation: object) -> McpHandle:
-        """Return the handle of *declaration*, built on its first resolve.
+    @staticmethod
+    def _key(declaration: Any) -> tuple[str, tuple[str, ...]]:
+        return declaration.server, declaration.include
 
-        Args:
-            declaration: The ``Mcp(server, include=...)`` marker of the parameter.
-            annotation: The parameter's annotation; not read.
-
-        Returns:
-            The declaration's handle.
-        """
-        return self._handles.get((declaration.server, declaration.include)) or self(
-            declaration.server, declaration.include
+    def _build(self, key: tuple[str, tuple[str, ...]]) -> _McpHandle:
+        server, include = key
+        return _McpHandle(
+            server=server,
+            include=include,
+            runtime=self._runtime,
+            observability=self._observability,
         )
 
 

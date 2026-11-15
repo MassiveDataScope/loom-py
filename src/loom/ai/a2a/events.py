@@ -20,6 +20,7 @@ the pillar.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from enum import StrEnum
 from typing import Any, Final
 
 from loom.ai.abc import (
@@ -37,9 +38,14 @@ _OUTPUT_ARTIFACT_ID: Final[str] = "output"
 _ARTIFACT_UPDATE: Final[str] = "artifact-update"
 _STATUS_UPDATE: Final[str] = "status-update"
 
-_WORKING: Final[str] = "working"
-_COMPLETED: Final[str] = "completed"
-_FAILED: Final[str] = "failed"
+
+class TaskState(StrEnum):
+    """The A2A task states a run is published under."""
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 def _text_part(text: str) -> Mapping[str, object]:
@@ -137,19 +143,19 @@ class A2AEventProjector:
 
     def _project_tool_call(self, _: ToolCallEvent) -> tuple[Mapping[str, object], ...]:
         message = _agent_message((_text_part(self._next_ordinal()),))
-        return (self._status_update({"state": _WORKING, "message": message}, final=False),)
+        return (self._status_update({"state": TaskState.WORKING, "message": message}, final=False),)
 
     def _project_tool_result(self, _: ToolResultEvent) -> tuple[Mapping[str, object], ...]:
-        return (self._status_update({"state": _WORKING}, final=False),)
+        return (self._status_update({"state": TaskState.WORKING}, final=False),)
 
     def _project_final(self, event: FinalEvent) -> tuple[Mapping[str, object], ...]:
         artifact = self._artifact_update(
             _OUTPUT_ARTIFACT_ID, (_data_part(event.output),), append=False, last_chunk=True
         )
-        return (artifact, self._status_update({"state": _COMPLETED}, final=True))
+        return (artifact, self._status_update({"state": TaskState.COMPLETED}, final=True))
 
     def _project_error(self, event: ErrorEvent) -> tuple[Mapping[str, object], ...]:
-        status = {"state": _FAILED, "metadata": {"code": str(event.code)}}
+        status = {"state": TaskState.FAILED, "metadata": {"code": str(event.code)}}
         return (self._status_update(status, final=True),)
 
 

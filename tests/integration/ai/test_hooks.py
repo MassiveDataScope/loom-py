@@ -24,16 +24,21 @@ from loom.ai.abc import (
     ToolResultEvent,
 )
 from loom.ai.compiler._plan import AgentPlan, CompiledOutputHook
-from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.errors import (
+    HOOK_FAILED_MESSAGE,
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunErrorCode,
+)
 from loom.ai.runtime import AgentRunError, AgentRuntime
-from loom.ai.runtime._bounded import RunContext
-from loom.ai.runtime._hooks import HOOK_FAILED_MESSAGE, hooked_events
+from loom.ai.runtime._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Caller, Input, UseCase
+from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.keys import use_case_key
 from tests.integration.ai.conftest import (
     DEFAULT_USAGE,
@@ -414,18 +419,19 @@ class TestHookExecution:
         container: LoomContainer,
     ) -> None:
         """A run context retained for one caller runs its hook as whoever acts."""
-        run = RunContext(
+        turn = TurnCallbacks(
             plan=_hooked_plan(RecordAnswer),
             identity=identity,
             interaction_id="acme-interaction",
             conversation_id=None,
+            invoker=container.resolve(ApplicationInvoker),
         )
 
         async def final() -> AsyncIterator[AgentEvent]:
             yield FinalEvent(output={"answer": "42"}, usage=DEFAULT_USAGE)
 
         with ExecutionScope(_ACME_OTHER):
-            events = [event async for event in hooked_events(final(), run, container)]
+            events = [event async for event in turn.events(final())]
 
         assert [type(event) for event in events] == [FinalEvent]
         assert [call.caller for call in recorder.calls] == [_ACME_OTHER]

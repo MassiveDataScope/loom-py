@@ -50,15 +50,13 @@ def supported_native_tools(target: InferenceTarget) -> frozenset[str]:
     return frozenset(name for name, cls in TOOL_CLASSES.items() if cls in admitted)
 
 
-def native_capability(capability: CompiledNativeCapability, context: object) -> NativeTool[object]:
+def native_capability(capability: CompiledNativeCapability) -> NativeTool[object]:
     """Build the engine capability of one granted provider tool.
 
     Args:
         capability: Compiled grant naming a tool already checked against the model.
-        context: Unused; the provider runs the tool, so there is nothing to wire.
 
     Returns:
         The capability the engine hands to the model provider.
     """
-    del context
     return NativeTool(TOOL_CLASSES[capability.tool]())

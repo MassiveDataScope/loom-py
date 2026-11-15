@@ -59,6 +59,7 @@ from loom.ai.abc import (
     DepsFactory,
     ErrorEvent,
     FinalEvent,
+    HealthState,
     HealthStatus,
     Prompt,
     TextDeltaEvent,
@@ -81,7 +82,7 @@ from loom.core.identity import Identity
 _logger = logging.getLogger(__name__)
 
 RETRY_BACKOFF_MS = 200
-"""Base wait before a retried attempt; doubled per attempt (FR-028).
+"""Base wait before a retried attempt; doubled per attempt.
 
 A constant rather than a policy field: ``policies`` describes what the agent
 is allowed to spend, and no requirement asks the artifact to tune the wait.
@@ -90,7 +91,7 @@ is allowed to spend, and no requirement asks the artifact to tune the wait.
 MAX_LOGGED_CAUSE_CHARS = 500
 """Cap on a logged failure cause: it is model-authored text, unbounded at the source."""
 
-_HEALTHY = HealthStatus(status="ok")
+_HEALTHY = HealthStatus(status=HealthState.OK)
 
 _NAMED_COUNTERS: frozenset[str] = frozenset(
     {
@@ -108,16 +109,18 @@ _NAMED_COUNTERS: frozenset[str] = frozenset(
 _HEALTH_BY_CODE: Mapping[AgentRunErrorCode, HealthStatus] = MappingProxyType(
     {
         AgentRunErrorCode.PROVIDER_UNAVAILABLE: HealthStatus(
-            status="unavailable", detail="the last run failed: the provider was unavailable"
+            status=HealthState.UNAVAILABLE,
+            detail="the last run failed: the provider was unavailable",
         ),
         AgentRunErrorCode.PROVIDER_RATE_LIMITED: HealthStatus(
-            status="degraded", detail="the last run failed: the provider rate limited it"
+            status=HealthState.DEGRADED,
+            detail="the last run failed: the provider rate limited it",
         ),
     }
 )
 
 _UNPRICED_SPEND_HEALTH: Final[HealthStatus] = HealthStatus(
-    status="degraded",
+    status=HealthState.DEGRADED,
     detail=(
         "a run produced a model response this engine could not fully price; "
         "policies.max_usd may not be fully enforced"
@@ -638,9 +641,7 @@ class PydanticAIEngine:
         pydantic validation failure alike replay the model request inside
         this same call, and each replay opens with a new response's first
         part, at ``index=0``, so a delta already relayed cannot be un-sent. A plan
-        that withholds nothing never buffers: *pending* stays empty and every
-        mapped event is yielded as it arrives, exactly as before
-        ``output_check`` existed.
+        that withholds nothing yields every mapped event as it arrives.
 
         *output_type* also selects which built agent serves this attempt:
         :attr:`_shaped_agent`, carrying no output validator, when given —

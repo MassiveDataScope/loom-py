@@ -42,7 +42,7 @@ from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, InstructionBlock, JsonSchemaOutput
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
-from loom.ai.engines.pydantic_ai._guards import capability_deps
+from loom.ai.engines.pydantic_ai._guards import bundle_container
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
@@ -333,26 +333,25 @@ class TestLiteralNeverInfers:
         assert "Say {{marca}}." in _instructions_sent(seen)
 
 
-class TestCapabilityDepsUnaffectedByTheWrap:
-    """AC-010: ``capability_deps`` behaves identically before and after the state wrap."""
-
-    def test_a_bundle_carrying_identity_and_container_passes(self) -> None:
+class TestBundleContainerUnaffectedByTheWrap:
+    def test_a_bundle_carrying_a_container_yields_it(self) -> None:
+        container = LoomContainer()
         bundle = _Bundle(
             identity=_ALICE,
-            container=LoomContainer(),
+            container=container,
             invoker="prod-invoker-token",
             subject=_ALICE.subject,
             mechanism=_ALICE.mechanism,
             state={"marca": "civic"},
         )
 
-        deps = capability_deps(cast("RunContext[Any]", SimpleNamespace(deps=bundle)))
+        found = bundle_container(cast("RunContext[Any]", SimpleNamespace(deps=bundle)))
 
-        assert deps.identity is _ALICE
+        assert found is container
 
     def test_a_bundle_carrying_neither_fails_closed(self) -> None:
         with pytest.raises(AgentRunError) as failure:
-            capability_deps(cast("RunContext[Any]", SimpleNamespace(deps=object())))
+            bundle_container(cast("RunContext[Any]", SimpleNamespace(deps=object())))
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
 

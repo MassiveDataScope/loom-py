@@ -52,6 +52,7 @@ from pydantic_ai.messages import (
 )
 
 from loom.ai.abc import AgentEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
+from loom.ai.engines.pydantic_ai._returns import RESERVED_METADATA_KEY, ReturnShape
 
 MAPPED_EVENT_KINDS: frozenset[str] = frozenset(
     {"part_start", "part_delta", "function_tool_call", "function_tool_result", "agent_run_result"}
@@ -85,9 +86,9 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
 )
 """Engine event kinds with no loom counterpart; carried by no consumer."""
 
-_TOOL_OK = "ok"
+_TOOL_OK = ReturnShape.OK
 _TOOL_RETRY = "the model was asked to retry the call"
-_TOOL_REFUSED = "refused"
+_TOOL_REFUSED = ReturnShape.REFUSED
 _TOOL_FAILED = "the call failed"
 _TOOL_DENIED = "the call was denied"
 _TOOL_INTERRUPTED = "the call was interrupted"
@@ -104,13 +105,10 @@ _OUTCOME_SUMMARIES: Mapping[str, str] = MappingProxyType(
 From pydantic-ai 2.66 a retried, failed, denied or interrupted call returns as
 a ``ToolReturnPart`` whose ``outcome`` says so; before, a retry was a
 ``RetryPromptPart`` and the part carried no outcome. Each summary is fixed, so
-the event never quotes what the tool or the model wrote (FR-030b)."""
+the event never quotes what the tool or the model wrote."""
 
-_COUNTED_SHAPES: frozenset[str] = frozenset({"rows"})
+_COUNTED_SHAPES: frozenset[str] = frozenset({ReturnShape.ROWS})
 """Shapes whose summary is a count and a unit; every other shape reads ``ok``."""
-
-_REFUSED_SHAPE = "refused"
-"""Shape a loom toolset publishes when it answers a refusal instead of data."""
 
 
 def _text_from_start(event: PartStartEvent) -> AgentEvent | None:
@@ -151,7 +149,7 @@ def _facts(part: object) -> Mapping[str, Any]:
     metadata = getattr(part, "metadata", None)
     if not isinstance(metadata, Mapping):
         return {}
-    facts = metadata.get("loom")
+    facts = metadata.get(RESERVED_METADATA_KEY)
     return facts if isinstance(facts, Mapping) else {}
 
 
@@ -172,7 +170,7 @@ def _tool_result(event: FunctionToolResultEvent) -> AgentEvent:
     failure = _OUTCOME_SUMMARIES.get(getattr(part, "outcome", "success"))
     if failure is not None:
         return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=failure)
-    if _facts(part).get("shape") == _REFUSED_SHAPE:
+    if _facts(part).get("shape") == ReturnShape.REFUSED:
         return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=_TOOL_REFUSED)
     return ToolResultEvent(call_id=part.tool_call_id, ok=True, summary=_summary(part))
 

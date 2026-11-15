@@ -261,6 +261,11 @@ class AgentEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     auth: str
     allow_anonymous: bool = False
 
+    @property
+    def active(self) -> bool:
+        """Whether the opt-in is in force: ``enabled`` and a named ``auth``."""
+        return self.enabled and bool(self.auth.strip())
+
 
 class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     """A2A exposure settings.
@@ -418,6 +423,18 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         if not self.specs and not manifest and not mcp_declared:
             raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
         return self.specs or manifest
+
+    def active_endpoint(self, name: str) -> AgentEndpointConfig | None:
+        """Return the HTTP opt-in of agent *name* only when it is in force.
+
+        Args:
+            name: Agent name.
+
+        Returns:
+            The agent's :attr:`AgentEndpointConfig.active` stanza, or ``None``.
+        """
+        endpoint = self.endpoints.get(name)
+        return endpoint if endpoint is not None and endpoint.active else None
 
 
 def _warn_unused_prices(

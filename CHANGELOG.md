@@ -639,6 +639,30 @@
     `loom.ai.runtime._grants.McpGrantView` and `SqlGrantView` lose their
     `identity=` argument.
 
+- **ai:** `HealthState` is a `StrEnum` (`OK`, `DEGRADED`, `UNAVAILABLE`)
+  instead of a `Literal` alias. Its members compare and encode as the same
+  strings, so `status == "ok"` and the `/health` JSON do not change; code
+  that annotates a bare string as `HealthState` uses the members for a type
+  checker. `HealthState.worst(states)` returns the worst of several states.
+- **ai (private modules):** `loom.ai.runtime._hooks`, `_conversation` and
+  `_bounded` merge into `loom.ai.runtime._turn`: `TurnCallbacks(plan,
+  identity, interaction_id, conversation_id, invoker)` runs the conversation
+  loader (`conversation()`) and the output hook (`events()`, `terminal()`),
+  and builds both commands (`command()`, `hook_command()`).
+  `CompiledOutputHook.step` and `CompiledConversation.step` name the step in
+  logs and errors. The fixed client texts and the denial table live in
+  `loom.ai.errors` (`HOOK_FAILED_MESSAGE`, `NO_TERMINAL_MESSAGE`,
+  `DENIED_MESSAGE`, `DENIALS`).
+  `loom.ai.runtime._health` merges into `_lifecycle` (`AgentHealth` is still
+  exported by `loom.ai.runtime`). `loom.ai._roles.bound_query_roles` becomes
+  `CompiledSqlCapability.roles_of(identity)`. In the pydantic-ai engine,
+  `build_capabilities(plan)` drops `container`, `native_capability(capability)`
+  drops `context`, `capability_deps` becomes `bundle_container` (read by the
+  `sql` tool only) and `CapabilityDeps` is removed,
+  `_failures.classify` becomes `Outcome.of`, and
+  `loom.ai.runtime._grants.INTERRUPTED_CALL_CODE` is removed
+  (`AgentRunErrorCode.MCP_CALL_INTERRUPTED` is the code).
+
 ## ⚠ Behaviour changes
 
 ### composition
@@ -1013,6 +1037,37 @@
 
 ### ai
 
+- **ai:** the application's `ApplicationInvoker` is resolved once: by the
+  agent runtime when it starts, for the output hook and the conversation
+  loader, and when each engine is built, for `usecase` tools. An invoker
+  registered or replaced in the container afterwards is not used. Each call
+  still acts as the identity acting where it runs.
+- **ai:** the agent runtime refuses to start with `INVOKER_BOUND` when the
+  container's `ApplicationInvoker` is bound to an identity
+  (`AppInvoker.for_identity`), and with `USECASE_INVOKER_MISSING`, naming the
+  agents, when a plan grants use cases and the container holds no invoker.
+  Building a pydantic-ai engine for such a plan raises the same
+  `USECASE_INVOKER_MISSING`; before, each tool call answered a refusal.
+- **ai:** a tool call refused for the caller (past the delegation deadline,
+  `Unauthenticated`, `Forbidden`, a SQL role refusal) that escapes a tool now
+  fails the run with `UNAUTHORIZED` (class `AUTHORIZATION`, never retried);
+  before it was classified `PROVIDER_UNAVAILABLE` and the run was retried.
+- **ai:** `McpGrantView.tools()` (an agent handle's `mcp(server).tools()`)
+  requires an authenticated caller inside an execution, as `call()` does.
+- **ai:** a `usecase` tool no longer reads the dependency bundle, so a bundle
+  without `container` only fails the `sql` tool, the one that reads it.
+- **ai:** `AgentHealth.checks` is typed `Mapping[str, HealthState]`.
+- **ai:** an interrupted MCP call through an `Mcp()` handle or an agent
+  handle's `mcp()` view raises the session's own `McpCallInterrupted`
+  (`MCP_CALL_INTERRUPTED`, unchanged), no longer a copy whose message is
+  prefixed with `mcp server '<name>':`.
+- **ai:** `CompiledOutputHook` and `CompiledConversation` share the base
+  `CompiledUseCaseCall`; `StateShape.decode(body)` decodes state bytes for
+  both the HTTP surface and the runtime's defaults;
+  `AgentEndpointConfig.active` and `AiConfig.active_endpoint(name)` state the
+  one "enabled and named `auth`" rule the HTTP mount, the A2A anonymity
+  opt-out and the JWT audience check share. The A2A task states are
+  `loom.ai.a2a.events.TaskState`.
 - **ai:** in a use case that declares both `Agent()` and `Mcp()`, the resolvers now
   run in declaration order, and a missing identity or an unbound resolver names the
   first-declared marker; before, agents always came first.

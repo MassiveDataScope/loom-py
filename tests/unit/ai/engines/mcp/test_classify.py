@@ -14,7 +14,6 @@ from loom.ai.engines.pydantic_ai._failures import (
     CLIENT_MADE_CODES,
     McpCallInterrupted,
     Outcome,
-    classify,
 )
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, is_retriable
 
@@ -36,29 +35,30 @@ class TestMcpErrorClassification:
     def test_a_client_made_code_is_unsafe_whoever_sent_it(
         self, code: int, make: type[MCPError]
     ) -> None:
-        assert classify(make(code, "Connection closed")) is Outcome.UNSAFE
+        assert Outcome.of(make(code, "Connection closed")) is Outcome.UNSAFE
 
     @pytest.mark.parametrize("make", [MCPError, _sent_by_server])
     def test_an_invalid_request_is_unsafe(self, make: type[MCPError]) -> None:
-        assert classify(make(-32600, "Unexpected content type")) is Outcome.UNSAFE
+        assert Outcome.of(make(-32600, "Unexpected content type")) is Outcome.UNSAFE
 
     @pytest.mark.parametrize("message", _SESSION_UNKNOWN)
     @pytest.mark.parametrize("make", [MCPError, _sent_by_server])
     def test_a_session_the_server_does_not_know_is_safe(
         self, message: str, make: type[MCPError]
     ) -> None:
-        assert classify(make(-32600, message)) is Outcome.SAFE
+        assert Outcome.of(make(-32600, message)) is Outcome.SAFE
 
     @pytest.mark.parametrize("message", _SESSION_UNKNOWN)
     @pytest.mark.parametrize("code", [-32000, -32603])
     def test_the_session_messages_are_safe_only_under_invalid_request(
         self, code: int, message: str
     ) -> None:
-        assert classify(MCPError(code, message)) is Outcome.UNSAFE
+        assert Outcome.of(MCPError(code, message)) is Outcome.UNSAFE
 
     def test_a_code_outside_the_client_set_is_an_answer_the_server_sent(self) -> None:
         assert (
-            classify(_sent_by_server(-32043, "middleware-sent JSON-RPC error")) is Outcome.COMPLETED
+            Outcome.of(_sent_by_server(-32043, "middleware-sent JSON-RPC error"))
+            is Outcome.COMPLETED
         )
 
     @pytest.mark.parametrize(
@@ -73,7 +73,7 @@ class TestMcpErrorClassification:
         ids=["connection", "runtime", "httpx", "group", "unknown"],
     )
     def test_anything_but_an_mcp_error_is_unsafe(self, exc: Exception) -> None:
-        assert classify(exc) is Outcome.UNSAFE
+        assert Outcome.of(exc) is Outcome.UNSAFE
 
     def test_the_client_made_codes_are_pinned(self) -> None:
         """An upgrade of mcp reruns this: a new client-made code must be added on purpose."""
@@ -101,7 +101,7 @@ class TestMcpErrorClassification:
     def test_a_model_retry_is_judged_by_what_caused_it(
         self, cause: BaseException | None, outcome: Outcome
     ) -> None:
-        assert classify(_wrapped(cause)) is outcome
+        assert Outcome.of(_wrapped(cause)) is outcome
 
 
 def _wrapped(cause: BaseException | None) -> Exception:

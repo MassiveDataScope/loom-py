@@ -1,4 +1,4 @@
-"""The HTTP pool of one MCP toolset, which a thawed process drops (plan 6.5).
+"""The HTTP pool of one MCP toolset, which a thawed process drops.
 
 A frozen Lambda keeps its pooled keep-alive connections while the server closes
 them, and httpcore2 only expires an idle connection by a monotonic clock that did
