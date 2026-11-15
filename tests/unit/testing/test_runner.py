@@ -508,14 +508,6 @@ class TestMcpHandleDoubleEnforcesInclude:
 
         assert result == {"title": "checkout runbook"}
 
-    async def test_with_tools_drives_tools_through_the_filter(self) -> None:
-        runbooks = McpHandleDouble("runbooks").with_tools("search_incident", "delete_incident")
-        runner = UseCaseTest(_McpUseCase()).with_mcp("runbooks", runbooks)
-        resolved = runner._resolve_mcp_double(
-            "runbooks", ("search_incident",), Identity(subject="ada")
-        )
-        assert resolved.tools() == ("search_incident",)
-
     async def test_an_unscripted_in_filter_tool_call_raises_assertion_error(self) -> None:
         runbooks = McpHandleDouble("runbooks").with_tools("search_incident")
         # No on_call_untyped scripted: admitted by the filter, refused by the double.

@@ -21,6 +21,7 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.execution import current_execution, execution_identity
 from loom.core.identity import Identity
 from loom.core.repository.abc import RepoFor
 from loom.core.use_case.use_case import UseCase
@@ -69,6 +70,7 @@ class RecordedQuery:
 
 
 _ScriptedT = TypeVar("_ScriptedT")
+_DoubleT = TypeVar("_DoubleT")
 
 
 def _next_scripted(queue: list[_ScriptedT], failure: str) -> _ScriptedT:
@@ -557,6 +559,84 @@ if TYPE_CHECKING:
         return double
 
 
+class _Doubles(Generic[_DoubleT]):
+    """The doubles a harness registered for one marker kind, keyed by the declared name.
+
+    Args:
+        declarer: What declares the markers, named in a refusal.
+        harness: The harness class whose method registers a double, named in a refusal.
+        doubles: The registered doubles by declared name.
+    """
+
+    __slots__ = ("_declarer", "_doubles", "_harness")
+
+    def __init__(self, declarer: str, harness: str, doubles: Mapping[str, _DoubleT]) -> None:
+        self._declarer = declarer
+        self._harness = harness
+        self._doubles = doubles
+
+    def _registered(self, key: str, spelling: str, method: str) -> _DoubleT:
+        """Return the double registered under *key*.
+
+        Inside an execution the execution's caller is read first; a singleton
+        built outside any execution reads none.
+
+        Args:
+            key: The name the marker declares.
+            spelling: The marker as written, named in the refusal.
+            method: The harness method registering a double for *key*.
+
+        Returns:
+            The registered double.
+
+        Raises:
+            loom.core.errors.Unauthenticated: Inside an execution acting with no caller.
+            RuntimeError: When no double is registered under *key*.
+        """
+        if current_execution() is not None:
+            execution_identity()
+        double = self._doubles.get(key)
+        if double is None:
+            raise RuntimeError(
+                f"{self._declarer} declares {spelling} but no double was registered; "
+                f"call {self._harness}.{method}({key!r}, ...) before running it."
+            )
+        return double
+
+
+class _AgentDoubles(_Doubles[AgentHandleDouble]):
+    """Resolves each ``Agent(name)`` declaration to the double registered for its name."""
+
+    __slots__ = ()
+
+    def resolve(self, declaration: Any, annotation: object) -> AgentHandleDouble:
+        """Return the double registered for ``declaration.name``.
+
+        Raises:
+            loom.core.errors.Unauthenticated: Inside an execution acting with no caller.
+            RuntimeError: When no double is registered for the name.
+        """
+        name = declaration.name
+        return self._registered(name, f"Agent({name!r})", "with_agent")
+
+
+class _McpDoubles(_Doubles[McpHandleDouble]):
+    """Resolves each ``Mcp(server, include=...)`` declaration to its server's double, narrowed."""
+
+    __slots__ = ()
+
+    def resolve(self, declaration: Any, annotation: object) -> _FilteredMcpDouble:
+        """Return the double registered for ``declaration.server``, narrowed to its ``include``.
+
+        Raises:
+            loom.core.errors.Unauthenticated: Inside an execution acting with no caller.
+            RuntimeError: When no double is registered for the server.
+        """
+        server = declaration.server
+        double = self._registered(server, f"Mcp({server!r}, ...)", "with_mcp")
+        return _FilteredMcpDouble(double, server=server, include=declaration.include)
+
+
 class UseCaseTest(Generic[ResultT]):
     """Fluent test harness for executing UseCases without HTTP or framework overhead.
 
@@ -766,10 +846,13 @@ class UseCaseTest(Generic[ResultT]):
             loom.core.engine.compiler.CompilationError: If the UseCase fails
                 structural validation.
         """
-        compiler = UseCaseCompiler()
-        executor = RuntimeExecutor(compiler)
-        executor.bind_agent_resolver(self._resolve_agent_double)
-        executor.bind_mcp_resolver(self._resolve_mcp_double)
+        declarer = f"{type(self._use_case).__qualname__}.execute"
+        harness = type(self).__name__
+        executor = RuntimeExecutor(
+            UseCaseCompiler(),
+            agent_resolver=_AgentDoubles(declarer, harness, self._agent_doubles),
+            mcp_resolver=_McpDoubles(declarer, harness, self._mcp_doubles),
+        )
         return await executor.execute(  # type: ignore[no-any-return]
             self._use_case,
             params=self._params,
@@ -778,60 +861,6 @@ class UseCaseTest(Generic[ResultT]):
             load_overrides=self._load_overrides if self._load_overrides else None,
             identity=self._identity,
         )
-
-    def _resolve_agent_double(self, name: str, identity: Identity) -> AgentHandleDouble:
-        """Resolve one ``Agent(name)`` marker to its registered double, failing closed.
-
-        Args:
-            name: Agent name the marker declared.
-            identity: Verified caller of this execution; the double is not
-                identity-aware, so it is not consulted — the same caller
-                already had to pass the plan's own ``Caller()`` binding, if
-                any, to reach this point.
-
-        Raises:
-            RuntimeError: If no :meth:`with_agent` call registered a double
-                for *name*. Naming the use case and the agent, the same way
-                an unregistered ``Caller()`` fails closed today.
-        """
-        del identity
-        double = self._agent_doubles.get(name)
-        if double is None:
-            raise RuntimeError(
-                f"{type(self._use_case).__qualname__}.execute declares Agent({name!r}) but "
-                f"no double was registered; call UseCaseTest.with_agent({name!r}, ...) before "
-                ".run()."
-            )
-        return double
-
-    def _resolve_mcp_double(
-        self, server: str, include: tuple[str, ...], identity: Identity
-    ) -> _FilteredMcpDouble:
-        """Resolve one ``Mcp(server, ...)`` marker to its registered double, failing closed.
-
-        Args:
-            server: Server name the marker declared.
-            include: The resolving binding's own ``include`` glob patterns,
-                narrowing the registered double the same way production
-                narrows the live catalogue.
-            identity: Verified caller of this execution; the double is not
-                identity-aware, so it is not consulted — the same reason
-                :meth:`_resolve_agent_double` does not consult it either.
-
-        Raises:
-            RuntimeError: If no :meth:`with_mcp` call registered a double
-                for *server*. Naming the use case and the server, the same
-                way an unregistered ``Agent(name)`` fails closed.
-        """
-        del identity
-        double = self._mcp_doubles.get(server)
-        if double is None:
-            raise RuntimeError(
-                f"{type(self._use_case).__qualname__}.execute declares Mcp({server!r}, ...) "
-                f"but no double was registered; call UseCaseTest.with_mcp({server!r}, ...) "
-                "before .run()."
-            )
-        return _FilteredMcpDouble(double, server=server, include=include)
 
     @property
     def plan(self) -> ExecutionPlan:
