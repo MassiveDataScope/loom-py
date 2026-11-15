@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
+import msgspec
 import pytest
 from bson import ObjectId
 from pymongo.errors import AutoReconnect, BulkWriteError
@@ -45,6 +46,12 @@ _CODEC = CursorCodec(signing="ephemeral")
 
 
 class ArticleCreate(BaseModel):
+    slug: str
+    title: str
+    views: int = 0
+
+
+class PlainArticleCreate(msgspec.Struct, omit_defaults=True):
     slug: str
     title: str
     views: int = 0
@@ -241,6 +248,37 @@ class TestStorageForm:
         assert collection.documents[created.id]["shade"] == "dark"
         assert await repo.get_by_id(created.id) == created
 
+    async def test_create_stores_a_field_left_at_its_default(
+        self, collection: FakeCollection
+    ) -> None:
+        await _articles(collection).create(ArticleCreate(slug="a", title="A"))
+
+        assert collection.documents["a"] == {"_id": "a", "title": "A", "views": 0}
+
+    async def test_create_many_stores_a_field_left_at_its_default(
+        self, collection: FakeCollection
+    ) -> None:
+        await _articles(collection).create_many([ArticleCreate(slug="a", title="A")])
+
+        assert collection.documents["a"]["views"] == 0
+
+    async def test_a_plain_struct_stores_its_defaults_on_create(
+        self, collection: FakeCollection
+    ) -> None:
+        await _articles(collection).create(PlainArticleCreate(slug="a", title="A"))
+
+        assert collection.documents["a"] == {"_id": "a", "title": "A", "views": 0}
+
+    async def test_update_keeps_the_fields_the_caller_did_not_send(
+        self, collection: FakeCollection
+    ) -> None:
+        repo = _articles(collection)
+        await repo.create(ArticleCreate(slug="a", title="A", views=7))
+
+        await repo.update("a", ArticleUpdate(title="B"))
+
+        assert collection.documents["a"]["views"] == 7
+
     async def test_only_model_columns_are_persisted(self, collection: FakeCollection) -> None:
         await _articles(collection).create(ArticleWithExtra(slug="a", title="A", extra="x"))
 
@@ -252,7 +290,7 @@ class TestStorageForm:
 
         await repo.update("a", ArticleWithExtra(slug="a", title="B", extra="x"))
 
-        assert set(collection.documents["a"]) == {"_id", "title"}
+        assert set(collection.documents["a"]) == {"_id", "title", "views"}
 
     async def test_create_output_equals_a_later_read(
         self, collection: FakeCollection, monkeypatch: pytest.MonkeyPatch

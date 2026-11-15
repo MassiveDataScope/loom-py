@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import msgspec
 import pytest
 
 from loom.core.errors import Conflict, UnsupportedQuery
@@ -16,6 +17,15 @@ pytestmark = pytest.mark.asyncio
 
 def _repo(client: FakeClient) -> RepositoryDynamoDB[Product, int]:
     return RepositoryDynamoDB(client=client, table_name="products", model=Product)
+
+
+class PlainProductCreate(msgspec.Struct, omit_defaults=True):
+    id: int
+    name: str = ""
+
+
+class PriceUpdate(msgspec.Struct, omit_defaults=True):
+    price: float = 0.0
 
 
 class TestDynamoRepositoryRoundTrip:
@@ -35,6 +45,39 @@ class TestDynamoRepositoryRoundTrip:
 
         # Floats cross the wire as low-level ``N`` AttributeValues (never native floats).
         assert fake_client.items["products"]["1"]["price"] == {"N": "9.5"}
+
+    async def test_create_stores_a_field_left_at_its_default(self, fake_client: FakeClient) -> None:
+        await _repo(fake_client).create(ProductCreate(id=1))
+
+        assert fake_client.items["products"]["1"] == {
+            "id": {"N": "1"},
+            "name": {"S": ""},
+            "price": {"N": "0.0"},
+        }
+
+    async def test_create_many_stores_a_field_left_at_its_default(
+        self, fake_client: FakeClient
+    ) -> None:
+        await _repo(fake_client).create_many([ProductCreate(id=1)])
+
+        assert fake_client.items["products"]["1"]["name"] == {"S": ""}
+
+    async def test_a_plain_struct_stores_its_defaults_on_create(
+        self, fake_client: FakeClient
+    ) -> None:
+        await _repo(fake_client).create(PlainProductCreate(id=1))
+
+        assert fake_client.items["products"]["1"] == {"id": {"N": "1"}, "name": {"S": ""}}
+
+    async def test_update_keeps_the_fields_the_caller_did_not_send(
+        self, fake_client: FakeClient
+    ) -> None:
+        repo = _repo(fake_client)
+        await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
+
+        await repo.update(1, PriceUpdate(price=1.5))
+
+        assert fake_client.items["products"]["1"]["name"] == {"S": "Widget"}
 
     async def test_get_by_non_key_field_raises_unsupported_query(
         self, fake_client: FakeClient

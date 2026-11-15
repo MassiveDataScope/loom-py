@@ -143,10 +143,10 @@ def _field_tuple(
         ``(name, type, default)``, where the default is ``msgspec.NODEFAULT`` for
         required fields and a ``msgspec.field(...)`` wrapper for default factories.
     """
-    if sf.default is msgspec.NODEFAULT or sf.default is msgspec.UNSET:
-        return (name, typ, msgspec.NODEFAULT)
     if sf.default_factory is not msgspec.NODEFAULT:
         return (name, typ, msgspec.field(default_factory=sf.default_factory))
+    if sf.default is msgspec.NODEFAULT or sf.default is msgspec.UNSET:
+        return (name, typ, msgspec.NODEFAULT)
     return (name, typ, sf.default)
 
 

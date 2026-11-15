@@ -59,6 +59,8 @@ class AcmeContractOrder(BaseModel):
     # Naive: sqlite stores no offset, so an aware value would not round-trip.
     created_at: datetime = ColumnField(DateTime(tz=False))
     note: str | None = ColumnField(nullable=True, default=None)
+    tags: list[str] = []
+    priority: int = 0
 
 
 class CreateOrder(Command, frozen=True):
@@ -68,6 +70,8 @@ class CreateOrder(Command, frozen=True):
     created_at: datetime
     note: str | None = None
     id: int | None = None
+    tags: list[str] = []
+    priority: int = 0
 
 
 class UpdateOrder(Command, frozen=True):

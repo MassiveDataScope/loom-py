@@ -44,6 +44,7 @@ from loom.core.repository.abc import (
     Readable,
     Updatable,
 )
+from loom.core.repository.record import RecordLayout
 from loom.core.uow.coordinator import Participant
 from loom.core.uow.scope import InvocationScope, current_scope
 
@@ -172,7 +173,7 @@ class RepositoryDynamoDB(
         existing item; a failed condition is surfaced as
         :class:`~loom.core.errors.Conflict`.
         """
-        internal = self._to_internal(data)
+        internal = self._creation_item(data)
         await self._put_new(internal)
         return self._to_output(internal)
 
@@ -202,7 +203,7 @@ class RepositoryDynamoDB(
             Conflict: With ``ERROR``, on a key that already exists or is
                 repeated in *data*.
         """
-        items = [self._to_internal(item) for item in data]
+        items = [self._creation_item(item) for item in data]
         if on_conflict is OnConflict.IGNORE:
             written = []
             for item in items:
@@ -365,6 +366,13 @@ class RepositoryDynamoDB(
             backend=self.backend_name,
             model=self._model.__qualname__,
         )
+
+    def _creation_item(self, data: msgspec.Struct) -> dict[str, Any]:
+        """Return the item to store for *data*, keyed by internal field name.
+
+        Every field that is not ``msgspec.UNSET`` is included, defaults too.
+        """
+        return cast(dict[str, Any], msgspec.to_builtins(RecordLayout.of(type(data)).values(data)))
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
         """Serialize a struct to a dict keyed by internal (snake_case) field names."""

@@ -1446,6 +1446,19 @@
   `MongoSessions` unkeyed, or a session manager keyed by store, is refused.
   An invalid `stores` section fails in `compose_application`.
   `_ROLLBACK_TIMEOUT_S` is now `ROLLBACK_TIMEOUT_S`.
+- **stores:** `create` and `create_many` on SQLAlchemy, Mongo and DynamoDB
+  store every field of the command, including the ones left at their default
+  (and `create_object` on SQLAlchemy builds the row from them). Before, a
+  field equal to its default was dropped by `omit_defaults`: a `NOT NULL`
+  SQLAlchemy column with no default of its own failed, and a Mongo document
+  or DynamoDB item lacked the field, so a filter on it missed. A field holding
+  `msgspec.UNSET` is still not stored and updates still write only what the
+  caller sent. `create_many` mutation events list the defaulted fields in
+  `changed_fields`. The create input derived by the REST auto-routes now makes
+  a field with a `default_factory` optional instead of required.
+- **stores:** a PostgreSQL `NOT NULL` violation through asyncpg now raises
+  `Conflict("Field '<column>' is required.")` naming the column, instead of
+  `unknown`; the unique-violation message names its constraint.
 
 ### rls
 

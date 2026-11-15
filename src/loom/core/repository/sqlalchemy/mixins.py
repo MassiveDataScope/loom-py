@@ -36,6 +36,7 @@ from loom.core.repository.abc import (
     build_page_result,
 )
 from loom.core.repository.mutation import MutationEvent
+from loom.core.repository.record import RecordLayout
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
@@ -131,7 +132,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def create_object(self, data: msgspec.Struct) -> Any:
         """Create a model instance from a struct without persisting it."""
-        return self._effective_sa_model(**self._serialize_input(data))
+        return self._effective_sa_model(**self._creation_values(data))
 
     @property
     def entity_name(self) -> str:
@@ -173,19 +174,41 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         return values[0] if len(values) == 1 else values
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
+        """Return the column values *data* carries on the wire, keyed by internal field name.
+
+        A struct field left at its default is omitted, so the result holds only
+        what the caller sent. A mapping is returned unchanged.
+
+        Raises:
+            TypeError: If a struct does not serialize to a mapping.
+        """
         if isinstance(data, msgspec.Struct):
             builtins = to_column_value(data)
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
-            values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
-            sa_model = self._effective_sa_model
-            names = (self._column_field_names or frozenset()).intersection(values)
-            check_time_offsets(
-                ((getattr(sa_model, name), values[name]) for name in names),
-                code=ErrorCode.BOUNDARY_VALIDATION,
-            )
-            return values
+            return self._checked_columns(_to_internal_field_names(type(data), builtins))
         return data
+
+    def _creation_values(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
+        """Return the column values to insert for *data*, keyed by internal field name.
+
+        A struct contributes every field that is not ``msgspec.UNSET``,
+        defaults included. A mapping is returned unchanged.
+        """
+        if isinstance(data, msgspec.Struct):
+            return self._checked_columns(to_column_value(RecordLayout.of(type(data)).values(data)))
+        return data
+
+    def _checked_columns(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Encode the JSON columns of *values* and check the time offsets of its columns."""
+        values = self._encode_json_columns(values)
+        sa_model = self._effective_sa_model
+        names = (self._column_field_names or frozenset()).intersection(values)
+        check_time_offsets(
+            ((getattr(sa_model, name), values[name]) for name in names),
+            code=ErrorCode.BOUNDARY_VALIDATION,
+        )
+        return values
 
     def _encode_json_columns(self, values: dict[str, Any]) -> dict[str, Any]:
         """Reduce JSON-column payloads to JSON-serialisable builtins."""
@@ -306,7 +329,7 @@ class SQLAlchemyCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
     @handle_integrity_errors
     async def create(self, data: msgspec.Struct) -> OutputT:
         """Persist one entity and return its output struct."""
-        serialized = self._serialize_input(data)
+        serialized = self._creation_values(data)
         async with self._session_scope(write=True) as scoped_session:
             sa_model = self._effective_sa_model
             obj = sa_model(**serialized)
@@ -396,7 +419,7 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
     def _insert_values(self, item: msgspec.Struct) -> dict[str, Any]:
         """Return the non-``None`` column values of *item* keyed by internal field name."""
         return {
-            key: value for key, value in self._serialize_input(item).items() if value is not None
+            key: value for key, value in self._creation_values(item).items() if value is not None
         }
 
     def _partial_keys(self, rows: list[dict[str, Any]]) -> set[str]:

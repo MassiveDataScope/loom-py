@@ -181,7 +181,7 @@ class TestCreateMany:
         assert mutations[0].op == "create"
         assert mutations[0].entity == repository.entity_name
         assert mutations[0].ids == tuple(item.id for item in created)
-        assert mutations[0].changed_fields == frozenset({"sku"})
+        assert mutations[0].changed_fields == frozenset({"sku", "qty"})
 
     async def test_callable_default_is_evaluated_for_the_row_that_omits_it(
         self, repository: RepositorySQLAlchemy[_Item, int], statements: list[str]

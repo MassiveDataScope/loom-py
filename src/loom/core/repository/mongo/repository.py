@@ -73,6 +73,7 @@ from loom.core.repository.abc.cursor import require_cursor_sort
 from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
+from loom.core.repository.record import RecordLayout
 
 Document = dict[str, Any]
 SessionProvider = Callable[[bool], AsyncClientSession | None]
@@ -605,11 +606,21 @@ class RepositoryMongo(
 
     def _new_document(self, data: msgspec.Struct) -> Document:
         """Build the document to insert: ``_id`` resolved and server defaults applied."""
-        values = self._to_internal(data)
+        values = self._creation_columns(data)
         supplied = values.pop(self._id_attr, None)
         key = self._ids.generate() if supplied is None else self._ids.to_storage(supplied)
         missing = frozenset(name for name in self._now_fields if values.get(name) is None)
         return {_ID: key, **values, **_stamp(missing)}
+
+    def _creation_columns(self, data: msgspec.Struct) -> Document:
+        """Return the column fields to store for *data*, keyed by internal name.
+
+        Every field that is not ``msgspec.UNSET`` is included, defaults too.
+        """
+        values = msgspec.to_builtins(
+            RecordLayout.of(type(data)).values(data), builtin_types=_NATIVE_TYPES
+        )
+        return self._stored_columns(cast(dict[str, Any], values))
 
     def _to_internal(self, data: msgspec.Struct) -> Document:
         """Serialize a struct to its column fields, keyed by internal name, in storage form."""
@@ -620,7 +631,12 @@ class RepositoryMongo(
             field.encode_name: field.name for field in msgspec.structs.fields(type(data))
         }
         payload = cast(dict[str, Any], builtins)
-        internal = {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+        return self._stored_columns(
+            {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+        )
+
+    def _stored_columns(self, internal: dict[str, Any]) -> Document:
+        """Keep the column fields of *internal* in storage form."""
         return {
             name: to_storage_value(value)
             for name, value in internal.items()

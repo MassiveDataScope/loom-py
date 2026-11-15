@@ -78,8 +78,13 @@ def _pgcode(exc: IntegrityError) -> str | None:
 
 
 def _diag(exc: IntegrityError, attr: str) -> str:
-    """Safely read a field from the psycopg2/psycopg3 ``diag`` object."""
-    diag = getattr(exc.orig, "diag", None)
+    """Safely read a diagnostic field from the underlying driver exception.
+
+    psycopg2 / psycopg3 expose it on the ``diag`` object; asyncpg exposes it
+    as an attribute of the exception wrapped by SQLAlchemy's adapter.
+    """
+    orig = exc.orig
+    diag = getattr(orig, "diag", None) or getattr(orig, "__cause__", None)
     return str(getattr(diag, attr, "") or "")
 
 
