@@ -78,19 +78,26 @@ def _pgcode(exc: IntegrityError) -> str | None:
 
 
 def _diag(exc: IntegrityError, attr: str) -> str:
-    """Safely read a diagnostic field from the underlying driver exception.
+    """Safely read a field from the psycopg2/psycopg3 ``diag`` object."""
+    diag = getattr(exc.orig, "diag", None)
+    return str(getattr(diag, attr, "") or "")
 
-    psycopg2 / psycopg3 expose it on the ``diag`` object; asyncpg exposes it
-    as an attribute of the exception wrapped by SQLAlchemy's adapter.
+
+def _not_null_column(exc: IntegrityError) -> str:
+    """Return the column a NOT NULL violation names, or an empty string.
+
+    Reads ``diag.column_name`` for psycopg2 / psycopg3 and ``column_name`` on
+    the wrapped exception for asyncpg.
     """
     orig = exc.orig
-    diag = getattr(orig, "diag", None) or getattr(orig, "__cause__", None)
-    return str(getattr(diag, attr, "") or "")
+    column = _diag(exc, "column_name") or getattr(
+        getattr(orig, "__cause__", None), "column_name", ""
+    )
+    return str(column or "")
 
 
 def _from_pgcode(code: str, exc: IntegrityError) -> LoomError:
     constraint = _diag(exc, "constraint_name")
-    column = _diag(exc, "column_name")
     detail = _diag(exc, "message_detail")
 
     if code == _PG_FOREIGN_KEY:
@@ -102,7 +109,7 @@ def _from_pgcode(code: str, exc: IntegrityError) -> LoomError:
         return Conflict(f"A record with these values already exists{suffix}.")
 
     if code == _PG_NOT_NULL:
-        name = column or "unknown"
+        name = _not_null_column(exc) or "unknown"
         return Conflict(f"Field '{name}' is required.")
 
     if code == _PG_CHECK:

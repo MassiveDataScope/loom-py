@@ -8,7 +8,7 @@ import msgspec
 
 
 class RecordLayout:
-    """The fields of one struct type that can hold ``msgspec.UNSET``.
+    """The fields of one struct type that can hold ``msgspec.UNSET``, and its tag.
 
     A layout is built once per struct type; :meth:`of` returns the same
     object for the same type.
@@ -17,6 +17,8 @@ class RecordLayout:
     _layouts: ClassVar[dict[type[msgspec.Struct], RecordLayout]] = {}
 
     def __init__(self, struct_type: type[msgspec.Struct]) -> None:
+        config = struct_type.__struct_config__
+        self._tag = None if config.tag_field is None else (config.tag_field, config.tag)
         self._unsettable = tuple(
             field.name
             for field in msgspec.structs.fields(struct_type)
@@ -44,10 +46,13 @@ class RecordLayout:
         """Return the field values of *row* keyed by field name, ``UNSET`` fields left out.
 
         A field left at its default is included, whatever ``omit_defaults``
-        the struct declares. Values are not converted.
+        the struct declares, and a tagged struct carries its tag field. Values
+        are not converted.
         """
         values = msgspec.structs.asdict(row)
         for name in self._unsettable:
             if values[name] is msgspec.UNSET:
                 del values[name]
+        if self._tag is not None:
+            values[self._tag[0]] = self._tag[1]
         return values

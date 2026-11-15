@@ -1453,12 +1453,13 @@
   SQLAlchemy column with no default of its own failed, and a Mongo document
   or DynamoDB item lacked the field, so a filter on it missed. A field holding
   `msgspec.UNSET` is still not stored and updates still write only what the
-  caller sent. `create_many` mutation events list the defaulted fields in
+  caller sent. A field whose default is `None` is now written as `null`
+  (Mongo) or a `NULL` attribute (DynamoDB) instead of being absent. `create_many` mutation events list the defaulted fields in
   `changed_fields`. The create input derived by the REST auto-routes now makes
   a field with a `default_factory` optional instead of required.
 - **stores:** a PostgreSQL `NOT NULL` violation through asyncpg now raises
   `Conflict("Field '<column>' is required.")` naming the column, instead of
-  `unknown`; the unique-violation message names its constraint.
+  `unknown`.
 
 ### rls
 

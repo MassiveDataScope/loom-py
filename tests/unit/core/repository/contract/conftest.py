@@ -78,6 +78,8 @@ class UpdateOrder(Command, frozen=True):
     status: OrderStatus | None = None
     amount: int | None = None
     note: str | None = None
+    tags: list[str] = []
+    priority: int = 0
 
 
 def _day(day: int) -> datetime:

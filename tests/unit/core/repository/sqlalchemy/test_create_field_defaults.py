@@ -33,7 +33,8 @@ class _CreateAsset(Command, frozen=True):
 
 class _UpdateAsset(Command, frozen=True):
     name: str | msgspec.UnsetType = msgspec.UNSET
-    rank: int | msgspec.UnsetType = msgspec.UNSET
+    rank: int = 0
+    fields_present: list[str] = []
 
 
 @pytest.fixture
@@ -67,6 +68,13 @@ class TestCreateKeepsFieldDefaults:
         created = await repo.create(_CreateAsset(name="a"))
 
         assert (created.fields_present, created.rank) == ([], 0)
+
+    async def test_create_object_holds_a_field_left_at_its_default(
+        self, repo: RepositorySQLAlchemy[_Asset, int]
+    ) -> None:
+        obj = repo.create_object(_CreateAsset(name="a"))
+
+        assert (obj.fields_present, obj.rank) == ([], 0)
 
     async def test_create_many_stores_a_field_left_at_its_default_in_every_row(
         self, repo: RepositorySQLAlchemy[_Asset, int]

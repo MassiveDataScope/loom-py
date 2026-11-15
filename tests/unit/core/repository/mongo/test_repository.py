@@ -57,6 +57,12 @@ class PlainArticleCreate(msgspec.Struct, omit_defaults=True):
     views: int = 0
 
 
+class ArticleRetitle(BaseModel):
+    title: str | None = None
+    views: int = 0
+    tags: list[str] = []
+
+
 class ArticleUpdate(BaseModel):
     title: str | None = None
     views: int | None = None
@@ -276,6 +282,16 @@ class TestStorageForm:
         await repo.create(ArticleCreate(slug="a", title="A", views=7))
 
         await repo.update("a", ArticleUpdate(title="B"))
+
+        assert collection.documents["a"]["views"] == 7
+
+    async def test_update_does_not_clobber_with_the_defaults_of_unsent_fields(
+        self, collection: FakeCollection
+    ) -> None:
+        repo = _articles(collection)
+        await repo.create(ArticleCreate(slug="a", title="A", views=7))
+
+        await repo.update("a", ArticleRetitle(title="B"))
 
         assert collection.documents["a"]["views"] == 7
 

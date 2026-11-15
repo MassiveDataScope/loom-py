@@ -9,7 +9,7 @@ from unittest.mock import patch
 import msgspec
 
 from loom.core.command import Command
-from loom.core.model import BaseModel, ColumnField
+from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
 from loom.core.repository.record import RecordLayout
 from loom.rest.autocrud import _derive_create_struct
 
@@ -27,6 +27,28 @@ class _Gift(Command, frozen=True):
     wrap_count: int = 0
     labels: list[str] = []
     note: str | msgspec.UnsetType = msgspec.UNSET
+
+
+class _Plain(msgspec.Struct):
+    label: str = msgspec.UNSET
+
+
+class _Optional(msgspec.Struct):
+    count: int | msgspec.UnsetType = 3
+
+
+class _Tagged(msgspec.Struct, tag="tagged", tag_field="kind"):
+    size: int = 1
+
+
+class _Rack(BaseModel):
+    __tablename__ = "record_layout_racks"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=32)
+    trays: list[dict[str, object]] = RelationField(
+        foreign_key="rack_id", cardinality=Cardinality.ONE_TO_MANY
+    )
 
 
 class _Tray(BaseModel):
@@ -85,9 +107,21 @@ class TestRecordLayout:
         }
 
     def test_an_unloaded_relation_is_left_out(self) -> None:
-        values = RecordLayout.of(_Tray).values(_Tray(name="t"))
+        values = RecordLayout.of(_Rack).values(_Rack(name="r"))
 
-        assert msgspec.UNSET not in values.values()
+        assert "trays" not in values
+
+    def test_a_plain_annotated_field_left_unset_is_left_out(self) -> None:
+        assert RecordLayout.of(_Plain).values(_Plain()) == {}
+
+    def test_an_unset_value_in_an_unset_capable_field_is_left_out(self) -> None:
+        layout = RecordLayout.of(_Optional)
+
+        assert layout.values(_Optional(count=msgspec.UNSET)) == {}
+        assert layout.values(_Optional()) == {"count": 3}
+
+    def test_a_tagged_struct_keeps_its_tag_field(self) -> None:
+        assert RecordLayout.of(_Tagged).values(_Tagged()) == {"kind": "tagged", "size": 1}
 
     def test_a_derived_create_input_keeps_its_defaulted_fields(self) -> None:
         create_input: type[Any] = _derive_create_struct(_Tray)
