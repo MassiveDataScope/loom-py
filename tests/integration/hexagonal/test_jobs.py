@@ -99,14 +99,6 @@ class TestACallerlessDispatch:
         assert failure.startswith("Authentication required")
         assert seen.calls == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=IndexError,
-        reason=(
-            "src bug: inline JobHandle.wait() raises IndexError for a failed job; "
-            "it documents JobFailedError (loom/core/job/handle.py, service.py _PendingDispatch)"
-        ),
-    )
     async def test_waits_into_job_failed_error(self, application: Application) -> None:
         async with application.running():
             handle = await _dispatched_by(application, None)

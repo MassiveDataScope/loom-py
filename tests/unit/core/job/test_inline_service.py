@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -63,13 +66,28 @@ class TestInProcessJobService:
         assert isinstance(handle, JobHandle)
         assert len(handle.job_id) == 36  # UUID4 format
 
-    async def test_dispatch_then_flush_executes_and_fills_result_holder(self) -> None:
+    async def test_dispatch_then_flush_executes_and_settles_the_handle(self) -> None:
         service = _make_service(return_value=99)
         handle = service.dispatch(DoubleJob, payload={})
-        assert handle._inline_result_holder == []
         await flush_pending_dispatches()
-        assert handle._inline_result_holder == [99]
         assert handle.wait() == 99
+
+    def test_wait_before_flush_raises_job_timeout_error(self) -> None:
+        service = _make_service()
+        handle = service.dispatch(DoubleJob, payload={})
+        with pytest.raises(JobTimeoutError) as caught:
+            handle.wait(timeout=1.0)
+        assert caught.value.job_id == handle.job_id
+
+    async def test_wait_on_a_failed_job_raises_job_failed_error_with_its_cause(self) -> None:
+        service = _make_service()
+        boom = ValueError("boom")
+        service._executor.run.side_effect = boom  # type: ignore[attr-defined]
+        handle = service.dispatch(DoubleJob, payload={})
+        await flush_pending_dispatches()
+        with pytest.raises(JobFailedError) as caught:
+            handle.wait()
+        assert (caught.value.job_id, caught.value.cause) == (handle.job_id, boom)
 
     def test_dispatch_respects_queue_override(self) -> None:
         service = _make_service()
@@ -135,6 +153,27 @@ class TestInProcessJobService:
         await flush_pending_dispatches()
 
         assert failure_calls == ["ValueError"]
+
+    async def test_a_failing_success_callback_keeps_the_job_result(self) -> None:
+        class BrokenCallback:
+            def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
+                raise RuntimeError("callback broke")
+
+            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+                return None
+
+        factory = MagicMock()
+        executor = MagicMock()
+        executor.run = AsyncMock(return_value=7)
+        factory.build = MagicMock(
+            side_effect=lambda cls: BrokenCallback() if cls is not DoubleJob else MagicMock()
+        )
+
+        service = InlineJobService(factory=factory, executor=executor)
+        handle = service.dispatch(DoubleJob, on_success=BrokenCallback)
+        await flush_pending_dispatches()
+
+        assert handle.wait() == 7
 
     # ---------------------------------------------------------------------------
     # dispatch_parallel()

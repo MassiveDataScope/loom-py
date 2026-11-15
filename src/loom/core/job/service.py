@@ -17,7 +17,7 @@ from loom.core.identity import (
 from loom.core.job.callback import CallbackOutcome, JobCallback, notify, refuse_reserved_payload
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
-from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.use_case.factory import UseCaseFactory
 
@@ -37,7 +37,7 @@ class _PendingDispatch:
     params: dict[str, Any] | None
     on_success: type[Any] | None
     on_failure: type[Any] | None
-    result_holder: list[Any]
+    outcome: InlineOutcome
     factory: UseCaseFactory
     executor: RuntimeExecutor = field(repr=False)
     captured: Delegation = NO_DELEGATION
@@ -54,7 +54,7 @@ class _PendingDispatch:
                 params=self.params,
                 payload=self.payload,
             )
-            self.result_holder.append(result)
+            self.outcome.succeed(result)
             if self.on_success is not None:
                 await notify(
                     self.factory,
@@ -65,6 +65,7 @@ class _PendingDispatch:
                     **self.payload,
                 )
         except Exception as exc:
+            self.outcome.fail(exc)
             if self.on_failure is not None:
                 await notify(
                     self.factory,
@@ -282,7 +283,7 @@ class InlineJobService:
         if on_success is not None or on_failure is not None:
             refuse_reserved_payload(payload)
         task_id = str(uuid.uuid4())
-        result_holder: list[Any] = []
+        outcome = InlineOutcome()
         pending = _PendingDispatch(
             job_type=job_type,
             task_id=task_id,
@@ -290,7 +291,7 @@ class InlineJobService:
             params=params,
             on_success=on_success,
             on_failure=on_failure,
-            result_holder=result_holder,
+            outcome=outcome,
             factory=self._factory,
             executor=self._executor,
             captured=captured_delegation(),
@@ -300,7 +301,7 @@ class InlineJobService:
             job_id=task_id,
             queue=queue or self._settings.of(job_type).queue,
             dispatched_at=datetime.now(UTC),
-            _inline_result_holder=result_holder,
+            _inline_outcome=outcome,
         )
 
     def dispatch_parallel(

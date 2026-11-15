@@ -1222,6 +1222,11 @@
 
 ### jobs
 
+- **jobs:** an inline `JobHandle.wait()` on a failed job raises
+  `JobFailedError` carrying the job's exception as `cause`, as on Celery;
+  it used to raise `IndexError`. Waiting before the dispatch has run raises
+  `JobTimeoutError`. A success callback that raises leaves the job's result
+  in place.
 - **jobs (logs):** a failed job logs one line, the executor's `[FAIL]`,
   which now carries `committed` and `failures` when post-commit actions
   failed. The Celery worker's extra `JobPostCommitFailed` error line is gone.

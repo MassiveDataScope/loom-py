@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.errors import JobFailedError, JobTimeoutError
-from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 
 
 def _now() -> datetime:
@@ -16,10 +16,9 @@ def _now() -> datetime:
 
 
 def _inline_handle(result: Any, job_id: str = "test-id") -> JobHandle[Any]:
-    holder: list[Any] = [result]
-    return JobHandle(
-        job_id=job_id, queue="default", dispatched_at=_now(), _inline_result_holder=holder
-    )
+    outcome = InlineOutcome()
+    outcome.succeed(result)
+    return JobHandle(job_id=job_id, queue="default", dispatched_at=_now(), _inline_outcome=outcome)
 
 
 # ---------------------------------------------------------------------------
