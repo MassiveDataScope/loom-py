@@ -1,10 +1,4 @@
-"""The authenticated caller of one execution, as a domain value object.
-
-``Identity`` is deliberately transport-agnostic: it says *who* is calling and
-*what they hold*, never *how* they proved it beyond a free-form ``mechanism``
-label.  A JWT authenticator, a mutual-TLS one, or a signed-header one all
-produce the same shape, so business policies never learn what a token is.
-"""
+"""The authenticated caller of one execution: who calls, what they hold, how they proved it."""
 
 from __future__ import annotations
 

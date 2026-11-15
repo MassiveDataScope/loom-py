@@ -138,10 +138,6 @@ class InvocationScope:
         """Whether the caller may touch this scope's participants (:meth:`require_owner` passes)."""
         return self._ownership_problem() is None
 
-    def transactional(self, key: StoreKey) -> bool:
-        """Whether the participant of store *key* can roll back."""
-        return self.participants[key].transactional
-
     def refuse_other_identity(self, use_case: str) -> None:
         """Refuse *use_case* running in this writing scope, in its task, as another identity.
 

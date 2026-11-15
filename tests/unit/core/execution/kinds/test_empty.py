@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from contextvars import Token
 from typing import Any
 
 import pytest
 
-from loom.core.engine import executor as executor_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.execution import ExecutionContext, ExecutionKinds, Kind, enter
+from loom.core.execution import ExecutionContext, ExecutionKinds, Kind
 from loom.core.identity import Identity
 from loom.core.use_case.use_case import UseCase
 
@@ -45,11 +43,13 @@ class TestAnExecutionFreePlan:
     ) -> None:
         entered: list[Identity | None] = []
 
-        def counting(given: Identity | None, *args: Any) -> Token[ExecutionContext | None]:
-            entered.append(given)
-            return enter(given, *args)
+        original = ExecutionContext.entered
 
-        monkeypatch.setattr(executor_module, "enter", counting)
+        def counting(given: Identity | None, *args: Any) -> ExecutionContext:
+            entered.append(given)
+            return original(given, *args)
+
+        monkeypatch.setattr(ExecutionContext, "entered", counting)
         kinds = AcmeCountingKinds()
         compiler = UseCaseCompiler()
         plan = compiler.compile(AcmePongUseCase)

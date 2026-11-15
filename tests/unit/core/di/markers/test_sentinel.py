@@ -9,10 +9,10 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.kinds import MCP, declare_ai_kinds
 from loom.core.execution import ExecutionScope, MarkerNotResolved
 from loom.core.identity import ANONYMOUS
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
+from loom.core.use_case.kinds import MCP, declare_kinds
 from loom.core.use_case.markers import Agent, Caller, Mcp
 
 GATEWAY = object()
@@ -34,7 +34,7 @@ class GatewayResolver:
 
 def _container() -> LoomContainer:
     container = LoomContainer(classify_key=classify_key)
-    declare_ai_kinds(container.kinds)
+    declare_kinds(container.kinds)
     container.kinds.bind(MCP, GatewayResolver())
     return container
 

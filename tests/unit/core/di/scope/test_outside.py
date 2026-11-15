@@ -10,10 +10,10 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Agent
+from loom.core.use_case.kinds import declare_kinds
 
 
 class AcmeTriage:
@@ -30,7 +30,7 @@ def _legacy(name: str, identity: Identity) -> tuple[str, Identity]:
 
 def _bound(scope: Scope) -> LoomContainer:
     container = LoomContainer()
-    declare_ai_kinds(container.kinds)
+    declare_kinds(container.kinds)
     RuntimeExecutor(UseCaseCompiler(), resolvers=container.kinds, agent_resolver=_legacy)
     container.register(AcmeTriage, AcmeTriage, scope=scope)
     return container

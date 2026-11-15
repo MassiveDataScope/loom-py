@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from loom.core.execution import context, enter, leave
+from loom.core.execution import ExecutionContext, context
 from loom.core.identity import Identity
 from loom.core.identity import context as identity_context
 from tests.helpers.loggers import RecordingLogger
@@ -35,11 +35,11 @@ def outliving() -> Callable[..., Awaitable[asyncio.Task[object]]]:
         inside: Callable[[], object] = lambda: None,
     ) -> asyncio.Task[object]:
         async def opens(body: Callable[[], Awaitable[None]]) -> None:
-            token = enter(identity)
+            token = ExecutionContext.entered(identity)
             try:
                 await body()
             finally:
-                leave(token)
+                token.close()
 
         return await outlive(opens, late, inside=inside)
 

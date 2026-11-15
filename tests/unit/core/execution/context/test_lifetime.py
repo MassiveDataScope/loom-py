@@ -19,14 +19,13 @@ import pytest
 from loom.core.errors import Unauthenticated
 from loom.core.execution import (
     ExecutionClosed,
+    ExecutionContext,
     ExecutionRequired,
     ExecutionScope,
     NoExecution,
     current_execution,
-    enter,
     execution_ended,
     execution_identity,
-    leave,
     per_execution,
 )
 from loom.core.identity import (
@@ -104,11 +103,11 @@ class TestATaskOutlivingItsExecution:
         self, outliving: Outliving
     ) -> None:
         def reopen() -> Identity:
-            token = enter(ACME_ALICE)
+            token = ExecutionContext.entered(ACME_ALICE)
             try:
                 return execution_identity()
             finally:
-                leave(token)
+                token.close()
 
         task = await outliving(reopen)
 
@@ -122,7 +121,7 @@ class TestATaskOutlivingItsExecution:
     ) -> None:
         def late() -> object:
             past_the_window()
-            return enter(ACME_ALICE)
+            return ExecutionContext.entered(ACME_ALICE)
 
         task = await outliving(late)
 

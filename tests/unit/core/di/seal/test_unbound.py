@@ -19,9 +19,9 @@ from loom.core.di.graph import (
     refuse_unbound,
 )
 from loom.core.di.scope import Scope
-from loom.core.engine.kinds import MCP
 from loom.core.execution import Kind
 from loom.core.use_case import Mcp, UseCase
+from loom.core.use_case.kinds import MCP
 from tests.helpers.composition import Serving, composition_source
 from tests.unit.composition.phases.components import AcmeMcpUser, AcmeRecord
 from tests.unit.composition.phases.paths import SQLITE

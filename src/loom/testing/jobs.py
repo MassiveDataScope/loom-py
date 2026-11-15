@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.identity import Identity, captured_delegation
-from loom.core.job.callback import CallbackOutcome
+from loom.core.job.callback import refuse_reserved_payload
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.handle import JobGroup, JobHandle
@@ -108,7 +108,7 @@ class RecordingJobService:
         _ = (countdown, priority, eta)
         payload = payload or {}
         if on_success is not None or on_failure is not None:
-            CallbackOutcome.refuse_reserved(payload)
+            refuse_reserved_payload(payload)
         record = DispatchedJob(
             job_type=job_type,
             payload=copy.deepcopy(payload),

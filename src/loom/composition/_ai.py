@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Collection, Iterable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from loom.composition.resources import Resource, ResourceKind
@@ -14,12 +14,12 @@ from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, GraphAnalysis, Node
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.registry import UseCaseRegistry
 
 if TYPE_CHECKING:
@@ -72,8 +72,7 @@ class AgentDepsFactory:
         """Return the dependency bundle for one invocation.
 
         Args:
-            identity: Verified caller of this invocation; informational, the
-                bundle does not carry it.
+            identity: The caller of this invocation; not read.
             container: Application container holding the singleton services.
             state: The invocation's state, a mapping normalised against the
                 artefact's declared shape, or ``None`` for an artefact that
@@ -156,13 +155,13 @@ class AiWiring:
                     "agent artifacts need an engine and its model bindings to compile. Add the "
                     "'ai:' section, or remove AGENTS from the manifest."
                 )
+            declared.mcp_grants({})
             return cls.ABSENT
         from loom.ai.bootstrap import build_agent_runtime
         from loom.ai.config import AiConfig
         from loom.ai.registry import resolve_engine_provider
 
         ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
-        replace(declared, agents=()).verify({}, ai_cfg.mcp_servers)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
         provider = resolve_engine_provider(ai_cfg.engine)
         runtime = build_agent_runtime(
@@ -341,27 +340,22 @@ class MarkerDeclarations:
                     of_kind.append((component, declaration))
         return cls(agents=tuple(by_kind[AGENT]), mcp=tuple(by_kind[MCP]))
 
-    def verify(
-        self, plans: Mapping[str, AgentPlan], servers: Mapping[str, McpServerConfig]
-    ) -> None:
-        """Refuse every ``Agent()`` and ``Mcp()`` declaration start-up cannot satisfy.
+    def verify(self, plans: Mapping[str, AgentPlan]) -> None:
+        """Refuse every ``Agent()`` declaration start-up cannot satisfy.
 
         Args:
             plans: Every compiled agent plan, by name; empty when no runtime
                 is built, which reports every declared agent as unknown.
-            servers: Every configured MCP server, by name; empty when no
-                ``ai:`` section is present, which reports every declared
-                server as unknown.
 
         Raises:
-            AgentCompilationError: With one issue per unknown agent, per
-                mismatched output type, then per unknown server.
+            AgentCompilationError: With one issue per unknown agent, then per
+                mismatched output type.
         """
-        if not self.agents and not self.mcp:
+        if not self.agents:
             return
         from loom.ai.errors import AgentCompilationError
 
-        issues = [*self._agent_issues(plans), *self._mcp_issues(servers)]
+        issues = list(self._agent_issues(plans))
         if issues:
             raise AgentCompilationError(issues)
 
@@ -369,26 +363,30 @@ class MarkerDeclarations:
         """Compile every ``Mcp()`` declaration into the runtime's own grants.
 
         Args:
-            servers: Every MCP server configured for this deployment.
+            servers: Every configured MCP server, by name; empty when no
+                ``ai:`` section is present, which reports every declared
+                server as unknown.
 
         Returns:
             One grant per declaration, in order; its parameter is where the
             declaration is.
 
         Raises:
-            AgentCompilationError: When a declaration names a server not in
-                *servers*, which :meth:`verify` refuses first.
+            AgentCompilationError: With one issue per declaration naming a
+                server not in *servers*.
         """
         if not self.mcp:
             return ()
         from loom.ai.compiler.phases import compile_mcp_capability
-        from loom.ai.errors import AgentCompilationError
+        from loom.ai.errors import AgentCompilationError, AgentErrorCode
         from loom.ai.runtime import UseCaseMcpGrant
 
+        available = tuple(servers)
+        issues: list[AgentCompilationIssue] = []
         grants: list[UseCaseMcpGrant] = []
         for component, found in self.mcp:
             marker = found.binding.declaration
-            capability, issues = compile_mcp_capability(
+            capability, _ = compile_mcp_capability(
                 marker.server,
                 include=marker.include,
                 exclude=(),
@@ -396,10 +394,20 @@ class MarkerDeclarations:
                 component=component,
             )
             if capability is None:
-                raise AgentCompilationError(issues)
+                issues.append(
+                    AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
+                        component=component,
+                        parameter=found.where,
+                        server=marker.server,
+                        available=available,
+                    )
+                )
+                continue
             grants.append(
                 UseCaseMcpGrant(capability=capability, usecase=component, parameter=found.where)
             )
+        if issues:
+            raise AgentCompilationError(issues)
         return tuple(grants)
 
     def _agent_issues(self, plans: Mapping[str, AgentPlan]) -> Iterator[AgentCompilationIssue]:
@@ -427,16 +435,3 @@ class MarkerDeclarations:
                 expected=getattr(expected, "__name__", str(expected)),
                 declared=getattr(declared, "__name__", str(declared)),
             )
-
-    def _mcp_issues(
-        self, servers: Mapping[str, McpServerConfig]
-    ) -> Iterator[AgentCompilationIssue]:
-        from loom.ai.errors import AgentErrorCode
-
-        available = tuple(servers)
-        for component, found in self.mcp:
-            server = found.binding.declaration.server
-            if server not in servers:
-                yield AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
-                    component=component, parameter=found.where, server=server, available=available
-                )

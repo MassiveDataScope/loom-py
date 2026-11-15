@@ -99,25 +99,25 @@ class CallbackOutcome(StrEnum):
         """
         return getattr(callback, f"on_{self}")
 
-    @staticmethod
-    def refuse_reserved(payload: Mapping[str, object]) -> None:
-        """Refuse a dispatch payload naming an argument a callback hook receives.
 
-        The payload reaches the hooks as keyword arguments beside ``job_id``,
-        ``result``, ``exc_type`` and ``exc_msg``.
+def refuse_reserved_payload(payload: Mapping[str, object]) -> None:
+    """Refuse a dispatch payload naming an argument a callback hook receives.
 
-        Args:
-            payload: The payload of a dispatch that attaches a callback.
+    The payload reaches the hooks as keyword arguments beside ``job_id``,
+    ``result``, ``exc_type`` and ``exc_msg``.
 
-        Raises:
-            ValueError: Naming each reserved key the payload holds.
-        """
-        reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
-        if reserved:
-            raise ValueError(
-                f"A job payload with a callback cannot hold {', '.join(reserved)}: "
-                "the callback hooks receive these arguments"
-            )
+    Args:
+        payload: The payload of a dispatch that attaches a callback.
+
+    Raises:
+        ValueError: Naming each reserved key the payload holds.
+    """
+    reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
+    if reserved:
+        raise ValueError(
+            f"A job payload with a callback cannot hold {', '.join(reserved)}: "
+            "the callback hooks receive these arguments"
+        )
 
 
 async def notify(

@@ -11,7 +11,7 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.execution import ExecutionScope, enter, leave
+from loom.core.execution import ExecutionContext, ExecutionScope
 from loom.core.identity import ANONYMOUS
 from tests.unit.core.execution.context.doubles import AcmeBuiltSession
 
@@ -133,10 +133,10 @@ class TestPerExecutionScope:
         container = _bound(Scope.REQUEST)
 
         def closed() -> tuple[object, object]:
-            token = enter(ANONYMOUS)
-            leave(token)
+            token = ExecutionContext.entered(ANONYMOUS)
+            token.close()
             with pytest.raises(RuntimeError):
-                leave(token)
+                token.close()
             return container.resolve(AcmeBuiltSession), container.resolve(AcmeBuiltSession)
 
         first, second = contextvars.copy_context().run(closed)

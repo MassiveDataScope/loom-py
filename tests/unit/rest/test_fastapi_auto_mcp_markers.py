@@ -49,7 +49,9 @@ compiler.compile(AcmeUnmarkedMcpUseCase)
 registry = UseCaseRegistry.build([AcmeUnmarkedMcpUseCase])
 
 analysis = LoomContainer().graph.analyse([ClassNode(AcmeUnmarkedMcpUseCase)], ())
-MarkerDeclarations.of(analysis, compiler, registry).verify({}, {})
+declared = MarkerDeclarations.of(analysis, compiler, registry)
+declared.verify({})
+declared.mcp_grants({})
 
 leaked = [name for name in sys.modules if name == "loom.ai" or name.startswith("loom.ai.")]
 print(json.dumps(sorted(leaked)))
@@ -86,7 +88,7 @@ class TestUseCaseWithoutAnMcpMarker:
     def test_no_ai_section_and_no_markers_does_not_fail(self) -> None:
         declared = declared_markers(AcmeMcpUseCaseWithoutMarker)
 
-        declared.verify({}, {})  # no raise
+        declared.mcp_grants({})  # no raise
 
         assert declared.mcp == ()
 
@@ -112,7 +114,7 @@ class TestKnownMcpServer:
     def test_a_configured_server_name_passes(self) -> None:
         declared = declared_markers(KnownServerUseCase)
 
-        declared.verify({}, _SERVERS)  # no raise
+        declared.mcp_grants(_SERVERS)  # no raise
 
         [(component, found)] = declared.mcp
         assert component == "KnownServerUseCase"
@@ -126,7 +128,7 @@ class TestUnknownMcpServer:
         declared = declared_markers(UnknownServerUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared.verify({}, _SERVERS)
+            declared.mcp_grants(_SERVERS)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.MCP_MARKER_UNKNOWN}
@@ -139,7 +141,7 @@ class TestUnknownMcpServer:
         declared = declared_markers(UnknownServerUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared.verify({}, {})
+            declared.mcp_grants({})
 
         assert "none" in str(excinfo.value)
 

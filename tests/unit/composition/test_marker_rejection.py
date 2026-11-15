@@ -9,12 +9,15 @@ execution, with nothing compiled and nothing configured.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition._ai import MarkerDeclarations
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
@@ -68,21 +71,38 @@ class _WithoutAgents:
 
 class TestMarkerRejection:
     def test_no_marker_does_not_raise(self) -> None:
-        declared_markers(SendReceiptUseCase).verify({}, {})
+        declared = declared_markers(SendReceiptUseCase)
+
+        declared.verify({})
+        assert declared.mcp_grants({}) == ()
 
     @pytest.mark.parametrize(
-        ("use_case", "code", "names"),
+        ("use_case", "refuse", "code", "names"),
         [
-            (AcmeNotifyIncident, AgentErrorCode.AGENT_MARKER_UNKNOWN, ("triage",)),
-            (AcmeLookUpKnowledge, AgentErrorCode.MCP_MARKER_UNKNOWN, ("gateway", "knowledge")),
+            (
+                AcmeNotifyIncident,
+                MarkerDeclarations.verify,
+                AgentErrorCode.AGENT_MARKER_UNKNOWN,
+                ("triage",),
+            ),
+            (
+                AcmeLookUpKnowledge,
+                MarkerDeclarations.mcp_grants,
+                AgentErrorCode.MCP_MARKER_UNKNOWN,
+                ("gateway", "knowledge"),
+            ),
         ],
         ids=["agent", "mcp"],
     )
     def test_a_marker_is_refused_naming_the_use_case_and_parameter(
-        self, use_case: type[UseCase[object, object]], code: AgentErrorCode, names: tuple[str, ...]
+        self,
+        use_case: type[UseCase[object, object]],
+        refuse: Callable[[MarkerDeclarations, dict[str, Any]], object],
+        code: AgentErrorCode,
+        names: tuple[str, ...],
     ) -> None:
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared_markers(use_case).verify({}, {})
+            refuse(declared_markers(use_case), {})
 
         message = str(excinfo.value)
         assert {issue.code for issue in excinfo.value.issues} == {code}
@@ -90,14 +110,18 @@ class TestMarkerRejection:
         assert all(name in message for name in names)
         assert "none" in message
 
-    def test_both_markers_are_refused_in_one_error_agent_first(self) -> None:
-        with pytest.raises(AgentCompilationError) as excinfo:
-            declared_markers(AcmeAgentAndServer).verify({}, {})
+    def test_each_marker_is_refused_by_its_own_check(self) -> None:
+        declared = declared_markers(AcmeAgentAndServer)
 
-        assert [issue.code for issue in excinfo.value.issues] == [
-            AgentErrorCode.AGENT_MARKER_UNKNOWN,
-            AgentErrorCode.MCP_MARKER_UNKNOWN,
+        with pytest.raises(AgentCompilationError) as agents:
+            declared.verify({})
+        with pytest.raises(AgentCompilationError) as servers:
+            declared.mcp_grants({})
+
+        assert [issue.code for issue in agents.value.issues] == [
+            AgentErrorCode.AGENT_MARKER_UNKNOWN
         ]
+        assert [issue.code for issue in servers.value.issues] == [AgentErrorCode.MCP_MARKER_UNKNOWN]
 
     def test_composition_refuses_the_marker_for_any_adapter(
         self, fixture_project: ProjectFactory

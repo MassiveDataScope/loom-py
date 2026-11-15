@@ -412,7 +412,8 @@ class TestCompilerLogging:
     def test_logs_one_line_naming_the_use_case(self) -> None:
         log = _RecordingLogger()
         UseCaseCompiler(logger=log).compile(_NoMarkersUseCase)
-        assert log.messages == ["[BOOT] Compiled UseCase: _NoMarkersUseCase (0 steps)"]
+        assert log.messages == ["[BOOT] Compiled UseCase"]
+        assert log.calls[0][1]["usecase"] == "_NoMarkersUseCase"
 
     @pytest.mark.parametrize(
         ("use_case", "detected"),
@@ -430,8 +431,7 @@ class TestCompilerLogging:
     def test_counts_the_computes_rules_and_steps(self) -> None:
         log = _RecordingLogger()
         UseCaseCompiler(logger=log).compile(_WithAllUseCase)
-        [(event, fields)] = log.calls
-        assert "(3 steps)" in event
+        [(_, fields)] = log.calls
         assert (fields["computes"], fields["rules"], fields["steps"]) == (1, 1, 3)
 
     def test_no_logs_on_cache_hit(self) -> None:

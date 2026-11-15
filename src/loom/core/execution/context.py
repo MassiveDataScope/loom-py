@@ -4,13 +4,13 @@ An *execution* is one run of a use case, a job or an agent turn. Each one gets
 an :class:`ExecutionContext` holding what it owns: the per-execution cache
 through which a ``REQUEST`` binding is built once per execution. It is
 published as the ``work`` of the acting identity of :mod:`loom.core.identity`,
-beside who it acts as: :func:`enter` fixes both, for the execution and every
+beside who it acts as: :meth:`ExecutionContext.entered` fixes both, for the execution and every
 task it starts, in one value. Handles read the identity through
 :func:`execution_identity` when they are called, never when they are built.
 
 This module writes the carrier of :mod:`loom.core.identity` (``_acting``)
 itself: to enter an execution with
-:meth:`~loom.core.identity.Acting.pinned_for`, to leave it, to act as no one
+:meth:`~loom.core.identity.Acting.pinned_for`, to close it, to act as no one
 in :class:`NoExecution`, and to close a context after a token misuse.
 
 Concurrency:
@@ -23,7 +23,7 @@ Concurrency:
 
 Lifetime:
     The identity governs everything the execution causes, for its whole life;
-    the resources last as long as the execution. :func:`leave` closes them: a
+    the resources last as long as the execution. :meth:`ExecutionContext.close` ends them: a
     task or thread still holding a copy afterwards keeps acting as the same
     caller (:func:`execution_identity`, ``Caller()``, row-level security) but
     reads no per-execution value: that raises :class:`ExecutionClosed` and
@@ -32,7 +32,7 @@ Lifetime:
     execution, so :func:`current_execution` returns ``None`` there). Work
     awaited inside the execution has ended before it closes. Such a task acts
     as its caller only within its delegation: past the deadline,
-    :func:`enter` refuses an execution it opens, and
+    :meth:`ExecutionContext.entered` refuses an execution it opens, and
     :func:`execution_identity` refuses to read its caller.
 """
 
@@ -64,7 +64,7 @@ _NO_CALLER_MESSAGE = (
     "(ANONYMOUS to run without a caller)."
 )
 _MISUSED_TOKEN_MESSAGE = (
-    "Execution token misuse: a token must be left once, in reverse order of entering; "
+    "Execution misuse: an execution must be closed once, in reverse order of entering; "
     "the execution context was closed."
 )
 _LEFT_OPEN_MESSAGE = (
@@ -83,15 +83,18 @@ _ENDED_MESSAGE = (
 class ExecutionContext:
     """The resources of one execution: its per-execution cache.
 
-    Built by :func:`enter`; code reads it through :func:`current_execution`.
+    Opened by :meth:`entered`; code reads it through :func:`current_execution`.
     The cache is allocated on the first store, so an execution that builds
     no ``REQUEST`` binding allocates nothing beyond this object. It holds
     what :meth:`store` and :func:`per_execution` keep, each value under its
     key, and, for each key :func:`per_execution` has built, the reentrant
     lock it builds under, keyed ``(_BUILD_LOCK_TAG, key)`` with a private tag no
-    caller's key can equal. :func:`leave` closes it: the cache and every read
+    caller's key can equal. :meth:`close` ends it: the cache and every read
     of it are gone (:class:`ExecutionClosed`). It holds no identity: who the
-    execution acts as is the acting identity :func:`enter` fixed with it.
+    execution acts as is the acting identity :meth:`entered` fixed with it.
+
+    Attributes:
+        ended: Whether :meth:`close` closed this execution.
 
     Example::
 
@@ -103,11 +106,73 @@ class ExecutionContext:
                 context.store(AcmeClient, client)
     """
 
-    __slots__ = ("_cache", "_token")
+    __slots__ = ("_cache", "_token", "ended")
 
     def __init__(self) -> None:
         self._cache: dict[Hashable, object] | None = None
         self._token: Token[Acting] | None = None
+        self.ended = False
+
+    @classmethod
+    def entered(cls, identity: Identity | None, what: str = "execution") -> ExecutionContext:
+        """Open a new execution acting as ``identity``, and fix it for the execution's work.
+
+        ``set_identity`` raises :class:`~loom.core.identity.IdentityFixed` in
+        the execution and in every task it starts. ``identity`` is the
+        effective one, computed by the caller; ``None`` means no caller. Each
+        execution has a cache of its own, shared with no execution around it.
+        The switch rule is :meth:`~loom.core.identity.Acting.pinned_for`'s: the
+        same subject keeps the delegation and is refused past it; another
+        subject is a logged switch with a delegation of its own.
+
+        Args:
+            identity: The effective identity, computed by the caller.
+            what: What runs, for the switch report (the use case's name).
+
+        Returns:
+            The execution, to :meth:`close` in a ``finally`` block.
+
+        Raises:
+            DelegationExpired: Acting as the subject acting, past its deadline.
+
+        Example::
+
+            execution = ExecutionContext.entered(identity, "AcmeUseCase")
+            try:
+                await acme_use_case.execute()
+            finally:
+                execution.close()
+        """
+        context = cls()
+        context._token = _acting.set(_acting_now().pinned_for(identity, context, what))
+        return context
+
+    def close(self) -> None:
+        """End this execution and restore the work and identity before it.
+
+        Close every execution exactly once, in reverse order of entering, in
+        the :mod:`contextvars` context that entered it: a ``finally`` block
+        does all three. A task or thread that copied its context and reads
+        the cache afterwards gets :class:`ExecutionClosed`, and keeps acting
+        as the same caller.
+
+        Raises:
+            RuntimeError: When this is not the execution in progress (closed
+                twice, out of order, or with an execution entered over it and
+                not closed). The current :mod:`contextvars` context is then
+                closed for good: it reads as no execution and acts as no one
+                with its identity fixed.
+            ValueError: When called from another :mod:`contextvars` context
+                (a task that copied it); nothing changes in either.
+        """
+        token = self._token
+        if token is None or _acting_now().work is not self:
+            _acting.set(_CLOSED_CONTEXT_ACTING)
+            raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
+        _acting.reset(token)
+        self._token = None
+        self._cache = _ENDED
+        self.ended = True
 
     def get(self, key: Hashable, default: object = None) -> object:
         """Return what this execution stored under ``key``.
@@ -160,9 +225,8 @@ _CACHE_ALLOCATION_LOCK = threading.Lock()
 class _EndedCache(dict[Hashable, object]):
     """The cache of every execution that ended: any read or write raises :class:`ExecutionClosed`.
 
-    :func:`leave` installs the one instance, :data:`_ENDED`, in place of the
-    cache, so a closed execution is refused by the reads it already does:
-    the hit path of :func:`per_execution` checks nothing more than before.
+    :meth:`ExecutionContext.close` installs the one instance, :data:`_ENDED`,
+    in place of the cache.
     """
 
     __slots__ = ()
@@ -195,9 +259,9 @@ _NO_EXECUTION_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
 _CLOSED_CONTEXT_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
 """Installed after a token misuse: no execution, no caller, and never restored.
 
-A value of its own, not :data:`_NO_EXECUTION_ACTING`: no later ``leave`` or
-:class:`NoExecution` exit can bring back an execution or a caller a misused
-token may have ended.
+A value of its own, not :data:`_NO_EXECUTION_ACTING`: no later close or
+:class:`NoExecution` exit can bring back an execution or a caller a misuse
+may have ended.
 """
 
 
@@ -212,7 +276,7 @@ def current_execution() -> ExecutionContext | None:
         The current :class:`ExecutionContext`, or ``None``.
     """
     context: Any = _acting_now().work
-    if context is None or context is _NO_EXECUTION or context._cache is _ENDED:
+    if context is None or context is _NO_EXECUTION or context.ended:
         return None
     return context
 
@@ -224,8 +288,7 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
     returned to everything that execution runs, its tasks and copied threads
     included; outside any execution, or in a context closed by a token
     misuse, each call builds a fresh one. A task or thread calling it after
-    its execution ended gets :class:`ExecutionClosed`. The cache is read
-    directly, with no call on the hit path.
+    its execution ended gets :class:`ExecutionClosed`.
 
     A miss builds under a reentrant lock of this execution and *key*, kept
     in the cache from the key's first build, so threads sharing one
@@ -233,7 +296,7 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
     build of a key while builds of other keys proceed: *make* may need
     another per-execution value, on its thread or on another one it waits
     for. Two threads each waiting for the other's build of the same key
-    wait forever, as a cycle of providers does (a bug either way).
+    wait forever, as a cycle of providers does.
     ``loop.run_in_executor`` copies no context: its thread runs outside the
     execution. A singleton is built under ``NoExecution``, so it
     never waits for a per-execution build.
@@ -275,75 +338,6 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
     return value
 
 
-def enter(identity: Identity | None, what: str = "execution") -> Token[Acting]:
-    """Open a new execution acting as ``identity``, and fix it for the execution's work.
-
-    The only code that fixes an identity for work (:func:`leave` and
-    :class:`NoExecution` restore or clear it): it fixes ``identity`` with
-    the new :class:`ExecutionContext` as its work, so
-    ``set_identity`` raises :class:`~loom.core.identity.IdentityFixed` in the
-    execution and in every task it starts. ``identity`` is the effective one,
-    computed by the caller; ``None`` means no caller. Every call builds a new
-    :class:`ExecutionContext`, so a nested execution gets a fresh cache and
-    shares no ``REQUEST`` instance with the one around it. The switch
-    rule is :meth:`~loom.core.identity.Acting.pinned_for`'s: the same subject
-    keeps the delegation and is refused past it; another subject is a logged
-    switch with a delegation of its own.
-
-    Args:
-        identity: The effective identity, computed by the caller.
-        what: What runs, for the switch report (the use case's name).
-
-    Returns:
-        The token to pass to :func:`leave` in a ``finally`` block.
-
-    Raises:
-        DelegationExpired: Acting as the subject acting, past its deadline.
-
-    Example::
-
-        token = enter(identity, "AcmeUseCase")
-        try:
-            await acme_use_case.execute()
-        finally:
-            leave(token)
-    """
-    context = ExecutionContext()
-    context._token = token = _acting.set(_acting_now().pinned_for(identity, context, what))  # pyright: ignore[reportPrivateUsage]
-    return token
-
-
-def leave(token: Token[Acting]) -> None:
-    """Close the execution ``token`` opened and restore the work and identity before it.
-
-    Leave every token exactly once, in reverse order of entering, in the
-    :mod:`contextvars` context that entered it: a ``finally`` block does all
-    three. The execution's cache is dropped: a task or thread that copied its
-    context and reads it afterwards gets :class:`ExecutionClosed`, and keeps
-    acting as the same caller.
-
-    Args:
-        token: The token returned by the matching :func:`enter`.
-
-    Raises:
-        RuntimeError: If ``token`` is not the token of the execution in
-            progress (left twice, out of order, or with an execution entered
-            over it and not left). The current :mod:`contextvars` context is
-            then *closed*: it reads as no execution, acts as no one with its
-            identity fixed, and no later ``leave`` or :class:`NoExecution`
-            exit can bring a caller back.
-        ValueError: If ``token`` was created in another :mod:`contextvars`
-            context (a task that copied it); nothing changes in either.
-    """
-    context: Any = _acting_now().work
-    if context is None or context._token is not token:
-        _acting.set(_CLOSED_CONTEXT_ACTING)
-        raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
-    _acting.reset(token)
-    context._token = None
-    context._cache = _ENDED
-
-
 def execution_ended() -> bool:
     """Whether this context was copied from an execution that has since ended.
 
@@ -354,13 +348,13 @@ def execution_ended() -> bool:
         ``True`` in a task or thread whose execution ended.
     """
     context: Any = _acting_now().work
-    return context is not None and context._cache is _ENDED
+    return context is not None and context.ended
 
 
 def execution_identity() -> Identity:
     """Return the identity the execution in progress acts as, failing closed.
 
-    That is the acting identity :func:`enter` fixed, which a task the
+    That is the acting identity :meth:`ExecutionContext.entered` fixed, which a task the
     execution started keeps after the execution ended, within its
     delegation.
 
@@ -377,22 +371,49 @@ def execution_identity() -> Identity:
     """
     acting = _acting_now()
     identity, context = acting.caller, acting.work
-    if identity is not None and context is not None:
-        if context._cache is _ENDED:  # pyright: ignore[reportAttributeAccessIssue]
-            acting.refuse_expired()
-        return identity
+    if identity is None or context is None:
+        raise _no_identity(context)
+    if context.ended:  # pyright: ignore[reportAttributeAccessIssue]
+        acting.refuse_expired()
+    return identity
+
+
+def live_execution_identity() -> Identity:
+    """Return the identity the execution in progress acts as, refused past its deadline.
+
+    Returns:
+        The identity, :data:`~loom.core.identity.ANONYMOUS` included.
+
+    Raises:
+        ExecutionRequired: Outside any execution, and in a context closed by
+            a token misuse.
+        Unauthenticated: When the execution acts with no caller.
+        DelegationExpired: Past the caller's deadline.
+    """
+    acting = _acting_now()
+    identity, context = acting.caller, acting.work
+    if identity is None or context is None:
+        raise _no_identity(context)
+    acting.refuse_expired()
+    return identity
+
+
+def _no_identity(context: object) -> ExecutionRequired | Unauthenticated:
+    """The error of an identity read outside an execution or in one acting with no caller."""
     if context is None or context is _NO_EXECUTION:
-        raise ExecutionRequired(_NO_EXECUTION_MESSAGE)
-    raise Unauthenticated(_NO_CALLER_MESSAGE)
+        return ExecutionRequired(_NO_EXECUTION_MESSAGE)
+    return Unauthenticated(_NO_CALLER_MESSAGE)
 
 
 class ExecutionScope:
     """Run a ``with`` body as an execution acting as the given identity.
 
-    The class form of :func:`enter` / :func:`leave` for code off the per-call
-    hot path: an agent run, or building a ``REQUEST`` binding outside any
-    execution. Acting as another identity than the one acting is an explicit
-    switch, by :func:`enter`'s rule, as ``executor.run(identity=...)``: logged.
+    The class form of :meth:`ExecutionContext.entered` and
+    :meth:`ExecutionContext.close` for code off the per-call hot path: an
+    agent run, or building a ``REQUEST`` binding outside any execution. Acting
+    as another identity than the one acting is an explicit switch, by
+    :meth:`ExecutionContext.entered`'s rule, as ``executor.run(identity=...)``:
+    logged.
     Entering an open instance again raises :class:`RuntimeError`.
 
     Args:
@@ -405,17 +426,17 @@ class ExecutionScope:
             reply = acme_agent.ask("Summarise invoice 42")
     """
 
-    __slots__ = ("_identity", "_token", "_what")
+    __slots__ = ("_execution", "_identity", "_what")
 
     def __init__(self, identity: Identity | None, *, what: str = "ExecutionScope") -> None:
         self._identity = identity
         self._what = what
-        self._token: Token[Acting] | None = None
+        self._execution: ExecutionContext | None = None
 
     def __enter__(self) -> None:
-        if self._token is not None:
+        if self._execution is not None:
             raise RuntimeError("This ExecutionScope is already open")
-        self._token = enter(self._identity, self._what)
+        self._execution = ExecutionContext.entered(self._identity, self._what)
 
     def __exit__(
         self,
@@ -423,22 +444,22 @@ class ExecutionScope:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        token = cast("Token[Acting]", self._token)
-        self._token = None
-        leave(token)
+        execution = self._execution
+        if execution is None:
+            raise RuntimeError("This ExecutionScope is not open")
+        self._execution = None
+        execution.close()
 
 
 class NoExecution:
     """Run a ``with`` body outside any execution, acting as no one, even inside one.
 
-    Singletons are built here, so a constructor that reads the execution
-    identity raises :class:`ExecutionRequired`, and one that reads the acting
-    identity sees :data:`~loom.core.identity.ANONYMOUS`, instead of freezing
-    whichever caller built it first. The enclosing execution and its
-    caller are back after the body, unless the body left an execution open or
-    misused a token: then the block closes the context and raises
-    :class:`RuntimeError`, since the enclosing execution may be the one a
-    misused token already tried to leave.
+    Singletons are built here: a constructor reading the execution identity
+    raises :class:`ExecutionRequired`, and one reading the acting identity
+    sees :data:`~loom.core.identity.ANONYMOUS`. The enclosing execution and
+    its caller are back after the body, unless the body left an execution
+    open or misused a token: then the block closes the context and raises
+    :class:`RuntimeError`.
 
     Example::
 

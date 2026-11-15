@@ -252,7 +252,7 @@ def store_of(model: type[Any]) -> StoreKey:
     if hasattr(model, _RETIRED_ATTRIBUTE):
         raise ConfigError(
             f"{model.__name__} declares {_RETIRED_ATTRIBUTE}, which was removed; "
-            f"declare {_STORE_ATTRIBUTE} instead (ADR 0008)"
+            f"declare {_STORE_ATTRIBUTE} instead"
         )
     declared = getattr(model, _STORE_ATTRIBUTE, DEFAULT_STORE)
     return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")

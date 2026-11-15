@@ -32,8 +32,7 @@ from typing import TYPE_CHECKING, Final, TypeAlias
 
 from loom.core.errors import Forbidden, Unauthenticated
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
-from loom.core.execution import execution_identity
-from loom.core.identity import Acting
+from loom.core.execution import live_execution_identity
 from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
 
 if TYPE_CHECKING:
@@ -994,8 +993,7 @@ def require_authenticated(who: str) -> Identity:
         AgentRunError: With ``UNAUTHORIZED`` when the identity acting is not
             authenticated.
     """
-    identity = execution_identity()
-    Acting.current().refuse_expired()
+    identity = live_execution_identity()
     if not identity.is_authenticated:
         raise AgentRunError(
             AgentRunErrorCode.UNAUTHORIZED, f"{who} requires an authenticated caller"

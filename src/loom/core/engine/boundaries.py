@@ -87,7 +87,7 @@ class OpensScope:
             try:
                 async with scope.frame(plan.frame):
                     if plan.joined:
-                        plan.refuse_autocommit_joined(scope.transactional)
+                        plan.refuse_autocommit_joined(scope.participants)
                     result = await work()
             except BaseException as exc:
                 error = exc
@@ -132,7 +132,7 @@ class JoinsScope:
         scope.refuse_other_identity(started.use_case_name)
         async with scope.frame(self.frame):
             if self.frame.joined:
-                plan.refuse_autocommit_joined(scope.transactional)
+                plan.refuse_autocommit_joined(scope.participants)
             return await work()
 
 

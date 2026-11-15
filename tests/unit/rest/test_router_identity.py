@@ -20,7 +20,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase

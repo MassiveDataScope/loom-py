@@ -38,7 +38,7 @@ from loom.core.repository.abc.query import (
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.field_ref import F

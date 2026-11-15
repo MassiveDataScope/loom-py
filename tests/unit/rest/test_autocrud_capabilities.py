@@ -27,7 +27,7 @@ from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc import BulkCreatable, Creatable, Listable, Readable
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.repository.registry import repository_for
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.factory import UseCaseFactory, main_repository

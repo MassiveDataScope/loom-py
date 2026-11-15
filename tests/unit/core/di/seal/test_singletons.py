@@ -11,7 +11,7 @@ from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionScope, current_execution
 from loom.core.identity import ANONYMOUS
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.use_case import UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.graph import acme

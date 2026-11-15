@@ -6,13 +6,14 @@ from typing import Any
 
 import pytest
 
+from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
-from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
+from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Caller
 
 
@@ -63,8 +64,7 @@ class TestConstructionBuild:
 
     def test_a_constructor_caller_needs_an_execution_to_build(self) -> None:
         container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        declare_use_case_kinds(container.kinds)
-        container.kinds.bind(CALLER, CallerResolver())
+        declare_kinds(container.kinds)
         factory = UseCaseFactory(container)
 
         with pytest.raises(ExecutionRequired):
@@ -73,3 +73,18 @@ class TestConstructionBuild:
             built: Any = factory.build(AcmeAsCaller)
 
         assert built.caller is ANONYMOUS
+
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    @pytest.mark.parametrize(
+        "container", [KernelRecipe.container, LoomContainer], ids=["kernel", "deprecated-default"]
+    )
+    def test_a_constructor_caller_reads_the_execution_identity_on_every_path(
+        self, container: Any
+    ) -> None:
+        acme = Identity(subject="acme-ada", mechanism="test")
+        factory = UseCaseFactory(container())
+
+        with ExecutionScope(acme):
+            built: Any = factory.build(AcmeAsCaller)
+
+        assert built.caller is acme

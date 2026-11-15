@@ -18,7 +18,7 @@ import pytest
 from loom.ai.abc import McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
-from loom.ai.engines.pydantic_ai._mcp import _entered, _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import _entered, _OpenToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime._grants import McpGrantView
 from loom.core.execution import ExecutionScope
@@ -194,7 +194,7 @@ async def _drained(session: _ToolsetSession) -> None:
 async def _open(first: _ScriptedSessionToolset, factory: AcmeToolsetFactory) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: over an entered first toolset."""
     await first.__aenter__()
-    return _ToolsetSession(first, rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 _TESTER = Identity(subject="tester")
@@ -754,7 +754,9 @@ class TestASessionThatHoldsNothing:
             _ScriptedSessionToolset("first", ledger, _forgotten()),
             _ScriptedSessionToolset("second", ledger),
         )
-        session = _ToolsetSession(first, rebuild=AcmeToolsetFactory(second), held=False)  # type: ignore[arg-type]
+        session = _ToolsetSession(
+            _OpenToolset.of(first, held=False), rebuild=AcmeToolsetFactory(second)
+        )  # type: ignore[arg-type]
 
         result = await session.call_tool("write_orders", {})
 
@@ -764,7 +766,7 @@ class TestASessionThatHoldsNothing:
     @_bounded
     async def test_closes_without_leaving_what_it_never_entered(self) -> None:
         first = _ScriptedSessionToolset("first", _Ledger())
-        session = _ToolsetSession(first, held=False)  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.of(first, held=False))  # type: ignore[arg-type]
         await session.call_tool("write_orders", {})
 
         await session.aclose()

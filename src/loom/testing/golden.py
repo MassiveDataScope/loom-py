@@ -30,7 +30,6 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
-from loom.core.use_case.kinds import CALLER, CallerResolver
 from loom.core.use_case.use_case import UseCase
 
 
@@ -204,7 +203,6 @@ class GoldenHarness:
 
     def _build_container(self) -> LoomContainer:
         container = KernelRecipe.container()
-        container.kinds.bind(CALLER, CallerResolver())
 
         def _make_provider(instance: Any) -> Callable[[], Any]:
             def _provider() -> Any:

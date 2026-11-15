@@ -34,7 +34,7 @@ import anyio
 import pytest
 
 from loom.ai.abc import ConcurrentMcpSession
-from loom.ai.engines.pydantic_ai._mcp import _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
 from loom.ai.runtime._mcp import mcp_session_for
 
 _CALL_DELAY = 0.05
@@ -88,7 +88,7 @@ class TestTheEngineAdapterDeclaresConcurrency:
     def test_toolset_session_declares_a_concurrent_mcp_session(self) -> None:
         # ``object()`` basta: la anotacion del toolset es solo de tipos (future
         # annotations), y el constructor no toca el objeto que recibe.
-        session = _ToolsetSession(object())  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.of(object()))  # type: ignore[arg-type]
         assert isinstance(session, ConcurrentMcpSession)
 
     async def test_calls_under_one_grant_really_run_in_parallel(self) -> None:
@@ -96,7 +96,7 @@ class TestTheEngineAdapterDeclaresConcurrency:
         # la sesion del motor, pasada por el unico punto que decide envolver o
         # no (``mcp_session_for``).
         toolset = _FakeToolset(delay=_CALL_DELAY)
-        engine_session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+        engine_session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
         session = mcp_session_for(engine_session, label="crm")
         start = time.monotonic()
         await asyncio.gather(*(session.call_tool(f"tool{i}", {}) for i in range(8)))
@@ -112,7 +112,7 @@ class TestTheErrorResultIsTranslated:
     def error_result(self) -> Callable[..., Awaitable[Any]]:
         async def translate(*, is_error: bool) -> Any:
             toolset = _FakeToolset(delay=0.0, is_error=is_error)
-            session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+            session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
             return await session.call_tool("tool", {})
 
         return translate
@@ -143,7 +143,7 @@ class TestCancellingDoesNotBlockTheSession:
     @pytest.fixture
     def slow_session(self) -> tuple[_FakeToolset, _ToolsetSession]:
         toolset = _FakeToolset(delay=0.1)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
         return toolset, session
 
     async def test_cancel_returns_control_immediately(

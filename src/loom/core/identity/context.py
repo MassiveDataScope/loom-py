@@ -14,7 +14,7 @@ Rules:
       (the HTTP request starts a delegation; a job envelope or a queued
       dispatch resumes one) and restores the previous one with
       :func:`reset_identity`.
-    - Work pins it: :func:`~loom.core.execution.enter` installs
+    - Work pins it: :meth:`~loom.core.execution.ExecutionContext.entered` installs
       :meth:`Acting.pinned_for`. Inside work :func:`set_identity` raises
       :class:`IdentityFixed`. The execution layer also writes the carrier
       (``_acting``) to enter and leave an execution, for ``NoExecution`` and
@@ -44,7 +44,7 @@ import msgspec
 from loom.core.config.errors import ConfigError
 from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
-from loom.core.identity.wire import Delegation
+from loom.core.identity.wire import NO_DELEGATION, Delegation
 from loom.core.logger import get_logger
 from loom.core.model.types import PositiveSeconds
 from loom.core.tracing import get_trace_id
@@ -127,6 +127,36 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         if identity is not caller and (caller is not None or self.work is not None):
             self.report_switch(identity, what)
         return pinned
+
+    def resumed(self, delegation: Delegation) -> Delegation | None:
+        """Return what queued work installs here to resume *delegation*, or ``None`` for nothing.
+
+        - No caller: none installed, or no caller over an authenticated one.
+        - Another caller than this one: *delegation* as is.
+        - This caller, inside work: nothing, the work's delegation governing.
+        - This caller, outside work: *delegation* ending at this caller's
+          deadline when that comes first.
+
+        Args:
+            delegation: The dispatcher's caller and deadline.
+
+        Returns:
+            The delegation to install, or ``None``.
+
+        Raises:
+            DelegationExpired: Inside work acting as the dispatcher, past the
+                captured deadline.
+        """
+        caller, until = delegation
+        if caller is None:
+            return NO_DELEGATION if self.effective.is_authenticated else None
+        if caller != self.caller:
+            return delegation
+        if self.work is not None:
+            if until is not None and until < self.deadline:
+                Acting(caller, caller, until, self.work).refuse_expired()
+            return None
+        return Delegation.of(caller, self.deadline if until is None else min(until, self.deadline))
 
     def refuse_expired(self) -> None:
         """Refuse acting as this caller past its deadline, logging ``delegation_expired``.

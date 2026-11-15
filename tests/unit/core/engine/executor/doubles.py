@@ -25,13 +25,13 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import RepoFor
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import Participant
 from loom.core.uow.scope import Frame, InvocationScope, current_scope
 from loom.core.use_case import Joined
 from loom.core.use_case.factory import UseCaseFactory, main_repository
-from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
+from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Agent, Caller, Exists, Input, Load, LoadById, Mcp, OnMissing
 from loom.core.use_case.use_case import UseCase
 
@@ -198,8 +198,7 @@ def serves_session(container: LoomContainer) -> None:
 def session_factory() -> UseCaseFactory:
     """A factory whose container serves :class:`AcmeSession` per execution."""
     container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-    declare_use_case_kinds(container.kinds)
-    container.kinds.bind(CALLER, CallerResolver())
+    declare_kinds(container.kinds)
     serves_session(container)
     built = UseCaseFactory(container)
     for use_case in (AcmeProbe, AcmeBroken, AcmeBrokenJob):

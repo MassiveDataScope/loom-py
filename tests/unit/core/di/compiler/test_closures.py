@@ -13,7 +13,7 @@ from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.abc import RepoFor
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from tests.unit.core.di.graph import acme
 from tests.unit.core.di.graph.acme import AcmeCaller, AcmeInput
 

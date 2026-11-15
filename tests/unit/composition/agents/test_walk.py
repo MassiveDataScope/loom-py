@@ -13,9 +13,9 @@ from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, Node
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.execution import Kind
 from loom.core.identity import ANONYMOUS
+from loom.core.use_case.kinds import AGENT, MCP
 from tests.unit.composition.agents.doubles import (
     AcmeDelegating,
     AcmeGatewayQueries,

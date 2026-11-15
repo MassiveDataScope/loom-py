@@ -19,9 +19,9 @@ from loom.core.identity import (
     current_identity,
 )
 from loom.core.job.job import Job
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
-from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
+from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -250,8 +250,7 @@ class AcmeRecordingFactory:
 def probe_factory(log: CallbackLog) -> UseCaseFactory:
     """A factory serving :class:`AcmeSession` per execution and ``log`` to callbacks."""
     container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-    declare_use_case_kinds(container.kinds)
-    container.kinds.bind(CALLER, CallerResolver())
+    declare_kinds(container.kinds)
     container.register(AcmeSession, AcmeSession, scope=DiScope.REQUEST)
     container.register(AcmeGreeter, AcmeGreeter, scope=DiScope.APPLICATION)
     container.register_instance(CallbackLog, log)

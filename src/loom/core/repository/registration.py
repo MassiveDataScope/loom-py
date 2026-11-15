@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast, get_origin
 
 from loom.core.di.container import LoomContainer
+from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, LoomStruct
+from loom.core.model.introspection import generic_type_arg
 from loom.core.persistence.stores import StoreKey, store_binding
 from loom.core.repository.abc.repo_for import (
     BulkCreatable,
@@ -15,6 +17,7 @@ from loom.core.repository.abc.repo_for import (
     Deletable,
     Listable,
     Readable,
+    RepoFor,
     Updatable,
 )
 from loom.core.repository.registry import (
@@ -82,11 +85,6 @@ def capabilities_of(repository_type: type) -> tuple[type, ...]:
     return tuple(proto for proto in _STANDARD_PROTOCOLS if proto in mro)
 
 
-def _standard_capability_keys(repository_type: type, model: type[LoomStruct]) -> tuple[Any, ...]:
-    """Return the ``Protocol[model]`` DI keys for the capabilities of *repository_type*."""
-    return tuple(cast(Any, proto)[model] for proto in capabilities_of(repository_type))
-
-
 def is_direct_protocol(cls: type) -> bool:
     """True when *cls* explicitly declares ``Protocol`` as a base.
 
@@ -97,23 +95,35 @@ def is_direct_protocol(cls: type) -> bool:
     return bool(cls.__dict__.get("_is_protocol"))
 
 
+def classify_key(annotation: object) -> KeyDependency | RepoDependency | None:
+    """``RepoFor[Model]`` is the repository of ``Model``; a class or protocol, a key.
+
+    A parametrised standard capability (``Listable[Order]``) or a protocol
+    alias (``Port[Order]``) is a key as written. Any other generic, such as
+    ``tuple[str, ...]``, is a value, not a dependency: ``None``.
+    """
+    model = generic_type_arg(annotation, RepoFor)
+    if model is not None:
+        return RepoDependency(model)
+    origin = get_origin(annotation)
+    if (
+        isinstance(annotation, type)
+        or origin in _STANDARD_PROTOCOLS
+        or (isinstance(origin, type) and is_direct_protocol(origin))
+    ):
+        return KeyDependency(annotation)
+    return None
+
+
 def capability_keys(
     repository_type: type[Any],
     model: type[LoomStruct],
 ) -> tuple[Any, ...]:
     """Return the DI keys a repository of *repository_type* for *model* is bound under.
 
-    Store wiring binds a registered repository under these keys, and
-    :class:`~loom.testing.HttpTestHarness` binds a fake under them.
-
-    Detects two categories:
-
-    * **Standard -able generics** — ``Readable[Model]``, ``Creatable[Model]``,
-      etc. — for every standard capability protocol found in the repository's
-      MRO.
-    * **Custom Protocol bases** — any class in ``repository_type.__orig_bases__``
-      that is itself a Protocol (i.e. it carries ``_is_protocol = True`` in its
-      own ``__dict__``) and is not one of the standard capabilities.
+    * ``Protocol[model]`` for every standard ``-able`` capability in the
+      repository's MRO.
+    * Every other protocol among ``repository_type.__orig_bases__``.
 
     Args:
         repository_type: The concrete repository class to inspect.
@@ -122,7 +132,7 @@ def capability_keys(
     Returns:
         Tuple of DI keys in stable order, with no duplicates.
     """
-    keys: list[Any] = list(_standard_capability_keys(repository_type, model))
+    keys: list[Any] = [cast(Any, proto)[model] for proto in capabilities_of(repository_type)]
 
     for base in getattr(repository_type, "__orig_bases__", ()):
         origin: Any = getattr(base, "__origin__", base)
@@ -148,7 +158,7 @@ def _default_capability_keys(
     """
     if default_repository_type is None:
         return ()
-    return _standard_capability_keys(default_repository_type, model)
+    return tuple(cast(Any, proto)[model] for proto in capabilities_of(default_repository_type))
 
 
 @dataclass(frozen=True)
@@ -274,11 +284,9 @@ def build_repository_registration_module(
     Persistible ``BaseModel`` types without an explicit registration use the
     provided default repository builder.
 
-    Capability DI keys (standard ``-able`` generics and custom Protocol bases)
-    are auto-detected and registered alongside the primary binding key so that
-    use cases can declare fine-grained capability dependencies without casts.
-    Default-built repositories bind the capabilities of
-    ``default_repository_type``; ``None`` binds none.
+    Each repository is also bound under its capability keys
+    (:func:`capability_keys`). Default-built repositories bind the
+    capabilities of ``default_repository_type``; ``None`` binds none.
 
     *default_builder* builds them, registered under
     ``store_binding(DefaultRepositoryBuilder, store)`` unless a caller

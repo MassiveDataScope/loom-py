@@ -8,9 +8,9 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.execution import ExecutionKinds, ExecutionRequired, ExecutionScope
 from loom.core.identity import Identity
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.markers import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 
@@ -33,7 +33,7 @@ class AcmeCallTimeResolver:
 
 
 class TestLegacyResolverBinding:
-    async def test_a_call_time_resolver_is_bound_as_is_and_kept_as_given(self) -> None:
+    async def test_a_call_time_resolver_is_bound_as_is(self) -> None:
         resolver = AcmeCallTimeResolver()
         compiler = UseCaseCompiler()
         marker = compiler.compile(AcmeTriageUseCase).execution_bindings[0].declaration
@@ -41,7 +41,6 @@ class TestLegacyResolverBinding:
         executor.bind_agent_resolver(resolver)
 
         assert await executor.execute(AcmeTriageUseCase(), identity=_ACME) == ("call-time", marker)
-        assert executor._agent_resolver is resolver  # noqa: SLF001 - the legacy shape
 
     def test_a_plain_callable_reads_the_execution_identity_at_resolve_time(self) -> None:
         kinds = ExecutionKinds()

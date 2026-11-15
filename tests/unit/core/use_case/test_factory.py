@@ -14,7 +14,7 @@ from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.repository.abc import Listable, RepoFor
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from tests.unit.core.doubles import FakeOrderRepo, IOrderRepo

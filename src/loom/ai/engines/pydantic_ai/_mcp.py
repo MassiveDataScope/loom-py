@@ -1,38 +1,15 @@
 """Outbound MCP transport: this agent calling a remote tool server.
 
-One ``MCPToolset`` per connection serves the whole worker, and
-:class:`SharedMcpToolsets` is what holds them:
-
-* :meth:`SharedMcpToolsets.open` is the
-  :data:`~loom.ai.runtime.McpClientFactory` the runtime opens at start-up.
-  Entering it connects the server and hands back a session, so an unreachable
-  server fails start-up as ``MCP_SERVER_UNREACHABLE`` and the declared tool
-  filters are validated against the tools the server really exposes
-  instead of being taken on trust.
-* :meth:`SharedMcpToolsets.for_build` is what the engine puts behind the
-  capability boundary for the run itself — the session :meth:`open` made, as a
-  toolset (:class:`_SessionToolset`) — so the start-up connection is the run's
-  connection and a worker holds one channel per server rather than one per
-  agent.
-
-What is shared is the session. :class:`_ToolsetSession` — what a grant view
-(:meth:`~loom.ai.abc.AgentHandle.mcp`, a use case's ``Mcp()``), a ``python``
-factory's ``remote()`` and the model's own tool calls all go through —
-declares itself with :class:`~loom.ai.abc.ConcurrentMcpSession`, so the
-runtime leaves it unwrapped: every caller reaches the same reference-counted
-``MCPToolset`` concurrently, never queued behind
-:class:`~loom.ai.runtime.SharedMcpSession`'s single lock, and a renewal any of
-them triggers serves them all.
-
-:func:`build_mcp_toolset` holds the connection rules of one grant — its
-validated URL and its credential — once, so start-up cannot validate a server
-the run would not reach.  The credential itself is resolved by
-:mod:`loom.ai.remote_auth`, which is where the deployment's own strategy plugs in;
-this module only carries the result to the client.
-
-The MCP client ships as an optional ``pydantic-ai-slim`` dependency, so it is
-imported inside the function that needs it: importing it at module load would
-break every deployment that declares no ``mcp`` grant.
+One ``MCPToolset`` per connection serves the whole worker, held by
+:class:`SharedMcpToolsets`: :meth:`SharedMcpToolsets.open` is the
+:data:`~loom.ai.runtime.McpClientFactory` the runtime enters at start-up, and
+:meth:`SharedMcpToolsets.for_build` puts that same session behind the run's
+capability boundary (:class:`_SessionToolset`). :class:`_ToolsetSession` is a
+:class:`~loom.ai.abc.ConcurrentMcpSession`: grant views, ``python`` factories
+and the model's own calls reach one toolset concurrently and share its
+renewal. :func:`build_mcp_toolset` holds one grant's validated URL and
+credential; the credential comes from :mod:`loom.ai.remote_auth`. The MCP
+client, an optional ``pydantic-ai-slim`` dependency, is imported on first use.
 """
 
 from __future__ import annotations
@@ -184,22 +161,20 @@ class _ToolsetSession(ConcurrentMcpSession):
     toolset enters and leaves it on each use.
 
     Args:
-        toolset: The toolset speaking to one server. When *held*, it is already
+        opened: The toolset speaking to one server. When held, it is already
             entered and the session holds that entry until :meth:`aclose`;
             otherwise it is not entered, and each use enters it alone.
         rebuild: Builds a new, not yet entered toolset for the same
             connection; ``None`` never replaces the one given.
-        held: Whether *toolset* is entered and held by the session.
     """
 
     def __init__(
         self,
-        toolset: MCPToolset[Any],
+        opened: _OpenToolset,
         *,
         rebuild: Callable[[], MCPToolset[Any]] | None = None,
-        held: bool = True,
     ) -> None:
-        self._current = _OpenToolset.of(toolset, held=held)
+        self._current = opened
         self._retired: _OpenToolset | None = None
         self._rebuild = rebuild
         self._renewing = asyncio.Lock()
@@ -293,26 +268,9 @@ class _ToolsetSession(ConcurrentMcpSession):
     async def call_tool(self, name: str, arguments: Mapping[str, Any]) -> McpToolCallResult:
         """Invoke one tool and return its protocol-level result.
 
-        Goes straight to the underlying client's ``call_tool_mcp`` rather than
-        ``MCPToolset.direct_call_tool``: the latter is written for the model's
-        own retry loop and turns an ``is_error`` result into a raised
-        ``ModelRetry``/``ToolFailed`` before the caller ever sees the flag.
-        This adapter's caller is
-        :class:`~loom.ai.runtime._grants.McpGrantView`, which must inspect
-        ``ok`` itself — before deciding whether to decode — so the raw
-        protocol result is what it needs, with neither prose-fallback mapping
-        nor an engine-facing exception in the way.
-
-        Nothing here shields the round trip from the caller's own
-        cancellation: this adapter holds no lock over the shared
-        ``MCPToolset``, so cancelling a caller here never desynchronises a
-        neighbour the way it would on a locked, single-framed session — the
-        JSON-RPC client keeps every in-flight call's response matched to its
-        own request id regardless. A cancelled caller — including the plan's
-        own ``tool_timeout_ms``, enforced by
-        :func:`~loom.ai.engines.pydantic_ai._guards.capability_call` around
-        this call on the ``kind: python`` and ``kind: mcp`` routes — is
-        therefore free to return the moment it fires.
+        Calls the client's ``call_tool_mcp``, so an ``is_error`` result is
+        returned with ``ok`` false rather than raised. A cancelled caller
+        returns at once; the shared toolset holds no lock.
 
         Args:
             name: Tool name as the server exposes it.
@@ -666,51 +624,15 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
 class SharedMcpToolsets:
     """The MCP toolsets of one worker: one per distinct connection.
 
-    Every agent granted a server works over the same connection, which is what
-    makes a worker hold one channel per server instead of one per agent. The
-    runtime opens it at start-up (:meth:`open`) as a :class:`_ToolsetSession`,
-    kept here per connection: :meth:`for_build` hands an agent's ``mcp`` grant
-    that session (:class:`_SessionToolset`), and :meth:`session_for` hands it to
-    a ``python`` factory, so a grant view, the model's own calls and a python
-    tool share one renewal and one in-flight count. A connection start-up did
-    not open -- tolerated as unreachable -- gets a session too, created on
-    first use, which holds no connection: each use enters and leaves its
-    toolset, so it connects then.
-
-    Sharing the toolset — rather than a
-    :class:`~loom.ai.runtime.SharedMcpSession` over it — is what keeps the
-    runs concurrent: the session wrapper serialises every call on one lock,
-    so one agent's ``tool_timeout_ms`` would stop bounding anything for its
-    neighbours, queued behind it. :class:`_ToolsetSession` holds no such
-    lock, so a caller cancelled mid-call — the plan's own
-    ``tool_timeout_ms`` firing, in particular — returns immediately instead
-    of waiting for the call to drain; the underlying JSON-RPC client still
-    matches every in-flight response to its own request id, so an abandoned
-    call never desynchronises a neighbour sharing the connection.
-
-    All of that holds only while the runtime's ``mcp_client_factory`` and the
-    engine build read the *same* instance. :meth:`open` records every
-    connection it was asked for and :meth:`for_build` refuses one it was never
-    asked for, which is why the two are separate methods: a shared
-    build-and-cache helper would have made :meth:`open` satisfy its own check
-    and left the wiring unverified. The engine build runs strictly after the
-    runtime opened its clients, so a grant missing from that record can only
-    mean the runtime was handed some other factory — and the run would then
-    hold a second connection whose tool filters nothing validated.
-
-    State is per instance and owned by the engine provider; nothing here is
-    module-level. One instance serves one runtime lifecycle: the toolsets are
-    never evicted, and an ``MCPToolset`` re-entered from a second event loop
-    would reuse a lock bound to the first.
-
-    This per-server deadline never fires first in production — see "The
-    per-server handshake deadline never fires first" in ``docs/ai/mcp.md``.
-
-    Every toolset built by an instance waits
-    :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its connection and
-    ``initialize`` handshake unless :meth:`set_connect_timeout` replaces that
-    deadline; production is handed the deployment's real
-    ``ai.startup_timeout_ms`` that way.
+    The runtime opens each connection at start-up (:meth:`open`) as a
+    :class:`_ToolsetSession`; :meth:`for_build` hands an agent's ``mcp``
+    grant that session and :meth:`session_for` hands it to a ``python``
+    factory. A connection start-up did not open (tolerated as unreachable)
+    gets a session created on first use that connects on each use.
+    :meth:`for_build` refuses a connection :meth:`open` was never asked for.
+    One instance serves one runtime lifecycle; toolsets are never evicted.
+    Each toolset waits :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its
+    connection and handshake unless :meth:`set_connect_timeout` replaces it.
 
     Example::
 
@@ -786,7 +708,7 @@ class SharedMcpToolsets:
         session = self._sessions.get(connection)
         if session is None:
             rebuild = self._builder(connection)
-            session = _ToolsetSession(rebuild(), rebuild=rebuild, held=False)
+            session = _ToolsetSession(_OpenToolset.of(rebuild(), held=False), rebuild=rebuild)
             self._sessions[connection] = session
         return session
 
@@ -856,8 +778,7 @@ async def _entered(
     toolset: MCPToolset[Any], *, rebuild: Callable[[], MCPToolset[Any]] | None = None
 ) -> AsyncIterator[_ToolsetSession]:
     """Enter *toolset* and hand that entry to a session, which closes all it holds on exit."""
-    await _OpenToolset.entered(toolset)
-    session = _ToolsetSession(toolset, rebuild=rebuild)
+    session = _ToolsetSession(await _OpenToolset.entered(toolset), rebuild=rebuild)
     try:
         yield session
     finally:

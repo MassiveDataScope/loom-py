@@ -12,7 +12,7 @@ from tests.helpers.source_tree import SRC, parsed
 _ENDPOINTS = tuple(
     sorted((*(SRC / "ai" / "fastapi").glob("*.py"), *(SRC / "ai" / "a2a").glob("*.py")))
 )
-_OPENERS = frozenset({"ExecutionScope", "enter"})
+_OPENERS = frozenset({"ExecutionScope", "entered"})
 
 
 def _openers_called(tree: ast.AST) -> list[str]:
@@ -39,8 +39,12 @@ class TestEndpointModules:
 
     @pytest.mark.parametrize(
         "source",
-        ["ExecutionScope(caller)", "execution.ExecutionScope(caller)", "enter(caller)"],
-        ids=["plain", "qualified", "enter"],
+        [
+            "ExecutionScope(caller)",
+            "execution.ExecutionScope(caller)",
+            "ExecutionContext.entered(caller)",
+        ],
+        ids=["plain", "qualified", "entered"],
     )
     def test_the_check_sees_every_way_to_open_one(self, source: str) -> None:
         assert _openers_called(ast.parse(source)) != []

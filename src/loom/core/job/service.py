@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from contextvars import Token
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
@@ -15,7 +14,7 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.job.callback import CallbackOutcome, JobCallback, notify
+from loom.core.job.callback import CallbackOutcome, JobCallback, notify, refuse_reserved_payload
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import JobGroup, JobHandle
@@ -46,7 +45,8 @@ class _PendingDispatch:
 
     async def run(self) -> None:
         """Run the job, then its callback, as the dispatcher, within the captured delegation."""
-        token = self._resume()
+        resumed = Acting.current().resumed(self.captured)
+        token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
         try:
             result: Any = await self.executor.run(
                 self.job_type,
@@ -78,39 +78,6 @@ class _PendingDispatch:
         finally:
             if token is not None:
                 reset_identity(token)
-
-    def _resume(self) -> Token[Acting] | None:
-        """Install the captured delegation where the dispatcher does not act already.
-
-        Outside work it resumes the captured delegation, ending at the
-        deadline of the caller acting instead when that caller is the
-        dispatcher and its deadline comes first; the job's execution is
-        refused past it. Inside work acting as the dispatcher it installs
-        nothing, the job running within that work's delegation, and is
-        refused when the captured deadline has passed. A dispatch with no
-        caller runs as no one, and is refused inside work acting as someone.
-
-        Returns:
-            The token to reset, or ``None`` when nothing was installed.
-
-        Raises:
-            IdentityFixed: Inside work acting as anyone else.
-            DelegationExpired: Inside work acting as the dispatcher, past the
-                captured deadline.
-        """
-        caller, until = self.captured
-        acting = Acting.current()
-        if caller is None:
-            return set_identity(None) if acting.effective.is_authenticated else None
-        if caller != acting.caller:
-            return set_identity(caller, until=until)
-        if acting.work is not None:
-            if until is not None and until < acting.deadline:
-                Acting(caller, caller, until, acting.work).refuse_expired()
-            return None
-        return set_identity(
-            caller, until=acting.deadline if until is None else min(until, acting.deadline)
-        )
 
 
 class JobService(Protocol):
@@ -313,7 +280,7 @@ class InlineJobService:
         _ = (countdown, priority, eta)
         payload = payload or {}
         if on_success is not None or on_failure is not None:
-            CallbackOutcome.refuse_reserved(payload)
+            refuse_reserved_payload(payload)
         task_id = str(uuid.uuid4())
         result_holder: list[Any] = []
         pending = _PendingDispatch(

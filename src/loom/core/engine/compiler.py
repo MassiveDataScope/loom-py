@@ -7,7 +7,6 @@ from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.engine.plan import (
     CallerBinding,
@@ -37,6 +36,7 @@ from loom.core.repository.abc.repo_for import (
     Updatable,
 )
 from loom.core.use_case.joined import joined_repository
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.markers import (
     LookupKind,
     SourceKind,
@@ -155,7 +155,7 @@ class UseCaseCompiler:
             + len(rule_steps)
         )
         self._logger.info(
-            f"[BOOT] Compiled UseCase: {uc_name} ({total} steps)",
+            "[BOOT] Compiled UseCase",
             usecase=uc_name,
             detected=bindings.detected,
             computes=len(compute_steps),
@@ -208,7 +208,7 @@ class UseCaseCompiler:
                 bindings=bindings,
             )
 
-        self._validate_marker_refs(use_case_type, bindings)
+        bindings.load_steps, bindings.exists_steps = self._readable_lookups(use_case_type, bindings)
         return bindings
 
     def _collect_binding_from_parameter(
@@ -235,13 +235,11 @@ class UseCaseCompiler:
             return
 
         if isinstance(marker, _AgentMarker):
-            binding = ExecutionBinding(name, AGENT, marker, annotation)
-            self._collect_execution(binding, f"Agent: {marker.name!r}", bindings)
+            self._collect_execution(ExecutionBinding(name, AGENT, marker, annotation), bindings)
             return
 
         if isinstance(marker, _McpMarker):
-            binding = ExecutionBinding(name, MCP, marker, annotation)
-            self._collect_execution(binding, f"Mcp: {marker.server!r}", bindings)
+            self._collect_execution(ExecutionBinding(name, MCP, marker, annotation), bindings)
             return
 
         if isinstance(marker, _LoadByIdMarker):
@@ -331,15 +329,11 @@ class UseCaseCompiler:
         bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
         bindings.detected.append(f"Query: {annotation.__name__} -> {name}")
 
-    def _collect_execution(
-        self, binding: ExecutionBinding, detected: str, bindings: _SignatureBindings
-    ) -> None:
-        """Record one ``Agent()`` or ``Mcp()`` marker; several may appear in one signature.
-
-        The agent or server it names is checked by the composition root, not here.
-        """
+    @staticmethod
+    def _collect_execution(binding: ExecutionBinding, bindings: _SignatureBindings) -> None:
+        """Record one ``Agent()`` or ``Mcp()`` parameter, detected as its declaration."""
         bindings.execution_bindings.append(binding)
-        bindings.detected.append(f"{detected} -> {binding.name}")
+        bindings.detected.append(f"{binding.declaration!r} -> {binding.name}")
 
     @staticmethod
     def _build_load_by_id_step(name: str, marker: _LoadByIdMarker[Any]) -> LoadStep:
@@ -381,12 +375,11 @@ class UseCaseCompiler:
             spelling=marker.spelling,
         )
 
-    def _validate_marker_refs(
-        self,
-        use_case_type: type[Compilable],
-        bindings: _SignatureBindings,
-    ) -> None:
-        """Refuse a lookup whose value cannot be read; point command lookups at ``Input()``.
+    @staticmethod
+    def _readable_lookups(
+        use_case_type: type[Compilable], bindings: _SignatureBindings
+    ) -> tuple[list[LoadStep], list[ExistsStep]]:
+        """Return the load and exists steps, each reading its value from a parameter or ``Input()``.
 
         Raises:
             CompilationError: When a lookup names a missing parameter, or the
@@ -401,8 +394,10 @@ class UseCaseCompiler:
                     f"{use_case_type.__qualname__}.execute: "
                     f"{step.spelling} {step.entity_type.__name__}: {problem}"
                 )
-        bindings.load_steps = [step.reading(command) for step in bindings.load_steps]
-        bindings.exists_steps = [step.reading(command) for step in bindings.exists_steps]
+        return (
+            [step.reading(command) for step in bindings.load_steps],
+            [step.reading(command) for step in bindings.exists_steps],
+        )
 
 
 def _primary_store(use_case_type: type[Compilable]) -> StoreKey:

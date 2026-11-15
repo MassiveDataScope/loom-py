@@ -18,15 +18,12 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.observation import StartedExecution
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep, ParameterBindingError
 from loom.core.errors import MissingCaller, RuleViolation, RuleViolations
 from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import CALLER
-
-_BINDERS = {AGENT: "bind_agent_resolver", MCP: "bind_mcp_resolver"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +169,8 @@ class ArgumentBinder:
                     raise RuntimeError(
                         f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
                         f"no {binding.kind.name!r} resolver is bound on this executor. Call "
-                        f"RuntimeExecutor.{_BINDERS[binding.kind]}() once the AI runtime exists."
+                        f"RuntimeExecutor.bind_{binding.kind.name}_resolver() once the AI "
+                        "runtime exists."
                     ) from None
 
         return resolve

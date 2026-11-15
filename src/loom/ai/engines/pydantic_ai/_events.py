@@ -1,36 +1,8 @@
-"""Engine stream events → loom's closed :data:`~loom.ai.abc.AgentEvent` union.
+"""Engine stream events projected onto loom's closed :data:`~loom.ai.abc.AgentEvent` union.
 
-The union has five members and gains a sixth only when two independent
-consumers need it, so this translation **projects onto what exists
-and invents nothing**. pydantic-ai publishes twenty-odd event kinds; four
-carry information a loom consumer can act on, and the rest are structural
-(part boundaries, availability deltas, realtime-session signals).
-
-Structural kinds are dropped rather than turned into an ``error``: an
-``error`` terminates the stream, so reporting one for a
-``part_end`` would fail a healthy run. Drift is caught instead by a coverage
-test that fails when pydantic-ai adds a kind this module has not been taught
-— explicit, and at test time rather than in production.
-
-Two translations carry a contract of their own.
-
-``tool_result.summary`` is built by loom from the structured facts a loom
-toolset publishes in ``metadata["loom"]``, and only from a closed list of
-shapes. A tool result is model-influenced content: were the summary
-read from the payload — or from a free-form string a tool supplied — a tool
-could dictate what every SSE consumer displays, and a large payload would be
-copied into every event. An unknown or absent shape degrades to ``"ok"``.
-
-The ``refused`` shape is the one that also flips ``ok``: a tripped bound or a
-contained failure must not read as a normal call in the stream. Its summary is
-the fixed word ``"refused"``, so no tool-authored text reaches the summary.
-
-``tool_call.arguments`` is a decoded mapping, decoded exactly once here. The
-engine hands the raw argument string through unparsed when the model emits
-malformed JSON — ``ToolCallPart.args_as_dict()`` answers
-``{"INVALID_JSON": "<the raw string>"}`` rather than raising — so relaying it
-would leak the model's unparsed text to every consumer as if it were
-structured arguments. Malformed arguments therefore become ``{}``.
+A tool result's summary is built from the closed shapes a loom toolset
+publishes in ``metadata["loom"]``, never from the payload; a ``refused``
+shape also reads ``ok=False``. Malformed tool-call arguments become ``{}``.
 """
 
 from __future__ import annotations
@@ -86,26 +58,16 @@ IGNORED_EVENT_KINDS: frozenset[str] = frozenset(
 )
 """Engine event kinds with no loom counterpart; carried by no consumer."""
 
-_TOOL_OK = ReturnShape.OK
 _TOOL_RETRY = "the model was asked to retry the call"
-_TOOL_REFUSED = ReturnShape.REFUSED
-_TOOL_FAILED = "the call failed"
-_TOOL_DENIED = "the call was denied"
-_TOOL_INTERRUPTED = "the call was interrupted"
 _OUTCOME_SUMMARIES: Mapping[str, str] = MappingProxyType(
     {
         "retried": _TOOL_RETRY,
-        "failed": _TOOL_FAILED,
-        "denied": _TOOL_DENIED,
-        "interrupted": _TOOL_INTERRUPTED,
+        "failed": "the call failed",
+        "denied": "the call was denied",
+        "interrupted": "the call was interrupted",
     }
 )
-"""The summary of each engine outcome that is not a success.
-
-From pydantic-ai 2.66 a retried, failed, denied or interrupted call returns as
-a ``ToolReturnPart`` whose ``outcome`` says so; before, a retry was a
-``RetryPromptPart`` and the part carried no outcome. Each summary is fixed, so
-the event never quotes what the tool or the model wrote."""
+"""The fixed summary of each engine outcome that is not a success."""
 
 _COUNTED_SHAPES: frozenset[str] = frozenset({ReturnShape.ROWS})
 """Shapes whose summary is a count and a unit; every other shape reads ``ok``."""
@@ -160,7 +122,7 @@ def _summary(part: object) -> str:
     count = facts.get("n")
     if shape in _COUNTED_SHAPES and isinstance(count, int):
         return f"{count} {shape}"
-    return _TOOL_OK
+    return ReturnShape.OK
 
 
 def _tool_result(event: FunctionToolResultEvent) -> AgentEvent:
@@ -171,16 +133,12 @@ def _tool_result(event: FunctionToolResultEvent) -> AgentEvent:
     if failure is not None:
         return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=failure)
     if _facts(part).get("shape") == ReturnShape.REFUSED:
-        return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=_TOOL_REFUSED)
+        return ToolResultEvent(call_id=part.tool_call_id, ok=False, summary=ReturnShape.REFUSED)
     return ToolResultEvent(call_id=part.tool_call_id, ok=True, summary=_summary(part))
 
 
 def translate(event: object) -> AgentEvent | None:
-    """Project one engine event onto the loom union.
-
-    ``agent_run_result`` is deliberately absent: the terminal ``final`` event
-    carries the *validated* answer and the run's usage, so it is built by the
-    engine adapter, which owns the decode.
+    """Project one engine event onto the loom union; ``agent_run_result`` is not projected.
 
     Args:
         event: Event yielded by the engine's stream.

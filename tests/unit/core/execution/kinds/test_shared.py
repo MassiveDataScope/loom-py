@@ -7,10 +7,9 @@ from typing import Any
 import pytest
 
 from loom.core.bootstrap import create_kernel
-from loom.core.engine.kinds import AGENT
 from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import Identity
-from loom.core.use_case.kinds import CALLER
+from loom.core.use_case.kinds import AGENT, CALLER
 from loom.core.use_case.markers import Agent, Caller
 from tests.unit.core.bootstrap.kernel.components import AcmeConfig, AcmePing
 

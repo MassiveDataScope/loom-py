@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.execution import ExecutionBinding
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
 from loom.core.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
+
+if TYPE_CHECKING:
+    from loom.core.uow.coordinator import Participant
 
 
 class ParameterBindingError(ValueError):
@@ -357,17 +360,20 @@ class ExecutionPlan:
         steps: tuple[LookupStep, ...] = (*self.load_steps, *self.exists_steps)
         return tuple(ModelRead(self.use_case_type, step.name, step.entity_type) for step in steps)
 
-    def refuse_autocommit_joined(self, transactional: Callable[[StoreKey], bool]) -> None:
+    def refuse_autocommit_joined(
+        self, stores: Mapping[StoreKey, Participant | StoreCapabilities]
+    ) -> None:
         """Refuse a joined store that cannot roll back.
 
         Args:
-            transactional: Whether a store's unit of work can roll back.
+            stores: Each joined store's participant or capabilities, which
+                tell whether it can roll back.
 
         Raises:
             JoinedAutocommitStore: For the first joined store, by name, that cannot.
         """
         for key in self.frame.stores[1:]:
-            if not transactional(key):
+            if not stores[key].transactional:
                 issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                     component=self.use_case_type, store=key
                 )
@@ -392,7 +398,10 @@ class ExecutionPlan:
         if self.primary != DEFAULT_STORE:
             catalog.require(self.primary, purpose=f"the __store__ of {name}")
         self.refuse_autocommit_joined(
-            lambda key: catalog.require(key, purpose=f"Joined in {name}").capabilities.transactional
+            {
+                key: catalog.require(key, purpose=f"Joined in {name}").capabilities
+                for key in self.frame.stores[1:]
+            }
         )
         uncomposed = sorted({self.primary, *self.joined} - set(factories))
         if factories and not self.read_only and uncomposed:

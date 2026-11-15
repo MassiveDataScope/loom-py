@@ -9,22 +9,22 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs, ParameterBindingError
 from loom.core.execution import (
+    ExecutionContext,
     ExecutionKinds,
     ExecutionResolver,
-    enter,
+    Kind,
     execution_identity,
-    leave,
 )
 from loom.core.identity import Identity, current_caller
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.uow.coordinator import Coordinator
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.use_case.kinds import AGENT, MCP
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job
@@ -127,8 +127,6 @@ class RuntimeExecutor:
         self._reporter = ExecutionReporter(logger or get_logger(__name__), metrics, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._binder = ArgumentBinder(self._kinds, repo_resolver)
-        self._agent_resolver: object | None = None
-        self._mcp_resolver: object | None = None
         if agent_resolver is not None:
             self.bind_agent_resolver(agent_resolver)
         if mcp_resolver is not None:
@@ -141,7 +139,7 @@ class RuntimeExecutor:
 
         A use case declaring ``Agent()`` that runs before this is called
         fails with an error naming this method. The resolver is bound to
-        :data:`~loom.core.engine.kinds.AGENT` on this executor's registry: as
+        :data:`~loom.core.use_case.kinds.AGENT` on this executor's registry: as
         is when it implements :class:`~loom.core.execution.ExecutionResolver`,
         else wrapped to be called with the execution identity at resolve time.
 
@@ -153,15 +151,7 @@ class RuntimeExecutor:
         Raises:
             RuntimeError: If a resolver is already bound.
         """
-        if self._agent_resolver is not None:
-            raise RuntimeError("RuntimeExecutor.bind_agent_resolver() called more than once")
-        bound = (
-            resolver
-            if isinstance(resolver, ExecutionResolver)
-            else _PositionalResolver(resolver, ("name",))
-        )
-        self._kinds.bind(AGENT, bound)
-        self._agent_resolver = resolver
+        self._bind(AGENT, resolver, ("name",))
 
     def bind_mcp_resolver(
         self, resolver: ExecutionResolver | Callable[[str, tuple[str, ...], Identity], Any]
@@ -180,15 +170,24 @@ class RuntimeExecutor:
         Raises:
             RuntimeError: If a resolver is already bound.
         """
-        if self._mcp_resolver is not None:
-            raise RuntimeError("RuntimeExecutor.bind_mcp_resolver() called more than once")
-        bound = (
+        self._bind(MCP, resolver, ("server", "include"))
+
+    def _bind(
+        self, kind: Kind, resolver: ExecutionResolver | Callable[..., Any], fields: tuple[str, ...]
+    ) -> None:
+        """Bind *resolver* to *kind*, wrapping a positional one called with *fields*.
+
+        Raises:
+            RuntimeError: If *kind* already has a resolver.
+        """
+        if self._kinds.is_bound(kind):
+            raise RuntimeError(f"RuntimeExecutor.bind_{kind.name}_resolver() called more than once")
+        self._kinds.bind(
+            kind,
             resolver
             if isinstance(resolver, ExecutionResolver)
-            else _PositionalResolver(resolver, ("server", "include"))
+            else _PositionalResolver(resolver, fields),
         )
-        self._kinds.bind(MCP, bound)
-        self._mcp_resolver = resolver
 
     async def run(
         self,
@@ -388,7 +387,8 @@ class RuntimeExecutor:
 
         The run is read-only when *read_only* or its plan says so. The
         effective identity is computed here, once: the one given, else the
-        one acting (``None`` for no caller). :func:`enter` fixes it before the
+        one acting (``None`` for no caller).
+        :meth:`~loom.core.execution.ExecutionContext.entered` fixes it before the
         instance is built, reporting a switch and keeping or starting its
         delegation, so the arguments, the acting identity and everything the
         execution causes see the same value. A run failing before it starts
@@ -409,21 +409,21 @@ class RuntimeExecutor:
                 )
         use_case = use_case_type.__qualname__
         phase = Phase.BEGIN
-        execution_token = None
+        execution = None
         try:
             plan = self._plan_for(use_case_type)
             read_only = read_only or plan.read_only
             if identity is None:
                 identity = current_caller()
-            execution_token = enter(identity, use_case)
+            execution = ExecutionContext.entered(identity, use_case)
             if not read_only:
                 refuse_write_under_read_only(f"{use_case}, which writes,")
             phase = Phase.BUILD
             compilable = build(target)
         except Exception as exc:
             self._reporter.not_started(use_case, exc, phase)
-            if execution_token is not None:
-                leave(execution_token)
+            if execution is not None:
+                execution.close()
             raise
         try:
             started = self._reporter.start(use_case)
@@ -435,7 +435,7 @@ class RuntimeExecutor:
                 lambda: started.business(call(plan, compilable, inputs, identity, started)),
             )
         finally:
-            leave(execution_token)
+            execution.close()
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -468,7 +468,7 @@ class _PositionalResolver:
             "identity when it resolves, so its handles are not bounded by the delegation "
             "window; bind a loom.core.execution.ExecutionResolver instead",
             DeprecationWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
         self._resolver = resolver
         self._fields = fields

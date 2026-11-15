@@ -1,18 +1,11 @@
-"""One entered runtime lifecycle: shared clients opened once, engines built once.
+"""One entered agent runtime: shared clients opened once, engines built once.
 
-Mirrors :class:`~loom.core.sql.clickhouse.registry.ClickHouseConnectionRegistry`:
-the runtime exists only between ``__aenter__`` and ``__aexit__``, so there is no
-intermediate started/stopped state. Entering opens every live client the plans
-declare — concurrently — through a single
-:class:`~contextlib.AsyncExitStack` owned by the entering task, validates the
-declared tool filters against the tools each server really exposes, re-verifies
-the read-only state of every SQL grant against live configuration, and builds
-one engine per plan. Connecting and validating share a single absolute
-deadline, so ``startup_timeout_ms`` bounds the whole of start-up once, whatever
-the number of servers -- unless ``ai.remote_clients`` is ``optional`` and a
-connection failure was tolerated, in which case the validation pass is given a
-fresh budget rather than the one the unreachable server spent. Leaving closes
-everything in strict reverse order.
+Entering opens every live client concurrently through one
+:class:`~contextlib.AsyncExitStack` owned by the entering task, verifies the
+declared tool filters and the read-only state of every SQL grant, and builds
+one engine per plan, all within ``startup_timeout_ms``; under
+``ai.remote_clients: optional`` a tolerated connection failure gives the
+filter pass a fresh budget. Leaving closes everything in reverse order.
 """
 
 from __future__ import annotations
@@ -23,7 +16,7 @@ from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from types import MappingProxyType, TracebackType
-from typing import Any, Self, cast
+from typing import Any, Self
 from uuid import uuid4
 
 from loom.ai._filters import select_names
@@ -73,12 +66,10 @@ from loom.ai.runtime._mcp import (
     filter_issues,
     filter_targets,
     listing_timeout_issues,
-    mcp_key,
     mcp_session_for,
 )
 from loom.ai.runtime._turn import TurnCallbacks
 from loom.core.di import LoomContainer
-from loom.core.errors import BoundaryValidationError
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
@@ -144,26 +135,15 @@ class _OpenedClient:
 class UseCaseMcpGrant:
     """One verified ``Mcp()`` marker binding, compiled into a runtime input.
 
-    Built by ``MarkerDeclarations.mcp_grants`` once the marker's server
-    name has been verified against ``ai.mcp_servers``, and handed to
-    :class:`AgentRuntime` so the server it names joins the set the runtime
-    opens even when no agent plan declares it. ``capability`` carries
-    this binding's own ``include`` — read only by :meth:`_use_case_filter_issues`,
-    to check it at start-up against the server's real tool list. At call
-    time the resolver never reads this ``include`` back: it receives its own
-    from the resolving :class:`~loom.core.execution.ExecutionBinding`, via the
-    executor, which is why one instance of this class exists per binding
-    rather than per server, even though start-up and call time end up
-    checking the same value on two different objects. The *shared*
-    grant a server's live session and full catalogue are read from is a
-    separate, server-keyed :class:`~loom.ai.runtime._grants.McpGrant` built by
-    :meth:`_build_use_case_grants`, whose own capability carries no ``include``
-    at all. ``usecase`` names the declaring use case, and is also carried
-    into :class:`FilterTarget.agent` for the server this binding lists on its
-    own (:meth:`_use_case_filter_targets`) — carried, not read: nothing on
-    that path reads the field back. ``parameter`` is read in one place only:
-    to name the offending signature when the marker's own ``include`` matches
-    no tool the server publishes.
+    Its server joins the clients the runtime opens even when no agent plan
+    declares it.
+
+    Attributes:
+        capability: The compiled server grant, with the marker's own ``include``,
+            checked at start-up against the server's tool list.
+        usecase: The declaring use case.
+        parameter: The declaring parameter, named when its ``include`` matches
+            no tool.
     """
 
     capability: CompiledMcpCapability
@@ -175,11 +155,7 @@ class AgentRuntime:
     """Owns the live agents of one worker: clients, engines and their limits.
 
     Usable only as an async context manager, and only from the task that
-    entered it: every live client is opened through one
-    :class:`~contextlib.AsyncExitStack` created in ``__aenter__``, so closing
-    happens in strict reverse order in the same task. That is what keeps a
-    session-affine client (MCP over a framed transport) from being closed by a
-    task that never opened it.
+    entered it, which closes every client in reverse order.
 
     Args:
         plans: Compiled plans this worker serves.
@@ -189,30 +165,17 @@ class AgentRuntime:
         container: Application container the engines resolve services from.
         sql_config: Live ``sql:`` configuration, re-verified at start-up
             against what the plans were compiled against.
-        mcp_client_factory: Builds the client of one MCP capability. Required
-            when any plan declares an ``mcp`` capability: without it the
-            declared tool filters cannot be validated, so start-up fails
-            closed rather than serving unvalidated grants. A missing factory is
-            a wiring bug, not an offline network, so ``ai.remote_clients:
-            optional`` does not tolerate it either.
+        mcp_client_factory: Builds the client of one MCP capability; required,
+            even under ``ai.remote_clients: optional``, when any plan declares
+            an ``mcp`` capability.
         a2a_client_factory: Builds the client of one A2A capability, with the
             same fail-closed rule.
         use_case_mcp: Every ``Mcp()`` marker binding a declaring use case
-            carries, already verified and compiled — see
-            :class:`UseCaseMcpGrant`. Each one's server joins the set of
-            clients this runtime opens, even when no agent plan names it. A
-            server named only this way stays outside the background health
-            probe: this runtime never reports it as an ``/health`` check
-            entry — see :meth:`_probe_forever`, which iterates the per-plan
-            slots. What a caller observes when such a server is down is
-            decided by :class:`~loom.ai.runtime._handle.McpMarkerResolver`:
-            every call on a tolerated-unreachable server raises
-            ``TOOL_UNAVAILABLE``, never a bind-time failure.
+            carries (:class:`UseCaseMcpGrant`). Each server joins the clients
+            this runtime opens; one named only this way is no ``/health``
+            check entry.
 
-    Runs emit no span of their own: the transport owns observability, because
-    only it knows the route, the method and the status code a run is attributed
-    to. Over HTTP that owner is
-    :func:`~loom.ai.fastapi.endpoints.bind_agent_endpoints`.
+    Runs emit no span of their own; the transport opens it.
 
     Raises:
         AgentCompilationError: From ``__aenter__``, aggregating every start-up
@@ -284,7 +247,7 @@ class AgentRuntime:
         self._owner = asyncio.current_task()
         deadline = self._startup_deadline()
         try:
-            self._verify_sql_readonly()
+            self._admit_sql_grants()
             self._invoker = self._resolve_invoker()
             self._verify_mcp_connections()
             tolerated = await self._open_clients(stack, deadline)
@@ -535,16 +498,26 @@ class AgentRuntime:
         self._require_plan(name)
         return self._health.get(name, _PROBING)
 
-    def _verify_sql_readonly(self) -> None:
-        """Abort start-up when a SQL grant's read-only state drifted."""
-        issues = [
-            AgentErrorCode.SQL_READONLY_DRIFT.issue(connection=capability.connection)
+    def _admit_sql_grants(self) -> None:
+        """Mark every SQL grant live, aborting start-up when one's read-only state drifted.
+
+        Raises:
+            AgentCompilationError: With one issue per drifted grant.
+        """
+        grants = [
+            capability
             for plan in self._plans.values()
             for capability in plan.capabilities
-            if type(capability) is CompiledSqlCapability and self._sql_drifted(capability)
+            if type(capability) is CompiledSqlCapability
+        ]
+        issues = [
+            AgentErrorCode.SQL_READONLY_DRIFT.issue(connection=capability.connection)
+            for capability in grants
+            if self._sql_drifted(capability)
         ]
         if issues:
             raise AgentCompilationError(issues)
+        self._live.update(capability.dependency_key for capability in grants)
 
     def _sql_drifted(self, capability: CompiledSqlCapability) -> bool:
         live = (
@@ -637,10 +610,7 @@ class AgentRuntime:
     def _verify_mcp_connections(self) -> None:
         """Refuse two grants of one server name that describe different connections.
 
-        The worker opens a single client per name and every agent granted it
-        works over that one client, so a second grant carrying another URL or
-        another credential would silently run against the first agent's
-        connection. Checked before any client opens.
+        Checked before any client opens.
 
         Raises:
             AgentCompilationError: Naming the server and both agents.
@@ -682,7 +652,7 @@ class AgentRuntime:
                 )
             )
             return
-        opened.append(_OpenedClient(key=mcp_key(capability), client=client, session=session))
+        opened.append(_OpenedClient(key=capability.dependency_key, client=client, session=session))
 
     async def _open_a2a(
         self,
@@ -707,7 +677,7 @@ class AgentRuntime:
                 AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(agent=capability.agent, reason=str(exc))
             )
             return
-        opened.append(_OpenedClient(key=_a2a_key(capability), client=client, session=session))
+        opened.append(_OpenedClient(key=capability.dependency_key, client=client, session=session))
 
     def _register_opened(self, stack: AsyncExitStack, opened: Sequence[_OpenedClient]) -> None:
         for entry in opened:
@@ -729,32 +699,22 @@ class AgentRuntime:
         issues: list[AgentCompilationIssue] = [
             AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(server=capability.server, reason=reason)
             for capability in mcp
-            if mcp_key(capability) not in live
+            if capability.dependency_key not in live
         ]
         issues.extend(
             AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(agent=remote.agent, reason=reason)
             for remote in a2a
-            if _a2a_key(remote) not in live
+            if remote.dependency_key not in live
         )
         return issues
 
     async def _verify_tool_filters(self, deadline: float) -> None:
         """Apply every declared tool filter to the tools really offered.
 
-        Tools are listed once per shared session, never once per (plan,
-        capability) pair: sessions are shared per server, so two plans pointing
-        at the same server would otherwise pay two serialised round trips for
-        identical data. The listing outlives this pass on ``self._tool_catalog``: a
-        grant handle's ``mcp()``/``tools()`` read it synchronously later, at no extra
-        round trip, because ``MCPToolset.list_tools`` caches its own result.
-
-        This pass never fails open. Under ``ai.remote_clients: optional`` the
-        waiver covers only servers that never connected --- ``_list_tools_once``
-        skips a server with no session and ``filter_issues`` skips a key that
-        was never listed. A server that did open still has its filters
-        verified, and its listing timing out still aborts start-up, which is
-        why the caller hands this pass a fresh budget rather than the one an
-        unreachable server exhausted.
+        Tools are listed once per shared session and kept on
+        ``self._tool_catalog``. Under ``ai.remote_clients: optional`` only a
+        server that never connected is skipped; a listing timing out aborts
+        start-up.
 
         Args:
             deadline: Absolute loop time the whole listing must complete by.
@@ -782,22 +742,14 @@ class AgentRuntime:
     def _use_case_filter_targets(self) -> tuple[FilterTarget, ...]:
         """One unfiltered target per declaring use case's server.
 
-        An empty ``include``/``exclude`` pair still gets the server *listed*
-        (:func:`filter_targets`'s own contract) and is then skipped by
-        :func:`filter_issues`; the marker's own ``include`` is checked
-        separately, in :meth:`_use_case_filter_issues`, over the catalogue
-        this listing fills.  Contributed here, unconditionally, rather than
-        after ``filter_targets`` might return an empty tuple: a deployment
-        with zero compiled agent plans and one declaring use case must still
-        list this server, or the catalogue :meth:`_mcp_grant` reads from
-        stays empty and every call the resolved handle makes fails with
-        ``TOOL_UNKNOWN`` against a server that opened cleanly.
+        Each server is listed even with no agent plan; the marker's own
+        ``include`` is checked by :meth:`_use_case_filter_issues`.
         """
         return tuple(
             FilterTarget(
                 agent=grant.usecase,
                 server=grant.capability.server,
-                key=mcp_key(grant.capability),
+                key=grant.capability.dependency_key,
                 include=(),
                 exclude=(),
             )
@@ -807,15 +759,11 @@ class AgentRuntime:
     def _use_case_filter_issues(self) -> list[AgentCompilationIssue]:
         """One issue per marker whose own ``include`` matches no listed tool.
 
-        Not a :func:`filter_issues` variant: that function has no field to
-        carry a parameter name, and building one issue shape from inside it
-        would need a discriminant on :class:`FilterTarget`. A server that was
-        never listed (a tolerated, unreachable one) is skipped here too — its
-        outage is reported by the connection check, not this filter pass.
+        A server that was never listed is skipped.
         """
         issues: list[AgentCompilationIssue] = []
         for grant in self._use_case_mcp:
-            catalogue = self._tool_catalog.get(mcp_key(grant.capability))
+            catalogue = self._tool_catalog.get(grant.capability.dependency_key)
             if catalogue is None:
                 continue
             names = tuple(tool.name for tool in catalogue)
@@ -857,11 +805,7 @@ class AgentRuntime:
     async def _probe_forever(self) -> None:
         """Refresh the health cache forever; only cancellation ends this task.
 
-        :meth:`~loom.ai.abc.AgentEngine.health` is a public protocol a third
-        party implements, so it may raise anything. An escaping failure would
-        end this task for good while ``/health`` kept answering the last cached
-        ``ok`` — a dead probe reported as a healthy runtime. Instead the failing
-        agent is recorded as ``unavailable`` and the loop moves on to the next.
+        An agent whose probe fails is recorded as ``unavailable``.
         """
         period = max(self._config.health_cache_ttl_ms, 1) / 1000
         while True:
@@ -882,24 +826,12 @@ class AgentRuntime:
         engine_status = await slot.engine.health()
         checks: dict[str, HealthState] = {"model": engine_status.status}
         for capability in slot.plan.capabilities:
-            check = self._dependency_check(capability)
-            if check is not None:
-                checks[check[0]] = check[1]
+            key = capability.dependency_key
+            if key is not None:
+                checks[key] = HealthState.OK if key in self._live else HealthState.UNAVAILABLE
         return AgentHealth(
             status=HealthState.worst(checks.values()), checks=MappingProxyType(checks)
         )
-
-    def _dependency_check(self, capability: object) -> tuple[str, HealthState] | None:
-        """Return the health-check key and state of a capability with a live dependency."""
-        if type(capability) is CompiledSqlCapability:
-            return f"sql:{capability.connection}", HealthState.OK
-        if type(capability) is CompiledMcpCapability:
-            key = mcp_key(capability)
-        elif type(capability) is CompiledA2ACapability:
-            key = _a2a_key(capability)
-        else:
-            return None
-        return key, HealthState.OK if key in self._live else HealthState.UNAVAILABLE
 
     @asynccontextmanager
     async def _run_stream(
@@ -1172,7 +1104,7 @@ class AgentRuntime:
         ``None`` under ``ai.remote_clients: optional`` for a server whose
         connection was tolerated as unreachable.
         """
-        key = mcp_key(capability)
+        key = capability.dependency_key
         session = self._sessions.get(key)
         if session is None:
             return None
@@ -1243,47 +1175,27 @@ def _resolve_state(
 ) -> Mapping[str, Any] | None:
     """Resolve one run's ``state`` against *shape*, before any engine call.
 
-    *state* is already decoded and normalised by whichever boundary received
-    it — this never parses bytes, it only checks the value against the
-    artefact's declared shape.
-
     Args:
         name: Agent this run targets, named in a raised error.
         shape: The agent's declared state shape, or ``None``.
-        state: Caller-supplied state, or ``None``.
+        state: Caller-supplied state, already decoded and normalised, or ``None``.
 
     Returns:
-        *state* unchanged when given. When *state* is ``None`` and *shape*
-        declares a :class:`~loom.core.model.LoomType` whose every field has a
-        default, the shape's own defaults — its decode of an empty object,
-        turned to builtins — so a stateful artefact renders its declared
-        defaults rather than empty markers. ``None`` when *shape* is
-        ``None``, or declares the open ``deps_type: dict`` form, which has no
-        defaults to supply.
+        :meth:`StateShape.resolve`'s state; ``None`` with no shape and no state.
 
     Raises:
         AgentRunError: ``STATE_UNDECLARED`` when *state* is given and *shape*
-            is ``None``; ``STATE_REQUIRED`` when *state* is ``None`` and
-            *shape* declares a field with no default.
+            is ``None``; ``STATE_REQUIRED`` as :meth:`StateShape.resolve` raises it.
     """
+    if shape is not None:
+        return shape.resolve(name, state)
     if state is not None:
-        if shape is None:
-            raise AgentRunError(
-                AgentRunErrorCode.STATE_UNDECLARED,
-                f"agent {name!r} declares no state (no 'deps_type' or 'deps_schema'); "
-                "remove 'state' from this call or declare a state shape on the artefact",
-            )
-        return cast(Mapping[str, Any], state)
-    if shape is None or shape.loom_type is None:
-        return None
-    try:
-        return shape.decode(b"{}")
-    except BoundaryValidationError as exc:
         raise AgentRunError(
-            AgentRunErrorCode.STATE_REQUIRED,
-            f"agent {name!r} declares a state field with no default ({exc}); "
-            "pass 'state' explicitly for this run",
-        ) from exc
+            AgentRunErrorCode.STATE_UNDECLARED,
+            f"agent {name!r} declares no state (no 'deps_type' or 'deps_schema'); "
+            "remove 'state' from this call or declare a state shape on the artefact",
+        )
+    return None
 
 
 def _check_conversation_id(conversation_id: str | None) -> None:
@@ -1314,11 +1226,6 @@ def _log_tolerated(issues: Iterable[AgentCompilationIssue]) -> None:
             "start-up continued without a remote client: %s (%s)", issue.code, issue.component
         )
         _logger.debug("remote client %r was not opened: %s", issue.component, issue.message)
-
-
-def _a2a_key(capability: CompiledA2ACapability) -> str:
-    """Return the health-check key of one A2A capability, by registered name."""
-    return f"a2a:{capability.agent}"
 
 
 def _remote_capabilities(
@@ -1354,20 +1261,7 @@ def _merge_use_case_mcp(
 ) -> tuple[CompiledMcpCapability, ...]:
     """Fold each declaring use case's own server into the set the runtime opens.
 
-    Applied above ``_open_clients``'s ``if not mcp and not a2a: return False``
-    guard: with zero compiled agent plans and a server named only by a use
-    case, that guard would otherwise fire on the agent-only ``mcp`` tuple and
-    nothing would ever open.
-
-    Both sources compile from the same ``ai.mcp_servers`` entry for a given
-    server name and differ only in ``include``/``exclude``. Neither field
-    reaches anything on this path: the client is keyed by
-    ``f"mcp:{server}"`` alone (:func:`~loom.ai.runtime._mcp.mcp_key`), and
-    the factory that opens it never reads a filter — the filtering is a view
-    built later, per grant. So whichever of the two capabilities wins opens
-    the same client, and ``setdefault`` here is a de-duplication rule, not a
-    precedence one, exactly like the one :func:`_remote_capabilities` already
-    applies across plans.
+    One capability per server name; both sources open the same client.
 
     Args:
         mcp: MCP capabilities every compiled agent plan declares, de-duplicated.

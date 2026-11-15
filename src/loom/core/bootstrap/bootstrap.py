@@ -16,8 +16,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.repository.dependency import classify_key
-from loom.core.use_case.factory import UseCaseFactory, main_repository
+from loom.core.use_case.factory import UseCaseFactory
 
 
 class BootstrapError(Exception):
@@ -108,7 +107,7 @@ def bootstrap_app(
 
     log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
-    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
+    container = KernelRecipe.container()
     with seeded_container(container, seeds, modules=modules, logger=log):
         result = KernelRecipe(use_cases, log, metrics=metrics)._install_use_cases(container)
         executor = RuntimeExecutor(

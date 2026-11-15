@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
-from loom.ai.engines.pydantic_ai._mcp import _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
 from tests.unit.ai.engines.doubles import AcmeToolsetFactory
 
 
@@ -55,7 +55,7 @@ async def _session(
 ) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: holding the first toolset's entry."""
     await first.__aenter__()
-    return _ToolsetSession(first, rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 class TestTheCallThatFoundTheSessionDead:

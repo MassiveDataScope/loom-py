@@ -11,10 +11,12 @@ from collections.abc import Callable
 import pytest
 
 from loom.composition import Application
-from loom.composition._reserved import refusing_reserved
+from loom.composition._reserved import reserved_keys
 from loom.composition.errors import ReservedBindingError
+from loom.core.bootstrap.kernel import seeded_container
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.logger import get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.sql import SqlQueryService
@@ -36,8 +38,15 @@ def _binds_observability(container: LoomContainer) -> None:
 
 
 def _run(module: Module, container: LoomContainer) -> None:
-    (refusing,) = refusing_reserved([module], (DEFAULT_STORE,))
-    refusing(container)
+    with seeded_container(
+        container,
+        {},
+        modules=(module,),
+        logger=get_logger("acme"),
+        reserved=reserved_keys((DEFAULT_STORE,)),
+        error=ReservedBindingError.for_key,
+    ):
+        pass
 
 
 def _sql_bound() -> LoomContainer:

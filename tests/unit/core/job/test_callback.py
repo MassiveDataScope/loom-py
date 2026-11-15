@@ -8,7 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.service import CeleryJobService
-from loom.core.job.callback import CallbackOutcome, JobCallback, NullJobCallback
+from loom.core.job.callback import (
+    JobCallback,
+    NullJobCallback,
+    refuse_reserved_payload,
+)
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
 from loom.testing.jobs import RecordingJobService
@@ -122,4 +126,4 @@ class TestReservedCallbackArguments:
 class TestRefuseReserved:
     def test_names_every_reserved_key_the_payload_holds(self) -> None:
         with pytest.raises(ValueError, match="cannot hold exc_msg, job_id: "):
-            CallbackOutcome.refuse_reserved({"job_id": 1, "exc_msg": "m", "acme": 2})
+            refuse_reserved_payload({"job_id": 1, "exc_msg": "m", "acme": 2})

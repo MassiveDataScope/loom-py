@@ -42,7 +42,7 @@ from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
-from loom.core.job.outcome import failure_log_fields, is_retryable
+from loom.core.job.outcome import is_retryable
 from loom.core.job.run import run_job
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
@@ -155,13 +155,6 @@ def _is_eager_request(task_self: Any) -> bool:
     return bool(getattr(conf, "task_always_eager", False))
 
 
-def _log_post_commit_failure(exc: Exception, job: str) -> None:
-    """Record which post-commit actions failed and whether anything committed."""
-    fields = failure_log_fields(exc)
-    if fields:
-        _log.error("JobPostCommitFailed", job=job, **fields)
-
-
 def _make_job_task(
     celery_app: Celery,
     job_type: type[Job[Any]],
@@ -248,7 +241,6 @@ def _make_job_task(
         *, task_self: Any, exc: Exception, trace_id: str | None, started: float
     ) -> NoReturn:
         """Retry the task when the failure allows it, otherwise let it die."""
-        _log_post_commit_failure(exc, name)
         if is_retryable(exc) and task_self.request.retries < task_self.max_retries:
             countdown = backoff**task_self.request.retries
             sink.on_event(

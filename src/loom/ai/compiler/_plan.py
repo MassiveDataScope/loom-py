@@ -77,6 +77,7 @@ class CompiledUsecaseCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "usecase"
+    dependency_key: ClassVar[None] = None
 
     keys: tuple[str, ...]
     use_cases: tuple[type[Compilable], ...]
@@ -98,6 +99,11 @@ class CompiledSqlCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     config: SqlConnectionConfig
     max_rows: int
     max_result_bytes: int
+
+    @property
+    def dependency_key(self) -> str:
+        """The key of this grant's connection in health checks."""
+        return f"sql:{self.connection}"
 
     def roles_of(self, identity: Identity) -> tuple[str, ...]:
         """Resolve one caller's roles on this connection, bound to the caller and never empty.
@@ -206,6 +212,11 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
+    @property
+    def dependency_key(self) -> str:
+        """The key of this server's shared session in health checks, by registered name."""
+        return f"mcp:{self.server}"
+
 
 def mcp_connection(capability: CompiledMcpCapability) -> CompiledMcpCapability:
     """Return the connection identity of one ``mcp`` grant, its filters cleared.
@@ -248,6 +259,7 @@ class CompiledSkillsCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "skills"
+    dependency_key: ClassVar[None] = None
 
     library: str
     directory: str
@@ -268,6 +280,7 @@ class CompiledPythonCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "python"
+    dependency_key: ClassVar[None] = None
 
     factory_ref: str
     factory: Callable[..., object]
@@ -302,6 +315,11 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
+    @property
+    def dependency_key(self) -> str:
+        """The key of this agent's shared client in health checks, by registered name."""
+        return f"a2a:{self.agent}"
+
 
 class CompiledNativeCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """Provider tool granted to an agent, already checked against its model.
@@ -315,6 +333,7 @@ class CompiledNativeCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "native"
+    dependency_key: ClassVar[None] = None
 
     tool: str
 

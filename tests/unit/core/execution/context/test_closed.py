@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
+from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.execution import (
+    ExecutionContext,
     ExecutionRequired,
     ExecutionScope,
     MarkerNotResolved,
     NoExecution,
     current_execution,
-    enter,
     execution_identity,
-    leave,
+    live_execution_identity,
 )
 from loom.core.identity import (
     ANONYMOUS,
@@ -42,6 +44,31 @@ class TestExecutionIdentity:
         """Refusing ``ANONYMOUS`` is the consumer's rule, not the context's."""
         with ExecutionScope(ANONYMOUS):
             assert execution_identity() is ANONYMOUS
+
+
+class TestLiveExecutionIdentity:
+    """The identity a tool or a handle acts as: the execution's, refused past its deadline."""
+
+    def test_returns_the_identity_within_the_delegation(self, window: float) -> None:
+        with ExecutionScope(_ALICE):
+            assert live_execution_identity() is _ALICE
+
+    def test_refuses_a_live_execution_past_the_caller_s_deadline(
+        self, past_the_window: Callable[[], None]
+    ) -> None:
+        with ExecutionScope(_ALICE):
+            assert execution_identity() is _ALICE
+            past_the_window()
+
+            assert execution_identity() is _ALICE
+            with pytest.raises(DelegationExpired):
+                live_execution_identity()
+
+    def test_refuses_outside_an_execution_and_an_execution_with_no_caller(self) -> None:
+        with acting_as(_ALICE), pytest.raises(ExecutionRequired):
+            live_execution_identity()
+        with ExecutionScope(None), pytest.raises(Unauthenticated):
+            live_execution_identity()
 
 
 class TestNoExecution:
@@ -76,12 +103,12 @@ class TestExitPaths:
             raise PlannedFailure
         assert current_execution() is None
 
-        token = enter(_ALICE)
+        token = ExecutionContext.entered(_ALICE)
         with pytest.raises(PlannedFailure):
             try:
                 raise PlannedFailure
             finally:
-                leave(token)
+                token.close()
         assert current_execution() is None
 
     async def test_a_cancelled_body_closes_the_execution(self) -> None:
@@ -91,12 +118,12 @@ class TestExitPaths:
 
         async def body() -> None:
             try:
-                token = enter(_ALICE)
+                token = ExecutionContext.entered(_ALICE)
                 try:
                     inside.set()
                     await asyncio.Event().wait()
                 finally:
-                    leave(token)
+                    token.close()
             finally:
                 seen_after.append(current_execution())
 

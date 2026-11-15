@@ -405,11 +405,14 @@ def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
 
 
 def _refuse_an_expired_caller(_session: Session, transaction: Any, _connection: Any) -> None:
-    """Open no transaction as a caller past its delegation.
+    """Refuse an outer SQLAlchemy transaction begun as a caller past its delegation.
 
-    One check per outer transaction, for every store, before its settings
-    and its first statement: the row-level security settings and the audit
-    columns written in it act as that caller.
+    The SQLAlchemy ``after_begin`` listener of every loom session; a
+    savepoint is not checked.
+
+    Raises:
+        DelegationExpired: When the caller acting is past its deadline.
     """
-    if not transaction.nested:
-        Acting.current().refuse_expired()
+    if transaction.nested:
+        return
+    Acting.current().refuse_expired()

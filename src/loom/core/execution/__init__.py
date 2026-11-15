@@ -14,10 +14,9 @@ from loom.core.execution.context import (
     ExecutionScope,
     NoExecution,
     current_execution,
-    enter,
     execution_ended,
     execution_identity,
-    leave,
+    live_execution_identity,
     per_execution,
 )
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired, MarkerNotResolved
@@ -42,9 +41,8 @@ __all__ = [
     "NoExecution",
     "UnboundKind",
     "current_execution",
-    "enter",
     "execution_ended",
     "execution_identity",
-    "leave",
+    "live_execution_identity",
     "per_execution",
 ]

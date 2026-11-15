@@ -16,24 +16,18 @@ class ExecutionRequired(SystemError):
 
 
 class ExecutionClosed(ExecutionRequired):
-    """Raised when a task or thread reads the execution it copied after that execution ended.
+    """Raised when a task or thread reads a per-execution value of an execution that ended.
 
-    A task created during an execution copies its context. Once the
-    execution ends its identity and per-execution values are gone, so the
-    task reads no caller rather than the one that has left. Background work
-    runs in an execution of its own: dispatch a job from inside the
-    execution, or call ``executor.run(UseCase, identity=...)`` from the task,
-    which opens its own execution.
+    Background work runs in an execution of its own: dispatch a job, or call
+    ``executor.run(UseCase)`` from the task.
     """
 
 
 class MarkerNotResolved(AttributeError):
     """Raised when an execution marker is used before its resolver replaced it.
 
-    A subclass of :class:`AttributeError` on purpose: ``hasattr``, ``getattr``
-    with a default and the copy and pickle protocols probe attributes and
-    expect that exact exception, so an unresolved marker answers them as
-    "absent" instead of breaking them.
+    An :class:`AttributeError`: ``hasattr``, ``getattr`` with a default and the
+    copy and pickle protocols read an unresolved marker as absent.
 
     Example::
 

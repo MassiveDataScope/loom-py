@@ -1,15 +1,10 @@
 """Mounting policy of the A2A surface: what is published, and how safely.
 
-Selection, the start-up refusals and the authentication-exclusion bookkeeping.
-None of this is A2A-specific — it is the policy any surface publishing an agent
-to the public internet has to satisfy — which is why it is stated once here
-rather than inline in the transport.
-
-**Only the card is anonymous.** Binding reads the exclusions mounted on the
-application's authentication middleware and refuses to start when any of them
-covers a path under the A2A or the agents prefix other than a card path; it then
-registers the card paths as the sole exclusion. Publishing an agent no caller could ever
-authenticate against is refused too.
+Selection, the start-up refusals and the authentication exclusions. Binding
+refuses to start when an exclusion mounted on the application's authentication
+middleware covers a path under the A2A or the agents prefix other than a card
+path, then registers the card paths as the sole exclusion. An agent no caller
+could authenticate against is refused.
 """
 
 from __future__ import annotations
@@ -61,12 +56,8 @@ def published_agents(
     ``expose`` is authoritative and never empty (``A2A_EXPOSE_EMPTY``): an empty
     list means no agent, never all of them.
 
-    A plan declaring ``deps_type`` or ``deps_schema`` (``plan.state is not
-    None``) is refused rather than published: the A2A handler runs an agent
-    with no state (``a2a/_handlers.py:235``), and the message shape it reads
-    carries a prompt and a ``contextId``, with no field for one
-    (``a2a/_handlers.py:175-186``). Rendering a declared state that never
-    arrives would degrade silently rather than fail.
+    A plan declaring ``deps_type`` or ``deps_schema`` is refused: the A2A
+    message carries no state.
 
     Raises:
         AgentCompilationError: With ``STATE_SURFACE_UNSUPPORTED``, naming the

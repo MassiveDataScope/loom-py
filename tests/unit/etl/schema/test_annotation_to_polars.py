@@ -19,7 +19,6 @@ from loom.etl.schema import (
     annotation_to_loom_type,
     resolve_schema,
 )
-from loom.etl.schema._contract import _annotation_to_loom_type
 
 
 class _Line(msgspec.Struct):
@@ -74,7 +73,7 @@ class TestAnnotationToPolars:
             annotation_to_loom_type(complex)
 
     def test_the_private_names_give_the_same_result(self) -> None:
-        loom_type = _annotation_to_loom_type(list[int])
+        loom_type = annotation_to_loom_type(list[int])
 
         assert loom_type == annotation_to_loom_type(list[int])
         assert private_loom_type_to_polars(loom_type) == loom_type_to_polars(loom_type)

@@ -451,10 +451,11 @@
   work (the execution) that fixed it. `current_caller()` (new) returns the
   caller, `None` for no caller, and `current_identity()` still returns
   `ANONYMOUS` for none. `ExecutionContext` holds the execution's resources
-  only: `ExecutionContext.identity` is removed, `enter(identity)` is
-  `enter(identity, what="execution")` (`what` names the work in a switch
-  report), its token is the acting identity's, and `refuse_ended_execution`
-  is replaced by `execution_ended()`.
+  only: `ExecutionContext.identity` is removed, an execution opens with
+  `ExecutionContext.entered(identity, what="execution")` (`what` names the
+  work in a switch report) and ends with its `close()`, `ended` says whether
+  it was closed, and `refuse_ended_execution` is replaced by
+  `execution_ended()`.
   - `set_identity` inside an execution, or in a task it started, raises
     `loom.core.identity.IdentityFixed`. A transport installing a caller (the
     HTTP middleware, the job worker) never fixes it, so transports may nest.
@@ -541,7 +542,10 @@
     link install. `ExecutionScope(identity, what=...)` names what runs in
     the switch report.
     `loom.core.identity` adds `Acting` (the value behind the tokens of
-    `set_identity` and `enter`; `Acting.current().refuse_expired()` refuses
+    `set_identity` and `ExecutionContext.entered`;
+    `Acting.resumed(delegation)` returns what queued work installs to resume
+    a dispatcher's delegation, its deadline the sooner of the captured one
+    and the caller's; `Acting.current().refuse_expired()` refuses
     a caller past its deadline), `Delegation` (`Delegation.of(caller,
     until)` keeps only an authenticated caller), `NO_DELEGATION`,
     `current_caller`,
@@ -618,6 +622,8 @@
     `loom.ai.errors.require_authenticated(who)`: the identity of the
     execution in progress, refused outside one (`ExecutionRequired`), past
     its deadline (`DelegationExpired`) or unauthenticated (`UNAUTHORIZED`).
+    `loom.core.execution.live_execution_identity()` returns that identity
+    with the deadline checked in the same read.
   - The AI dependency bundle needs only `container`. `usecase` tools, the
     output hook and the conversation loader resolve the container's
     `ApplicationInvoker` and act as the identity acting in the run's
@@ -648,7 +654,10 @@
   instead of a `Literal` alias. Its members compare and encode as the same
   strings, so `status == "ok"` and the `/health` JSON do not change; code
   that annotates a bare string as `HealthState` uses the members for a type
-  checker. `HealthState.worst(states)` returns the worst of several states.
+  checker. `HealthState.worst(states)` returns the worst of several states;
+  a state that is no member (an engine reporting its own string) ranks as
+  `UNAVAILABLE`, as the `/health` aggregate did before, instead of failing
+  the probe.
 - **ai (private modules):** `loom.ai.runtime._hooks`, `_conversation` and
   `_bounded` merge into `loom.ai.runtime._turn`: `TurnCallbacks(plan,
   identity, interaction_id, conversation_id, invoker)` runs the conversation
@@ -783,10 +792,11 @@
   reached binding that does not compile fails the seal or its first resolve.
   `UseCaseFactory.graph` is that same graph. `create_kernel` and the
   composition build their container reading through
-  `loom.core.repository.dependency.classify_key` and
+  `loom.core.repository.registration.classify_key` and
   `loom.core.use_case.factory.main_repository`, which gives a use case built
-  through `UseCase.__init__` its main repository, with the use-case and AI
-  execution kinds declared before any module runs.
+  through `UseCase.__init__` its main repository, with the execution kinds
+  declared by `loom.core.use_case.kinds.declare_kinds` before any module
+  runs.
 - **di:** a factory function bound with `register` or `register_default`
   gets its required parameters from the container, as a class gets its
   constructor's: `def gateway(client: HttpClient) -> Gateway: ...` then
@@ -839,9 +849,9 @@
   it used to raise into the drain as a `PostCommitError`.
   `run(type)` executes the plan compiled for `type`, so the builder must
   return an instance of exactly that class. An execution leaves its context
-  when it ends, so a use case that enters an execution (`enter`) and never
-  leaves it now makes that end raise `RuntimeError` (token misuse) and closes
-  the context.
+  when it ends, so a use case that enters an execution
+  (`ExecutionContext.entered`) and never closes it now makes that end raise
+  `RuntimeError` (misuse) and closes the context.
 - **rest:** `LoomRestAdapter.handle` runs the use case as the request's caller
   (the ambient identity the transport installed, passed explicitly), so a
   `Caller()` in `execute()` now receives it instead of raising
@@ -903,10 +913,11 @@
   a rule failure carries `broken_rules`, a list of
   `{"rule", "field", "message"}` entries, `rule` null for violations raised
   by `execute()` itself.
-- **engine (logs):** compiling a use case logs one info line,
-  `[BOOT] Compiled UseCase: <name> (<n> steps)`, with `usecase`, `detected`
-  (each marker parameter found, such as `"Input: CreateUser"` or
-  `"LoadById: User by user_id"`), `computes`, `rules` and `steps`. It replaces
+- **engine (logs):** compiling a use case logs one info line with the fixed
+  event `[BOOT] Compiled UseCase` and the fields `usecase`, `detected`
+  (each marker parameter found, such as `"Input: CreateUser"`,
+  `"LoadById: User by user_id"` or `"Agent('triage') -> triage"`),
+  `computes`, `rules` and `steps`. It replaces
   the `[BOOT] Compiling UseCase: <name>`, `[BOOT]  - Detected ...`,
   `[BOOT]  - Validated <n> compute steps`, `[BOOT]  - Validated <n> rules` and
   `[BOOT]  - ExecutionPlan built (<n> steps)` lines.
@@ -993,8 +1004,12 @@
   test runners.
 - **deprecation:** `UseCaseFactory(container)` over a container still on the
   default reading (`LoomContainer()`) warns with a `DeprecationWarning` and
-  adopts the use-case reading once, so `RepoFor[Model]` and a use case's main
-  repository are still injected. Over a container that reads another way it
+  adopts the use-case reading and the execution kinds once
+  (`loom.core.use_case.kinds.declare_kinds`), so `RepoFor[Model]`, a use
+  case's main repository and a constructor `Caller()` are injected as on
+  `create_kernel`'s container; before, a constructor `Caller()` received the
+  marker object itself. The deprecated `bootstrap_app` builds the same
+  container. Over a container that reads another way it
   raises `ValueError`; over a sealed bare container, `ContainerSealed`.
   **Migration:** build the kernel with `create_kernel` or the application with
   `loom.composition.create_app`.
@@ -1042,6 +1057,18 @@
 
 ### ai
 
+- **ai:** start-up checks `Mcp()` declarations when it compiles their grants
+  and `Agent()` declarations after the agents are built, each in an error of
+  its own: a deployment where both an agent and a server are unknown reports
+  the servers (`MCP_MARKER_UNKNOWN`) first and the agents
+  (`AGENT_MARKER_UNKNOWN`) once those are fixed, where one error listed both.
+  `MarkerDeclarations.verify(plans)` checks agents only; `mcp_grants(servers)`
+  refuses unknown servers.
+- **ai:** `StateShape` computes its `defaults` (the decode of an empty
+  object, read-only) when it is built, and `StateShape.resolve(agent, state)`
+  returns the caller's state or those defaults. A run of a shape with a field
+  lacking a default still raises `STATE_REQUIRED`; its message no longer
+  quotes the validation error.
 - **ai:** the application's `ApplicationInvoker` is resolved once: by the
   agent runtime when it starts, for the output hook and the conversation
   loader, and when each engine is built, for `usecase` tools. An invoker
@@ -1146,6 +1173,11 @@
 
 ### jobs
 
+- **jobs (logs):** a failed job logs one line, the executor's `[FAIL]`,
+  which now carries `committed` and `failures` when post-commit actions
+  failed. The Celery worker's extra `JobPostCommitFailed` error line is gone.
+  **Migration:** alert on `[FAIL]` with a `committed` field instead of
+  `JobPostCommitFailed`.
 - **jobs:** an inline dispatch drained outside any work while its
   dispatcher acts again resumes the captured delegation, ending at the
   earlier of the captured deadline and the deadline of the caller acting;

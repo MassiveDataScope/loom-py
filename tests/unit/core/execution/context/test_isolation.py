@@ -11,7 +11,12 @@ import asyncio
 import pytest
 
 from loom.core.errors import Unauthenticated
-from loom.core.execution import ExecutionScope, current_execution, enter, execution_identity, leave
+from loom.core.execution import (
+    ExecutionContext,
+    ExecutionScope,
+    current_execution,
+    execution_identity,
+)
 from loom.core.identity import Identity, current_caller
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB
 
@@ -24,7 +29,7 @@ class TestInterleavedExecutions:
         async def run(
             identity: Identity, mine: asyncio.Event, theirs: asyncio.Event
         ) -> list[object]:
-            token = enter(identity)
+            token = ExecutionContext.entered(identity)
             try:
                 context = current_execution()
                 assert context is not None
@@ -37,7 +42,7 @@ class TestInterleavedExecutions:
                     seen += [execution_identity(), context.get("acme-report")]
                 return seen
             finally:
-                leave(token)
+                token.close()
 
         alice, bob = await asyncio.gather(
             run(ACME_ALICE, alice_inside, bob_inside), run(ACME_BOB, bob_inside, alice_inside)
@@ -50,30 +55,30 @@ class TestInterleavedExecutions:
 
 class TestEnter:
     def test_enter_installs_the_identity_given_without_inheriting(self) -> None:
-        """Inheritance belongs to the executor: ``enter(None, ...)`` inside Alice has no caller."""
+        """Inheritance belongs to the executor: ``entered(None)`` inside Alice has no caller."""
         with ExecutionScope(ACME_ALICE):
-            token = enter(None)
+            token = ExecutionContext.entered(None)
             try:
                 assert current_execution() is not None
                 assert current_caller() is None
             finally:
-                leave(token)
+                token.close()
             assert execution_identity() is ACME_ALICE
 
     def test_enter_none_outside_any_execution_is_still_an_execution(self) -> None:
         """An execution with no caller is still an execution: reading its caller fails closed."""
-        token = enter(None)
+        token = ExecutionContext.entered(None)
         try:
             with pytest.raises(Unauthenticated):
                 execution_identity()
         finally:
-            leave(token)
+            token.close()
         assert current_execution() is None
 
 
 class TestExecutionContext:
     def test_it_holds_resources_and_no_identity(self) -> None:
-        """Who acts is the acting identity ``enter`` fixed; the context keeps only resources."""
+        """The acting identity says who acts; the context keeps only resources."""
         with ExecutionScope(ACME_ALICE):
             context = current_execution()
             assert context is not None

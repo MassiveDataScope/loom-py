@@ -16,9 +16,10 @@ from typing import TypeVar
 
 from loom.composition._ai import AiWiring, MarkerDeclarations
 from loom.composition._jobs import configure_job_service
-from loom.composition._reserved import refusing_reserved
+from loom.composition._reserved import reserved_keys
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
 from loom.composition.application import Application
+from loom.composition.errors import ReservedBindingError
 from loom.composition.recipe import Adapter, Recipe
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.composition.source import CompositionSource
@@ -30,7 +31,6 @@ from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.graph import GraphAnalysis
-from loom.core.engine.kinds import AGENT, MCP
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
@@ -47,6 +47,7 @@ from loom.core.persistence.stores import (
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.factory import ModelRead
+from loom.core.use_case.kinds import AGENT, MCP
 
 T = TypeVar("T")
 
@@ -312,7 +313,6 @@ def register(
         SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
     """
     ctx, catalog, observability = source.config, source.catalog, source.observability
-    reserved = tuple(catalog.specs)
     cache = cache_module_for(ctx)
     configure_delegation(
         ctx.positive_seconds("identity.max_delegation_seconds", DEFAULT_MAX_DELEGATION_SECONDS)
@@ -329,12 +329,6 @@ def register(
         if factories
         else None
     )
-    ordered = (
-        *refusing_reserved(modules, reserved),
-        *refusing_reserved(recipe.overrides, reserved),
-        *(wiring.repo_registration_module for wiring in stores.wirings.values()),
-        cache,
-    )
     seeds = {
         type(source.app): source.app,
         Environment: source.environment,
@@ -342,8 +336,16 @@ def register(
         StoreCatalog: catalog,
     }
     with seeded_container(
-        KernelRecipe.container(), seeds, modules=ordered, logger=logger
+        KernelRecipe.container(),
+        seeds,
+        modules=(*modules, *recipe.overrides),
+        logger=logger,
+        reserved=reserved_keys(catalog.specs),
+        error=ReservedBindingError.for_key,
     ) as container:
+        for wiring in stores.wirings.values():
+            wiring.repo_registration_module(container)
+        cache(container)
         if sink is not None:
             container.register_instance(ElevationSink, sink)
         kernel = KernelRecipe(
@@ -400,7 +402,8 @@ def wire_ai(
         return AiWiring.ABSENT
     declared = MarkerDeclarations.of(analysis, kernel.compiler, kernel.registry)
     if not recipe.agents:
-        declared.verify({}, {})
+        declared.mcp_grants({})
+        declared.verify({})
         return AiWiring.ABSENT
     ai = AiWiring.build(
         source.config,
@@ -415,7 +418,7 @@ def wire_ai(
             else frozenset(found.binding.declaration.name for _, found in declared.agents)
         ),
     )
-    declared.verify({agent.name: agent for agent in ai.plans}, ai.mcp_servers)
+    declared.verify({agent.name: agent for agent in ai.plans})
     ai.bind_resolvers(kernel)
     return ai
 

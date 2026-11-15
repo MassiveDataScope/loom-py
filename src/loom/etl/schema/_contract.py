@@ -56,14 +56,11 @@ from loom.etl.schema._schema import (
     StructType,
 )
 
-#: Contract accepted by ``with_schema``: either an explicit column-schema tuple
-#: or an annotated class whose fields are mapped to :class:`ColumnSchema` entries.
 SchemaContract: TypeAlias = tuple[ColumnSchema, ...] | type[Any]
+"""Contract accepted by ``with_schema``: a column-schema tuple or an annotated class."""
 
-#: Contract accepted by ``parse_json``: a :data:`LoomType` (passthrough), an
-#: annotated class (→ :class:`StructType`), or a ``list[X]`` generic alias
-#: (→ :class:`ListType`).
 JsonContract: TypeAlias = LoomType | type[Any]
+"""Contract accepted by ``parse_json``: a :data:`LoomType`, an annotated class or ``list[X]``."""
 
 
 _PY_TO_LOOM: dict[type, LoomDtype] = {
@@ -182,10 +179,6 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
         "Supported: int, float, str, bool, bytes, datetime, date, list[X], "
         "LoomType instances, and annotated classes."
     )
-
-
-#: Alias of :func:`annotation_to_loom_type`.
-_annotation_to_loom_type = annotation_to_loom_type
 
 
 def _class_to_schema(cls: type[Any]) -> tuple[ColumnSchema, ...]:

@@ -19,8 +19,7 @@ Concurrency:
     provider resolving another singleton on its own thread recurses. Locks
     are taken in one order, a binding's then :data:`STRUCTURE_LOCK`, so a
     provider may wait on another thread that resolves from the container.
-    A cycle of providers split across two threads waits forever instead of
-    recursing; it is a bug either way. Serving a built singleton takes no
+    A cycle of providers split across two threads waits forever. Serving a built singleton takes no
     lock; a per-execution binding is built once per execution
     (:func:`~loom.core.execution.per_execution`).
 """

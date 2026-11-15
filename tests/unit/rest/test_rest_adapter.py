@@ -36,7 +36,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc.query import CursorResult, PageResult
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter

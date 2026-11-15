@@ -22,6 +22,7 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
+from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import LoggerPort
 from loom.core.tracing import get_trace_id
 from loom.core.uow.coordinator import InvocationOutcome
@@ -204,7 +205,7 @@ class StartedExecution:
             fields["broken_rules"] = [rule._asdict() for rule in broken]
             self.logger.warning(message, **fields)
             return
-        self.logger.error(message, **fields, error=str(error))
+        self.logger.error(message, **fields, **failure_log_fields(error), error=str(error))
 
     def _error_kind(self, error: BaseException) -> Phase:
         if isinstance(error, asyncio.CancelledError):

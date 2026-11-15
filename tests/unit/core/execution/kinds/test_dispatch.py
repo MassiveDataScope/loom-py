@@ -8,10 +8,9 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.kinds import AGENT, MCP, declare_ai_kinds
 from loom.core.execution import ExecutionKinds, Kind
 from loom.core.identity import Identity
-from loom.core.use_case.kinds import CALLER, declare_use_case_kinds
+from loom.core.use_case.kinds import AGENT, CALLER, MCP, declare_kinds
 from loom.core.use_case.markers import Agent, Caller, Exists, Input, Load, LoadById, Mcp, Query
 from loom.core.use_case.use_case import UseCase
 
@@ -103,21 +102,21 @@ class TestTheKindsRegistry:
     )
     def test_use_case_kinds_refuse_every_input_marker(self, marker: object) -> None:
         kinds = ExecutionKinds()
-        declare_use_case_kinds(kinds)
+        declare_kinds(kinds)
 
         assert "input of execute" in (kinds.refusal_for(marker) or "")
         assert kinds.kind_for(marker, Any) is None
 
     def test_use_case_kinds_declare_the_caller_as_not_singleton_safe(self) -> None:
         kinds = ExecutionKinds()
-        declare_use_case_kinds(kinds)
+        declare_kinds(kinds)
 
         assert kinds.kind_for(Caller(), Identity) is CALLER
         assert not CALLER.singleton_safe
 
     def test_ai_kinds_declare_the_agent_and_mcp_markers(self) -> None:
         kinds = ExecutionKinds()
-        declare_ai_kinds(kinds)
+        declare_kinds(kinds)
 
         assert kinds.kind_for(Agent("acme-triage"), Any) is AGENT
         assert kinds.kind_for(Mcp("acme-docs", include=["search"]), Any) is MCP

@@ -20,7 +20,7 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.sql.service import SqlQueryService
 from loom.core.use_case import Caller, UseCase
 from loom.core.use_case.factory import main_repository

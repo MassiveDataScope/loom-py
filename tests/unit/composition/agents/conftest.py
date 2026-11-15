@@ -10,7 +10,7 @@ import pytest
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import DependencyGraph, Edge, Node
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.kinds import declare_ai_kinds
+from loom.core.use_case.kinds import declare_kinds
 from tests.unit.composition.agents.doubles import (
     AcmeDelegating,
     AcmeDiamond,
@@ -27,7 +27,7 @@ from tests.unit.core.di.graph import acme
 @pytest.fixture
 def container() -> LoomContainer:
     container = acme.container()
-    declare_ai_kinds(container.kinds)
+    declare_kinds(container.kinds)
     return container
 
 

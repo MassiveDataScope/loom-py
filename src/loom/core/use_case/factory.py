@@ -16,9 +16,9 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError
 from loom.core.di.introspection import Constructor, RepoDependency
-from loom.core.repository.dependency import classify_key
-from loom.core.repository.registration import is_standard_capability
+from loom.core.repository.registration import classify_key, is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
+from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")
@@ -88,12 +88,13 @@ class UseCaseFactory:
     Attributes:
         graph: The container's dependency graph, read as loom reads a use
             case or a job: constructor annotations classified with
-            :func:`~loom.core.repository.dependency.classify_key`, a use
+            :func:`~loom.core.repository.registration.classify_key`, a use
             case's main repository included (:func:`main_repository`).
     """
 
     def __init__(self, container: LoomContainer) -> None:
         if container._adopt_reading(classify_key, main_repository):
+            declare_kinds(container.kinds)
             warnings.warn(
                 "UseCaseFactory over a container that does not read constructors as loom "
                 "builds a use case is deprecated; build it with create_kernel or "

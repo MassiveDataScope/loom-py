@@ -9,7 +9,7 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import NotFound, RuleViolation, RuleViolations
+from loom.core.errors import NotFound, PostCommitError, RuleViolation, RuleViolations
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
 
@@ -50,6 +50,11 @@ class _SimpleUseCase(UseCase[Any, str]):
 class _FailingUseCase(UseCase[Any, str]):
     async def execute(self, cmd: Cmd = Input()) -> str:
         raise RuntimeError("boom")
+
+
+class _FailingAfterCommitUseCase(UseCase[Any, str]):
+    async def execute(self, cmd: Cmd = Input()) -> str:
+        raise PostCommitError(committed=True, failures=(RuntimeError("acme"),))
 
 
 def _always_bad(
@@ -379,6 +384,14 @@ class TestStructuredLogs:
             await executor.execute(use_case, payload={"value": "x"})
         fields = log.fields_for("[FAIL]")
         assert fields.get("status") == "failure"
+
+    async def test_fail_log_says_whether_a_post_commit_failure_committed(self) -> None:
+        log = _RecordingLogger()
+        executor = RuntimeExecutor(UseCaseCompiler(logger=log), logger=log)
+        with pytest.raises(PostCommitError):
+            await executor.execute(_FailingAfterCommitUseCase(), payload={"value": "x"})
+        fields = log.fields_for("[FAIL]")
+        assert (fields.get("committed"), fields.get("failures")) == (True, 1)
 
     async def test_compile_log_has_usecase_field(self) -> None:
         log = _RecordingLogger()

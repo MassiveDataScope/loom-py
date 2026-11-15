@@ -22,17 +22,16 @@ from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.kinds import declare_ai_kinds
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.repository.dependency import classify_key
+from loom.core.repository.registration import classify_key
 from loom.core.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
-from loom.core.use_case.kinds import CALLER, CallerResolver, declare_use_case_kinds
+from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
@@ -139,6 +138,11 @@ def create_kernel(
     return kernel
 
 
+def _kernel_key_bound(module: Callable[..., object], key: BindingKey) -> BootstrapError:
+    name = getattr(module, "__qualname__", None) or repr(module)
+    return BootstrapError(f"{name} binds {describe_key(key)}, a key the kernel binds itself")
+
+
 @contextmanager
 def seeded_container(
     container: LoomContainer,
@@ -147,6 +151,7 @@ def seeded_container(
     modules: Sequence[Callable[[LoomContainer], None]],
     logger: LoggerPort,
     reserved: Collection[BindingKey] = (),
+    error: Callable[[Callable[..., object], BindingKey], BootstrapError] = _kernel_key_bound,
 ) -> Iterator[LoomContainer]:
     """*container* with each of *seeds* bound under its key, then filled by *modules*.
 
@@ -154,10 +159,18 @@ def seeded_container(
     module can resolve them. The caller finishes the container inside the
     ``with`` block.
 
+    Args:
+        container: The container to fill.
+        seeds: Instances bound under their key before any module runs.
+        modules: DI modules run in order.
+        logger: Where each module's registration is logged.
+        reserved: Keys no module may bind or replace.
+        error: Builds the error raised for a module and the reserved key it bound.
+
     Raises:
-        BootstrapError: Naming the module, when one binds or replaces a key
-            of *reserved*; wrapping any other failure of a module or of the
-            ``with`` block, cause chained. A ``BootstrapError`` passes through.
+        BootstrapError: Built by *error* when a module binds or replaces a
+            key of *reserved*; wrapping any other failure of a module or of
+            the ``with`` block, cause chained. A ``BootstrapError`` passes through.
     """
     try:
         logger.info("[BOOT] Initialising DI container")
@@ -171,9 +184,7 @@ def seeded_container(
             module(container)
             for key in reserved:
                 if view.get(key) is not before[key]:
-                    raise BootstrapError(
-                        f"{name} binds {describe_key(key)}, a key the kernel binds itself"
-                    )
+                    raise error(module, key)
         yield container
     except BootstrapError:
         raise
@@ -209,14 +220,14 @@ class KernelRecipe:
         """Return a new container that reads constructors as loom builds a use case.
 
         Annotations are classified with
-        :func:`~loom.core.repository.dependency.classify_key`, a use case
+        :func:`~loom.core.repository.registration.classify_key`, a use case
         built through ``UseCase.__init__`` gets its main repository
-        (:func:`~loom.core.use_case.factory.main_repository`), and the
-        use-case and AI kinds are declared before anything is registered.
+        (:func:`~loom.core.use_case.factory.main_repository`), and the kinds
+        are declared (:func:`~loom.core.use_case.kinds.declare_kinds`) before
+        anything is registered.
         """
         container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        declare_use_case_kinds(container.kinds)
-        declare_ai_kinds(container.kinds)
+        declare_kinds(container.kinds)
         return container
 
     def install(self, container: LoomContainer) -> KernelRuntime:
@@ -226,16 +237,15 @@ class KernelRecipe:
         :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation
         sink is the bound :class:`~loom.core.authz.elevation.ElevationSink`,
         if any), :class:`~loom.core.use_case.registry.UseCaseRegistry` and
-        :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Binds the
-        ``Caller()`` resolver on ``container.kinds`` and gives the executor
-        that registry, the factory's ``build`` as its builder, and the agent
-        and MCP resolvers, if any. Validates nothing.
+        :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Gives the
+        executor ``container.kinds``, that registry, the factory's ``build``
+        as its builder, and the agent and MCP resolvers, if any. Validates
+        nothing.
 
         Raises:
             CompilationError: When a use case does not compile.
         """
         kinds = container.kinds
-        kinds.bind(CALLER, CallerResolver())
         base = self._install_use_cases(container)
         executor = RuntimeExecutor(
             base.compiler,

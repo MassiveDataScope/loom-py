@@ -10,8 +10,8 @@ import msgspec
 import pytest
 
 from loom.etl.schema._contract import (
-    _annotation_to_loom_type,
     _strip_optional,
+    annotation_to_loom_type,
     resolve_json_type,
     resolve_schema,
 )
@@ -221,12 +221,12 @@ class TestAnnotationConversion:
             (str | None, LoomDtype.UTF8),
         ],
     )
-    def test_annotation_to_loom_type(self, annotation: Any, expected: Any) -> None:
-        assert _annotation_to_loom_type(annotation) == expected
+    def testannotation_to_loom_type(self, annotation: Any, expected: Any) -> None:
+        assert annotation_to_loom_type(annotation) == expected
 
     def test_annotation_to_loom_type_unknown_raises(self) -> None:
         with pytest.raises(TypeError, match="Cannot convert annotation"):
-            _annotation_to_loom_type(object)
+            annotation_to_loom_type(object)
 
 
 class TestStripOptional:

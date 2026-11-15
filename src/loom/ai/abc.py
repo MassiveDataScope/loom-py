@@ -36,9 +36,10 @@ from typing import (
 
 import msgspec
 
-from loom.ai.errors import AgentRunErrorCode
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.errors.model import BoundaryValidationError
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
 
@@ -75,10 +76,47 @@ class StateShape(LoomFrozenStruct, frozen=True, kw_only=True):
         loom_type: Boundary type produced at compile, decoding and
             normalising the state mapping, or ``None`` alongside
             ``schema is None``.
+        defaults: The state a run supplying none renders: :attr:`loom_type`'s
+            decode of an empty object, computed when the shape is built;
+            ``None`` under the open form or when a field has no default.
     """
 
     schema: Mapping[str, Any] | None
     loom_type: LoomType | None
+    defaults: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.loom_type is None:
+            return
+        try:
+            defaults = self.decode(b"{}")
+        except BoundaryValidationError:
+            return
+        msgspec.structs.force_setattr(self, "defaults", MappingProxyType(dict(defaults)))
+
+    def resolve(self, agent: str, state: object | None) -> Mapping[str, Any] | None:
+        """Return the state one run of *agent* renders: *state*, else :attr:`defaults`.
+
+        Args:
+            agent: The agent the run targets, named in a raised error.
+            state: The caller's state, already decoded and normalised, or ``None``.
+
+        Returns:
+            *state* when given, else :attr:`defaults`.
+
+        Raises:
+            AgentRunError: ``STATE_REQUIRED`` when *state* is ``None`` and a
+                field of :attr:`loom_type` has no default.
+        """
+        if state is not None:
+            return cast(Mapping[str, Any], state)
+        if self.defaults is None and self.loom_type is not None:
+            raise AgentRunError(
+                AgentRunErrorCode.STATE_REQUIRED,
+                f"agent {agent!r} declares a state field with no default; "
+                "pass 'state' explicitly for this run",
+            )
+        return self.defaults
 
     def decode(self, body: bytes) -> Mapping[str, Any]:
         """Decode JSON state bytes against this shape and return them as builtins.
@@ -849,20 +887,23 @@ class HealthState(StrEnum):
     UNAVAILABLE = "unavailable"
 
     @classmethod
-    def worst(cls, states: Iterable[HealthState]) -> HealthState:
+    def worst(cls, states: Iterable[str]) -> HealthState:
         """Return the worst of *states*, ``OK`` when there are none.
 
         Args:
-            states: Health states.
+            states: Health states; one that is no :class:`HealthState`
+                ranks as ``UNAVAILABLE``.
 
         Returns:
             The worst state.
         """
-        return cls(max(states, key=_HEALTH_RANK.__getitem__, default=cls.OK))
+        unknown = _HEALTH_RANK[cls.UNAVAILABLE]
+        return _BY_RANK[max((_HEALTH_RANK.get(state, unknown) for state in states), default=0)]
 
 
+_BY_RANK: Final[tuple[HealthState, ...]] = tuple(HealthState)
 _HEALTH_RANK: Final[Mapping[str, int]] = MappingProxyType(
-    {state: rank for rank, state in enumerate(HealthState)}
+    {state: rank for rank, state in enumerate(_BY_RANK)}
 )
 
 
@@ -1040,8 +1081,8 @@ class DepsFactory(Protocol):
         """Build the dependency bundle for one invocation.
 
         Args:
-            identity: Verified caller of this invocation; informational, no
-                capability call reads it.
+            identity: The caller of this invocation; not read: a capability
+                call acts as the identity of the execution in progress.
             container: Application container holding the singleton services.
             state: The invocation's state, a mapping normalised against the
                 artefact's declared shape, or ``None`` for an artefact that

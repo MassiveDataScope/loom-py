@@ -137,9 +137,7 @@ class Delegation(NamedTuple):
             attributes=cls._attributes(payload.get(_ATTRIBUTES)),
             mechanism=mechanism if isinstance(mechanism, str) else "",
         )
-        if _UNTIL not in payload:
-            return cls(caller, None)
-        return cls(caller, cls._deadline(payload[_UNTIL]))
+        return cls(caller, cls._deadline(payload[_UNTIL]) if _UNTIL in payload else None)
 
     @staticmethod
     def _roles(value: object) -> tuple[str, ...]:

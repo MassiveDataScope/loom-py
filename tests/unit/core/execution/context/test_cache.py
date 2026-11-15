@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 import pytest
 
-from loom.core.execution import ExecutionScope, enter, leave
+from loom.core.execution import ExecutionContext, ExecutionScope
 from loom.core.execution.context import per_execution
 from loom.core.identity import ANONYMOUS
 from tests.unit.core.execution.context.doubles import AcmeBuiltSession
@@ -45,10 +45,10 @@ class TestPerExecutionCache:
         session = per_execution(AcmeBuiltSession, AcmeBuiltSession)
 
         def closed() -> tuple[object, object]:
-            token = enter(ANONYMOUS)
-            leave(token)
+            token = ExecutionContext.entered(ANONYMOUS)
+            token.close()
             with pytest.raises(RuntimeError):
-                leave(token)
+                token.close()
             return session(), session()
 
         first, second = contextvars.copy_context().run(closed)
