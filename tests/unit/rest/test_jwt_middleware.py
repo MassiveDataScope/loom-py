@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import pathlib
+import secrets
 import sys
 import tempfile
 import time
@@ -24,11 +25,9 @@ from loom.core.identity import current_identity
 from loom.core.model.redaction import Secret
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, JwtAuthMiddleware, RequestCredentials
 
-_SECRET = "unit-test-secret-of-thirty-two-bytes"
-# The secret is a path now: a msgspec struct emits its fields, so holding the
-# value would publish the key that both verifies and signs.
+_SHARED_HS256 = secrets.token_urlsafe(32)
 _SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")
-pathlib.Path(_SECRET_PATH).write_text(_SECRET)
+pathlib.Path(_SECRET_PATH).write_text(_SHARED_HS256)
 _ROLES_CLAIM = "loom_roles"
 _EMAIL = "ada@example.com"
 
@@ -48,7 +47,7 @@ def _config(**overrides: Any) -> JwtAuthConfig:
     return JwtAuthConfig(**params)
 
 
-def _token(*, secret: str = _SECRET, exp_offset: int = 3600, **claims: Any) -> str:
+def _token(*, secret: str = _SHARED_HS256, exp_offset: int = 3600, **claims: Any) -> str:
     """Encode an HS256 token with a relative expiry and extra claims."""
     payload: dict[str, Any] = {"sub": "user-1", "exp": int(time.time()) + exp_offset}
     payload.update(claims)
@@ -211,7 +210,7 @@ class TestJwtRequestAuthentication:
         self,
     ) -> None:
         """A token with no ``sub`` carries no identity to bind or audit: rejected."""
-        token = pyjwt.encode({"exp": int(time.time()) + 3600}, _SECRET, algorithm="HS256")
+        token = pyjwt.encode({"exp": int(time.time()) + 3600}, _SHARED_HS256, algorithm="HS256")
         response = _get(_client(_config()), token)
         assert response.status_code == 401
 
@@ -270,22 +269,22 @@ class TestJwtConfigHidesTheSecret:
         """The released ``secret_path`` form keeps the value out of the struct entirely."""
         config = _config()
 
-        assert _SECRET not in repr(config)
-        assert _SECRET.encode() not in msgspec.json.encode(config)
-        assert _SECRET not in str(msgspec.to_builtins(config))
+        assert _SHARED_HS256 not in repr(config)
+        assert _SHARED_HS256.encode() not in msgspec.json.encode(config)
+        assert _SHARED_HS256 not in str(msgspec.to_builtins(config))
         key = config.keyring().pick(None)
         assert key is not None
-        assert key.material == _SECRET
-        assert _SECRET not in repr(key)
+        assert key.material == _SHARED_HS256
+        assert _SHARED_HS256 not in repr(key)
 
     def test_a_secret_in_the_config_is_shown_by_no_serializer(
         self,
     ) -> None:
         """``secret`` holds the value as a ``Secret``: a repr and a dump mask it, and an
         encoder that does not know the type refuses it instead of publishing it."""
-        config = JwtAuthConfig(secret=Secret(_SECRET), algorithms=("HS256",))
+        config = JwtAuthConfig(secret=Secret(_SHARED_HS256), algorithms=("HS256",))
 
-        assert _SECRET not in repr(config)
+        assert _SHARED_HS256 not in repr(config)
         assert dump_config(config)["secret"] == "***"
         with pytest.raises(TypeError):
             msgspec.json.encode(config)
@@ -296,7 +295,7 @@ class TestJwtConfigHidesTheSecret:
         self,
     ) -> None:
         with pytest.raises(TypeError, match="secret must be Secret"):
-            JwtAuthConfig(secret=_SECRET, algorithms=("HS256",))  # type: ignore[arg-type]
+            JwtAuthConfig(secret=_SHARED_HS256, algorithms=("HS256",))  # type: ignore[arg-type]
 
     def test_an_unreadable_secret_path_fails_without_naming_the_path(
         self,

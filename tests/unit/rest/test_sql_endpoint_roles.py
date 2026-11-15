@@ -14,6 +14,7 @@ authenticator that has never heard of a token.
 from __future__ import annotations
 
 import pathlib
+import secrets
 import tempfile
 import time
 from typing import Any
@@ -44,9 +45,9 @@ ROLES_CLAIM = "loom_sql_roles"
 ROLE_A = "role_viz_reader"
 ROLE_B = "role_viz_sales"
 ROLE_FORBIDDEN = "role_admin_evil"
-SECRET = "unit-test-secret-of-thirty-two-bytes"
+SHARED_HS256 = secrets.token_urlsafe(32)
 SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")
-pathlib.Path(SECRET_PATH).write_text(SECRET)
+pathlib.Path(SECRET_PATH).write_text(SHARED_HS256)
 AUDIENCE = "loom-api"
 SUBJECT_HEADER = "x-subject"
 ROLES_HEADER = "x-roles"
@@ -166,7 +167,7 @@ def _token(roles: Any, *, subject: str = "user-1") -> str:
             "exp": int(time.time()) + 3600,
             ROLES_CLAIM: roles,
         },
-        SECRET,
+        SHARED_HS256,
         algorithm="HS256",
     )
 
