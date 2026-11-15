@@ -77,5 +77,7 @@ class TestCallTargetRoots:
         """Under the lenient rules refusal 6 is a root's only, so the root check must still run."""
         roots = [ClassNode(AcmeClose), ClassNode(AcmeSettle)]
 
+        graph = acme.container().graph
+
         with pytest.raises(DependencyGraphError, match=r"^AcmeSettle: names: tuple\[str, \.\.\.\]"):
-            acme.container().graph.analyse(roots, LENIENT_REFUSALS)
+            graph.analyse(roots, LENIENT_REFUSALS)

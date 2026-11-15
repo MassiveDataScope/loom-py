@@ -119,4 +119,5 @@ class TestOnMissing:
         with pytest.raises(NotFound) as caught:
             OnMissing.RAISE.answer(FakeEntity, 7)
 
-        assert "FakeEntity" in str(caught.value) and "7" in str(caught.value)
+        assert "FakeEntity" in str(caught.value)
+        assert "7" in str(caught.value)

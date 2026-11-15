@@ -74,9 +74,10 @@ class TestStartedApplicationContainer:
         self, overridden: Callable[..., Application]
     ) -> None:
         executor = overridden().kernel.executor
+        resolver = _AcmeAgents()
 
         with pytest.raises(ContainerSealed, match="before the container is sealed"):
-            executor.bind_agent_resolver(_AcmeAgents())
+            executor.bind_agent_resolver(resolver)
 
 
 class _AcmeAgents:

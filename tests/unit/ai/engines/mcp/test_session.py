@@ -245,9 +245,10 @@ class TestASafeFailure:
         third = _ScriptedSessionToolset("third", ledger)
         factory = AcmeToolsetFactory(second, third)
         session = await _open(first, factory)
+        view = _view(session)
 
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
-            await _view(session).call_untyped("write_orders", {})
+            await view.call_untyped("write_orders", {})
 
         assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
         assert isinstance(raised.value, McpCallInterrupted)
@@ -293,9 +294,10 @@ class TestAnUnsafeFailure:
         )
         factory = AcmeToolsetFactory(second)
         session = await _open(first, factory)
+        view = _view(session)
 
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
-            await _view(session).call_untyped("write_orders", {})
+            await view.call_untyped("write_orders", {})
 
         assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
         assert first.reached == ["write_orders"]
@@ -793,9 +795,10 @@ class TestTheMarkersView:
     async def test_says_a_refused_call_was_not_sent(self) -> None:
         session = await _open(_ScriptedSessionToolset("first", _Ledger()), AcmeToolsetFactory())
         await session.aclose()
+        view = _view(session)
 
         with ExecutionScope(_TESTER), pytest.raises(AgentRunError) as raised:
-            await _view(session).call_untyped("write_orders", {})
+            await view.call_untyped("write_orders", {})
 
         assert raised.value.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
         assert "not sent" in str(raised.value)

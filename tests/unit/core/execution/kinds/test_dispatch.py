@@ -90,8 +90,9 @@ class TestTheKindsRegistry:
         assert kinds.is_bound(ACME)
         assert kinds.resolve(ACME, marker, int) == "acme-handle"
         assert resolver.calls == [(marker, int)]
+        another = AcmeRecordingResolver()
         with pytest.raises(RuntimeError, match="already bound"):
-            kinds.bind(ACME, AcmeRecordingResolver())
+            kinds.bind(ACME, another)
 
     def test_called_classes_are_plain_classes_and_nothing_by_default(self) -> None:
         calling = Kind("acme-call", called_classes=lambda annotation: (AcmeMarker,))

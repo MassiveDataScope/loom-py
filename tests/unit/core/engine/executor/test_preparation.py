@@ -555,5 +555,7 @@ class TestStepTable:
         extra = (*plan.param_bindings, ParamBinding("other", int))
         _Replaced.__execution_plan__ = replace(plan, param_bindings=extra)  # type: ignore[attr-defined]
 
+        use_case = _Replaced()
+
         with pytest.raises(ValueError, match="missing required parameter 'other'"):
-            await executor.execute(_Replaced(), params={"value": 1})
+            await executor.execute(use_case, params={"value": 1})

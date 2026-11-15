@@ -695,13 +695,13 @@ class TestInvocation:
 
     def test_refuses_the_build_when_the_container_holds_no_invoker(self) -> None:
         """Without an invoker the engine is never built, naming the agent."""
+        capabilities = (usecase_capability(),)
+        model = ScriptedToolModel(calls=())
+        container = LoomContainer()
+        deps = CapabilityDepsFactory()
+
         with pytest.raises(AgentCompilationError) as failure:
-            build_engine(
-                capabilities=(usecase_capability(),),
-                model=ScriptedToolModel(calls=()),
-                container=LoomContainer(),
-                deps=CapabilityDepsFactory(),
-            )
+            build_engine(capabilities=capabilities, model=model, container=container, deps=deps)
 
         assert [issue.code for issue in failure.value.issues] == [
             AgentErrorCode.USECASE_INVOKER_MISSING
@@ -710,13 +710,13 @@ class TestInvocation:
     def test_refuses_the_build_when_the_container_holds_a_bound_invoker(self) -> None:
         kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
         kernel.container.register_instance(ApplicationInvoker, kernel.app.for_identity(ANALYST))
+        capabilities = (usecase_capability(),)
+        model = ScriptedToolModel(calls=())
+        deps = CapabilityDepsFactory()
 
         with pytest.raises(AgentCompilationError) as failure:
             build_engine(
-                capabilities=(usecase_capability(),),
-                model=ScriptedToolModel(calls=()),
-                container=kernel.container,
-                deps=CapabilityDepsFactory(),
+                capabilities=capabilities, model=model, container=kernel.container, deps=deps
             )
 
         assert [issue.code for issue in failure.value.issues] == [AgentErrorCode.INVOKER_BOUND]

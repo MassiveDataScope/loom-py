@@ -566,9 +566,7 @@ def align_to_schema(
             continue
         if target_dtype == pl.String and isinstance(col_dtype, (pl.Struct, pl.List, pl.Array)):
             exprs.append(_series_to_json_string(df[col_name]).alias(col_name))
-        elif col_dtype == pl.String and target_dtype != pl.String:
-            pass
-        else:
+        elif col_dtype != pl.String:
             exprs.append(pl.col(col_name).cast(target_dtype, strict=False).alias(col_name))
     if exprs:
         df = df.with_columns(exprs)

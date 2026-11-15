@@ -172,8 +172,10 @@ class TestFlowTriggerSettings:
             flow_settings_from_mapping({"trigger": raw})
 
     def test_an_inherited_parameter_must_be_a_field(self, tmp_path: Path) -> None:
+        yaml = _trigger_yaml("updated_at_from, run_date")
+
         with pytest.raises(ValueError, match="'run_date', not a field of AcmeTriggerParams"):
-            _flow(tmp_path, _trigger_yaml("updated_at_from, run_date"))
+            _flow(tmp_path, yaml)
 
     @pytest.mark.parametrize("field", ["batch", "until"])
     def test_only_text_date_and_datetime_fields_can_be_inherited(

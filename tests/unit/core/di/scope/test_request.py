@@ -143,9 +143,11 @@ class TestPerExecutionScope:
 
         assert first is not second
 
-    async def test_threads_of_one_execution_build_one_instance_once(self) -> None:
+    async def test_threads_of_one_execution_build_one_instance_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         threads = 4
-        AcmeSlowSession.built = 0
+        monkeypatch.setattr(AcmeSlowSession, "built", 0)
         start = threading.Barrier(threads, timeout=5.0)
         container = LoomContainer()
         container.register(AcmeSlowSession, AcmeSlowSession)

@@ -81,7 +81,8 @@ class TestTheCarrier:
         with acting_as(_ALICE, until=time.time() + until):
             _, deadline = captured_delegation()
 
-        assert deadline is not None and deadline <= time.time() + window
+        assert deadline is not None
+        assert deadline <= time.time() + window
 
     def test_no_caller_has_no_deadline(self) -> None:
         token = set_identity(None, until=_LATER)
@@ -210,11 +211,10 @@ class TestPinnedFor:
     def test_the_same_subject_past_its_deadline_is_refused(
         self, switches: RecordingLogger, given: Identity, deadline: float
     ) -> None:
-        with (
-            acting_as(_ALICE, until=deadline),
-            pytest.raises(DelegationExpired, match="system identity"),
-        ):
-            Acting.current().pinned_for(given, _WORK, "AcmeUseCase")
+        with acting_as(_ALICE, until=deadline):
+            acting = Acting.current()
+            with pytest.raises(DelegationExpired, match="system identity"):
+                acting.pinned_for(given, _WORK, "AcmeUseCase")
 
         assert [event for event, _ in switches.calls] == ["delegation_expired"]
 
@@ -314,11 +314,10 @@ class TestRefuseExpired:
     def test_refuses_past_the_deadline_logging_the_guidance(
         self, switches: RecordingLogger, deadline: float
     ) -> None:
-        with (
-            acting_as(_ALICE, until=deadline),
-            pytest.raises(DelegationExpired, match="system identity"),
-        ):
-            Acting.current().refuse_expired()
+        with acting_as(_ALICE, until=deadline):
+            acting = Acting.current()
+            with pytest.raises(DelegationExpired, match="system identity"):
+                acting.refuse_expired()
 
         assert switches.calls == [
             ("delegation_expired", {"guidance": DelegationExpired.default_message})

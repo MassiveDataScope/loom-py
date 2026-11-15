@@ -57,13 +57,15 @@ def _refused(container: LoomContainer, *skip: Kind) -> None:
 
 class TestUnboundKind:
     def test_a_singleton_declaring_an_unbound_kind_is_refused_with_its_path(self) -> None:
+        container = _bound(Scope.APPLICATION)
+
         with pytest.raises(
             DependencyGraphError,
             match=(
                 "AcmeUsesCrm -> adapter: AcmeCrmAdapter: crm: no resolver is bound for 'acme-crm'"
             ),
         ):
-            _refused(_bound(Scope.APPLICATION))
+            _refused(container)
 
     def test_a_skipped_kind_is_not_refused(self) -> None:
         _refused(_bound(Scope.APPLICATION), ACME_CRM)
@@ -90,8 +92,9 @@ class TestUnboundKind:
             container.seal(acme.analysed(container, AcmeUsesCrm), deferred=(ACME_CRM,))
         with pytest.raises(ResolutionError, match="no resolver is bound for 'acme-crm'"):
             container.resolve(AcmeCrmAdapter)
+        resolver = acme_resolver()
         with pytest.raises(ContainerSealed, match="the container is sealed"):
-            container.kinds.bind(ACME_CRM, acme_resolver())
+            container.kinds.bind(ACME_CRM, resolver)
 
 
 class AcmeCrmPort:
@@ -134,18 +137,20 @@ class TestUnboundMcpAdapter:
     ) -> None:
         """No MCP resolver is ever bound without agents: the AI phase refuses first (T11)."""
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
+        source = _source()
 
         with pytest.raises(AgentCompilationError) as caught:
-            compose_application(_source(), adapter, modules=(_binds_crm,))
+            compose_application(source, adapter, modules=(_binds_crm,))
 
         assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
         assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
 
     def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
+        source = _source()
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-            application = compose_application(_source(), adapter, modules=(_binds_crm,))
+            application = compose_application(source, adapter, modules=(_binds_crm,))
 
         with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
             application.kernel.container.resolve(AcmeCrmPort)

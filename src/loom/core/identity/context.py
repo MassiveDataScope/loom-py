@@ -121,7 +121,8 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         if identity is None or caller is None or identity.subject != caller.subject:
             pinned = Acting.delegated(identity, work=work)
         else:
-            if not time.time() <= self.deadline:
+            in_time = time.time() <= self.deadline
+            if not in_time:
                 self.refuse_expired()
             pinned = Acting(identity, identity, self.deadline, work)
         if identity is not caller and (caller is not None or self.work is not None):
@@ -164,7 +165,8 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         Raises:
             DelegationExpired: When a caller acts past its deadline.
         """
-        if not time.time() <= self.deadline:
+        in_time = time.time() <= self.deadline
+        if not in_time:
             error = DelegationExpired()
             _log.warning("delegation_expired", guidance=str(error))
             raise error

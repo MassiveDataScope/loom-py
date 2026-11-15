@@ -117,8 +117,10 @@ class TestACallerWithNoSubject:
         self, runtime: AgentRuntime, triage: Any, crm: Any, backend_calls: Any
     ) -> None:
         async with runtime:
-            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as refused:
-                await HANDLE_CALLS["agent"](triage, crm)()
+            with ExecutionScope(ANONYMOUS):
+                handle_call = HANDLE_CALLS["agent"](triage, crm)
+                with pytest.raises(AgentRunError) as refused:
+                    await handle_call()
 
         assert refused.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert str(refused.value) == "agent 'acme-triage' requires an authenticated caller"
@@ -139,8 +141,10 @@ class TestACallerWithNoSubject:
         assert "" in sql_service.rows_by_subject
 
         async with runtime:
-            with ExecutionScope(caller), pytest.raises(AgentRunError) as refused:
-                await call(triage, crm)()
+            with ExecutionScope(caller):
+                handle_call = call(triage, crm)
+                with pytest.raises(AgentRunError) as refused:
+                    await handle_call()
 
         assert refused.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert backend_calls() == 0

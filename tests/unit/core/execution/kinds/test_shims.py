@@ -56,5 +56,6 @@ class TestResolverBinding:
 
         assert kinds.is_bound(AGENT)
         assert not kinds.is_bound(MCP)
+        another = AcmeCallTimeResolver()
         with pytest.raises(RuntimeError, match="more than once"):
-            executor.bind_agent_resolver(AcmeCallTimeResolver())
+            executor.bind_agent_resolver(another)

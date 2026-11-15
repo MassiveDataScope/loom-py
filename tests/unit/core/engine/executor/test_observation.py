@@ -58,7 +58,8 @@ class TestLogs:
         await executor.execute(AcmeNoMarkersUseCase(), params={"value": 1})
 
         [(event, fields)] = logger.calls
-        assert event.startswith("[DONE]") and event.endswith("ms")
+        assert event.startswith("[DONE]")
+        assert event.endswith("ms")
         assert (fields["usecase"], fields["status"]) == ("AcmeNoMarkersUseCase", "success")
 
     async def test_outside_debug_mode_the_log_lists_no_steps(
@@ -107,8 +108,9 @@ class TestLogs:
                 pass
 
         executor = make_executor(debug_execution=False, logger=logger)
+        use_case = RuleUseCase()
         with pytest.raises(RuleViolations):
-            await executor.execute(RuleUseCase(), payload={"email": "x@x.com", "name": "X"})
+            await executor.execute(use_case, payload={"email": "x@x.com", "name": "X"})
 
         [(event, fields)] = logger.calls
         assert event.startswith("[FAIL]")
@@ -125,8 +127,11 @@ class TestLogs:
             async def execute(self) -> None:
                 raise RuleViolations([RuleViolation("email", "taken")])
 
+        executor = make_executor(logger=logger)
+        use_case = RaisesViolations()
+
         with pytest.raises(RuleViolations):
-            await make_executor(logger=logger).execute(RaisesViolations())
+            await executor.execute(use_case)
 
         [(_, fields)] = logger.calls
         assert fields["status"] == "rule_failure"
@@ -219,8 +224,10 @@ class TestBuildFailure:
     ) -> None:
         logger = AcmeErrorRecorder()
 
+        executor = make_executor(logger=logger)
+
         with pytest.raises(LookupError):
-            await make_executor(logger=logger).run(AcmeBroken, factory=factory)
+            await executor.run(AcmeBroken, factory=factory)
 
         ((event, fields),) = logger.errors
         assert event == "[FAIL] AcmeBroken"
@@ -275,16 +282,21 @@ class TestOneTerminalOutcome:
     async def test_a_run_that_fails_logs_one_fail_and_no_done(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
+        executor = make_executor(logger=logger)
+        use_case = AcmeNoMarkersUseCase()
+
         with pytest.raises(ValueError, match="missing required parameter"):
-            await make_executor(logger=logger).execute(AcmeNoMarkersUseCase(), params={})
+            await executor.execute(use_case, params={})
 
         assert [_outcome(m) for m in logger.messages if _outcome(m)] == ["[FAIL]"]
 
     async def test_a_run_that_fails_to_build_logs_one_fail_and_emits_no_event(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger, factory: UseCaseFactory
     ) -> None:
+        executor = make_executor(logger=logger)
+
         with pytest.raises(LookupError):
-            await make_executor(logger=logger).run(AcmeBroken, factory=factory)
+            await executor.run(AcmeBroken, factory=factory)
 
         assert [_outcome(m) for m in logger.messages if _outcome(m)] == ["[FAIL]"]
         assert JOURNAL.entries == []
@@ -308,8 +320,11 @@ class TestUnstartedRunsLogOneTerminalLine:
     async def test_a_plan_that_fails_to_compile_on_demand(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
+        executor = make_executor(logger=logger)
+        use_case = _DoesNotCompile()
+
         with pytest.raises(CompilationError):
-            await make_executor(logger=logger).execute(_DoesNotCompile())
+            await executor.execute(use_case)
 
         assert _terminal_lines(logger, "_DoesNotCompile") == [("[FAIL]", "begin")]
 
@@ -317,8 +332,11 @@ class TestUnstartedRunsLogOneTerminalLine:
     async def test_a_caller_past_its_delegation(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
+        executor = make_executor(logger=logger)
+        use_case = AcmeNoMarkersUseCase()
+
         with acting_as(ALICE, until=time.time() - 1), pytest.raises(DelegationExpired):
-            await make_executor(logger=logger).execute(AcmeNoMarkersUseCase(), params={"value": 1})
+            await executor.execute(use_case, params={"value": 1})
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
 
@@ -333,8 +351,10 @@ class TestUnstartedRunsLogOneTerminalLine:
             async def execute(self) -> None:
                 await executor.execute(AcmeNoMarkersUseCase(), params={"value": 1})
 
+        use_case = ReadsThenWrites()
+
         with pytest.raises(UndeclaredStoreWrite):
-            await executor.execute(ReadsThenWrites())
+            await executor.execute(use_case)
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
 
@@ -343,10 +363,11 @@ class TestUnstartedRunsLogOneTerminalLine:
     ) -> None:
         metrics = _RaisesOnStart()
 
+        executor = make_executor(logger=logger, metrics=metrics)
+        use_case = AcmeNoMarkersUseCase()
+
         with pytest.raises(RuntimeError, match="acme metrics down"):
-            await make_executor(logger=logger, metrics=metrics).execute(
-                AcmeNoMarkersUseCase(), params={"value": 1}
-            )
+            await executor.execute(use_case, params={"value": 1})
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
         assert metrics.events == []

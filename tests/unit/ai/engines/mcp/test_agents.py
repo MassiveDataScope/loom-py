@@ -130,8 +130,9 @@ class _World:
         """Run one agent that must fail; return the error and the model."""
         model = _Model(tool, {"text": "agent"} if arguments is None else arguments)
         agent = Agent(FunctionModel(model), toolsets=[self.toolset()], deps_type=_Deps)
+        deps = _Deps()
         with pytest.raises(AgentRunError) as raised, ExecutionScope(_TESTER):
-            await agent.run("go", deps=_Deps())
+            await agent.run("go", deps=deps)
         return raised.value, model
 
     def requests(self, *methods: str) -> int:

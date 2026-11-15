@@ -181,8 +181,10 @@ class TestBuiltInsideTheExecution:
             async def execute(self) -> None:
                 await executor.run(AcmeProbe, factory=factory)
 
+        outer = _ReadOnlyOuter()
+
         with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
-            await executor.execute(_ReadOnlyOuter(), read_only=True, identity=ALICE)
+            await executor.execute(outer, read_only=True, identity=ALICE)
 
         assert JOURNAL.entries == ["EXEC_START", "EXEC_ERROR"]
 

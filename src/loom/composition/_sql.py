@@ -42,18 +42,16 @@ class SqlWiring:
     service: SqlQueryService
 
     @property
-    def resources(self) -> tuple[Resource, ...]:
-        """The ClickHouse registry as the application's resource; none without a registry."""
+    def resource(self) -> Resource | None:
+        """The ClickHouse registry as the application's resource; ``None`` without a registry."""
         registry = self.registry
         if registry is None:
-            return ()
-        return (
-            Resource(
-                kind=ResourceKind.SQL,
-                name="clickhouse",
-                manager=lambda: registry,
-                check=registry.check,
-            ),
+            return None
+        return Resource(
+            kind=ResourceKind.SQL,
+            name="clickhouse",
+            manager=lambda: registry,
+            check=registry.check,
         )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.execution import ExecutionKinds, Kind, execution_identity
+from loom.core.execution import ExecutionKinds, ExecutionResolver, Kind, execution_identity
 from loom.core.identity import Identity
 from loom.core.use_case.markers import (
     _AgentMarker,
@@ -22,7 +22,7 @@ MCP = Kind("mcp", spelling=_McpMarker.spelling)
 _INPUT_MARKERS = (_InputMarker, _QueryMarker, _LoadByIdMarker, _LoadMarker, _ExistsMarker)
 
 
-class CallerResolver:
+class CallerResolver(ExecutionResolver):
     """Resolves ``Caller()`` to the identity of the execution in progress."""
 
     __slots__ = ()

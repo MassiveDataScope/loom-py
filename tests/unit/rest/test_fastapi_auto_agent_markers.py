@@ -99,8 +99,11 @@ class TestUseCaseWithoutAnAgentMarker:
 
 class TestUnknownAgent:
     def test_an_unknown_agent_name_aborts_startup(self) -> None:
+        declared = declared_markers(UnknownAgentUseCase)
+        plans = _by_name(_plan("triage"))
+
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared_markers(UnknownAgentUseCase).verify(_by_name(_plan("triage")))
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_UNKNOWN}
@@ -109,8 +112,10 @@ class TestUnknownAgent:
         assert "triage" in message
 
     def test_without_an_ai_section_the_message_says_there_are_no_agents(self) -> None:
+        declared = declared_markers(UnknownAgentUseCase)
+
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared_markers(UnknownAgentUseCase).verify({})
+            declared.verify({})
 
         assert "none" in str(excinfo.value)
 
@@ -118,9 +123,10 @@ class TestUnknownAgent:
 class TestMismatchedAgentOutput:
     def test_an_annotation_that_mismatches_the_declared_output_aborts(self) -> None:
         plans = _by_name(_plan("triage", output_type=dict))
+        declared = declared_markers(MismatchedOutputUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared_markers(MismatchedOutputUseCase).verify(plans)
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH}
@@ -134,9 +140,10 @@ class TestMismatchedAgentOutput:
 class TestAgentMarkerProblemsAreReportedTogether:
     def test_two_distinct_problems_are_reported_together(self) -> None:
         declared = declared_markers(UnknownAgentUseCase, MismatchedOutputUseCase)
+        plans = _by_name(_plan("triage", output_type=dict))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            declared.verify(_by_name(_plan("triage", output_type=dict)))
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {
@@ -207,10 +214,11 @@ class TestResolversBindOnlyWithAnAiRuntime:
             def resolve(self, declaration: object, annotation: object) -> object:
                 return object()
 
+        another = AnotherResolver()
         with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_agent_resolver(AnotherResolver())
+            result.executor.bind_agent_resolver(another)
         with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_mcp_resolver(AnotherResolver())
+            result.executor.bind_mcp_resolver(another)
 
     @pytest.mark.parametrize("registered", [True, False], ids=["registered", "unregistered"])
     def test_the_handle_opens_spans_on_the_registered_observability_runtime(

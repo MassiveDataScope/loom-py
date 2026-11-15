@@ -44,8 +44,9 @@ class InlineOutcome:
             JobFailedError: If the job raised.
             JobTimeoutError: If the job has not run yet.
         """
-        if self._error is not None:
-            raise JobFailedError(job_id, self._error) from self._error
+        error = self._error
+        if error is not None:
+            raise JobFailedError(job_id, error) from error
         if not self._settled:
             raise JobTimeoutError(job_id, timeout)
         return self._result

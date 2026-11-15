@@ -65,8 +65,10 @@ class TestReservedBindings:
         )
 
     def test_a_module_replacing_a_reserved_key_is_refused(self) -> None:
+        container = _sql_bound()
+
         with pytest.raises(ReservedBindingError, match="SqlQueryService"):
-            _run(binds_sql_service, _sql_bound())
+            _run(binds_sql_service, container)
 
     @pytest.mark.parametrize("module", [_leaves_everything, _defaults_sql_service])
     def test_a_module_leaving_a_bound_reserved_key_alone_passes(self, module: Module) -> None:

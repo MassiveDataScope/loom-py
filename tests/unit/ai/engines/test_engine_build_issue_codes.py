@@ -55,20 +55,20 @@ class TestEngineBuildIssueCodes:
         class _NeverCompiled:
             __execution_plan__ = None
 
-        with pytest.raises(AgentCompilationError) as failure:
-            build_toolsets(
-                make_plan(
-                    _AGENT,
-                    capabilities=(
-                        CompiledUsecaseCapability(
-                            keys=("orders.create",),
-                            use_cases=(_NeverCompiled,),  # type: ignore[arg-type]
-                        ),
-                    ),
+        plan = make_plan(
+            _AGENT,
+            capabilities=(
+                CompiledUsecaseCapability(
+                    keys=("orders.create",),
+                    use_cases=(_NeverCompiled,),  # type: ignore[arg-type]
                 ),
-                LoomContainer(),
-                mcp=SharedMcpToolsets(),
-            )
+            ),
+        )
+        container = LoomContainer()
+        mcp = SharedMcpToolsets()
+
+        with pytest.raises(AgentCompilationError) as failure:
+            build_toolsets(plan, container, mcp=mcp)
 
         assert _only_issue(failure) == (
             AgentErrorCode.USECASE_NOT_COMPILED,

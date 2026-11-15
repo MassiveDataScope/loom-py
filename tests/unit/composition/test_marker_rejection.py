@@ -126,5 +126,8 @@ class TestMarkerRejection:
     def test_composition_refuses_the_marker_for_any_adapter(
         self, fixture_project: ProjectFactory
     ) -> None:
+        project = fixture_project()
+        adapter = _WithoutAgents()
+
         with pytest.raises(AgentCompilationError, match="AcmeNotifyIncident"):
-            build_application(fixture_project(), adapter=_WithoutAgents(), environment="test")
+            build_application(project, adapter=adapter, environment="test")

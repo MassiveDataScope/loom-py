@@ -207,7 +207,8 @@ class TestCeleryCallbackTasks:
         succeed(AcmeCallerCallback, **link_from(BOB, until=time.time() + AN_HOUR)).get()
 
         [(_, seen)] = callback_log
-        assert seen.caller is not None and seen.caller.subject == BOB.subject
+        assert seen.caller is not None
+        assert seen.caller.subject == BOB.subject
 
     def test_a_constructor_caller_is_refused_when_the_link_carries_none(
         self, succeed: Callable[..., Any]
@@ -245,9 +246,10 @@ class TestFailureCallbackBackendRead:
             celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryAsyncRuntime()
         )
         link = link_from(BOB, until=time.time() - 1)
+        result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **link})
 
         with pytest.raises(DelegationExpired):
-            task.apply(kwargs={"job_id": "acme-job", "context": {}, **link}).get()
+            result.get()
 
         read.assert_not_called()
         assert callback_log == []
@@ -273,9 +275,10 @@ class TestFailureCallbackBackendRead:
             observability_runtime=recorder.runtime,
         )
         link = link_from(BOB, until=time.time() + AN_HOUR)
+        result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **link})
 
         with pytest.raises(ConnectionError):
-            task.apply(kwargs={"job_id": "acme-job", "context": {}, **link}).get()
+            result.get()
 
         [error] = [
             event.kind

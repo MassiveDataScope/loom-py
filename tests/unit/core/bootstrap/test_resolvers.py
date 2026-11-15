@@ -76,11 +76,14 @@ class TestKernelResolvers:
             "agent_resolver": lambda name, identity: name,
             "mcp_resolver": lambda server, include, identity: server,
         }
+        config = AcmeResolverConfig()
+        modules = (_binds(Scope.APPLICATION),)
+
         with pytest.raises(BootstrapError, match=r"resolve\(declaration, annotation\)") as caught:
             create_kernel(
-                config=AcmeResolverConfig(),
+                config=config,
                 use_cases=(),
-                modules=(_binds(Scope.APPLICATION),),  # type: ignore[arg-type]
+                modules=modules,  # type: ignore[arg-type]
                 **{field: legacy[field]},
             )
 

@@ -181,11 +181,13 @@ class TestFilterPlan:
         assert "names: ['Ghost', 'Phantom']" in str(exc_info.value)
 
     def test_filter_refuses_a_bare_string(self) -> None:
+        plan = _compile(PipelineAll)
+
         with pytest.raises(
             TypeError,
             match=r"not the string 'OrdersStagingAStep'.*include=\{'OrdersStagingAStep'\}",
         ):
-            filter_plan(_compile(PipelineAll), "OrdersStagingAStep")
+            filter_plan(plan, "OrdersStagingAStep")
 
     def test_filter_accepts_any_iterable_of_names(self) -> None:
         plan = _compile(PipelineAll)

@@ -388,8 +388,9 @@ class TestStructuredLogs:
     async def test_fail_log_says_whether_a_post_commit_failure_committed(self) -> None:
         log = _RecordingLogger()
         executor = RuntimeExecutor(UseCaseCompiler(logger=log), logger=log)
+        use_case = _FailingAfterCommitUseCase()
         with pytest.raises(PostCommitError):
-            await executor.execute(_FailingAfterCommitUseCase(), payload={"value": "x"})
+            await executor.execute(use_case, payload={"value": "x"})
         fields = log.fields_for("[FAIL]")
         assert (fields.get("committed"), fields.get("failures")) == (True, 1)
 

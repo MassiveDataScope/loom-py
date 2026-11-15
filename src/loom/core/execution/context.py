@@ -222,6 +222,10 @@ _CACHE_ALLOCATION_LOCK = threading.Lock()
 """Taken only to allocate an execution's cache, once per execution that stores anything."""
 
 
+_PER_EXECUTION_VALUE = "per-execution value"
+"""What an ended execution's cache refuses to read or write."""
+
+
 class _EndedCache(dict[Hashable, object]):
     """The cache of every execution that ended: any read or write raises :class:`ExecutionClosed`.
 
@@ -232,13 +236,13 @@ class _EndedCache(dict[Hashable, object]):
     __slots__ = ()
 
     def __contains__(self, key: object) -> bool:
-        raise _closed("per-execution value")
+        raise _closed(_PER_EXECUTION_VALUE)
 
     def get(self, key: Hashable, default: object = None) -> object:  # type: ignore[override]
-        raise _closed("per-execution value")
+        raise _closed(_PER_EXECUTION_VALUE)
 
     def __setitem__(self, key: Hashable, value: object) -> None:
-        raise _closed("per-execution value")
+        raise _closed(_PER_EXECUTION_VALUE)
 
 
 _ENDED = _EndedCache()

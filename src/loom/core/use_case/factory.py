@@ -15,7 +15,7 @@ from typing import Any, NamedTuple, TypeVar
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError
-from loom.core.di.introspection import Constructor, RepoDependency
+from loom.core.di.introspection import Constructor, RepoDependency, no_implicit_dependencies
 from loom.core.repository.registration import classify_key, is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
 from loom.core.use_case.kinds import declare_kinds
@@ -48,7 +48,7 @@ def main_repository(cls: type[Any]) -> Constructor:
     """
     model = getattr(cls, "__loom_main_model__", None)
     if model is None or cls.__init__ is not UseCase.__init__:
-        return ()
+        return no_implicit_dependencies(cls)
     contract = getattr(cls, "__loom_main_repo_contract__", None)
     capability = contract if is_standard_capability(contract) else None
     return (("main_repo", RepoDependency(model, capability)),)

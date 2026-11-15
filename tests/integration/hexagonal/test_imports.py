@@ -49,4 +49,5 @@ class TestTheUseCaseModule:
             "notifier": CustomerNotifier.__name__,
         }
         assert all(p.default is inspect.Parameter.empty for p in parameters)
-        assert inspect.isabstract(ShipmentQueries) and inspect.isabstract(CustomerNotifier)
+        assert inspect.isabstract(ShipmentQueries)
+        assert inspect.isabstract(CustomerNotifier)

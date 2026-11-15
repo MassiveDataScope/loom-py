@@ -759,8 +759,10 @@ class TestJoinedStoreThatCannotRollBack:
         async def outer() -> None:
             await executor.execute(audited)
 
+        use_case = Run(outer) if nested else audited
+
         with pytest.raises(JoinedAutocommitStore, match="store audit, which cannot roll back"):
-            await executor.execute(Run(outer) if nested else audited)
+            await executor.execute(use_case)
 
         assert ran == []
 

@@ -157,10 +157,8 @@ def compose_application(
     )
     analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
     ai = clock.lap("wire_ai", wire_ai(source, recipe, kernel, analysis, sql))
-    clock.lap(
-        "seal",
-        seal(kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories),
-    )
+    seal(kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories)
+    clock.lap("seal", None)
     gateways = kernel.container.resolve_or_none(CacheGateways)
     cache = () if gateways is None else gateways.named()
     discovered = recipe.discovered
@@ -180,8 +178,7 @@ def compose_application(
                 Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
                 for name, gateway in cache
             ),
-            *sql.resources,
-            *ai.resources,
+            *(resource for resource in (sql.resource, ai.resource) if resource is not None),
             *stores.resources,
         ),
     )

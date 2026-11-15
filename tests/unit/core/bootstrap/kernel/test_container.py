@@ -119,5 +119,8 @@ class TestKernelContainer:
         assert executors == [kernel.executor]
 
     def test_installing_raises_a_compilation_error_as_is(self) -> None:
+        recipe = KernelRecipe([AcmeUncompilable], LOG)
+        container = KernelRecipe.container()
+
         with pytest.raises(CompilationError, match="AcmeUncompilable.execute"):
-            KernelRecipe([AcmeUncompilable], LOG).install(KernelRecipe.container())
+            recipe.install(container)

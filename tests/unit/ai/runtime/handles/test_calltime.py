@@ -133,8 +133,9 @@ class TestEachCallReadsTheIdentity:
         self, runtime: AgentRuntime, triage: Any, crm: Any, call: Any, backend_calls: Any
     ) -> None:
         async with runtime:
+            handle_call = call(triage, crm)
             with pytest.raises(ExecutionRequired):
-                await call(triage, crm)()
+                await handle_call()
 
         assert backend_calls() == 0
 

@@ -124,15 +124,19 @@ class TestRegistrationAnalysis:
         assert application.kernel.compiler.get_plan(cast(Any, AcmeAuditCallback)) is None
 
     def test_a_callback_is_refused_like_any_root(self, source: CompositionSource) -> None:
+        adapter = _WithCallbacks(AcmeAuditCallback)
+
         with pytest.raises(BootstrapError, match="AcmeAuditCallback -> trail: AcmeCallbackTrail"):
-            compose_application(source, _WithCallbacks(AcmeAuditCallback))
+            compose_application(source, adapter)
 
     def test_a_callback_injecting_an_unmapped_repository_is_refused_at_startup(
         self,
         source: CompositionSource,
     ) -> None:
+        adapter = _WithCallbacks(AcmeUnservedCallback)
+
         with pytest.raises(BootstrapError) as caught:
-            compose_application(source, _WithCallbacks(AcmeUnservedCallback))
+            compose_application(source, adapter)
 
         assert str(caught.value.__cause__) == (
             "AcmeUnservedCallback: unserved: no repository mapping is registered for AcmeUnserved"
@@ -183,9 +187,10 @@ class TestRegistrationAnalysis:
         source: CompositionSource,
     ) -> None:
         adapter = _WithCallbacks(AcmeAuditNames)
+        modules = (_binds(AcmeNamedTrail, AcmeNamedTrail),)
 
         with pytest.raises(BootstrapError, match="AcmeNamedTrail: names: tuple") as caught:
-            compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+            compose_application(source, adapter, modules=modules)
 
         assert isinstance(caught.value.__cause__, DependencyGraphError)
 
@@ -194,9 +199,10 @@ class TestRegistrationAnalysis:
         source: CompositionSource,
     ) -> None:
         adapter = _WithCallbacks(AcmeAuditNames, lenient=True)
+        modules = (_binds(AcmeNamedTrail, AcmeNamedTrail),)
 
         with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
-            compose_application(source, adapter, modules=(_binds(AcmeNamedTrail, AcmeNamedTrail),))
+            compose_application(source, adapter, modules=modules)
 
     def test_a_use_case_reaches_its_main_repository_and_capability(
         self, source: CompositionSource, analyses: list[GraphAnalysis]

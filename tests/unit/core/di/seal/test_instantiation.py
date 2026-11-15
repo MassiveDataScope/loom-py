@@ -105,7 +105,7 @@ class TestSealCompilesPerExecutionBindings:
     def test_seal_compiles_reachable_per_execution_bindings_without_building_them(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        AcmeCountedSession.built = 0
+        monkeypatch.setattr(AcmeCountedSession, "built", 0)
         container = LoomContainer()
         container.register(AcmeCountedSession, AcmeCountedSession)
         container.seal(acme.analysed(container, AcmeSessionLedger))

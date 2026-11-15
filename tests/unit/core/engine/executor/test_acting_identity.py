@@ -288,7 +288,8 @@ class TestATaskOutlivingItsExecution:
         outer_ticket, outer_scope = cast(tuple[object, object], outer)
         assert identity is BOB
         assert ticket is not outer_ticket
-        assert scope is not None and scope is not outer_scope
+        assert scope is not None
+        assert scope is not outer_scope
         assert len(stores.created) == 2
 
     async def test_a_use_case_it_runs_as_another_identity_is_a_switch(

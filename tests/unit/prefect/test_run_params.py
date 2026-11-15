@@ -352,12 +352,12 @@ class TestRunName:
 
     @pytest.mark.usefixtures("in_run")
     def test_resolves_against_the_slot(self) -> None:
-        run_name = make_run_name_callback("sample", "run_date")
+        run_name = make_run_name_callback("run_date")
         assert run_name(run_date="${yesterday}").startswith("20260921T000000-")
 
     @pytest.mark.usefixtures("in_run")
     def test_scheduled_run_without_correlation_value_is_named_by_its_slot(self) -> None:
-        run_name = make_run_name_callback("sample", None)
+        run_name = make_run_name_callback(None)
         assert run_name(run_date="${yesterday}") == "2026-09-22T23:30"
 
 

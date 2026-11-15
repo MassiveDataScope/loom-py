@@ -110,8 +110,10 @@ class TestSealedKinds:
     def test_sealing_again_is_allowed(self, sealed: LoomContainer) -> None:
         sealed.seal()
 
+        resolver = _AcmeResolver()
+
         with pytest.raises(ContainerSealed):
-            sealed.kinds.bind(_ACME, _AcmeResolver())
+            sealed.kinds.bind(_ACME, resolver)
 
     def test_a_declaration_made_before_seal_still_resolves(self) -> None:
         container = LoomContainer()

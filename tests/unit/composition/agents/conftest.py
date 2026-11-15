@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterator
 
 import pytest
 
@@ -47,7 +46,7 @@ def compiler() -> UseCaseCompiler:
 
 
 @pytest.fixture
-def edge_reads(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[Node]]:
+def edge_reads(monkeypatch: pytest.MonkeyPatch) -> Counter[Node]:
     """How many times each node's edges are read, by anyone, while the test runs."""
     reads: Counter[Node] = Counter()
     edges = DependencyGraph.edges
@@ -57,4 +56,4 @@ def edge_reads(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[Node]]:
         return edges(graph, node)
 
     monkeypatch.setattr(DependencyGraph, "edges", counting)
-    yield reads
+    return reads

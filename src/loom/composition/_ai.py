@@ -184,12 +184,12 @@ class AiWiring:
         return self.config.mcp_servers if self.config is not None else {}
 
     @property
-    def resources(self) -> tuple[Resource, ...]:
-        """The agent runtime as the application's resource; none without a runtime."""
+    def resource(self) -> Resource | None:
+        """The agent runtime as the application's resource; ``None`` without a runtime."""
         runtime = self.runtime
         if runtime is None:
-            return ()
-        return (Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime),)
+            return None
+        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime)
 
     def bind_resolvers(self, kernel: KernelRuntime) -> None:
         """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`runtime`, if any.

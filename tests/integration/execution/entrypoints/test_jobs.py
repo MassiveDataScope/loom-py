@@ -69,8 +69,10 @@ class TestInlineJobService:
     async def test_run_with_nothing_acting_has_no_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
+        jobs = InlineJobService(factory, executor)
+
         with pytest.raises(Unauthenticated):
-            await InlineJobService(factory, executor).run(AcmeProbeJob)
+            await jobs.run(AcmeProbeJob)
 
     async def test_a_dispatch_runs_as_its_dispatcher_in_an_execution_of_its_own(
         self, factory: UseCaseFactory, executor: RuntimeExecutor

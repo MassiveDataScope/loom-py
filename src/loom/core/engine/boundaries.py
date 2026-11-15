@@ -66,20 +66,15 @@ class OpensScope:
     owns_transaction: ClassVar[bool] = True
     read_only: ClassVar[bool] = False
 
-    async def run(
-        self,
-        plan: ExecutionPlan,
-        started: StartedExecution,
-        channel: _PostCommitChannels,
-        work: Work,
-    ) -> Any:
-        """Open an invocation scope, run *work* in it, end it, raise what it ended with.
+    async def run(self, execution: _Run) -> Any:
+        """Open an invocation scope, run the work in it, end it, raise what it ended with.
 
         The scope is unpublished before this returns.
 
         Raises:
             JoinedAutocommitStore: When a joined store cannot roll back.
         """
+        plan = execution.plan
         result: Any = None
         error: BaseException | None = None
         async with invocation(self.coordinator) as scope:
@@ -88,14 +83,14 @@ class OpensScope:
                 async with scope.frame(plan.frame):
                     if plan.joined:
                         plan.refuse_autocommit_joined(scope.participants)
-                    result = await work()
+                    result = await execution.work()
             except BaseException as exc:
                 error = exc
             try:
-                outcome = await started.committing(scope, error)
+                outcome = await execution.started.committing(scope, error)
             finally:
-                channel.settled = PostCommitChannel()
-                scope.settle_post_commit(channel.settled, error)
+                execution.settled = PostCommitChannel()
+                scope.settle_post_commit(execution.settled, error)
         failure = invocation_error(outcome, error or scope.poisoned)
         if failure is not None:
             raise failure
@@ -115,25 +110,19 @@ class JoinsScope:
     read_only: bool
     owns_transaction: ClassVar[bool] = False
 
-    async def run(
-        self,
-        plan: ExecutionPlan,
-        started: StartedExecution,
-        channel: _PostCommitChannels,
-        work: Work,
-    ) -> Any:
-        """Run *work* under the frame, as the identity that opened the scope.
+    async def run(self, execution: _Run) -> Any:
+        """Run the work under the frame, as the identity that opened the scope.
 
         Raises:
             NestedIdentityMismatch: When the execution acts as another identity.
             JoinedAutocommitStore: When a joined store cannot roll back.
         """
         scope = self.scope
-        scope.refuse_other_identity(started.use_case_name)
+        scope.refuse_other_identity(execution.started.use_case_name)
         async with scope.frame(self.frame):
             if self.frame.joined:
-                plan.refuse_autocommit_joined(scope.participants)
-            return await work()
+                execution.plan.refuse_autocommit_joined(scope.participants)
+            return await execution.work()
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,15 +132,9 @@ class WithoutUnitOfWork:
     owns_transaction: ClassVar[bool] = False
     read_only: ClassVar[bool] = False
 
-    async def run(
-        self,
-        plan: ExecutionPlan,
-        started: StartedExecution,
-        channel: _PostCommitChannels,
-        work: Work,
-    ) -> Any:
-        """Run *work* as is."""
-        return await work()
+    async def run(self, execution: _Run) -> Any:
+        """Run the work as is."""
+        return await execution.work()
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,20 +150,14 @@ class ReadsOnItsOwn:
     owns_transaction: ClassVar[bool] = False
     read_only: ClassVar[bool] = True
 
-    async def run(
-        self,
-        plan: ExecutionPlan,
-        started: StartedExecution,
-        channel: _PostCommitChannels,
-        work: Work,
-    ) -> Any:
-        """Run *work* under a read-only frame of an invocation of its own."""
+    async def run(self, execution: _Run) -> Any:
+        """Run the work under a read-only frame of an invocation of its own."""
         with unscoped() if self.hides_scope else nullcontext():
             async with (
                 invocation(self.coordinator, read_only=True) as own,
                 own.frame(_READ_ONLY),
             ):
-                return await work()
+                return await execution.work()
 
 
 Boundary: TypeAlias = OpensScope | JoinsScope | WithoutUnitOfWork | ReadsOnItsOwn
@@ -229,7 +206,9 @@ class Boundaries:
         Raises:
             NestedElevation: Inside an execution that elevated a scope.
         """
-        channel = _PostCommitChannels(boundary.owns_transaction or active_channel() is None)
+        execution = _Run(
+            plan, started, work, opens=boundary.owns_transaction or active_channel() is None
+        )
         try:
             elevated = elevated_scopes()
             if elevated:
@@ -239,17 +218,17 @@ class Boundaries:
                 sink=self._sink,
                 read_only=boundary.read_only,
             ):
-                result = await boundary.run(plan, started, channel, work)
+                result = await boundary.run(execution)
         except BaseException as exc:
-            await channel.after_failure()
+            await execution.after_failure()
             started.failed(exc)
             raise
         finally:
-            channel.unbind()
+            execution.unbind()
         try:
             started.succeeded()
         finally:
-            await channel.after_success(committed=boundary.owns_transaction)
+            await execution.after_success(committed=boundary.owns_transaction)
         return result
 
 
@@ -268,17 +247,24 @@ def outside_departed_execution() -> Iterator[None]:
         reset_channel(channel_token)
 
 
-class _PostCommitChannels:
-    """The post-commit channel one execution opened, if any, and the one its outcome settled.
+class _Run:
+    """One execution of *plan* running *work* in its boundary, observed by *started*.
 
-    ``settled`` is set once the coordinator has ended the invocation scope
-    this execution owns: the actions its stores' outcomes let run, drained
-    even on failure. Without it the opened channel is discarded.
+    It holds the post-commit channel the execution opened, when *opens*, and
+    the one its outcome settled. ``settled`` is set once the coordinator has
+    ended the invocation scope this execution owns: the actions its stores'
+    outcomes let run, drained even on failure. Without it the opened channel
+    is discarded.
     """
 
-    __slots__ = ("_token", "opened", "settled")
+    __slots__ = ("_token", "opened", "plan", "settled", "started", "work")
 
-    def __init__(self, opens: bool) -> None:
+    def __init__(
+        self, plan: ExecutionPlan, started: StartedExecution, work: Work, *, opens: bool
+    ) -> None:
+        self.plan = plan
+        self.started = started
+        self.work = work
         self.opened = PostCommitChannel() if opens else None
         self._token = None if self.opened is None else bind_channel(self.opened)
         self.settled: PostCommitChannel | None = None
