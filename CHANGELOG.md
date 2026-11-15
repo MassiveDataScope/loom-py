@@ -758,6 +758,9 @@
 
 ### composition
 
+- **composition:** `Recipe.cursor_codec` takes the `StoreCatalog` the
+  application builds, and returns `None` when no store of it pages with
+  cursors.
 - **composition:** a composed application (`create_app`, `build_application`,
   `compose_application`, the Celery worker and every Lambda entry) builds one
   `RuntimeExecutor`, not a throwaway one first. An `APPLICATION` provider that
@@ -1306,6 +1309,8 @@
 
 ### stores
 
+- **stores:** a backend serving a store must implement `capabilities()` at
+  composition time, as its contract states.
 - **stores:** a repository read, a `@with_session_scope(write=False)` method
   or `operation_session(write=False)` on a store the invocation did not
   enlist (a read-only execution such as a REST `GET`, or no invocation)
@@ -1486,6 +1491,18 @@
 - **etl:** `StepRunnerProto` requires `seed(..., *, schema=None)`,
   `seed_temp` and `run`. `ETLScenario.apply` still calls `seed(ref, data,
   columns)` positionally when no schema is declared.
+
+## 🐛 Fixes
+
+### stores
+
+- **stores:** an application builds its cursor codec only when a store it
+  builds pages with cursors (the capability `loom.cursors.E001` reads).
+  Before: any discovered model made the composition build it, so with every
+  store on `none` and the default `signed` signing it failed with
+  `ConfigError: cursor signing needs a key`. Now: such an application
+  composes without `persistence.cursors` keys; a SQLAlchemy or Mongo store
+  still needs them.
 
 # 🚀 Releases 2.1.3 to 9.0.0
 

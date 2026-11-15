@@ -224,6 +224,9 @@ def plan(source: CompositionSource, adapter: Adapter[object]) -> Recipe:
 def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
     """Read each job's settings, then build and prepare every store the discovered models use.
 
+    The stores share one cursor codec, built only when a store it builds
+    pages with cursors, as ``loom.cursors.E001`` decides.
+
     Args:
         source: What the application composes from.
         recipe: What it composes.
@@ -232,9 +235,9 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
         The job settings and the stores.
 
     Raises:
-        ConfigError: When a job's settings, ``persistence.cursors`` or a
-            store section is invalid, or a store is named after the default
-            store's backend.
+        ConfigError: When a job's settings, a store section or, for a store
+            that pages with cursors, ``persistence.cursors`` is invalid, or a
+            store is named after the default store's backend.
     """
     ctx, discovered, catalog = source.config, recipe.discovered, source.catalog
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
@@ -246,7 +249,7 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
             f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
-    cursor_codec = recipe.cursor_codec(ctx)
+    cursor_codec = recipe.cursor_codec(ctx, catalog.with_default(recipe.default_backend))
     wirings: dict[StoreKey, PersistenceWiring] = {}
     for key, models in stores.items():
         runtime = BackendRuntime(

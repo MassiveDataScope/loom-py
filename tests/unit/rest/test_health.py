@@ -25,6 +25,7 @@ from loom.core.identity import Identity
 from loom.core.model import BaseModel
 from loom.core.persistence import NoneBackend, PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import NO_CAPABILITIES, StoreCapabilities, StoreSpec
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module
@@ -72,6 +73,10 @@ class _ProbedBackend:
     name: ClassVar[str] = "probed"
     repository_type: ClassVar[type[Any] | None] = None
     ready: ClassVar[bool | None] = None
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        del spec
+        return NO_CAPABILITIES
 
     def build(
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime

@@ -24,6 +24,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.stores import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -198,6 +199,10 @@ class _RecordingBackend:
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
     runtimes: ClassVar[list[BackendRuntime]] = []
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        del spec
+        return MODELS_ONLY
 
     def build(
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime

@@ -59,7 +59,7 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
 
 def _serves_repositories(config: ConfigContext) -> bool:
     """Whether any configured store pages with cursors."""
-    return any(spec.capabilities.pages_with_cursors for spec in load_catalog(config).specs.values())
+    return load_catalog(config).pages_with_cursors
 
 
 __all__: list[str] = []

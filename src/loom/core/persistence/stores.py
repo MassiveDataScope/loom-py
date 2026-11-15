@@ -174,6 +174,34 @@ class StoreCatalog:
 
     specs: Mapping[StoreKey, StoreSpec]
 
+    @property
+    def pages_with_cursors(self) -> bool:
+        """Whether any declared store pages with cursors."""
+        return any(spec.capabilities.pages_with_cursors for spec in self.specs.values())
+
+    def with_default(self, backend: str) -> StoreCatalog:
+        """Return the catalog with :data:`DEFAULT_STORE`, served by *backend* when undeclared.
+
+        Args:
+            backend: Backend of the default store when the catalog does not
+                declare it, read as a section holding only ``backend``.
+
+        Returns:
+            This catalog when it declares the default store; otherwise a copy
+            that also holds the default store, first.
+
+        Raises:
+            ConfigError: When *backend* is neither a registered persistence
+                backend nor a connection-only kind, or is connection-only.
+        """
+        if DEFAULT_STORE in self.specs:
+            return self
+        section = ConfigContext.from_dict(
+            {ConfigKey.STORES: {DEFAULT_STORE: {BACKEND_KEY: backend}}}
+        )
+        default = _spec(section, DEFAULT_STORE, registered_names(BACKEND_ENTRY_POINT_GROUP))
+        return StoreCatalog(specs=MappingProxyType({DEFAULT_STORE: default, **self.specs}))
+
     def require(self, key: str, *, backend: str | None = None, purpose: str) -> StoreSpec:
         """Return the store *key*, which *purpose* needs, served by *backend* when given.
 

@@ -17,7 +17,7 @@ from loom.core.di.graph import (
     GraphAnalysis,
     refuse_unmapped_repository,
 )
-from loom.core.persistence.stores import NONE_BACKEND
+from loom.core.persistence.stores import NONE_BACKEND, StoreCatalog
 from loom.core.repository.abc import CursorCodec
 
 if TYPE_CHECKING:
@@ -115,13 +115,22 @@ class Recipe:
             warnings.warn(warning, stacklevel=2)
         return analysis
 
-    def cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
-        """The one cursor codec every store shares; ``None`` when no store serves a repository.
+    def cursor_codec(self, ctx: ConfigContext, catalog: StoreCatalog) -> CursorCodec | None:
+        """The one cursor codec every store shares; ``None`` when no store pages with cursors.
+
+        Args:
+            ctx: The configuration holding ``persistence.cursors``.
+            catalog: The stores the application builds.
+
+        Returns:
+            The codec, or ``None`` for a connection-only recipe or when no
+            store of *catalog* pages with cursors.
 
         Raises:
-            ConfigError: When ``persistence.cursors`` is invalid.
+            ConfigError: When a store pages with cursors and
+                ``persistence.cursors`` is invalid.
         """
-        if self.connection_only or not self.discovered.models:
+        if self.connection_only or not catalog.pages_with_cursors:
             return None
         return CursorCodec.from_context(ctx)
 
