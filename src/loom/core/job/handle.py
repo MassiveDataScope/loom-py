@@ -46,7 +46,7 @@ class InlineOutcome:
         """
         error = self._error
         if error is not None:
-            raise JobFailedError(job_id, error) from error
+            raise JobFailedError(job_id, error)
         if not self._settled:
             raise JobTimeoutError(job_id, timeout)
         return self._result

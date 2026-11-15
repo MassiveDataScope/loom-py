@@ -52,7 +52,8 @@ class JobFailedError(SystemError):
     """Raised when a job fails during execution.
 
     Wraps the underlying cause so callers can inspect it without catching
-    arbitrary exceptions directly.
+    arbitrary exceptions directly; the cause is also chained as
+    ``__cause__``.
 
     Args:
         job_id: UUID of the failed job.
@@ -70,6 +71,7 @@ class JobFailedError(SystemError):
         super().__init__(msg, code=ErrorCode.JOB_FAILED)
         self.job_id = job_id
         self.cause = cause
+        self.__cause__ = cause
 
 
 class MixedJobBackendsError(SystemError):

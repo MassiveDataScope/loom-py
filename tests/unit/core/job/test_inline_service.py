@@ -87,7 +87,9 @@ class TestInProcessJobService:
         await flush_pending_dispatches()
         with pytest.raises(JobFailedError) as caught:
             handle.wait()
-        assert (caught.value.job_id, caught.value.cause) == (handle.job_id, boom)
+        assert caught.value.job_id == handle.job_id
+        assert caught.value.cause is boom
+        assert caught.value.__cause__ is boom
 
     def test_dispatch_respects_queue_override(self) -> None:
         service = _make_service()
