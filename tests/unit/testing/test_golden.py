@@ -157,15 +157,17 @@ class TestSerializePlan:
         assert ls["profile"] == "detail"
         assert "Product" in ls["entity_type"]
 
-    def test_compute_step_has_fn_qualname(self) -> None:
+    @pytest.mark.parametrize(
+        ("expected", "steps"),
+        [
+            pytest.param("_normalize", "compute_steps", id="compute_step_has_fn_qualname"),
+            pytest.param("_rule_step_fn", "rule_steps", id="rule_step_has_fn_qualname"),
+        ],
+    )
+    def test_step_has_fn_qualname(self, expected: str, steps: str) -> None:
         plan = self._make_plan()
         result = serialize_plan(plan)
-        assert "_normalize" in result["compute_steps"][0]["fn"]
-
-    def test_rule_step_has_fn_qualname(self) -> None:
-        plan = self._make_plan()
-        result = serialize_plan(plan)
-        assert "_rule_step_fn" in result["rule_steps"][0]["fn"]
+        assert expected in result[steps][0]["fn"]
 
     def test_no_input_binding_is_none(self) -> None:
         plan = ExecutionPlan(

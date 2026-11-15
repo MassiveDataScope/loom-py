@@ -82,28 +82,30 @@ def _capability_of_kind(plan: AgentPlan, kind: str) -> CompiledCapability:
     pytest.fail(f"plan carries no compiled capability of kind {kind!r}")
 
 
-def test_reports_kind_unsupported_when_engine_does_not_serve_the_kind(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    spec = spec_factory(capabilities=(McpCapability(server="knowledge"),))
-    issue = single_issue_for(spec, supported_kinds=frozenset({"usecase"}))
-    assert (issue.code, issue.field) == (
-        AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED,
-        "capabilities",
-    )
+class TestKindAndKeyRefusals:
+    def test_reports_kind_unsupported_when_engine_does_not_serve_the_kind(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        spec = spec_factory(capabilities=(McpCapability(server="knowledge"),))
+        issue = single_issue_for(spec, supported_kinds=frozenset({"usecase"}))
+        assert (issue.code, issue.field) == (
+            AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED,
+            "capabilities",
+        )
 
-
-def test_reports_usecase_key_unknown_when_key_is_not_registered(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    spec = spec_factory(capabilities=(UsecaseCapability(keys=("nowhere.unknown_key",)),))
-    issue = single_issue_for(spec)
-    assert (issue.code, issue.field) == (
-        AgentErrorCode.USECASE_KEY_UNKNOWN,
-        "capabilities.keys",
-    )
+    def test_reports_usecase_key_unknown_when_key_is_not_registered(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        spec = spec_factory(capabilities=(UsecaseCapability(keys=("nowhere.unknown_key",)),))
+        issue = single_issue_for(spec)
+        assert (issue.code, issue.field) == (
+            AgentErrorCode.USECASE_KEY_UNKNOWN,
+            "capabilities.keys",
+        )
 
 
 class _ListQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -115,24 +117,26 @@ class _ListItems(UseCase[Any, int]):
         return query.limit
 
 
-def test_reports_usecase_declares_query_when_the_granted_use_case_takes_query(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    UseCaseCompiler().compile(_ListItems)
-    registry = UseCaseRegistry(
-        _by_name={"items.list": _ListItems}, _by_type={_ListItems: "items.list"}
-    )
-    spec = spec_factory(capabilities=(UsecaseCapability(keys=("items.list",)),))
+class TestUseCaseQueryRefusal:
+    def test_reports_usecase_declares_query_when_the_granted_use_case_takes_query(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        UseCaseCompiler().compile(_ListItems)
+        registry = UseCaseRegistry(
+            _by_name={"items.list": _ListItems}, _by_type={_ListItems: "items.list"}
+        )
+        spec = spec_factory(capabilities=(UsecaseCapability(keys=("items.list",)),))
 
-    issue = single_issue_for(spec, registry=registry)
+        issue = single_issue_for(spec, registry=registry)
 
-    assert (issue.code, issue.field) == (
-        AgentErrorCode.USECASE_DECLARES_QUERY,
-        "capabilities.keys",
-    )
-    assert "items.list" in issue.message
-    assert "Query()" in issue.message
+        assert (issue.code, issue.field) == (
+            AgentErrorCode.USECASE_DECLARES_QUERY,
+            "capabilities.keys",
+        )
+        assert "items.list" in issue.message
+        assert "Query()" in issue.message
 
 
 class TestSql:
@@ -591,28 +595,26 @@ class TestPythonFactory:
             "capabilities.factory",
         )
 
-    def test_reports_not_callable_when_factory_resolves_to_a_non_callable(
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(
+                "myapp.tools.broken:NOT_CALLABLE",
+                id="reports_not_callable_when_factory_resolves_to_a_non_callable",
+            ),
+            pytest.param(
+                "myapp.tools.params:build_keyword_only",
+                id="reports_not_callable_when_factory_leaves_no_slot_for_the_context",
+            ),
+        ],
+    )
+    def test_reports_not_callable_when_the_factory_cannot_build_a_tool(
         self,
+        factory: str,
         spec_factory: Callable[..., AgentSpecV1],
         single_issue_for: Callable[..., AgentCompilationIssue],
     ) -> None:
-        spec = spec_factory(
-            capabilities=(PythonCapability(factory="myapp.tools.broken:NOT_CALLABLE"),)
-        )
-        issue = single_issue_for(spec)
-        assert (issue.code, issue.field) == (
-            AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE,
-            "capabilities.factory",
-        )
-
-    def test_reports_not_callable_when_factory_leaves_no_slot_for_the_context(
-        self,
-        spec_factory: Callable[..., AgentSpecV1],
-        single_issue_for: Callable[..., AgentCompilationIssue],
-    ) -> None:
-        spec = spec_factory(
-            capabilities=(PythonCapability(factory="myapp.tools.params:build_keyword_only"),)
-        )
+        spec = spec_factory(capabilities=(PythonCapability(factory=factory),))
         issue = single_issue_for(spec)
         assert (issue.code, issue.field) == (
             AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE,

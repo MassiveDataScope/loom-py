@@ -1,26 +1,18 @@
 """Agent compiler: validated artifact in, immutable plan out.
 
-Offline by construction (FR-010): nothing in this package touches the
+Offline by construction: nothing in this package touches the
 network, reads credentials or loads entry points — ``supported_kinds``
 arrives as a plain value resolved by the bootstrap.  Every phase accumulates
-its issues and one :class:`AgentCompilationError` reports them all (FR-011).
+its issues and one :class:`AgentCompilationError` reports them all.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
-from types import MappingProxyType
 
-from loom.ai.abc import NativeToolSupport, OutputCheck, StateShape
-from loom.ai.compiler._plan import (
-    AgentPlan,
-    CompiledCapability,
-    CompiledConversation,
-    CompiledInstruction,
-    CompiledOutput,
-    CompiledOutputHook,
-)
+from loom.ai.abc import NativeToolSupport
+from loom.ai.compiler._plan import AgentPlan
 from loom.ai.compiler.phases._capabilities import compile_capabilities
 from loom.ai.compiler.phases._conversation import compile_conversation
 from loom.ai.compiler.phases._hook import compile_output_hook
@@ -32,8 +24,6 @@ from loom.ai.compiler.phases._state import compile_state
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, DecodedSpec
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
-from loom.ai.inference import InferenceTarget
-from loom.ai.pricing import ModelPrice
 from loom.core.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -47,7 +37,7 @@ class AgentCompiler:
 
     Runs every validation phase over every spec, accumulates all the issues
     found and raises a single :class:`AgentCompilationError`, so a generator
-    sees the whole picture at once (FR-011, SC-003).
+    sees the whole picture at once.
 
     Args:
         config: Deployment configuration of the AI pillar.
@@ -168,52 +158,20 @@ class AgentCompiler:
         issues.extend(capability_issues)
         if issues or output is None or inference is None or not instructions:
             return None, issues
-        plan = self._build_plan(
+        plan = AgentPlan.compiled(
             spec,
-            instructions,
-            state,
-            inference,
-            self._config.prices.get(inference.model),
-            output,
-            output_check,
-            capabilities,
-            on_output,
-            conversation,
-            source_path,
-        )
-        return plan, []
-
-    @staticmethod
-    def _build_plan(
-        spec: AgentSpecV1,
-        instructions: tuple[CompiledInstruction, ...],
-        state: StateShape | None,
-        inference: InferenceTarget,
-        price: ModelPrice | None,
-        output: CompiledOutput,
-        output_check: OutputCheck | None,
-        capabilities: tuple[CompiledCapability, ...],
-        on_output: CompiledOutputHook | None,
-        conversation: CompiledConversation | None,
-        source_path: str | None,
-    ) -> AgentPlan:
-        return AgentPlan(
-            name=spec.name,
-            description=spec.description,
             instructions=instructions,
             state=state,
-            spec_version=spec.spec_version,
             inference=inference,
-            price=price,
+            price=self._config.prices.get(inference.model),
             output=output,
             output_check=output_check,
             capabilities=capabilities,
-            policies=spec.policies,
             on_output=on_output,
             conversation=conversation,
-            metadata=MappingProxyType(dict(spec.metadata)),
             source_path=source_path,
         )
+        return plan, []
 
 
 def _as_entry(item: AgentSpecV1 | DecodedSpec) -> tuple[AgentSpecV1, str | None]:

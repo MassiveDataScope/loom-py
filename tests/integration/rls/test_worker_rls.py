@@ -131,17 +131,18 @@ def _through_the_worker(config: str, subjects: tuple[str, ...]) -> dict[str, lis
         worker_shutdown.send(sender=None)
 
 
-async def test_a_job_returns_the_rows_the_api_returns_for_each_scope(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(notes.SCHEMA)
-    application = application_for(notes, database, tmp_path)
-    await create_schema(database.migrator, application)
-    await _seed(database.bypass)
-    config = _config(tmp_path)
+class TestWorkerRls:
+    async def test_a_job_returns_the_rows_the_api_returns_for_each_scope(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(notes.SCHEMA)
+        application = application_for(notes, database, tmp_path)
+        await create_schema(database.migrator, application)
+        await _seed(database.bypass)
+        config = _config(tmp_path)
 
-    api = {subject: await _through_the_api(config, subject) for subject in (U1, U2)}
-    worker = _through_the_worker(config, (U1, U2))
+        api = {subject: await _through_the_api(config, subject) for subject in (U1, U2)}
+        worker = _through_the_worker(config, (U1, U2))
 
-    assert api == {U1: ["a", "b"], U2: ["z"]}
-    assert worker == api
+        assert api == {U1: ["a", "b"], U2: ["z"]}
+        assert worker == api

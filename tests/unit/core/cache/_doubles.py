@@ -58,7 +58,7 @@ SERIALIZED_BACKEND: dict[str, Any] = {
 """aiocache entry for a memory alias that carries entity data, msgpack-encoded."""
 
 
-class Widget(BaseModel):
+class AcmeCacheWidget(BaseModel):
     """Row with an integer primary key."""
 
     __tablename__ = "widgets"
@@ -94,7 +94,7 @@ class CodeWidget(BaseModel):
     name: str = ColumnField(length=32)
 
 
-RowT = TypeVar("RowT", Widget, UuidWidget, DateWidget, CodeWidget)
+RowT = TypeVar("RowT", AcmeCacheWidget, UuidWidget, DateWidget, CodeWidget)
 
 
 class WidgetCreate(msgspec.Struct):
@@ -204,7 +204,7 @@ class CountingRepository(Repository[RowT, WidgetCreate, WidgetUpdate, Any], Gene
     """Read-only repository double that counts reads and honours ``<pk> IN (...)``.
 
     The primary key is whatever the row model declares (``id`` on
-    :class:`Widget`, ``code`` on :class:`CodeWidget`).  ``list_with_query``
+    :class:`AcmeCacheWidget`, ``code`` on :class:`CodeWidget`).  ``list_with_query``
     matches keys by equality, as a typed backend does — a SQLAlchemy
     ``DateTime`` column filtered with strings returns no rows — and returns
     the matches in reverse insertion order so a test can tell whether the
@@ -330,7 +330,7 @@ class WritableRepository(CountingRepository[RowT], Generic[RowT]):
     """Counting double whose writes mutate ``storage``.
 
     ``create`` assigns the next free integer key, so it serves the
-    integer-keyed rows (:class:`Widget`, :class:`CodeWidget`).  The writes do
+    integer-keyed rows (:class:`AcmeCacheWidget`, :class:`CodeWidget`).  The writes do
     not publish anything: the cached wrapper around this double is what
     turns them into mutation events.
 
@@ -380,19 +380,21 @@ class WritableRepository(CountingRepository[RowT], Generic[RowT]):
 
 
 @cached
-class CachedWidgetRepository(WritableRepository[Widget], Readable[Widget], Listable[Widget]):
+class CachedWidgetRepository(
+    WritableRepository[AcmeCacheWidget], Readable[AcmeCacheWidget], Listable[AcmeCacheWidget]
+):
     """Writable double marked ``@cached`` that declares two standard capabilities.
 
-    Registered with ``repository_for(Widget)`` by the test that needs it (see
+    Registered with ``repository_for(AcmeCacheWidget)`` by the test that needs it (see
     :func:`registered_repository`), so the registration module binds
-    ``Readable[Widget]`` and ``Listable[Widget]`` beside the primary key.
+    ``Readable[AcmeCacheWidget]`` and ``Listable[AcmeCacheWidget]`` beside the primary key.
     """
 
-    def __init__(self, rows: Sequence[Widget] = ()) -> None:
-        super().__init__(rows, Widget)
+    def __init__(self, rows: Sequence[AcmeCacheWidget] = ()) -> None:
+        super().__init__(rows, AcmeCacheWidget)
 
 
-class ParentRepository(CountingRepository[Widget]):
+class ParentRepository(CountingRepository[AcmeCacheWidget]):
     """Counting double for an entity whose reads depend on ``widget`` rows."""
 
     entity_name = "parent"
@@ -428,7 +430,7 @@ class RestrictedFilterRepository(CountingRepository[RowT], Generic[RowT]):
         return await super().list_with_query(query, profile=profile)
 
 
-class GatedRepository(CountingRepository[Widget]):
+class GatedRepository(CountingRepository[AcmeCacheWidget]):
     """Repository double whose reads block until the test opens the gate.
 
     Holding the reads inside the wrapper is what makes a stampede observable:
@@ -445,8 +447,8 @@ class GatedRepository(CountingRepository[Widget]):
             SQLAlchemy repository does inside a transaction.
     """
 
-    def __init__(self, rows: Sequence[Widget]) -> None:
-        super().__init__(rows, Widget)
+    def __init__(self, rows: Sequence[AcmeCacheWidget]) -> None:
+        super().__init__(rows, AcmeCacheWidget)
         self.gate = asyncio.Event()
         self.failure: Exception | None = None
         self.custom_calls = 0
@@ -457,7 +459,7 @@ class GatedRepository(CountingRepository[Widget]):
         """Whether a read would run inside a session owned by the caller."""
         return self.caller_scoped_session
 
-    async def get_by_id(self, obj_id: Any, profile: str = "default") -> Widget | None:
+    async def get_by_id(self, obj_id: Any, profile: str = "default") -> AcmeCacheWidget | None:
         _ = profile
         self.get_by_id_calls += 1
         await self._pass_gate()

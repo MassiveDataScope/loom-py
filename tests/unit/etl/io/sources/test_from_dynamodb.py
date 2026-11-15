@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import msgspec
 import pytest
 
 from loom.core.expr.nodes import AndExpr, EqExpr, InExpr
 from loom.etl.declarative.expr import col
-from loom.etl.declarative.source import FromDynamoDb, SourceRef
+from loom.etl.declarative.source import ExtraFieldsMode, FromDynamoDb, SourceRef
 from loom.etl.declarative.source._specs import DynamoDbSourceSpec, SourceKind
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
-
-
-class OrderDoc(msgspec.Struct):
-    id: str
-    status: str | None = None
-
+from tests.unit.etl.io.sources.doubles import OptionalStatusOrderDoc
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -41,13 +35,16 @@ class TestConstruction:
         spec = FromDynamoDb("events")._to_spec("events")
         assert spec.kind == SourceKind.DYNAMODB
 
-    def test_invalid_table_name_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "table",
+        [
+            pytest.param("bad name!", id="invalid_table_name_raises"),
+            pytest.param("ab", id="too_short_table_name_raises"),
+        ],
+    )
+    def test_invalid_table_name_raises(self, table: str) -> None:
         with pytest.raises(ValueError, match="Invalid DynamoDB table"):
-            FromDynamoDb("bad name!")
-
-    def test_too_short_table_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid DynamoDB table"):
-            FromDynamoDb("ab")
+            FromDynamoDb(table)
 
     def test_too_long_table_name_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid DynamoDB table"):
@@ -126,7 +123,7 @@ class TestProject:
 
 class TestWithSchema:
     def test_schema_stored_in_spec(self) -> None:
-        spec = FromDynamoDb("orders").with_schema(OrderDoc)._to_spec("orders")
+        spec = FromDynamoDb("orders").with_schema(OptionalStatusOrderDoc)._to_spec("orders")
         assert spec.schema == (
             ColumnSchema("id", LoomDtype.UTF8, nullable=True),
             ColumnSchema("status", LoomDtype.UTF8, nullable=True),
@@ -134,7 +131,7 @@ class TestWithSchema:
 
     def test_with_schema_is_immutable(self) -> None:
         base = FromDynamoDb("orders")
-        with_schema = base.with_schema(OrderDoc)
+        with_schema = base.with_schema(OptionalStatusOrderDoc)
         assert base._schema == ()
         assert with_schema._schema != ()
 
@@ -145,15 +142,18 @@ class TestWithSchema:
 
 
 class TestOnExtraFields:
-    @pytest.mark.parametrize("mode", ["ignore", "warn", "capture", "error"])
-    def test_valid_modes(self, mode: str) -> None:
-        spec = FromDynamoDb("orders").on_extra_fields(mode)._to_spec("orders")  # type: ignore[arg-type]
-        assert spec.extra_fields_mode == mode
+    @pytest.mark.parametrize("mode", [*ExtraFieldsMode, "ignore", "warn", "capture", "error"])
+    def test_a_mode_is_carried_as_its_member(self, mode: str) -> None:
+        spec = FromDynamoDb("orders").on_extra_fields(mode)._to_spec("orders")
+        assert spec.extra_fields_mode is ExtraFieldsMode(mode)
+
+    def test_the_default_mode_is_ignore(self) -> None:
+        assert FromDynamoDb("orders")._to_spec("orders").extra_fields_mode is ExtraFieldsMode.IGNORE
 
     def test_invalid_mode_raises(self) -> None:
         source = FromDynamoDb("orders")
-        with pytest.raises(ValueError, match="not valid"):
-            source.on_extra_fields("bad")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=r"not valid\. Choose one of: \['capture', 'error'"):
+            source.on_extra_fields("bad")
 
 
 # ---------------------------------------------------------------------------
@@ -170,15 +170,17 @@ class TestBatchSize:
         spec = FromDynamoDb("orders").batch_size(500)._to_spec("orders")
         assert spec.batch_size == 500
 
-    def test_batch_size_zero_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "batch_size",
+        [
+            pytest.param(0, id="batch_size_zero_raises"),
+            pytest.param(10001, id="batch_size_too_high_raises"),
+        ],
+    )
+    def test_batch_size_out_of_range_raises(self, batch_size: int) -> None:
         source = FromDynamoDb("orders")
         with pytest.raises(ValueError, match="between 1 and 10000"):
-            source.batch_size(0)
-
-    def test_batch_size_too_high_raises(self) -> None:
-        source = FromDynamoDb("orders")
-        with pytest.raises(ValueError, match="between 1 and 10000"):
-            source.batch_size(10_001)
+            source.batch_size(batch_size)
 
     def test_batch_size_boundary_values(self) -> None:
         assert FromDynamoDb("orders").batch_size(1)._batch_size == 1
@@ -231,15 +233,17 @@ class TestParallelScan:
         spec = FromDynamoDb("orders").parallel_scan(8)._to_spec("orders")
         assert spec.total_segments == 8
 
-    def test_below_minimum_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "segments",
+        [
+            pytest.param(1, id="below_minimum_raises"),
+            pytest.param(65, id="above_maximum_raises"),
+        ],
+    )
+    def test_parallel_scan_out_of_range_raises(self, segments: int) -> None:
         source = FromDynamoDb("orders")
         with pytest.raises(ValueError, match="between 2 and 64"):
-            source.parallel_scan(1)
-
-    def test_above_maximum_raises(self) -> None:
-        source = FromDynamoDb("orders")
-        with pytest.raises(ValueError, match="between 2 and 64"):
-            source.parallel_scan(65)
+            source.parallel_scan(segments)
 
     def test_boundary_values(self) -> None:
         assert FromDynamoDb("orders").parallel_scan(2)._total_segments == 2

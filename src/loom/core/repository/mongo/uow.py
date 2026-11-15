@@ -33,7 +33,7 @@ from pymongo.errors import PyMongoError
 from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.abc import UnitOfWork, UowEvent
 from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
 from loom.core.uow.scope import current_handle
@@ -185,9 +185,9 @@ class MongoUnitOfWork(EntersAlone):
             await session.end_session()
             raise
         self._session = session
-        _log.debug("UoWBegin")
+        _log.debug(UowEvent.BEGIN)
 
-    async def flush(self) -> None:  # NOSONAR S7503 - the PhasedUnitOfWork protocol awaits it
+    async def flush(self) -> None:  # NOSONAR S7503
         """Nothing to flush: every write already reached the server inside the transaction.
 
         Raises:
@@ -211,7 +211,7 @@ class MongoUnitOfWork(EntersAlone):
             if exc.has_error_label("UnknownTransactionCommitResult"):
                 raise CommitUncertain(exc) from exc
             raise
-        _log.debug("UoWCommit")
+        _log.debug(UowEvent.COMMIT)
 
     async def rollback(self) -> None:
         """Abort the transaction, unless the session no longer holds one.
@@ -228,7 +228,7 @@ class MongoUnitOfWork(EntersAlone):
         if not session.in_transaction:
             return
         await session.abort_transaction()
-        _log.debug("UoWRollback")
+        _log.debug(UowEvent.ROLLBACK)
 
     async def close(self) -> None:
         """End the session under ``asyncio.shield``, so a cancellation lets it finish.
@@ -249,7 +249,7 @@ class MongoUnitOfWork(EntersAlone):
         try:
             await session.end_session()
         except Exception:
-            _log.exception("UoWCloseFailed")
+            _log.exception(UowEvent.CLOSE_FAILED)
 
     def _require_session(self, operation: str) -> AsyncClientSession:
         if self._session is None:

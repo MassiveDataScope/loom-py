@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 try:
     import pytest
-except ModuleNotFoundError as exc:  # pragma: no cover - packaging guard
+except ModuleNotFoundError as exc:  # pragma: no cover
     raise ModuleNotFoundError(
         "loom.etl.testing.spark defines pytest fixtures: install loom-kernel[testing]"
     ) from exc
@@ -146,11 +146,6 @@ class SparkTestSession:
     def session(self) -> SparkSession:
         """The underlying :class:`pyspark.sql.SparkSession`."""
         return self._session
-
-
-# ---------------------------------------------------------------------------
-# SparkStepRunner — in-memory Spark step test harness
-# ---------------------------------------------------------------------------
 
 
 class _SparkCapturingWriter:
@@ -323,11 +318,6 @@ class SparkStepRunner:
         if self._writer.spec is None:
             raise RuntimeError("No spec — call run() first.")
         return self._writer.spec
-
-
-# ---------------------------------------------------------------------------
-# pytest fixture — opt-in via explicit import or pytest plugin registration
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")

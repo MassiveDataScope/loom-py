@@ -23,6 +23,7 @@ from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
 from loom.core.repository.mutation import MutationEvent
 
 from ._doubles import (
+    AcmeCacheWidget,
     CodeWidget,
     CountingCacheBackend,
     CountingRepository,
@@ -30,7 +31,6 @@ from ._doubles import (
     RestrictedFilterRepository,
     RowT,
     UuidWidget,
-    Widget,
     WidgetCreate,
     WidgetUpdate,
 )
@@ -41,7 +41,7 @@ MISSING_IDS = (2, 3, 5)
 UUID_NAMESPACE = UUID("11111111-1111-1111-1111-111111111111")
 
 
-class _Env(NamedTuple, Generic[RowT]):
+class AcmeIndexEnv(NamedTuple, Generic[RowT]):
     repository: CountingRepository[RowT]
     backend: CountingCacheBackend
     resolver: GenerationalDependencyResolver
@@ -53,7 +53,7 @@ def _make_env(
     row_type: type[RowT],
     cache_config: CacheConfig,
     repository: CountingRepository[RowT] | None = None,
-) -> _Env[RowT]:
+) -> AcmeIndexEnv[RowT]:
     inner = repository if repository is not None else CountingRepository(rows, row_type)
     backend = CountingCacheBackend()
     resolver = GenerationalDependencyResolver(backend)
@@ -63,15 +63,15 @@ def _make_env(
         cache=backend,
         dependency_resolver=resolver,
     )
-    return _Env(inner, backend, resolver, wrapper)
+    return AcmeIndexEnv(inner, backend, resolver, wrapper)
 
 
 def _cursor_query(limit: int) -> QuerySpec:
     return QuerySpec(pagination=PaginationMode.CURSOR, limit=limit)
 
 
-def _widgets(count: int) -> list[Widget]:
-    return [Widget(id=index, name=f"w{index}") for index in range(1, count + 1)]
+def _widgets(count: int) -> list[AcmeCacheWidget]:
+    return [AcmeCacheWidget(id=index, name=f"w{index}") for index in range(1, count + 1)]
 
 
 def _uuid_widgets(count: int) -> list[UuidWidget]:
@@ -93,30 +93,30 @@ def _code_widgets(count: int) -> list[CodeWidget]:
 
 
 @pytest.fixture
-def env(cache_config: CacheConfig) -> _Env[Widget]:
+def env(cache_config: CacheConfig) -> AcmeIndexEnv[AcmeCacheWidget]:
     """Cached repository over counting doubles, seeded with five rows."""
-    return _make_env(_widgets(ROW_COUNT), Widget, cache_config)
+    return _make_env(_widgets(ROW_COUNT), AcmeCacheWidget, cache_config)
 
 
-async def _entity_cache_key(env: _Env[RowT], obj_id: object) -> str:
+async def _entity_cache_key(env: AcmeIndexEnv[RowT], obj_id: object) -> str:
     tags = env.resolver.entity_tags(env.wrapper.entity_name, obj_id)
     fingerprint = await env.resolver.fingerprint(tags)
     return entity_key(env.wrapper.entity_name, obj_id, PROFILE, fingerprint, scope="")
 
 
-async def _warm_index(env: _Env[RowT], limit: int = ROW_COUNT) -> None:
+async def _warm_index(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> None:
     await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
     env.repository.reset_counters()
     env.backend.reset_counters()
 
 
-async def _evict_entities(env: _Env[RowT], ids: Sequence[object]) -> None:
+async def _evict_entities(env: AcmeIndexEnv[RowT], ids: Sequence[object]) -> None:
     for obj_id in ids:
         del env.backend.data[await _entity_cache_key(env, obj_id)]
     env.backend.reset_counters()
 
 
-async def _list_all(env: _Env[RowT], limit: int = ROW_COUNT) -> PageResult[RowT]:
+async def _list_all(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> PageResult[RowT]:
     page = await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
     assert isinstance(page, PageResult)
     return page
@@ -127,7 +127,7 @@ class TestPartiallyWarmIndex:
 
     @pytest.mark.asyncio
     async def test_refills_missing_entities_with_a_single_repository_query(
-        self, env: _Env[Widget]
+        self, env: AcmeIndexEnv[AcmeCacheWidget]
     ) -> None:
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
@@ -142,7 +142,9 @@ class TestPartiallyWarmIndex:
         ]
 
     @pytest.mark.asyncio
-    async def test_queries_the_missing_ids_with_a_single_in_filter(self, env: _Env[Widget]) -> None:
+    async def test_queries_the_missing_ids_with_a_single_in_filter(
+        self, env: AcmeIndexEnv[AcmeCacheWidget]
+    ) -> None:
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
 
@@ -158,7 +160,7 @@ class TestPartiallyWarmIndex:
 
     @pytest.mark.asyncio
     async def test_reads_entity_fingerprints_in_one_cache_round_trip(
-        self, env: _Env[Widget]
+        self, env: AcmeIndexEnv[AcmeCacheWidget]
     ) -> None:
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
@@ -170,14 +172,14 @@ class TestPartiallyWarmIndex:
 
     @pytest.mark.asyncio
     async def test_fingerprint_round_trips_do_not_grow_with_the_index_size(
-        self, cache_config: CacheConfig, env: _Env[Widget]
+        self, cache_config: CacheConfig, env: AcmeIndexEnv[AcmeCacheWidget]
     ) -> None:
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
         await _list_all(env)
         small = env.backend.tag_multi_get_calls
 
-        larger = _make_env(_widgets(20), Widget, cache_config)
+        larger = _make_env(_widgets(20), AcmeCacheWidget, cache_config)
         await _warm_index(larger, limit=20)
         await _evict_entities(larger, range(1, 21, 2))
         await _list_all(larger, limit=20)
@@ -185,7 +187,9 @@ class TestPartiallyWarmIndex:
         assert larger.backend.tag_multi_get_calls == small
 
     @pytest.mark.asyncio
-    async def test_writes_back_only_the_missing_entries(self, env: _Env[Widget]) -> None:
+    async def test_writes_back_only_the_missing_entries(
+        self, env: AcmeIndexEnv[AcmeCacheWidget]
+    ) -> None:
         await _warm_index(env)
         await _evict_entities(env, (3,))
 
@@ -244,7 +248,7 @@ class TestSingleMissingEntity:
     """One miss is cheaper through ``get_by_id`` than through a paginated query."""
 
     @pytest.mark.asyncio
-    async def test_uses_get_by_id(self, env: _Env[Widget]) -> None:
+    async def test_uses_get_by_id(self, env: AcmeIndexEnv[AcmeCacheWidget]) -> None:
         await _warm_index(env)
         await _evict_entities(env, (3,))
 
@@ -263,7 +267,7 @@ class TestOversizedIndex:
     async def test_splits_the_refill_into_batches(self, cache_config: CacheConfig) -> None:
         row_count = REFILL_BATCH_SIZE * 2 + 1
         rows = _widgets(row_count)
-        env = _make_env(rows, Widget, cache_config)
+        env = _make_env(rows, AcmeCacheWidget, cache_config)
         # The index is written by the cursor path, which no backend limits.
         await env.wrapper.list_with_query(
             _cursor_query(row_count),
@@ -299,9 +303,9 @@ class TestRestrictedFilterFields:
         rows = _widgets(ROW_COUNT)
         env = _make_env(
             rows,
-            Widget,
+            AcmeCacheWidget,
             cache_config,
-            repository=RestrictedFilterRepository(rows, Widget),
+            repository=RestrictedFilterRepository(rows, AcmeCacheWidget),
         )
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
@@ -386,7 +390,7 @@ class TestStaleIndex:
 
     @pytest.mark.asyncio
     async def test_missing_id_in_the_refill_query_triggers_the_list_fallback(
-        self, env: _Env[Widget]
+        self, env: AcmeIndexEnv[AcmeCacheWidget]
     ) -> None:
         await _warm_index(env)
         await _evict_entities(env, (3, 5))
@@ -403,7 +407,7 @@ class TestFullyWarmIndex:
     """A fully warm index is served without touching the repository."""
 
     @pytest.mark.asyncio
-    async def test_issues_no_repository_calls(self, env: _Env[Widget]) -> None:
+    async def test_issues_no_repository_calls(self, env: AcmeIndexEnv[AcmeCacheWidget]) -> None:
         await _warm_index(env)
 
         page = await _list_all(env)
@@ -441,17 +445,19 @@ class TestResolverWithoutBatchSupport:
         self, cache_config: CacheConfig
     ) -> None:
         rows = _widgets(ROW_COUNT)
-        repository = CountingRepository(rows, Widget)
+        repository = CountingRepository(rows, AcmeCacheWidget)
         backend = CountingCacheBackend()
         batching = GenerationalDependencyResolver(backend)
         resolver = _PerGroupResolver(batching)
-        wrapper: CachedRepository[Widget, WidgetCreate, WidgetUpdate, object] = CachedRepository(
-            repository,
-            config=cache_config,
-            cache=backend,
-            dependency_resolver=resolver,
+        wrapper: CachedRepository[AcmeCacheWidget, WidgetCreate, WidgetUpdate, object] = (
+            CachedRepository(
+                repository,
+                config=cache_config,
+                cache=backend,
+                dependency_resolver=resolver,
+            )
         )
-        env = _Env(repository, backend, batching, wrapper)
+        env = AcmeIndexEnv(repository, backend, batching, wrapper)
         await _warm_index(env)
         await _evict_entities(env, MISSING_IDS)
 

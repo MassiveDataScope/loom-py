@@ -3,7 +3,7 @@
 A use case writes to its primary store, the ``__store__`` of its main model,
 and reads from any store. A constructor parameter annotated ``Joined[...]``
 declares one more store it writes to: the store of the repository's model,
-which joins the invocation and commits with it (ADR 0008).
+which joins the invocation and commits with it.
 """
 
 from __future__ import annotations

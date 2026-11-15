@@ -73,8 +73,6 @@ class ClickHouseSqlExecutor:
         try:
             driver_result = await self._client.query(sql, parameters=parameters, settings=settings)
         except OperationalError as exc:
-            # OperationalError subclasses DatabaseError: transport failures
-            # must be caught first and mapped to a generic system error.
             raise SystemError("SQL backend is unreachable or failed at transport level") from exc
         except DatabaseError as exc:
             raise SqlExecutionError(sanitize_backend_error(str(exc))) from exc
@@ -90,7 +88,6 @@ class ClickHouseSqlExecutor:
     def _query_settings(self, options: SqlExecutionOptions, limit: int) -> dict[str, Any]:
         """Merge the policy settings last so connection settings never win."""
         settings: dict[str, Any] = dict(self._config.settings)
-        # Without an effective role nothing may inject one (fail-closed).
         settings.pop("role", None)
         settings.update(
             limit=limit + 1,

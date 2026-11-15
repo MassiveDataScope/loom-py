@@ -130,8 +130,6 @@ def required_guard_revision(audited: bool) -> int | None:
     return AUDIT_GUARD_REVISION if audited else None
 
 
-# The columns of ``<schema>.audit_log`` as ``name type[ not null]``, in order. The
-# shape a CDC consumer must also produce; startup and ``verify`` compare with it.
 AUDIT_LOG_COLUMNS: Final = (
     "id bigint not null",
     "at timestamp with time zone not null",
@@ -153,8 +151,6 @@ AUDIT_LOG_COLUMNS: Final = (
     "backend_pid integer",
     "origin text not null",
 )
-# Its constraints and indexes, schema-qualified names stripped, sorted. A
-# changed primary key, CHECK or index breaks a CDC consumer as much as a column.
 AUDIT_LOG_CONSTRAINTS: Final = (
     "constraint CHECK ((op = ANY (ARRAY['I'::bpchar, 'U'::bpchar, 'D'::bpchar])))",
     "constraint CHECK ((origin = ANY (ARRAY['trigger'::text, 'cdc'::text])))",

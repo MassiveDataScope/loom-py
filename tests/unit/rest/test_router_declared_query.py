@@ -18,8 +18,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.registration import classify_key
 from loom.core.use_case import Query
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
@@ -90,7 +91,7 @@ class ListOrdersUnannotatedProfile(UseCase[Any, int]):
         return query.limit
 
 
-class Orders(RestInterface[Any]):
+class AcmeOrderQueryApi(RestInterface[Any]):
     prefix = "/orders"
     routes = (
         RestRoute(use_case=ListOrders, method="GET", path=""),
@@ -122,7 +123,7 @@ class Orders(RestInterface[Any]):
 
 class _RecordingFactory(UseCaseFactory):
     def __init__(self) -> None:
-        super().__init__(LoomContainer())
+        super().__init__(LoomContainer(classify_key=classify_key, implicit=main_repository))
         self.built: list[type[Any]] = []
 
     def build(self, use_case_type: type[Any]) -> Any:
@@ -138,14 +139,14 @@ def factory() -> _RecordingFactory:
 @pytest.fixture
 def client(factory: _RecordingFactory) -> TestClient:
     compiler = UseCaseCompiler()
-    for route in Orders.routes:
+    for route in AcmeOrderQueryApi.routes:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
     app = FastAPI()
     register_error_handlers(app)
     registry = bind_interfaces(
         app,
-        RestInterfaceCompiler(compiler).compile(Orders),
+        RestInterfaceCompiler(compiler).compile(AcmeOrderQueryApi),
         factory,
         RuntimeExecutor(compiler),
         ObservabilityRuntime.noop(),
@@ -154,207 +155,203 @@ def client(factory: _RecordingFactory) -> TestClient:
     return TestClient(app)
 
 
-def test_declared_values_reach_execute_typed(client: TestClient) -> None:
-    response = client.get(
-        "/orders",
-        params={
+class TestDeclaredQueryParameters:
+    def test_declared_values_reach_execute_typed(self, client: TestClient) -> None:
+        response = client.get(
+            "/orders",
+            params={
+                "customerId": _CUSTOMER,
+                "status": "open",
+                "changed_since": "2026-09-15T10:00:00+02:00",
+                "cursor": "abc",
+                "limit": "7",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
             "customerId": _CUSTOMER,
             "status": "open",
             "changed_since": "2026-09-15T10:00:00+02:00",
             "cursor": "abc",
-            "limit": "7",
-        },
+            "limit": 7,
+            "flag": False,
+        }
+
+    def test_defaults_apply_when_absent(self, client: TestClient) -> None:
+        response = client.get("/orders")
+
+        assert response.json() == {
+            "customerId": None,
+            "status": None,
+            "changed_since": None,
+            "cursor": None,
+            "limit": 50,
+            "flag": False,
+        }
+
+    @pytest.mark.parametrize(
+        "query", ["changed_sinse=2026-01-01T00:00:00Z", "customer_id=x", "limit=5&limit=6"]
     )
+    def test_an_unknown_or_repeated_parameter_is_unsupported(
+        self, client: TestClient, query: str
+    ) -> None:
+        response = client.get(f"/orders?{query}")
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "customerId": _CUSTOMER,
-        "status": "open",
-        "changed_since": "2026-09-15T10:00:00+02:00",
-        "cursor": "abc",
-        "limit": 7,
-        "flag": False,
-    }
+        detail = response.json()["detail"]
+        assert (response.status_code, detail["code"]) == (400, "unsupported_query")
+        assert detail["message"] == (
+            "The request has a query parameter this route does not accept, or one given twice."
+        )
 
+    def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
+        self,
+        client: TestClient,
+    ) -> None:
+        response = client.get("/orders/by-profile?profile=detail&limit=5")
 
-def test_defaults_apply_when_absent(client: TestClient) -> None:
-    response = client.get("/orders")
+        assert (response.status_code, response.json()) == (200, ["detail", 5])
 
-    assert response.json() == {
-        "customerId": None,
-        "status": None,
-        "changed_since": None,
-        "cursor": None,
-        "limit": 50,
-        "flag": False,
-    }
-
-
-@pytest.mark.parametrize(
-    "query", ["changed_sinse=2026-01-01T00:00:00Z", "customer_id=x", "limit=5&limit=6"]
-)
-def test_an_unknown_or_repeated_parameter_is_unsupported(client: TestClient, query: str) -> None:
-    response = client.get(f"/orders?{query}")
-
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (400, "unsupported_query")
-    assert detail["message"] == (
-        "The request has a query parameter this route does not accept, or one given twice."
+    @pytest.mark.parametrize(
+        ("query", "field"),
+        [
+            ("limit=500", "limit"),
+            ("status=gone", "status"),
+            ("customerId=not-a-uuid", "customerId"),
+            ("changed_since=2026-09-15T10:00:00", "changed_since"),
+        ],
     )
+    def test_a_bad_value_is_a_query_validation_error(
+        self, client: TestClient, query: str, field: str
+    ) -> None:
+        response = client.get(f"/orders?{query}")
 
+        detail = response.json()["detail"]
+        assert (response.status_code, detail["code"]) == (400, "query_validation")
+        assert [violation["field"] for violation in detail["violations"]] == [field]
 
-def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
-    client: TestClient,
-) -> None:
-    response = client.get("/orders/by-profile?profile=detail&limit=5")
+    def test_openapi_publishes_exactly_the_declared_parameters(self, client: TestClient) -> None:
+        document = client.get("/openapi.json").json()
 
-    assert (response.status_code, response.json()) == (200, ["detail", 5])
+        parameters = document["paths"]["/orders"]["get"]["parameters"]
+        assert parameters == [
+            {
+                "name": "customerId",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "format": "uuid"},
+            },
+            {
+                "name": "status",
+                "in": "query",
+                "required": False,
+                "schema": {"$ref": "#/components/schemas/OrderStatus"},
+            },
+            {
+                "name": "changed_since",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "format": "date-time"},
+            },
+            {"name": "cursor", "in": "query", "required": False, "schema": {"type": "string"}},
+            {
+                "name": "limit",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                "description": "Rows per page.",
+            },
+            {
+                "name": "flag",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "boolean", "default": False},
+            },
+        ]
+        assert document["components"]["schemas"]["OrderStatus"]["enum"] == ["open", "shipped"]
 
+    def test_a_pydantic_query_is_accepted_validated_and_published(self, client: TestClient) -> None:
+        accepted = client.get("/orders/from-model?status=shipped&limit=3")
+        refused = client.get("/orders/from-model?limit=0")
+        unknown = client.get("/orders/from-model?page=2")
+        operation = client.get("/openapi.json").json()["paths"]["/orders/from-model"]["get"]
 
-@pytest.mark.parametrize(
-    ("query", "field"),
-    [
-        ("limit=500", "limit"),
-        ("status=gone", "status"),
-        ("customerId=not-a-uuid", "customerId"),
-        ("changed_since=2026-09-15T10:00:00", "changed_since"),
-    ],
-)
-def test_a_bad_value_is_a_query_validation_error(
-    client: TestClient, query: str, field: str
-) -> None:
-    response = client.get(f"/orders?{query}")
+        assert (accepted.status_code, accepted.json()) == (200, ["shipped", 3])
+        assert (refused.status_code, refused.json()["detail"]["code"]) == (400, "query_validation")
+        assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
+        assert all("title" not in parameter["schema"] for parameter in operation["parameters"])
+        assert [parameter["name"] for parameter in operation["parameters"]] == [
+            "customerId",
+            "status",
+            "changed_since",
+            "limit",
+            "flag",
+        ]
 
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (400, "query_validation")
-    assert [violation["field"] for violation in detail["violations"]] == [field]
-
-
-def test_openapi_publishes_exactly_the_declared_parameters(client: TestClient) -> None:
-    document = client.get("/openapi.json").json()
-
-    parameters = document["paths"]["/orders"]["get"]["parameters"]
-    assert parameters == [
-        {
-            "name": "customerId",
-            "in": "query",
-            "required": False,
-            "schema": {"type": "string", "format": "uuid"},
-        },
-        {
-            "name": "status",
-            "in": "query",
-            "required": False,
-            "schema": {"$ref": "#/components/schemas/OrderStatus"},
-        },
-        {
-            "name": "changed_since",
-            "in": "query",
-            "required": False,
-            "schema": {"type": "string", "format": "date-time"},
-        },
-        {"name": "cursor", "in": "query", "required": False, "schema": {"type": "string"}},
-        {
-            "name": "limit",
-            "in": "query",
-            "required": False,
-            "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
-            "description": "Rows per page.",
-        },
-        {
-            "name": "flag",
-            "in": "query",
-            "required": False,
-            "schema": {"type": "boolean", "default": False},
-        },
-    ]
-    assert document["components"]["schemas"]["OrderStatus"]["enum"] == ["open", "shipped"]
-
-
-def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient) -> None:
-    accepted = client.get("/orders/from-model?status=shipped&limit=3")
-    refused = client.get("/orders/from-model?limit=0")
-    unknown = client.get("/orders/from-model?page=2")
-    operation = client.get("/openapi.json").json()["paths"]["/orders/from-model"]["get"]
-
-    assert (accepted.status_code, accepted.json()) == (200, ["shipped", 3])
-    assert (refused.status_code, refused.json()["detail"]["code"]) == (400, "query_validation")
-    assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
-    assert all("title" not in parameter["schema"] for parameter in operation["parameters"])
-    assert [parameter["name"] for parameter in operation["parameters"]] == [
-        "customerId",
-        "status",
-        "changed_since",
-        "limit",
-        "flag",
-    ]
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "/orders?profile=detail",
-        "/orders/by-profile?profile=detail&profile=default",
-        "/orders/exposed-unused?profile=detail",
-        "/orders/unannotated-profile?profile=detail",
-    ],
-)
-def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
-    client: TestClient, url: str
-) -> None:
-    response = client.get(url)
-
-    assert (response.status_code, response.json()["detail"]["code"]) == (
-        400,
-        "unsupported_query",
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "/orders?profile=detail",
+            "/orders/by-profile?profile=detail&profile=default",
+            "/orders/exposed-unused?profile=detail",
+            "/orders/unannotated-profile?profile=detail",
+        ],
     )
+    def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
+        self, client: TestClient, url: str
+    ) -> None:
+        response = client.get(url)
 
+        assert (response.status_code, response.json()["detail"]["code"]) == (
+            400,
+            "unsupported_query",
+        )
 
-@pytest.mark.parametrize(
-    "url", ["/orders?page=2", "/orders?limit=500", "/orders/by-profile?profile=unknown"]
-)
-def test_a_refused_query_does_not_build_the_use_case(
-    client: TestClient, factory: _RecordingFactory, url: str
-) -> None:
-    response = client.get(url)
+    @pytest.mark.parametrize(
+        "url", ["/orders?page=2", "/orders?limit=500", "/orders/by-profile?profile=unknown"]
+    )
+    def test_a_refused_query_does_not_build_the_use_case(
+        self, client: TestClient, factory: _RecordingFactory, url: str
+    ) -> None:
+        response = client.get(url)
 
-    assert response.status_code == 400
-    assert factory.built == []
+        assert response.status_code == 400
+        assert factory.built == []
 
+    @pytest.mark.parametrize("path", ["/orders", "/orders/from-model"])
+    def test_a_bad_enum_value_is_not_echoed(self, client: TestClient, path: str) -> None:
+        response = client.get(path, params={"status": "secret-input-value"})
 
-@pytest.mark.parametrize("path", ["/orders", "/orders/from-model"])
-def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
-    response = client.get(path, params={"status": "secret-input-value"})
+        assert (response.status_code, response.json()["detail"]["code"]) == (
+            400,
+            "query_validation",
+        )
+        assert "secret-input-value" not in response.text
 
-    assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
-    assert "secret-input-value" not in response.text
+    def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
+        self,
+        client: TestClient,
+    ) -> None:
+        response = client.get("/orders/by-profile", params={"profile": "secret-input-value"})
 
+        detail = response.json()["detail"]
+        assert (response.status_code, detail["code"]) == (400, "query_validation")
+        assert detail["violations"] == [
+            {"field": "profile", "message": "Not a profile this route allows."}
+        ]
+        assert "secret-input-value" not in response.text
 
-def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
-    client: TestClient,
-) -> None:
-    response = client.get("/orders/by-profile", params={"profile": "secret-input-value"})
+    def test_a_field_without_default_is_a_required_parameter(self, client: TestClient) -> None:
+        operation = client.get("/openapi.json").json()["paths"]["/orders/by-owner"]["get"]
 
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (400, "query_validation")
-    assert detail["violations"] == [
-        {"field": "profile", "message": "Not a profile this route allows."}
-    ]
-    assert "secret-input-value" not in response.text
+        assert [(p["name"], p["required"]) for p in operation["parameters"]] == [
+            ("owner", True),
+            ("tier", False),
+        ]
 
+    def test_a_missing_required_field_is_a_query_validation_error(self, client: TestClient) -> None:
+        response = client.get("/orders/by-owner")
 
-def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> None:
-    operation = client.get("/openapi.json").json()["paths"]["/orders/by-owner"]["get"]
-
-    assert [(p["name"], p["required"]) for p in operation["parameters"]] == [
-        ("owner", True),
-        ("tier", False),
-    ]
-
-
-def test_a_missing_required_field_is_a_query_validation_error(client: TestClient) -> None:
-    response = client.get("/orders/by-owner")
-
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (400, "query_validation")
-    assert [violation["field"] for violation in detail["violations"]] == ["owner"]
+        detail = response.json()["detail"]
+        assert (response.status_code, detail["code"]) == (400, "query_validation")
+        assert [violation["field"] for violation in detail["violations"]] == ["owner"]

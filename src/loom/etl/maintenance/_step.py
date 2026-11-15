@@ -61,11 +61,6 @@ class MaintenanceStep(Generic[ParamsT]):
         return type(self).operations
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _extract_params_type(cls: type[Any]) -> type[Any] | None:
     """Extract the ParamsT generic arg from MaintenanceStep[ParamsT]."""
     return _extract_generic_arg(cls, MaintenanceStep)

@@ -53,8 +53,6 @@ if TYPE_CHECKING:
     from loom.streaming.mongo._bytewax_source import MongoCDCSource
 
 logger = logging.getLogger(__name__)
-# The change-stream source imports pymongo: an island of the 'mongo' extra,
-# loaded only when a flow reads MongoDB.
 _MONGO_CDC_ISLAND = "loom.streaming.mongo._bytewax_source"
 ItemT = TypeVar("ItemT")
 PayloadT = TypeVar("PayloadT", bound=StreamPayload)
@@ -130,7 +128,6 @@ def _write_kafka_batch(
                 if dlq_lineage is not None:
                     request = dlq_lineage(item, request)
                 headers = {**request.headers, "x-dlq-error": dlq_error}
-                # ``replace`` copies fields added later.
                 _send_request(message_producer, sink.dlq_topic, replace(request, headers=headers))
             producer.flush()
         except KafkaDeliveryError as dlq_exc:
@@ -167,7 +164,6 @@ def _keep_message_lineage(
     request: _KafkaSendRequest[StreamPayload],
 ) -> _KafkaSendRequest[StreamPayload]:
     """Keep the failed message's own trace on its DLQ record instead of a child trace."""
-    # ``replace`` copies fields added later.
     return replace(
         request,
         trace_id=message.meta.trace_id,
@@ -190,8 +186,6 @@ def _commit_runtime_items(
 
 _COMMITTED_FETCH_TIMEOUT_MS = 10_000
 _METADATA_FETCH_TIMEOUT_S = 10.0
-# Cluster metadata converges a moment after a topic is created or a leader is
-# elected, so a source that starts in that window retries instead of dying.
 _METADATA_VISIBILITY_TIMEOUT_S = 15.0
 _METADATA_RETRY_INTERVAL_S = 0.25
 _RETRIABLE_METADATA_CODES = frozenset(
@@ -389,8 +383,6 @@ class _KafkaSourcePartition(StatefulSourcePartition[KafkaRecord[bytes], "int | N
         self._backoff = timedelta(milliseconds=settings.poll_backoff_ms)
         self._keepalive = timedelta(milliseconds=settings.commit_keepalive_ms)
         self._next_awake: datetime | None = None
-        # Seeded so an epoch with no data snapshots the true read position
-        # instead of overwriting a prior resume_state with None.
         self._next_offset: int | None = start_position
         self._last_commit_at = datetime.now(UTC)
 
@@ -547,10 +539,7 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
     per message, in that message's own trace, plus one ``Scope.WRITE`` span for
     the flush itself, in a trace of its own, linking back to all of them.
 
-    A flow ending in ``IntoTopic`` used to produce a trace that stopped at its
-    last node span. Wrapping rather than branching inside the write keeps the
-    untraced path — the framework's highest-throughput path — free of the extra
-    branch: an untraced sink builds the bare partition instead.
+    An untraced sink builds the bare partition instead.
 
     Args:
         partition: Kafka partition that performs the write.

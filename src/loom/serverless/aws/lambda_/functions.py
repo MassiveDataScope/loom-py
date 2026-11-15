@@ -205,7 +205,6 @@ def _served(where: str, trigger: Trigger) -> list[str]:
 
 
 def _check_batching(where: str, queue: QueueMapping | None) -> None:
-    # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
     if queue is None:
         return
     if (queue.batch_size or 0) > 10 and not queue.batching_window_s:

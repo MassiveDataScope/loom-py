@@ -14,7 +14,9 @@ import pytest
 from loom.composition import AppConfig, Application, CompositionSource, Recipe
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
@@ -55,31 +57,49 @@ def composition_source(
 
 
 class Serving:
-    """An adapter composing exactly the models, use cases and jobs it is given."""
+    """An adapter composing exactly the models, use cases and jobs it is given, with *overrides*.
+
+    *lenient* is passed to its recipe as :attr:`Recipe.lenient`.
+    """
 
     def __init__(
         self,
         *models: type[BaseModel],
         use_cases: tuple[type, ...] = (),
         jobs: tuple[type, ...] = (),
+        overrides: tuple[Callable[[LoomContainer], None], ...] = (),
+        lenient: bool = False,
     ) -> None:
         self.discovered = DiscoveryResult(
             models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
         )
+        self.overrides = overrides
+        self.lenient = lenient
 
     def recipe(self, source: CompositionSource) -> Recipe:
         del source
-        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered)
+        return Recipe(
+            profile=SERVER_PROFILE,
+            discovered=self.discovered,
+            overrides=self.overrides,
+            lenient=self.lenient,
+        )
 
     def bind(self, application: Application) -> Application:
         return application
+
+
+def coordinator_of(executor: RuntimeExecutor) -> Any:
+    """The coordinator *executor* opens a top-level writer's scope over, if any."""
+    top_level = executor._boundaries._top_level  # noqa: SLF001
+    return getattr(top_level, "coordinator", None)
 
 
 def uow_factory(
     application: Application, key: StoreKey = DEFAULT_STORE
 ) -> UnitOfWorkFactory | None:
     """The unit-of-work factory *application* runs store *key*'s executions with, if any."""
-    coordinator: Any = application.kernel.executor._coordinator  # noqa: SLF001
+    coordinator = coordinator_of(application.kernel.executor)
     return None if coordinator is None else coordinator._factories.get(key)  # noqa: SLF001
 
 
@@ -98,6 +118,20 @@ def fixture_project(tmp_path: Path) -> ProjectFactory:
         return write_project(directory, **options)
 
     return write
+
+
+@pytest.fixture
+def executors(monkeypatch: pytest.MonkeyPatch) -> list[RuntimeExecutor]:
+    """Every ``RuntimeExecutor`` constructed during the test, in order."""
+    built: list[RuntimeExecutor] = []
+    construct = RuntimeExecutor.__init__
+
+    def counted(self: RuntimeExecutor, *args: Any, **kwargs: Any) -> None:
+        built.append(self)
+        construct(self, *args, **kwargs)
+
+    monkeypatch.setattr(RuntimeExecutor, "__init__", counted)
+    return built
 
 
 @pytest.fixture

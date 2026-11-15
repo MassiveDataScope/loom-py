@@ -46,31 +46,6 @@ class _Station(BaseModel):
 _TAKEN_AT = datetime(2026, 1, 2, 8, 30, tzinfo=UTC)
 
 
-def test_the_repository_write_path_and_to_column_row_give_the_same_column_values() -> None:
-    compile_all(_Station)
-    compiled = cast(Any, get_compiled(_Station))
-    repository: RepositorySQLAlchemy[_Station, int] = RepositorySQLAlchemy(
-        session_manager=MagicMock(metadata=get_metadata()),
-        model=_Station,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
-    station = _Station(
-        id=1, mode=_Mode.MANUAL, origin=_Point(x=3, taken_at=_TAKEN_AT), opens_at=time(8, 30)
-    )
-
-    from_repository = repository._serialize_input(station)
-    from_columns = to_column_row(station, compiled.__table__.columns)
-
-    expected = {
-        "id": 1,
-        "mode": "manual",
-        "origin": {"x": 3, "taken_at": "2026-01-02T08:30:00Z"},
-        "opens_at": time(8, 30),
-    }
-    assert from_repository == expected
-    assert from_columns == expected
-
-
 class _Reading(msgspec.Struct):
     reading_id: int
     mode: _Mode
@@ -111,41 +86,65 @@ def _reading(**overrides: Any) -> _Reading:
     return _Reading(**{**values, **overrides})
 
 
-def test_each_column_takes_the_attribute_of_its_name_in_its_column_form() -> None:
-    row = to_column_row(_reading(note="n"), _reading_table().columns)
+class TestColumnRow:
+    def test_the_repository_write_path_and_to_column_row_give_the_same_column_values(self) -> None:
+        compile_all(_Station)
+        compiled = cast(Any, get_compiled(_Station))
+        repository: RepositorySQLAlchemy[_Station, int] = RepositorySQLAlchemy(
+            session_manager=MagicMock(metadata=get_metadata()),
+            model=_Station,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        station = _Station(
+            id=1, mode=_Mode.MANUAL, origin=_Point(x=3, taken_at=_TAKEN_AT), opens_at=time(8, 30)
+        )
 
-    assert row == {
-        "reading_id": 1,
-        "mode": "auto",
-        "origin": {"x": 3, "taken_at": "2026-01-02T08:30:00Z"},
-        "opens_at": time(8, 30),
-        "amount": Decimal("1.50"),
-        "visit_id": UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
-        "blob": b"\x00\x01",
-        "note": "n",
-    }
+        from_repository = repository._serialize_input(station)
+        from_columns = to_column_row(station, compiled.__table__.columns)
 
+        expected = {
+            "id": 1,
+            "mode": "manual",
+            "origin": {"x": 3, "taken_at": "2026-01-02T08:30:00Z"},
+            "opens_at": time(8, 30),
+        }
+        assert from_repository == expected
+        assert from_columns == expected
 
-def test_an_unset_value_leaves_its_column_out_of_the_row() -> None:
-    row = to_column_row(_reading(), _reading_table().columns)
+    def test_each_column_takes_the_attribute_of_its_name_in_its_column_form(self) -> None:
+        row = to_column_row(_reading(note="n"), _reading_table().columns)
 
-    assert "note" not in row
-    assert set(row) == {column.name for column in _reading_table().columns} - {"note"}
+        assert row == {
+            "reading_id": 1,
+            "mode": "auto",
+            "origin": {"x": 3, "taken_at": "2026-01-02T08:30:00Z"},
+            "opens_at": time(8, 30),
+            "amount": Decimal("1.50"),
+            "visit_id": UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
+            "blob": b"\x00\x01",
+            "note": "n",
+        }
 
+    def test_an_unset_value_leaves_its_column_out_of_the_row(self) -> None:
+        row = to_column_row(_reading(), _reading_table().columns)
 
-def test_a_time_whose_offset_its_column_cannot_take_is_refused() -> None:
-    reading = _reading(opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
-    columns = _reading_table().columns
+        assert "note" not in row
+        assert set(row) == {column.name for column in _reading_table().columns} - {"note"}
 
-    with pytest.raises(BoundaryValidationError) as refused:
-        to_column_row(reading, columns)
+    def test_a_time_whose_offset_its_column_cannot_take_is_refused(self) -> None:
+        reading = _reading(opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
+        columns = _reading_table().columns
 
-    assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
-    assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
+        with pytest.raises(BoundaryValidationError) as refused:
+            to_column_row(reading, columns)
 
+        assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
 
-def test_a_time_with_an_offset_is_kept_in_a_json_column() -> None:
-    aware = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
-    table = Table("t", MetaData(), Column("opens_at", sa_types.JSON))
+    def test_a_time_with_an_offset_is_kept_in_a_json_column(self) -> None:
+        aware = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+        table = Table("t", MetaData(), Column("opens_at", sa_types.JSON))
 
-    assert to_column_row(_reading(opens_at=aware), table.columns) == {"opens_at": "08:30:00+02:00"}
+        assert to_column_row(_reading(opens_at=aware), table.columns) == {
+            "opens_at": "08:30:00+02:00"
+        }

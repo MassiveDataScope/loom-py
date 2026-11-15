@@ -72,108 +72,108 @@ async def _run(url: str, statement: str, *, role: str | None = None) -> None:
         await engine.dispose()
 
 
-async def test_no_role_can_change_the_log_or_a_partition(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database, partition = await _database(scoped_database, tmp_path)
-    users = {
-        "write": database.write,
-        "read": database.read,
-        "bypass": database.bypass,
-        "migrator": database.migrator,
-    }
-    accepted: list[str] = []
-    for rel in (f"{SCHEMA}.audit_log", partition):
-        for who, url in users.items():
-            for operation, statement in WRITES.items():
-                if who == "migrator" and operation == "insert":
-                    continue  # the schema's owner is trusted to insert; see below
-                try:
-                    await _run(url, statement.format(rel=rel))
-                except DBAPIError:
-                    continue
-                accepted.append(f"{who} {operation} {rel}")
-        for operation, statement in WRITES.items():
-            try:
-                await _run(database.superuser, statement.format(rel=rel), role=f"{SCHEMA}_auditor")
-            except DBAPIError:
-                continue
-            accepted.append(f"auditor {operation} {rel}")
-
-    assert accepted == []
-
-
-async def test_only_the_auditor_and_the_owner_read_the_log(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database, partition = await _database(scoped_database, tmp_path)
-    read = "SELECT count(*) FROM {rel}"
-    refused: list[str] = []
-    for rel in (f"{SCHEMA}.audit_log", partition):
-        statement = read.format(rel=rel)
-        for who, url in {
+class TestAuditReader:
+    async def test_no_role_can_change_the_log_or_a_partition(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database, partition = await _database(scoped_database, tmp_path)
+        users = {
             "write": database.write,
             "read": database.read,
             "bypass": database.bypass,
-        }.items():
-            with pytest.raises(DBAPIError, match="permission denied"):
-                await _run(url, statement)
-            refused.append(who)
-        await _run(database.superuser, statement, role=f"{SCHEMA}_auditor")
-        await _run(database.migrator, statement)
+            "migrator": database.migrator,
+        }
+        accepted: list[str] = []
+        for rel in (f"{SCHEMA}.audit_log", partition):
+            for who, url in users.items():
+                for operation, statement in WRITES.items():
+                    if who == "migrator" and operation == "insert":
+                        continue  # the schema's owner is trusted to insert; see below
+                    try:
+                        await _run(url, statement.format(rel=rel))
+                    except DBAPIError:
+                        continue
+                    accepted.append(f"{who} {operation} {rel}")
+            for operation, statement in WRITES.items():
+                try:
+                    await _run(
+                        database.superuser, statement.format(rel=rel), role=f"{SCHEMA}_auditor"
+                    )
+                except DBAPIError:
+                    continue
+                accepted.append(f"auditor {operation} {rel}")
 
-    assert len(refused) == 6
+        assert accepted == []
 
+    async def test_only_the_auditor_and_the_owner_read_the_log(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database, partition = await _database(scoped_database, tmp_path)
+        read = "SELECT count(*) FROM {rel}"
+        refused: list[str] = []
+        for rel in (f"{SCHEMA}.audit_log", partition):
+            statement = read.format(rel=rel)
+            for who, url in {
+                "write": database.write,
+                "read": database.read,
+                "bypass": database.bypass,
+            }.items():
+                with pytest.raises(DBAPIError, match="permission denied"):
+                    await _run(url, statement)
+                refused.append(who)
+            await _run(database.superuser, statement, role=f"{SCHEMA}_auditor")
+            await _run(database.migrator, statement)
 
-@pytest.mark.parametrize(
-    "statement",
-    [
-        "ALTER TABLE {log} DISABLE TRIGGER loom_audit_log_immutable_row",
-        "DROP TRIGGER loom_audit_log_immutable_truncate ON {log}",
-        "ALTER TABLE {schema}.accounts DISABLE TRIGGER loom_audit_record",
-        "DROP TRIGGER loom_audit_record ON {schema}.memos",
-        "ALTER TABLE {log} DETACH PARTITION {partition}",
-        "DROP TABLE {partition}",
-        "DROP TABLE {log}",
-        "SELECT detach_partition('{log}'::regclass, '{partition_name}', true)",
-    ],
-)
-async def test_the_owner_cannot_disable_detach_or_drop_the_audit(
-    scoped_database: BootstrapFactory, tmp_path: Path, statement: str
-) -> None:
-    database, partition = await _database(scoped_database, tmp_path)
-    sql = statement.format(
-        log=f"{SCHEMA}.audit_log",
-        schema=SCHEMA,
-        partition=partition,
-        partition_name=partition.split(".", 1)[1],
+        assert len(refused) == 6
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "ALTER TABLE {log} DISABLE TRIGGER loom_audit_log_immutable_row",
+            "DROP TRIGGER loom_audit_log_immutable_truncate ON {log}",
+            "ALTER TABLE {schema}.accounts DISABLE TRIGGER loom_audit_record",
+            "DROP TRIGGER loom_audit_record ON {schema}.memos",
+            "ALTER TABLE {log} DETACH PARTITION {partition}",
+            "DROP TABLE {partition}",
+            "DROP TABLE {log}",
+            "SELECT detach_partition('{log}'::regclass, '{partition_name}', true)",
+        ],
     )
+    async def test_the_owner_cannot_disable_detach_or_drop_the_audit(
+        self, scoped_database: BootstrapFactory, tmp_path: Path, statement: str
+    ) -> None:
+        database, partition = await _database(scoped_database, tmp_path)
+        sql = statement.format(
+            log=f"{SCHEMA}.audit_log",
+            schema=SCHEMA,
+            partition=partition,
+            partition_name=partition.split(".", 1)[1],
+        )
 
-    with pytest.raises(DBAPIError, match="loom_guard"):
-        await _run(database.migrator, sql)
+        with pytest.raises(DBAPIError, match="loom_guard"):
+            await _run(database.migrator, sql)
 
+    @pytest.mark.parametrize(
+        ("statement", "reason"),
+        [
+            ("ALTER TABLE {schema}.memos DROP CONSTRAINT memos_pkey", "without a primary key"),
+            (
+                "ALTER TABLE {schema}.accounts DROP CONSTRAINT accounts_pkey,"
+                " ADD PRIMARY KEY (tenant, internal_note)",
+                "keyed by an excluded column",
+            ),
+            (
+                "ALTER FUNCTION {schema}.write_audit_row()"
+                " SET search_path = pg_catalog, public, pg_temp",
+                "differs from the released one",
+            ),
+        ],
+    )
+    async def test_the_owner_cannot_rekey_an_audited_table_or_repoint_the_writer(
+        self, scoped_database: BootstrapFactory, tmp_path: Path, statement: str, reason: str
+    ) -> None:
+        database, _ = await _database(scoped_database, tmp_path)
+        sql = statement.format(schema=SCHEMA)
 
-@pytest.mark.parametrize(
-    ("statement", "reason"),
-    [
-        ("ALTER TABLE {schema}.memos DROP CONSTRAINT memos_pkey", "without a primary key"),
-        (
-            "ALTER TABLE {schema}.accounts DROP CONSTRAINT accounts_pkey,"
-            " ADD PRIMARY KEY (tenant, internal_note)",
-            "keyed by an excluded column",
-        ),
-        (
-            "ALTER FUNCTION {schema}.write_audit_row()"
-            " SET search_path = pg_catalog, public, pg_temp",
-            "differs from the released one",
-        ),
-    ],
-)
-async def test_the_owner_cannot_rekey_an_audited_table_or_repoint_the_writer(
-    scoped_database: BootstrapFactory, tmp_path: Path, statement: str, reason: str
-) -> None:
-    database, _ = await _database(scoped_database, tmp_path)
-    sql = statement.format(schema=SCHEMA)
-
-    with pytest.raises(DBAPIError, match=reason):
-        await _run(database.migrator, sql)
+        with pytest.raises(DBAPIError, match=reason):
+            await _run(database.migrator, sql)

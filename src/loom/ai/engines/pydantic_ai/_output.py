@@ -2,16 +2,13 @@
 
 This module serves the ``msgspec.Struct`` output path only. pydantic-ai's
 ``output_schema`` instructs the model and returns a plain dictionary
-**without runtime validation** (research R-004), so loom validates. It does
+**without runtime validation**, so loom validates. It does
 so with the :class:`~loom.core.model.LoomType` the compiler already built,
 over the model's raw JSON bytes: :meth:`~loom.core.model.LoomType.decode_json`
-fuses validation and construction into a single pass, which is what
-invariant 5 requires for this path. ``msgspec.convert()`` over a mapping is
-never used here — walking a second object graph for the same payload is the
-double pass the performance rules forbid.
+fuses validation and construction into a single pass. ``msgspec.convert()``
+over a mapping is never used here.
 
-A pydantic output satisfies invariant 5 differently and never reaches this
-module (D7, FR-012): the compiled model class is pydantic-ai's own
+A pydantic output never reaches this module: the compiled model class is pydantic-ai's own
 ``output_type``, so pydantic-ai validates the answer, feeds a rejection back
 to the model and retries, entirely on its own side — zero loom decodes. The
 engine reads that answer straight off ``result.output``
@@ -26,17 +23,13 @@ and Anthropic among them — ``args`` is still the untouched string the model
 produced, and loom decodes exactly that.
 
 pydantic-ai builds its own ``result.output`` for every provider, so it parses
-that payload once on its side whatever the vendor. That pass is the engine's
-and is outside loom's budget; loom's own budget — the one the contract suite
-counts — is the single decode below.
+that payload once on its side whatever the vendor; loom performs the single
+decode below.
 
-**Declared residual** (invariant 5, "residual"): some provider SDKs parse the
-tool arguments before pydantic-ai sees them (the Bedrock Converse API returns
-``toolUse.input`` already decoded). For those, the raw string no longer
-exists, and the engine's own ``ToolCallPart.args_as_json_str()`` re-serialises
-it. That pass belongs to the engine and is not hidden: loom still performs
-exactly one decode and no encode, and the residual is confined to the branch
-below.
+Some provider SDKs parse the tool arguments before pydantic-ai sees them (the
+Bedrock Converse API returns ``toolUse.input`` already decoded). For those,
+the engine's own ``ToolCallPart.args_as_json_str()`` re-serialises them, and
+loom still performs exactly one decode and no encode.
 """
 
 from __future__ import annotations
@@ -80,9 +73,6 @@ def raw_output(result: AgentRunResult[Any]) -> str | bytes:
             part = _payload_part(message)
             if isinstance(part, TextPart):
                 return part.content
-            # ``args`` is the provider's untouched string whenever the wire
-            # format kept it; ``args_as_json_str()`` is the engine's own
-            # re-serialisation for SDKs that pre-parsed it (declared residual).
             return part.args if isinstance(part.args, str) else part.args_as_json_str()
     raise MissingOutputPayload("the run produced no model response")
 
@@ -99,8 +89,8 @@ def decode_output(output: CompiledOutput, result: AgentRunResult[Any]) -> object
 
     Raises:
         AgentRunError: With ``OUTPUT_SCHEMA_VIOLATION`` when the model's
-            answer does not satisfy the declared shape — a failure of model
-            behaviour, which FR-028 declares non-retriable at this level.
+            answer does not satisfy the declared shape; not retried at this
+            level.
     """
     try:
         raw = raw_output(result)

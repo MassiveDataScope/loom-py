@@ -36,12 +36,9 @@ def read_file(location: str, *, setting: str) -> str:
     """
     try:
         return read_text(location)
-    except Exception as exc:  # noqa: BLE001 - every backend raises its own types
+    except Exception as exc:  # noqa: BLE001
         failure = type(exc).__name__
         hint = _CLOUD_HINT if isinstance(exc, ImportError) else ""
-    # Raised outside the handler: ``from None`` only hides the cause, and
-    # ``__context__`` would still hold it, bytes included, for any logger that
-    # walks it.
     raise ConfigError(f"Could not read {setting}: {failure}{hint}")
 
 

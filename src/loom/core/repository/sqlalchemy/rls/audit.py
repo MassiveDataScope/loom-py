@@ -22,8 +22,6 @@ from loom.core.repository.sqlalchemy.rls.integrity import AUDIT_SUPPORTED
 from loom.core.schema_names import schema_identifier, sql_identifier
 
 AUDIT_LOG: Final = "audit_log"
-# Months ahead the guard keeps partitioned on every deploy and every run of
-# ``loom schema audit ensure-partitions``; a year without either still writes.
 AUDIT_HORIZON_MONTHS: Final = 12
 PREPARE_AUDIT_LOG: Final = "SELECT prepare_audit_log()"
 PROTECT_AUDITED: Final = (
@@ -43,12 +41,7 @@ PRESENT_TABLES: Final = (
 )
 AUDIT_LOG_EXISTS: Final = "SELECT to_regclass(quote_ident(:schema) || '.audit_log') IS NOT NULL"
 ENSURE_AUDIT_PARTITIONS: Final = "SELECT ensure_audit_partitions(CAST(:months AS int))"
-# A scheduled run must not queue audited writes behind a long lock wait.
 SCHEDULED_LOCK_TIMEOUT: Final = "SET LOCAL lock_timeout = '5s'"
-# The one definition of an expired partition, on the database's clock in UTC (the
-# partitions' bounds): its upper bound is at or before this UTC month's start
-# minus the retention. ``verify`` lists
-# them; ``drop-expired`` takes the oldest; the guard re-checks the same rule.
 EXPIRED_AUDIT_PARTITIONS: Final = (
     "SELECT c.relname FROM audit_partition p JOIN pg_class c ON c.oid = p.rel "
     "CROSS JOIN config cfg WHERE cfg.retention_months IS NOT NULL "
@@ -57,7 +50,6 @@ EXPIRED_AUDIT_PARTITIONS: Final = (
     "- make_interval(months => cfg.retention_months)) AT TIME ZONE 'UTC' "
     "ORDER BY p.upper_bound"
 )
-# EXPIRED_AUDIT_PARTITIONS with LIMIT 1, spelled out: SQL reaching the database is a literal.
 OLDEST_EXPIRED_AUDIT_PARTITION: Final = (
     "SELECT c.relname FROM audit_partition p JOIN pg_class c ON c.oid = p.rel "
     "CROSS JOIN config cfg WHERE cfg.retention_months IS NOT NULL "
@@ -161,7 +153,7 @@ async def drop_expired_audit_partition(connection: AsyncConnection) -> str | Non
     """Drop the oldest audit partition past the configured retention; return its name.
 
     One partition per call, so a wrong retention costs at most one month
-    before someone notices (FR-017). ``None`` when nothing is expired or no
+    before someone notices. ``None`` when nothing is expired or no
     retention is configured. The guard re-checks the retention and refuses a
     partition within it, whatever this query found.
 

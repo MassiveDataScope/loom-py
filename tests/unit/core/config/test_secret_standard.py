@@ -143,5 +143,6 @@ def _problems() -> list[str]:
     return problems
 
 
-def test_decodable_config_uses_the_redacted_types() -> None:
-    assert _problems() == []
+class TestDecodableConfigUsesRedactedTypes:
+    def test_decodable_config_uses_the_redacted_types(self) -> None:
+        assert _problems() == []

@@ -17,37 +17,40 @@ from loom.core.persistence.stores import (
 from tests.helpers.composition import composition_source
 
 
-def test_the_composition_refuses_a_retired_section_in_memory_too() -> None:
-    source = composition_source(
-        ConfigContext.from_dict({"app": {"name": "x"}, "database": {"url": "sqlite://"}})
-    )
+class TestRetiredStoreSections:
+    def test_the_composition_refuses_a_retired_section_in_memory_too(self) -> None:
+        source = composition_source(
+            ConfigContext.from_dict({"app": {"name": "x"}, "database": {"url": "sqlite://"}})
+        )
 
-    with pytest.raises(ConfigError, match="stores.default"):
-        source.backend(DEFAULT_STORE, default="none")
+        with pytest.raises(ConfigError, match="stores.default"):
+            source.backend(DEFAULT_STORE, default="none")
 
+    def test_each_store_names_the_backend_composed_for_it(self) -> None:
+        stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
+        source = composition_source(
+            ConfigContext.from_dict({"app": {"name": "x"}, "stores": stores})
+        )
 
-def test_each_store_names_the_backend_composed_for_it() -> None:
-    stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
-    source = composition_source(ConfigContext.from_dict({"app": {"name": "x"}, "stores": stores}))
+        keys = (DEFAULT_STORE, StoreKey("audit"))
 
-    keys = (DEFAULT_STORE, StoreKey("audit"))
+        backends = [source.backend(key, default="mongo").name for key in keys]
 
-    backends = [source.backend(key, default="mongo").name for key in keys]
+        assert backends == ["none", "sqlalchemy"]
 
-    assert backends == ["none", "sqlalchemy"]
+    def test_a_store_section_resolves_against_the_whole_configuration_without_its_backend(
+        self,
+    ) -> None:
+        ctx = ConfigContext.from_dict(
+            {
+                "app": {"name": "orders"},
+                "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite:///${app.name}.db"}},
+            }
+        )
 
+        settings = load_catalog(ctx).specs[DEFAULT_STORE].settings()
 
-def test_a_store_section_resolves_against_the_whole_configuration_without_its_backend() -> None:
-    ctx = ConfigContext.from_dict(
-        {
-            "app": {"name": "orders"},
-            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite:///${app.name}.db"}},
-        }
-    )
-
-    settings = load_catalog(ctx).specs[DEFAULT_STORE].settings()
-
-    assert settings == {"url": "sqlite:///orders.db"}
+        assert settings == {"url": "sqlite:///orders.db"}
 
 
 def _catalog(stores: dict[str, Any]) -> StoreCatalog:
@@ -63,38 +66,37 @@ class _ClickRecord(BaseModel):
 _CLICKHOUSE = {"backend": "clickhouse", "url": "clickhouse://ch:8123/analytics"}
 
 
-def test_a_clickhouse_store_is_a_connection_only_kind_of_the_catalog() -> None:
-    spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
+class TestClickHouseStoreReaders:
+    def test_a_clickhouse_store_is_a_connection_only_kind_of_the_catalog(self) -> None:
+        spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
 
-    assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
-    assert spec.settings() == {"url": "clickhouse://ch:8123/analytics"}
+        assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
+        assert spec.settings() == {"url": "clickhouse://ch:8123/analytics"}
 
+    def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_ones(
+        self,
+    ) -> None:
+        with pytest.raises(ConfigError) as error:
+            _catalog({"events": {"backend": "kafka"}})
 
-def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_ones() -> None:
-    with pytest.raises(ConfigError) as error:
-        _catalog({"events": {"backend": "kafka"}})
+        message = str(error.value)
+        assert "Unknown persistence backend 'kafka'. Registered backends:" in message
+        assert "Connection-only stores: clickhouse." in message
 
-    message = str(error.value)
-    assert "Unknown persistence backend 'kafka'. Registered backends:" in message
-    assert "Connection-only stores: clickhouse." in message
+    def test_a_model_of_a_named_clickhouse_store_fails_at_composition(self) -> None:
+        catalog = _catalog({"default": {"backend": "none"}, "events": _CLICKHOUSE})
 
+        with pytest.raises(ConfigError, match="connection-only clickhouse store"):
+            catalog.models_by_store([_ClickRecord])
 
-def test_a_model_of_a_named_clickhouse_store_fails_at_composition() -> None:
-    catalog = _catalog({"default": {"backend": "none"}, "events": _CLICKHOUSE})
+    def test_a_clickhouse_default_store_fails_when_the_catalog_loads(self) -> None:
+        with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
+            _catalog({"default": _CLICKHOUSE})
 
-    with pytest.raises(ConfigError, match="connection-only clickhouse store"):
-        catalog.models_by_store([_ClickRecord])
+    def test_a_clickhouse_default_store_is_not_composed_as_a_backend(self) -> None:
+        source = composition_source(
+            ConfigContext.from_dict({"app": {"name": "x"}, "stores": {"default": _CLICKHOUSE}})
+        )
 
-
-def test_a_clickhouse_default_store_fails_when_the_catalog_loads() -> None:
-    with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-        _catalog({"default": _CLICKHOUSE})
-
-
-def test_a_clickhouse_default_store_is_not_composed_as_a_backend() -> None:
-    source = composition_source(
-        ConfigContext.from_dict({"app": {"name": "x"}, "stores": {"default": _CLICKHOUSE}})
-    )
-
-    with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-        source.backend(DEFAULT_STORE, default="none")
+        with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
+            source.backend(DEFAULT_STORE, default="none")

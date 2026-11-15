@@ -19,6 +19,8 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
+from tests.helpers.source_tree import parsed
+
 _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 _ERRORS_PACKAGE = _SRC / "core" / "errors"
 _ERRORS_MODULES = frozenset({"errors.py", "_errors.py"})
@@ -38,7 +40,7 @@ def _base_name(base: ast.expr) -> str | None:
 
 def _classes(path: Path) -> Iterator[ast.ClassDef]:
     """Every class definition in *path*, nested ones included."""
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(parsed(path)):
         if isinstance(node, ast.ClassDef):
             yield node
 
@@ -92,7 +94,7 @@ def _web_imports_in_core() -> list[str]:
     """``path:line module`` for every import of a web package under ``loom/core``."""
     found: list[str] = []
     for path in sorted((_SRC / "core").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parsed(path)):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
@@ -136,11 +138,12 @@ def _literal_codes() -> list[str]:
     return found
 
 
-def test_the_lint_sees_the_whole_hierarchy() -> None:
-    """A subclass of a pillar error is an error class too; the catalogue is in."""
-    names = _error_classes()
-    assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
-    assert "UnsupportedFormatError" in names
+class TestErrorPlacementLint:
+    def test_the_lint_sees_the_whole_hierarchy(self) -> None:
+        """A subclass of a pillar error is an error class too; the catalogue is in."""
+        names = _error_classes()
+        assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
+        assert "UnsupportedFormatError" in names
 
 
 def _outside_a_family() -> list[str]:
@@ -153,21 +156,19 @@ def _outside_a_family() -> list[str]:
     ]
 
 
-def test_every_error_code_is_a_catalogue_member() -> None:
-    """R1: a code is declared once, in a catalogue; no class spells one as a string."""
-    assert _literal_codes() == []
+class TestErrorPlacement:
+    def test_every_error_code_is_a_catalogue_member(self) -> None:
+        """R1: a code is declared once, in a catalogue; no class spells one as a string."""
+        assert _literal_codes() == []
 
+    def test_every_error_belongs_to_a_family(self) -> None:
+        """R2: a transport tells a 4xx from a 5xx, and what to retry, by the family alone."""
+        assert _outside_a_family() == []
 
-def test_every_error_belongs_to_a_family() -> None:
-    """R2: a transport tells a 4xx from a 5xx, and what to retry, by the family alone."""
-    assert _outside_a_family() == []
+    def test_core_error_subclasses_live_in_an_errors_module(self) -> None:
+        """R3: a ``LoomError`` subclass lives under ``core/errors/`` or in an errors module."""
+        assert _misplaced() == []
 
-
-def test_core_error_subclasses_live_in_an_errors_module() -> None:
-    """R3: a ``LoomError`` subclass lives under ``core/errors/`` or in an errors module."""
-    assert _misplaced() == []
-
-
-def test_core_imports_no_web_package() -> None:
-    """R5: core errors say what failed; a transport maps them."""
-    assert _web_imports_in_core() == []
+    def test_core_imports_no_web_package(self) -> None:
+        """R5: core errors say what failed; a transport maps them."""
+        assert _web_imports_in_core() == []

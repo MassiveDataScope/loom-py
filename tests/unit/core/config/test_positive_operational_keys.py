@@ -49,34 +49,33 @@ def _bytewax_runtime() -> type[Any]:
     return BytewaxRuntimeConfig
 
 
-@pytest.mark.parametrize("value", [0, -1])
-@pytest.mark.parametrize(
-    ("struct", "required", "field"),
-    [
-        (_connection_pool, {}, "size"),
-        (_sql, _SQL_REQUIRED, "executor_threads"),
-        (_sql, _SQL_REQUIRED, "max_execution_time"),
-        (_sql, _SQL_REQUIRED, "connect_timeout"),
-        (_sql, _SQL_REQUIRED, "read_timeout"),
-        (_pool, {}, "size"),
-        (_pool, {}, "timeout"),
-        (_pool, {}, "recycle"),
-        (_celery_runtime, {}, "shutdown_timeout_ms"),
-        (_bytewax_runtime, {}, "epoch_interval_ms"),
-        (_bytewax_runtime, {}, "force_shutdown_timeout_ms"),
-    ],
-)
-def test_zero_or_below_is_refused_at_decode_naming_the_field(
-    struct: Callable[[], type[Any]], required: dict[str, Any], field: str, value: int
-) -> None:
-    with pytest.raises(msgspec.ValidationError, match=field):
-        convert_config({**required, field: value}, struct(), strict=True)
+class TestPositiveOperationalKeys:
+    @pytest.mark.parametrize("value", [0, -1])
+    @pytest.mark.parametrize(
+        ("struct", "required", "field"),
+        [
+            (_connection_pool, {}, "size"),
+            (_sql, _SQL_REQUIRED, "executor_threads"),
+            (_sql, _SQL_REQUIRED, "max_execution_time"),
+            (_sql, _SQL_REQUIRED, "connect_timeout"),
+            (_sql, _SQL_REQUIRED, "read_timeout"),
+            (_pool, {}, "size"),
+            (_pool, {}, "timeout"),
+            (_pool, {}, "recycle"),
+            (_celery_runtime, {}, "shutdown_timeout_ms"),
+            (_bytewax_runtime, {}, "epoch_interval_ms"),
+            (_bytewax_runtime, {}, "force_shutdown_timeout_ms"),
+        ],
+    )
+    def test_zero_or_below_is_refused_at_decode_naming_the_field(
+        self, struct: Callable[[], type[Any]], required: dict[str, Any], field: str, value: int
+    ) -> None:
+        with pytest.raises(msgspec.ValidationError, match=field):
+            convert_config({**required, field: value}, struct(), strict=True)
 
+    def test_a_negative_pool_overflow_is_refused_at_decode_naming_the_field(self) -> None:
+        with pytest.raises(msgspec.ValidationError, match="max_overflow"):
+            msgspec.convert({"max_overflow": -1}, PoolConfig)
 
-def test_a_negative_pool_overflow_is_refused_at_decode_naming_the_field() -> None:
-    with pytest.raises(msgspec.ValidationError, match="max_overflow"):
-        msgspec.convert({"max_overflow": -1}, PoolConfig)
-
-
-def test_a_zero_pool_overflow_is_accepted() -> None:
-    assert msgspec.convert({"max_overflow": 0}, PoolConfig).max_overflow == 0
+    def test_a_zero_pool_overflow_is_accepted(self) -> None:
+        assert msgspec.convert({"max_overflow": 0}, PoolConfig).max_overflow == 0

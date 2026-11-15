@@ -38,8 +38,9 @@ from loom.core.repository.abc.query import (
     QuerySpec,
     build_page_result,
 )
+from loom.core.repository.registration import classify_key
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.markers import Exists, Input
 from loom.core.use_case.use_case import UseCase
@@ -58,7 +59,7 @@ from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
 # ---------------------------------------------------------------------------
 
 
-class PingUseCase(UseCase[Any, str]):
+class AcmePingUseCase(UseCase[Any, str]):
     async def execute(self, **kwargs: Any) -> str:
         await asyncio.sleep(0)
         return "pong"
@@ -320,7 +321,7 @@ def _uc_compiler(*types: type[UseCase[Any, Any]]) -> UseCaseCompiler:
 
 
 def _factory(uc_compiler: UseCaseCompiler, *types: type[UseCase[Any, Any]]) -> UseCaseFactory:
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     factory = UseCaseFactory(container)
     for t in types:
         factory.register(t)
@@ -370,302 +371,12 @@ def _compile_routes(
     return RestInterfaceCompiler(uc_comp).compile(interface)
 
 
-class _RecordingObserver:
+class RecordingObservabilityObserver:
     def __init__(self) -> None:
         self.events: list[ObservabilityLifecycleEvent] = []
 
     def on_event(self, event: ObservabilityLifecycleEvent) -> None:
         self.events.append(event)
-
-
-# ---------------------------------------------------------------------------
-# bind_interfaces — basic routing
-# ---------------------------------------------------------------------------
-
-
-def test_bind_interfaces_registers_route() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/ping/")
-    assert response.status_code == 200
-    assert response.json() == "pong"
-
-
-def test_bind_interfaces_content_type_is_json() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/ping/")
-    assert "application/json" in response.headers["content-type"]
-
-
-def test_bind_interfaces_path_param_extracted() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=ItemUseCase, method="GET", path="/{item_id}"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/42")
-    assert response.status_code == 200
-    assert response.json()["item_id"] == "42"
-
-
-def test_bind_interfaces_path_param_typed_from_execute_signature() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/typed-items"
-        routes = (RestRoute(use_case=IntItemUseCase, method="GET", path="/{item_id}"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/typed-items/42")
-    assert response.status_code == 200
-    assert response.json()["item_id"] == 42
-
-
-def test_bind_interfaces_path_param_validation_uses_typed_signature() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/typed-items"
-        routes = (RestRoute(use_case=IntItemUseCase, method="GET", path="/{item_id}"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/typed-items/not-an-int")
-    assert response.status_code == 422
-
-
-def test_bind_interfaces_status_code_respected() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/things"
-        routes = (RestRoute(use_case=PingUseCase, method="POST", path="/", status_code=201),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.post("/things/")
-    assert response.status_code == 201
-
-
-def test_bind_interfaces_multiple_routes() -> None:
-    class IFace(RestInterface[Any]):
-        prefix = "/v1"
-        routes = (
-            RestRoute(use_case=PingUseCase, method="GET", path="/ping"),
-            RestRoute(use_case=ItemUseCase, method="GET", path="/items/{item_id}"),
-        )
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    assert client.get("/v1/ping").json() == "pong"
-    assert client.get("/v1/items/7").json()["item_id"] == "7"
-
-
-# ---------------------------------------------------------------------------
-# bind_interfaces — POST with body
-# ---------------------------------------------------------------------------
-
-
-def test_bind_interfaces_request_body_decoded() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/echo"
-        routes = (RestRoute(use_case=EchoUseCase, method="POST", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.post("/echo/", json={"name": "loom"})
-    assert response.status_code == 200
-    assert response.json() == {"status": "received"}
-
-
-def test_bind_interfaces_empty_body_no_payload() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/ping/")
-    assert response.status_code == 200
-
-
-def test_bind_interfaces_rejects_profile_query_when_not_exposed() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/ping/?profile=detail")
-    assert response.status_code == 400
-    assert "not allowed" in response.json()["detail"]
-
-
-def test_bind_interfaces_passes_default_profile_when_use_case_accepts_it() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        profile_default = "summary"
-        routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/")
-    assert response.status_code == 200
-    assert response.json() == {"profile": "summary"}
-
-
-def test_bind_interfaces_accepts_profile_query_when_exposed() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        expose_profile = True
-        allowed_profiles = ("summary", "detail")
-        profile_default = "summary"
-        routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?profile=detail")
-    assert response.status_code == 200
-    assert response.json() == {"profile": "detail"}
-
-
-def test_bind_interfaces_rejects_disallowed_profile_query() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        expose_profile = True
-        allowed_profiles = ("summary",)
-        routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?profile=detail")
-    assert response.status_code == 400
-    assert "Invalid profile" in response.json()["detail"]
-
-
-def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?page=2&limit=10")
-    assert response.status_code == 200
-    assert response.json() == {
-        "pagination": PaginationMode.OFFSET.value,
-        "page": 2,
-        "limit": 10,
-        "cursor": None,
-        "filter_field": None,
-        "filter_op": None,
-        "filter_value": None,
-        "sort_field": None,
-        "sort_direction": None,
-    }
-
-
-def test_bind_interfaces_builds_query_spec_from_cursor_url_params() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?after=abc123&limit=1")
-    assert response.status_code == 200
-    assert response.json() == {
-        "pagination": PaginationMode.CURSOR.value,
-        "page": 1,
-        "limit": 1,
-        "cursor": "abc123",
-        "filter_field": None,
-        "filter_op": None,
-        "filter_value": None,
-        "sort_field": None,
-        "sort_direction": None,
-    }
-
-
-def test_bind_interfaces_refuses_a_page_whose_offset_overflows() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
-
-    response = client.get(f"/items/?page={2**63}&limit=2")
-
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert detail["code"] == "query_validation"
-    assert [violation["field"] for violation in detail["violations"]] == ["page"]
-
-
-def test_bind_interfaces_uses_compiled_default_pagination_mode() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        pagination_mode = PaginationMode.CURSOR
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?limit=1")
-    assert response.status_code == 200
-    assert response.json()["pagination"] == PaginationMode.CURSOR.value
-
-
-def test_bind_interfaces_rejects_pagination_override_when_disabled() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        pagination_mode = PaginationMode.OFFSET
-        allow_pagination_override = False
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?pagination=cursor")
-    assert response.status_code == 400
-    assert "cannot override" in response.json()["detail"]
-
-
-def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/rows"
-        filterable = ALL
-        allow_pagination_override = False
-        routes = (RestRoute(use_case=IdOnlyFilterUseCase, method="GET", path="/"),)
-
-    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
-
-    response = client.get("/rows/?rank=7")
-
-    assert response.status_code == 400
-    body = response.json()["detail"]
-    assert body["code"] == "unsupported_query"
-    assert "rank" in body["message"]
 
 
 def _entry_client(
@@ -704,367 +415,6 @@ def _refusal(response: Any) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if key != "trace_id"}
 
 
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        ("sort=seenAt", [["seen_at", "ASC"]]),
-        ("sort=id&direction=DESC", [["id", "DESC"]]),
-    ],
-)
-def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
-    query: str, expected: list[list[str]]
-) -> None:
-    SORTS_SEEN.clear()
-    response = _entry_client(EntrySortUseCase).get(f"/entries/?{query}")
-
-    assert response.status_code == 200
-    assert [expected] == SORTS_SEEN
-
-
-def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike() -> None:
-    client = _entry_client(EntrySortUseCase)
-
-    existing = _refusal(client.get("/entries/?sort=code"))
-    missing = _refusal(client.get("/entries/?sort=nope"))
-
-    assert existing["message"].replace("'code'", "'nope'") == missing["message"]
-
-
-@pytest.mark.parametrize("query", ["id=1", "id__like=1%25", "id__is_null=true"])
-def test_bind_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
-    query: str,
-) -> None:
-    detail = _refusal(_entry_client().get(f"/entries/?{query}"))
-
-    assert detail["message"] == "Filtering on field 'id' is not allowed by this route."
-
-
-@pytest.mark.parametrize(
-    ("query", "message"),
-    [
-        ("code__exists=true", "Operator 'exists' is not supported by this route."),
-        ("code__not_exists=true", "Operator 'not_exists' is not supported by this route."),
-        ("rank__like=1%25", "Operator 'like' applies to text fields only."),
-        ("rank__ilike=1%25", "Operator 'ilike' applies to text fields only."),
-    ],
-)
-def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
-    query: str, message: str
-) -> None:
-    assert _refusal(_entry_client().get(f"/entries/?{query}"))["message"] == message
-
-
-@pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
-def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> None:
-    assert _filters_seen(f"code={raw}") == {"code": raw}
-
-
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        ("rank=7", {"rank": 7}),
-        ("sortOrder=4", {"sort_order": 4}),
-        ("quota__gt=0", {"quota": 0}),
-        ("code__like=01%25", {"code": "01%"}),
-    ],
-)
-def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
-    query: str, expected: dict[str, Any]
-) -> None:
-    assert _filters_seen(query) == expected
-
-
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [("nickname=ann", {"nickname": "ann"}), ("nickname__like=an%25", {"nickname": "an%"})],
-)
-def test_bind_interfaces_filters_an_unset_text_column_by_value_and_pattern(
-    query: str, expected: dict[str, Any]
-) -> None:
-    assert _filters_seen(query) == expected
-
-
-def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
-    seen = _filters_seen(
-        "tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z", EntryFilterTypesUseCase
-    )
-
-    assert seen == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
-
-
-def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value() -> None:
-    assert _filters_seen("phase=closed") == {"phase": "closed"}
-    assert _filters_seen("phase=closed", EntryFilterTypesUseCase) == {"phase": "_Phase"}
-
-
-@pytest.mark.parametrize(
-    ("query", "field"),
-    [("rank=s3cr3t", "rank"), ("active=1", "active"), ("rank__in=1,s3cr3t", "rank")],
-)
-def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
-    query: str, field: str
-) -> None:
-    response = _entry_client().get(f"/entries/?{query}")
-
-    assert response.status_code == 400
-    body = response.json()["detail"]
-    assert body["code"] == "query_validation"
-    assert [violation["field"] for violation in body["violations"]] == [field]
-    assert "s3cr3t" not in response.text
-
-
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        ("rank__in=1,2,3", {"rank": [1, 2, 3]}),
-        ("code__in=01,true,2.5", {"code": ["01", "true", "2.5"]}),
-    ],
-)
-def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
-    query: str, expected: dict[str, Any]
-) -> None:
-    assert _filters_seen(query) == expected
-
-
-# ---------------------------------------------------------------------------
-# bind_interfaces — tags propagated to OpenAPI
-# ---------------------------------------------------------------------------
-
-
-def test_bind_interfaces_tags_on_routes() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        tags = ("Pings",)
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    # Verify OpenAPI schema has the tag on the route
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/ping/"]["get"]
-    assert "Pings" in operation.get("tags", [])
-
-
-def test_bind_interfaces_uses_use_case_docstring_for_route_docs() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/docs"
-        routes = (RestRoute(use_case=DocUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/docs/"]["get"]
-    assert operation["summary"] == "Doc summary from use case."
-    assert "Extended documentation" in operation["description"]
-
-
-def test_openapi_response_schema_inferred_from_use_case_return_type() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    response_schema = schema["paths"]["/ping/"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    assert response_schema["type"] == "string"
-
-
-def test_openapi_request_schema_from_command_excludes_internal_fields() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    raw_schema = schema["paths"]["/items/"]["post"]["requestBody"]["content"]["application/json"][
-        "schema"
-    ]
-    request_schema = _resolve_schema(raw_schema, schema)
-    properties = request_schema["properties"]
-    assert "fullName" in properties
-    assert "tenant_id" not in properties
-
-
-def test_openapi_request_schema_for_plain_command_type() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/plain"
-        routes = (RestRoute(use_case=PlainCreateUseCase, method="POST", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    raw_schema = schema["paths"]["/plain/"]["post"]["requestBody"]["content"]["application/json"][
-        "schema"
-    ]
-    request_schema = _resolve_schema(raw_schema, schema)
-    assert request_schema["type"] == "object"
-    assert "full_name" in request_schema["properties"]
-
-
-# ---------------------------------------------------------------------------
-# bind_interfaces — boundary validation (a Command body that fails to convert)
-# ---------------------------------------------------------------------------
-
-
-def test_bind_interfaces_bad_body_field_maps_to_422_boundary_validation() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.post("/items/", json={"fullName": 12})
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["code"] == "boundary_validation"
-    assert detail["violations"] == [{"field": "fullName", "message": "Expected `str`, got `int`"}]
-
-
-def test_bind_interfaces_missing_body_field_reports_that_field() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.post("/items/", json={})
-    assert response.status_code == 422
-    assert response.json()["detail"]["violations"][0]["field"] == "fullName"
-
-
-# ---------------------------------------------------------------------------
-# bind_interfaces — a strict pydantic.BaseModel result renders through the loom type
-# ---------------------------------------------------------------------------
-
-
-def test_bind_interfaces_basemodel_result_renders_as_json_object() -> None:
-    class IFace(RestInterface[Any]):
-        prefix = "/model"
-        routes = (RestRoute(use_case=ModelResultUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/model/")
-    assert response.status_code == 200
-    assert response.json() == {"fullName": "Alice"}
-
-
-# ---------------------------------------------------------------------------
-# OpenAPI — response schema for a pydantic return type
-# ---------------------------------------------------------------------------
-
-
-def test_openapi_response_schema_for_basemodel_return_type() -> None:
-    class IFace(RestInterface[Any]):
-        prefix = "/model"
-        routes = (RestRoute(use_case=ModelResultUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    raw_schema = schema["paths"]["/model/"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    response_schema = _resolve_schema(raw_schema, schema)
-    assert "fullName" in response_schema["properties"]
-    assert "title" not in response_schema
-
-
-def test_openapi_response_schema_for_basemodel_list_return_type() -> None:
-    class IFace(RestInterface[Any]):
-        prefix = "/models"
-        routes = (RestRoute(use_case=ModelListResultUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    response_schema = schema["paths"]["/models/"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    assert response_schema["type"] == "array"
-    items_schema = _resolve_schema(response_schema["items"], schema)
-    assert "fullName" in items_schema["properties"]
-
-
-def test_openapi_response_schema_for_root_model_return_type() -> None:
-    class IFace(RestInterface[Any]):
-        prefix = "/root"
-        routes = (RestRoute(use_case=RootModelResultUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    raw_schema = schema["paths"]["/root/"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    response_schema = _resolve_schema(raw_schema, schema)
-    assert "fullName" in response_schema["properties"]
-
-
-def test_openapi_autocrud_list_has_response_schema_and_query_parameters() -> None:
-    class IFace(RestInterface[_AutoItem]):
-        prefix = "/auto-items"
-        auto = True
-        include = ("list",)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/auto-items/"]["get"]
-
-    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
-    assert response_schema
-
-    parameter_names = {parameter["name"] for parameter in operation["parameters"]}
-    expected_params = {"page", "limit", "pagination", "after", "cursor", "sort", "direction"}
-    assert expected_params <= parameter_names
-
-
-def test_openapi_autocrud_summary_uses_generated_docstring() -> None:
-    class IFace(RestInterface[_AutoItem]):
-        prefix = "/auto-docs"
-        auto = True
-        include = ("list",)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/auto-docs/"]["get"]
-    assert operation["summary"] == "List _AutoItem with filtering, sorting and pagination."
-
-
-def test_openapi_autocrud_get_path_param_uses_model_id_type() -> None:
-    class IFace(RestInterface[_AutoItem]):
-        prefix = "/auto-item"
-        auto = True
-        include = ("get",)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/auto-item/{id}"]["get"]
-    id_param = next(param for param in operation["parameters"] if param["name"] == "id")
-    assert id_param["schema"]["type"] == "integer"
-
-
 # ---------------------------------------------------------------------------
 # create_fastapi_app — integration
 # ---------------------------------------------------------------------------
@@ -1078,144 +428,11 @@ def _bootstrap(*use_cases: type[UseCase[Any, Any]]) -> BootstrapResult:
     return bootstrap_app(config=_FakeConfig(), use_cases=list(use_cases))
 
 
-def test_create_fastapi_app_returns_fastapi_instance() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    result = _bootstrap(PingUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
-    )
-    assert isinstance(app, FastAPI)
-
-
-def test_create_fastapi_app_emits_use_case_span() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    observer = _RecordingObserver()
-    runtime = ObservabilityRuntime([observer])
-    result = _bootstrap(PingUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=runtime,
-    )
-    client = TestClient(app)
-    response = client.get("/ping/")
-
-    assert response.status_code == 200
-    assert [event.kind for event in observer.events] == [
-        ObservabilityEventKind.START,
-        ObservabilityEventKind.END,
-    ]
-    assert observer.events[0].scope is ObservabilityScope.USE_CASE
-    assert observer.events[0].name == "PingUseCase"
-    assert observer.events[0].meta["route"] == "/ping/"
-    assert observer.events[1].meta["status_code"] == 200
-
-
-def test_use_case_span_nests_under_the_request_span_of_a_host_sdk() -> None:
-    """A host's request span parents the use case span, in the host's own trace.
-
-    The ASGI middleware stands in for what an OTEL HTTP instrumentation does in
-    production. Loom never installs a tracer provider globally, so the two
-    providers export separately while sharing one context and one trace.
-    """
-
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    host_exporter = InMemorySpanExporter()
-    host_provider = TracerProvider()
-    host_provider.add_span_processor(SimpleSpanProcessor(host_exporter))
-    loom_exporter = InMemorySpanExporter()
-    loom_provider = TracerProvider()
-    loom_provider.add_span_processor(SimpleSpanProcessor(loom_exporter))
-    host_tracer = host_provider.get_tracer("host.sdk")
-
-    class _HostSpanMiddleware:
-        """Pure-ASGI middleware, so its span is current in the endpoint's task."""
-
-        def __init__(self, app: Any) -> None:
-            self.app = app
-
-        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-            if scope["type"] != "http":
-                await self.app(scope, receive, send)
-                return
-            with host_tracer.start_as_current_span("host:request"):
-                await self.app(scope, receive, send)
-
-    result = _bootstrap(PingUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=ObservabilityRuntime(
-            [], tracer=loom_provider.get_tracer("loom.rest")
-        ),
-    )
-    app.add_middleware(_HostSpanMiddleware)
-
-    assert TestClient(app).get("/ping/").status_code == 200
-
-    host_spans = host_exporter.get_finished_spans()
-    loom_spans = loom_exporter.get_finished_spans()
-    assert [span.name for span in host_spans] == ["host:request"]
-    assert [span.name for span in loom_spans] == ["use_case:PingUseCase"]
-
-    request_context = host_spans[0].get_span_context()
-    use_case_context = loom_spans[0].get_span_context()
-    use_case_parent = loom_spans[0].parent
-    assert request_context is not None
-    assert use_case_context is not None
-    assert use_case_parent is not None
-    assert use_case_parent.span_id == request_context.span_id
-    assert use_case_context.trace_id == request_context.trace_id
-
-
-def test_create_fastapi_app_routes_work() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    result = _bootstrap(PingUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
-    )
-    client = TestClient(app)
-    assert client.get("/ping/").json() == "pong"
-
-
-def test_create_fastapi_app_accepts_fastapi_kwargs() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    result = _bootstrap(PingUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
-        title="My API",
-        version="2.0.0",
-    )
-    assert app.title == "My API"
-    assert app.version == "2.0.0"
-
-
 class TestRoutesArgument:
     """``routes`` is the one way to name the interfaces to mount."""
 
     def test_routes_are_required(self) -> None:
-        result = _bootstrap(PingUseCase)
+        result = _bootstrap(AcmePingUseCase)
         observability_runtime = ObservabilityRuntime.noop()
         with pytest.raises(TypeError, match="routes"):
             create_fastapi_app(result, observability_runtime=observability_runtime)  # type: ignore[call-arg]
@@ -1223,9 +440,9 @@ class TestRoutesArgument:
     def test_the_interfaces_keyword_is_refused(self) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"
-            routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
-        result = _bootstrap(PingUseCase)
+        result = _bootstrap(AcmePingUseCase)
         observability_runtime = ObservabilityRuntime.noop()
         with pytest.raises(TypeError, match="routes"):
             create_fastapi_app(  # type: ignore[call-arg]
@@ -1237,9 +454,9 @@ class TestRoutesArgument:
     def test_a_bare_sequence_names_route_sources(self) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"
-            routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
-        result = _bootstrap(PingUseCase)
+        result = _bootstrap(AcmePingUseCase)
         observability_runtime = ObservabilityRuntime.noop()
         with pytest.raises(TypeError, match="RouteSources"):
             create_fastapi_app(
@@ -1249,92 +466,930 @@ class TestRoutesArgument:
             )
 
 
-def test_create_fastapi_app_multiple_interfaces() -> None:
-    class PingIFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
+class TestBindInterfacesRouting:
+    def test_bind_interfaces_registers_route(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
-    class ItemIFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=ItemUseCase, method="GET", path="/{item_id}"),)
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/ping/")
+        assert response.status_code == 200
+        assert response.json() == "pong"
 
-    result = _bootstrap(PingUseCase, ItemUseCase)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[PingIFace, ItemIFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
+    def test_bind_interfaces_content_type_is_json(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/ping/")
+        assert "application/json" in response.headers["content-type"]
+
+    def test_bind_interfaces_path_param_extracted(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=ItemUseCase, method="GET", path="/{item_id}"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/42")
+        assert response.status_code == 200
+        assert response.json()["item_id"] == "42"
+
+    def test_bind_interfaces_path_param_typed_from_execute_signature(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/typed-items"
+            routes = (RestRoute(use_case=IntItemUseCase, method="GET", path="/{item_id}"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/typed-items/42")
+        assert response.status_code == 200
+        assert response.json()["item_id"] == 42
+
+    def test_bind_interfaces_path_param_validation_uses_typed_signature(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/typed-items"
+            routes = (RestRoute(use_case=IntItemUseCase, method="GET", path="/{item_id}"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/typed-items/not-an-int")
+        assert response.status_code == 422
+
+    def test_bind_interfaces_status_code_respected(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/things"
+            routes = (
+                RestRoute(use_case=AcmePingUseCase, method="POST", path="/", status_code=201),
+            )
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.post("/things/")
+        assert response.status_code == 201
+
+    def test_bind_interfaces_multiple_routes(
+        self,
+    ) -> None:
+        class IFace(RestInterface[Any]):
+            prefix = "/v1"
+            routes = (
+                RestRoute(use_case=AcmePingUseCase, method="GET", path="/ping"),
+                RestRoute(use_case=ItemUseCase, method="GET", path="/items/{item_id}"),
+            )
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        assert client.get("/v1/ping").json() == "pong"
+        assert client.get("/v1/items/7").json()["item_id"] == "7"
+
+
+class TestBindInterfacesRequestBody:
+    def test_bind_interfaces_request_body_decoded(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/echo"
+            routes = (RestRoute(use_case=EchoUseCase, method="POST", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.post("/echo/", json={"name": "loom"})
+        assert response.status_code == 200
+        assert response.json() == {"status": "received"}
+
+    def test_bind_interfaces_empty_body_no_payload(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/ping/")
+        assert response.status_code == 200
+
+
+class TestBindInterfacesProfile:
+    def test_bind_interfaces_rejects_profile_query_when_not_exposed(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/ping/?profile=detail")
+        assert response.status_code == 400
+        assert "not allowed" in response.json()["detail"]
+
+    def test_bind_interfaces_passes_default_profile_when_use_case_accepts_it(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            profile_default = "summary"
+            routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/")
+        assert response.status_code == 200
+        assert response.json() == {"profile": "summary"}
+
+    def test_bind_interfaces_accepts_profile_query_when_exposed(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            expose_profile = True
+            allowed_profiles = ("summary", "detail")
+            profile_default = "summary"
+            routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?profile=detail")
+        assert response.status_code == 200
+        assert response.json() == {"profile": "detail"}
+
+    def test_bind_interfaces_rejects_disallowed_profile_query(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            expose_profile = True
+            allowed_profiles = ("summary",)
+            routes = (RestRoute(use_case=ProfileAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?profile=detail")
+        assert response.status_code == 400
+        assert "Invalid profile" in response.json()["detail"]
+
+
+class TestBindInterfacesPagination:
+    def test_bind_interfaces_builds_query_spec_from_offset_url_params(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?page=2&limit=10")
+        assert response.status_code == 200
+        assert response.json() == {
+            "pagination": PaginationMode.OFFSET.value,
+            "page": 2,
+            "limit": 10,
+            "cursor": None,
+            "filter_field": None,
+            "filter_op": None,
+            "filter_value": None,
+            "sort_field": None,
+            "sort_direction": None,
+        }
+
+    def test_bind_interfaces_builds_query_spec_from_cursor_url_params(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?after=abc123&limit=1")
+        assert response.status_code == 200
+        assert response.json() == {
+            "pagination": PaginationMode.CURSOR.value,
+            "page": 1,
+            "limit": 1,
+            "cursor": "abc123",
+            "filter_field": None,
+            "filter_op": None,
+            "filter_value": None,
+            "sort_field": None,
+            "sort_direction": None,
+        }
+
+    def test_bind_interfaces_refuses_a_page_whose_offset_overflows(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+        response = client.get(f"/items/?page={2**63}&limit=2")
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert detail["code"] == "query_validation"
+        assert [violation["field"] for violation in detail["violations"]] == ["page"]
+
+    def test_bind_interfaces_uses_compiled_default_pagination_mode(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            pagination_mode = PaginationMode.CURSOR
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?limit=1")
+        assert response.status_code == 200
+        assert response.json()["pagination"] == PaginationMode.CURSOR.value
+
+    def test_bind_interfaces_rejects_pagination_override_when_disabled(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            pagination_mode = PaginationMode.OFFSET
+            allow_pagination_override = False
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/items/?pagination=cursor")
+        assert response.status_code == 400
+        assert "cannot override" in response.json()["detail"]
+
+
+class TestBindInterfacesFilters:
+    def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/rows"
+            filterable = ALL
+            allow_pagination_override = False
+            routes = (RestRoute(use_case=IdOnlyFilterUseCase, method="GET", path="/"),)
+
+        client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+        response = client.get("/rows/?rank=7")
+
+        assert response.status_code == 400
+        body = response.json()["detail"]
+        assert body["code"] == "unsupported_query"
+        assert "rank" in body["message"]
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("sort=seenAt", [["seen_at", "ASC"]]),
+            ("sort=id&direction=DESC", [["id", "DESC"]]),
+        ],
     )
-    client = TestClient(app)
-    assert client.get("/ping/").json() == "pong"
-    assert client.get("/items/99").json()["item_id"] == "99"
+    def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
+        self, query: str, expected: list[list[str]]
+    ) -> None:
+        SORTS_SEEN.clear()
+        response = _entry_client(EntrySortUseCase).get(f"/entries/?{query}")
 
+        assert response.status_code == 200
+        assert [expected] == SORTS_SEEN
 
-def test_create_fastapi_app_uncompiled_use_case_raises() -> None:
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
+    def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike(
+        self,
+    ) -> None:
+        client = _entry_client(EntrySortUseCase)
 
-    # bootstrap with NO use cases — PingUseCase not compiled
-    result = _bootstrap()
-    observability_runtime = ObservabilityRuntime.noop()
-    route_sources = RouteSources(python=[IFace])
-    with pytest.raises(InterfaceCompilationError, match="not been compiled"):
-        create_fastapi_app(
-            result,
-            routes=route_sources,
-            observability_runtime=observability_runtime,
+        existing = _refusal(client.get("/entries/?sort=code"))
+        missing = _refusal(client.get("/entries/?sort=nope"))
+
+        assert existing["message"].replace("'code'", "'nope'") == missing["message"]
+
+    @pytest.mark.parametrize("query", ["id=1", "id__like=1%25", "id__is_null=true"])
+    def test_bind_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
+        self,
+        query: str,
+    ) -> None:
+        detail = _refusal(_entry_client().get(f"/entries/?{query}"))
+
+        assert detail["message"] == "Filtering on field 'id' is not allowed by this route."
+
+    @pytest.mark.parametrize(
+        ("query", "message"),
+        [
+            ("code__exists=true", "Operator 'exists' is not supported by this route."),
+            ("code__not_exists=true", "Operator 'not_exists' is not supported by this route."),
+            ("rank__like=1%25", "Operator 'like' applies to text fields only."),
+            ("rank__ilike=1%25", "Operator 'ilike' applies to text fields only."),
+        ],
+    )
+    def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
+        self, query: str, message: str
+    ) -> None:
+        assert _refusal(_entry_client().get(f"/entries/?{query}"))["message"] == message
+
+    @pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
+    def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(self, raw: str) -> None:
+        assert _filters_seen(f"code={raw}") == {"code": raw}
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("rank=7", {"rank": 7}),
+            ("sortOrder=4", {"sort_order": 4}),
+            ("quota__gt=0", {"quota": 0}),
+            ("code__like=01%25", {"code": "01%"}),
+        ],
+    )
+    def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
+        self, query: str, expected: dict[str, Any]
+    ) -> None:
+        assert _filters_seen(query) == expected
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [("nickname=ann", {"nickname": "ann"}), ("nickname__like=an%25", {"nickname": "an%"})],
+    )
+    def test_bind_interfaces_filters_an_unset_text_column_by_value_and_pattern(
+        self, query: str, expected: dict[str, Any]
+    ) -> None:
+        assert _filters_seen(query) == expected
+
+    def test_bind_interfaces_builds_enum_and_temporal_filter_values(
+        self,
+    ) -> None:
+        seen = _filters_seen(
+            "tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z", EntryFilterTypesUseCase
         )
 
+        assert seen == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
 
-def test_create_fastapi_app_accepts_defaults() -> None:
-    from loom.rest.model import PaginationMode
+    def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value(
+        self,
+    ) -> None:
+        assert _filters_seen("phase=closed") == {"phase": "closed"}
+        assert _filters_seen("phase=closed", EntryFilterTypesUseCase) == {"phase": "_Phase"}
 
-    class IFace(RestInterface[str]):
-        prefix = "/ping"
-        routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-    result = _bootstrap(PingUseCase)
-    defaults = RestApiDefaults(pagination_mode=PaginationMode.CURSOR)
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[IFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
-        defaults=defaults,
+    @pytest.mark.parametrize(
+        ("query", "field"),
+        [("rank=s3cr3t", "rank"), ("active=1", "active"), ("rank__in=1,s3cr3t", "rank")],
     )
-    assert isinstance(app, FastAPI)
+    def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
+        self, query: str, field: str
+    ) -> None:
+        response = _entry_client().get(f"/entries/?{query}")
 
+        assert response.status_code == 400
+        body = response.json()["detail"]
+        assert body["code"] == "query_validation"
+        assert [violation["field"] for violation in body["violations"]] == [field]
+        assert "s3cr3t" not in response.text
 
-def test_create_fastapi_app_exists_marker_uses_registered_repository() -> None:
-    class _UsersIFace(RestInterface[bool]):
-        prefix = "/users"
-        routes = (RestRoute(use_case=_ExistsCheckEmailUseCase, method="POST", path="/exists"),)
-
-    class _FakeRepo:
-        model = _ExistsUserRecord
-
-        async def exists_by(self, field: str, value: Any) -> bool:
-            await asyncio.sleep(0)
-            return field == "email" and value == "taken@example.com"
-
-    _repo = _FakeRepo()
-    _token = ("repo", _ExistsUserRecord)
-
-    def _register_repo(container: LoomContainer) -> None:
-        container.register(_token, lambda: _repo, scope=Scope.APPLICATION)
-        container.register_repo(_ExistsUserRecord, _token)
-
-    result = bootstrap_app(
-        config=_FakeConfig(),
-        use_cases=[_ExistsCheckEmailUseCase],
-        modules=[_register_repo],
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("rank__in=1,2,3", {"rank": [1, 2, 3]}),
+            ("code__in=01,true,2.5", {"code": ["01", "true", "2.5"]}),
+        ],
     )
-    app = create_fastapi_app(
-        result,
-        routes=RouteSources(python=[_UsersIFace]),
-        observability_runtime=ObservabilityRuntime.noop(),
-    )
-    client = TestClient(app)
+    def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
+        self, query: str, expected: dict[str, Any]
+    ) -> None:
+        assert _filters_seen(query) == expected
 
-    response = client.post("/users/exists", json={"email": "taken@example.com"})
-    assert response.status_code == 200
-    assert response.json() is True
+
+class TestBindInterfacesOpenApi:
+    def test_bind_interfaces_tags_on_routes(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            tags = ("Pings",)
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        # Verify OpenAPI schema has the tag on the route
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/ping/"]["get"]
+        assert "Pings" in operation.get("tags", [])
+
+    def test_the_operation_is_named_after_the_use_case(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        schema = TestClient(_make_app(*_compile_routes(IFace))).get("/openapi.json").json()
+
+        assert schema["paths"]["/ping/"]["get"]["operationId"] == "handle_AcmePingUseCase_ping__get"
+
+    def test_every_route_endpoint_is_a_coroutine_function(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        app = _make_app(*_compile_routes(IFace))
+        endpoints = [r.endpoint for r in app.routes if getattr(r, "path", "") == "/ping/"]
+
+        assert endpoints
+        assert all(asyncio.iscoroutinefunction(endpoint) for endpoint in endpoints)
+
+    def test_bind_interfaces_uses_use_case_docstring_for_route_docs(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/docs"
+            routes = (RestRoute(use_case=DocUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/docs/"]["get"]
+        assert operation["summary"] == "Doc summary from use case."
+        assert "Extended documentation" in operation["description"]
+
+    def test_openapi_response_schema_inferred_from_use_case_return_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        response_schema = schema["paths"]["/ping/"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        assert response_schema["type"] == "string"
+
+    def test_openapi_request_schema_from_command_excludes_internal_fields(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        raw_schema = schema["paths"]["/items/"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        request_schema = _resolve_schema(raw_schema, schema)
+        properties = request_schema["properties"]
+        assert "fullName" in properties
+        assert "tenant_id" not in properties
+
+    def test_openapi_request_schema_for_plain_command_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/plain"
+            routes = (RestRoute(use_case=PlainCreateUseCase, method="POST", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        raw_schema = schema["paths"]["/plain/"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        request_schema = _resolve_schema(raw_schema, schema)
+        assert request_schema["type"] == "object"
+        assert "full_name" in request_schema["properties"]
+
+
+class TestBindInterfacesBoundaryValidation:
+    def test_bind_interfaces_bad_body_field_maps_to_422_boundary_validation(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.post("/items/", json={"fullName": 12})
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["code"] == "boundary_validation"
+        assert detail["violations"] == [
+            {"field": "fullName", "message": "Expected `str`, got `int`"}
+        ]
+
+    def test_bind_interfaces_missing_body_field_reports_that_field(
+        self,
+    ) -> None:
+        class IFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=CreateItemUseCase, method="POST", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.post("/items/", json={})
+        assert response.status_code == 422
+        assert response.json()["detail"]["violations"][0]["field"] == "fullName"
+
+
+class TestBindInterfacesBaseModelResult:
+    def test_bind_interfaces_basemodel_result_renders_as_json_object(
+        self,
+    ) -> None:
+        class IFace(RestInterface[Any]):
+            prefix = "/model"
+            routes = (RestRoute(use_case=ModelResultUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        response = client.get("/model/")
+        assert response.status_code == 200
+        assert response.json() == {"fullName": "Alice"}
+
+
+class TestOpenApiPydanticSchemas:
+    def test_openapi_response_schema_for_basemodel_return_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[Any]):
+            prefix = "/model"
+            routes = (RestRoute(use_case=ModelResultUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        raw_schema = schema["paths"]["/model/"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        response_schema = _resolve_schema(raw_schema, schema)
+        assert "fullName" in response_schema["properties"]
+        assert "title" not in response_schema
+
+    def test_openapi_response_schema_for_basemodel_list_return_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[Any]):
+            prefix = "/models"
+            routes = (RestRoute(use_case=ModelListResultUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        response_schema = schema["paths"]["/models/"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        assert response_schema["type"] == "array"
+        items_schema = _resolve_schema(response_schema["items"], schema)
+        assert "fullName" in items_schema["properties"]
+
+    def test_openapi_response_schema_for_root_model_return_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[Any]):
+            prefix = "/root"
+            routes = (RestRoute(use_case=RootModelResultUseCase, method="GET", path="/"),)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        raw_schema = schema["paths"]["/root/"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        response_schema = _resolve_schema(raw_schema, schema)
+        assert "fullName" in response_schema["properties"]
+
+    def test_openapi_autocrud_list_has_response_schema_and_query_parameters(
+        self,
+    ) -> None:
+        class IFace(RestInterface[_AutoItem]):
+            prefix = "/auto-items"
+            auto = True
+            include = ("list",)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/auto-items/"]["get"]
+
+        response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        assert response_schema
+
+        parameter_names = {parameter["name"] for parameter in operation["parameters"]}
+        expected_params = {"page", "limit", "pagination", "after", "cursor", "sort", "direction"}
+        assert expected_params <= parameter_names
+
+    def test_openapi_autocrud_summary_uses_generated_docstring(
+        self,
+    ) -> None:
+        class IFace(RestInterface[_AutoItem]):
+            prefix = "/auto-docs"
+            auto = True
+            include = ("list",)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/auto-docs/"]["get"]
+        assert operation["summary"] == "List _AutoItem with filtering, sorting and pagination."
+
+    def test_openapi_autocrud_get_path_param_uses_model_id_type(
+        self,
+    ) -> None:
+        class IFace(RestInterface[_AutoItem]):
+            prefix = "/auto-item"
+            auto = True
+            include = ("get",)
+
+        routes = _compile_routes(IFace)
+        app = _make_app(*routes)
+        client = TestClient(app)
+        schema = client.get("/openapi.json").json()
+        operation = schema["paths"]["/auto-item/{id}"]["get"]
+        id_param = next(param for param in operation["parameters"] if param["name"] == "id")
+        assert id_param["schema"]["type"] == "integer"
+
+
+class TestCreateFastApiApp:
+    def test_create_fastapi_app_returns_fastapi_instance(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        result = _bootstrap(AcmePingUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+        )
+        assert isinstance(app, FastAPI)
+
+    def test_create_fastapi_app_routes_work(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        result = _bootstrap(AcmePingUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+        )
+        client = TestClient(app)
+        assert client.get("/ping/").json() == "pong"
+
+    def test_create_fastapi_app_accepts_fastapi_kwargs(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        result = _bootstrap(AcmePingUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+            title="My API",
+            version="2.0.0",
+        )
+        assert app.title == "My API"
+        assert app.version == "2.0.0"
+
+    def test_create_fastapi_app_multiple_interfaces(
+        self,
+    ) -> None:
+        class PingIFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        class ItemIFace(RestInterface[dict[str, Any]]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=ItemUseCase, method="GET", path="/{item_id}"),)
+
+        result = _bootstrap(AcmePingUseCase, ItemUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[PingIFace, ItemIFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+        )
+        client = TestClient(app)
+        assert client.get("/ping/").json() == "pong"
+        assert client.get("/items/99").json()["item_id"] == "99"
+
+    def test_create_fastapi_app_uncompiled_use_case_raises(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        # bootstrap with NO use cases — AcmePingUseCase not compiled
+        result = _bootstrap()
+        observability_runtime = ObservabilityRuntime.noop()
+        route_sources = RouteSources(python=[IFace])
+        with pytest.raises(InterfaceCompilationError, match="not been compiled"):
+            create_fastapi_app(
+                result,
+                routes=route_sources,
+                observability_runtime=observability_runtime,
+            )
+
+    def test_create_fastapi_app_accepts_defaults(
+        self,
+    ) -> None:
+        from loom.rest.model import PaginationMode
+
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        result = _bootstrap(AcmePingUseCase)
+        defaults = RestApiDefaults(pagination_mode=PaginationMode.CURSOR)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+            defaults=defaults,
+        )
+        assert isinstance(app, FastAPI)
+
+    def test_create_fastapi_app_exists_marker_uses_registered_repository(
+        self,
+    ) -> None:
+        class _UsersIFace(RestInterface[bool]):
+            prefix = "/users"
+            routes = (RestRoute(use_case=_ExistsCheckEmailUseCase, method="POST", path="/exists"),)
+
+        class _FakeRepo:
+            model = _ExistsUserRecord
+
+            async def exists_by(self, field: str, value: Any) -> bool:
+                await asyncio.sleep(0)
+                return field == "email" and value == "taken@example.com"
+
+        _repo = _FakeRepo()
+        _token = ("repo", _ExistsUserRecord)
+
+        def _register_repo(container: LoomContainer) -> None:
+            container.register(_token, lambda: _repo, scope=Scope.APPLICATION)
+            container.register_repo(_ExistsUserRecord, _token)
+
+        result = bootstrap_app(
+            config=_FakeConfig(),
+            use_cases=[_ExistsCheckEmailUseCase],
+            modules=[_register_repo],
+        )
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[_UsersIFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+        )
+        client = TestClient(app)
+
+        response = client.post("/users/exists", json={"email": "taken@example.com"})
+        assert response.status_code == 200
+        assert response.json() is True
+
+
+class TestUseCaseSpans:
+    def test_create_fastapi_app_emits_use_case_span(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        observer = RecordingObservabilityObserver()
+        runtime = ObservabilityRuntime([observer])
+        result = _bootstrap(AcmePingUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=runtime,
+        )
+        client = TestClient(app)
+        response = client.get("/ping/")
+
+        assert response.status_code == 200
+        assert [event.kind for event in observer.events] == [
+            ObservabilityEventKind.START,
+            ObservabilityEventKind.END,
+        ]
+        assert observer.events[0].scope is ObservabilityScope.USE_CASE
+        assert observer.events[0].name == "AcmePingUseCase"
+        assert observer.events[0].meta["route"] == "/ping/"
+        assert observer.events[1].meta["status_code"] == 200
+
+    def test_use_case_span_nests_under_the_request_span_of_a_host_sdk(
+        self,
+    ) -> None:
+        """A host's request span parents the use case span, in the host's own trace.
+
+        The ASGI middleware stands in for what an OTEL HTTP instrumentation does in
+        production. Loom never installs a tracer provider globally, so the two
+        providers export separately while sharing one context and one trace.
+        """
+
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        host_exporter = InMemorySpanExporter()
+        host_provider = TracerProvider()
+        host_provider.add_span_processor(SimpleSpanProcessor(host_exporter))
+        loom_exporter = InMemorySpanExporter()
+        loom_provider = TracerProvider()
+        loom_provider.add_span_processor(SimpleSpanProcessor(loom_exporter))
+        host_tracer = host_provider.get_tracer("host.sdk")
+
+        class _HostSpanMiddleware:
+            """Pure-ASGI middleware, so its span is current in the endpoint's task."""
+
+            def __init__(self, app: Any) -> None:
+                self.app = app
+
+            async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+                if scope["type"] != "http":
+                    await self.app(scope, receive, send)
+                    return
+                with host_tracer.start_as_current_span("host:request"):
+                    await self.app(scope, receive, send)
+
+        result = _bootstrap(AcmePingUseCase)
+        app = create_fastapi_app(
+            result,
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime(
+                [], tracer=loom_provider.get_tracer("loom.rest")
+            ),
+        )
+        app.add_middleware(_HostSpanMiddleware)
+
+        assert TestClient(app).get("/ping/").status_code == 200
+
+        host_spans = host_exporter.get_finished_spans()
+        loom_spans = loom_exporter.get_finished_spans()
+        assert [span.name for span in host_spans] == ["host:request"]
+        assert [span.name for span in loom_spans] == ["use_case:AcmePingUseCase"]
+
+        request_context = host_spans[0].get_span_context()
+        use_case_context = loom_spans[0].get_span_context()
+        use_case_parent = loom_spans[0].parent
+        assert request_context is not None
+        assert use_case_context is not None
+        assert use_case_parent is not None
+        assert use_case_parent.span_id == request_context.span_id
+        assert use_case_context.trace_id == request_context.trace_id

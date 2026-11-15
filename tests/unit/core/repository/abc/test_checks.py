@@ -33,30 +33,36 @@ def _with_cursors(backend: dict[str, Any], cursors: dict[str, Any]) -> dict[str,
     return {**backend, "persistence": persistence}
 
 
-@pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
-def test_keys_signing_the_cursors_pass(backend: dict[str, Any]) -> None:
-    assert not _found(_with_cursors(backend, _SIGNED))
-    assert not _found(_with_cursors(backend, {"signing": "signed", **_SIGNED}))
+class TestCursorSigningChecks:
+    @pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
+    def test_keys_signing_the_cursors_pass(self, backend: dict[str, Any]) -> None:
+        assert not _found(_with_cursors(backend, _SIGNED))
+        assert not _found(_with_cursors(backend, {"signing": "signed", **_SIGNED}))
 
+    @pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
+    @pytest.mark.parametrize(
+        "cursors",
+        [
+            {"signing": "unsigned"},
+            {"signing": "ephemeral", **_SIGNED},
+            {"signing": "${oc.env:CURSOR_SIGNING}", **_SIGNED},
+            {},
+            {"current_key_id": "2026-11", "keys": _SIGNED["keys"]},
+            {"current_key_id": "${oc.env:CURSOR_KEY_ID}", "keys": _SIGNED["keys"]},
+        ],
+        ids=[
+            "unsigned",
+            "ephemeral",
+            "placeholder-mode",
+            "no-key",
+            "unknown-key",
+            "placeholder-key",
+        ],
+    )
+    def test_cursors_not_signed_with_a_configured_key_fail(
+        self, backend: dict[str, Any], cursors: dict[str, Any]
+    ) -> None:
+        assert _found(_with_cursors(backend, cursors))
 
-@pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
-@pytest.mark.parametrize(
-    "cursors",
-    [
-        {"signing": "unsigned"},
-        {"signing": "ephemeral", **_SIGNED},
-        {"signing": "${oc.env:CURSOR_SIGNING}", **_SIGNED},
-        {},
-        {"current_key_id": "2026-11", "keys": _SIGNED["keys"]},
-        {"current_key_id": "${oc.env:CURSOR_KEY_ID}", "keys": _SIGNED["keys"]},
-    ],
-    ids=["unsigned", "ephemeral", "placeholder-mode", "no-key", "unknown-key", "placeholder-key"],
-)
-def test_cursors_not_signed_with_a_configured_key_fail(
-    backend: dict[str, Any], cursors: dict[str, Any]
-) -> None:
-    assert _found(_with_cursors(backend, cursors))
-
-
-def test_a_configuration_serving_no_repositories_is_not_judged() -> None:
-    assert not _found({"persistence": {"cursors": {"signing": "unsigned"}}})
+    def test_a_configuration_serving_no_repositories_is_not_judged(self) -> None:
+        assert not _found({"persistence": {"cursors": {"signing": "unsigned"}}})

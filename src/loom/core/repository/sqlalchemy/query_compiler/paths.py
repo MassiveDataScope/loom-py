@@ -41,7 +41,6 @@ def resolve_column(sa_model: type[Any], path: str) -> Any:
     if len(parts) == 1:
         return attr
 
-    # One-level relation traversal
     related_model = _related_model(attr, path)
     nested = getattr(related_model, parts[1], None)
     if nested is None:

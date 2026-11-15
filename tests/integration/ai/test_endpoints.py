@@ -42,13 +42,13 @@ from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import (
     CONVERSATION_LOAD_FAILED_MESSAGE,
     CONVERSATION_LOAD_TIMEOUT_MESSAGE,
+    HOOK_FAILED_MESSAGE,
     AgentCompilationError,
     AgentErrorCode,
     AgentRunErrorCode,
 )
 from loom.ai.fastapi.endpoints import bind_agent_endpoints
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._hooks import HOOK_FAILED_MESSAGE
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden

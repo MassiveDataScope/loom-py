@@ -27,7 +27,7 @@ from loom.streaming.kafka import (
 )
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
 from tests.unit.streaming.kafka.cases import OrderCreated, ProductEvent
-from tests.unit.streaming.kafka.fakes import (
+from tests.unit.streaming.kafka.doubles import (
     ConsumerBackendStub,
     FakeKafkaMessage,
     install_raw_consumer_stub,

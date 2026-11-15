@@ -80,7 +80,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _SEPARATOR: Final = "__"
-_LEVEL: Final = re.compile(r"\w+", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
+_LEVEL: Final = re.compile(r"\w+", re.ASCII)
 _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
 _ALLOWLIST_FIELD: Final = "overridable"
@@ -181,7 +181,6 @@ def _apply_overrides(
     from omegaconf import OmegaConf
 
     written = OmegaConf.to_container(config, resolve=False)
-    # Validated with or without variables, so a bad entry fails in development.
     declared = _declared_allowlist(written)
     if not variables:
         return config
@@ -218,8 +217,6 @@ def _parsed(name: str, key: str, value: str) -> Any:
         layer = OmegaConf.from_dotlist([f"{key}={value}"])
         written = OmegaConf.to_container(layer, resolve=False)
     except Exception:
-        # Any parse failure, a YAML tag that fails to construct included; from
-        # None, since the chained exception's message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
     if any(INTERPOLATION in text for _, text in config_strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
@@ -234,7 +231,6 @@ def _parsed(name: str, key: str, value: str) -> Any:
 def _require_no_import(name: str, key: str, layer: Any, environment: Environment) -> None:
     from omegaconf import OmegaConf
 
-    # The parsed value: a YAML escape such as "\x3a" hides the colon from the raw text.
     parsed = config_strings(OmegaConf.to_container(layer, resolve=False))
     if key.casefold() == "app.job_service" and any(":" in text for _, text in parsed):
         raise ConfigError(
@@ -257,8 +253,6 @@ def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
     try:
         return OmegaConf.merge(config, layer)
     except OmegaConfBaseException:
-        # From None: chained, the merge error would print with the traceback,
-        # and its message may quote the value.
         raise ConfigError(f"{name} does not merge into {key!r}") from None
 
 

@@ -1,4 +1,4 @@
-"""Public projection of compiled agents (US7).
+"""Public projection of compiled agents.
 
 The AI pillar's contribution to
 :func:`~loom.core.introspection.describe_app`: it turns each compiled
@@ -12,7 +12,7 @@ server — so publishing "everything but a deny-list" would leak the moment a
 new field appears.  A kind with no registered projection is therefore an
 error, never a guess.
 
-Excluded at agent level (FR-054): ``instructions``, the resolved
+Excluded at agent level: ``instructions``, the resolved
 ``inference`` target, the compiled ``output.loom_type`` and the author's
 free-form ``metadata``.
 """
@@ -72,7 +72,7 @@ class AgentDescription(LoomFrozenStruct, frozen=True, kw_only=True):
         output_schema: JSON Schema of the agent's structured answer.
         capabilities: Described grants, in the order the plan carries them.
         policies: Validated execution limits. An absent optional cap
-            (FR-042) is published as ``None``. ``max_usd`` is published as a
+            is published as ``None``. ``max_usd`` is published as a
             JSON number, matching the published schema's own
             ``policies.max_usd`` (``type: number``) — never as the string
             msgspec would otherwise encode a ``Decimal`` to.

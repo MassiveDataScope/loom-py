@@ -70,101 +70,100 @@ def recipe(contract_project: ProjectFactory) -> Recipe:
     return LambdaAdapter().recipe(source)
 
 
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [
-        ("profile", LAMBDA_PROFILE),
-        ("pool_metrics", None),
-        ("agents", True),
-        ("agent_endpoints", False),
-    ],
-)
-def test_the_recipe_asks_for_one_connection_and_no_pool_metrics_or_agent_endpoints(
-    recipe: Recipe, field: str, expected: object
-) -> None:
-    assert getattr(recipe, field) == expected
+class TestLambdaRecipe:
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("profile", LAMBDA_PROFILE),
+            ("pool_metrics", None),
+            ("agents", True),
+            ("agent_endpoints", False),
+        ],
+    )
+    def test_the_recipe_asks_for_one_connection_and_no_pool_metrics_or_agent_endpoints(
+        self, recipe: Recipe, field: str, expected: object
+    ) -> None:
+        assert getattr(recipe, field) == expected
 
+    @pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
+    def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
+        self, contract_project: ProjectFactory, options: dict[str, Any], key: str
+    ) -> None:
+        config = contract_project(**options)
 
-@pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
-def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
-    contract_project: ProjectFactory, options: dict[str, Any], key: str
-) -> None:
-    config = contract_project(**options)
+        adapter = LambdaAdapter()
 
-    adapter = LambdaAdapter()
+        with pytest.raises(LambdaUnservedConfigError) as raised:
+            build_application(config, adapter=adapter, environment=_TEST)
+        assert raised.value.key == key
 
-    with pytest.raises(LambdaUnservedConfigError) as raised:
-        build_application(config, adapter=adapter, environment=_TEST)
-    assert raised.value.key == key
+    @pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
+    def test_a_configuration_refusal_comes_before_discovery(
+        self, contract_project: ProjectFactory, options: dict[str, Any], key: str
+    ) -> None:
+        config = contract_project(app=_UNDISCOVERABLE_APP, **options)
 
+        adapter = LambdaAdapter()
 
-@pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
-def test_a_configuration_refusal_comes_before_discovery(
-    contract_project: ProjectFactory, options: dict[str, Any], key: str
-) -> None:
-    config = contract_project(app=_UNDISCOVERABLE_APP, **options)
+        with pytest.raises(LambdaUnservedConfigError) as raised:
+            build_application(config, adapter=adapter, environment=_TEST)
+        assert raised.value.key == key
 
-    adapter = LambdaAdapter()
+    def test_an_sql_connection_without_an_endpoint_composes_with_its_sql(
+        self,
+        contract_project: ProjectFactory,
+    ) -> None:
+        connection = dict(_SQL_CONNECTION, sql_endpoint={"enabled": False})
+        config = contract_project(sql={"connections": {"analytics": connection}})
 
-    with pytest.raises(LambdaUnservedConfigError) as raised:
-        build_application(config, adapter=adapter, environment=_TEST)
-    assert raised.value.key == key
+        application = build_application(config, adapter=LambdaAdapter(), environment=_TEST)
 
+        assert application.sql.config is not None
 
-def test_an_sql_connection_without_an_endpoint_composes_with_its_sql(
-    contract_project: ProjectFactory,
-) -> None:
-    connection = dict(_SQL_CONNECTION, sql_endpoint={"enabled": False})
-    config = contract_project(sql={"connections": {"analytics": connection}})
+    @pytest.mark.parametrize("adapter", [FastAPIAdapter, LambdaAdapter])
+    def test_an_exclusion_reaching_a_templated_route_aborts_startup(
+        self, contract_project: ProjectFactory, adapter: Callable[[], Adapter[object]]
+    ) -> None:
+        config = contract_project(exclude_paths=("/items/everything",))
+        composed = adapter()
 
-    application = build_application(config, adapter=LambdaAdapter(), environment=_TEST)
+        with pytest.raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
+            create_app(config, adapter=composed, environment=_TEST)
 
-    assert application.sql.config is not None
+    def test_a_route_at_a_default_exclusion_requires_a_token_on_lambda(
+        self,
+        open_lambda: Callable[..., LambdaProject],
+    ) -> None:
+        project = open_lambda(exclude_paths=None, health_route=True)
 
+        reply = lambda_client(project.handler)("POST", "/health")
 
-@pytest.mark.parametrize("adapter", [FastAPIAdapter, LambdaAdapter])
-def test_an_exclusion_reaching_a_templated_route_aborts_startup(
-    contract_project: ProjectFactory, adapter: Callable[[], Adapter[object]]
-) -> None:
-    config = contract_project(exclude_paths=("/items/everything",))
-    composed = adapter()
+        assert reply.status == 401
 
-    with pytest.raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
-        create_app(config, adapter=composed, environment=_TEST)
+    def test_fastapi_refuses_a_route_at_its_health_path(
+        self, contract_project: ProjectFactory
+    ) -> None:
+        config = contract_project(exclude_paths=None, health_route=True)
+        adapter = FastAPIAdapter()
 
+        with pytest.raises(InterfaceCompilationError, match="reserved for the readiness route"):
+            create_app(config, adapter=adapter, environment=_TEST)
 
-def test_a_route_at_a_default_exclusion_requires_a_token_on_lambda(
-    open_lambda: Callable[..., LambdaProject],
-) -> None:
-    project = open_lambda(exclude_paths=None, health_route=True)
+    def test_bind_before_recipe_is_refused(self) -> None:
+        application: Any = object()
+        adapter = LambdaAdapter()
 
-    reply = lambda_client(project.handler)("POST", "/health")
+        with pytest.raises(CompositionStateError, match="LambdaAdapter.bind") as raised:
+            adapter.bind(application)
+        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
 
-    assert reply.status == 401
+    def test_a_second_recipe_on_the_same_adapter_is_refused(
+        self, contract_project: ProjectFactory
+    ) -> None:
+        adapter = LambdaAdapter()
+        build_application(contract_project(), adapter=adapter, environment=_TEST)
+        second = contract_project()
 
-
-def test_fastapi_refuses_a_route_at_its_health_path(contract_project: ProjectFactory) -> None:
-    config = contract_project(exclude_paths=None, health_route=True)
-    adapter = FastAPIAdapter()
-
-    with pytest.raises(InterfaceCompilationError, match="reserved for the readiness route"):
-        create_app(config, adapter=adapter, environment=_TEST)
-
-
-def test_bind_before_recipe_is_refused() -> None:
-    application: Any = object()
-    adapter = LambdaAdapter()
-
-    with pytest.raises(CompositionStateError, match="LambdaAdapter.bind") as raised:
-        adapter.bind(application)
-    assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
-
-
-def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: ProjectFactory) -> None:
-    adapter = LambdaAdapter()
-    build_application(contract_project(), adapter=adapter, environment=_TEST)
-    second = contract_project()
-
-    with pytest.raises(CompositionStateError, match="one adapter instance") as raised:
-        build_application(second, adapter=adapter, environment=_TEST)
-    assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
+        with pytest.raises(CompositionStateError, match="one adapter instance") as raised:
+            build_application(second, adapter=adapter, environment=_TEST)
+        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED

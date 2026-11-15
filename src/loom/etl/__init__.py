@@ -165,18 +165,14 @@ from loom.etl.storage import (
 )
 
 __all__ = [
-    # params
     "ETLParams",
-    # step / process / pipeline
     "ETLStep",
     "StepSQL",
     "ClientStep",
     "ETLProcess",
     "ETLPipeline",
-    # runner
     "ETLRunner",
     "InvalidStageError",
-    # sources
     "Sources",
     "SourceSet",
     "FromTable",
@@ -189,22 +185,17 @@ __all__ = [
     "FromMongo",
     "FromDynamoDb",
     "SourceRef",
-    # targets
     "IntoTable",
     "IntoFile",
     "IntoTemp",
     "IntoClickHouse",
     "IntoClient",
     "IntoHistory",
-    # SCD2 enums
     "HistorifyInputMode",
     "DeletePolicy",
     "HistoryDateType",
-    # SCD2 spec
     "HistorifySpec",
-    # SCD2 report
     "HistorifyRepairReport",
-    # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyDeleteMarkerError",
@@ -212,43 +203,33 @@ __all__ = [
     "EmptyReplaceError",
     "UpsertDeleteFlagError",
     "UnsupportedUpsertDeleteFlagError",
-    # intermediates
     "FsspecTempCleaner",
     "CheckpointScope",
     "CheckpointStore",
-    # format
     "Format",
-    # read options
     "ReadOptions",
     "CsvReadOptions",
     "JsonReadOptions",
     "ExcelReadOptions",
     "ParquetReadOptions",
-    # write options
     "WriteOptions",
     "CsvWriteOptions",
     "JsonWriteOptions",
     "ParquetWriteOptions",
-    # table / column refs
     "TableRef",
     "col",
-    # params proxy
     "params",
     "ParamExpr",
-    # I/O protocols
     "TableDiscovery",
     "SourceReader",
     "TargetWriter",
     "ClientCommandExecutor",
     "AgentBatchRunner",
-    # ClickHouse client executor
     "ClickHouseClientExecutor",
-    # storage locator
     "TableLocation",
     "TableLocator",
     "PrefixLocator",
     "MappingLocator",
-    # storage config (YAML-loadable)
     "StorageEngine",
     "StorageConfig",
     "StorageDefaults",
@@ -259,7 +240,6 @@ __all__ = [
     "FileRoute",
     "MaintenanceConfig",
     "MaintenanceVacuumConfig",
-    # maintenance
     "MaintenanceStep",
     "MaintainTable",
     "MaintainSchema",
@@ -270,11 +250,9 @@ __all__ = [
     "OptimizeResult",
     "TableMaintenanceResult",
     "DeltaTableMaintainer",
-    # observability config (YAML-loadable)
     "ETLObservabilityConfig",
     "LineageConfig",
     "OtelConfig",
-    # schema — primitive
     "SchemaMode",
     "ColumnSchema",
     "LoomDtype",
@@ -282,7 +260,6 @@ __all__ = [
     "SchemaNotFoundError",
     "SchemaError",
     "UnsupportedFormatError",
-    # schema — complex / structural types
     "ListType",
     "ArrayType",
     "StructType",

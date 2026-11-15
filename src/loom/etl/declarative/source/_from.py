@@ -533,7 +533,6 @@ class SourceSet(Generic[ParamsT]):
             )
     """
 
-    # Class-level sources populated by __init_subclass__
     _sources: dict[str, _SourceEntryType]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

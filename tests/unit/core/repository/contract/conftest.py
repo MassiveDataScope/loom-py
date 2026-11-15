@@ -1,6 +1,6 @@
 """Backend contract suite fixtures (FR-014).
 
-Every backend runs the same tests over the same neutral ``Order`` model; a
+Every backend runs the same tests over the same neutral ``AcmeContractOrder`` model; a
 test that needs a capability the backend does not declare skips with the
 capability name. Expected query results come from :func:`oracle`, a pure
 Python evaluation of the seed data, so one ``QuerySpec`` must yield the same
@@ -49,7 +49,7 @@ class OrderStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class Order(BaseModel):
+class AcmeContractOrder(BaseModel):
     __tablename__ = _TABLE
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
@@ -191,7 +191,7 @@ class BackendCase:
 
     name: str
     repository_factory: Callable[[], AbstractAsyncContextManager[Any]]
-    model: type[Order]
+    model: type[AcmeContractOrder]
     capabilities: frozenset[type]
     transactions: bool
     unit_of_work: Callable[[Any], UnitOfWork]
@@ -199,8 +199,8 @@ class BackendCase:
 
 
 @asynccontextmanager
-async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[Order, int]]:
-    compile_all(Order)
+async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeContractOrder, int]]:
+    compile_all(AcmeContractOrder)
     # ``None`` pool options: SQLAlchemy picks StaticPool for ``:memory:``.
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
@@ -211,30 +211,34 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[Order, 
         connect_args={},
         store=DEFAULT_STORE,
     )
-    compiled = get_compiled(Order)
+    compiled = get_compiled(AcmeContractOrder)
     assert compiled is not None
     try:
         async with manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
         yield RepositorySQLAlchemy(
-            session_manager=manager, model=Order, cursor_codec=CursorCodec(signing="ephemeral")
+            session_manager=manager,
+            model=AcmeContractOrder,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
     finally:
         await manager.dispose()
 
 
 @asynccontextmanager
-async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[Order, int]]:
+async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
     client = FakeClient(key_name="id", table_names=(_TABLE,))
-    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=Order)
+    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
 
 
 @asynccontextmanager
-async def _mongo_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
-    # ``Order.id`` is autoincrement, which the mongo backend refuses at boot;
+async def _mongo_repository() -> AsyncIterator[RepositoryMongo[AcmeContractOrder, int]]:
+    # ``AcmeContractOrder.id`` is autoincrement, which the mongo backend refuses at boot;
     # the repository itself only maps the key, and the seed ids are explicit.
     collection = FakeMongoClient().collection(_TABLE)
-    yield RepositoryMongo(Order, collection, cursor_codec=CursorCodec(signing="ephemeral"))
+    yield RepositoryMongo(
+        AcmeContractOrder, collection, cursor_codec=CursorCodec(signing="ephemeral")
+    )
 
 
 # Repository -> client for the transactional mongo case. A weak key keeps the
@@ -248,11 +252,13 @@ def mongo_client_of(repository: Any) -> FakeMongoClient:
 
 
 @asynccontextmanager
-async def _mongo_transactional_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
+async def _mongo_transactional_repository() -> AsyncIterator[
+    RepositoryMongo[AcmeContractOrder, int]
+]:
     client = FakeMongoClient()
     collection = client.collection(_TABLE)
     repository = RepositoryMongo(
-        Order,
+        AcmeContractOrder,
         collection,
         session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -277,7 +283,7 @@ def _sqlalchemy_case() -> BackendCase:
     return BackendCase(
         name="sqlalchemy",
         repository_factory=_sqlalchemy_repository,
-        model=Order,
+        model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(RepositorySQLAlchemy)),
         transactions=True,
         unit_of_work=lambda repository: SQLAlchemyUnitOfWork(repository.session_manager),
@@ -289,7 +295,7 @@ def _dynamodb_case() -> BackendCase:
     return BackendCase(
         name="dynamodb",
         repository_factory=_dynamodb_repository,
-        model=Order,
+        model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(RepositoryDynamoDB)),
         transactions=False,
         unit_of_work=lambda _repository: DynamoUnitOfWork(),
@@ -300,7 +306,7 @@ def _mongo_case() -> BackendCase:
     return BackendCase(
         name="mongo",
         repository_factory=_mongo_repository,
-        model=Order,
+        model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(RepositoryMongo)),
         transactions=False,
         unit_of_work=lambda _repository: NoOpMongoUnitOfWork(),
@@ -311,7 +317,7 @@ def _mongo_transactional_case() -> BackendCase:
     return BackendCase(
         name="mongo-transactional",
         repository_factory=_mongo_transactional_repository,
-        model=Order,
+        model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(RepositoryMongo)),
         transactions=True,
         unit_of_work=lambda repository: MongoUnitOfWork(

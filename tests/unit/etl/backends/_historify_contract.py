@@ -18,7 +18,6 @@ provide four pytest fixtures:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -37,15 +36,11 @@ from loom.etl.declarative.target._history import (
     HistorifyTemporalConflictError,
     HistoryDateType,
 )
+from tests.unit.etl.backends.doubles import RunDateParams
 
 # ---------------------------------------------------------------------------
 # Shared helpers (module-level — imported by concrete test modules too)
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class _Params:
-    run_date: date
 
 
 def _snapshot_spec(
@@ -345,7 +340,7 @@ class HistorifyContractTests:
         read_table: Callable,
     ) -> None:
         frame = make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
         assert len(read_table(self._uri(root))) == 2
 
     def test_valid_from_equals_eff_date(
@@ -356,7 +351,7 @@ class HistorifyContractTests:
         read_table: Callable,
     ) -> None:
         frame = make_frame([{"player_id": 1, "team_id": "RM"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
         rows = read_table(self._uri(root))
         assert rows[0]["valid_from"] == date(2024, 1, 1)
 
@@ -368,7 +363,7 @@ class HistorifyContractTests:
         read_table: Callable,
     ) -> None:
         frame = make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
         rows = read_table(self._uri(root))
         assert all(r["valid_to"] is None for r in rows)
 
@@ -384,8 +379,8 @@ class HistorifyContractTests:
         read_table: Callable,
     ) -> None:
         frame = make_frame([{"player_id": 1, "team_id": "RM"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 2)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 2)))
         rows = read_table(self._uri(root))
         assert len(rows) == 1
         assert rows[0]["valid_to"] is None
@@ -398,8 +393,8 @@ class HistorifyContractTests:
         read_table: Callable,
     ) -> None:
         frame = make_frame([{"player_id": 1, "team_id": "RM"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 2)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 2)))
         rows = read_table(self._uri(root))
         assert rows[0]["valid_from"] == date(2024, 1, 1)
 
@@ -418,8 +413,8 @@ class HistorifyContractTests:
         compare equal, not "changed" — a null must not reopen the vector on
         every run."""
         frame = make_frame([{"player_id": 1, "team_id": None}, {"player_id": 2, "team_id": "RM"}])
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 1)))
-        writer.write(frame, _snapshot_spec(), _Params(run_date=date(2024, 1, 2)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 1)))
+        writer.write(frame, _snapshot_spec(), RunDateParams(run_date=date(2024, 1, 2)))
         rows = read_table(self._uri(root))
         player_1 = [r for r in rows if r["player_id"] == 1]
         assert len(player_1) == 1
@@ -444,7 +439,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame(
@@ -454,7 +449,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         player_1 = [r for r in rows if r["player_id"] == 1]
@@ -476,12 +471,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": None}, {"player_id": 2, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}, {"player_id": 2, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         player_1 = sorted((r for r in rows if r["player_id"] == 1), key=lambda r: r["valid_from"])
@@ -505,12 +500,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 5)),
+            RunDateParams(run_date=date(2024, 1, 5)),
         )
         assert len(read_table(self._uri(root))) == 2
 
@@ -524,12 +519,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 5)),
+            RunDateParams(run_date=date(2024, 1, 5)),
         )
         rows = read_table(self._uri(root))
         p2 = [r for r in rows if r["player_id"] == 2]
@@ -550,12 +545,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         assert len(read_table(self._uri(root))) == 2
 
@@ -569,12 +564,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         old = [r for r in rows if r["team_id"] == "RM"]
@@ -590,12 +585,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         new = [r for r in rows if r["team_id"] == "BCA"]
@@ -617,12 +612,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         p2 = [r for r in rows if r["player_id"] == 2]
@@ -639,12 +634,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         p2 = [r for r in rows if r["player_id"] == 2]
@@ -661,12 +656,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         p2 = [r for r in rows if r["player_id"] == 2]
@@ -690,12 +685,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 2
@@ -721,12 +716,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         old = [r for r in rows if r["team_id"] == "RM"]
@@ -754,7 +749,7 @@ class HistorifyContractTests:
                 {"player_id": 1, "team_id": "GET", "role": "loan"},
             ]
         )
-        writer.write(frame, spec, _Params(run_date=date(2024, 1, 1)))
+        writer.write(frame, spec, RunDateParams(run_date=date(2024, 1, 1)))
         rows = read_table(self._uri(root))
         assert len(rows) == 2
         assert all(r["valid_to"] is None for r in rows)
@@ -775,12 +770,12 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "role": "owner"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 2
@@ -810,7 +805,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame(
@@ -820,7 +815,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 4
@@ -853,7 +848,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame(
@@ -864,7 +859,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 3
@@ -893,7 +888,7 @@ class HistorifyContractTests:
                 ]
             ),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         frame2 = make_frame(
             [
@@ -901,8 +896,8 @@ class HistorifyContractTests:
                 {"player_id": 1, "team_id": "BAR", "role": "loan"},
             ]
         )
-        writer.write(frame2, spec, _Params(run_date=date(2024, 6, 1)))
-        writer.write(frame2, spec, _Params(run_date=date(2024, 6, 1)))  # rerun
+        writer.write(frame2, spec, RunDateParams(run_date=date(2024, 6, 1)))
+        writer.write(frame2, spec, RunDateParams(run_date=date(2024, 6, 1)))  # rerun
         rows = read_table(self._uri(root))
         assert len(rows) == 4
 
@@ -921,12 +916,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "salary": 100}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "salary": 150}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 1
@@ -946,11 +941,11 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         frame2 = make_frame([{"player_id": 1, "team_id": "BCA"}])
-        writer.write(frame2, _snapshot_spec(), _Params(run_date=date(2024, 6, 1)))
-        writer.write(frame2, _snapshot_spec(), _Params(run_date=date(2024, 6, 1)))
+        writer.write(frame2, _snapshot_spec(), RunDateParams(run_date=date(2024, 6, 1)))
+        writer.write(frame2, _snapshot_spec(), RunDateParams(run_date=date(2024, 6, 1)))
         assert len(read_table(self._uri(root))) == 2
 
     def test_same_day_rerun_stable_valid_to(
@@ -963,11 +958,11 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         frame2 = make_frame([{"player_id": 1, "team_id": "BCA"}])
         for _ in range(3):
-            writer.write(frame2, _snapshot_spec(), _Params(run_date=date(2024, 6, 1)))
+            writer.write(frame2, _snapshot_spec(), RunDateParams(run_date=date(2024, 6, 1)))
         rows = read_table(self._uri(root))
         old = [r for r in rows if r["team_id"] == "RM"]
         assert old[0]["valid_to"] == date(2024, 5, 31)
@@ -984,17 +979,17 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),  # rerun
+            RunDateParams(run_date=date(2024, 6, 1)),  # rerun
         )
         rows = read_table(self._uri(root))
         p2 = [r for r in rows if r["player_id"] == 2]
@@ -1017,17 +1012,17 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "LIV"}]),
             _snapshot_spec(allow_temporal_rerun=True),
-            _Params(run_date=date(2024, 3, 1)),
+            RunDateParams(run_date=date(2024, 3, 1)),
         )
         rows = sorted(read_table(self._uri(root)), key=lambda r: r["valid_from"])
         assert [(r["team_id"], r["valid_from"], r["valid_to"]) for r in rows] == [
@@ -1046,19 +1041,19 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "BCA"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         backfill = [{"player_id": 1, "team_id": "LIV"}]
         for _ in range(2):
             writer.write(
                 make_frame(backfill),
                 _snapshot_spec(allow_temporal_rerun=True),
-                _Params(run_date=date(2024, 3, 1)),
+                RunDateParams(run_date=date(2024, 3, 1)),
             )
         rows = sorted(read_table(self._uri(root)), key=lambda r: r["valid_from"])
         assert [(r["team_id"], r["valid_from"], r["valid_to"]) for r in rows] == [
@@ -1079,11 +1074,11 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         frame = make_frame([{"player_id": 1, "team_id": "RM"}])
         spec = _snapshot_spec(allow_temporal_rerun=False)
-        params = _Params(run_date=date(2024, 1, 1))
+        params = RunDateParams(run_date=date(2024, 1, 1))
         with pytest.raises(HistorifyTemporalConflictError):
             writer.write(
                 frame,
@@ -1100,12 +1095,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(),
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM"}]),
             _snapshot_spec(allow_temporal_rerun=True),
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
 
     # ------------------------------------------------------------------
@@ -1811,12 +1806,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "email": "old@rm.com"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "email": "new@rm.com"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 1
@@ -1835,13 +1830,13 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "email": "v1@rm.com"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         for i in range(3):
             writer.write(
                 make_frame([{"player_id": 1, "team_id": "RM", "email": f"v{i + 2}@rm.com"}]),
                 spec,
-                _Params(run_date=date(2024, 1, i + 2)),
+                RunDateParams(run_date=date(2024, 1, i + 2)),
             )
         rows = read_table(self._uri(root))
         assert len(rows) == 1
@@ -1858,12 +1853,12 @@ class HistorifyContractTests:
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "email": "original@rm.com"}]),
             spec,
-            _Params(run_date=date(2024, 1, 1)),
+            RunDateParams(run_date=date(2024, 1, 1)),
         )
         writer.write(
             make_frame([{"player_id": 1, "team_id": "RM", "email": "changed@rm.com"}]),
             spec,
-            _Params(run_date=date(2024, 6, 1)),
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         rows = read_table(self._uri(root))
         assert len(rows) == 1

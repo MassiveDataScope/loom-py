@@ -256,15 +256,11 @@ def _build_stdlib_handler(cfg: HandlerConfig) -> logging.Handler:
 
 
 def _setup_stdlib(config: LogConfig, level: int, environment: Environment) -> None:
-    # Every stdlib record (loom-internal or third-party) is routed through
-    # a structlog ProcessorFormatter so the whole process shares one render.
     target = logging.getLogger(config.name) if config.name else logging.getLogger()
     target.setLevel(level)
     while target.handlers:
         target.removeHandler(target.handlers[-1])
 
-    # Handlers stay at NOTSET: stdlib loggers filter, so their named levels apply
-    # as set. structlog's bound loggers still filter at the top-level level.
     for handler_cfg in config.handlers or (StreamHandlerConfig(),):
         handler = _build_stdlib_handler(handler_cfg)
         handler.setFormatter(

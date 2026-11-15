@@ -49,130 +49,126 @@ def _inherit(aws: object) -> dict[str, Any]:
     return inherit_aws(aws, {"read_timeout": 3}, "storage.dynamodb", AwsClientConfig)
 
 
-def test_no_aws_section_adds_nothing() -> None:
-    assert _inherit(None) == {"read_timeout": 3}
+class TestAwsSection:
+    def test_no_aws_section_adds_nothing(self) -> None:
+        assert _inherit(None) == {"read_timeout": 3}
 
-
-@pytest.mark.parametrize(
-    "key", ["aws_access_key_id", "aws_secret_access_key", "credentials", "table", "queues"]
-)
-def test_aws_refuses_credentials_and_product_keys(key: str) -> None:
-    with pytest.raises(ConfigError, match=f"'aws' takes no key '{key}'"):
-        _inherit({"region": "eu-west-1", key: "x"})
-
-
-def test_aws_names_the_replacement_of_a_retired_key() -> None:
-    written = {"endpoint_url": "http://localhost:4566"}
-    with pytest.raises(ConfigError, match=r"aws\.endpoint_url was removed; use aws\.url"):
-        _inherit(written)
-
-
-def test_a_dynamodb_store_inherits_aws() -> None:
-    clients = _store({"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}})
-
-    assert clients.calls == [("dynamodb", "eu-west-3")]
-    assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
-    assert clients.options[0]["config"].read_timeout == 9
-
-
-def test_a_dynamodb_store_overrides_aws_key_by_key() -> None:
-    store = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
-    clients = _store({"aws": _AWS, "stores": {"default": store}})
-
-    assert clients.calls == [("dynamodb", "eu-west-1")]
-    assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
-    assert clients.options[0]["config"].read_timeout == 3
-
-
-def test_a_dynamodb_store_without_aws_still_needs_its_region() -> None:
-    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", "table": "t"}}})
-    backend = DynamoDBBackend()
-    with pytest.raises(ConfigError, match="region is required"):
-        build_backend(backend, ctx, (), SERVER_PROFILE)
-
-
-def test_storage_dynamodb_inherits_aws_key_by_key() -> None:
-    ctx = ConfigContext.from_dict({"aws": _AWS, "storage": {"dynamodb": {"read_timeout": 3}}})
-
-    dynamodb = _parse_sections(ctx)[0].dynamodb
-
-    assert dynamodb is not None
-    assert (dynamodb.region, dynamodb.url, dynamodb.read_timeout) == (
-        "eu-west-3",
-        "http://localhost:4566",
-        3,
+    @pytest.mark.parametrize(
+        "key", ["aws_access_key_id", "aws_secret_access_key", "credentials", "table", "queues"]
     )
+    def test_aws_refuses_credentials_and_product_keys(self, key: str) -> None:
+        with pytest.raises(ConfigError, match=f"'aws' takes no key '{key}'"):
+            _inherit({"region": "eu-west-1", key: "x"})
+
+    def test_aws_names_the_replacement_of_a_retired_key(self) -> None:
+        written = {"endpoint_url": "http://localhost:4566"}
+        with pytest.raises(ConfigError, match=r"aws\.endpoint_url was removed; use aws\.url"):
+            _inherit(written)
 
 
-def test_aws_alone_enables_no_dynamodb_source() -> None:
-    ctx = ConfigContext.from_dict({"aws": _AWS, "storage": {}})
+class TestDynamoDbAwsInheritance:
+    def test_a_dynamodb_store_inherits_aws(self) -> None:
+        clients = _store(
+            {"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}}
+        )
 
-    assert _parse_sections(ctx)[0].dynamodb is None
+        assert clients.calls == [("dynamodb", "eu-west-3")]
+        assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+        assert clients.options[0]["config"].read_timeout == 9
 
+    def test_a_dynamodb_store_overrides_aws_key_by_key(self) -> None:
+        store = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
+        clients = _store({"aws": _AWS, "stores": {"default": store}})
 
-def test_the_ssm_resolver_reads_aws_as_written(tmp_path: Path) -> None:
-    yaml = "aws:\n  region: eu-west-3\n  url: http://localhost:4566\n"
+        assert clients.calls == [("dynamodb", "eu-west-1")]
+        assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+        assert clients.options[0]["config"].read_timeout == 3
 
-    clients = _ssm(tmp_path, yaml, SsmResolver())
+    def test_a_dynamodb_store_without_aws_still_needs_its_region(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"stores": {"default": {"backend": "dynamodb", "table": "t"}}}
+        )
+        backend = DynamoDBBackend()
+        with pytest.raises(ConfigError, match="region is required"):
+            build_backend(backend, ctx, (), SERVER_PROFILE)
 
-    assert clients.calls == [("ssm", "eu-west-3")]
-    assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+    def test_storage_dynamodb_inherits_aws_key_by_key(self) -> None:
+        ctx = ConfigContext.from_dict({"aws": _AWS, "storage": {"dynamodb": {"read_timeout": 3}}})
 
+        dynamodb = _parse_sections(ctx)[0].dynamodb
 
-def test_the_resolver_region_overrides_aws(tmp_path: Path) -> None:
-    clients = _ssm(tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver("eu-west-1"))
+        assert dynamodb is not None
+        assert (dynamodb.region, dynamodb.url, dynamodb.read_timeout) == (
+            "eu-west-3",
+            "http://localhost:4566",
+            3,
+        )
 
-    assert clients.calls == [("ssm", "eu-west-1")]
+    def test_aws_alone_enables_no_dynamodb_source(self) -> None:
+        ctx = ConfigContext.from_dict({"aws": _AWS, "storage": {}})
 
-
-def test_without_aws_the_resolver_lets_boto3_pick_the_region(tmp_path: Path) -> None:
-    clients = _ssm(tmp_path, "", SsmResolver())
-
-    assert clients.calls == [("ssm", None)]
-    assert "endpoint_url" not in clients.options[0]
-
-
-@pytest.mark.parametrize("key", ["region", "read_timeout"])
-def test_the_resolver_refuses_a_placeholder_in_aws(tmp_path: Path, key: str) -> None:
-    yaml = f"aws:\n  {key}: ${{oc.env:AWS_X}}\n"
-    resolver = SsmResolver()
-    with pytest.raises(ConfigError, match=rf"aws\.{key} is a placeholder"):
-        _ssm(tmp_path, yaml, resolver)
-
-
-def test_the_resolver_fetches_a_key_once_per_configuration(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    path.write_text("a: ${ssm:/k}\nb: ${ssm:/k}\n", encoding="utf-8")
-    client = _ssm_client()
-    ctx = ConfigContext(load_config(str(path), resolvers=[SsmResolver()]))
-    with patched_aws_clients(client):
-        ctx.section("a", str)
-        ctx.section("b", str)
-
-    client.get_parameter.assert_called_once()
+        assert _parse_sections(ctx)[0].dynamodb is None
 
 
-def test_the_sns_topic_region_overrides_aws() -> None:
-    with patched_aws_clients() as clients:
-        SnsNotifier(topic_arn=_TOPIC, aws=_AWS)
+class TestResolversReadAws:
+    def test_the_ssm_resolver_reads_aws_as_written(self, tmp_path: Path) -> None:
+        yaml = "aws:\n  region: eu-west-3\n  url: http://localhost:4566\n"
 
-    assert clients.calls == [("sns", "us-east-1")]
-    assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+        clients = _ssm(tmp_path, yaml, SsmResolver())
 
+        assert clients.calls == [("ssm", "eu-west-3")]
+        assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
 
-def test_one_resolver_builds_a_client_per_configuration(tmp_path: Path) -> None:
-    resolver = SsmResolver()
-    first = tmp_path / "first.yaml"
-    second = tmp_path / "second.yaml"
-    first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
-    second.write_text(
-        "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n", encoding="utf-8"
-    )
-    client = _ssm_client()
-    with patched_aws_clients(client) as clients:
-        for path in (first, second):
-            ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
+    def test_the_resolver_region_overrides_aws(self, tmp_path: Path) -> None:
+        clients = _ssm(tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver("eu-west-1"))
 
-    assert clients.calls == [("ssm", "eu-west-1"), ("ssm", "us-east-1")]
-    assert "endpoint_url" not in clients.options[0]
-    assert clients.options[1]["endpoint_url"] == "http://localhost:4566"
+        assert clients.calls == [("ssm", "eu-west-1")]
+
+    def test_without_aws_the_resolver_lets_boto3_pick_the_region(self, tmp_path: Path) -> None:
+        clients = _ssm(tmp_path, "", SsmResolver())
+
+        assert clients.calls == [("ssm", None)]
+        assert "endpoint_url" not in clients.options[0]
+
+    @pytest.mark.parametrize("key", ["region", "read_timeout"])
+    def test_the_resolver_refuses_a_placeholder_in_aws(self, tmp_path: Path, key: str) -> None:
+        yaml = f"aws:\n  {key}: ${{oc.env:AWS_X}}\n"
+        resolver = SsmResolver()
+        with pytest.raises(ConfigError, match=rf"aws\.{key} is a placeholder"):
+            _ssm(tmp_path, yaml, resolver)
+
+    def test_the_resolver_fetches_a_key_once_per_configuration(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text("a: ${ssm:/k}\nb: ${ssm:/k}\n", encoding="utf-8")
+        client = _ssm_client()
+        ctx = ConfigContext(load_config(str(path), resolvers=[SsmResolver()]))
+        with patched_aws_clients(client):
+            ctx.section("a", str)
+            ctx.section("b", str)
+
+        client.get_parameter.assert_called_once()
+
+    def test_the_sns_topic_region_overrides_aws(self) -> None:
+        with patched_aws_clients() as clients:
+            SnsNotifier(topic_arn=_TOPIC, aws=_AWS)
+
+        assert clients.calls == [("sns", "us-east-1")]
+        assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+
+    def test_one_resolver_builds_a_client_per_configuration(self, tmp_path: Path) -> None:
+        resolver = SsmResolver()
+        first = tmp_path / "first.yaml"
+        second = tmp_path / "second.yaml"
+        first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
+        second.write_text(
+            "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n",
+            encoding="utf-8",
+        )
+        client = _ssm_client()
+        with patched_aws_clients(client) as clients:
+            for path in (first, second):
+                ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
+
+        assert clients.calls == [("ssm", "eu-west-1"), ("ssm", "us-east-1")]
+        assert "endpoint_url" not in clients.options[0]
+        assert clients.options[1]["endpoint_url"] == "http://localhost:4566"

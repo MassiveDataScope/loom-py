@@ -20,7 +20,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.repository.registration import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
@@ -94,7 +95,7 @@ class Payments(RestInterface[Any]):
 
 def _openapi() -> dict[str, Any]:
     compiler = UseCaseCompiler()
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     for route in Payments.routes:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
@@ -168,23 +169,25 @@ _OPERATIONS = pytest.mark.parametrize(
 )
 
 
-@_OPERATIONS
-@pytest.mark.parametrize("field", ["method", "fallback"])
-def test_each_tag_of_a_union_maps_to_an_existing_component(
-    operation: tuple[str, str], field: str
-) -> None:
-    document = _openapi()
+class TestOpenApiDocumentReferences:
+    @_OPERATIONS
+    @pytest.mark.parametrize("field", ["method", "fallback"])
+    def test_each_tag_of_a_union_maps_to_an_existing_component(
+        self, operation: tuple[str, str], field: str
+    ) -> None:
+        document = _openapi()
 
-    mapping = _mapping(document, operation, field)
+        mapping = _mapping(document, operation, field)
 
-    assert set(mapping) == {"card", "transfer"}
-    assert all(_resolves(document, target) for target in mapping.values())
+        assert set(mapping) == {"card", "transfer"}
+        assert all(_resolves(document, target) for target in mapping.values())
 
+    def test_every_reference_in_the_document_resolves(
+        self,
+    ) -> None:
+        document = _openapi()
 
-def test_every_reference_in_the_document_resolves() -> None:
-    document = _openapi()
+        references = list(_references(document))
 
-    references = list(_references(document))
-
-    assert references
-    assert [ref for ref in references if not _resolves(document, ref)] == []
+        assert references
+        assert [ref for ref in references if not _resolves(document, ref)] == []

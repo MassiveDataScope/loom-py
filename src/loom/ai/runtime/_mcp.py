@@ -3,7 +3,7 @@
 A JSON-RPC session gets one shared lock serialising every concurrent call by
 default, unless it declares itself already safe for concurrent calls (see
 :func:`mcp_session_for` and :class:`~loom.ai.abc.ConcurrentMcpSession`). The
-declared tool filters are validated here too (FR-025): they are checked
+declared tool filters are validated here too: they are checked
 against the tools a server really lists, which is a property of the session,
 not of the runtime lifecycle.
 """
@@ -91,15 +91,8 @@ class SharedMcpSession:
 def mcp_session_for(session: McpSession, *, label: str) -> McpSession:
     """Return the session a grant view calls through, serialised unless declared safe.
 
-    ``session`` already carries the answer: one that subclasses
-    :class:`~loom.ai.abc.ConcurrentMcpSession` already guards its own frames
-    — the engine's own session does, because the underlying JSON-RPC client
-    multiplexes concurrent calls by request id rather than writing straight
-    through a single unmatched stream — so wrapping it again would only add
-    a second, redundant lock, queuing every grant view behind its own
-    neighbours. A session that declares nothing is serialised behind
-    :class:`SharedMcpSession`, the safe default for a third-party session
-    this runtime does not control.
+    A :class:`~loom.ai.abc.ConcurrentMcpSession` is returned as is; any
+    other session is serialised behind :class:`SharedMcpSession`.
 
     Args:
         session: The just-opened session of one MCP connection.
@@ -155,7 +148,7 @@ def filter_targets(plans: Iterable[AgentPlan]) -> tuple[FilterTarget, ...]:
         FilterTarget(
             agent=plan.name,
             server=capability.server,
-            key=mcp_key(capability),
+            key=capability.dependency_key,
             include=capability.include,
             exclude=capability.exclude,
         )
@@ -204,18 +197,8 @@ def listing_timeout_issues(
 def connection_conflicts(plans: Iterable[AgentPlan]) -> list[AgentCompilationIssue]:
     """Return one issue per agent whose grant contradicts the server's first one.
 
-    This is what makes two different keyings agree. Start-up de-duplicates its
-    clients by server *name* (``_remote_capabilities``), while the engine keys
-    the toolset it shares by *connection*
-    (:func:`~loom.ai.compiler.mcp_connection`). One name resolving to two
-    connections would therefore open one client at start-up and still build a
-    second toolset at run time — a connection whose tool filters nothing
-    validated, for an agent that believes it was checked. Refused before any
-    client opens, so it is a boot failure and not a run-time surprise.
-
-    Plans compiled together can never disagree, because every connection fact
-    comes from one ``ai.mcp_servers`` mapping; nothing forces a deployment to
-    compile its plans together.
+    Start-up opens one client per server name, so two grants of one name
+    must describe one connection (:func:`~loom.ai.compiler.mcp_connection`).
 
     Args:
         plans: Compiled plans of this worker, in the order they were given.
@@ -242,8 +225,3 @@ def connection_conflicts(plans: Iterable[AgentPlan]) -> list[AgentCompilationIss
                     )
                 )
     return issues
-
-
-def mcp_key(capability: CompiledMcpCapability) -> str:
-    """Return the health-check key of one MCP capability, by registered name."""
-    return f"mcp:{capability.server}"

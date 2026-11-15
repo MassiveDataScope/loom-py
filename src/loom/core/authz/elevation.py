@@ -150,7 +150,6 @@ async def elevate_scope(
     try:
         open_now = sink.in_transaction(scopes)
     except BaseException:
-        # Refused before any statement: the scope stays unelevated.
         frame.scopes.discard(scope)
         raise
     if not open_now:
@@ -158,7 +157,6 @@ async def elevate_scope(
     failure, cancelled = await _settle(lambda: sink.set_flag(scope))
     if failure is None and cancelled is None:
         return
-    # The flag may be on: the session goes, and its invocation cannot commit.
     frame.scopes.discard(scope)
     if failure is None:
         failure = RuntimeError(f"elevating scope {scope!r} was interrupted")
@@ -193,8 +191,6 @@ async def _clear_added(frame: _Frame) -> None:
         return
     held_by_parent = frame.parent.scopes if frame.parent is not None else set()
     added = frozenset(frame.scopes - held_by_parent)
-    # The sink is asked only when there is something to clear: a frame that
-    # elevated nothing closes without touching the session.
     if not added or not frame.sink.in_transaction(added):
         return
     sink = frame.sink
@@ -218,7 +214,6 @@ async def _fail_closed(
         BaseException: Otherwise ``failure``, or what the invalidation failed
             with, chained from it.
     """
-    # The type only: a driver error's parameters may carry the settings' values.
     _logger.error(
         "elevation flags for %s may be left on (%s); invalidating the session",
         sorted(scopes),
@@ -249,14 +244,14 @@ async def _settle(
     """
     try:
         step = call()
-    except BaseException as exc:  # NOSONAR S5754 - returned, the caller fails closed
+    except BaseException as exc:  # NOSONAR S5754
         return exc, None
     pending = asyncio.ensure_future(_failure_of(step))
     cancelled: asyncio.CancelledError | None = None
     while not pending.done():
         try:
             await asyncio.wait([pending])
-        except asyncio.CancelledError as exc:  # NOSONAR S7497 - re-raised by the caller
+        except asyncio.CancelledError as exc:  # NOSONAR S7497
             cancelled = cancelled or exc
     return pending.result(), cancelled
 
@@ -264,7 +259,7 @@ async def _settle(
 async def _failure_of(step: Awaitable[object]) -> BaseException | None:
     try:
         await asyncio.wait_for(step, _FLAG_STEP_TIMEOUT_S)
-    except BaseException as exc:  # NOSONAR S5754 - returned, the caller fails closed
+    except BaseException as exc:  # NOSONAR S5754
         return exc
     return None
 

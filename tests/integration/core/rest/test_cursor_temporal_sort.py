@@ -71,28 +71,29 @@ def _config(tmp_path: Path) -> str:
     return str(config)
 
 
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [
-        ("starts_at", ["08:15:00", "09:30:00", "11:00:00"]),
-        ("held_on", ["2026-10-01", "2026-10-02", "2026-10-03"]),
-    ],
-)
-def test_a_cursor_page_sorted_by_a_temporal_column_reaches_the_next_page(
-    tmp_path: Path, field: str, expected: list[str]
-) -> None:
-    app = create_app(_config(tmp_path), environment="development")
-    page = f"/slots/?pagination=cursor&limit=2&sort={field}&direction=ASC"
+class TestCursorTemporalSort:
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("starts_at", ["08:15:00", "09:30:00", "11:00:00"]),
+            ("held_on", ["2026-10-01", "2026-10-02", "2026-10-03"]),
+        ],
+    )
+    def test_a_cursor_page_sorted_by_a_temporal_column_reaches_the_next_page(
+        self, tmp_path: Path, field: str, expected: list[str]
+    ) -> None:
+        app = create_app(_config(tmp_path), environment="development")
+        page = f"/slots/?pagination=cursor&limit=2&sort={field}&direction=ASC"
 
-    with TestClient(app, raise_server_exceptions=False) as client:
-        for row in _ROWS:
-            assert client.post("/slots/", json=row).status_code == 201
-        first = client.get(page)
-        second = client.get(f"{page}&after={first.json()['nextCursor']}")
+        with TestClient(app, raise_server_exceptions=False) as client:
+            for row in _ROWS:
+                assert client.post("/slots/", json=row).status_code == 201
+            first = client.get(page)
+            second = client.get(f"{page}&after={first.json()['nextCursor']}")
 
-    assert first.status_code == 200, first.text
-    assert second.status_code == 200, second.text
-    key = {"starts_at": "startsAt", "held_on": "heldOn"}[field]
-    walked = [item[key] for item in first.json()["items"] + second.json()["items"]]
-    assert walked == expected
-    assert second.json()["nextCursor"] is None
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        key = {"starts_at": "startsAt", "held_on": "heldOn"}[field]
+        walked = [item[key] for item in first.json()["items"] + second.json()["items"]]
+        assert walked == expected
+        assert second.json()["nextCursor"] is None

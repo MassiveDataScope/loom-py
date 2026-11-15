@@ -6,8 +6,7 @@ the connection that backend reads. A connection-only store
 (:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no persistence backend:
 it serves no model and no repository, never joins a unit of work, and only
 hands its connection to the streaming and ETL sinks that name it. A model
-declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`
-(ADR 0008).
+declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`.
 
 Loading the catalog resolves nothing but each ``backend``: a deploy check or
 CI can load it without the secrets the connections name. A store resolves
@@ -68,7 +67,7 @@ CONNECTION_ONLY_BACKENDS: Final = frozenset({CLICKHOUSE_BACKEND})
 
 _STORE_ATTRIBUTE: Final = "__store__"
 _RETIRED_ATTRIBUTE: Final = "__database__"
-_KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
+_KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -253,7 +252,7 @@ def store_of(model: type[Any]) -> StoreKey:
     if hasattr(model, _RETIRED_ATTRIBUTE):
         raise ConfigError(
             f"{model.__name__} declares {_RETIRED_ATTRIBUTE}, which was removed; "
-            f"declare {_STORE_ATTRIBUTE} instead (ADR 0008)"
+            f"declare {_STORE_ATTRIBUTE} instead"
         )
     declared = getattr(model, _STORE_ATTRIBUTE, DEFAULT_STORE)
     return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")

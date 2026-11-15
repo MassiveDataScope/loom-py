@@ -17,9 +17,9 @@ from loom.core.repository import PageParams
 from loom.core.repository.abc.query import QuerySpec
 
 from ._doubles import (
+    AcmeCacheWidget,
     CachedEnv,
     ParentRepository,
-    Widget,
     WidgetCreate,
     WidgetUpdate,
     WritableRepository,
@@ -31,18 +31,18 @@ ROW_A = 1
 ROW_B = 2
 LIST_TAG_KEY = "tag:widget:list"
 
-Write = Callable[[CachedEnv[Widget]], Awaitable[object]]
+Write = Callable[[CachedEnv[AcmeCacheWidget]], Awaitable[object]]
 
 
-async def _create(env: CachedEnv[Widget]) -> object:
+async def _create(env: CachedEnv[AcmeCacheWidget]) -> object:
     return await env.wrapper.create(WidgetCreate(name="c"))
 
 
-async def _update(env: CachedEnv[Widget]) -> object:
+async def _update(env: CachedEnv[AcmeCacheWidget]) -> object:
     return await env.wrapper.update(ROW_A, WidgetUpdate(name="a-updated"))
 
 
-async def _delete(env: CachedEnv[Widget]) -> object:
+async def _delete(env: CachedEnv[AcmeCacheWidget]) -> object:
     return await env.wrapper.delete(ROW_A)
 
 
@@ -52,18 +52,18 @@ every_write = pytest.mark.parametrize(
 
 
 @pytest.fixture
-def env(cache_config: CacheConfig) -> CachedEnv[Widget]:
-    rows = [Widget(id=ROW_A, name="a"), Widget(id=ROW_B, name="b")]
-    return wrap_with_cache(WritableRepository(rows, Widget), cache_config)
+def env(cache_config: CacheConfig) -> CachedEnv[AcmeCacheWidget]:
+    rows = [AcmeCacheWidget(id=ROW_A, name="a"), AcmeCacheWidget(id=ROW_B, name="b")]
+    return wrap_with_cache(WritableRepository(rows, AcmeCacheWidget), cache_config)
 
 
-def _writable(env: CachedEnv[Widget]) -> WritableRepository[Widget]:
+def _writable(env: CachedEnv[AcmeCacheWidget]) -> WritableRepository[AcmeCacheWidget]:
     """Narrow the env's repository to the writable double the fixture built."""
     assert isinstance(env.repository, WritableRepository)
     return env.repository
 
 
-async def _warm_both_rows(env: CachedEnv[Widget]) -> None:
+async def _warm_both_rows(env: CachedEnv[AcmeCacheWidget]) -> None:
     await env.wrapper.get_by_id(ROW_A)
     await env.wrapper.get_by_id(ROW_B)
     assert env.repository.get_by_id_calls == 2
@@ -73,7 +73,9 @@ class TestPerIdInvalidation:
     """AC5: a write to row A leaves the cached read of row B untouched."""
 
     @pytest.mark.asyncio
-    async def test_update_evicts_only_the_updated_row(self, env: CachedEnv[Widget]) -> None:
+    async def test_update_evicts_only_the_updated_row(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         await _warm_both_rows(env)
 
         await env.wrapper.update(ROW_A, WidgetUpdate(name="a-updated"))
@@ -87,7 +89,9 @@ class TestPerIdInvalidation:
         assert env.repository.get_by_id_calls == 3
 
     @pytest.mark.asyncio
-    async def test_delete_evicts_only_the_deleted_row(self, env: CachedEnv[Widget]) -> None:
+    async def test_delete_evicts_only_the_deleted_row(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         await _warm_both_rows(env)
 
         assert await env.wrapper.delete(ROW_A) is True
@@ -100,7 +104,7 @@ class TestPerIdInvalidation:
 
     @pytest.mark.asyncio
     async def test_entity_scoped_read_of_another_row_stays_warm(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         assert await env.wrapper.note_count(ROW_A) == 1
         assert await env.wrapper.note_count(ROW_B) == 1
@@ -120,7 +124,7 @@ class TestListsAndDependentsDie:
     @every_write
     @pytest.mark.asyncio
     async def test_every_list_read_misses_after_a_write(
-        self, env: CachedEnv[Widget], write: Write
+        self, env: CachedEnv[AcmeCacheWidget], write: Write
     ) -> None:
         page = PageParams(page=1, limit=10)
         query = QuerySpec(page=1, limit=10)
@@ -145,9 +149,9 @@ class TestListsAndDependentsDie:
     @every_write
     @pytest.mark.asyncio
     async def test_dependent_parent_read_misses_after_a_write(
-        self, env: CachedEnv[Widget], cache_config: CacheConfig, write: Write
+        self, env: CachedEnv[AcmeCacheWidget], cache_config: CacheConfig, write: Write
     ) -> None:
-        parent = ParentRepository([Widget(id=7, name="p")], Widget)
+        parent = ParentRepository([AcmeCacheWidget(id=7, name="p")], AcmeCacheWidget)
         parent_wrapper = rewrap_with_cache(env, parent, cache_config)
         await parent_wrapper.get_by_id(7)
         await parent_wrapper.get_by_id(7)
@@ -163,7 +167,9 @@ class TestBumpAccounting:
     """AC7/AC8 on the direct path: which counters a write increments."""
 
     @pytest.mark.asyncio
-    async def test_create_bumps_the_list_and_id_tags_only(self, env: CachedEnv[Widget]) -> None:
+    async def test_create_bumps_the_list_and_id_tags_only(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         created = await env.wrapper.create(WidgetCreate(name="c"))
 
         assert set(env.backend.incr_keys) == {LIST_TAG_KEY, f"tag:widget:id:{created.id}"}
@@ -171,7 +177,7 @@ class TestBumpAccounting:
 
     @pytest.mark.asyncio
     async def test_create_many_bumps_the_list_once_and_every_id(
-        self, env: CachedEnv[Widget]
+        self, env: CachedEnv[AcmeCacheWidget]
     ) -> None:
         created = await env.wrapper.create_many(
             [WidgetCreate(name="c"), WidgetCreate(name="d"), WidgetCreate(name="e")]
@@ -184,13 +190,17 @@ class TestBumpAccounting:
         assert len(env.backend.incr_keys) == 4
 
     @pytest.mark.asyncio
-    async def test_update_bumps_the_list_and_id_tags_only(self, env: CachedEnv[Widget]) -> None:
+    async def test_update_bumps_the_list_and_id_tags_only(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         await env.wrapper.update(ROW_A, WidgetUpdate(name="a-updated"))
 
         assert sorted(env.backend.incr_keys) == [f"tag:widget:id:{ROW_A}", LIST_TAG_KEY]
 
     @pytest.mark.asyncio
-    async def test_delete_bumps_the_list_and_id_tags_only(self, env: CachedEnv[Widget]) -> None:
+    async def test_delete_bumps_the_list_and_id_tags_only(
+        self, env: CachedEnv[AcmeCacheWidget]
+    ) -> None:
         await env.wrapper.delete(ROW_A)
 
         assert sorted(env.backend.incr_keys) == [f"tag:widget:id:{ROW_A}", LIST_TAG_KEY]

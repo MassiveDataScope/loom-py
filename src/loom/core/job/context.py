@@ -1,6 +1,6 @@
 """Pending job dispatches, delegated to the post-commit channel.
 
-The public names are kept for existing callers; the queue itself is the
+The queue itself is the
 :class:`~loom.core.engine.post_commit.PostCommitChannel` that
 :func:`~loom.core.engine.post_commit.store_channel` returns for the store the
 running execution writes to.  When no channel is bound, a per-context fallback
@@ -8,7 +8,8 @@ channel holds the dispatches so :func:`flush_pending_dispatches` and
 :func:`clear_pending_dispatches` keep working for hand-driven callers.
 
 Inside an execution the executor owns the drain: :func:`flush_pending_dispatches`
-refuses to run then, and :func:`clear_pending_dispatches` discards the
+refuses to run then (a task whose execution ended is in none: its dispatches go
+to the fallback channel, as at top level), and :func:`clear_pending_dispatches` discards the
 execution's dispatches rather than the fallback channel's. A read-only
 execution writes nothing, through a job neither: queueing a dispatch from one
 raises :class:`~loom.core.errors.UndeclaredStoreWrite`.
@@ -21,10 +22,9 @@ from contextvars import ContextVar
 from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
+from loom.core.execution import execution_ended
 from loom.core.uow.scope import current_scope
 
-# default=None, never a channel instance: a shared default would leak
-# dispatches across contexts.  Each context creates its own on first use.
 _fallback: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_pending_dispatches", default=None
 )
@@ -80,7 +80,7 @@ async def flush_pending_dispatches() -> None:
         loom.core.errors.PostCommitError: If any dispatch raised;
             the remaining dispatches still run.
     """
-    if active_channel() is not None:
+    if active_channel() is not None and not execution_ended():
         raise RuntimeError(
             "flush_pending_dispatches() cannot run inside an execution: "
             "RuntimeExecutor owns the post-commit channel and drains it "

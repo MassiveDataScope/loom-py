@@ -24,81 +24,81 @@ from loom.etl.schema._schema import LoomDtype
 from loom.etl.testing import ETLScenario, PolarsStepRunner, StepResult, StepRunnerProto
 
 
-class P(ETLParams):  # type: ignore[misc]
+class MinAmountParams(ETLParams):  # type: ignore[misc]
     min_amount: float = 0.0
 
 
-class Normalize(ETLStep[P]):
+class Normalize(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.orders"))
     target = IntoTemp("normalized_orders")
     calls: ClassVar[int] = 0
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         type(self).calls += 1
         return raw.with_columns(pl.col("amount") * 2)
 
 
-class Enrich(ETLStep[P]):
+class Enrich(ETLStep[MinAmountParams]):
     orders = FromTemp("normalized_orders")
     target = IntoTable("mart.orders").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders.filter(pl.col("amount").is_not_null())
 
 
-class EagerIntoTemp(ETLStep[P]):
+class EagerIntoTemp(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.orders"))
     target = IntoTemp("eager")
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw.collect()
 
 
-class PartA(ETLStep[P]):
+class PartA(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.a"))
     target = IntoTemp("parts", append=True)
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class PartB(ETLStep[P]):
+class PartB(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.b"))
     target = IntoTemp("parts", append=True)
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class KeepAcrossRetries(ETLStep[P]):
+class KeepAcrossRetries(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.orders"))
     target = IntoTemp("kept", scope=CheckpointScope.CORRELATION)
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class ReadKept(ETLStep[P]):
+class ReadKept(ETLStep[MinAmountParams]):
     kept = FromTemp("kept")
     target = IntoTable("mart.kept").replace()
 
-    def execute(self, params: P, *, kept: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, kept: Any) -> Any:  # type: ignore[override]
         return kept
 
 
-class Projected(ETLStep[P]):
+class Projected(ETLStep[MinAmountParams]):
     orders = FromTable("raw.orders").where(col("amount") >= 10.0).columns("id", "amount")
     target = IntoTable("mart.big").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class UnknownColumn(ETLStep[P]):
+class UnknownColumn(ETLStep[MinAmountParams]):
     orders = FromTable("raw.orders").columns("id", "missing")
     target = IntoTable("mart.bad").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
@@ -108,13 +108,13 @@ class _OrderRow(msgspec.Struct):
     note: str | None
 
 
-class _ReceivedSchema(ETLStep[P]):
+class _ReceivedSchema(ETLStep[MinAmountParams]):
     """Return the dtypes the step receives, one row per column."""
 
     orders = FromTable("raw.orders").with_schema(_OrderRow)
     target = IntoTable("mart.schema").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, orders: Any) -> Any:  # type: ignore[override]
         schema = orders.collect_schema()
         return pl.LazyFrame({"column": schema.names(), "dtype": [str(d) for d in schema.dtypes()]})
 
@@ -123,43 +123,43 @@ class _Payload(msgspec.Struct):
     kind: str
 
 
-class DecodedEvents(ETLStep[P]):
+class DecodedEvents(ETLStep[MinAmountParams]):
     events = FromTable("raw.events").parse_json("payload", _Payload)
     target = IntoTable("mart.events").replace()
 
-    def execute(self, params: P, *, events: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, events: Any) -> Any:  # type: ignore[override]
         return events.select(pl.col("payload").struct.field("kind"))
 
 
-class UpsertWithTombstones(ETLStep[P]):
+class UpsertWithTombstones(ETLStep[MinAmountParams]):
     sources = Sources(cdc=FromTable("raw.cdc"))
     target = IntoTable("silver.orders").upsert(keys=("id",), delete_flag="_deleted")
 
-    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, cdc: Any) -> Any:  # type: ignore[override]
         return cdc
 
 
-class _Passthrough(ETLStep[P]):
+class _Passthrough(ETLStep[MinAmountParams]):
     sources = Sources(raw=FromTable("raw.orders"))
     target = IntoTable("mart.out").replace()
 
-    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
 
 
-class _PassthroughTemp(ETLStep[P]):
+class _PassthroughTemp(ETLStep[MinAmountParams]):
     orders = FromTemp("normalized_orders")
     target = IntoTable("mart.out").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class UpsertDroppingFlag(ETLStep[P]):
+class UpsertDroppingFlag(ETLStep[MinAmountParams]):
     sources = Sources(cdc=FromTable("raw.cdc"))
     target = IntoTable("silver.orders").upsert(keys=("id",), delete_flag="_deleted")
 
-    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: MinAmountParams, *, cdc: Any) -> Any:  # type: ignore[override]
         return cdc.drop("_deleted")
 
 
@@ -178,14 +178,14 @@ class TestSeedTemp:
             "normalized_orders", [(1, 10.0), (2, None)], ["id", "amount"]
         )
 
-        result = runner.run(Enrich, P())
+        result = runner.run(Enrich, MinAmountParams())
 
         assert result.to_polars().to_dict(as_series=False) == {"id": [1], "amount": [10.0]}
 
     def test_seeding_the_alias_does_not_satisfy_from_temp(self) -> None:
         runner = PolarsStepRunner().seed_temp("orders", [(1, 10.0)], ["id", "amount"])
         runner.seed("orders", [(1, 10.0)], ["id", "amount"])
-        params = P()
+        params = MinAmountParams()
 
         with pytest.raises(FileNotFoundError, match="normalized_orders"):
             runner.run(Enrich, params)
@@ -194,7 +194,7 @@ class TestSeedTemp:
 # 2 ---------------------------------------------------------------------------
 class TestIntoTempResult:
     def test_into_temp_step_returns_the_temp_contents(self) -> None:
-        result = PolarsStepRunner(_ORDERS).run(Normalize, P())
+        result = PolarsStepRunner(_ORDERS).run(Normalize, MinAmountParams())
 
         assert result.temp_name == "normalized_orders"
         assert result.to_polars().sort("id")["amount"].to_list() == [20.0, 10.0, None]
@@ -204,7 +204,7 @@ class TestIntoTempResult:
 class TestIntoTempRejectsEagerFrames:
     def test_dataframe_from_execute_raises_like_production(self) -> None:
         runner = PolarsStepRunner(_ORDERS)
-        params = P()
+        params = MinAmountParams()
 
         with pytest.raises(TypeError, match="expects polars.LazyFrame"):
             runner.run(EagerIntoTemp, params)
@@ -219,8 +219,8 @@ class TestFanIn:
             .seed("raw.b", [(2, "x")], ["id", "extra"])
         )
 
-        first = runner.run(PartA, P())
-        result = runner.run(PartB, P())
+        first = runner.run(PartA, MinAmountParams())
+        result = runner.run(PartB, MinAmountParams())
 
         first.assert_count(1)
         assert result.temp_name == "parts"
@@ -235,21 +235,21 @@ class TestCorrelationScope:
     def test_correlation_scoped_temp_is_written_and_read(self) -> None:
         runner = PolarsStepRunner(_ORDERS)
 
-        runner.run(KeepAcrossRetries, P()).assert_count(3)
-        runner.run(ReadKept, P()).assert_count(3)
+        runner.run(KeepAcrossRetries, MinAmountParams()).assert_count(3)
+        runner.run(ReadKept, MinAmountParams()).assert_count(3)
 
     def test_run_returns_the_temp_from_the_scope_the_step_wrote(self) -> None:
         runner = PolarsStepRunner(_ORDERS).seed_temp("kept", [(99, 1.0)], ["id", "amount"])
 
-        result = runner.run(KeepAcrossRetries, P())
+        result = runner.run(KeepAcrossRetries, MinAmountParams())
 
         assert sorted(result.to_polars()["id"].to_list()) == [1, 2, 3]
 
     def test_a_seeded_run_temp_takes_precedence_for_from_temp(self) -> None:
         runner = PolarsStepRunner(_ORDERS).seed_temp("kept", [(99, 1.0)], ["id", "amount"])
-        runner.run(KeepAcrossRetries, P())
+        runner.run(KeepAcrossRetries, MinAmountParams())
 
-        result = runner.run(ReadKept, P())
+        result = runner.run(ReadKept, MinAmountParams())
 
         assert result.to_polars()["id"].to_list() == [99]
 
@@ -259,8 +259,8 @@ class TestChaining:
     def test_two_steps_chained_through_a_temp_on_one_runner(self) -> None:
         runner = PolarsStepRunner(_ORDERS)
 
-        runner.run(Normalize, P())
-        result = runner.run(Enrich, P())
+        runner.run(Normalize, MinAmountParams())
+        result = runner.run(Enrich, MinAmountParams())
 
         assert sorted(result.to_polars()["amount"].to_list()) == [10.0, 20.0]
 
@@ -268,11 +268,11 @@ class TestChaining:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(Normalize, "calls", 0)
-        normalized = _ORDERS.after(Normalize, P())
+        normalized = _ORDERS.after(Normalize, MinAmountParams())
 
-        first = PolarsStepRunner(normalized).run(Enrich, P())
-        second = PolarsStepRunner(normalized).run(Enrich, P())
-        third = normalized.apply(PolarsStepRunner()).run(Enrich, P())
+        first = PolarsStepRunner(normalized).run(Enrich, MinAmountParams())
+        second = PolarsStepRunner(normalized).run(Enrich, MinAmountParams())
+        third = normalized.apply(PolarsStepRunner()).run(Enrich, MinAmountParams())
 
         assert Normalize.calls == 1
         for result in (first, second, third):
@@ -280,7 +280,7 @@ class TestChaining:
 
     def test_after_ignores_seeds_outside_its_prefix(self) -> None:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
-        normalized = ETLScenario().after(Normalize, P())
+        normalized = ETLScenario().after(Normalize, MinAmountParams())
 
         with pytest.raises(KeyError, match="raw.orders"):
             normalized.apply(runner)
@@ -291,10 +291,10 @@ class TestChaining:
         monkeypatch.setattr(Normalize, "calls", 0)
         small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
         large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
-        normalized = _ORDERS.after(Normalize, P())
+        normalized = _ORDERS.after(Normalize, MinAmountParams())
 
-        from_small = PolarsStepRunner(small + normalized).run(Enrich, P())
-        from_large = PolarsStepRunner(large + normalized).run(Enrich, P())
+        from_small = PolarsStepRunner(small + normalized).run(Enrich, MinAmountParams())
+        from_large = PolarsStepRunner(large + normalized).run(Enrich, MinAmountParams())
 
         assert Normalize.calls == 1
         assert from_small.to_polars().equals(from_large.to_polars())
@@ -305,11 +305,11 @@ class TestChaining:
         monkeypatch.setattr(Normalize, "calls", 0)
         small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
         large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
-        small_after = small.after(Normalize, P())
-        large_after = large.after(Normalize, P())
+        small_after = small.after(Normalize, MinAmountParams())
+        large_after = large.after(Normalize, MinAmountParams())
 
         results = [
-            PolarsStepRunner(scenario).run(Enrich, P())
+            PolarsStepRunner(scenario).run(Enrich, MinAmountParams())
             for scenario in (small_after, large_after, small_after, large_after)
         ]
 
@@ -317,14 +317,14 @@ class TestChaining:
         assert [len(r.to_polars()) for r in results] == [1, 2, 1, 2]
 
     def test_repr_lists_after_entries_apart_from_temps(self) -> None:
-        scenario = _ORDERS.after(Normalize, P())
+        scenario = _ORDERS.after(Normalize, MinAmountParams())
 
         assert repr(scenario) == "ETLScenario(tables=['raw.orders'], temps=[], after=['Normalize'])"
 
     def test_seed_temp_infers_the_name_from_an_into_temp_result(self) -> None:
-        upstream = PolarsStepRunner(_ORDERS).run(Normalize, P())
+        upstream = PolarsStepRunner(_ORDERS).run(Normalize, MinAmountParams())
 
-        result = PolarsStepRunner().seed_temp(upstream).run(Enrich, P())
+        result = PolarsStepRunner().seed_temp(upstream).run(Enrich, MinAmountParams())
 
         result.assert_count(2)
 
@@ -346,7 +346,7 @@ class TestTypedSeeds:
         )
 
         for runner, rows in ((empty, 0), (nulls, 2)):
-            result = runner.run(_Passthrough, P())
+            result = runner.run(_Passthrough, MinAmountParams())
             result.assert_count(rows)
             result.assert_schema(schema)
 
@@ -356,7 +356,7 @@ class TestTypedSeeds:
             runner = PolarsStepRunner().seed_temp(
                 "normalized_orders", rows, ["id", "amount"], schema=schema
             )
-            result = runner.run(_PassthroughTemp, P())
+            result = runner.run(_PassthroughTemp, MinAmountParams())
             result.assert_count(len(rows))
             result.assert_schema(schema)
 
@@ -383,8 +383,8 @@ class TestScenarioComposition:
         full = orders + temps
         runner = PolarsStepRunner(full)
 
-        runner.run(_Passthrough, P()).assert_count(1)
-        runner.run(Enrich, P()).assert_count(0)
+        runner.run(_Passthrough, MinAmountParams()).assert_count(1)
+        runner.run(Enrich, MinAmountParams()).assert_count(0)
         assert repr(orders) == "ETLScenario(tables=['raw.orders'], temps=[], after=[])"
 
     def test_positional_with_table_and_seed_calls_still_work(self) -> None:
@@ -397,7 +397,7 @@ class TestScenarioComposition:
         runner.seed("raw.orders", [(1, 10.0), (2, 20.0)], ["id", "amount"])
 
         assert isinstance(runner, StepRunnerProto)
-        runner.run(_Passthrough, P()).assert_count(2)
+        runner.run(_Passthrough, MinAmountParams()).assert_count(2)
 
     def test_runner_accepts_several_scenarios(self) -> None:
         orders = ETLScenario().with_table("raw.orders", [(1, 10.0)], ["id", "amount"])
@@ -405,8 +405,8 @@ class TestScenarioComposition:
 
         runner = PolarsStepRunner(orders, temps)
 
-        runner.run(_Passthrough, P()).assert_count(1)
-        runner.run(Enrich, P()).assert_count(1)
+        runner.run(_Passthrough, MinAmountParams()).assert_count(1)
+        runner.run(Enrich, MinAmountParams()).assert_count(1)
 
 
 # 9 ---------------------------------------------------------------------------
@@ -417,14 +417,14 @@ class TestDeclaredSourceSchema:
     def test_untyped_seed_reaches_the_step_with_the_declared_dtypes(self) -> None:
         runner = PolarsStepRunner().seed("raw.orders", self._ROWS, ["id", "amount", "note"])
 
-        received = runner.run(_ReceivedSchema, P()).to_polars()
+        received = runner.run(_ReceivedSchema, MinAmountParams()).to_polars()
 
         assert dict(received.iter_rows()) == self._EXPECTED
 
     def test_untyped_scenario_table_reaches_the_step_with_the_declared_dtypes(self) -> None:
         scenario = ETLScenario().with_table("raw.orders", self._ROWS, ["id", "amount", "note"])
 
-        received = PolarsStepRunner(scenario).run(_ReceivedSchema, P()).to_polars()
+        received = PolarsStepRunner(scenario).run(_ReceivedSchema, MinAmountParams()).to_polars()
 
         assert dict(received.iter_rows()) == self._EXPECTED
 
@@ -435,14 +435,14 @@ class TestSourceFinalisation:
             "raw.orders", [(1, 10.0, "a"), (2, 5.0, "b"), (3, 30.0, "c")], ["id", "amount", "tag"]
         )
 
-        frame = runner.run(Projected, P()).to_polars().sort("id")
+        frame = runner.run(Projected, MinAmountParams()).to_polars().sort("id")
 
         assert frame.columns == ["id", "amount"]
         assert frame["id"].to_list() == [1, 3]
 
     def test_unknown_column_fails(self) -> None:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
-        params = P()
+        params = MinAmountParams()
 
         with pytest.raises(pl.exceptions.ColumnNotFoundError):
             runner.run(UnknownColumn, params)
@@ -450,7 +450,7 @@ class TestSourceFinalisation:
     def test_parse_json_columns_reach_the_step_decoded(self) -> None:
         runner = PolarsStepRunner().seed("raw.events", [('{"kind": "click"}',)], ["payload"])
 
-        frame = runner.run(DecodedEvents, P()).to_polars()
+        frame = runner.run(DecodedEvents, MinAmountParams()).to_polars()
 
         assert frame["kind"].to_list() == ["click"]
 
@@ -462,7 +462,7 @@ class TestDeleteMetricsInMemory:
             "raw.cdc", [(1, "open", True), (2, "open", False)], ["id", "status", "_deleted"]
         )
 
-        result = runner.run(UpsertWithTombstones, P())
+        result = runner.run(UpsertWithTombstones, MinAmountParams())
 
         assert result.deletes == 1
 
@@ -471,7 +471,7 @@ class TestDeleteMetricsInMemory:
             "raw.cdc", [(1, "open", True)], ["id", "status", "_deleted"]
         )
 
-        result = runner.run(UpsertDroppingFlag, P())
+        result = runner.run(UpsertDroppingFlag, MinAmountParams())
 
         with pytest.raises(UpsertDeleteFlagError, match="is missing from"):
             _ = result.deletes
@@ -479,13 +479,13 @@ class TestDeleteMetricsInMemory:
     def test_deletes_needs_a_boolean_flag_column(self) -> None:
         runner = PolarsStepRunner().seed("raw.cdc", [(1, "open", 1)], ["id", "status", "_deleted"])
 
-        result = runner.run(UpsertWithTombstones, P())
+        result = runner.run(UpsertWithTombstones, MinAmountParams())
 
         with pytest.raises(UpsertDeleteFlagError, match="must be a boolean column"):
             _ = result.deletes
 
     def test_deletes_needs_an_upsert_with_delete_flag(self) -> None:
-        result = PolarsStepRunner(_ORDERS).run(_Passthrough, P())
+        result = PolarsStepRunner(_ORDERS).run(_Passthrough, MinAmountParams())
 
         with pytest.raises(RuntimeError, match="delete_flag"):
             _ = result.deletes
@@ -495,7 +495,7 @@ class TestDeleteMetricsInMemory:
             "raw.cdc", [(1, "open", True)], ["id", "status", "_deleted"]
         )
 
-        result = runner.run(UpsertWithTombstones, P())
+        result = runner.run(UpsertWithTombstones, MinAmountParams())
 
         with pytest.raises(RuntimeError, match=r"table\(ref\)\.assert_count"):
             _ = result.merged

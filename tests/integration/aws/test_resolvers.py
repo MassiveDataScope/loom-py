@@ -62,26 +62,26 @@ def _load(write_config: ConfigWriter, placeholder: str) -> ConfigContext:
     return ConfigContext.from_yaml(str(path), resolvers=with_default_resolvers())
 
 
-def test_a_placeholder_resolves_from_the_emulator_aws_names(
-    write_config: ConfigWriter, stored: _Stored
-) -> None:
-    config = _load(write_config, stored.placeholder)
+class TestResolvers:
+    def test_a_placeholder_resolves_from_the_emulator_aws_names(
+        self, write_config: ConfigWriter, stored: _Stored
+    ) -> None:
+        config = _load(write_config, stored.placeholder)
 
-    assert config.section(_SECTION, dict[str, object])["resolved"] == stored.expected
+        assert config.section(_SECTION, dict[str, object])["resolved"] == stored.expected
 
+    @pytest.mark.parametrize(
+        ("placeholder", "code"),
+        [
+            ("${secrets:loom-it/never-created}", "ResourceNotFoundException"),
+            ("${ssm:/loom-it/never-created}", "ParameterNotFound"),
+        ],
+        ids=["secret", "ssm"],
+    )
+    def test_a_missing_value_fails_naming_the_aws_error_code(
+        self, write_config: ConfigWriter, placeholder: str, code: str
+    ) -> None:
+        config = _load(write_config, placeholder)
 
-@pytest.mark.parametrize(
-    ("placeholder", "code"),
-    [
-        ("${secrets:loom-it/never-created}", "ResourceNotFoundException"),
-        ("${ssm:/loom-it/never-created}", "ParameterNotFound"),
-    ],
-    ids=["secret", "ssm"],
-)
-def test_a_missing_value_fails_naming_the_aws_error_code(
-    write_config: ConfigWriter, placeholder: str, code: str
-) -> None:
-    config = _load(write_config, placeholder)
-
-    with pytest.raises(ConfigError, match=code):
-        config.section(_SECTION, dict[str, object])
+        with pytest.raises(ConfigError, match=code):
+            config.section(_SECTION, dict[str, object])

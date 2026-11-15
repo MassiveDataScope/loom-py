@@ -4,7 +4,7 @@ Loom carries a conversation as opaque bytes (:class:`~loom.ai.abc.Conversation`)
 this module is the only place that knows the bytes are pydantic-ai's serialised
 message list. The history is decoded once, before any provider call, so a
 malformed one fails with nothing spent, and the same decoded list is re-sent on
-every retried attempt (D10). What the engine returns is only what this run
+every retried attempt. What the engine returns is only what this run
 added: ``new_messages_json()`` excludes the history by construction.
 """
 
@@ -30,7 +30,7 @@ class RunConversation:
 
     Attributes:
         conversation_id: Loom's identifier, forwarded verbatim so pydantic-ai
-            stamps every new message with it (D9).
+            stamps every new message with it.
         history: Prior turns, or ``None`` on a first turn.
     """
 

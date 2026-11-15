@@ -44,7 +44,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import compose_application, load_source
+from loom.composition import CompositionSource, compose_application
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
@@ -54,10 +54,6 @@ if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
-
-# ---------------------------------------------------------------------------
-# Result
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -78,11 +74,6 @@ class WorkerBootstrapResult:
     container: LoomContainer
     factory: UseCaseFactory
     celery_app: Celery
-
-
-# ---------------------------------------------------------------------------
-# bootstrap_worker
-# ---------------------------------------------------------------------------
 
 
 def bootstrap_worker(
@@ -176,7 +167,7 @@ def bootstrap_worker(
         )
         result.celery_app.start()
     """
-    source = load_source(
+    source = CompositionSource.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,

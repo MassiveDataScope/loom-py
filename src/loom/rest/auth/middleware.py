@@ -26,7 +26,6 @@ from loom.rest.auth.config import JwtAuthConfig
 from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.constants import BEARER_CHALLENGE
 
-# ASGI type aliases
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]
@@ -54,8 +53,10 @@ class AuthenticationMiddleware:
        ``INFO`` — the response and the log have different audiences, and only the
        response has an attacker in it.  Never the credential: a log holding a
        bearer token turns log access into API access.
-    4. On success, installs the identity for the duration of the request and
-       restores the previous one in a ``finally`` — without it, a reused
+    4. On success, installs the identity for the duration of the request,
+       starting its delegation (work the request causes, tasks that outlive
+       it included, acts as its caller for ``identity.max_delegation_seconds``),
+       and restores the previous one in a ``finally`` — without it, a reused
        worker task would inherit the previous caller.
     5. When the authenticator raises
        :class:`~loom.rest.auth.abc.AuthenticationUnavailable`, answers ``503``

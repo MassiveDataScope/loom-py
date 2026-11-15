@@ -21,7 +21,7 @@ from loom.streaming import (  # noqa: E402
     With,
 )
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Order, Result, build_message  # noqa: E402
+from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult, build_message  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -31,13 +31,13 @@ class TestCollectBatch:
         self,
         streaming_kafka_config: DictConfig,
     ) -> None:
-        flow: StreamFlow[Order, Result] = StreamFlow(
+        flow: StreamFlow[AcmeOrder, AcmeResult] = StreamFlow(
             name="collect_timeout_flow",
-            source=FromTopic("orders.in", payload=Order),
+            source=FromTopic("orders.in", payload=AcmeOrder),
             process=Process(
                 CollectBatch(max_records=2, timeout_ms=1),
                 With(
-                    process=Process(_EchoRecordStep(), IntoTopic("orders.out", payload=Result)),
+                    process=Process(_EchoRecordStep(), IntoTopic("orders.out", payload=AcmeResult)),
                     client=object(),
                     scope=ResourceScope.WORKER,
                 ),
@@ -46,7 +46,7 @@ class TestCollectBatch:
         runner = StreamingTestRunner.from_flow(
             flow,
             config=streaming_kafka_config,
-        ).with_messages([build_message(Order(order_id="o-1"))])
+        ).with_messages([build_message(AcmeOrder(order_id="o-1"))])
 
         runner.run()
 
@@ -54,7 +54,7 @@ class TestCollectBatch:
         assert len(runner.output) == 1
 
 
-class _EchoRecordStep(RecordStep[Order, Result]):
-    def execute(self, message: Message[Order], **kwargs: object) -> Result:
+class _EchoRecordStep(RecordStep[AcmeOrder, AcmeResult]):
+    def execute(self, message: Message[AcmeOrder], **kwargs: object) -> AcmeResult:
         del kwargs
-        return Result(value=message.payload.order_id)
+        return AcmeResult(value=message.payload.order_id)

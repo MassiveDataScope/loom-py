@@ -24,7 +24,7 @@ _ANSWER: Mapping[str, str] = {"answer": "ok"}
 
 
 @dataclass
-class _RecordingDeps:
+class _StateRecordingDeps:
     """Records every ``state`` this factory was asked to build a bundle for."""
 
     states: list[object | None] = field(default_factory=list)
@@ -35,22 +35,22 @@ class _RecordingDeps:
         """Record *state* and return a bundle carrying it, structurally like the real one."""
         del identity, container
         self.states.append(state)
-        return _Bundle(state=state)
+        return _ForwardedStateBundle(state=state)
 
 
 @dataclass(frozen=True)
-class _Bundle:
+class _ForwardedStateBundle:
     state: Any | None
 
 
-def _engine(deps: _RecordingDeps) -> AgentEngine:
+def _engine(deps: _StateRecordingDeps) -> AgentEngine:
     model = answering_model(encode(_ANSWER))
     return build_engine(make_plan(), model, deps=deps)  # type: ignore[arg-type]
 
 
 class TestStateReachesTheDependencyBundle:
     async def test_run_forwards_state_unchanged(self) -> None:
-        deps = _RecordingDeps()
+        deps = _StateRecordingDeps()
         engine = _engine(deps)
 
         await engine.run(_PROMPT, identity=_IDENTITY, state={"marca": "civic", "km": 12})
@@ -58,7 +58,7 @@ class TestStateReachesTheDependencyBundle:
         assert deps.states == [{"marca": "civic", "km": 12}]
 
     async def test_run_stream_forwards_state_unchanged(self) -> None:
-        deps = _RecordingDeps()
+        deps = _StateRecordingDeps()
         engine = _engine(deps)
 
         async with engine.run_stream(
@@ -70,7 +70,7 @@ class TestStateReachesTheDependencyBundle:
         assert deps.states == [{"marca": "civic", "km": 3}]
 
     async def test_a_run_with_no_state_forwards_none(self) -> None:
-        deps = _RecordingDeps()
+        deps = _StateRecordingDeps()
         engine = _engine(deps)
 
         await engine.run(_PROMPT, identity=_IDENTITY)

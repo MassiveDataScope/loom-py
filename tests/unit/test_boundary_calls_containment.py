@@ -10,6 +10,8 @@ import ast
 from collections import Counter
 from pathlib import Path
 
+from tests.helpers.source_tree import parsed
+
 _SRC = Path(__file__).resolve().parents[2] / "src" / "loom"
 _PACKAGES = ("ai", "serverless", "core/cache", "core/command", "rest")
 _TARGETS = frozenset(
@@ -27,6 +29,7 @@ _TARGETS = frozenset(
 
 _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/a2a/_rpc.py", "msgspec.json.Decoder"): 1,
+    ("ai/abc.py", "msgspec.json.decode"): 1,
     ("ai/compiler/_fingerprint.py", "msgspec.json.encode"): 1,
     ("ai/declarative/_envelope.py", "msgspec.json.decode"): 1,
     ("ai/etl/_columns.py", "msgspec.json.encode"): 1,
@@ -34,7 +37,6 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/engines/pydantic_ai/_events.py", "msgspec.json.decode"): 1,
     ("ai/engines/pydantic_ai/_returns.py", "msgspec.json.encode"): 1,
     ("ai/fastapi/endpoints.py", "msgspec.json.Decoder"): 1,
-    ("ai/fastapi/endpoints.py", "msgspec.json.decode"): 1,
     ("ai/fastapi/response.py", "msgspec.json.Encoder"): 1,
     ("ai/remote_auth.py", "msgspec.convert"): 1,
     ("ai/runtime/_grants.py", "msgspec.json.encode"): 1,
@@ -93,7 +95,7 @@ def _resolved_call_name(node: ast.Call, bindings: dict[str, str]) -> str | None:
 
 
 def _count_target_calls(path: Path) -> Counter[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parsed(path)
     bindings = _import_bindings(tree)
     counts: Counter[str] = Counter()
     for node in ast.walk(tree):
@@ -125,6 +127,7 @@ def _format_diff(observed: dict[tuple[str, str], int]) -> list[str]:
     return lines
 
 
-def test_boundary_conversion_calls_are_contained() -> None:
-    diff = _format_diff(_observed_calls())
-    assert not diff, "\n".join(["boundary call allow-list is out of date:", *diff])
+class TestBoundaryCallsContainment:
+    def test_boundary_conversion_calls_are_contained(self) -> None:
+        diff = _format_diff(_observed_calls())
+        assert not diff, "\n".join(["boundary call allow-list is out of date:", *diff])

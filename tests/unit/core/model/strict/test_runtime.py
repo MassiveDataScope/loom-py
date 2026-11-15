@@ -22,34 +22,33 @@ class Open(StrictStruct, forbid_unknown_fields=False):
     row_id: int
 
 
-def test_strict_struct_is_frozen_keyword_only_closed_and_redacted() -> None:
-    with pytest.raises(msgspec.ValidationError, match="unknown field"):
-        msgspec.json.decode(b'{"amount_cents": 1, "extra": 2}', type=Quote)
-    with pytest.raises(TypeError):
-        Quote(1)  # type: ignore[misc]  # pyright: ignore[reportCallIssue]
-    with pytest.raises(TypeError):
-        Child(1)  # type: ignore[misc]  # pyright: ignore[reportCallIssue]
-    with pytest.raises(AttributeError):
-        Quote(amount_cents=1).amount_cents = 2  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]
-    with pytest.raises(TypeError, match="password must be Secret"):
-        Quote(amount_cents=1, password="plain")  # type: ignore[arg-type]
-    assert msgspec.json.encode(Quote(amount_cents=5)) == b'{"amount_cents":5,"password":null}'
+class TestStrictStructRuntime:
+    def test_strict_struct_is_frozen_keyword_only_closed_and_redacted(self) -> None:
+        with pytest.raises(msgspec.ValidationError, match="unknown field"):
+            msgspec.json.decode(b'{"amount_cents": 1, "extra": 2}', type=Quote)
+        with pytest.raises(TypeError):
+            Quote(1)  # type: ignore[misc]  # pyright: ignore[reportCallIssue]
+        with pytest.raises(TypeError):
+            Child(1)  # type: ignore[misc]  # pyright: ignore[reportCallIssue]
+        with pytest.raises(AttributeError):
+            Quote(amount_cents=1).amount_cents = 2  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]
+        with pytest.raises(TypeError, match="password must be Secret"):
+            Quote(amount_cents=1, password="plain")  # type: ignore[arg-type]
+        assert msgspec.json.encode(Quote(amount_cents=5)) == b'{"amount_cents":5,"password":null}'
 
+    def test_a_subclass_can_reopen_unknown_fields_and_positional_args(self) -> None:
+        assert msgspec.json.decode(b'{"row_id": 1, "x": 2}', type=Open) == Open(row_id=1)
 
-def test_a_subclass_can_reopen_unknown_fields_and_positional_args() -> None:
-    assert msgspec.json.decode(b'{"row_id": 1, "x": 2}', type=Open) == Open(row_id=1)
-
-    class Positional(StrictStruct, kw_only=False):
-        a: int
-
-    assert Positional(1) == Positional(a=1)
-
-
-def test_a_subclass_cannot_unfreeze() -> None:
-    with pytest.raises(TypeError, match="frozen=False is not allowed"):
-
-        class Mutable(StrictStruct, frozen=False):  # type: ignore[misc]  # pyright: ignore[reportGeneralTypeIssues]
+        class Positional(StrictStruct, kw_only=False):
             a: int
+
+        assert Positional(1) == Positional(a=1)
+
+    def test_a_subclass_cannot_unfreeze(self) -> None:
+        with pytest.raises(TypeError, match="frozen=False is not allowed"):
+
+            class Mutable(StrictStruct, frozen=False):  # type: ignore[misc]  # pyright: ignore[reportGeneralTypeIssues]
+                a: int
 
 
 class _Plain(msgspec.Struct, frozen=True):
@@ -60,7 +59,8 @@ class _Loom(LoomFrozenStruct):
     name: str
 
 
-def test_loom_frozen_struct_config_is_unchanged() -> None:
-    names = [n for n in dir(_Plain.__struct_config__) if not n.startswith("_")]
-    loom, plain = _Loom.__struct_config__, _Plain.__struct_config__
-    assert [getattr(loom, n) for n in names] == [getattr(plain, n) for n in names]
+class TestLoomFrozenStructConfig:
+    def test_loom_frozen_struct_config_is_unchanged(self) -> None:
+        names = [n for n in dir(_Plain.__struct_config__) if not n.startswith("_")]
+        loom, plain = _Loom.__struct_config__, _Plain.__struct_config__
+        assert [getattr(loom, n) for n in names] == [getattr(plain, n) for n in names]

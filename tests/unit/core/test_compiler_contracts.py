@@ -15,13 +15,13 @@ class _IntCompiler:
         return len(request)
 
 
-def test_module_exports_only_the_protocol() -> None:
-    assert compiler_module.__all__ == ["CompilerProtocol"]
+class TestCompilerProtocol:
+    def test_module_exports_only_the_protocol(self) -> None:
+        assert compiler_module.__all__ == ["CompilerProtocol"]
 
+    def test_compiler_protocol_is_structurally_satisfied(self) -> None:
+        compiler: CompilerProtocol[str, int] = _IntCompiler()
 
-def test_compiler_protocol_is_structurally_satisfied() -> None:
-    compiler: CompilerProtocol[str, int] = _IntCompiler()
-
-    assert compiler.compile("abc") == 3
-    assert isinstance(compiler, _IntCompiler)
-    assert compiler.requests == ["abc"]  # type: ignore[attr-defined]
+        assert compiler.compile("abc") == 3
+        assert isinstance(compiler, _IntCompiler)
+        assert compiler.requests == ["abc"]  # type: ignore[attr-defined]

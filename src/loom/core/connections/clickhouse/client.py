@@ -69,8 +69,6 @@ async def open_async_client(options: dict[str, Any]) -> Any:
     shutdown.
     """
     with warnings.catch_warnings():
-        # The 0.15.x AsyncClient is a thread-pool wrapper and warns about the
-        # upcoming native client; migration to 1.0 is tracked debt.
         warnings.simplefilter("ignore", FutureWarning)
         return await clickhouse_connect.get_async_client(**options)
 

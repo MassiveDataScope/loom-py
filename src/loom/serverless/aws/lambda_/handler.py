@@ -145,7 +145,7 @@ class LambdaAdapter:
         if trigger is None or isinstance(trigger, HttpTrigger):
             recipe, self._bind = self._compose_http(source, name)
         else:
-            assert name is not None  # only a declared function has a trigger
+            assert name is not None
             recipe, self._bind = self._compose_jobs(source, name, trigger)
         return recipe
 
@@ -179,7 +179,6 @@ class LambdaAdapter:
     def _compose_http(self, source: CompositionSource, name: str | None) -> tuple[Recipe, _Bind]:
         if self._jobs or self._use_cases or self._metrics is not None:
             raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
-        # The http stack (FastAPI, Starlette, Mangum) needs the lambda extra.
         from loom.serverless.aws.lambda_.triggers.http import compose_http
 
         return compose_http(source, name, self._authenticator)

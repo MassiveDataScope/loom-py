@@ -29,76 +29,73 @@ def _named_aliases() -> CacheConfig:
     )
 
 
-def test_the_documented_example_can_be_applied() -> None:
-    """aiocache demands a literal ``default`` alias, which the example lacks."""
-    CacheGateway.apply_config(_named_aliases())
+class TestCacheConfigWiring:
+    def test_the_documented_example_can_be_applied(self) -> None:
+        """aiocache demands a literal ``default`` alias, which the example lacks."""
+        CacheGateway.apply_config(_named_aliases())
 
-    assert CacheGateway(alias="cache") is not None
-    assert CacheGateway(alias="counters") is not None
+        assert CacheGateway(alias="cache") is not None
+        assert CacheGateway(alias="counters") is not None
 
+    def test_the_injected_default_serves_the_data_alias(self) -> None:
+        """A gateway built with no alias must not silently get a different backend."""
+        CacheGateway.apply_config(_named_aliases())
 
-def test_the_injected_default_serves_the_data_alias() -> None:
-    """A gateway built with no alias must not silently get a different backend."""
-    CacheGateway.apply_config(_named_aliases())
+        assert CacheGateway() is not None
 
-    assert CacheGateway() is not None
+    def test_an_explicit_default_is_not_overwritten(self) -> None:
+        config = CacheConfig(
+            aiocache_alias="cache",
+            aiocache_config=RedactedMap(
+                {
+                    "cache": dict(MEMORY_BACKEND),
+                    "default": {"cache": "aiocache.SimpleMemoryCache", "namespace": "mine"},
+                }
+            ),
+        )
 
+        CacheGateway.apply_config(config)
 
-def test_an_explicit_default_is_not_overwritten() -> None:
-    config = CacheConfig(
-        aiocache_alias="cache",
-        aiocache_config=RedactedMap(
+        assert CacheGateway(alias="default") is not None
+
+    def test_an_empty_config_can_still_be_applied(self) -> None:
+        """The zero-argument default must be usable, not a landmine."""
+        CacheGateway.apply_config(CacheConfig())
+
+        assert CacheGateway() is not None
+
+    def test_a_yaml_section_keeps_its_backends(self) -> None:
+        """``section()`` converts by field name, so the YAML key has to match one."""
+        parsed = {
+            "aiocache_alias": "sessions",
+            "aiocache_config": {"sessions": dict(MEMORY_BACKEND)},
+        }
+
+        config = convert_config(parsed, CacheConfig, strict=False)
+
+        assert config.aiocache_config == {"sessions": dict(MEMORY_BACKEND)}
+
+    def test_from_mapping_accepts_the_short_key_too(self) -> None:
+        """The docstring used ``aiocache:``, so configs in the wild carry both."""
+        config = CacheConfig.from_mapping(
+            {"aiocache_alias": "sessions", "aiocache": {"sessions": dict(MEMORY_BACKEND)}}
+        )
+
+        assert config.aiocache_config == {"sessions": dict(MEMORY_BACKEND)}
+
+    def test_from_mapping_prefers_the_field_name_when_both_are_present(self) -> None:
+        config = CacheConfig.from_mapping(
             {
-                "cache": dict(MEMORY_BACKEND),
-                "default": {"cache": "aiocache.SimpleMemoryCache", "namespace": "mine"},
+                "aiocache_config": {"a": dict(MEMORY_BACKEND)},
+                "aiocache": {"b": dict(MEMORY_BACKEND)},
             }
-        ),
-    )
+        )
 
-    CacheGateway.apply_config(config)
+        assert set(config.aiocache_config) == {"a"}
 
-    assert CacheGateway(alias="default") is not None
-
-
-def test_an_empty_config_can_still_be_applied() -> None:
-    """The zero-argument default must be usable, not a landmine."""
-    CacheGateway.apply_config(CacheConfig())
-
-    assert CacheGateway() is not None
-
-
-def test_a_yaml_section_keeps_its_backends() -> None:
-    """``section()`` converts by field name, so the YAML key has to match one."""
-    parsed = {
-        "aiocache_alias": "sessions",
-        "aiocache_config": {"sessions": dict(MEMORY_BACKEND)},
-    }
-
-    config = convert_config(parsed, CacheConfig, strict=False)
-
-    assert config.aiocache_config == {"sessions": dict(MEMORY_BACKEND)}
-
-
-def test_from_mapping_accepts_the_short_key_too() -> None:
-    """The docstring used ``aiocache:``, so configs in the wild carry both."""
-    config = CacheConfig.from_mapping(
-        {"aiocache_alias": "sessions", "aiocache": {"sessions": dict(MEMORY_BACKEND)}}
-    )
-
-    assert config.aiocache_config == {"sessions": dict(MEMORY_BACKEND)}
-
-
-def test_from_mapping_prefers_the_field_name_when_both_are_present() -> None:
-    config = CacheConfig.from_mapping(
-        {"aiocache_config": {"a": dict(MEMORY_BACKEND)}, "aiocache": {"b": dict(MEMORY_BACKEND)}}
-    )
-
-    assert set(config.aiocache_config) == {"a"}
-
-
-@pytest.mark.parametrize("payload", [{}, {"aiocache": {}}, {"aiocache_config": {}}])
-def test_from_mapping_never_invents_backends(payload: dict[str, object]) -> None:
-    assert CacheConfig.from_mapping(payload).aiocache_config == {}
+    @pytest.mark.parametrize("payload", [{}, {"aiocache": {}}, {"aiocache_config": {}}])
+    def test_from_mapping_never_invents_backends(self, payload: dict[str, object]) -> None:
+        assert CacheConfig.from_mapping(payload).aiocache_config == {}
 
 
 class TestYamlSection:

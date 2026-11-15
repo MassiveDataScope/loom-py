@@ -82,7 +82,6 @@ class IntoTable:
     def __init__(self, ref: str | LogicalRef | TableRef) -> None:
         table_ref = ref if isinstance(ref, TableRef) else TableRef(ref)
         self._ref = table_ref
-        # Default write mode is REPLACE.  Call a write-mode method to change it.
         self._spec: Any = ReplaceSpec(table_ref=table_ref)
 
     def append(

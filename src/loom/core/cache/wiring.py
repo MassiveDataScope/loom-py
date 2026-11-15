@@ -52,30 +52,43 @@ class CacheGateways:
     data: CacheGateway
     counters: CacheGateway
 
+    def named(self) -> Iterator[tuple[str, CacheGateway]]:
+        """Yield each gateway once with its name, ``data`` then ``counters``."""
+        yield "data", self.data
+        if self.counters is not self.data:
+            yield "counters", self.counters
+
     def distinct(self) -> Iterator[CacheGateway]:
         """Yield each gateway once, so a shutdown closes an alias only once."""
-        yield self.data
-        if self.counters is not self.data:
-            yield self.counters
+        for _, gateway in self.named():
+            yield gateway
 
 
-def _register_calls(container: LoomContainer, calls: CachedCalls) -> None:
-    """Claim the ``CachedCalls`` slot with *calls*, unless it is already taken.
+@dataclass(frozen=True)
+class _CacheSlot:
+    """A container key the cache module binds unless a deployment bound its own.
 
-    The same courtesy the decorator slot gets: a deployment that registered its
-    own binder keeps it, and loom says whose it kept.
-
-    Args:
-        container: Container the cache module is being applied to.
-        calls: Binder loom would bind when the slot is free.
+    Attributes:
+        key: The key claimed.
+        kept: The event logged when a binding is already there.
+        log_field: The log field naming the kept binding's type.
     """
-    if container.is_registered(CachedCalls):
-        existing = container.resolve(CachedCalls)
-        get_logger(__name__).warning(
-            "CacheCallsAlreadyRegistered", calls=type(existing).__qualname__
-        )
-        return
-    container.register_instance(CachedCalls, calls)
+
+    key: object
+    kept: str
+    log_field: str
+
+    def claim(self, container: LoomContainer, instance: object) -> None:
+        """Bind *instance* under :attr:`key`, or log :attr:`kept` naming the binding kept."""
+        existing = container.resolve_or_none(self.key)
+        if existing is not None:
+            get_logger(__name__).warning(self.kept, **{self.log_field: type(existing).__qualname__})
+            return
+        container.register_instance(self.key, instance)
+
+
+_CALLS_SLOT = _CacheSlot(CachedCalls, "CacheCallsAlreadyRegistered", "calls")
+_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator, "CacheDecoratorAlreadyRegistered", "decorator")
 
 
 def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
@@ -124,21 +137,9 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
         container.register_instance(CacheGateway, data)
         container.register_instance(GenerationalDependencyResolver, resolver)
         container.register_instance(CacheGateways, CacheGateways(data=data, counters=counters))
-        # The single flight reports a load abandoned by its last caller: the
-        # body of a cached call is application code, and a failure nobody is
-        # left to await would otherwise be lost, as it is for a repository.
         flight = SingleFlight(_log_abandoned_call)
-        # Before the decorator block, which returns early when its slot is
-        # taken: registering after it would leave a deployment that supplies
-        # its own decorator with no binder at all.
-        _register_calls(container, _ConfiguredCalls(config, data, flight, random.Random()))
-        if container.is_registered(RepositoryDecorator):
-            existing = container.resolve(RepositoryDecorator)
-            get_logger(__name__).warning(
-                "CacheDecoratorAlreadyRegistered", decorator=type(existing).__qualname__
-            )
-            return
-        container.register_instance(RepositoryDecorator, decorate)
+        _CALLS_SLOT.claim(container, _ConfiguredCalls(config, data, flight, random.Random()))
+        _DECORATOR_SLOT.claim(container, decorate)
 
     return register
 
@@ -155,10 +156,9 @@ def _announce_uncached(repository: Any) -> Any:
 
 
 def _announcing_module(container: LoomContainer) -> None:
-    """Claim the decorator and binder slots, when free, with the pass-throughs that announce."""
-    _register_calls(container, _UnconfiguredCalls())
-    if not container.is_registered(RepositoryDecorator):
-        container.register_instance(RepositoryDecorator, _announce_uncached)
+    """Claim the decorator and binder slots with the pass-throughs that announce."""
+    _CALLS_SLOT.claim(container, _UnconfiguredCalls())
+    _DECORATOR_SLOT.claim(container, _announce_uncached)
 
 
 def cache_module_for(ctx: ConfigContext) -> Callable[[LoomContainer], None]:

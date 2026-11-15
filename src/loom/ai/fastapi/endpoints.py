@@ -6,14 +6,13 @@ opt-in — an agent needs ``enabled`` **and** a named ``auth`` in ``ai.endpoints
 agent that opts in without a usable authenticator aborts start-up instead of
 serving anonymously by accident.
 
-Two request-path rules come straight from the contract
-(``specs/001-ai-agent-layer/contracts/http-sse.md``):
+Two request-path rules:
 
 * Authentication is evaluated **before** existence, so an anonymous probe for
   an unknown agent gets ``401`` and the surface cannot be used to enumerate the
-  agents an application runs (FR-029b).
+  agents an application runs.
 * The body is capped **while it is read**. The declared ``Content-Length`` is a
-  fast path for honest clients, never the cap (FR-033a).
+  fast path for honest clients, never the cap.
 
 Both are enforced by :mod:`loom.ai._transport`, which the A2A surface shares:
 they are properties of an agent transport, not of this wire protocol.
@@ -24,7 +23,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Annotated, Any, Final, cast
+from typing import Annotated, Any, Final
 
 import msgspec
 from fastapi import FastAPI
@@ -38,9 +37,9 @@ from loom.ai._transport import (
     always_closed,
     annotate_usage,
     project_output,
-    projecting_final,
     read_body_capped,
     require_caller,
+    with_projected_output,
 )
 from loom.ai.abc import (
     CONVERSATION_ID_MAX_LENGTH,
@@ -48,6 +47,7 @@ from loom.ai.abc import (
     AgentResult,
     ErrorEvent,
     FinalEvent,
+    HealthState,
     StateShape,
 )
 from loom.ai.config import AgentEndpointConfig, AiConfig
@@ -70,21 +70,12 @@ _logger = logging.getLogger(__name__)
 
 _MEDIA_TYPE_SSE: Final[str] = "text/event-stream"
 
-# Published mapping of run-error codes to HTTP statuses (contract table). Codes
-# absent from the table are deliberate 500s: an unmapped outcome is a defect in
-# this table, not something to guess a status for.
 _STATUS_BY_CODE: Mapping[AgentRunErrorCode, int] = MappingProxyType(
     {
         AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION: 422,
         AgentRunErrorCode.MAX_ITERATIONS_EXCEEDED: 422,
         AgentRunErrorCode.USAGE_LIMIT_EXCEEDED: 422,
-        # Unreachable through this surface: _decode_state raises a
-        # TransportError 422 (STATE_NOT_DECLARED) before the runtime is ever
-        # called. Mapped anyway, for a marker-driven caller that reaches
-        # AgentRuntime.run directly and for the totality test.
         AgentRunErrorCode.STATE_UNDECLARED: 422,
-        # A caller-omitted 'state' against a shape with a required field and
-        # no default; the same client-mistake status as STATE_UNDECLARED.
         AgentRunErrorCode.STATE_REQUIRED: 422,
         AgentRunErrorCode.PROVIDER_UNAVAILABLE: 503,
         AgentRunErrorCode.PROVIDER_RATE_LIMITED: 503,
@@ -99,17 +90,6 @@ _STATUS_BY_CODE: Mapping[AgentRunErrorCode, int] = MappingProxyType(
     }
 )
 
-# The remainder of ``AgentRunErrorCode`` deliberately falls back to the ``500``
-# below: these are wiring bugs (an unknown grant, a tool call that raised, a
-# call cycle), client-side cancellation, or a deployment defect (a declared
-# ``max_usd`` against a model the deployed price catalogue cannot price), none
-# of which the HTTP contract names a status for. That deliberate set has no
-# production reader — the fallback is the literal ``500`` in
-# ``_run_error_response`` — so it lives only in
-# ``tests/unit/ai/test_error_catalogue_totality.py``, next to the totality
-# test it exists for: a new code added to the enum without an entry in either
-# table fails that test instead of silently defaulting to 500.
-
 
 class _AgentRunRequest(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Body accepted by ``/run`` and ``/stream``: a prompt, an optional thread and state.
@@ -123,15 +103,10 @@ class _AgentRunRequest(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
     decoded by the one module-level :data:`_REQUEST_DECODER` shared by every
     agent, which cannot know any one artefact's declared state shape.
     ``Raw`` stops decoding at this field, so :func:`_decode_state` can parse
-    those bytes exactly once, against the artefact's own shape (FR-008).
+    those bytes exactly once, against the artefact's own shape.
 
-    Typed plain ``msgspec.Raw``, not ``Raw | None``: measured against
-    ``msgspec`` 0.20.0, a ``Raw``-bearing union accepts a JSON ``null`` for
-    the field but rejects any other value with ``ValidationError``, which
-    would refuse every caller who actually sends ``state``. The default is
-    an empty ``Raw`` — indistinguishable, once decoded, from an explicit
-    JSON ``null`` — and :func:`_decode_state` treats both as "no state
-    given", which is what every caller of this field means by either.
+    The default is an empty ``Raw``; :func:`_decode_state` treats it and an
+    explicit JSON ``null`` alike, as "no state given".
     """
 
     prompt: str
@@ -172,7 +147,7 @@ _ABSENT_STATE: Final[frozenset[bytes]] = frozenset({b"", b"null"})
 def _decode_state(
     name: str, state_shape: StateShape | None, raw: msgspec.Raw
 ) -> Mapping[str, Any] | None:
-    """Decode one request's ``state`` bytes exactly once, against its declared shape (FR-008).
+    """Decode one request's ``state`` bytes exactly once, against its declared shape.
 
     Args:
         name: Agent this request targets, named in a raised error.
@@ -184,7 +159,7 @@ def _decode_state(
 
     Returns:
         ``None`` when *raw* is absent. Otherwise the normalised mapping the
-        bundle carries (FR-009): *state_shape*'s own
+        bundle carries: *state_shape*'s own
         :class:`~loom.core.model.LoomType` decoded and turned to builtins
         when it has one, or a plain JSON value under the open
         ``deps_type: dict`` form.
@@ -203,17 +178,10 @@ def _decode_state(
             f"agent {name!r} declares no state (no 'deps_type' or 'deps_schema'); "
             "remove 'state' from the request or declare a state shape on the artefact",
         )
-    body = bytes(raw)
-    if state_shape.loom_type is None:
-        try:
-            return cast(Mapping[str, Any], msgspec.json.decode(body))
-        except msgspec.DecodeError as exc:
-            raise TransportError(422, "INVALID_STATE", str(exc)) from exc
     try:
-        decoded = state_shape.loom_type.decode_json(body)
-    except BoundaryValidationError as exc:
+        return state_shape.decode(bytes(raw))
+    except (BoundaryValidationError, msgspec.DecodeError) as exc:
         raise TransportError(422, "INVALID_STATE", str(exc)) from exc
-    return cast(Mapping[str, Any], state_shape.loom_type.to_builtins(decoded))
 
 
 async def _read_request(
@@ -231,8 +199,7 @@ async def _read_request(
         name: Agent this request targets.
         max_prompt_bytes: Cap on the ``prompt`` field alone.
         max_state_bytes: Cap on the raw ``state`` bytes alone, measured
-            before decode — cheap, and independent of the prompt's own cap
-            (FR-015).
+            before decode — cheap, and independent of the prompt's own cap.
         state_shape: The agent's declared state shape, read once by the
             caller through :meth:`~loom.ai.runtime.AgentRuntime.state_shape`.
 
@@ -358,9 +325,6 @@ def _make_run_handler(
                 subject=identity.subject,
                 mechanism=identity.mechanism,
             )
-            # The handle is opened rather than a lexical span entered because
-            # the run's usage is only known once the run is over, and the
-            # closing attributes are where an operator reads what it spent.
             with always_closed(span), span.as_current():
                 result = await _annotated_run(runtime, span, name, body, identity, state)
             result = project_output(result, runtime.output_type(name))
@@ -445,15 +409,13 @@ def _stream_frames(
                     conversation_id=body.conversation_id,
                     state=state,
                 ) as events:
-                    projected_events = projecting_final(events, runtime.output_type(name))
+                    projected_events = with_projected_output(events, runtime.output_type(name))
                     async for frame in stream_sse(
                         _annotating_usage(projected_events, span),
                         heartbeat_ms=HEARTBEAT_MS,
                     ):
                         yield frame
             except AgentRunError as exc:
-                # Admission failures surface once the response exists, so they
-                # can only travel in-band, as this stream's terminal frame.
                 annotate_usage(span, exc.usage)
                 yield encode_sse_event(
                     ErrorEvent(code=exc.code, message=str(exc), interaction_id=exc.interaction_id)
@@ -516,11 +478,9 @@ def _make_health_handler(
         payload: dict[str, object] = {"status": health.status}
         if health.detail is not None:
             payload["detail"] = health.detail
-        # Dependency identifiers are internal topology: an anonymous scrape
-        # gets the aggregate only (FR-029c).
         if current_identity().is_authenticated:
             payload["checks"] = dict(health.checks)
-        status_code = 503 if health.status == "unavailable" else 200
+        status_code = 503 if health.status == HealthState.UNAVAILABLE else 200
         return AgentJSONResponse(content=payload, status_code=status_code)
 
     return agent_health
@@ -537,7 +497,7 @@ def _exposed_agents(
     """
     exposed: dict[str, AgentEndpointConfig] = {}
     for name, endpoint in config.endpoints.items():
-        if not endpoint.enabled or not endpoint.auth.strip():
+        if not endpoint.active:
             continue
         _require_usable_authenticator(name, endpoint, authenticator)
         exposed[name] = endpoint

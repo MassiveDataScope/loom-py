@@ -30,12 +30,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 
-from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
+from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.identity import current_identity
-from loom.core.identity.wire import encode_identity
+from loom.core.engine.metrics import NoMetrics
+from loom.core.identity import captured_delegation
+from loom.core.job.callback import CallbackOutcome, refuse_reserved_payload
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
@@ -54,19 +56,9 @@ if TYPE_CHECKING:
 ResultT = TypeVar("ResultT")
 
 
-# ---------------------------------------------------------------------------
-# Pending send — replaces closures with a callable dataclass
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _PendingCeleryDispatch:
-    """Deferred ``send_task`` call executed after UoW commits.
-
-    Avoids nested function definitions (closures) by capturing all send
-    context as explicit dataclass fields.  The instance is enqueued on the
-    post-commit channel and called when the executor drains it.
-    """
+    """One deferred ``send_task``, run by the post-commit channel once the unit of work closed."""
 
     celery_app: Celery
     task_name: str
@@ -117,91 +109,35 @@ class _PendingCeleryDispatch:
         return ({"job_name": self.task_name, "task_id": self.task_id},)
 
 
-# ---------------------------------------------------------------------------
-# Link builders — module-level, single responsibility each
-# ---------------------------------------------------------------------------
+class _CallbackLink(msgspec.Struct, frozen=True):
+    """The keyword arguments of a job's callback task, the dispatcher's delegation among them."""
 
+    job_id: str
+    context: dict[str, Any]
+    trace_id: str | None
+    identity: dict[str, Any] | None
 
-def _build_link(
-    celery_app: Celery,
-    callback_type: type[Any],
-    payload: dict[str, Any],
-    task_id: str,
-    trace_id: str | None,
-    *,
-    name_prefix: str,
-    immutable: bool,
-) -> Any:
-    return celery_app.signature(
-        f"{name_prefix}.{callback_type.__qualname__}",
-        kwargs={"job_id": task_id, "context": payload, "trace_id": trace_id},
-        immutable=immutable,
-    )
+    def signature(
+        self, celery_app: Celery, callback_type: type[Any], outcome: CallbackOutcome
+    ) -> Any:
+        """Return the signature calling *callback_type*'s hook for *outcome* with this link.
 
+        A success signature is mutable, so Celery passes the job's return
+        value first; a failure signature is immutable.
 
-def _build_success_link(
-    celery_app: Celery,
-    callback_type: type[Any],
-    payload: dict[str, Any],
-    task_id: str,
-    trace_id: str | None = None,
-) -> Any:
-    """Build a Celery success-callback signature (``immutable=False``).
+        Args:
+            celery_app: The application the signature belongs to.
+            callback_type: The callback class whose task it calls.
+            outcome: The outcome the job's ``link`` or ``link_error`` reports.
 
-    Args:
-        celery_app: Celery application used to create the signature.
-        callback_type: Callback class whose registered task name is used.
-        payload: Dispatch payload forwarded as execution context.
-        task_id: Parent task UUID for correlation.
-        trace_id: Distributed trace ID propagated to the callback worker.
-
-    Returns:
-        Celery ``Signature`` passed as ``link`` on the parent task.
-    """
-    return _build_link(
-        celery_app,
-        callback_type,
-        payload,
-        task_id,
-        trace_id,
-        name_prefix=TASK_CALLBACK_PREFIX,
-        immutable=False,
-    )
-
-
-def _build_failure_link(
-    celery_app: Celery,
-    callback_type: type[Any],
-    payload: dict[str, Any],
-    task_id: str,
-    trace_id: str | None = None,
-) -> Any:
-    """Build a Celery failure-callback signature (``immutable=True``).
-
-    Args:
-        celery_app: Celery application used to create the signature.
-        callback_type: Callback class whose registered task name is used.
-        payload: Dispatch payload forwarded as execution context.
-        task_id: Parent task UUID for correlation.
-        trace_id: Distributed trace ID propagated to the callback worker.
-
-    Returns:
-        Celery ``Signature`` passed as ``link_error`` on the parent task.
-    """
-    return _build_link(
-        celery_app,
-        callback_type,
-        payload,
-        task_id,
-        trace_id,
-        name_prefix=TASK_CALLBACK_ERROR_PREFIX,
-        immutable=True,
-    )
-
-
-# ---------------------------------------------------------------------------
-# CeleryJobService
-# ---------------------------------------------------------------------------
+        Returns:
+            The Celery ``Signature``.
+        """
+        return celery_app.signature(
+            callback_task_name(callback_type, outcome),
+            kwargs=msgspec.structs.asdict(self),
+            immutable=outcome is CallbackOutcome.FAILURE,
+        )
 
 
 class CeleryJobService:
@@ -220,10 +156,7 @@ class CeleryJobService:
 
     When *factory* and *executor* are provided, :meth:`run` executes the
     job in-process (same as :class:`~loom.core.job.service.InlineJobService`)
-    without touching the broker.  This enables use cases that need an
-    immediate result — e.g. workflow steps that call a job synchronously —
-    while keeping broker dispatch for fire-and-forget paths.  Omitting both
-    preserves the previous behaviour where :meth:`run` raises
+    without touching the broker; without them it raises
     :class:`NotImplementedError`.
 
     Args:
@@ -240,7 +173,6 @@ class CeleryJobService:
 
         service = CeleryJobService(celery_app, factory=factory, executor=executor)
         handle = service.dispatch(SendEmailJob, payload={"user_id": 1})
-        # actual send_task happens after UoW commit via flush
     """
 
     def __init__(
@@ -255,7 +187,7 @@ class CeleryJobService:
     ) -> None:
         self._app = celery_app
         self._settings = settings or JobSettings()
-        self._metrics = metrics
+        self._metrics = NoMetrics() if metrics is None else metrics
         self._factory = factory
         self._executor = executor
         self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
@@ -263,10 +195,6 @@ class CeleryJobService:
     def close(self) -> None:
         """Close the Celery application owned by this service."""
         self._app.close()
-
-    # ------------------------------------------------------------------
-    # JobService protocol
-    # ------------------------------------------------------------------
 
     async def run(
         self,
@@ -300,10 +228,13 @@ class CeleryJobService:
                 "CeleryJobService.run() requires factory and executor. "
                 "Pass them at construction or use InlineJobService."
             )
-        instance = self._factory.build(job_type)
-        return await self._executor.execute(
-            instance, params=params, payload=payload, identity=current_identity()
+        result: ResultT = await self._executor.run(
+            job_type,
+            factory=self._factory,
+            params=params,
+            payload=payload,
         )
+        return result
 
     def dispatch(
         self,
@@ -325,10 +256,12 @@ class CeleryJobService:
         the current Unit of Work commits.  If the UoW rolls back, the
         pending entry is discarded and no task reaches the broker.
 
-        The current trace ID and caller identity are captured at registration
-        time so they are propagated to the Celery worker even though the send
-        happens later.  Both travel inside the envelope: no context variable
-        crosses a broker.
+        The current trace ID, the identity acting
+        (:func:`~loom.core.identity.current_caller`) and the deadline of its
+        delegation are captured at registration time so they are propagated
+        to the Celery worker even though the send happens later.  They travel
+        inside the envelope, and inside each callback link: no context
+        variable crosses a broker, and the callbacks act as the dispatcher.
 
         Args:
             job_type: Concrete ``Job`` subclass to dispatch.
@@ -346,31 +279,28 @@ class CeleryJobService:
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` whose ``job_id``
             matches the ``task_id`` that will be passed to ``send_task``.
+
+        Raises:
+            ValueError: When a callback is attached and *payload* holds
+                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
-        identity = encode_identity(current_identity())
+        identity = captured_delegation().encoded()
+        payload = payload or {}
+        if on_success is not None or on_failure is not None:
+            refuse_reserved_payload(payload)
         options = self._settings.of(job_type)
         eff_queue = queue or options.queue
         eff_countdown = countdown if countdown is not None else options.countdown
         eff_priority = priority if priority is not None else options.priority
-
-        link = (
-            _build_success_link(self._app, on_success, payload or {}, task_id, trace_id)
-            if on_success
-            else None
-        )
-        link_error = (
-            _build_failure_link(self._app, on_failure, payload or {}, task_id, trace_id)
-            if on_failure
-            else None
-        )
+        callback_link = _CallbackLink(task_id, payload, trace_id, identity)
 
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
             task_name=wire_job_name(job_type.__qualname__),
             task_id=task_id,
-            payload=payload or {},
+            payload=payload,
             params=params,
             trace_id=trace_id,
             identity=identity,
@@ -379,12 +309,16 @@ class CeleryJobService:
             priority=eff_priority,
             eta=eta,
             soft_time_limit=options.timeout,
-            link=link,
-            link_error=link_error,
+            link=None
+            if on_success is None
+            else callback_link.signature(self._app, on_success, CallbackOutcome.SUCCESS),
+            link_error=None
+            if on_failure is None
+            else callback_link.signature(self._app, on_failure, CallbackOutcome.FAILURE),
             observability_runtime=self._observability_runtime,
         )
         add_pending_publish(pending)
-        self._emit(
+        self._metrics.on_event(
             RuntimeEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=job_type.__qualname__,
@@ -440,7 +374,3 @@ class CeleryJobService:
             self.dispatch(job_type, payload=job_payload) for job_type, job_payload in jobs
         )
         return JobGroup(handles=handles)
-
-    def _emit(self, event: RuntimeEvent) -> None:
-        if self._metrics is not None:
-            self._metrics.on_event(event)

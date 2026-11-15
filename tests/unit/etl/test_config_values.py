@@ -14,7 +14,6 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.etl import (
     ClientStep,
-    ETLParams,
     ETLPipeline,
     ETLProcess,
     ETLStep,
@@ -30,10 +29,7 @@ from loom.etl.runner import ETLRunner
 from loom.etl.runtime import ConfigValueError
 from loom.etl.testing import PolarsStepRunner, StubSourceReader, StubTargetWriter
 from tests.unit._resolver_stubs import MappingResolver
-
-
-class RunParams(ETLParams):  # type: ignore[misc]
-    run_date: date
+from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
 class RespondioSettings(msgspec.Struct, kw_only=True):
@@ -41,43 +37,43 @@ class RespondioSettings(msgspec.Struct, kw_only=True):
     page_size: int = 100
 
 
-_PARAMS = RunParams(run_date=date(2026, 9, 25))
+_PARAMS = RunDateIgnoredParams(run_date=date(2026, 9, 25))
 _CONFIG = {"respondio": {"api_token": "tok-1", "page_size": 50}}
 
 
-class FetchStep(ETLStep[RunParams]):
+class FetchStep(ETLStep[RunDateIgnoredParams]):
     api_token = FromConfig("respondio.api_token")
     respondio = FromConfig("respondio", RespondioSettings)
     target = IntoTable("raw.messages").replace()
 
     def execute(  # type: ignore[override]
-        self, params: RunParams, *, api_token: str, respondio: RespondioSettings
+        self, params: RunDateIgnoredParams, *, api_token: str, respondio: RespondioSettings
     ) -> Any:
         return {"token": api_token, "page_size": respondio.page_size}
 
 
-class InlineSourceStep(ETLStep[RunParams]):
+class InlineSourceStep(ETLStep[RunDateIgnoredParams]):
     orders = FromTable("raw.orders")
     api_token = FromConfig("respondio.api_token")
     target = IntoTable("staging.orders").replace()
 
-    def execute(self, params: RunParams, *, orders: Any, api_token: str) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any, api_token: str) -> Any:  # type: ignore[override]
         return (orders, api_token)
 
 
-class GroupedSourceStep(ETLStep[RunParams]):
+class GroupedSourceStep(ETLStep[RunDateIgnoredParams]):
     sources = Sources(orders=FromTable("raw.orders"))
     api_token = FromConfig("respondio.api_token")
     target = IntoTable("staging.grouped").replace()
 
-    def execute(self, params: RunParams, *, orders: Any, api_token: str) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any, api_token: str) -> Any:  # type: ignore[override]
         return (orders, api_token)
 
 
-class TokenClientStep(ClientStep[RunParams]):
+class TokenClientStep(ClientStep[RunDateIgnoredParams]):
     api_token = FromConfig("respondio.api_token")
 
-    def execute(self, params: RunParams, *, client: Any, api_token: str) -> None:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, client: Any, api_token: str) -> None:  # type: ignore[override]
         client.append(api_token)
 
 
@@ -147,11 +143,11 @@ class TestCompileStructure:
         ]
 
     def test_missing_execute_param_is_rejected(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             api_token = FromConfig("respondio.api_token")
             target = IntoTable("raw.messages").replace()
 
-            def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams) -> Any:  # type: ignore[override]
                 return None
 
         error = _compile_error(_Step)
@@ -160,45 +156,45 @@ class TestCompileStructure:
         assert "api_token" in str(error)
 
     def test_extra_execute_param_is_rejected(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             target = IntoTable("raw.messages").replace()
 
-            def execute(self, params: RunParams, *, api_token: str) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, api_token: str) -> Any:  # type: ignore[override]
                 return None
 
         assert _compile_error(_Step).code is ETLErrorCode.EXTRA_SOURCE_PARAMS
 
     def test_alias_shared_with_a_grouped_source_is_rejected(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             sources = Sources(orders=FromTable("raw.orders"))
             orders = FromConfig("respondio.api_token")
             target = IntoTable("staging.orders").replace()
 
-            def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
                 return orders
 
         assert _compile_error(_Step).code is ETLErrorCode.CONFIG_ALIAS_CONFLICT
 
     def test_client_step_needs_the_param(self) -> None:
-        class _Client(ClientStep[RunParams]):
+        class _Client(ClientStep[RunDateIgnoredParams]):
             api_token = FromConfig("respondio.api_token")
 
-            def execute(self, params: RunParams, *, client: Any) -> None:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, client: Any) -> None:  # type: ignore[override]
                 return None
 
         assert _compile_error(_Client).code is ETLErrorCode.MISSING_CONFIG_PARAMS
 
     def test_client_alias_is_reserved_on_client_steps(self) -> None:
-        class _Client(ClientStep[RunParams]):
+        class _Client(ClientStep[RunDateIgnoredParams]):
             client = FromConfig("respondio.api_token")
 
-            def execute(self, params: RunParams, *, client: Any) -> None:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, client: Any) -> None:  # type: ignore[override]
                 return None
 
         assert _compile_error(_Client).code is ETLErrorCode.CONFIG_ALIAS_CONFLICT
 
     def test_sql_step_cannot_receive_config_values(self) -> None:
-        class _Sql(StepSQL[RunParams, Any]):
+        class _Sql(StepSQL[RunDateIgnoredParams, Any]):
             orders = FromTable("raw.orders")
             api_token = FromConfig("respondio.api_token")
             target = IntoTable("staging.sql").replace()
@@ -240,10 +236,10 @@ class TestCompileAgainstConfig:
         assert "cannot be resolved" in str(error)
 
     def test_pipeline_compile_checks_every_step(self) -> None:
-        class _Proc(ETLProcess[RunParams]):
+        class _Proc(ETLProcess[RunDateIgnoredParams]):
             steps = [InlineSourceStep, FetchStep]
 
-        class _Pipeline(ETLPipeline[RunParams]):
+        class _Pipeline(ETLPipeline[RunDateIgnoredParams]):
             processes = [_Proc]
 
         compiler = ETLCompiler(config_context=ConfigContext.from_dict({"respondio": {}}))
@@ -305,10 +301,10 @@ class TestExecutorInjection:
         assert exc.value.key == "respondio.api_token"
 
     def test_steps_without_config_values_need_no_context(self) -> None:
-        class _Plain(ETLStep[RunParams]):
+        class _Plain(ETLStep[RunDateIgnoredParams]):
             target = IntoTable("raw.plain").replace()
 
-            def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams) -> Any:  # type: ignore[override]
                 return "ok"
 
         executor, writer = _executor(config=None)
@@ -318,19 +314,19 @@ class TestExecutorInjection:
         assert writer.written[0][0] == "ok"
 
 
-class _TokenLengthStep(ETLStep[RunParams]):
+class _TokenLengthStep(ETLStep[RunDateIgnoredParams]):
     api_token = FromConfig("respondio.api_token")
     target = IntoTable("raw.token_length").replace()
 
-    def execute(self, params: RunParams, *, api_token: str) -> pl.LazyFrame:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, api_token: str) -> pl.LazyFrame:  # type: ignore[override]
         return pl.DataFrame({"token_length": [len(api_token)]}).lazy()
 
 
-class _TokenProc(ETLProcess[RunParams]):
+class _TokenProc(ETLProcess[RunDateIgnoredParams]):
     steps = [_TokenLengthStep]
 
 
-class _TokenPipeline(ETLPipeline[RunParams]):
+class _TokenPipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [_TokenProc]
 
 
@@ -386,13 +382,13 @@ class TestRunnerFromYaml:
 
 class TestPolarsStepRunner:
     def test_with_config_injects_fake_values(self) -> None:
-        class _Step(ETLStep[RunParams]):
+        class _Step(ETLStep[RunDateIgnoredParams]):
             orders = FromTable("raw.orders")
             api_token = FromConfig("respondio.api_token")
             target = IntoTable("staging.orders").replace()
 
             def execute(  # type: ignore[override]
-                self, params: RunParams, *, orders: pl.LazyFrame, api_token: str
+                self, params: RunDateIgnoredParams, *, orders: pl.LazyFrame, api_token: str
             ) -> pl.LazyFrame:
                 return orders.with_columns(pl.lit(api_token).alias("token"))
 

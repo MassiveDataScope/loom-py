@@ -68,10 +68,7 @@ def compute_correlation_id(
     return f"{flow_name}-{_sanitize(resolved[correlation_field])}"
 
 
-def make_run_name_callback(
-    name: str,
-    correlation_field: str | None,
-) -> Any:
+def make_run_name_callback(correlation_field: str | None) -> Any:
     """Return the callable that Prefect calls to compute each run's name.
 
     Resolution order:
@@ -81,11 +78,10 @@ def make_run_name_callback(
       3. ``<value of correlation_field>-<HHMMSS>``.
       4. ``<UTC timestamp>`` as last resort.
 
-    The callable is bound to *name* and *correlation_field* so the factory
+    The callable is bound to *correlation_field* so the factory
     can pass it as ``flow_run_name=`` without leaking closure state.
 
     Args:
-        name: The flow's display name.
         correlation_field: Name of the parameter to use as the
             correlation value, or ``None``.
 
@@ -105,9 +101,6 @@ def make_run_name_callback(
         if cid:
             return f"{cid}-{ts}"
         if correlation_field and params.get(correlation_field) is not None:
-            # The callable runs BEFORE the flow body that resolves
-            # ``${now}`` etc. — resolve here too so the displayed name
-            # reflects the real bound value.
             value = resolve_placeholder(params[correlation_field], anchor=anchor)
             return f"{_sanitize(value)}-{ts}"
         return datetime.now(tz=UTC).strftime(_COMPACT_TIMESTAMP_FMT)

@@ -34,53 +34,50 @@ def _extra_requirements(extra: str, python: str | None = None) -> dict[str, Requ
     return found
 
 
-def test_mongo_extra_installs_pymongo() -> None:
-    requirements = _extra_requirements("mongo")
+class TestPackagingExtras:
+    def test_mongo_extra_installs_pymongo(self) -> None:
+        requirements = _extra_requirements("mongo")
 
-    assert "pymongo" in requirements
-    assert requirements["pymongo"].specifier.contains("4.18.3")
-    assert not requirements["pymongo"].specifier.contains("4.18.2")
-    assert not requirements["pymongo"].specifier.contains("5.0")
+        assert "pymongo" in requirements
+        assert requirements["pymongo"].specifier.contains("4.18.3")
+        assert not requirements["pymongo"].specifier.contains("4.18.2")
+        assert not requirements["pymongo"].specifier.contains("5.0")
 
+    def test_sqs_extra_installs_boto3(self) -> None:
+        assert "boto3" in _extra_requirements("sqs")
 
-def test_sqs_extra_installs_boto3() -> None:
-    assert "boto3" in _extra_requirements("sqs")
+    def test_sqlalchemy_extra_pins_greenlet_explicitly(self) -> None:
+        requirements = _extra_requirements("sqlalchemy")
 
+        assert "sqlalchemy" in requirements
+        assert "greenlet" in requirements
+        assert requirements["greenlet"].specifier.contains("3.0")
 
-def test_sqlalchemy_extra_pins_greenlet_explicitly() -> None:
-    requirements = _extra_requirements("sqlalchemy")
+    def test_streaming_extra_skips_bytewax_on_python_313(self) -> None:
+        assert "bytewax" in _extra_requirements("streaming", python="3.12")
+        assert "bytewax" not in _extra_requirements("streaming", python="3.13")
+        assert "bytewax" not in _extra_requirements("streaming", python="3.14")
+        assert "confluent-kafka" in _extra_requirements("streaming", python="3.13")
 
-    assert "sqlalchemy" in requirements
-    assert "greenlet" in requirements
-    assert requirements["greenlet"].specifier.contains("3.0")
+    @pytest.mark.parametrize(
+        ("extra", "packages"),
+        [
+            ("etl-spark", ("pyspark", "delta-spark")),
+            ("pyspark", ("pyspark",)),
+        ],
+    )
+    def test_spark_extras_skip_pyspark_on_python_313(
+        self, extra: str, packages: tuple[str, ...]
+    ) -> None:
+        for package in packages:
+            assert package in _extra_requirements(extra, python="3.12")
+            assert package not in _extra_requirements(extra, python="3.13")
+            assert package not in _extra_requirements(extra, python="3.14")
 
+    @pytest.mark.parametrize("package", ["fastapi", "pydantic", "prometheus-client", "mangum"])
+    def test_lambda_extra_installs_the_rest_stack_and_mangum(self, package: str) -> None:
+        assert package in _extra_requirements("lambda")
 
-def test_streaming_extra_skips_bytewax_on_python_313() -> None:
-    assert "bytewax" in _extra_requirements("streaming", python="3.12")
-    assert "bytewax" not in _extra_requirements("streaming", python="3.13")
-    assert "bytewax" not in _extra_requirements("streaming", python="3.14")
-    assert "confluent-kafka" in _extra_requirements("streaming", python="3.13")
-
-
-@pytest.mark.parametrize(
-    ("extra", "packages"),
-    [
-        ("etl-spark", ("pyspark", "delta-spark")),
-        ("pyspark", ("pyspark",)),
-    ],
-)
-def test_spark_extras_skip_pyspark_on_python_313(extra: str, packages: tuple[str, ...]) -> None:
-    for package in packages:
-        assert package in _extra_requirements(extra, python="3.12")
-        assert package not in _extra_requirements(extra, python="3.13")
-        assert package not in _extra_requirements(extra, python="3.14")
-
-
-@pytest.mark.parametrize("package", ["fastapi", "pydantic", "prometheus-client", "mangum"])
-def test_lambda_extra_installs_the_rest_stack_and_mangum(package: str) -> None:
-    assert package in _extra_requirements("lambda")
-
-
-@pytest.mark.parametrize(("version", "accepted"), [("0.22", True), ("0.21", False)])
-def test_lambda_extra_needs_mangum_022_or_later(version: str, accepted: bool) -> None:
-    assert _extra_requirements("lambda")["mangum"].specifier.contains(version) is accepted
+    @pytest.mark.parametrize(("version", "accepted"), [("0.22", True), ("0.21", False)])
+    def test_lambda_extra_needs_mangum_022_or_later(self, version: str, accepted: bool) -> None:
+        assert _extra_requirements("lambda")["mangum"].specifier.contains(version) is accepted

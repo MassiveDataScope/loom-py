@@ -143,7 +143,7 @@ def assemble_flow(
     failure_hooks, completion_hooks = make_notification_hooks(name, settings.notifiers)
     decorated = prefect.flow(
         name=name,
-        flow_run_name=make_run_name_callback(name, correlation_field),
+        flow_run_name=make_run_name_callback(correlation_field),
         retries=retries,
         retry_delay_seconds=retry_delay_seconds,
         validate_parameters=False,

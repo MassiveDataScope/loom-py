@@ -124,6 +124,7 @@ def write_project(
     persistence: dict[str, Any] | None = None,
     store: dict[str, Any] | None = _DEFAULT_STORE,
     cache: dict[str, Any] | None = None,
+    identity: dict[str, Any] | None = None,
     prefix: str = "/ping",
     route_path: str = "/",
     id_field: str = _AUTOINCREMENT_ID_FIELD,
@@ -140,6 +141,7 @@ def write_project(
             explicit ``cursors.signing: ephemeral``.
         store: Contents of the ``stores.default`` section; ``None`` omits it.
         cache: Contents of the ``cache`` section; ``None`` omits it.
+        identity: Contents of the ``identity`` section; ``None`` omits it.
         prefix: Prefix of the generated REST interface.
         route_path: Path of its single route, relative to *prefix*.
         id_field: Source line declaring the fixture model's primary key.
@@ -171,6 +173,8 @@ def write_project(
         config["stores"] = {"default": dict(store)}
     if cache is not None:
         config["cache"] = dict(cache)
+    if identity is not None:
+        config["identity"] = dict(identity)
     if rest is not None:
         config["app"]["rest"] = rest
     if sql is not None:

@@ -80,8 +80,6 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
                 "max_pool_connections": self.pool.size,
                 "connect_timeout": self.connect_timeout,
                 "read_timeout": self.read_timeout,
-                # total_max_attempts counts the first request; Config's own
-                # max_attempts would count retries only.
                 "retries": {"total_max_attempts": self.max_attempts, "mode": self.retry_mode},
             },
             **omit_none({"endpoint_url": self.url}),

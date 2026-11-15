@@ -4,7 +4,7 @@ Everything the compiler, the runtime and the HTTP layer share with an engine
 lives here, and nothing here imports an engine: the bootstrap resolves the
 provider through :mod:`loom.ai.registry` and hands the compiler plain values.
 
-A run may continue a conversation the application loaded (FR-034): the prior
+A run may continue a conversation the application loaded: the prior
 history crosses this boundary as opaque, engine-native bytes inside
 :class:`Conversation`, and the run's new messages come back the same way on
 :attr:`AgentResult.messages` and :attr:`FinalEvent.messages`.  Loom defines no
@@ -16,25 +16,30 @@ artifact format they serve is not.  See :mod:`loom.ai` for the distinction.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
+from enum import StrEnum
+from types import MappingProxyType
 from typing import (
     Any,
     ClassVar,
     Final,
     Generic,
-    Literal,
     Protocol,
     TypeAlias,
     TypeVar,
+    cast,
     overload,
     runtime_checkable,
 )
 
-from loom.ai.errors import AgentRunErrorCode
+import msgspec
+
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.errors.model import BoundaryValidationError
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
 
@@ -54,7 +59,7 @@ ToolResultT = TypeVar("ToolResultT")
 
 
 class StateShape(LoomFrozenStruct, frozen=True, kw_only=True):
-    """The one shape ``deps_type``/``deps_schema`` compile to (FR-003).
+    """The one shape ``deps_type``/``deps_schema`` compile to.
 
     ``deps_schema``, ``deps_type: <symbol>`` and ``deps_type: dict`` are three
     authored spellings of one optional JSON Schema; the compiler resolves all
@@ -67,14 +72,69 @@ class StateShape(LoomFrozenStruct, frozen=True, kw_only=True):
     Attributes:
         schema: JSON Schema the artifact's state must satisfy, or ``None``
             under the ``deps_type: dict`` waiver, where no schema exists and
-            template markers are not validated (FR-006).
+            template markers are not validated.
         loom_type: Boundary type produced at compile, decoding and
             normalising the state mapping, or ``None`` alongside
             ``schema is None``.
+        defaults: The state a run supplying none renders: :attr:`loom_type`'s
+            decode of an empty object, computed when the shape is built;
+            ``None`` under the open form or when a field has no default.
     """
 
     schema: Mapping[str, Any] | None
     loom_type: LoomType | None
+    defaults: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.loom_type is None:
+            return
+        try:
+            defaults = self.decode(b"{}")
+        except BoundaryValidationError:
+            return
+        msgspec.structs.force_setattr(self, "defaults", MappingProxyType(dict(defaults)))
+
+    def resolve(self, agent: str, state: object | None) -> Mapping[str, Any] | None:
+        """Return the state one run of *agent* renders: *state*, else :attr:`defaults`.
+
+        Args:
+            agent: The agent the run targets, named in a raised error.
+            state: The caller's state, already decoded and normalised, or ``None``.
+
+        Returns:
+            *state* when given, else :attr:`defaults`.
+
+        Raises:
+            AgentRunError: ``STATE_REQUIRED`` when *state* is ``None`` and a
+                field of :attr:`loom_type` has no default.
+        """
+        if state is not None:
+            return cast(Mapping[str, Any], state)
+        if self.defaults is None and self.loom_type is not None:
+            raise AgentRunError(
+                AgentRunErrorCode.STATE_REQUIRED,
+                f"agent {agent!r} declares a state field with no default; "
+                "pass 'state' explicitly for this run",
+            )
+        return self.defaults
+
+    def decode(self, body: bytes) -> Mapping[str, Any]:
+        """Decode JSON state bytes against this shape and return them as builtins.
+
+        Args:
+            body: The state as JSON bytes.
+
+        Returns:
+            The normalised mapping: :attr:`loom_type`'s decode turned to
+            builtins, or the plain JSON value under the open form.
+
+        Raises:
+            BoundaryValidationError: When *body* does not fit :attr:`loom_type`.
+            msgspec.DecodeError: When *body* is not JSON under the open form.
+        """
+        if self.loom_type is None:
+            return cast(Mapping[str, Any], msgspec.json.decode(body))
+        return cast(Mapping[str, Any], self.loom_type.to_builtins(self.loom_type.decode_json(body)))
 
 
 class AgentUsage(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -423,14 +483,8 @@ class AgentHandle(Protocol[AnswerT]):
 
         The artefact's own output check — the retry loop that asks the model
         to correct a violation of its declared schema — does not run when
-        ``expect`` overrides the shape. That is forced, not chosen: the
-        check is compiled against the declared schema, so handing it another
-        shape would either fail inside the engine's own retry loop or invent
-        a verdict loom has no basis for. Validating an overridden shape is
-        the calling code's job instead, and it is better placed there:
-        holding a typed answer, calling code can act on a bad verdict — for
-        example asking again in a loop it controls — rather than only
-        reporting one.
+        ``expect`` overrides the shape. Validating an overridden shape is
+        the calling code's job.
 
         Permissions never travel through this call. What the agent may
         reach comes from the artefact's own grants and from the identity
@@ -449,7 +503,7 @@ class AgentHandle(Protocol[AnswerT]):
                 dependency bundle normalised against its declared shape;
                 given against an artefact declaring no ``deps_type`` or
                 ``deps_schema``, the call is refused rather than dropped
-                silently (FR-010).
+                silently.
 
         Returns:
             The decoded answer, this run's own usage and its interaction id.
@@ -554,10 +608,11 @@ class AgentHandle(Protocol[AnswerT]):
         one place the full what-holds/what-is-lost list is written; every
         other mention of it points back here.
 
-        **What still holds.** The identity bound to this handle and the
-        artefact's grants: already built into what is returned, so a run
-        driven this way still reaches exactly what the artefact granted, as
-        this caller. ``policies.tool_timeout_ms`` still bounds every
+        **What still holds.** The artefact's grants: already built into what
+        is returned, so a run driven this way still reaches exactly what the
+        artefact granted, as the identity acting where the accessor's block
+        is entered, refused outside any execution, past that caller's
+        deadline or with no authenticated caller. ``policies.tool_timeout_ms`` still bounds every
         capability call, because it is compiled into the tools the returned
         agent already carries. The artefact's ``output_check`` validator
         still runs, for the same reason. So do loom's chain-cycle and
@@ -655,7 +710,7 @@ class ToolResultEvent(
 
 
 class ErrorEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="error", tag_field="type"):
-    """The run failed mid-stream (FR-032).
+    """The run failed mid-stream.
 
     Attributes:
         code: Stable run-time failure code; the retry policy reads its class.
@@ -704,12 +759,12 @@ class FinalEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="final", tag_f
 
 
 AgentEvent = TextDeltaEvent | ToolCallEvent | ToolResultEvent | ErrorEvent | FinalEvent
-"""Closed five-member tagged union of streaming events (FR-030).
+"""Closed five-member tagged union of streaming events.
 
-Exactly one of ``final`` or ``error`` terminates every stream (SC-011), and
+Exactly one of ``final`` or ``error`` terminates every stream, and
 ``final`` is the only variant carrying usage.
 
-Adding a variant requires two independent real consumers (FR-035): a single
+Adding a variant requires two independent real consumers: a single
 engine wanting a richer event is not grounds to widen a union every SSE
 client, test fake and contract suite must understand.
 """
@@ -719,9 +774,9 @@ class AgentEngine(Protocol):
     """One compiled agent, ready to run.
 
     Engines take a single prompt and, optionally, the conversation the run
-    continues: an opaque, engine-native history the application loaded
-    (FR-034).  Loom defines no message model and stores no history; an engine
-    that receives ``conversation=None`` runs single-shot.
+    continues: an opaque, engine-native history the application loaded.  Loom defines no
+    message model and stores no history; an engine that receives ``conversation=None``
+    runs single-shot.
     """
 
     async def run(
@@ -742,7 +797,7 @@ class AgentEngine(Protocol):
                 single-shot.
             state: This run's state, already decoded by whichever boundary
                 received it and normalised against the artefact's declared
-                shape — never parsed again here (FR-008). ``None`` for an
+                shape — never parsed again here. ``None`` for an
                 artefact declaring no state, or for a stateful one whose
                 caller supplied none, in which case it carries the shape's
                 own declared defaults instead of an empty value.
@@ -807,10 +862,11 @@ class NativeCapableEngine(Protocol):
         state: object | None = None,
         guard: Callable[[], AbstractAsyncContextManager[None]],
     ) -> object:
-        """Return this engine's own objects, bound to *identity*.
+        """Return this engine's own objects, with a dependency bundle built for *identity*.
 
         Args:
-            identity: Verified caller the returned objects are built for.
+            identity: Verified caller the dependency bundle is built for;
+                informational.
             state: This run's state, already resolved against the plan's
                 declared shape.
             guard: Zero-argument factory of the async context manager a
@@ -823,16 +879,39 @@ class NativeCapableEngine(Protocol):
         ...
 
 
-HealthState = Literal["ok", "degraded", "unavailable"]
-"""The three health states. Defined beside the struct that carries it so the alias
-and the field cannot drift apart."""
+class HealthState(StrEnum):
+    """The three health states, best first."""
+
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+
+    @classmethod
+    def worst(cls, states: Iterable[str]) -> HealthState:
+        """Return the worst of *states*, ``OK`` when there are none.
+
+        Args:
+            states: Health states; one that is no :class:`HealthState`
+                ranks as ``UNAVAILABLE``.
+
+        Returns:
+            The worst state.
+        """
+        unknown = _HEALTH_RANK[cls.UNAVAILABLE]
+        return _BY_RANK[max((_HEALTH_RANK.get(state, unknown) for state in states), default=0)]
+
+
+_BY_RANK: Final[tuple[HealthState, ...]] = tuple(HealthState)
+_HEALTH_RANK: Final[Mapping[str, int]] = MappingProxyType(
+    {state: rank for rank, state in enumerate(_BY_RANK)}
+)
 
 
 class HealthStatus(LoomFrozenStruct, frozen=True, kw_only=True):
-    """Health of one agent engine, shared by every engine (FR-048).
+    """Health of one agent engine, shared by every engine.
 
     Attributes:
-        status: ``"ok"``, ``"degraded"`` or ``"unavailable"``.
+        status: The engine's health state.
         detail: Optional human-readable explanation.
     """
 
@@ -872,15 +951,10 @@ class McpToolCallResult(LoomFrozenStruct, frozen=True, kw_only=True):
 class McpSession(Protocol):
     """Minimal MCP session the runtime needs from any client library.
 
-    Migration (breaking, from v1.16.1): ``list_tools`` used to return tool
-    names (``tuple[str, ...]``) and ``call_tool`` used to return the server's
-    structured content directly (``object``). Both shapes shipped, so a
-    third-party session implementing this Protocol has to update both methods.
-    ``list_tools`` now returns :class:`McpToolInfo` so a caller can see which
-    tools publish an output schema, and ``call_tool`` now returns
+    ``list_tools`` returns :class:`McpToolInfo` so a caller can see which
+    tools publish an output schema, and ``call_tool`` returns
     :class:`McpToolCallResult` so a caller can see the server's own failure
-    flag instead of having it silently folded into a successful-looking
-    return. Nothing else about the Protocol moved.
+    flag.
     """
 
     async def list_tools(self) -> tuple[McpToolInfo, ...]:
@@ -921,10 +995,7 @@ class ConcurrentMcpSession:
     unwrapped.
 
     This class carries no members: subclassing it *is* the declaration. A
-    session that does not subclass it is treated exactly as every
-    :class:`McpSession` was before this class existed — wrapped and
-    serialised — because not declaring the guarantee is the safe default,
-    never a failure.
+    session that does not subclass it is wrapped and serialised.
 
     A subclass keeping this promise must (a) tolerate overlapping calls by
     matching each response back to its own request id — the multiplexing
@@ -995,12 +1066,10 @@ reject every factory that names them.
 class DepsFactory(Protocol):
     """Builds per-invocation dependencies for capability calls.
 
-    Singleton services are captured once at build; :class:`Identity` is
-    supplied per invocation so every capability call runs as the caller
-    (FR-043). The bundle also carries the invocation's ``state``, alongside
-    the verified caller and the container, never instead of them: a
-    capability call reads ``identity`` and ``container`` off the bundle the
-    same way regardless of whether ``state`` is present.
+    Singleton services are captured once at build. A capability call reads
+    ``container`` off the bundle and acts as the identity of the execution in
+    progress. The bundle also carries the invocation's ``state``, beside the
+    container.
     """
 
     def build(
@@ -1012,7 +1081,8 @@ class DepsFactory(Protocol):
         """Build the dependency bundle for one invocation.
 
         Args:
-            identity: Verified caller of this invocation.
+            identity: The caller of this invocation; not read: a capability
+                call acts as the identity of the execution in progress.
             container: Application container holding the singleton services.
             state: The invocation's state, a mapping normalised against the
                 artefact's declared shape, or ``None`` for an artefact that
@@ -1039,7 +1109,7 @@ OutputCheck: TypeAlias = Callable[[Mapping[str, Any]], str | None]
 Called once per attempt inside the engine's own output-retry loop. For a
 ``msgspec.Struct`` output the mapping is the one the engine parsed from the
 model's answer — never loom's decoded object, so nothing is decoded twice.
-For a pydantic output (D7, FR-012) the check still receives a
+For a pydantic output the check still receives a
 ``Mapping[str, Any]``: the engine calls it with
 ``loom_type.to_builtins(instance)`` of pydantic-ai's own validated instance,
 so a check written once serves both libraries. Returns ``None`` to accept the
@@ -1084,9 +1154,7 @@ class AgentEngineProvider(Protocol):
         Called exactly once per plan by the runtime, never per request.
 
         Args:
-            plan: The compiled ``AgentPlan``.  Typed as ``object`` here
-                because the plan struct is built in phase 4; the parameter
-                narrows to ``AgentPlan`` then (recorded decision).
+            plan: The compiled ``AgentPlan``, typed as ``object``.
             deps: Per-invocation dependency factory.
             container: Application container.
 

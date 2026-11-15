@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+import inspect
+from collections.abc import Callable, Mapping
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from loom.core.execution import ExecutionScope
+from loom.core.identity import current_caller
+
+if TYPE_CHECKING:
+    from loom.core.use_case.factory import UseCaseFactory
 
 
 @runtime_checkable
@@ -68,3 +77,68 @@ class NullJobCallback:
 
     def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
         """Accept failure notification and do nothing."""
+
+
+_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})
+
+
+class CallbackOutcome(StrEnum):
+    """How a job ended, naming the :class:`JobCallback` hook it calls."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+    def hook(self, callback: object) -> Callable[..., Any]:
+        """Return the hook of *callback*, an instance or its class, that this outcome calls.
+
+        Args:
+            callback: A :class:`JobCallback` or its class.
+
+        Returns:
+            Its ``on_success`` or ``on_failure``.
+        """
+        return getattr(callback, f"on_{self}")
+
+
+def refuse_reserved_payload(payload: Mapping[str, object]) -> None:
+    """Refuse a dispatch payload naming an argument a callback hook receives.
+
+    The payload reaches the hooks as keyword arguments beside ``job_id``,
+    ``result``, ``exc_type`` and ``exc_msg``.
+
+    Args:
+        payload: The payload of a dispatch that attaches a callback.
+
+    Raises:
+        ValueError: Naming each reserved key the payload holds.
+    """
+    reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
+    if reserved:
+        raise ValueError(
+            f"A job payload with a callback cannot hold {', '.join(reserved)}: "
+            "the callback hooks receive these arguments"
+        )
+
+
+async def notify(
+    factory: UseCaseFactory, callback_type: type[Any], outcome: CallbackOutcome, **arguments: Any
+) -> None:
+    """Build *callback_type* and call its hook for *outcome* in one execution as the caller acting.
+
+    With no caller, a constructor ``Caller()`` and a handle fail closed.
+
+    Args:
+        factory: Builds the callback with its dependencies.
+        callback_type: The :class:`JobCallback` class to build.
+        outcome: How the job ended.
+        **arguments: The hook's keyword arguments: ``job_id``, then
+            ``result`` or ``exc_type`` and ``exc_msg``, then the dispatch
+            payload.
+
+    Raises:
+        DelegationExpired: Past the caller's deadline.
+    """
+    with ExecutionScope(current_caller(), what=callback_type.__qualname__):
+        reply = outcome.hook(factory.build(callback_type))(**arguments)
+        if reply is not None and inspect.isawaitable(reply):
+            await reply

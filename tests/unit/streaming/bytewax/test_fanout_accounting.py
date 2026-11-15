@@ -87,14 +87,14 @@ from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
+    AcmeOrder,
+    AcmeResult,
     Item,
-    Order,
-    Result,
     UpperItem,
     build_compiled_plan,
     build_compiled_source,
 )
-from tests.unit.streaming.kafka.fakes import ProducerBackendStub  # noqa: E402
+from tests.unit.streaming.kafka.doubles import ProducerBackendStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -116,7 +116,7 @@ class _Committer:
         self.commits.append(list(partitions))
 
 
-def _sourced_message(payload: Order, offset: int = OFFSET) -> Message[Order]:
+def _sourced_message(payload: AcmeOrder, offset: int = OFFSET) -> Message[AcmeOrder]:
     """Build a message carrying real Kafka coordinates, as the source emits."""
     return Message(
         payload=payload,
@@ -169,14 +169,14 @@ def _drive(monkeypatch: pytest.MonkeyPatch, module: Any, inputs: Any) -> list[An
 class _ThreeWayExpand:
     """Expand step turning one order into three results."""
 
-    def execute(self, message: Message[Order], **_: object) -> list[Result]:
-        return [Result(value=f"{message.payload.order_id}-{index}") for index in range(3)]
+    def execute(self, message: Message[AcmeOrder], **_: object) -> list[AcmeResult]:
+        return [AcmeResult(value=f"{message.payload.order_id}-{index}") for index in range(3)]
 
 
 class _EmptyExpand:
     """Expand step that legitimately produces nothing for this record."""
 
-    def execute(self, message: Message[Order], **_: object) -> list[Result]:
+    def execute(self, message: Message[AcmeOrder], **_: object) -> list[AcmeResult]:
         del message
         return []
 
@@ -189,7 +189,7 @@ class TestExpandingStepAccounting:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tracker, committer = _tracker(OFFSET)
-        produced = _drive(monkeypatch, _steps, _sourced_message(Order(order_id="ab")))
+        produced = _drive(monkeypatch, _steps, _sourced_message(AcmeOrder(order_id="ab")))
         _steps._apply_expand_step("in", _ThreeWayExpand(), 1, _ctx(tracker))
         results = produced[0]
         assert len(results) == 3
@@ -211,7 +211,7 @@ class TestExpandingStepAccounting:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tracker, _ = _tracker(OFFSET)
-        produced = _drive(monkeypatch, _steps, _sourced_message(Order(order_id="ab")))
+        produced = _drive(monkeypatch, _steps, _sourced_message(AcmeOrder(order_id="ab")))
         _steps._apply_expand_step("in", _EmptyExpand(), 1, _ctx(tracker))
 
         assert produced[0] == []
@@ -224,7 +224,7 @@ class TestExpandingStepAccounting:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """With no tracker the node must behave exactly as before."""
-        produced = _drive(monkeypatch, _steps, _sourced_message(Order(order_id="ab")))
+        produced = _drive(monkeypatch, _steps, _sourced_message(AcmeOrder(order_id="ab")))
         _steps._apply_expand_step("in", _ThreeWayExpand(), 1, _ctx(None))
 
         assert len(produced[0]) == 3
@@ -248,10 +248,10 @@ class TestExpandRoutesAccounting:
 
     def test_fewer_rows_than_routes_still_commits(self) -> None:
         tracker, _ = _tracker(OFFSET)
-        declared = frozenset({Order, Result})
+        declared = frozenset({AcmeOrder, AcmeResult})
 
         _routing._register_row_fanout(
-            self._expanded({Order: [Order(order_id="a")]}),
+            self._expanded({AcmeOrder: [AcmeOrder(order_id="a")]}),
             tracker,
             declared,
             False,
@@ -266,11 +266,11 @@ class TestExpandRoutesAccounting:
 
     def test_more_rows_than_routes_waits_for_every_row(self) -> None:
         tracker, _ = _tracker(OFFSET)
-        declared = frozenset({Order})
-        rows = [Order(order_id=str(index)) for index in range(4)]
+        declared = frozenset({AcmeOrder})
+        rows = [AcmeOrder(order_id=str(index)) for index in range(4)]
 
         _routing._register_row_fanout(
-            self._expanded({Order: rows}),
+            self._expanded({AcmeOrder: rows}),
             tracker,
             declared,
             False,
@@ -294,7 +294,7 @@ class TestExpandRoutesAccounting:
         _routing._register_row_fanout(
             self._expanded({}),
             tracker,
-            frozenset({Order}),
+            frozenset({AcmeOrder}),
             False,
             ObservabilityRuntime.noop(),
             "orders",
@@ -309,9 +309,11 @@ class TestExpandRoutesAccounting:
         tracker, _ = _tracker(OFFSET)
 
         _routing._register_row_fanout(
-            self._expanded({Order: [Order(order_id="a")], Result: [Result(value="x")]}),
+            self._expanded(
+                {AcmeOrder: [AcmeOrder(order_id="a")], AcmeResult: [AcmeResult(value="x")]}
+            ),
             tracker,
-            frozenset({Order}),
+            frozenset({AcmeOrder}),
             True,
             ObservabilityRuntime.noop(),
             "orders",
@@ -331,9 +333,11 @@ class TestExpandRoutesAccounting:
         tracker, _ = _tracker(OFFSET)
 
         _routing._register_row_fanout(
-            self._expanded({Order: [Order(order_id="a")], Result: [Result(value="x")]}),
+            self._expanded(
+                {AcmeOrder: [AcmeOrder(order_id="a")], AcmeResult: [AcmeResult(value="x")]}
+            ),
             tracker,
-            frozenset({Order}),
+            frozenset({AcmeOrder}),
             False,
             ObservabilityRuntime.noop(),
             "orders",
@@ -452,7 +456,7 @@ def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:
 
 
 def _compiled_topic(topic: str) -> Any:
-    return build_compiled_plan(output=IntoTopic(topic, payload=Result)).output
+    return build_compiled_plan(output=IntoTopic(topic, payload=AcmeResult)).output
 
 
 class TestWiringGuards:
@@ -469,9 +473,9 @@ class TestWiringGuards:
                 id="branch output after a path end",
             ),
             pytest.param(
-                lambda: _guard_context(output=IntoTopic("t.out", payload=Result)).wire_flow_output(
-                    None
-                ),
+                lambda: _guard_context(
+                    output=IntoTopic("t.out", payload=AcmeResult)
+                ).wire_flow_output(None),
                 "flow.output is never written",
                 id="flow output after a path end",
             ),
@@ -520,12 +524,12 @@ class TestErrorEnvelopeAccounting:
         """
 
         class _FailingExpand:
-            def execute(self, message: Message[Order], **_: object) -> list[Result]:
+            def execute(self, message: Message[AcmeOrder], **_: object) -> list[AcmeResult]:
                 del message
                 raise RuntimeError("expander-boom")
 
         tracker, _ = _tracker(OFFSET)
-        produced = _drive(monkeypatch, _steps, _sourced_message(Order(order_id="ab")))
+        produced = _drive(monkeypatch, _steps, _sourced_message(AcmeOrder(order_id="ab")))
         _steps._apply_expand_step("in", _FailingExpand(), 1, _ctx(tracker))
         results = produced[0]
 
@@ -552,13 +556,13 @@ class TestExpandRoutesWiring:
 
         class _Expander:
             @staticmethod
-            def expand(payload: Order) -> dict[type, list[Any]]:
+            def expand(payload: AcmeOrder) -> dict[type, list[Any]]:
                 del payload
-                return {Result: [Result(value="a"), Result(value="b")]}
+                return {AcmeResult: [AcmeResult(value="a"), AcmeResult(value="b")]}
 
         node = ExpandRoutes(
             expander=cast(Any, _Expander),
-            routes={Result: cast(Any, SimpleNamespace(nodes=()))},
+            routes={AcmeResult: cast(Any, SimpleNamespace(nodes=()))},
         )
         tracker, _ = _tracker(OFFSET)
         steps_run: list[str] = []
@@ -576,7 +580,7 @@ class TestExpandRoutesWiring:
         ctx = _ctx(tracker)
         ctx.wire_branch = lambda *args, **kwargs: None
 
-        _routing._apply_expand_routes(_sourced_message(Order(order_id="ab")), node, 4, ctx)
+        _routing._apply_expand_routes(_sourced_message(AcmeOrder(order_id="ab")), node, 4, ctx)
 
         assert any("fanout" in step for step in steps_run), "the fanout step was never wired"
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -607,7 +611,7 @@ class TestCommitKeyGuards:
     def test_a_message_without_kafka_coordinates_is_not_counted(self) -> None:
         assert (
             _shared._commit_key(
-                Message(payload=Order(order_id="a"), meta=MessageMeta(message_id="m-1"))
+                Message(payload=AcmeOrder(order_id="a"), meta=MessageMeta(message_id="m-1"))
             )
             is None
         )
@@ -642,7 +646,7 @@ Event = tuple[str, object, int | None]
 """``(kind, where, offset)``: produce, flush, write, fork or complete."""
 
 
-class _Row(LoomStruct):
+class AcmeFanoutRow(LoomStruct):
     value: str
 
 
@@ -744,22 +748,25 @@ class _FailingBatch(BatchExpandStep[Item, Item]):
 class _TwoRows:
     """Expand every item into two rows of one type."""
 
-    outputs: ClassVar[tuple[type, ...]] = (_Row,)
+    outputs: ClassVar[tuple[type, ...]] = (AcmeFanoutRow,)
 
     @classmethod
     def expand(cls, event: Item) -> dict[type, list[Any]]:
-        return {_Row: [_Row(value=event.value), _Row(value=event.value)]}
+        return {AcmeFanoutRow: [AcmeFanoutRow(value=event.value), AcmeFanoutRow(value=event.value)]}
 
 
 class _RowsByOffset:
     """Item 0 expands to a routed and an unrouted row, item 1 to none, item 2 to an unrouted one."""
 
-    outputs: ClassVar[tuple[type, ...]] = (_Row, _Other)
+    outputs: ClassVar[tuple[type, ...]] = (AcmeFanoutRow, _Other)
 
     @classmethod
     def expand(cls, event: Item) -> dict[type, list[Any]]:
         if event.value == "item-0":
-            return {_Row: [_Row(value=event.value)], _Other: [_Other(value=event.value)]}
+            return {
+                AcmeFanoutRow: [AcmeFanoutRow(value=event.value)],
+                _Other: [_Other(value=event.value)],
+            }
         if event.value == "item-2":
             return {_Other: [_Other(value=event.value)]}
         return {}
@@ -1012,7 +1019,9 @@ _PATH_CASES = {
             ExpandRoutes(
                 expander=_TwoRows,
                 routes={
-                    _Row: Process(WithAsync(process=Process(IntoTopic("t.inline", payload=_Row))))
+                    AcmeFanoutRow: Process(
+                        WithAsync(process=Process(IntoTopic("t.inline", payload=AcmeFanoutRow)))
+                    )
                 },
             )
         ),
@@ -1021,7 +1030,10 @@ _PATH_CASES = {
     ),
     "expand_routes_route_ending_in_into_topic": _PathCase(
         lambda: Process(
-            ExpandRoutes(expander=_TwoRows, routes={_Row: Process(IntoTopic("t.a", payload=_Row))})
+            ExpandRoutes(
+                expander=_TwoRows,
+                routes={AcmeFanoutRow: Process(IntoTopic("t.a", payload=AcmeFanoutRow))},
+            )
         ),
         _each("t.a", 0, 0, 1, 1, 2, 2),
         shares=2,
@@ -1191,7 +1203,10 @@ _PATH_CASES = {
     "explode_then_router": _PathCase(
         lambda: Process(
             cast(Any, Explode(_TwoRows)),  # Process does not type Explode
-            Router.by(_PayloadType(), routes={_Row: Process(IntoTopic("t.a", payload=_Row))}),
+            Router.by(
+                _PayloadType(),
+                routes={AcmeFanoutRow: Process(IntoTopic("t.a", payload=AcmeFanoutRow))},
+            ),
         ),
         _each("t.a", 0, 0, 1, 1, 2, 2),
         shares=2,
@@ -1259,7 +1274,7 @@ _PATH_CASES = {
         lambda: Process(
             ExpandRoutes(
                 expander=_RowsByOffset,
-                routes={_Row: Process(IntoTopic("t.a", payload=_Row))},
+                routes={AcmeFanoutRow: Process(IntoTopic("t.a", payload=AcmeFanoutRow))},
                 default=Process(IntoTopic("t.b", payload=_Other)),
             )
         ),
@@ -1267,7 +1282,9 @@ _PATH_CASES = {
         shares={0: 2, 1: 1, 2: 1},
     ),
     "expand_routes_route_into_table": _PathCase(
-        lambda: Process(ExpandRoutes(expander=_TwoRows, routes={_Row: Process(_table(_Row))})),
+        lambda: Process(
+            ExpandRoutes(expander=_TwoRows, routes={AcmeFanoutRow: Process(_table(AcmeFanoutRow))})
+        ),
         _each("items_table", 0, 0, 1, 1, 2, 2),
         shares=2,
     ),
@@ -1471,7 +1488,7 @@ class TestStorageCompletesAfterItsFlush:
 
     @staticmethod
     def _orders(*offsets: int) -> list[Message[Any]]:
-        return [_sourced_message(Order(order_id=str(offset)), offset) for offset in offsets]
+        return [_sourced_message(AcmeOrder(order_id=str(offset)), offset) for offset in offsets]
 
     def test_buffered_rows_complete_only_with_the_flush_that_writes_them(self) -> None:
         """No close() at the end is the crash: offset 3 was never written, so it is replayed."""

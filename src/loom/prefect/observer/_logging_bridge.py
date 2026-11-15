@@ -89,7 +89,7 @@ class PrefectLogBridgeHandler(logging.Handler):
         )
         self._worker.start()
 
-    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401 - inherited
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         if self._closed:
             return
         try:
@@ -101,7 +101,7 @@ class PrefectLogBridgeHandler(logging.Handler):
             return
         self._queue.put_nowait(payload)
 
-    def close(self) -> None:  # noqa: D401 - inherited
+    def close(self) -> None:  # noqa: D401
         """Drain pending logs and stop the worker."""
         if self._closed:
             return

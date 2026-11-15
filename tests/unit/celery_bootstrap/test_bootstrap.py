@@ -77,19 +77,20 @@ def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
 # ---------------------------------------------------------------------------
 
 
-def test_celery_discovery_rejects_duplicate_job_qualnames() -> None:
-    def make_job() -> type[Job[None]]:
-        class Duplicate(Job[None]):
-            def execute(self) -> None:
-                return None
+class TestDuplicateJobQualnames:
+    def test_celery_discovery_rejects_duplicate_job_qualnames(self) -> None:
+        def make_job() -> type[Job[None]]:
+            class Duplicate(Job[None]):
+                def execute(self) -> None:
+                    return None
 
-        return Duplicate
+            return Duplicate
 
-    ctx = ConfigContext.from_dict({"app": {"name": "duplicate-jobs"}})
-    jobs = [make_job(), make_job()]
+        ctx = ConfigContext.from_dict({"app": {"name": "duplicate-jobs"}})
+        jobs = [make_job(), make_job()]
 
-    with pytest.raises(DuplicateJobName):
-        discovery._resolve_compilables_and_jobs(ctx, jobs, [])
+        with pytest.raises(DuplicateJobName):
+            discovery._resolve_compilables_and_jobs(ctx, jobs, [])
 
 
 # ---------------------------------------------------------------------------

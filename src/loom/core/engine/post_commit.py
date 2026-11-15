@@ -7,7 +7,7 @@ failed transaction discards them.  The owner unbinds the channel before
 draining, so an execution started from an action opens its own lifecycle.
 Inside an invocation scope the executor owns, :func:`store_channel` holds
 each action on the channel of the store that owns it until that store has
-ended (ADR 0008).
+ended.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core._async import held_task
 from loom.core.errors import PostCommitError
+from loom.core.execution import execution_ended
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.scope import current_scope, refuse_write_under_read_only
@@ -34,7 +35,7 @@ ActionT = TypeVar("ActionT", bound=PostCommitAction)
 class LoggedAction(Protocol):
     """A post-commit action naming what it sends, for the logs: never its payload."""
 
-    def log_fields(self) -> Iterable[Mapping[str, object]]: ...  # job_name, task_id per send
+    def log_fields(self) -> Iterable[Mapping[str, object]]: ...
 
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
@@ -265,7 +266,7 @@ async def _run_all(pending: collections.deque[PostCommitAction], failures: list[
         action = pending.popleft()
         try:
             await _run_one(action)
-        except Exception as exc:  # collected and re-raised together by drain
+        except Exception as exc:
             failures.append((action, exc))
 
 
@@ -275,11 +276,11 @@ async def _run_one(action: PostCommitAction) -> None:
         await result
 
 
-def bind_channel(channel: PostCommitChannel) -> Token[PostCommitChannel | None]:
+def bind_channel(channel: PostCommitChannel | None) -> Token[PostCommitChannel | None]:
     """Make ``channel`` the active channel for the current context.
 
     Args:
-        channel: Channel that receives subsequent enqueues.
+        channel: Channel that receives subsequent enqueues; ``None`` binds none.
 
     Returns:
         Token to pass to :func:`reset_channel`.
@@ -309,7 +310,10 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
     :meth:`~loom.core.uow.scope.InvocationScope.owners_of` names. Anywhere
     else a job dispatch (``store`` omitted) is queued on
     :func:`active_channel`, and a cache invalidation gets ``None``: its write
-    is already durable, so it runs now.
+    is already durable, so it runs now. A job dispatch from a task whose
+    execution ended gets ``None`` too: that execution's channel is drained,
+    so the dispatch goes out detached, as at top level, acting as the same
+    caller.
 
     Args:
         store: Store the action depends on; ``None`` for a job dispatch of
@@ -319,6 +323,8 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
         UndeclaredStoreWrite: For a job dispatch while a read-only execution runs.
     """
     if store is None:
+        if execution_ended():
+            return None
         refuse_write_under_read_only("a job dispatch")
     scope = current_scope()
     owners = None if scope is None else scope.owners_of(store)

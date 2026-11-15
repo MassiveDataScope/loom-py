@@ -36,10 +36,6 @@ from loom.rest.errors import _INTERNAL_ERROR_MESSAGE
 
 _JSONRPC_VERSION: Final = "2.0"
 
-# Everything an external caller is ever told about a failed run, keyed by the
-# stable code. Nothing here is derived from ``AgentRunError.message``: that
-# text names capability keys, SQL connections, remote agent hosts and model
-# bindings — exactly what the card and the stream redact (FR-030a, FR-038).
 RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
     {
         AgentRunErrorCode.PROVIDER_UNAVAILABLE: "the model provider is unavailable",
@@ -61,16 +57,12 @@ RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
         AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT: (
             "the conversation loader exceeded its time limit"
         ),
-        # Unreachable over this surface: a stateful artefact never publishes
-        # here (STATE_SURFACE_UNSUPPORTED, start-up). Present for the
-        # catalogue's own totality test.
         AgentRunErrorCode.STATE_UNDECLARED: "the run declares no state, so it accepts none",
-        # Unreachable over this surface for the same reason as
-        # STATE_UNDECLARED above: a stateful artefact never publishes here.
         AgentRunErrorCode.STATE_REQUIRED: (
             "the run declares a required state field with no default, and no state was given"
         ),
         AgentRunErrorCode.MCP_GRANT_UNKNOWN: "the requested MCP grant is unknown",
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED: "the MCP server is not granted to any use case",
         AgentRunErrorCode.SQL_GRANT_UNKNOWN: "the requested SQL grant is unknown",
         AgentRunErrorCode.TOOL_UNKNOWN: "the requested tool is unknown",
         AgentRunErrorCode.TOOL_UNTYPED: "the requested tool publishes no output schema",

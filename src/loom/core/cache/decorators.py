@@ -141,7 +141,6 @@ def cache_call(
                 f"@cache_call requires a coroutine function; {func.__qualname__} is not one"
             )
         func.__cache_call__ = _CallPolicy(ttl_key, unless, version)  # type: ignore[attr-defined]
-        # ``iscoroutinefunction`` narrows the callable and erases ``F``.
         return cast(F, func)
 
     return decorator

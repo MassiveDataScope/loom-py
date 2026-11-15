@@ -8,7 +8,7 @@ def is_retryable(exc: Exception) -> bool:
     return bool(getattr(exc, "retryable", True))
 
 
-def failure_log_fields(exc: Exception) -> dict[str, object]:
+def failure_log_fields(exc: BaseException) -> dict[str, object]:
     """Return transport-neutral details for a failed job."""
     if isinstance(exc, PostCommitError):
         return {"committed": exc.committed, "failures": len(exc.failures)}

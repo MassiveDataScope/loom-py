@@ -42,10 +42,6 @@ from loom.etl.schema._schema import (
     StructType,
 )
 
-# ---------------------------------------------------------------------------
-# Coarse primitive mapping tables
-# ---------------------------------------------------------------------------
-
 _LOOM_TO_POLARS: dict[LoomDtype, type[pl.DataType]] = {
     LoomDtype.INT8: pl.Int8,
     LoomDtype.INT16: pl.Int16,
@@ -57,7 +53,7 @@ _LOOM_TO_POLARS: dict[LoomDtype, type[pl.DataType]] = {
     LoomDtype.UINT64: pl.UInt64,
     LoomDtype.FLOAT32: pl.Float32,
     LoomDtype.FLOAT64: pl.Float64,
-    LoomDtype.DECIMAL: pl.Float64,  # coarse fallback — use DecimalType for precision/scale
+    LoomDtype.DECIMAL: pl.Float64,
     LoomDtype.UTF8: pl.String,
     LoomDtype.BINARY: pl.Binary,
     LoomDtype.BOOLEAN: pl.Boolean,
@@ -87,7 +83,6 @@ _POLARS_TO_LOOM: dict[type[pl.DataType], LoomDtype] = {
     pl.Datetime: LoomDtype.DATETIME,
     pl.Duration: LoomDtype.DURATION,
     pl.Time: LoomDtype.TIME,
-    # structural / complex types — coarse mapping
     pl.List: LoomDtype.LIST,
     pl.Array: LoomDtype.ARRAY,
     pl.Struct: LoomDtype.STRUCT,
@@ -96,8 +91,6 @@ _POLARS_TO_LOOM: dict[type[pl.DataType], LoomDtype] = {
     pl.Null: LoomDtype.NULL,
 }
 
-# Structural LoomDtype members that carry inner-type information which
-# cannot be expressed at the enum level.
 _STRUCTURAL_DTYPES: frozenset[LoomDtype] = frozenset(
     {
         LoomDtype.LIST,
@@ -107,11 +100,6 @@ _STRUCTURAL_DTYPES: frozenset[LoomDtype] = frozenset(
         LoomDtype.ENUM,
     }
 )
-
-
-# ---------------------------------------------------------------------------
-# Coarse conversion (primitive LoomDtype only)
-# ---------------------------------------------------------------------------
 
 
 def loom_to_polars(dtype: LoomDtype) -> type[pl.DataType]:
@@ -154,11 +142,6 @@ def polars_to_loom(dtype: pl.DataType) -> LoomDtype:
         no mapping exists.
     """
     return _POLARS_TO_LOOM.get(type(dtype), LoomDtype.NULL)
-
-
-# ---------------------------------------------------------------------------
-# Rich recursive conversion
-# ---------------------------------------------------------------------------
 
 
 def polars_to_loom_type(dtype: pl.DataType | DataTypeClass) -> LoomType:

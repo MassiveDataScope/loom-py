@@ -1,11 +1,11 @@
 """Compiled agent plan structs (Tier 3 of the data model).
 
-The plan is the only artifact-derived input to every downstream stage
-(FR-014): every string reference whose resolution is possible offline dies at
-compile, so the plan carries resolved handles — the registered use-case types,
-the SQL connection config, the imported toolset factory — never names.
+The plan is the only artifact-derived input to every downstream stage: every string
+reference whose resolution is possible offline dies at compile, so the plan carries
+resolved handles — the registered use-case types, the SQL connection config, the
+imported toolset factory — never names.
 
-Secret containment (invariant 4): the plan carries no literal secret.  The
+Secret containment: the plan carries no literal secret.  The
 one secret-bearing struct it embeds, :class:`~loom.ai.inference.InferenceTarget`,
 redacts its references in ``repr`` and refuses msgspec encoding; the built
 :class:`~loom.core.model.LoomType` in :class:`CompiledOutput` is likewise not
@@ -19,30 +19,33 @@ from JSON, which is why fields may hold arbitrary runtime handles.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import Any, ClassVar, Final
 
 import msgspec
 
 from loom.ai.abc import OutputCheck, StateShape
 from loom.ai.compiler._fingerprint import plan_fingerprint
-from loom.ai.declarative import PolicySpec
+from loom.ai.declarative import AgentSpecV1, PolicySpec
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.engine.compilable import Compilable
+from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.model.redaction import Secret
+from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
 from loom.core.sql.config import SqlConnectionConfig
+from loom.core.sql.roles import resolve_query_roles
 
 
 class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
     """Structured-output contract with a :class:`~loom.core.model.LoomType` built at compile time.
 
-    Interpreting the schema per response would be per-item reflection, so the
-    boundary type is constructed exactly once, at compile (research R-004,
-    invariant 5).  For a ``msgspec.Struct`` output the decode is strict —
-    unknown fields are rejected, which is what makes returning the validated
-    bytes unchanged safe. For a pydantic output invariant 5 is satisfied
-    differently (D7, FR-012): ``.type`` is handed to pydantic-ai itself as the
+    The boundary type is constructed exactly once, at compile.  For a
+    ``msgspec.Struct`` output the decode is strict — unknown fields are
+    rejected, so the validated bytes are returned unchanged. For a pydantic
+    output ``.type`` is handed to pydantic-ai itself as the
     run's ``output_type``, so pydantic-ai — not loom — validates, retries and
     builds the instance; loom never decodes that answer a second time.
 
@@ -51,7 +54,7 @@ class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
         loom_type: Boundary type produced at compile, whichever library built
             it (:func:`~loom.core.model.loom_type` for a ``type_ref``,
             :func:`~loom.core.model.msgspec_type` for a ``json_schema``): the
-            start-up marker check (``ai/_startup.py``) reads ``.type``. The
+            start-up check of an ``Agent()`` marker reads ``.type``. The
             engine reads it differently per library: for a ``msgspec.Struct``,
             ``ai/engines/pydantic_ai/_output.py`` decodes the model's raw
             bytes through ``.decode_json(bytes)``; for a pydantic model,
@@ -74,6 +77,7 @@ class CompiledUsecaseCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "usecase"
+    dependency_key: ClassVar[None] = None
 
     keys: tuple[str, ...]
     use_cases: tuple[type[Compilable], ...]
@@ -95,6 +99,44 @@ class CompiledSqlCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     config: SqlConnectionConfig
     max_rows: int
     max_result_bytes: int
+
+    @property
+    def dependency_key(self) -> str:
+        """The key of this grant's connection in health checks."""
+        return f"sql:{self.connection}"
+
+    def roles_of(self, identity: Identity) -> tuple[str, ...]:
+        """Resolve one caller's roles on this connection, bound to the caller and never empty.
+
+        Args:
+            identity: Verified caller whose roles are resolved.
+
+        Returns:
+            The caller's roles allowlisted on this connection.
+
+        Raises:
+            AgentRunError: With ``UNAUTHORIZED`` when the caller carries no role
+                bound to this connection, or none of its roles is allowlisted.
+        """
+        try:
+            roles = resolve_query_roles(
+                identity,
+                connection=self.connection,
+                roles_bound=True,
+                allowed_roles=frozenset(self.config.allowed_roles),
+                requested_roles=None,
+            )
+        except (RolesNotBoundError, RoleNotAllowedError) as exc:
+            raise AgentRunError(
+                AgentRunErrorCode.UNAUTHORIZED,
+                f"the caller may not query the {self.connection!r} connection",
+            ) from exc
+        if not roles:
+            raise AgentRunError(
+                AgentRunErrorCode.UNAUTHORIZED,
+                f"no role of the caller is allowlisted on the {self.connection!r} connection",
+            )
+        return roles
 
 
 class CompiledRemoteAuth(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -128,7 +170,7 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     deadline — so nothing downstream re-reads configuration.  The URL or the
     command resolves in ``__aenter__``, over the network or by spawning a
     subprocess: it is one of the declared exceptions to "strings die at
-    compile" (invariant 3), and so is the filter, which is applied against the
+    compile", and so is the filter, which is applied against the
     server's real tool list.
 
     Configuration already proved the fields coherent with the transport, so
@@ -169,6 +211,11 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     env: tuple[tuple[str, Secret[str] | str], ...] = ()
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+
+    @property
+    def dependency_key(self) -> str:
+        """The key of this server's shared session in health checks, by registered name."""
+        return f"mcp:{self.server}"
 
 
 def mcp_connection(capability: CompiledMcpCapability) -> CompiledMcpCapability:
@@ -212,6 +259,7 @@ class CompiledSkillsCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "skills"
+    dependency_key: ClassVar[None] = None
 
     library: str
     directory: str
@@ -232,6 +280,7 @@ class CompiledPythonCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "python"
+    dependency_key: ClassVar[None] = None
 
     factory_ref: str
     factory: Callable[..., object]
@@ -243,7 +292,7 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
 
     The card is fetched in ``__aenter__`` and the filter applied against the
     skills it really advertises — one of the declared exceptions to "strings
-    die at compile" (invariant 3).
+    die at compile".
 
     Attributes:
         agent: Configured agent name, carried for the self-description.
@@ -266,6 +315,11 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
+    @property
+    def dependency_key(self) -> str:
+        """The key of this agent's shared client in health checks, by registered name."""
+        return f"a2a:{self.agent}"
+
 
 class CompiledNativeCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """Provider tool granted to an agent, already checked against its model.
@@ -279,6 +333,7 @@ class CompiledNativeCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     kind: ClassVar[str] = "native"
+    dependency_key: ClassVar[None] = None
 
     tool: str
 
@@ -322,47 +377,46 @@ CONVERSATION_CONTEXT_FIELDS: Final[tuple[str, ...]] = (
 """Run-context names the conversation loader offers to its use case's Input."""
 
 
-class CompiledOutputHook(LoomFrozenStruct, frozen=True, kw_only=True):
+class CompiledUseCaseCall(LoomFrozenStruct, frozen=True, kw_only=True):
+    """A use case a run executes, resolved, with the Input names it accepts.
+
+    Attributes:
+        step: Name of the step in log lines and errors.
+        usecase: Use-case key as written in the artifact, for messages.
+        use_case: Registered use-case type, as
+            :attr:`CompiledUsecaseCapability.use_cases` carries them.
+        accepted: Internal names the Input declares; the run-time filter,
+            computed once from ``msgspec.structs.fields``.
+    """
+
+    step: ClassVar[str]
+    usecase: str
+    use_case: type[Compilable]
+    accepted: frozenset[str]
+
+
+class CompiledOutputHook(CompiledUseCaseCall, frozen=True, kw_only=True):
     """Use case executed once per completed run, resolved and proven feedable.
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`HOOK_OUTPUT_FIELD` or
     :data:`HOOK_CONTEXT_FIELDS`, so the runtime never discovers a missing
-    field at the end of a run.  ``accepted`` is computed here, once, from
-    ``msgspec.structs.fields``: the runtime filters the offered dict to it
-    before ``from_payload`` so a strict Command works without per-run
-    reflection.
-
-    Attributes:
-        usecase: Use-case key as written in the artifact, for messages.
-        use_case: Registered use-case type, as
-            :attr:`CompiledUsecaseCapability.use_cases` carries them.
-        accepted: Internal names the Input declares; the run-time filter.
+    field at the end of a run.
     """
 
-    usecase: str
-    use_case: type[Compilable]
-    accepted: frozenset[str]
+    step: ClassVar[str] = "on_output hook"
 
 
-class CompiledConversation(LoomFrozenStruct, frozen=True, kw_only=True):
+class CompiledConversation(CompiledUseCaseCall, frozen=True, kw_only=True):
     """Use case executed before a run that carries a ``conversation_id``.
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`CONVERSATION_CONTEXT_FIELDS` and that the
     Input declares ``conversation_id``, so the loader always knows which
-    conversation to load.  ``accepted`` is the run-time filter, computed once
-    as :attr:`CompiledOutputHook.accepted` is.
-
-    Attributes:
-        usecase: Use-case key as written in the artifact, for messages.
-        use_case: Registered use-case type.
-        accepted: Internal names the Input declares; the run-time filter.
+    conversation to load.
     """
 
-    usecase: str
-    use_case: type[Compilable]
-    accepted: frozenset[str]
+    step: ClassVar[str] = "conversation loader"
 
 
 class CompiledInstruction(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -370,7 +424,7 @@ class CompiledInstruction(LoomFrozenStruct, frozen=True, kw_only=True):
 
     A bare-string artifact and a one-block artifact compile to the same
     single-element tuple, so nothing downstream branches on which of the two
-    forms an artifact declared (FR-003's instruction-side counterpart).
+    forms an artifact declared.
 
     Attributes:
         text: Instruction text. Literal unless ``template`` names a template
@@ -397,7 +451,7 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         state: Shape of the artifact's declared state, or ``None`` when the
             artifact declares neither ``deps_type`` nor ``deps_schema``.
         spec_version: Artifact format version, retained for self-description.
-        inference: Resolved model binding; one binding, no fallback (FR-019a).
+        inference: Resolved model binding; one binding, no fallback.
         price: Configured price of the bound model, from ``ai.prices``, or
             ``None`` when the deployment declares none for it.
         output: Structured-output contract with its compiled boundary type.
@@ -410,6 +464,11 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         metadata: Free-form string labels carried alongside the agent.
         source_path: Artifact provenance for error messages, when known.
     """
+
+    @property
+    def grants_use_cases(self) -> bool:
+        """Whether the plan holds a ``usecase`` capability."""
+        return any(type(grant) is CompiledUsecaseCapability for grant in self.capabilities)
 
     @property
     def fingerprint(self) -> str:
@@ -433,6 +492,56 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         keeps the fingerprint.
         """
         return plan_fingerprint(self)
+
+    @classmethod
+    def compiled(
+        cls,
+        spec: AgentSpecV1,
+        *,
+        instructions: tuple[CompiledInstruction, ...],
+        state: StateShape | None,
+        inference: InferenceTarget,
+        price: ModelPrice | None,
+        output: CompiledOutput,
+        output_check: OutputCheck | None,
+        capabilities: tuple[CompiledCapability, ...],
+        on_output: CompiledOutputHook | None,
+        conversation: CompiledConversation | None,
+        source_path: str | None,
+    ) -> AgentPlan:
+        """Return the plan of ``spec`` from its compiled parts.
+
+        Args:
+            spec: The artifact; supplies name, description, format version,
+                policies and metadata.
+            instructions: Compiled instruction blocks.
+            state: Compiled state shape.
+            inference: Resolved model binding.
+            price: Configured price of the bound model.
+            output: Compiled output contract.
+            output_check: Resolved output check.
+            capabilities: Compiled capabilities.
+            on_output: Compiled output hook.
+            conversation: Compiled conversation loader.
+            source_path: Artifact provenance.
+        """
+        return cls(
+            name=spec.name,
+            description=spec.description,
+            instructions=instructions,
+            state=state,
+            spec_version=spec.spec_version,
+            inference=inference,
+            price=price,
+            output=output,
+            output_check=output_check,
+            capabilities=capabilities,
+            policies=spec.policies,
+            on_output=on_output,
+            conversation=conversation,
+            metadata=MappingProxyType(dict(spec.metadata)),
+            source_path=source_path,
+        )
 
     name: str
     description: str

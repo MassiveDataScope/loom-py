@@ -152,7 +152,8 @@ class TestF01SessionClosed:
 #        test_dispatch_is_sent_after_the_close_and_after_exec_done
 #      read-only / no unit of work        → contract/test_dispatch.py::
 #        test_read_only_execution_opens_no_unit_of_work_and_sends_at_the_end
-#        and test_executor_uow.py::test_dispatch_runs_at_the_end_without_uow_factory
+#        and executor/test_boundaries.py::TestWithoutAUnitOfWork::
+#        test_dispatch_runs_at_the_end_without_uow_factory
 #      failed execution discards          → contract/test_dispatch.py::
 #        test_failed_execution_discards_and_the_next_one_sends_nothing_stale
 #      broker failure after a commit      → contract/test_dispatch.py::

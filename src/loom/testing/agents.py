@@ -3,7 +3,7 @@
 :class:`FakeAgentEngine` replays a fixed event script with no network, no
 credentials, no clocks and no randomness, so runs are reproducible byte for
 byte.  :func:`agent_engine_contract_suite` is the engine-agnostic contract
-suite (FR-048): it exercises only the :class:`~loom.ai.abc.AgentEngine`
+suite: it exercises only the :class:`~loom.ai.abc.AgentEngine`
 protocol surface and the ``loom.ai`` value types, so the same suite runs
 unmodified against the fake and against any real engine adapter.
 """
@@ -23,6 +23,7 @@ from loom.ai.abc import (
     Conversation,
     ErrorEvent,
     FinalEvent,
+    HealthState,
     HealthStatus,
     Prompt,
     TextDeltaEvent,
@@ -181,7 +182,7 @@ class FakeAgentEngine:
         Returns:
             Always ``"ok"``: the fake has no dependency that could degrade.
         """
-        return HealthStatus(status="ok")
+        return HealthStatus(status=HealthState.OK)
 
     @asynccontextmanager
     async def _stream(self) -> AsyncIterator[AsyncIterator[AgentEvent]]:
@@ -204,7 +205,7 @@ class ContractScenario(LoomFrozenStruct, frozen=True, kw_only=True):
     failure with its coded error.  The scenario is therefore the right seam —
     the suite hands this neutral description and the adapter under test
     builds an engine exhibiting it: the fake maps it onto a script, and a
-    real-engine adapter can map it onto a stubbed provider (FR-048).
+    real-engine adapter can map it onto a stubbed provider.
 
     Attributes:
         expected_output: Output ``run()`` and the terminal ``FinalEvent``
@@ -252,8 +253,6 @@ def _assert_valid_usage(usage: object) -> None:
         usage.tool_calls,
     )
     assert all(value >= 0 for value in counters), "every usage counter must be >= 0"
-    # An engine that cannot price a run reports no cost: a zero would be read
-    # as a free run by anything comparing two models on what they spent.
     assert usage.cost is None or usage.cost >= 0, "cost must be absent or >= 0"
 
 
@@ -347,10 +346,6 @@ async def _check_stream_close_is_deterministic(
     engine = factory(_success_scenario())
     async with engine.run_stream(_SUITE_PROMPT, identity=_SUITE_IDENTITY) as stream:
         await anext(stream)
-    # A closed async generator raises StopAsyncIteration from __anext__;
-    # engines wrapping the stream in another object may surface the interpreter's
-    # RuntimeError("cannot reuse already closed ...") instead.  Both prove the
-    # iterator was closed on exit, so both are accepted.
     try:
         await anext(stream)
     except (StopAsyncIteration, RuntimeError):
@@ -391,13 +386,13 @@ async def _run_check(
 def agent_engine_contract_suite(
     engine_factory: Callable[[ContractScenario], AgentEngine],
 ) -> None:
-    """Run the shared :class:`~loom.ai.abc.AgentEngine` contract suite (FR-048).
+    """Run the shared :class:`~loom.ai.abc.AgentEngine` contract suite.
 
     Every check exercises only the protocol surface and the ``loom.ai`` value
     types, never an engine's internals, so the same suite validates the fake
     and any real engine adapter.  Checks: ``run()`` result and usage shape,
     exactly-one-terminal streams for success and failure, usage carried only
-    by ``FinalEvent``, the full run-time error-code taxonomy with FR-028
+    by ``FinalEvent``, the full run-time error-code taxonomy with its
     retriability, deterministic stream closure on early exit, and a known
     ``health()`` status.
 

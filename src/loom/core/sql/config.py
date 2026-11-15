@@ -19,12 +19,8 @@ from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.model.types import PositiveInt
 
-# re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
-# accept Unicode word characters, widening this security allowlist.
 _ROLE_PATTERN = re.compile(r"^\w+$", re.ASCII)
 
-# The only ``sql_endpoint.auth`` mode carrying a verified caller identity, and
-# therefore the only one able to bind a request to a subset of the allowlist.
 _IDENTITY_BOUND_AUTH = "identity"
 
 
@@ -81,6 +77,10 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
             ``True`` for ``"identity"``.
         """
         return self.auth == _IDENTITY_BOUND_AUTH
+
+    def mount_path(self, name: str) -> str:
+        """Return where the endpoint of connection ``name`` is mounted."""
+        return self.path or f"/sql/{name}"
 
 
 class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
@@ -183,10 +183,6 @@ def reject_retired_sql_keys(raw: object, path: str = "sql") -> None:
         reject_retired_keys(connection, f"{path}.connections.{name}", SqlConnectionConfig)
 
 
-# Client options the SQL service decides itself. The driver copies the DSN's
-# query parameters over the arguments it is given, so one written there would
-# silently replace the service's choice (server sessions, write retries, a
-# client-wide role or credentials outside the dedicated fields).
 _PINNED_DSN_OPTIONS = frozenset(
     {
         "autogenerate_session_id",

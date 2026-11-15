@@ -1,4 +1,4 @@
-"""Standalone agent artifact validation (FR-015).
+"""Standalone agent artifact validation.
 
 ``python -m loom.ai.validate <globs>`` decodes every matching artifact and
 runs the configuration-independent compiler phases — structure (via the
@@ -56,10 +56,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     matched = _matched_files(patterns)
     if not matched:
-        # A pattern that matches nothing exits 0 if you only count issues,
-        # which is how a CI step guards a corpus while validating none of it:
-        # exactly what happened to this project's own workflow when the corpus
-        # moved to one directory per agent and the glob kept saying '*.yaml'.
         print(f"no artifact matched: {' '.join(patterns)}", file=sys.stderr)
         return 2
     issues = [issue for path in matched for issue in _issues_for_file(path)]
@@ -75,8 +71,6 @@ def _matched_files(patterns: Sequence[str]) -> tuple[Path, ...]:
     typed the pattern already has the process's own permissions, so there is
     no boundary here to escape and confining the result would only break the
     legitimate case of validating an artifact outside the working tree.
-    (Sonar's pythonsecurity:S8707 reads this as traversal; the suppression in
-    sonar-project.properties carries the reasoning.)
 
     Args:
         patterns: Glob patterns as given on the command line.

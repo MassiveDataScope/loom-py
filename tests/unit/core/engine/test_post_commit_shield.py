@@ -73,81 +73,86 @@ class _SlowDispatch(UseCase[Any, str]):
         return value
 
 
-async def test_a_cancellation_after_the_commit_does_not_abort_the_shielded_priority_lane() -> None:
-    log = Log()
-    factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
-    gate = asyncio.Event()
+class TestPostCommitShield:
+    async def test_a_cancellation_after_the_commit_does_not_abort_the_shielded_priority_lane(
+        self,
+    ) -> None:
+        log = Log()
+        factory = StubUnitOfWorkFactory(log)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
+        gate = asyncio.Event()
 
-    task = asyncio.create_task(
-        executor.execute(_SlowPriorityAction(gate, log), params={"value": "x"})
-    )
-    # Let the pipeline run to the commit and the drain start; the priority
-    # action blocks on the gate right after logging that it started.
-    while "priority.started" not in log.entries:
-        await asyncio.sleep(0)
-    assert "uow.commit" in log.entries
+        task = asyncio.create_task(
+            executor.execute(_SlowPriorityAction(gate, log), params={"value": "x"})
+        )
+        # Let the pipeline run to the commit and the drain start; the priority
+        # action blocks on the gate right after logging that it started.
+        while "priority.started" not in log.entries:
+            await asyncio.sleep(0)
+        assert "uow.commit" in log.entries
 
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    # The caller gave up, but the shielded priority lane kept running in
-    # the background: releasing the gate lets it finish.
-    gate.set()
-    await asyncio.sleep(0.01)
+        # The caller gave up, but the shielded priority lane kept running in
+        # the background: releasing the gate lets it finish.
+        gate.set()
+        await asyncio.sleep(0.01)
 
-    assert "priority.finished" in log.entries
+        assert "priority.finished" in log.entries
 
+    async def test_a_cancellation_after_the_commit_still_aborts_a_plain_dispatch_in_flight(
+        self,
+    ) -> None:
+        """The property the priority lane's shield must not widen: dispatches stay cancellable."""
+        log = Log()
+        factory = StubUnitOfWorkFactory(log)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
+        gate = asyncio.Event()
 
-async def test_a_cancellation_after_the_commit_still_aborts_a_plain_dispatch_in_flight() -> None:
-    """The property the priority lane's shield must not widen: dispatches stay cancellable."""
-    log = Log()
-    factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
-    gate = asyncio.Event()
+        task = asyncio.create_task(
+            executor.execute(_SlowDispatch(gate, log), params={"value": "x"})
+        )
+        while "dispatch.started" not in log.entries:
+            await asyncio.sleep(0)
+        assert "uow.commit" in log.entries
 
-    task = asyncio.create_task(executor.execute(_SlowDispatch(gate, log), params={"value": "x"}))
-    while "dispatch.started" not in log.entries:
-        await asyncio.sleep(0)
-    assert "uow.commit" in log.entries
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+        # Unlike the priority lane, the plain lane really was interrupted: the
+        # drain aborted and re-queued the dispatch instead of resuming it, so
+        # releasing the gate now reaches nothing still waiting on it.
+        gate.set()
+        await asyncio.sleep(0.01)
 
-    # Unlike the priority lane, the plain lane really was interrupted: the
-    # drain aborted and re-queued the dispatch instead of resuming it, so
-    # releasing the gate now reaches nothing still waiting on it.
-    gate.set()
-    await asyncio.sleep(0.01)
+        assert "dispatch.finished" not in log.entries
 
-    assert "dispatch.finished" not in log.entries
+    async def test_a_cancellation_before_any_commit_still_aborts_normally(self) -> None:
+        """No lane, no shield, applies before a unit of work has committed anything."""
+        log = Log()
+        factory = StubUnitOfWorkFactory(log)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
+        class _Hang(UseCase[Any, str]):
+            async def execute(self, value: str) -> str:
+                await asyncio.Event().wait()
+                return value
 
-async def test_a_cancellation_before_any_commit_still_aborts_normally() -> None:
-    """No lane, no shield, applies before a unit of work has committed anything."""
-    log = Log()
-    factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
+        task = asyncio.create_task(executor.execute(_Hang(), params={"value": "x"}))
+        await asyncio.sleep(0.01)
+        task.cancel()
 
-    class _Hang(UseCase[Any, str]):
-        async def execute(self, value: str) -> str:
-            await asyncio.Event().wait()
-            return value
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    task = asyncio.create_task(executor.execute(_Hang(), params={"value": "x"}))
-    await asyncio.sleep(0.01)
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert "uow.commit" not in log.entries
-    assert "uow.rollback" in log.entries
+        assert "uow.commit" not in log.entries
+        assert "uow.rollback" in log.entries

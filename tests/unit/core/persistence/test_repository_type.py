@@ -11,8 +11,9 @@ from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 
 
-def test_each_backend_names_the_repository_it_serves() -> None:
-    assert SQLAlchemyBackend.repository_type is RepositorySQLAlchemy
-    assert DynamoDBBackend.repository_type is RepositoryDynamoDB
-    assert MongoBackend.repository_type is RepositoryMongo
-    assert NoneBackend.repository_type is None
+class TestRepositoryType:
+    def test_each_backend_names_the_repository_it_serves(self) -> None:
+        assert SQLAlchemyBackend.repository_type is RepositorySQLAlchemy
+        assert DynamoDBBackend.repository_type is RepositoryDynamoDB
+        assert MongoBackend.repository_type is RepositoryMongo
+        assert NoneBackend.repository_type is None

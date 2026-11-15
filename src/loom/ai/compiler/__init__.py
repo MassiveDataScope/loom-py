@@ -2,7 +2,7 @@
 
 Turns a decoded :class:`~loom.ai.declarative.AgentSpecV1` into an immutable
 :class:`AgentPlan` — the only artifact-derived input every downstream stage
-reads (FR-014).  Compilation is fully offline: no network, no credentials, no
+reads.  Compilation is fully offline: no network, no credentials, no
 entry-point loading, and every problem found across every phase (and every
 spec, in :meth:`AgentCompiler.compile_all`) is reported at once through a
 single :class:`AgentCompilationError` with stable

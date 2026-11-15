@@ -102,8 +102,6 @@ class CallerBoundSql:
     ) -> None:
         self._service = service
         self._observability = observability
-        # The config is frozen, so the allowlists are precomputed once, as the
-        # service itself does, for O(1) role membership checks per query.
         self._allowed_roles: dict[str, frozenset[str]] = {
             name: frozenset(connection.allowed_roles)
             for name, connection in config.connections.items()
@@ -147,10 +145,6 @@ class CallerBoundSql:
         """
         allowed_roles = self._allowed_roles.get(connection)
         if allowed_roles is None:
-            # Unknown to this collaborator means unknown to the service too, so
-            # it phrases the failure: an actionable ConfigError when no 'sql:'
-            # section exists, UnknownConnectionError otherwise. Neither reaches
-            # an executor — the service validates the connection first.
             return await self._service.execute(
                 sql, connection=connection, parameters=parameters, limit=limit, offset=offset
             )
@@ -181,7 +175,7 @@ class CallerBoundSql:
         resolution either returns a non-empty intersection or raises. It stays
         because ``()`` is the one value that would be *accepted* downstream —
         ``SqlQueryService.execute`` reads it as "no roles given" and falls back
-        to the connection's shared ``default_role`` (FR-043a), turning a
+        to the connection's shared ``default_role``, turning a
         refusal into a silent privilege swap.
         """
         roles = resolve_query_roles(
@@ -191,7 +185,7 @@ class CallerBoundSql:
             allowed_roles=allowed_roles,
             requested_roles=None,
         )
-        if not roles:  # pragma: no cover - unreachable today, kept fail-closed
+        if not roles:  # pragma: no cover
             raise RolesNotBoundError(connection)
         return roles
 

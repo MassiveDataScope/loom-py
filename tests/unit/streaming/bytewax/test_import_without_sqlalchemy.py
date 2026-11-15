@@ -44,19 +44,24 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_bytewax_runner_imports_without_sqlalchemy() -> None:
-    """``import loom.streaming.bytewax.runner`` succeeds with ``sqlalchemy`` hidden."""
-    result = _run_in_clean_interpreter(_IMPORT_RUNNER_SCRIPT)
+class TestBytewaxRunnerImport:
+    def test_bytewax_runner_imports_without_sqlalchemy(self) -> None:
+        """``import loom.streaming.bytewax.runner`` succeeds with ``sqlalchemy`` hidden."""
+        result = _run_in_clean_interpreter(_IMPORT_RUNNER_SCRIPT)
 
-    assert result.returncode == 0, f"import loom.streaming.bytewax.runner failed:\n{result.stderr}"
+        assert result.returncode == 0, (
+            f"import loom.streaming.bytewax.runner failed:\n{result.stderr}"
+        )
 
 
-def test_session_manager_for_names_sqlalchemy_extra_when_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Building a SQLAlchemy session manager without the extra raises a hinting ImportError."""
-    monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.session_manager", None)
-    manager = ResourceManager(cast(AsyncBridge, object()))
+class TestSessionManagerWithoutSqlalchemy:
+    def test_session_manager_for_names_sqlalchemy_extra_when_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Building a SQLAlchemy session manager without the extra raises a hinting ImportError."""
+        monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.session_manager", None)
+        manager = ResourceManager(cast(AsyncBridge, object()))
 
-    with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")))
+        with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
+            manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")))

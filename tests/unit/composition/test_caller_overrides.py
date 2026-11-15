@@ -85,58 +85,58 @@ def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:
     assert str(error) == error.issue.message
 
 
-@pytest.mark.parametrize("key", _RESERVED, ids=_IDS)
-def test_the_api_refuses_a_module_binding_a_reserved_key(
-    fixture_project: ProjectFactory, key: BindingKey
-) -> None:
-    project = fixture_project()
-    adapter = FastAPIAdapter()
-    module = _module(key)
-    with pytest.raises(ReservedBindingError) as caught:
-        build_application(project, adapter=adapter, environment="test", modules=[module])
+class TestCallerOverrides:
+    @pytest.mark.parametrize("key", _RESERVED, ids=_IDS)
+    def test_the_api_refuses_a_module_binding_a_reserved_key(
+        self, fixture_project: ProjectFactory, key: BindingKey
+    ) -> None:
+        project = fixture_project()
+        adapter = FastAPIAdapter()
+        module = _module(key)
+        with pytest.raises(ReservedBindingError) as caught:
+            build_application(project, adapter=adapter, environment="test", modules=[module])
 
-    _assert_reserved(caught.value, key)
+        _assert_reserved(caught.value, key)
 
+    @pytest.mark.parametrize("key", _RESERVED, ids=_IDS)
+    def test_the_worker_refuses_a_module_binding_a_reserved_key(
+        self, tmp_path: Path, key: BindingKey
+    ) -> None:
+        module = _module(key)
+        with pytest.raises(ReservedBindingError) as caught:
+            _worker(tmp_path, module)
 
-@pytest.mark.parametrize("key", _RESERVED, ids=_IDS)
-def test_the_worker_refuses_a_module_binding_a_reserved_key(
-    tmp_path: Path, key: BindingKey
-) -> None:
-    module = _module(key)
-    with pytest.raises(ReservedBindingError) as caught:
-        _worker(tmp_path, module)
+        _assert_reserved(caught.value, key)
 
-    _assert_reserved(caught.value, key)
+    @pytest.mark.parametrize(
+        "key",
+        [MongoSessions, (MongoSessions, StoreKey("ledger")), (SessionManager, StoreKey("ledger"))],
+        ids=["MongoSessions", "MongoSessions-ledger", "SessionManager-ledger"],
+    )
+    def test_a_module_binding_the_sessions_of_any_store_is_refused(
+        self, tmp_path: Path, key: BindingKey
+    ) -> None:
+        module = _module(key)
+        with pytest.raises(ReservedBindingError) as caught:
+            _worker(tmp_path, module)
 
+        assert caught.value.key == key
 
-@pytest.mark.parametrize(
-    "key",
-    [MongoSessions, (MongoSessions, StoreKey("ledger")), (SessionManager, StoreKey("ledger"))],
-    ids=["MongoSessions", "MongoSessions-ledger", "SessionManager-ledger"],
-)
-def test_a_module_binding_the_sessions_of_any_store_is_refused(
-    tmp_path: Path, key: BindingKey
-) -> None:
-    module = _module(key)
-    with pytest.raises(ReservedBindingError) as caught:
-        _worker(tmp_path, module)
+    def test_the_error_is_a_bootstrap_error_naming_the_key(self, tmp_path: Path) -> None:
+        module = _module(SqlQueryService)
+        with pytest.raises(BootstrapError, match="SqlQueryService"):
+            _worker(tmp_path, module)
 
-    assert caught.value.key == key
+    def test_the_composition_registers_one_session_manager_for_repositories(
+        self,
+        fixture_project: ProjectFactory,
+    ) -> None:
+        application = build_application(
+            fixture_project(), adapter=FastAPIAdapter(), environment="test"
+        )
+        container = application.kernel.container
 
-
-def test_the_error_is_a_bootstrap_error_naming_the_key(tmp_path: Path) -> None:
-    module = _module(SqlQueryService)
-    with pytest.raises(BootstrapError, match="SqlQueryService"):
-        _worker(tmp_path, module)
-
-
-def test_the_composition_registers_one_session_manager_for_repositories(
-    fixture_project: ProjectFactory,
-) -> None:
-    application = build_application(fixture_project(), adapter=FastAPIAdapter(), environment="test")
-    container = application.kernel.container
-
-    manager = container.resolve(SessionManager)
-    factory: Any = uow_factory(application)
-    assert factory._session_manager is manager
-    assert container.resolve(DefaultRepositoryBuilder).session_manager is manager
+        manager = container.resolve(SessionManager)
+        factory: Any = uow_factory(application)
+        assert factory._session_manager is manager
+        assert container.resolve(DefaultRepositoryBuilder).session_manager is manager

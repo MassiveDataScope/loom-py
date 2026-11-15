@@ -105,22 +105,10 @@ class SingleFlight:
         return flight
 
     def _release(self, flight: _Flight, task: asyncio.Task[object]) -> None:
-        # The identity check matters: a load that finished may already have
-        # been replaced by a newer one for the same key, and this callback
-        # must not evict it.
         if self._in_flight.get(flight.key) is flight:
             del self._in_flight[flight.key]
         if task.cancelled():
             return
-        # Reading the exception here also marks it as retrieved, so a burst
-        # whose callers all went away does not surface as an unretrieved
-        # exception; the waiters that are still there receive it through their
-        # own await.
         error = task.exception()
-        # The count is accurate here: a waiter decrements when its coroutine
-        # resumes, and ``shield`` wakes it through ``call_soon``, so every
-        # surviving waiter is still counted while this callback runs and every
-        # cancelled one has already been resumed and subtracted.  It does not
-        # depend on the order the done callbacks were registered in.
         if error is not None and flight.waiters == 0 and self._on_abandoned_failure is not None:
             self._on_abandoned_failure(flight.key, error)

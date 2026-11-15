@@ -1,8 +1,8 @@
 """Unit tests for the shared entry-point loader.
 
 These tests pin the public contract of ``loom.core.plugins.entrypoints``:
-duplicate-name policies, ``None`` on a miss, the not-found error and the
-API-version handshake.
+duplicate-name policies, ``None`` on a miss, the not-found error, the
+API-version handshake and one read of the installed distributions per group.
 """
 
 from __future__ import annotations
@@ -16,9 +16,11 @@ from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
     ApiVersionRequirement,
     DuplicateEntryPointError,
+    DuplicatePolicy,
     EntryPointError,
     EntryPointNotFoundError,
     check_api_version,
+    list_entry_points,
     load_entry_point,
     select_entry_point,
 )
@@ -183,23 +185,24 @@ class TestDuplicatePolicyWarnFirst:
 
 
 class TestWithoutDuplicates:
-    def test_returns_the_sole_entry_point_when_the_policy_is_error(
+    @pytest.mark.parametrize(
+        "on_duplicate",
+        [
+            pytest.param("error", id="returns_the_sole_entry_point_when_the_policy_is_error"),
+            pytest.param(
+                "warn_first", id="returns_the_sole_entry_point_when_the_policy_is_warn_first"
+            ),
+        ],
+    )
+    def test_returns_the_sole_entry_point_whatever_the_policy(
         self,
+        on_duplicate: DuplicatePolicy,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         entry = _FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("alpha"))
         _install(monkeypatch, (entry,))
 
-        assert select_entry_point(_GROUP, _NAME, on_duplicate="error") is entry
-
-    def test_returns_the_sole_entry_point_when_the_policy_is_warn_first(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        entry = _FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("alpha"))
-        _install(monkeypatch, (entry,))
-
-        assert select_entry_point(_GROUP, _NAME, on_duplicate="warn_first") is entry
+        assert select_entry_point(_GROUP, _NAME, on_duplicate=on_duplicate) is entry
 
     def test_emits_no_warning_when_there_are_no_duplicates(
         self,
@@ -552,3 +555,23 @@ class TestCheckApiVersion:
             check_api_version(engine, self.REQUIREMENT)
 
         assert excinfo.value.requirement is self.REQUIREMENT
+
+
+class TestReadOncePerGroup:
+    def test_reads_the_installed_distributions_once_per_group(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reads: list[str] = []
+
+        def counted() -> _FakeEntryPoints:
+            reads.append("entry_points")
+            return _FakeEntryPoints((_FakeEntryPoint(_NAME, "loom-engine-alpha", _Engine("a")),))
+
+        monkeypatch.setattr(entrypoints_module, "entry_points", counted)
+
+        for _ in range(3):
+            load_entry_point(_GROUP, _NAME, on_duplicate="error")
+        list_entry_points("loom.persistence.backends")
+
+        assert len(reads) == 2

@@ -23,11 +23,13 @@ from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import agent_marker_resolver
+from loom.ai.runtime._handle import AgentMarkerResolver
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.sql.service import NullSqlQueryService
+from loom.core.use_case import Agent
 from tests.integration.ai.conftest import make_ai_config, make_plan
 from tests.integration.ai.test_capabilities import (
     ScriptedToolModel,
@@ -69,15 +71,16 @@ class TestTheHatchOverTheRealRuntime:
         runtime, _ = await _runtime_and_model()
 
         async with runtime:
-            resolver = agent_marker_resolver(
+            resolver = AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
-            handle = resolver(_AGENT_NAME, _ANALYST)
+            handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
-            async with native_agent(_as_handle(handle)) as access:
-                engine = runtime._slots[_AGENT_NAME].engine  # noqa: SLF001
-                assert isinstance(engine, PydanticAIEngine)
-                assert access.agent is engine._agent  # noqa: SLF001
+            with ExecutionScope(_ANALYST):
+                async with native_agent(_as_handle(handle)) as access:
+                    engine = runtime._slots[_AGENT_NAME].engine  # noqa: SLF001
+                    assert isinstance(engine, PydanticAIEngine)
+                    assert access.agent is engine._agent  # noqa: SLF001
 
     async def test_a_capability_call_made_with_the_bundle_runs_as_the_authenticated_caller(
         self,
@@ -85,36 +88,34 @@ class TestTheHatchOverTheRealRuntime:
         runtime, model = await _runtime_and_model()
 
         async with runtime:
-            resolver = agent_marker_resolver(
+            resolver = AgentMarkerResolver(
                 runtime, sql_query_service=NullSqlQueryService(), observability=None
             )
-            handle = resolver(_AGENT_NAME, _ANALYST)
+            handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
-            async with native_agent(_as_handle(handle)) as access:
-                await access.agent.run("hello", deps=access.deps)
+            with ExecutionScope(_ANALYST):
+                async with native_agent(_as_handle(handle)) as access:
+                    await access.agent.run("hello", deps=access.deps)
 
         assert _ANALYST.subject in model.shown
 
-    async def test_a_bundle_built_for_an_anonymous_caller_is_refused_at_the_tool_boundary(
-        self,
-    ) -> None:
-        """``_guards.authenticated_caller`` refuses at the call boundary itself.
+    async def test_a_run_acting_as_no_one_is_refused_at_the_tool_boundary(self) -> None:
+        """The engine's tool boundary refuses the acting identity, not the bundle's.
 
         ``AgentHandle.native()`` already refuses an anonymous caller before
         the engine is ever asked (see ``TestAnonymousIdentity`` in
         ``tests/unit/ai/runtime/test_agent_handle.py``); this pins the
-        engine's own, independent guard, reached only by driving the engine
-        directly with an unauthenticated identity — the defense in depth a
-        driver relying on a hand-built bundle would still need.
+        engine's own, independent guard: a bundle built for the analyst,
+        driven in an execution acting as no one, runs no tool.
         """
         runtime, model = await _runtime_and_model()
 
         async with runtime:
             engine = runtime._slots[_AGENT_NAME].engine  # noqa: SLF001
             assert isinstance(engine, PydanticAIEngine)
-            access = engine.native(identity=ANONYMOUS, guard=_noop_guard)
+            access = engine.native(identity=_ANALYST, guard=_noop_guard)
 
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 await access.native.agent.run("hello", deps=access.native.deps)
 
         assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED

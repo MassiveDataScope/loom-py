@@ -20,8 +20,12 @@ from loom.ai.abc import (
 from loom.ai.config import A2AAgentConfig, A2AConfig, AgentEndpointConfig, AiConfig, McpServerConfig
 from loom.ai.engines.pydantic_ai import create_a2a_client, create_mcp_client
 from loom.ai.inference import InferenceTarget
+from loom.composition._ai import MarkerDeclarations
 from loom.core.di import LoomContainer
+from loom.core.di.graph import ClassNode
+from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.identity import Identity
+from loom.core.use_case.registry import UseCaseRegistry
 
 DEFAULT_USAGE = AgentUsage(
     input_tokens=11,
@@ -240,3 +244,12 @@ def make_ai_config(
         remote_clients=remote_clients,
         max_agent_depth=max_agent_depth,
     )
+
+
+def declared_markers(*use_cases: type[Any]) -> MarkerDeclarations:
+    """What the AI phase reaches from *use_cases*, each compiled and bound to nothing else."""
+    compiler = UseCaseCompiler()
+    for use_case in use_cases:
+        compiler.compile(use_case)
+    analysis = LoomContainer().graph.analyse(map(ClassNode, use_cases), ())
+    return MarkerDeclarations.of(analysis, compiler, UseCaseRegistry.build(list(use_cases)))

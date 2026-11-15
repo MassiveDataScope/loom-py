@@ -140,38 +140,42 @@ def _labels(lake: Path) -> pl.DataFrame:
     return pl.read_delta(str(lake / "fact" / "labels")).filter(pl.col("message_id") >= 0)
 
 
-def test_the_step_labels_every_pending_message_and_skips_them_on_rerun(tmp_path: Path) -> None:
-    lake = tmp_path / "lake"
-    _seed(lake, "raw.messages", pl.DataFrame({"message_id": [1, 2, 3], "text": ["a", "b", "c"]}))
-    _seed(lake, "fact.labels", _labels_schema_seed())
-    models_built: list[Model] = []
-    runner = _runner(tmp_path, models_built)
-    params = RunParams(run_date=date(2026, 10, 9))
+class TestWithAgentStep:
+    def test_the_step_labels_every_pending_message_and_skips_them_on_rerun(
+        self, tmp_path: Path
+    ) -> None:
+        lake = tmp_path / "lake"
+        _seed(
+            lake, "raw.messages", pl.DataFrame({"message_id": [1, 2, 3], "text": ["a", "b", "c"]})
+        )
+        _seed(lake, "fact.labels", _labels_schema_seed())
+        models_built: list[Model] = []
+        runner = _runner(tmp_path, models_built)
+        params = RunParams(run_date=date(2026, 10, 9))
 
-    runner.run(_Pipeline, params)
-    first = _labels(lake).sort("message_id")
-    runner.run(_Pipeline, params)
-    second = _labels(lake).sort("message_id")
+        runner.run(_Pipeline, params)
+        first = _labels(lake).sort("message_id")
+        runner.run(_Pipeline, params)
+        second = _labels(lake).sort("message_id")
 
-    assert first["message_id"].to_list() == [1, 2, 3]
-    assert first["answer"].to_list() == ["acepta"] * 3
-    assert first["agent_status"].to_list() == ["ok"] * 3
-    assert first["agent_cost_usd"].null_count() == 0
-    assert second.equals(first)
-    assert len(models_built) == 1
+        assert first["message_id"].to_list() == [1, 2, 3]
+        assert first["answer"].to_list() == ["acepta"] * 3
+        assert first["agent_status"].to_list() == ["ok"] * 3
+        assert first["agent_cost_usd"].null_count() == 0
+        assert second.equals(first)
+        assert len(models_built) == 1
 
+    def test_a_batch_of_errors_is_upserted_into_an_existing_table(self, tmp_path: Path) -> None:
+        lake = tmp_path / "lake"
+        _seed(lake, "raw.messages", pl.DataFrame({"message_id": [1, 2], "text": ["a", "b"]}))
+        _seed(lake, "fact.labels", _labels_schema_seed())
+        runner = _runner(tmp_path, [], failing=True)
 
-def test_a_batch_of_errors_is_upserted_into_an_existing_table(tmp_path: Path) -> None:
-    lake = tmp_path / "lake"
-    _seed(lake, "raw.messages", pl.DataFrame({"message_id": [1, 2], "text": ["a", "b"]}))
-    _seed(lake, "fact.labels", _labels_schema_seed())
-    runner = _runner(tmp_path, [], failing=True)
+        runner.run(_Pipeline, RunParams(run_date=date(2026, 10, 9)))
+        stored = _labels(lake).sort("message_id")
 
-    runner.run(_Pipeline, RunParams(run_date=date(2026, 10, 9)))
-    stored = _labels(lake).sort("message_id")
-
-    assert stored["message_id"].to_list() == [1, 2]
-    assert stored["agent_status"].to_list() == ["error", "error"]
-    assert stored["agent_error"].to_list() == ["PROVIDER_UNAVAILABLE"] * 2
-    assert stored["answer"].to_list() == [None, None]
-    assert stored.schema["answer"] == pl.String()
+        assert stored["message_id"].to_list() == [1, 2]
+        assert stored["agent_status"].to_list() == ["error", "error"]
+        assert stored["agent_error"].to_list() == ["PROVIDER_UNAVAILABLE"] * 2
+        assert stored["answer"].to_list() == [None, None]
+        assert stored.schema["answer"] == pl.String()

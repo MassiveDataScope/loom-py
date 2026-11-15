@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from loom.core.bootstrap import BootstrapError
+from loom.core.di.graph import (
+    LENIENT_REFUSALS,
+    REFUSALS,
+    ClassNode,
+    DependencyGraph,
+    DependencyGraphError,
+    GraphAnalysis,
+    refuse_unmapped_repository,
+)
 from loom.core.persistence.stores import NONE_BACKEND
+from loom.core.repository.abc import CursorCodec
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
     from loom.composition.source import CompositionSource
+    from loom.core.config import ConfigContext
+    from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
@@ -42,6 +57,19 @@ class Recipe:
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
             :class:`~loom.core.persistence.BackendRuntime`).
+        callbacks: Job callback classes the entry point builds; the
+            dependency graph's roots with the use cases and jobs, never
+            compiled.
+        overrides: DI modules run right after the caller's modules, under the
+            same reserved-key check; a test double of a repository binds under
+            the key its store would bind it. Set by the testing harness; no
+            production entry point sets them.
+        lenient: Skip the checks a test double cannot pass: the deploy
+            checks, the use-case factory's verification, the refusal of a
+            store a component cannot write to, and the refusal of an agent
+            marker on an entry point that hosts no agents. A missing binding
+            an ``APPLICATION`` singleton needs is still refused. Set by the
+            testing harness; no production entry point sets it.
     """
 
     profile: RuntimeProfile
@@ -53,6 +81,49 @@ class Recipe:
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
+    callbacks: tuple[type, ...] = ()
+    overrides: tuple[Callable[[LoomContainer], None], ...] = ()
+    lenient: bool = False
+
+    def analysed(self, graph: DependencyGraph) -> GraphAnalysis:
+        """*graph* analysed from the classes loom builds: use cases, jobs, then callbacks.
+
+        Each :class:`~loom.core.di.errors.DependencyUnresolvable` is emitted as a warning.
+
+        Args:
+            graph: The use-case factory's dependency graph.
+
+        Returns:
+            The analysis.
+
+        Raises:
+            BootstrapError: Wrapping the first structural refusal, cause chained.
+        """
+        discovered = self.discovered
+        callbacks = tuple(map(ClassNode, self.callbacks))
+        roots = (*map(ClassNode, (*discovered.use_cases, *discovered.jobs)), *callbacks)
+        refusals = (
+            LENIENT_REFUSALS
+            if self.lenient
+            else (*REFUSALS, refuse_unmapped_repository(frozenset(callbacks)))
+        )
+        try:
+            analysis = graph.analyse(roots, refusals)
+        except DependencyGraphError as exc:
+            raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+        for warning in analysis.warnings:
+            warnings.warn(warning, stacklevel=2)
+        return analysis
+
+    def cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
+        """The one cursor codec every store shares; ``None`` when no store serves a repository.
+
+        Raises:
+            ConfigError: When ``persistence.cursors`` is invalid.
+        """
+        if self.connection_only or not self.discovered.models:
+            return None
+        return CursorCodec.from_context(ctx)
 
 
 class Adapter(Protocol[T_co]):

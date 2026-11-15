@@ -277,15 +277,17 @@ def _page_schema() -> tuple[ColumnSchema, ...]:
 
 
 class TestLimit:
-    def test_limit_applied(self) -> None:
-        reader, _ = _reader(_numbered_items(10))
-        df = reader.read(_spec(limit=3), None).collect()
-        assert df.height == 3
-
-    def test_no_limit_returns_all(self) -> None:
-        reader, _ = _reader(_numbered_items(5))
-        df = reader.read(_spec(limit=None), None).collect()
-        assert df.height == 5
+    @pytest.mark.parametrize(
+        ("available", "limit", "expected"),
+        [
+            pytest.param(10, 3, 3, id="limit_applied"),
+            pytest.param(5, None, 5, id="no_limit_returns_all"),
+        ],
+    )
+    def test_limit(self, available: int, limit: int | None, expected: int) -> None:
+        reader, _ = _reader(_numbered_items(available))
+        df = reader.read(_spec(limit=limit), None).collect()
+        assert df.height == expected
 
     def test_n_rows_head_enforced(self) -> None:
         reader, _ = _reader(_numbered_items(10))

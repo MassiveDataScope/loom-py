@@ -10,7 +10,6 @@ from loom.core.plugins.entrypoints import (
     load_entry_point,
 )
 
-# abc imports profile, which imports the store catalog, which imports this module
 if TYPE_CHECKING:
     from loom.core.persistence.abc import PersistenceBackend
 

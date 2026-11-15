@@ -1,10 +1,4 @@
-"""The authenticated caller of one execution, as a domain value object.
-
-``Identity`` is deliberately transport-agnostic: it says *who* is calling and
-*what they hold*, never *how* they proved it beyond a free-form ``mechanism``
-label.  A JWT authenticator, a mutual-TLS one, or a signed-header one all
-produce the same shape, so business policies never learn what a token is.
-"""
+"""The authenticated caller of one execution: who calls, what they hold, how they proved it."""
 
 from __future__ import annotations
 
@@ -55,9 +49,6 @@ class Identity:
 
     subject: str
     roles: tuple[str, ...] = ()
-    # default_factory, not default: on Python 3.11 dataclasses reject an
-    # unhashable default, and a mappingproxy is unhashable. The factory hands
-    # back the same frozen empty mapping, so nothing is allocated per instance.
     attributes: Mapping[str, str] = field(default_factory=lambda: _EMPTY_ATTRIBUTES)
     mechanism: str = ""
 

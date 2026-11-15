@@ -126,11 +126,9 @@ def _backend(name: str, context: JobBackendContext) -> _Built:
 
 def _routed(context: JobBackendContext, default: str) -> _Built:
     """The *default* backend; ``celery.queues`` but Celery's default queue go to Celery."""
-    # Celery is imported only when it declares queues.
     if default == "celery" or not context.config.has("celery.queues"):
         return _backend(default, context)
     celery_cfg = _celery_config(context.config)
-    # Celery's own default queue stays with the default backend: it is every job's queue.
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
     served = tuple(job for job in context.jobs if context.settings.of(job).queue not in queues)
     service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
@@ -147,8 +145,6 @@ def _implicit(context: JobBackendContext) -> _Built:
     """Today's rule without ``app.job_service``: Celery when configured and installed."""
     ctx = context.config
     configured = ctx.has(ConfigKey.CELERY)
-    # find_spec locates without importing: without a celery section the
-    # application must not pay for loading Celery.
     installed = configured or importlib.util.find_spec("celery") is not None
     if installed:
         warnings.warn(

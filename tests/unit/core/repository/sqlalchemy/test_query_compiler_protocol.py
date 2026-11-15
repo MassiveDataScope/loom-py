@@ -35,17 +35,17 @@ def _compiler(allowed: frozenset[str] = frozenset()) -> QuerySpecCompiler:
     )
 
 
-def test_sqlalchemy_compiler_satisfies_query_compiler() -> None:
-    compiler: QueryCompiler[Any, Any] = _compiler()
+class TestQueryCompilerProtocol:
+    def test_sqlalchemy_compiler_satisfies_query_compiler(self) -> None:
+        compiler: QueryCompiler[Any, Any] = _compiler()
 
-    clause = compiler.compile_filter(FilterGroup(filters=(FilterSpec("rank", FilterOp.EQ, 1),)))
+        clause = compiler.compile_filter(FilterGroup(filters=(FilterSpec("rank", FilterOp.EQ, 1),)))
 
-    assert "rank" in str(clause)
+        assert "rank" in str(clause)
 
+    def test_compile_filter_honours_allowed_fields(self) -> None:
+        compiler = _compiler(frozenset({"id"}))
+        group = FilterGroup(filters=(FilterSpec("rank", FilterOp.EQ, 1),))
 
-def test_compile_filter_honours_allowed_fields() -> None:
-    compiler = _compiler(frozenset({"id"}))
-    group = FilterGroup(filters=(FilterSpec("rank", FilterOp.EQ, 1),))
-
-    with pytest.raises(UnsafeFilterError):
-        compiler.compile_filter(group)
+        with pytest.raises(UnsafeFilterError):
+            compiler.compile_filter(group)

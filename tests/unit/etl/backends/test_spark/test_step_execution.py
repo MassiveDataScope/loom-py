@@ -12,7 +12,6 @@ from pyspark.sql import functions as F
 
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.etl import (
-    ETLParams,
     ETLStep,
     Format,
     FromFile,
@@ -34,15 +33,12 @@ from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.testing import StubRunObserver
+from tests.unit.etl.backends.doubles import NoParams
 
 from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
 
 
-class NoParams(ETLParams):
-    pass
-
-
-class DoubleAmountStep(ETLStep[NoParams]):
+class SparkDoubleAmountStep(ETLStep[NoParams]):
     orders: FromTable = FromTable("raw.orders")  # type: ignore[assignment]
     target = IntoTable("staging.orders").replace()
 
@@ -50,7 +46,7 @@ class DoubleAmountStep(ETLStep[NoParams]):
         return orders.withColumn("amount", F.col("amount") * 2)
 
 
-class PassThroughStep(ETLStep[NoParams]):
+class SparkPassThroughStep(ETLStep[NoParams]):
     events: FromTable = FromTable("raw.events")  # type: ignore[assignment]
     target = IntoTable("staging.events").replace()
 
@@ -58,7 +54,7 @@ class PassThroughStep(ETLStep[NoParams]):
         return events
 
 
-class AppendStep(ETLStep[NoParams]):
+class SparkAppendStep(ETLStep[NoParams]):
     deltas: FromTable = FromTable("raw.deltas")  # type: ignore[assignment]
     target = IntoTable("staging.ledger").append()
 
@@ -89,52 +85,54 @@ def _read(spark: SparkSession, root: Path, ref: str) -> DataFrame:
     return spark.read.format("delta").load(str(path))
 
 
-def test_writer_replace_partitions_first_run_creates_partitioned_table(
-    spark: SparkSession,
-    spark_writer: SparkTargetWriter,
-    spark_root: Path,
-) -> None:
-    spec = ReplacePartitionsSpec(
-        table_ref=TableRef("staging.partitioned"),
-        partition_cols=("year",),
-        schema_mode=SchemaMode.OVERWRITE,
-    )
-    frame = spark.createDataFrame([(2024, 99.0)], ["year", "v"])
-    spark_writer.write(frame, spec, None)
+class TestSparkWriterFirstWrite:
+    def test_writer_replace_partitions_first_run_creates_partitioned_table(
+        self,
+        spark: SparkSession,
+        spark_writer: SparkTargetWriter,
+        spark_root: Path,
+    ) -> None:
+        spec = ReplacePartitionsSpec(
+            table_ref=TableRef("staging.partitioned"),
+            partition_cols=("year",),
+            schema_mode=SchemaMode.OVERWRITE,
+        )
+        frame = spark.createDataFrame([(2024, 99.0)], ["year", "v"])
+        spark_writer.write(frame, spec, None)
 
-    path = spark_table_path(spark_root, TableRef("staging.partitioned"))
-    detail = spark.sql(f"DESCRIBE DETAIL delta.`{path}`").collect()[0].asDict()
-    assert detail["partitionColumns"] == ["year"]
+        path = spark_table_path(spark_root, TableRef("staging.partitioned"))
+        detail = spark.sql(f"DESCRIBE DETAIL delta.`{path}`").collect()[0].asDict()
+        assert detail["partitionColumns"] == ["year"]
 
+    def test_writer_append_creates_table_on_first_write(
+        self,
+        spark: SparkSession,
+        spark_root: Path,
+    ) -> None:
+        spark_writer = SparkTargetWriter(
+            spark, spark_root, missing_table_policy=MissingTablePolicy.CREATE
+        )
+        frame = spark.createDataFrame([(1, 10.0)], ["id", "v"])
+        spark_writer.append(frame, TableRef("staging.append_first"), None)
 
-def test_writer_append_creates_table_on_first_write(
-    spark: SparkSession,
-    spark_root: Path,
-) -> None:
-    spark_writer = SparkTargetWriter(
-        spark, spark_root, missing_table_policy=MissingTablePolicy.CREATE
-    )
-    frame = spark.createDataFrame([(1, 10.0)], ["id", "v"])
-    spark_writer.append(frame, TableRef("staging.append_first"), None)
+        path = spark_table_path(spark_root, TableRef("staging.append_first"))
+        assert spark.read.format("delta").load(str(path)).count() == 1
 
-    path = spark_table_path(spark_root, TableRef("staging.append_first"))
-    assert spark.read.format("delta").load(str(path)).count() == 1
-
-
-def test_writer_append_first_write_requires_create_policy(
-    spark: SparkSession,
-    spark_writer: SparkTargetWriter,
-) -> None:
-    frame = spark.createDataFrame([(1, 10.0)], ["id", "v"])
-    table_ref = TableRef("staging.append_first")
-    with pytest.raises(SchemaNotFoundError, match="missing_table_policy='create'"):
-        spark_writer.append(frame, table_ref, None)
+    def test_writer_append_first_write_requires_create_policy(
+        self,
+        spark: SparkSession,
+        spark_writer: SparkTargetWriter,
+    ) -> None:
+        frame = spark.createDataFrame([(1, 10.0)], ["id", "v"])
+        table_ref = TableRef("staging.append_first")
+        with pytest.raises(SchemaNotFoundError, match="missing_table_policy='create'"):
+            spark_writer.append(frame, table_ref, None)
 
 
 class TestRunStepDataFlow:
     _COUNT_SCENARIOS = (
         CountScenario(
-            step_type=PassThroughStep,
+            step_type=SparkPassThroughStep,
             source_table="raw.events",
             source_rows=[(i, i * 10) for i in range(5)],
             source_columns=["ts", "val"],
@@ -144,7 +142,7 @@ class TestRunStepDataFlow:
             expected_count=5,
         ),
         CountScenario(
-            step_type=AppendStep,
+            step_type=SparkAppendStep,
             source_table="raw.deltas",
             source_rows=[(1, 10), (2, 20)],
             source_columns=["id", "v"],
@@ -196,7 +194,7 @@ class TestRunStepDataFlow:
             spark.createDataFrame([(99, 999.0)], ["id", "amount"]),
         )
 
-        plan = ETLCompiler().compile_step(DoubleAmountStep)
+        plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
         ETLExecutor(spark_reader, spark_writer).run_step(plan, NoParams())
 
         rows = _read(spark, spark_root, "staging.orders").orderBy("id").collect()
@@ -222,7 +220,7 @@ class TestRunStepEvents:
         )
 
         observer = StubRunObserver()
-        plan = ETLCompiler().compile_step(DoubleAmountStep)
+        plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
         ETLExecutor(
             spark_reader,
             spark_writer,
@@ -238,7 +236,7 @@ class TestRunStepEvents:
                 raise RuntimeError("spark read failure")
 
         observer = StubRunObserver()
-        plan = ETLCompiler().compile_step(DoubleAmountStep)
+        plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
 
         executor = ETLExecutor(
             FailingReader(),
@@ -265,7 +263,7 @@ class TestRunStepContracts:
             spark.createDataFrame([(1, 1.0)], ["id", "amount"]),
         )
 
-        plan = ETLCompiler().compile_step(DoubleAmountStep)
+        plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
         executor = ETLExecutor(spark_reader, spark_writer)
         params = NoParams()
         with pytest.raises(SchemaNotFoundError):

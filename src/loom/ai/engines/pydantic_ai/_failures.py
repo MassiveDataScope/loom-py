@@ -3,7 +3,7 @@
 A failed call is sent again only when it provably never ran: the server answered
 that it does not know the session. Everything else that is not the server's own
 answer may have run, so it is raised as :class:`McpCallInterrupted` and never
-repeated (plan 6.5; fastmcp 4.1.6, mcp 2.3.0).
+repeated.
 
 The mcp client raises one class, ``MCPError``, both for what it makes itself and
 for what a server sends; only the code tells them apart. On a ``tools/call`` the
@@ -14,6 +14,7 @@ an answer, even when a server sent it.
 
 from __future__ import annotations
 
+import functools
 from enum import Enum
 from typing import Final
 
@@ -23,19 +24,29 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 
 CLIENT_MADE_CODES: Final[frozenset[int]] = frozenset(
     {
-        -32000,  # CONNECTION_CLOSED
-        -32001,  # REQUEST_TIMEOUT
-        -32600,  # INVALID_REQUEST
-        -32601,  # METHOD_NOT_FOUND
-        -32603,  # INTERNAL_ERROR
-        -32700,  # PARSE_ERROR
+        -32000,
+        -32001,
+        -32600,
+        -32601,
+        -32603,
+        -32700,
     }
 )
-"""JSON-RPC codes the mcp 2.3.0 client makes on a ``tools/call``; an mcp upgrade rechecks them."""
+"""JSON-RPC codes the mcp client makes on a ``tools/call``."""
 
 _INVALID_REQUEST: Final = -32600
 _SESSION_UNKNOWN: Final = frozenset({"Session not found", "Session terminated"})
 """The two messages of a 404 on a session the server no longer knows: nothing ran."""
+
+
+@functools.cache
+def _mcp_error() -> type[Exception] | None:
+    """Return the mcp client's ``MCPError``, or ``None`` when the client is not installed."""
+    try:
+        from mcp import MCPError
+    except ImportError:
+        return None
+    return MCPError
 
 
 class Outcome(Enum):
@@ -48,13 +59,42 @@ class Outcome(Enum):
     COMPLETED = "completed"
     """The server answered with an error; it passes through unchanged."""
 
+    @classmethod
+    def of(cls, exc: BaseException) -> Outcome:
+        """Return what a call's failure proves about the server.
+
+        On the agent path pydantic-ai's ``MCPToolset`` raises its own ``ModelRetry``
+        or ``ToolFailed`` over the client's error, so such a signal is judged by its
+        cause; one with no cause is the tool's own error, an answer.
+
+        Args:
+            exc: What the call raised.
+
+        Returns:
+            ``SAFE`` for a session the server does not know, ``COMPLETED`` for a
+            JSON-RPC error outside the client's own codes or the tool's own error,
+            ``UNSAFE`` for anything else.
+        """
+        if isinstance(exc, ModelRetry | ToolFailed):
+            cause = exc.__cause__
+            return cls.COMPLETED if cause is None else cls.of(cause)
+        mcp_error = _mcp_error()
+        if mcp_error is None or not isinstance(exc, mcp_error):
+            return cls.UNSAFE
+        code, message = getattr(exc, "code", None), getattr(exc, "message", None)
+        if code not in CLIENT_MADE_CODES:
+            return cls.COMPLETED
+        if code == _INVALID_REQUEST and message in _SESSION_UNKNOWN:
+            return cls.SAFE
+        return cls.UNSAFE
+
 
 class McpCallInterrupted(AgentRunError):
     """An MCP call failed in a way that leaves unknown whether it ran on the server.
 
     It is never repeated, and the session renews before the next call. Being a
     run error with its own code is what lets an engine-neutral caller recognise
-    it: a marker's grant view reports it under ``INTERRUPTED_CALL_CODE``. A call refused
+    it: a marker's grant view reports it under the same code. A call refused
     before it was sent -- the session is closed, or a renewal could not
     connect -- carries the same code, and its message says it was not sent.
 
@@ -72,36 +112,3 @@ class McpCallInterrupted(AgentRunError):
             AgentRunErrorCode.MCP_CALL_INTERRUPTED,
             f"{what} {fate if sent else 'was not sent'}; it is not repeated",
         )
-
-
-def classify(exc: BaseException) -> Outcome:
-    """Return what a call's failure proves about the server.
-
-    On the agent path pydantic-ai's ``MCPToolset`` raises its own ``ModelRetry``
-    or ``ToolFailed`` over the client's error, so such a signal is judged by its
-    cause; one with no cause is the tool's own error, an answer.
-
-    Args:
-        exc: What the call raised.
-
-    Returns:
-        ``SAFE`` for a session the server does not know, ``COMPLETED`` for a
-        JSON-RPC error outside the client's own codes or the tool's own error,
-        ``UNSAFE`` for anything else.
-    """
-    if isinstance(exc, ModelRetry | ToolFailed):
-        cause = exc.__cause__
-        return Outcome.COMPLETED if cause is None else classify(cause)
-    try:
-        from mcp import MCPError
-    except ImportError:  # without the client no error can be a server's answer
-        return Outcome.UNSAFE
-    if not isinstance(exc, MCPError):
-        return Outcome.UNSAFE
-    # Read by name: a checker without the client cannot narrow to MCPError.
-    code, message = getattr(exc, "code", None), getattr(exc, "message", None)
-    if code not in CLIENT_MADE_CODES:
-        return Outcome.COMPLETED
-    if code == _INVALID_REQUEST and message in _SESSION_UNKNOWN:
-        return Outcome.SAFE
-    return Outcome.UNSAFE

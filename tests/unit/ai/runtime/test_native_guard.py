@@ -22,6 +22,7 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._chain import current_chain
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
@@ -83,12 +84,13 @@ class TestCycleDetection:
     async def test_driving_the_same_agent_twice_nested_raises_the_cycle_code(self) -> None:
         runtime = _runtime(max_agent_depth=2, names=("a",))
         async with runtime:
-            outer = _access(runtime, "a")
-            async with outer.guard():
-                inner = _access(runtime, "a")
-                with pytest.raises(AgentRunError) as excinfo:
-                    async with inner.guard():
-                        pass
+            with ExecutionScope(_AUTHENTICATED):
+                outer = _access(runtime, "a")
+                async with outer.guard():
+                    inner = _access(runtime, "a")
+                    with pytest.raises(AgentRunError) as excinfo:
+                        async with inner.guard():
+                            pass
 
         assert excinfo.value.code is AgentRunErrorCode.AGENT_CALL_CYCLE
 
@@ -97,14 +99,15 @@ class TestDepthBound:
     async def test_exceeding_max_agent_depth_raises_the_too_deep_code(self) -> None:
         runtime = _runtime(max_agent_depth=2, names=("a", "b", "c"))
         async with runtime:
-            a = _access(runtime, "a")
-            async with a.guard():
-                b = _access(runtime, "b")
-                async with b.guard():
-                    c = _access(runtime, "c")
-                    with pytest.raises(AgentRunError) as excinfo:
-                        async with c.guard():
-                            pass
+            with ExecutionScope(_AUTHENTICATED):
+                a = _access(runtime, "a")
+                async with a.guard():
+                    b = _access(runtime, "b")
+                    async with b.guard():
+                        c = _access(runtime, "c")
+                        with pytest.raises(AgentRunError) as excinfo:
+                            async with c.guard():
+                                pass
 
         assert excinfo.value.code is AgentRunErrorCode.AGENT_CALL_TOO_DEEP
 
@@ -113,12 +116,13 @@ class TestAdmission:
     async def test_exceeding_max_concurrent_runs_raises_too_many_runs(self) -> None:
         runtime = _runtime(max_agent_depth=2, max_concurrent_runs=1, names=("a", "b"))
         async with runtime:
-            a = _access(runtime, "a")
-            async with a.guard():
-                b = _access(runtime, "b")
-                with pytest.raises(AgentRunError) as excinfo:
-                    async with b.guard():
-                        pass
+            with ExecutionScope(_AUTHENTICATED):
+                a = _access(runtime, "a")
+                async with a.guard():
+                    b = _access(runtime, "b")
+                    with pytest.raises(AgentRunError) as excinfo:
+                        async with b.guard():
+                            pass
 
         assert excinfo.value.code is AgentRunErrorCode.TOO_MANY_RUNS
 
@@ -127,17 +131,19 @@ class TestChainRestoration:
     async def test_the_chain_is_restored_after_the_body(self) -> None:
         runtime = _runtime(names=("a",))
         async with runtime:
-            assert current_chain() == ()
-            access = _access(runtime, "a")
-            async with access.guard():
-                assert current_chain() == ("a",)
-            assert current_chain() == ()
+            with ExecutionScope(_AUTHENTICATED):
+                assert current_chain() == ()
+                access = _access(runtime, "a")
+                async with access.guard():
+                    assert current_chain() == ("a",)
+                assert current_chain() == ()
 
     async def test_the_chain_is_restored_even_when_the_body_raises(self) -> None:
         runtime = _runtime(names=("a",))
         async with runtime:
-            access = _access(runtime, "a")
-            with pytest.raises(ValueError):
-                async with access.guard():
-                    raise ValueError("boom")
-            assert current_chain() == ()
+            with ExecutionScope(_AUTHENTICATED):
+                access = _access(runtime, "a")
+                with pytest.raises(ValueError):
+                    async with access.guard():
+                        raise ValueError("boom")
+                assert current_chain() == ()

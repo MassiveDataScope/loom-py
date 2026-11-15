@@ -16,7 +16,7 @@ from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.plugins.optional import MissingExtraError
 
 _AWS_EXTRA = "config-ssm"
-_CLIENT = ("client",)  # a resolver key is a string
+_CLIENT = ("client",)
 
 
 def aws_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
@@ -188,8 +188,6 @@ def _navigate_json(raw: str, keys: list[str], path: str) -> object:
     try:
         data: object = json.loads(raw)
     except json.JSONDecodeError as exc:
-        # Suppress chain (from None) — JSONDecodeError.doc holds the raw secret
-        # and would be exposed via __cause__ in tracebacks / APM serialisation.
         raise ConfigError(
             f"Resolver path {path!r} value is not valid JSON "
             f"(required for key navigation): {exc.msg} at position {exc.pos}"

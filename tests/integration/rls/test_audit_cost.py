@@ -95,37 +95,39 @@ async def _audit_trigger(session: AsyncConnection, state: str) -> None:
         await session.execute(text(f"ALTER EVENT TRIGGER {name} ENABLE ALWAYS"))
 
 
-async def test_the_audit_trigger_cost_is_measured_against_the_target(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(SCHEMA)
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
-    )
-    audited = f"{SCHEMA}.accounts"
-    engine = create_async_engine(database.superuser, poolclass=NullPool)
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text(FILL.format(table=audited, rows=ROWS)))
-        async with engine.connect() as connection:
-            session = await connection.execution_options(isolation_level="AUTOCOMMIT")
-            median = await _medians(session, audited)
-    finally:
-        await engine.dispose()
-
-    committed_baseline, committed_audit = median["committed_off"], median["committed"]
-    baseline, with_audit = median["looped_off"], median["looped"]
-    overhead = committed_audit / committed_baseline - 1
-    per_row_us = (with_audit - baseline) / ROWS * 1_000_000
-    print(  # noqa: T201 - the measurement is this test's output
-        f"\nSC-004: {ROWS} updates, median of {SERIES}. Committed one by one: "
-        f"{committed_baseline * 1000:.0f} ms unaudited, {committed_audit * 1000:.0f} ms audited, "
-        f"overhead {overhead:.0%} (target under {TARGET:.0%}). Server-side loop: "
-        f"{baseline * 1000:.1f} ms unaudited, {with_audit * 1000:.1f} ms audited, "
-        f"{per_row_us:.0f} us per audited row"
-    )
-    if overhead >= TARGET:
-        warnings.warn(
-            f"audit overhead {overhead:.0%} is over the {TARGET:.0%} target", stacklevel=1
+class TestAuditCost:
+    async def test_the_audit_trigger_cost_is_measured_against_the_target(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(SCHEMA)
+        await create_schema(
+            database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
         )
-    assert committed_baseline > 0
+        audited = f"{SCHEMA}.accounts"
+        engine = create_async_engine(database.superuser, poolclass=NullPool)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text(FILL.format(table=audited, rows=ROWS)))
+            async with engine.connect() as connection:
+                session = await connection.execution_options(isolation_level="AUTOCOMMIT")
+                median = await _medians(session, audited)
+        finally:
+            await engine.dispose()
+
+        committed_baseline, committed_audit = median["committed_off"], median["committed"]
+        baseline, with_audit = median["looped_off"], median["looped"]
+        overhead = committed_audit / committed_baseline - 1
+        per_row_us = (with_audit - baseline) / ROWS * 1_000_000
+        print(  # noqa: T201 - the measurement is this test's output
+            f"\nSC-004: {ROWS} updates, median of {SERIES}. Committed one by one: "
+            f"{committed_baseline * 1000:.0f} ms unaudited, "
+            f"{committed_audit * 1000:.0f} ms audited, "
+            f"overhead {overhead:.0%} (target under {TARGET:.0%}). Server-side loop: "
+            f"{baseline * 1000:.1f} ms unaudited, {with_audit * 1000:.1f} ms audited, "
+            f"{per_row_us:.0f} us per audited row"
+        )
+        if overhead >= TARGET:
+            warnings.warn(
+                f"audit overhead {overhead:.0%} is over the {TARGET:.0%} target", stacklevel=1
+            )
+        assert committed_baseline > 0

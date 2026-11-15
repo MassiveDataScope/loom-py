@@ -25,8 +25,7 @@ class AppendSpec:
         streaming:   When ``True`` requests a streaming Arrow write.  In
                      this release the Polars backend honours the flag
                      only for :class:`ReplacePartitionsSpec`; other modes
-                     accept the flag for forward-compatibility but still
-                     materialise the frame.
+                     accept the flag but still materialise the frame.
     """
 
     table_ref: TableRef
@@ -100,8 +99,7 @@ class ReplaceWhereSpec:
                            In this release the Polars backend honours
                            the flag only for
                            :class:`ReplacePartitionsSpec`; other modes
-                           accept the flag for forward-compatibility but
-                           still materialise the frame.
+                           accept the flag but still materialise the frame.
     """
 
     table_ref: TableRef

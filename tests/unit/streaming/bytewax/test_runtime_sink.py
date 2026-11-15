@@ -22,12 +22,12 @@ from tests.unit.streaming.bytewax.cases import (  # noqa: E402
     build_compiled_sink,
     build_order_message,
 )
-from tests.unit.streaming.kafka.fakes import RawProducerStub  # noqa: E402
+from tests.unit.streaming.kafka.doubles import RawProducerStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
 
-class _OrderPartitionStrategy:
+class AcmeOrderPartitionStrategy:
     """Partition by order id."""
 
     def partition_key(self, message: Message[Any]) -> bytes | str | None:
@@ -35,15 +35,21 @@ class _OrderPartitionStrategy:
 
 
 class TestRuntimeSinkPartitionPolicy:
+    @pytest.fixture
+    def producer(self, monkeypatch: pytest.MonkeyPatch) -> RawProducerStub:
+        """Install a raw producer stub in place of the Kafka producer client."""
+
+        installed = RawProducerStub()
+        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: installed)
+        return installed
+
     def test_uses_partition_policy_when_message_has_no_key(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        producer: RawProducerStub,
     ) -> None:
-        fake_raw = RawProducerStub()
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
 
         policy = PartitionPolicy(
-            strategy=_OrderPartitionStrategy(),
+            strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.ENTITY_STABLE,
             allow_repartition=False,
         )
@@ -51,21 +57,19 @@ class TestRuntimeSinkPartitionPolicy:
 
         sink.write_batch([build_order_message("123", None)])
 
-        assert len(fake_raw.sent) == 1
-        record = fake_raw.sent[0]
+        assert len(producer.sent) == 1
+        record = producer.sent[0]
         assert isinstance(record, KafkaRecord)
         assert record.topic == "orders.out"
         assert record.key == b"order-123"
 
     def test_preserves_existing_key_without_repartition(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        producer: RawProducerStub,
     ) -> None:
-        fake_raw = RawProducerStub()
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
 
         policy = PartitionPolicy(
-            strategy=_OrderPartitionStrategy(),
+            strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.BEST_EFFORT,
             allow_repartition=False,
         )
@@ -73,20 +77,18 @@ class TestRuntimeSinkPartitionPolicy:
 
         sink.write_batch([build_order_message("123", b"tenant-a")])
 
-        assert len(fake_raw.sent) == 1
-        record = fake_raw.sent[0]
+        assert len(producer.sent) == 1
+        record = producer.sent[0]
         assert isinstance(record, KafkaRecord)
         assert record.key == b"tenant-a"
 
     def test_can_override_existing_key_when_repartition_allowed(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        producer: RawProducerStub,
     ) -> None:
-        fake_raw = RawProducerStub()
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
 
         policy = PartitionPolicy(
-            strategy=_OrderPartitionStrategy(),
+            strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.BEST_EFFORT,
             allow_repartition=True,
         )
@@ -94,13 +96,13 @@ class TestRuntimeSinkPartitionPolicy:
 
         sink.write_batch([build_order_message("123", b"tenant-a")])
 
-        assert len(fake_raw.sent) == 1
-        record = fake_raw.sent[0]
+        assert len(producer.sent) == 1
+        record = producer.sent[0]
         assert isinstance(record, KafkaRecord)
         assert record.key == b"order-123"
 
 
-class _RecordingTracker:
+class RecordingOffsetTracker:
     """Commit tracker that records the offsets a batch completed."""
 
     def __init__(self) -> None:
@@ -138,10 +140,10 @@ class _DlqUnencodableCodec(MsgspecCodec[Any]):
 def _dlq_sink(
     monkeypatch: pytest.MonkeyPatch,
     raw: RawProducerStub,
-) -> tuple[_runtime_io._KafkaMessageSinkPartition, _RecordingTracker]:
+) -> tuple[_runtime_io._KafkaMessageSinkPartition, RecordingOffsetTracker]:
     monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: raw)
     sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
-    tracker = _RecordingTracker()
+    tracker = RecordingOffsetTracker()
     sink.bind_commit_tracker(tracker)
     return sink, tracker
 

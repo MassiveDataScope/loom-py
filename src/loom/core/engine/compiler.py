@@ -7,21 +7,19 @@ from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.engine.plan import (
-    AgentBinding,
     CallerBinding,
-    ComputeStep,
+    CommandStep,
     ExecutionPlan,
     ExistsStep,
     InputBinding,
     LoadStep,
-    McpBinding,
     ParamBinding,
     QueryBinding,
-    RuleStep,
 )
 from loom.core.errors import UnsupportedBoundaryType
+from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import BaseModel, loom_type
@@ -38,6 +36,7 @@ from loom.core.repository.abc.repo_for import (
     Updatable,
 )
 from loom.core.use_case.joined import joined_repository
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.markers import (
     LookupKind,
     SourceKind,
@@ -71,11 +70,11 @@ class _SignatureBindings:
     param_bindings: list[ParamBinding] = field(default_factory=list)
     load_steps: list[LoadStep] = field(default_factory=list)
     exists_steps: list[ExistsStep] = field(default_factory=list)
-    agent_bindings: list[AgentBinding] = field(default_factory=list)
-    mcp_bindings: list[McpBinding] = field(default_factory=list)
+    execution_bindings: list[ExecutionBinding] = field(default_factory=list)
     input_binding: InputBinding | None = None
     caller_binding: CallerBinding | None = None
     query_binding: QueryBinding | None = None
+    detected: list[str] = field(default_factory=list)
 
 
 class UseCaseCompiler:
@@ -105,7 +104,7 @@ class UseCaseCompiler:
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
         self._logger = logger or get_logger(__name__)
-        self._metrics = metrics
+        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         """Return the ExecutionPlan for ``use_case_type``, compiling if needed.
@@ -141,32 +140,13 @@ class UseCaseCompiler:
         """
         return self._cache.get(use_case_type)
 
-    def _emit(self, event: RuntimeEvent) -> None:
-        if self._metrics is not None:
-            self._metrics.on_event(event)
-
     def _build_plan(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         uc_name = use_case_type.__qualname__
-        self._logger.info(f"[BOOT] Compiling UseCase: {uc_name}", usecase=uc_name)
-        self._emit(RuntimeEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
+        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
 
         bindings = self._inspect_execute(use_case_type)
-        compute_steps = tuple(
-            ComputeStep(fn=fn, accepts_context=_fn_accepts_context(fn))
-            for fn in use_case_type.computes
-        )
-        rule_steps = tuple(
-            RuleStep(fn=fn, accepts_context=_fn_accepts_context(fn)) for fn in use_case_type.rules
-        )
-
-        self._logger.info(
-            f"[BOOT]  - Validated {len(compute_steps)} compute steps",
-            usecase=uc_name,
-        )
-        self._logger.info(
-            f"[BOOT]  - Validated {len(rule_steps)} rules",
-            usecase=uc_name,
-        )
+        compute_steps = tuple(CommandStep.of(fn) for fn in use_case_type.computes)
+        rule_steps = tuple(CommandStep.of(fn) for fn in use_case_type.rules)
 
         total = (
             len(bindings.load_steps)
@@ -175,10 +155,14 @@ class UseCaseCompiler:
             + len(rule_steps)
         )
         self._logger.info(
-            f"[BOOT]  - ExecutionPlan built ({total} steps)",
+            "[BOOT] Compiled UseCase",
             usecase=uc_name,
+            detected=bindings.detected,
+            computes=len(compute_steps),
+            rules=len(rule_steps),
+            steps=total,
         )
-        self._emit(RuntimeEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
+        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
 
         primary = _primary_store(use_case_type)
         plan = ExecutionPlan(
@@ -191,8 +175,7 @@ class UseCaseCompiler:
             rule_steps=rule_steps,
             read_only=bool(getattr(use_case_type, "read_only", False)),
             caller_binding=bindings.caller_binding,
-            agent_bindings=tuple(bindings.agent_bindings),
-            mcp_bindings=tuple(bindings.mcp_bindings),
+            execution_bindings=tuple(bindings.execution_bindings),
             query_binding=bindings.query_binding,
             primary=primary,
             joined=_joined_stores(use_case_type) - {primary},
@@ -225,7 +208,7 @@ class UseCaseCompiler:
                 bindings=bindings,
             )
 
-        self._validate_marker_refs(use_case_type, bindings)
+        bindings.load_steps, bindings.exists_steps = self._readable_lookups(use_case_type, bindings)
         return bindings
 
     def _collect_binding_from_parameter(
@@ -252,26 +235,32 @@ class UseCaseCompiler:
             return
 
         if isinstance(marker, _AgentMarker):
-            self._collect_agent(name, annotation, marker, bindings)
+            self._collect_execution(ExecutionBinding(name, AGENT, marker, annotation), bindings)
             return
 
         if isinstance(marker, _McpMarker):
-            self._collect_mcp(name, marker, bindings)
+            self._collect_execution(ExecutionBinding(name, MCP, marker, annotation), bindings)
             return
 
         if isinstance(marker, _LoadByIdMarker):
             bindings.load_steps.append(self._build_load_by_id_step(name, marker))
-            self._log_load_by_id(marker)
+            bindings.detected.append(f"LoadById: {marker.entity_type.__name__} by {marker.by}")
             return
 
         if isinstance(marker, _LoadMarker):
             bindings.load_steps.append(self._build_load_step(name, marker))
-            self._log_load(marker)
+            bindings.detected.append(
+                f"Load: {marker.entity_type.__name__} {marker.against} "
+                f"<- {marker.from_kind.value}:{marker.from_name}"
+            )
             return
 
         if isinstance(marker, _ExistsMarker):
             bindings.exists_steps.append(self._build_exists_step(name, marker))
-            self._log_exists(marker)
+            bindings.detected.append(
+                f"Exists: {marker.entity_type.__name__} {marker.against} "
+                f"<- {marker.from_kind.value}:{marker.from_name}"
+            )
             return
 
         bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
@@ -299,8 +288,7 @@ class UseCaseCompiler:
                 f"Input() parameter '{name}' type must implement from_payload(payload)"
             )
         bindings.input_binding = InputBinding(name=name, command_type=annotation)
-        cmd_name = getattr(annotation, "__name__", repr(annotation))
-        self._logger.info(f"[BOOT]  - Detected Input: {cmd_name}")
+        bindings.detected.append(f"Input: {getattr(annotation, '__name__', repr(annotation))}")
 
     def _collect_caller(
         self,
@@ -313,7 +301,7 @@ class UseCaseCompiler:
                 f"{use_case_type.__qualname__}.execute: only one Caller() parameter is allowed"
             )
         bindings.caller_binding = CallerBinding(name=name)
-        self._logger.info(f"[BOOT]  - Detected Caller: {name}")
+        bindings.detected.append(f"Caller: {name}")
 
     def _collect_query(
         self,
@@ -339,47 +327,13 @@ class UseCaseCompiler:
             ) from exc
         bindings.query_binding = QueryBinding(name=name, query_type=annotation)
         bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
-        self._logger.info(f"[BOOT]  - Detected Query: {annotation.__name__} -> {name}")
+        bindings.detected.append(f"Query: {annotation.__name__} -> {name}")
 
-    def _collect_agent(
-        self,
-        name: str,
-        annotation: Any,
-        marker: _AgentMarker,
-        bindings: _SignatureBindings,
-    ) -> None:
-        """Record one ``Agent()`` marker; several may appear in one signature.
-
-        Only the parameter name, the declared agent name and the raw
-        annotation are kept here. Whether that agent exists and whether the
-        annotation's type argument matches its declared output cannot be
-        checked here: this compiler runs regardless of whether the optional
-        AI pillar is even installed, so that check happens once, in the
-        composition root, only after the AI runtime it needs has been built.
-        """
-        bindings.agent_bindings.append(
-            AgentBinding(name=name, agent=marker.name, annotation=annotation)
-        )
-        self._logger.info(f"[BOOT]  - Detected Agent: {marker.name!r} -> {name}")
-
-    def _collect_mcp(
-        self,
-        name: str,
-        marker: _McpMarker,
-        bindings: _SignatureBindings,
-    ) -> None:
-        """Record one ``Mcp()`` marker; several may appear in one signature.
-
-        Only the parameter name, the declared server name and the declared
-        ``include`` are kept here. Whether that server exists cannot be
-        checked here: this compiler runs regardless of whether the optional
-        AI pillar is even installed, the same reason ``_collect_agent``
-        cannot validate the agent name either.
-        """
-        bindings.mcp_bindings.append(
-            McpBinding(name=name, server=marker.server, include=marker.include)
-        )
-        self._logger.info(f"[BOOT]  - Detected Mcp: {marker.server!r} -> {name}")
+    @staticmethod
+    def _collect_execution(binding: ExecutionBinding, bindings: _SignatureBindings) -> None:
+        """Record one ``Agent()`` or ``Mcp()`` parameter, detected as its declaration."""
+        bindings.execution_bindings.append(binding)
+        bindings.detected.append(f"{binding.declaration!r} -> {binding.name}")
 
     @staticmethod
     def _build_load_by_id_step(name: str, marker: _LoadByIdMarker[Any]) -> LoadStep:
@@ -392,6 +346,7 @@ class UseCaseCompiler:
             against="id",
             profile=marker.profile,
             on_missing=marker.on_missing,
+            spelling=marker.spelling,
         )
 
     @staticmethod
@@ -405,6 +360,7 @@ class UseCaseCompiler:
             against=marker.against,
             profile=marker.profile,
             on_missing=marker.on_missing,
+            spelling=marker.spelling,
         )
 
     @staticmethod
@@ -416,57 +372,32 @@ class UseCaseCompiler:
             source_name=marker.from_name,
             against=marker.against,
             on_missing=marker.on_missing,
+            spelling=marker.spelling,
         )
 
-    def _log_load_by_id(self, marker: _LoadByIdMarker[Any]) -> None:
-        self._logger.info(
-            f"[BOOT]  - Detected LoadById: {marker.entity_type.__name__} by {marker.by}"
-        )
+    @staticmethod
+    def _readable_lookups(
+        use_case_type: type[Compilable], bindings: _SignatureBindings
+    ) -> tuple[list[LoadStep], list[ExistsStep]]:
+        """Return the load and exists steps, each reading its value from a parameter or ``Input()``.
 
-    def _log_load(self, marker: _LoadMarker[Any]) -> None:
-        src = f"{marker.from_kind.value}:{marker.from_name}"
-        self._logger.info(
-            f"[BOOT]  - Detected Load: {marker.entity_type.__name__} {marker.against} <- {src}"
-        )
-
-    def _log_exists(self, marker: _ExistsMarker[Any]) -> None:
-        src = f"{marker.from_kind.value}:{marker.from_name}"
-        self._logger.info(
-            f"[BOOT]  - Detected Exists: {marker.entity_type.__name__} {marker.against} <- {src}"
-        )
-
-    def _validate_marker_refs(
-        self,
-        use_case_type: type[Compilable],
-        bindings: _SignatureBindings,
-    ) -> None:
+        Raises:
+            CompilationError: When a lookup names a missing parameter, or the
+                command with no ``Input()`` parameter.
+        """
         param_names = {pb.name for pb in bindings.param_bindings}
-        has_input = bindings.input_binding is not None
-        for ls in bindings.load_steps:
-            if ls.source_kind is SourceKind.PARAM and ls.source_name not in param_names:
+        command = None if bindings.input_binding is None else bindings.input_binding.name
+        for step in (*bindings.load_steps, *bindings.exists_steps):
+            problem = step.source_problem(param_names, command is not None)
+            if problem is not None:
                 raise CompilationError(
                     f"{use_case_type.__qualname__}.execute: "
-                    f"LoadById({ls.entity_type.__name__}): "
-                    f"parameter '{ls.source_name}' not found in execute signature"
+                    f"{step.spelling} {step.entity_type.__name__}: {problem}"
                 )
-            if ls.source_kind is SourceKind.COMMAND and not has_input:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"LoadById({ls.entity_type.__name__}): from_command requires Input() parameter"
-                )
-
-        for es in bindings.exists_steps:
-            if es.source_kind is SourceKind.PARAM and es.source_name not in param_names:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"Exists({es.entity_type.__name__}): "
-                    f"parameter '{es.source_name}' not found in execute signature"
-                )
-            if es.source_kind is SourceKind.COMMAND and not has_input:
-                raise CompilationError(
-                    f"{use_case_type.__qualname__}.execute: "
-                    f"Exists({es.entity_type.__name__}): from_command requires Input() parameter"
-                )
+        return (
+            [step.reading(command) for step in bindings.load_steps],
+            [step.reading(command) for step in bindings.exists_steps],
+        )
 
 
 def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
@@ -515,31 +446,3 @@ def _joined_stores(use_case_type: type[Compilable]) -> frozenset[StoreKey]:
             )
         stores.add(store_of(model))
     return frozenset(stores)
-
-
-def _fn_accepts_context(fn: Any) -> bool:
-    """Return ``True`` when *fn* accepts a third positional context argument.
-
-    Called once per compute/rule function at compile time so the executor
-    never needs to call ``inspect.signature`` on the hot request path.
-
-    Args:
-        fn: Callable to introspect.
-
-    Returns:
-        ``True`` if *fn* has three or more positional parameters, or uses
-        ``*args`` (``VAR_POSITIONAL``).
-    """
-    try:
-        params = tuple(inspect.signature(fn).parameters.values())
-    except (TypeError, ValueError):
-        return False
-
-    positional_kinds = (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    )
-    positional = [p for p in params if p.kind in positional_kinds]
-    if len(positional) >= 3:
-        return True
-    return any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params)

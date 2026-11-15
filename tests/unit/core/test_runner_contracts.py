@@ -41,87 +41,77 @@ class _BrokenFlush:
 # ---------------------------------------------------------------------------
 
 
-def test_module_exports_only_lifecycle_capabilities() -> None:
-    assert set(runner_module.__all__) == {
-        "SupportsFlush",
-        "SupportsShutdown",
-        "flush_runner",
-        "shutdown_runner",
-    }
+class TestRunnerModuleExports:
+    def test_module_exports_only_lifecycle_capabilities(self) -> None:
+        assert set(runner_module.__all__) == {
+            "SupportsFlush",
+            "SupportsShutdown",
+            "flush_runner",
+            "shutdown_runner",
+        }
 
 
-# ---------------------------------------------------------------------------
-# Happy path — capability dispatch
-# ---------------------------------------------------------------------------
+class TestRunnerCapabilityDispatch:
+    def test_shutdown_runner_calls_structural_capability(self) -> None:
+        runner = _ShutdownCapable()
+
+        assert isinstance(runner, SupportsShutdown)
+
+        shutdown_runner(runner)
+
+        assert runner.shutdown_calls == 1
+
+    def test_flush_runner_calls_structural_capability(self) -> None:
+        runner = _FlushCapable()
+
+        assert isinstance(runner, SupportsFlush)
+
+        flush_runner(runner)
+
+        assert runner.flush_calls == 1
+
+    def test_lifecycle_helpers_are_noop_for_objects_without_capabilities(self) -> None:
+        shutdown_runner(object())
+        flush_runner(object())
 
 
-def test_shutdown_runner_calls_structural_capability() -> None:
-    runner = _ShutdownCapable()
+class TestRunnerExceptionSafety:
+    def test_shutdown_runner_suppresses_exception_and_logs_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
+            shutdown_runner(_BrokenShutdown())  # must not raise
 
-    assert isinstance(runner, SupportsShutdown)
+        assert "shutdown()" in caplog.text
+        assert "_BrokenShutdown" in caplog.text
 
-    shutdown_runner(runner)
+    def test_flush_runner_suppresses_exception_and_logs_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
+            flush_runner(_BrokenFlush())  # must not raise
 
-    assert runner.shutdown_calls == 1
+        assert "flush()" in caplog.text
+        assert "_BrokenFlush" in caplog.text
 
+    def test_original_exception_is_preserved_when_shutdown_raises_in_finally(self) -> None:
+        def _pipeline_fails_then_shuts_down() -> None:
+            try:
+                raise ValueError("pipeline error")
+            finally:
+                shutdown_runner(_BrokenShutdown())
 
-def test_flush_runner_calls_structural_capability() -> None:
-    runner = _FlushCapable()
+        with pytest.raises(ValueError, match="pipeline error"):
+            _pipeline_fails_then_shuts_down()
 
-    assert isinstance(runner, SupportsFlush)
+    def test_original_exception_is_preserved_when_flush_raises_in_finally(self) -> None:
+        def _pipeline_fails_then_flushes() -> None:
+            try:
+                raise ValueError("pipeline error")
+            finally:
+                flush_runner(_BrokenFlush())
 
-    flush_runner(runner)
-
-    assert runner.flush_calls == 1
-
-
-def test_lifecycle_helpers_are_noop_for_objects_without_capabilities() -> None:
-    shutdown_runner(object())
-    flush_runner(object())
-
-
-# ---------------------------------------------------------------------------
-# Exception safety — finally-block contract
-# ---------------------------------------------------------------------------
-
-
-def test_shutdown_runner_suppresses_exception_and_logs_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
-        shutdown_runner(_BrokenShutdown())  # must not raise
-
-    assert "shutdown()" in caplog.text
-    assert "_BrokenShutdown" in caplog.text
-
-
-def test_flush_runner_suppresses_exception_and_logs_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
-        flush_runner(_BrokenFlush())  # must not raise
-
-    assert "flush()" in caplog.text
-    assert "_BrokenFlush" in caplog.text
-
-
-def test_original_exception_is_preserved_when_shutdown_raises_in_finally() -> None:
-    def _pipeline_fails_then_shuts_down() -> None:
-        try:
-            raise ValueError("pipeline error")
-        finally:
-            shutdown_runner(_BrokenShutdown())
-
-    with pytest.raises(ValueError, match="pipeline error"):
-        _pipeline_fails_then_shuts_down()
-
-
-def test_original_exception_is_preserved_when_flush_raises_in_finally() -> None:
-    def _pipeline_fails_then_flushes() -> None:
-        try:
-            raise ValueError("pipeline error")
-        finally:
-            flush_runner(_BrokenFlush())
-
-    with pytest.raises(ValueError, match="pipeline error"):
-        _pipeline_fails_then_flushes()
+        with pytest.raises(ValueError, match="pipeline error"):
+            _pipeline_fails_then_flushes()

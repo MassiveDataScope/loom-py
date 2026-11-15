@@ -35,7 +35,7 @@ _PROFILE = "default"
 _KEYS: list[_Key] = [(7, 1), (7, 2), (8, 1)]
 
 
-class _Entry(BaseModel):
+class AcmeCachedEntry(BaseModel):
     __tablename__ = "cached_composite_entries"
 
     account_id: int = ColumnField(primary_key=True)
@@ -43,39 +43,41 @@ class _Entry(BaseModel):
     rank: int = ColumnField()
 
 
-class _CreateEntry(Command, frozen=True):
+class AcmeCreateEntry(Command, frozen=True):
     account_id: int
     id: int
     rank: int
 
 
-class _PatchEntry(Command, frozen=True):
+class AcmePatchEntry(Command, frozen=True):
     rank: int
 
 
-class _EntryRepository(RepositorySQLAlchemy[_Entry, _Key]):
+class _EntryRepository(RepositorySQLAlchemy[AcmeCachedEntry, _Key]):
     @cache_query(scope="entity")
     async def rank_of(self, key: _Key) -> int:
         entry = await self.get_by_id(key)
         return -1 if entry is None else entry.rank
 
 
-_Cached = CachedRepository[_Entry, _CreateEntry, _PatchEntry, _Key]
-_Read = Callable[[_Cached], Awaitable[PageResult[_Entry] | CursorResult[_Entry]]]
+_Cached = CachedRepository[AcmeCachedEntry, AcmeCreateEntry, AcmePatchEntry, _Key]
+_Read = Callable[[_Cached], Awaitable[PageResult[AcmeCachedEntry] | CursorResult[AcmeCachedEntry]]]
 
 
-class _Env(NamedTuple):
+class AcmeCompositeCacheEnv(NamedTuple):
     wrapper: _Cached
     backend: CountingCacheBackend
     resolver: GenerationalDependencyResolver
     statements: list[str]
 
 
-def _read_paginated(wrapper: _Cached) -> Awaitable[PageResult[_Entry]]:
+def _read_paginated(wrapper: _Cached) -> Awaitable[PageResult[AcmeCachedEntry]]:
     return wrapper.list_paginated(PageParams(page=1, limit=10))
 
 
-def _read_cursor(wrapper: _Cached) -> Awaitable[PageResult[_Entry] | CursorResult[_Entry]]:
+def _read_cursor(
+    wrapper: _Cached,
+) -> Awaitable[PageResult[AcmeCachedEntry] | CursorResult[AcmeCachedEntry]]:
     return wrapper.list_with_query(QuerySpec(pagination=PaginationMode.CURSOR, limit=10))
 
 
@@ -86,16 +88,20 @@ _READS = pytest.mark.parametrize(
 
 @pytest.fixture
 async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionManager:
-    return await sqlite_manager_for(_Entry)
+    return await sqlite_manager_for(AcmeCachedEntry)
 
 
 @pytest.fixture
-async def env(session_manager: SessionManager, cache_config: CacheConfig) -> AsyncIterator[_Env]:
+async def env(
+    session_manager: SessionManager, cache_config: CacheConfig
+) -> AsyncIterator[AcmeCompositeCacheEnv]:
     repository = _EntryRepository(
-        session_manager=session_manager, model=_Entry, cursor_codec=CursorCodec(signing="ephemeral")
+        session_manager=session_manager,
+        model=AcmeCachedEntry,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
     await repository.create_many(
-        [_CreateEntry(account_id=account, id=ident, rank=ident) for account, ident in _KEYS]
+        [AcmeCreateEntry(account_id=account, id=ident, rank=ident) for account, ident in _KEYS]
     )
     backend = CountingCacheBackend()
     resolver = GenerationalDependencyResolver(backend)
@@ -111,15 +117,15 @@ async def env(session_manager: SessionManager, cache_config: CacheConfig) -> Asy
 
     sync_engine = session_manager.engine.sync_engine
     event.listen(sync_engine, "before_cursor_execute", _capture)
-    yield _Env(wrapper, backend, resolver, statements)
+    yield AcmeCompositeCacheEnv(wrapper, backend, resolver, statements)
     event.remove(sync_engine, "before_cursor_execute", _capture)
 
 
-def _keys(result: PageResult[_Entry] | CursorResult[_Entry]) -> list[_Key]:
+def _keys(result: PageResult[AcmeCachedEntry] | CursorResult[AcmeCachedEntry]) -> list[_Key]:
     return [(item.account_id, item.id) for item in result.items]
 
 
-async def _evict(env: _Env, key: _Key) -> None:
+async def _evict(env: AcmeCompositeCacheEnv, key: _Key) -> None:
     tags = env.resolver.entity_tags(env.wrapper.entity_name, key)
     fingerprint = await env.resolver.fingerprint(tags)
     del env.backend.data[entity_key(env.wrapper.entity_name, key, _PROFILE, fingerprint, scope="")]
@@ -127,7 +133,9 @@ async def _evict(env: _Env, key: _Key) -> None:
 
 class TestCachedList:
     @_READS
-    async def test_warm_read_serves_every_row_from_the_cache(self, env: _Env, read: _Read) -> None:
+    async def test_warm_read_serves_every_row_from_the_cache(
+        self, env: AcmeCompositeCacheEnv, read: _Read
+    ) -> None:
         await read(env.wrapper)
         env.statements.clear()
 
@@ -137,7 +145,9 @@ class TestCachedList:
         assert env.statements == []
 
     @_READS
-    async def test_evicted_entity_is_reloaded_by_its_full_key(self, env: _Env, read: _Read) -> None:
+    async def test_evicted_entity_is_reloaded_by_its_full_key(
+        self, env: AcmeCompositeCacheEnv, read: _Read
+    ) -> None:
         await read(env.wrapper)
         await _evict(env, (7, 2))
 
@@ -146,7 +156,7 @@ class TestCachedList:
         assert _keys(result) == _KEYS
 
     async def test_several_evicted_entities_are_reloaded_by_their_full_keys(
-        self, env: _Env
+        self, env: AcmeCompositeCacheEnv
     ) -> None:
         await _read_paginated(env.wrapper)
         for key in _KEYS:
@@ -159,9 +169,9 @@ class TestCachedList:
 
 
 class TestEntityScopedRead:
-    async def test_takes_the_full_key(self, env: _Env) -> None:
+    async def test_takes_the_full_key(self, env: AcmeCompositeCacheEnv) -> None:
         assert await env.wrapper.rank_of((7, 2)) == 2
 
-    async def test_refuses_a_partial_key(self, env: _Env) -> None:
+    async def test_refuses_a_partial_key(self, env: AcmeCompositeCacheEnv) -> None:
         with pytest.raises(TypeError, match=r"received a int .*expected tuple\[int, int\]"):
             await env.wrapper.rank_of(7)

@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "Agent compilation failed with 1 error(s): AcmeMcpUser: parameter 'knowledge' names unknown mcp server 'knowledge'; configured servers: none",
+  "type": "loom.ai.errors.AgentCompilationError",
+  "wrapped": false
+}

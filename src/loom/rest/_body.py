@@ -20,7 +20,6 @@ import msgspec
 
 from loom.core.tracing import get_trace_id
 
-# ASGI type aliases
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]

@@ -37,13 +37,13 @@ from tests.unit.core.uow._coordinator_fakes import (
 )
 
 from ._doubles import (
+    AcmeCacheWidget,
     CachedEnv,
     CodeWidget,
     CountingCacheBackend,
     CountingRepository,
     DateWidget,
     UuidWidget,
-    Widget,
     WidgetCreate,
     WidgetUpdate,
     WritableRepository,
@@ -949,7 +949,7 @@ class TestPrimaryKeyByName:
         assert await env.backend.get_value(expected_key, type=CodeWidget) == keyed
 
     def test_a_repository_without_a_model_is_refused(self, cache_config: CacheConfig) -> None:
-        repository = WritableRepository([Widget(id=1, name="a")], Widget)
+        repository = WritableRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget)
         del repository.model
         backend = CountingCacheBackend()
         resolver = _RecordingResolver(backend)
@@ -976,7 +976,8 @@ class TestEntityScopeValidation:
         [
             (
                 wrap_with_cache(
-                    CountingRepository([Widget(id=1, name="a")], Widget), CacheConfig()
+                    CountingRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget),
+                    CacheConfig(),
                 ),
                 "1",
                 "str",
@@ -984,7 +985,8 @@ class TestEntityScopeValidation:
             ),
             (
                 wrap_with_cache(
-                    CountingRepository([Widget(id=1, name="a")], Widget), CacheConfig()
+                    CountingRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget),
+                    CacheConfig(),
                 ),
                 True,
                 "bool",
@@ -1029,7 +1031,9 @@ class TestEntityScopeValidation:
 
     @pytest.mark.asyncio
     async def test_key_passed_by_keyword_raises(self) -> None:
-        env = wrap_with_cache(CountingRepository([Widget(id=1, name="a")], Widget), CacheConfig())
+        env = wrap_with_cache(
+            CountingRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget), CacheConfig()
+        )
 
         with pytest.raises(TypeError, match="note_count.*first positional argument"):
             await env.wrapper.note_count(obj_id=1)
@@ -1068,8 +1072,8 @@ class TestEntityScopeValidation:
     async def test_exact_type_caches_until_its_row_is_updated(
         self, cache_config: CacheConfig
     ) -> None:
-        rows = [Widget(id=1, name="a"), Widget(id=2, name="bb")]
-        env = wrap_with_cache(WritableRepository(rows, Widget), cache_config)
+        rows = [AcmeCacheWidget(id=1, name="a"), AcmeCacheWidget(id=2, name="bb")]
+        env = wrap_with_cache(WritableRepository(rows, AcmeCacheWidget), cache_config)
 
         assert await env.wrapper.note_count(1) == 1
         assert await env.wrapper.note_count(1) == 1

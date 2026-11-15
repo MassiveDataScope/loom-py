@@ -227,10 +227,9 @@ def decode_spec(
         data:     Raw JSON bytes of a single artifact.
         source:   Human-readable origin used as every issue's component and,
             when it is a real path, as the artifact's ``source_path``.
-        versions: Registry of readable spec versions. Overriding it is how the
-            deprecation path is exercised without shipping a fictitious future
-            version: a registry whose maximum key is above the artifact's
-            version turns that artifact into a deprecated-but-readable one.
+        versions: Registry of readable spec versions. A registry whose
+            maximum key is above the artifact's version reads that artifact as
+            deprecated.
 
     Returns:
         The decoded artifact together with its non-fatal issues, such as a

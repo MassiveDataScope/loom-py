@@ -1,8 +1,9 @@
 """The contract every compile-issue catalogue keeps (ADR 0003 part B).
 
 A catalogue member builds its issue from keyword parameters, so the type
-checker no longer sees a missing or misspelt one. Each pillar's catalogue test
-runs three checks instead:
+checker no longer sees a missing or misspelt one.
+``tests/unit/core/errors/test_issue_catalogues.py`` runs three checks over each
+pillar's catalogue instead:
 
 - every member renders from its declared parameters (:func:`check_renders`);
 - every literal ``<Catalogue>.MEMBER.issue(...)`` call in ``src/loom`` passes
@@ -16,14 +17,15 @@ runs three checks instead:
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping, Set
+from functools import cache
 from pathlib import Path
 from typing import NamedTuple
 
 from loom.core.errors.codes import IssueCode
+from tests.helpers.source_tree import SRC, parsed, source_files
 
 _ROOT = Path(__file__).resolve().parents[2]
-_SRC = _ROOT / "src" / "loom"
 _ENCODING = "utf-8"
 
 INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
@@ -39,6 +41,12 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
         "test_reports_schema_invalid_when_output_schema_is_not_valid_json_schema",
         "tests/unit/ai/compiler/test_state_phase.py::"
         "test_an_invalid_deps_schema_reports_schema_invalid",
+    ),
+    "ai/runtime/_lifecycle.py::_refuse_plans_needing_an_invoker": (
+        "tests/integration/ai/test_conversation.py::"
+        "test_reports_both_codes_when_the_plan_declares_a_hook_and_a_loader",
+        "tests/integration/ai/test_capabilities.py::"
+        "test_refuses_a_plan_granting_use_cases_when_the_container_holds_no_invoker",
     ),
     "ai/config.py::_validate_remote_url": (
         "tests/unit/ai/test_config.py::test_fails_with_mcp_url_invalid_when_the_url_is_not_safe",
@@ -94,7 +102,7 @@ def issue_calls(catalogue: type[IssueCode]) -> list[IssueCall]:
         positional = bool(node.args) or None in named
         keywords = None if positional else frozenset(name for name in named if name)
         calls.append(IssueCall(f"{path}:{node.lineno}", member, keywords))
-    assert calls, f"no {catalogue.__name__}.MEMBER.issue(...) call found under {_SRC}"
+    assert calls, f"no {catalogue.__name__}.MEMBER.issue(...) call found under {SRC}"
     return calls
 
 
@@ -121,26 +129,29 @@ def missing_covering_tests(pillar: str) -> list[str]:
     return missing
 
 
-def _issue_calls() -> Iterator[tuple[str, ast.Call, str]]:
-    """Yield every ``<anything>.issue(...)`` call in ``src/loom`` and its innermost function."""
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding=_ENCODING), str(path))
+@cache
+def _issue_calls() -> tuple[tuple[str, ast.Call, str], ...]:
+    """Every ``<anything>.issue(...)`` call in ``src/loom`` and its innermost function."""
+    found: list[tuple[str, ast.Call, str]] = []
+    for path in source_files():
+        tree = parsed(path)
         owner: dict[int, str] = {}
         # ast.walk visits outer functions first, so an inner one overwrites.
         for function in ast.walk(tree):
             if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 owner.update({id(node): function.name for node in ast.walk(function)})
-        relative = path.relative_to(_SRC).as_posix()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "issue"
-            ):
-                yield relative, node, owner.get(id(node), "<module>")
+        relative = path.relative_to(SRC).as_posix()
+        found.extend(
+            (relative, node, owner.get(id(node), "<module>"))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "issue"
+        )
+    return tuple(found)
 
 
-def _literal_member(node: ast.Call, catalogues: set[str]) -> str | None:
+def _literal_member(node: ast.Call, catalogues: Set[str]) -> str | None:
     """Return ``MEMBER`` when *node* is ``<one of catalogues>.MEMBER.issue(...)``."""
     target = node.func.value if isinstance(node.func, ast.Attribute) else None
     if not isinstance(target, ast.Attribute) or not isinstance(target.value, ast.Name):
@@ -148,12 +159,13 @@ def _literal_member(node: ast.Call, catalogues: set[str]) -> str | None:
     return target.attr if target.value.id in catalogues else None
 
 
-def _catalogue_names() -> set[str]:
+@cache
+def _catalogue_names() -> frozenset[str]:
     """Return the name of every class in ``src/loom`` that subclasses ``IssueCode``."""
-    return {
+    return frozenset(
         node.name
-        for path in _SRC.rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text(encoding=_ENCODING)))
+        for path in source_files()
+        for node in ast.walk(parsed(path))
         if isinstance(node, ast.ClassDef)
         and any(isinstance(base, ast.Name) and base.id == "IssueCode" for base in node.bases)
-    }
+    )

@@ -18,7 +18,6 @@ from loom.prefect.flow._signature import normalize_datetime_fields
 
 _log = logging.getLogger(__name__)
 
-# The run never reads the record back, so a slow or absent API must not hold it.
 _RECORD_TIMEOUT_SECONDS = 10.0
 
 

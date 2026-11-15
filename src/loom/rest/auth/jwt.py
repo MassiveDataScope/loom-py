@@ -19,7 +19,7 @@ from typing import Any
 from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, RESERVED_CLAIMS, JwtAuthConfig
-from loom.rest.auth.issuer import JwtIssuer as JwtIssuer  # the released import path
+from loom.rest.auth.issuer import JwtIssuer as JwtIssuer
 from loom.rest.auth.keys import FixedKey, Key, load_pyjwt
 
 _logger = logging.getLogger(__name__)
@@ -63,10 +63,7 @@ class JwtAuthenticator:
         self._roles_claim = config.roles_claim
         self._keys = config.keyring()
         self._accepted_types = frozenset(_media_type(kind) for kind in config.accepted_types)
-        # One shared secret checks every token and no typ is required: the
-        # header could not change the outcome, so it is not read per request.
         self._reads_header = bool(self._accepted_types) or not isinstance(self._keys, FixedKey)
-        # Registered claims describe the token, not the caller: never identity attributes.
         roles = {config.roles_claim} if config.roles_claim else set()
         self._excluded_claims = RESERVED_CLAIMS | roles
         self._decode_options: dict[str, Any] = {
@@ -117,13 +114,9 @@ class JwtAuthenticator:
                 options=self._decode_options,
             )
         except self._jwt.PyJWTError as exc:
-            # DEBUG only, and never the token itself: no oracle in responses/logs.
             _logger.debug("JWT verification failed: %s: %s", type(exc).__name__, exc)
             return None
         except Exception as exc:  # noqa: BLE001
-            # Fail closed: anything else from the JWT or crypto backend refuses
-            # the token too. Its traceback would carry the revealed key, so only
-            # the type is logged.
             _logger.debug("JWT verification failed: %s", type(exc).__name__)
             return None
         return claims
@@ -181,8 +174,6 @@ class JwtAuthenticator:
         if self._roles_claim is None:
             return ()
         if self._roles_claim not in claims:
-            # Names that disagree between issuer and verifier lose every role
-            # without an error anywhere: say it once, at DEBUG, never the token.
             _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
             return ()
         return _roles_from_claim(claims[self._roles_claim])
@@ -245,8 +236,6 @@ def _attributes(claims: Mapping[str, Any], excluded: frozenset[str]) -> dict[str
 
 def _unprefixed(crossing: Mapping[str, str]) -> dict[str, str]:
     """Strip the attribute prefix, letting a namespaced claim win over a plain one."""
-    # Filter by prefix on both sides: comparing against the stripped names would
-    # keep the wire-format key too, and the domain would see the attribute twice.
     namespaced = {
         name.removeprefix(ATTRIBUTE_CLAIM_PREFIX): value
         for name, value in crossing.items()

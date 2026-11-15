@@ -137,7 +137,6 @@ def build_sqlalchemy_repository_registration_module(
     )
 
     def _register_with_session(container: LoomContainer) -> None:
-        # The store's one session manager: the composition refuses a caller binding the key.
         register_session_manager(container, session_manager)
         register_cursor_codec(container, cursor_codec)
         register(container)

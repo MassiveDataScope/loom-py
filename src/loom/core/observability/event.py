@@ -42,35 +42,28 @@ class Scope(StrEnum):
     unambiguous.
     """
 
-    # Application
     USE_CASE = "use_case"
     JOB = "job"
 
-    # ETL pipeline hierarchy
     PIPELINE = "pipeline"
     PROCESS = "process"
     STEP = "step"
 
-    # Streaming flow hierarchy
     FLOW = "flow"
     NODE = "node"
     POLL_CYCLE = "poll_cycle"
     BATCH_COLLECT = "batch_collect"
 
-    # AI agent hierarchy
     AGENT = "agent"
     TOOL = "tool"
 
-    # I/O operations
     TRANSPORT = "transport"
     READ = "read"
     WRITE = "write"
     DELETE = "delete"
 
-    # Admin
     MAINTENANCE = "maintenance"
 
-    # End of a message's life
     TERMINAL = "terminal"
 
 
@@ -78,9 +71,8 @@ class TerminalReason(StrEnum):
     """Why a streaming message stopped existing.
 
     A message is traceable from ingestion, through every node, to its death.
-    Death is the part that used to be invisible: a message written to a sink,
-    turned into an error envelope, or expanded to zero rows simply stopped
-    appearing, with nothing to query. Each value names one of those endings and
+    A message written to a sink, turned into an error envelope, or expanded
+    to zero rows ends its life; each value names one of those endings and
     becomes the ``name`` of a :attr:`Scope.TERMINAL` span, so the last span of
     a trace says how the message ended.
 

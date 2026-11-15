@@ -20,7 +20,7 @@ from loom.streaming.bytewax.runner import StreamingRunner  # noqa: E402
 from loom.streaming.graph._flow import StreamFlow  # noqa: E402
 from tests.helpers.extras import with_boto3, without_boto3  # noqa: E402
 from tests.unit._resolver_stubs import MappingResolver  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
+from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
 
@@ -61,7 +61,7 @@ def _stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestFromYaml:
     def test_user_resolver_reaches_the_runtime(
-        self, bytewax_stream_flow: StreamFlow[Order, Result], tmp_path: Path
+        self, bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult], tmp_path: Path
     ) -> None:
         config_path = _write_streaming_yaml(tmp_path, "${stub:workers}")
 
@@ -73,7 +73,7 @@ class TestFromYaml:
 
     def test_secrets_placeholder_without_boto3_names_the_extra(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -85,7 +85,7 @@ class TestFromYaml:
 
     def test_no_aws_client_without_placeholders(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -100,7 +100,7 @@ class TestFromYaml:
 
     def test_user_secrets_resolver_wins_over_the_default(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -115,7 +115,7 @@ class TestFromYaml:
 
 class TestRunResolversRequireConfigPath:
     def test_resolvers_with_config_instead_of_config_path_is_rejected(
-        self, bytewax_stream_flow: StreamFlow[Order, Result]
+        self, bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult]
     ) -> None:
         config = ConfigContext.from_dict({})
         runner = StreamingRunner()
@@ -126,7 +126,7 @@ class TestRunResolversRequireConfigPath:
 
     def test_config_without_resolvers_still_runs(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _stub_execution(monkeypatch)
@@ -158,7 +158,7 @@ class TestRunResolversRequireConfigPath:
 class TestRunWithConfigPath:
     def test_user_resolver_reaches_the_runtime(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -176,7 +176,7 @@ class TestRunWithConfigPath:
 
     def test_secrets_placeholder_without_boto3_names_the_extra(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -190,7 +190,7 @@ class TestRunWithConfigPath:
 
     def test_no_aws_client_without_placeholders(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -207,7 +207,7 @@ class TestRunWithConfigPath:
 
     def test_user_secrets_resolver_wins_over_the_default(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

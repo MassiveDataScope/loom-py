@@ -45,11 +45,6 @@ class ResourceLifecycle(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Cleanup helpers — must precede the classes that call them
-# ---------------------------------------------------------------------------
-
-
 def _exit_entered(
     entered: list[tuple[str, AbstractContextManager[object]]],
 ) -> None:
@@ -66,11 +61,6 @@ async def _aexit_entered(
     for _, cm in reversed(entered):
         with suppress(Exception):
             await cm.__aexit__(None, None, None)
-
-
-# ---------------------------------------------------------------------------
-# Sync lifecycle
-# ---------------------------------------------------------------------------
 
 
 class SyncResourceLifecycle:
@@ -172,11 +162,6 @@ class SyncResourceLifecycle:
         _exit_entered(self._entered)
         self._entered = []
         self._resources = {}
-
-
-# ---------------------------------------------------------------------------
-# Async lifecycle
-# ---------------------------------------------------------------------------
 
 
 class AsyncResourceLifecycle:
@@ -297,11 +282,6 @@ class AsyncResourceLifecycle:
         self._resources = {}
         if entered:
             self._bridge.run(_aexit_entered(entered))
-
-
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
 
 
 @overload

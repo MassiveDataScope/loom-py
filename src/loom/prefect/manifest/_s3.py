@@ -50,16 +50,8 @@ class S3JsonManifestStore:
         self._bucket = bucket
         self._prefix = prefix
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _path(self, correlation_id: str) -> str:
         return f"s3://{self._bucket}/{self._prefix}/{correlation_id}/manifest.json"
-
-    # ------------------------------------------------------------------
-    # ManifestStore protocol
-    # ------------------------------------------------------------------
 
     def load(self, correlation_id: str) -> RunManifest | None:
         """Return the stored manifest, or ``None`` if it does not exist.
@@ -113,7 +105,6 @@ class S3JsonManifestStore:
         path = self._path(correlation_id)
         try:
             fs = fsspec.filesystem("s3")
-            # Strip the s3:// scheme for the filesystem call
             key = path[len("s3://") :]
             fs.rm(key)
         except FileNotFoundError:

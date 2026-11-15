@@ -16,7 +16,7 @@ from loom.etl.backends.polars import PolarsSourceReader, decode_json_columns
 from .conftest import table_path
 
 
-class Payload(msgspec.Struct):
+class AcmePayload(msgspec.Struct):
     event_type: str
     user_id: int
 
@@ -35,58 +35,58 @@ def _raw() -> pl.DataFrame:
     )
 
 
-_EVENTS = FromTable("raw.events").parse_json("payload", Payload).parse_json("tags", list[str])
+_EVENTS = FromTable("raw.events").parse_json("payload", AcmePayload).parse_json("tags", list[str])
 
 
-def test_decodes_the_columns_a_from_table_declares() -> None:
-    decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
+class TestDecodeJsonColumns:
+    def test_decodes_the_columns_a_from_table_declares(self) -> None:
+        decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
 
-    assert decoded.schema["payload"] == pl.Struct({"event_type": pl.String, "user_id": pl.Int64})
-    assert decoded.schema["tags"] == pl.List(pl.String)
-    assert decoded["payload"].to_list() == [{"event_type": "click", "user_id": 7}, None, None]
-    assert decoded["tags"].to_list() == [["a", "b"], [], None]
-    assert decoded["id"].to_list() == [1, 2, 3]
+        assert decoded.schema["payload"] == pl.Struct(
+            {"event_type": pl.String, "user_id": pl.Int64}
+        )
+        assert decoded.schema["tags"] == pl.List(pl.String)
+        assert decoded["payload"].to_list() == [{"event_type": "click", "user_id": 7}, None, None]
+        assert decoded["tags"].to_list() == [["a", "b"], [], None]
+        assert decoded["id"].to_list() == [1, 2, 3]
 
+    def test_keeps_the_frame_kind(self) -> None:
+        eager = decode_json_columns(_raw(), _EVENTS.json_columns)
+        lazy = decode_json_columns(_raw().lazy(), _EVENTS.json_columns)
 
-def test_keeps_the_frame_kind() -> None:
-    eager = decode_json_columns(_raw(), _EVENTS.json_columns)
-    lazy = decode_json_columns(_raw().lazy(), _EVENTS.json_columns)
+        assert isinstance(eager, pl.DataFrame)
+        assert isinstance(lazy, pl.LazyFrame)
+        assert_frame_equal(lazy.collect(), eager)
 
-    assert isinstance(eager, pl.DataFrame)
-    assert isinstance(lazy, pl.LazyFrame)
-    assert_frame_equal(lazy.collect(), eager)
+    def test_returns_the_frame_itself_without_json_columns(self) -> None:
+        frame = _raw()
+        assert decode_json_columns(frame, FromTable("raw.events").json_columns) is frame
+        assert decode_json_columns(frame, iter(())) is frame
 
+    def test_decodes_the_columns_a_from_file_declares(self) -> None:
+        source = FromFile("s3://bucket/events.json", format=Format.JSON).parse_json(
+            "payload", AcmePayload
+        )
+        decoded = decode_json_columns(_raw().select("payload"), source.json_columns)
 
-def test_returns_the_frame_itself_without_json_columns() -> None:
-    frame = _raw()
-    assert decode_json_columns(frame, FromTable("raw.events").json_columns) is frame
-    assert decode_json_columns(frame, iter(())) is frame
+        assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
 
+    def test_normalises_a_field_that_changes_type_between_rows(self) -> None:
+        frame = pl.DataFrame(
+            {
+                "payload": [
+                    json.dumps({"event_type": "click", "user_id": 7}),
+                    json.dumps({"event_type": {"name": "view"}, "user_id": 8}),
+                ]
+            }
+        )
+        decoded = decode_json_columns(frame, _EVENTS.json_columns[:1])
 
-def test_decodes_the_columns_a_from_file_declares() -> None:
-    source = FromFile("s3://bucket/events.json", format=Format.JSON).parse_json("payload", Payload)
-    decoded = decode_json_columns(_raw().select("payload"), source.json_columns)
+        assert decoded["payload"].to_list()[1] == {"event_type": '{"name": "view"}', "user_id": 8}
 
-    assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
+    def test_the_reader_decodes_the_columns_its_source_declares(self, tmp_path: Path) -> None:
+        write_deltalake(str(table_path(tmp_path, _EVENTS.table_ref)), _raw(), mode="overwrite")
 
+        read = PolarsSourceReader(tmp_path).read(_EVENTS._to_spec("events"), None).collect()
 
-def test_normalises_a_field_that_changes_type_between_rows() -> None:
-    frame = pl.DataFrame(
-        {
-            "payload": [
-                json.dumps({"event_type": "click", "user_id": 7}),
-                json.dumps({"event_type": {"name": "view"}, "user_id": 8}),
-            ]
-        }
-    )
-    decoded = decode_json_columns(frame, _EVENTS.json_columns[:1])
-
-    assert decoded["payload"].to_list()[1] == {"event_type": '{"name": "view"}', "user_id": 8}
-
-
-def test_the_reader_decodes_the_columns_its_source_declares(tmp_path: Path) -> None:
-    write_deltalake(str(table_path(tmp_path, _EVENTS.table_ref)), _raw(), mode="overwrite")
-
-    read = PolarsSourceReader(tmp_path).read(_EVENTS._to_spec("events"), None).collect()
-
-    assert_frame_equal(read, decode_json_columns(_raw(), _EVENTS.json_columns))
+        assert_frame_equal(read, decode_json_columns(_raw(), _EVENTS.json_columns))

@@ -51,19 +51,21 @@ def _offline_guard(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(variable, raising=False)
 
 
-def test_corpus_compiles_clean_when_offline_and_credentialless(
-    compiler_env_config: AiConfig,
-    compiler_env_registry: UseCaseRegistry,
-    compiler_env_sql: SqlConfig,
-    fake_myapp_path: object,
-) -> None:
-    compiler = AgentCompiler(
-        config=compiler_env_config,
-        registry=compiler_env_registry,
-        supported_kinds=ALL_KINDS,
-        sql=compiler_env_sql,
-        native_tools=admits_every_native_tool,
-    )
-    decoded = load_specs([CORPUS_PATTERN], root=CORPUS_DIR)
-    plans = compiler.compile_all(decoded)
-    assert len(plans) == len(decoded) == 10
+class TestOfflineCompilation:
+    def test_corpus_compiles_clean_when_offline_and_credentialless(
+        self,
+        compiler_env_config: AiConfig,
+        compiler_env_registry: UseCaseRegistry,
+        compiler_env_sql: SqlConfig,
+        fake_myapp_path: object,
+    ) -> None:
+        compiler = AgentCompiler(
+            config=compiler_env_config,
+            registry=compiler_env_registry,
+            supported_kinds=ALL_KINDS,
+            sql=compiler_env_sql,
+            native_tools=admits_every_native_tool,
+        )
+        decoded = load_specs([CORPUS_PATTERN], root=CORPUS_DIR)
+        plans = compiler.compile_all(decoded)
+        assert len(plans) == len(decoded) == 10

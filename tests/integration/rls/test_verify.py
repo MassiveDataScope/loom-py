@@ -66,12 +66,6 @@ async def _checks(url: str, application: Application) -> set[str]:
     return {finding.check for finding in report.findings}
 
 
-async def test_a_freshly_created_schema_verifies_clean(products) -> None:
-    for database, application in products.values():
-        report = await verify(database.superuser, application)
-        assert report.ok, report.findings
-
-
 HATCH = "SELECT loom_guard_notes.open_hatch()"
 REGISTERED_QUAL = (
     "SELECT qual FROM loom_guard_notes.scoped_policy "
@@ -93,171 +87,180 @@ async def _skip_below_postgres_16(uri: str) -> None:
         pytest.skip("GRANT ... WITH INHERIT needs Postgres 16")
 
 
-@pytest.mark.parametrize(
-    ("label", "mutate", "revert", "check"),
-    [
-        (
-            "missing group grant",
-            ["REVOKE SELECT ON notes.notes FROM notes_readers"],
-            ["GRANT SELECT ON notes.notes TO notes_readers"],
-            "group.privileges",
-        ),
-        (
-            "direct grant to a user within the registered set",
-            [
-                "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE",
-                "GRANT SELECT ON notes.notes TO notes_rw",
-                "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS",
-            ],
-            ["REVOKE SELECT ON notes.notes FROM notes_rw"],
-            "assertion",
-        ),
-        (
-            "bypass grant revoked",
-            ["REVOKE SELECT ON notes.notes FROM notes_ops"],
-            ["GRANT SELECT ON notes.notes TO notes_ops"],
-            "bypass.privileges",
-        ),
-        (
-            "bypass grant on the structural version table",
-            [
-                "SET ROLE notes_owner",
-                "CREATE TABLE notes.alembic_version (version_num varchar(32) PRIMARY KEY)",
-                "RESET ROLE",
-            ],
-            ["DROP TABLE notes.alembic_version"],
-            "bypass.version_table",
-        ),
-        (
-            "sequence privilege other than USAGE for writers",
-            ["GRANT SELECT ON SEQUENCE notes.notes_id_seq TO notes_writers"],
-            ["REVOKE SELECT ON SEQUENCE notes.notes_id_seq FROM notes_writers"],
-            "sequence.usage",
-        ),
-        (
-            "bypass without USAGE on a sequence",
-            ["REVOKE USAGE ON SEQUENCE notes.notes_id_seq FROM notes_ops"],
-            ["GRANT USAGE ON SEQUENCE notes.notes_id_seq TO notes_ops"],
-            "bypass.sequence_usage",
-        ),
-        (
-            "a read user member of writers",
-            ["GRANT notes_writers TO notes_ro"],
-            ["REVOKE notes_writers FROM notes_ro"],
-            "membership.access",
-        ),
-        (
-            "migrator with inherited membership",
-            ["GRANT notes_owner TO notes_migrator WITH INHERIT TRUE"],
-            ["GRANT notes_owner TO notes_migrator WITH INHERIT FALSE"],
-            "migrator.inherit",
-        ),
-        (
-            "an undeclared member of readers",
-            ["CREATE ROLE notes_stranger NOLOGIN", "GRANT notes_readers TO notes_stranger"],
-            ["DROP ROLE notes_stranger"],
-            "membership.undeclared",
-        ),
-        (
-            "owner member of a bypass role",
-            ["GRANT notes_ops TO notes_owner"],
-            ["REVOKE notes_ops FROM notes_owner"],
-            "bypass.membership",
-        ),
-    ],
-)
-async def test_notes_negatives_surface_one_check(products, label, mutate, revert, check) -> None:
-    database, application = products["notes"]
-    if any("WITH INHERIT" in statement for statement in mutate):
-        await _skip_below_postgres_16(database.superuser)
+class TestVerify:
+    async def test_a_freshly_created_schema_verifies_clean(self, products) -> None:
+        for database, application in products.values():
+            report = await verify(database.superuser, application)
+            assert report.ok, report.findings
 
-    await _run(database.superuser, mutate)
-    try:
-        checks = await _checks(database.superuser, application)
-    finally:
-        await _run(database.superuser, revert)
-
-    assert check in checks, (label, checks)
-    assert (await verify(database.superuser, application)).ok
-
-
-@pytest.mark.parametrize(
-    ("label", "mutate", "revert", "check"),
-    [
-        (
-            "undeclared grant on a global table",
-            ["GRANT INSERT ON ledger.accounts TO ledger_writers"],
-            ["REVOKE INSERT ON ledger.accounts FROM ledger_writers"],
-            "global.privileges",
-        ),
-        (
-            "missing declared grant on a global table",
-            ["REVOKE SELECT ON ledger.accounts FROM ledger_readers"],
-            ["GRANT SELECT ON ledger.accounts TO ledger_readers"],
-            "global.privileges",
-        ),
-        (
-            "DELETE granted to a group on a global table a scoped table references",
-            ["GRANT DELETE ON ledger.accounts TO ledger_writers"],
-            ["REVOKE DELETE ON ledger.accounts FROM ledger_writers"],
-            "c9.group_write",
-        ),
-    ],
-)
-async def test_ledger_negatives_surface_one_check(products, label, mutate, revert, check) -> None:
-    database, application = products["ledger"]
-
-    await _run(database.superuser, mutate)
-    try:
-        checks = await _checks(database.superuser, application)
-    finally:
-        await _run(database.superuser, revert)
-
-    assert check in checks, (label, checks)
-    assert (await verify(database.superuser, application)).ok
-
-
-async def test_findings_name_the_table_the_check_and_both_sides(products) -> None:
-    database, application = products["notes"]
-
-    await _run(database.superuser, ["REVOKE SELECT ON notes.notes FROM notes_readers"])
-    try:
-        report = await verify(database.superuser, application)
-    finally:
-        await _run(database.superuser, ["GRANT SELECT ON notes.notes TO notes_readers"])
-
-    finding = next(f for f in report.findings if f.check == "group.privileges")
-    assert finding.table == "notes"
-    assert "SELECT" in finding.expected
-    assert finding.actual is not None
-
-
-@pytest.mark.parametrize(
-    ("label", "alteration"),
-    [
-        ("altered qual with the same policy count", "USING (true)"),
-        ("policy roles other than public", "TO notes_readers"),
-    ],
-)
-async def test_a_policy_drift_surfaces_as_an_assertion_finding(products, label, alteration) -> None:
-    database, application = products["notes"]
-    async with _admin(database.superuser) as conn:
-        registered = (await conn.execute(text(REGISTERED_QUAL))).scalar_one()
-    drift = (
-        "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE; "
-        f"ALTER POLICY loom_select ON notes.notes {alteration}; "
-        "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS"
+    @pytest.mark.parametrize(
+        ("label", "mutate", "revert", "check"),
+        [
+            (
+                "missing group grant",
+                ["REVOKE SELECT ON notes.notes FROM notes_readers"],
+                ["GRANT SELECT ON notes.notes TO notes_readers"],
+                "group.privileges",
+            ),
+            (
+                "direct grant to a user within the registered set",
+                [
+                    "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE",
+                    "GRANT SELECT ON notes.notes TO notes_rw",
+                    "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS",
+                ],
+                ["REVOKE SELECT ON notes.notes FROM notes_rw"],
+                "assertion",
+            ),
+            (
+                "bypass grant revoked",
+                ["REVOKE SELECT ON notes.notes FROM notes_ops"],
+                ["GRANT SELECT ON notes.notes TO notes_ops"],
+                "bypass.privileges",
+            ),
+            (
+                "bypass grant on the structural version table",
+                [
+                    "SET ROLE notes_owner",
+                    "CREATE TABLE notes.alembic_version (version_num varchar(32) PRIMARY KEY)",
+                    "RESET ROLE",
+                ],
+                ["DROP TABLE notes.alembic_version"],
+                "bypass.version_table",
+            ),
+            (
+                "sequence privilege other than USAGE for writers",
+                ["GRANT SELECT ON SEQUENCE notes.notes_id_seq TO notes_writers"],
+                ["REVOKE SELECT ON SEQUENCE notes.notes_id_seq FROM notes_writers"],
+                "sequence.usage",
+            ),
+            (
+                "bypass without USAGE on a sequence",
+                ["REVOKE USAGE ON SEQUENCE notes.notes_id_seq FROM notes_ops"],
+                ["GRANT USAGE ON SEQUENCE notes.notes_id_seq TO notes_ops"],
+                "bypass.sequence_usage",
+            ),
+            (
+                "a read user member of writers",
+                ["GRANT notes_writers TO notes_ro"],
+                ["REVOKE notes_writers FROM notes_ro"],
+                "membership.access",
+            ),
+            (
+                "migrator with inherited membership",
+                ["GRANT notes_owner TO notes_migrator WITH INHERIT TRUE"],
+                ["GRANT notes_owner TO notes_migrator WITH INHERIT FALSE"],
+                "migrator.inherit",
+            ),
+            (
+                "an undeclared member of readers",
+                ["CREATE ROLE notes_stranger NOLOGIN", "GRANT notes_readers TO notes_stranger"],
+                ["DROP ROLE notes_stranger"],
+                "membership.undeclared",
+            ),
+            (
+                "owner member of a bypass role",
+                ["GRANT notes_ops TO notes_owner"],
+                ["REVOKE notes_ops FROM notes_owner"],
+                "bypass.membership",
+            ),
+        ],
     )
-    restore = (
-        f"BEGIN; {HATCH}; "
-        f"ALTER POLICY loom_select ON notes.notes TO PUBLIC USING ({registered}); COMMIT"
+    async def test_notes_negatives_surface_one_check(
+        self, products, label, mutate, revert, check
+    ) -> None:
+        database, application = products["notes"]
+        if any("WITH INHERIT" in statement for statement in mutate):
+            await _skip_below_postgres_16(database.superuser)
+
+        await _run(database.superuser, mutate)
+        try:
+            checks = await _checks(database.superuser, application)
+        finally:
+            await _run(database.superuser, revert)
+
+        assert check in checks, (label, checks)
+        assert (await verify(database.superuser, application)).ok
+
+    @pytest.mark.parametrize(
+        ("label", "mutate", "revert", "check"),
+        [
+            (
+                "undeclared grant on a global table",
+                ["GRANT INSERT ON ledger.accounts TO ledger_writers"],
+                ["REVOKE INSERT ON ledger.accounts FROM ledger_writers"],
+                "global.privileges",
+            ),
+            (
+                "missing declared grant on a global table",
+                ["REVOKE SELECT ON ledger.accounts FROM ledger_readers"],
+                ["GRANT SELECT ON ledger.accounts TO ledger_readers"],
+                "global.privileges",
+            ),
+            (
+                "DELETE granted to a group on a global table a scoped table references",
+                ["GRANT DELETE ON ledger.accounts TO ledger_writers"],
+                ["REVOKE DELETE ON ledger.accounts FROM ledger_writers"],
+                "c9.group_write",
+            ),
+        ],
     )
+    async def test_ledger_negatives_surface_one_check(
+        self, products, label, mutate, revert, check
+    ) -> None:
+        database, application = products["ledger"]
 
-    await _run(database.superuser, [drift])
-    try:
-        checks = await _checks(database.superuser, application)
-    finally:
-        await _run(database.superuser, [restore])
+        await _run(database.superuser, mutate)
+        try:
+            checks = await _checks(database.superuser, application)
+        finally:
+            await _run(database.superuser, revert)
 
-    assert "assertion" in checks, (label, checks)
-    assert (await verify(database.superuser, application)).ok
+        assert check in checks, (label, checks)
+        assert (await verify(database.superuser, application)).ok
+
+    async def test_findings_name_the_table_the_check_and_both_sides(self, products) -> None:
+        database, application = products["notes"]
+
+        await _run(database.superuser, ["REVOKE SELECT ON notes.notes FROM notes_readers"])
+        try:
+            report = await verify(database.superuser, application)
+        finally:
+            await _run(database.superuser, ["GRANT SELECT ON notes.notes TO notes_readers"])
+
+        finding = next(f for f in report.findings if f.check == "group.privileges")
+        assert finding.table == "notes"
+        assert "SELECT" in finding.expected
+        assert finding.actual is not None
+
+    @pytest.mark.parametrize(
+        ("label", "alteration"),
+        [
+            ("altered qual with the same policy count", "USING (true)"),
+            ("policy roles other than public", "TO notes_readers"),
+        ],
+    )
+    async def test_a_policy_drift_surfaces_as_an_assertion_finding(
+        self, products, label, alteration
+    ) -> None:
+        database, application = products["notes"]
+        async with _admin(database.superuser) as conn:
+            registered = (await conn.execute(text(REGISTERED_QUAL))).scalar_one()
+        drift = (
+            "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE; "
+            f"ALTER POLICY loom_select ON notes.notes {alteration}; "
+            "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS"
+        )
+        restore = (
+            f"BEGIN; {HATCH}; "
+            f"ALTER POLICY loom_select ON notes.notes TO PUBLIC USING ({registered}); COMMIT"
+        )
+
+        await _run(database.superuser, [drift])
+        try:
+            checks = await _checks(database.superuser, application)
+        finally:
+            await _run(database.superuser, [restore])
+
+        assert "assertion" in checks, (label, checks)
+        assert (await verify(database.superuser, application)).ok

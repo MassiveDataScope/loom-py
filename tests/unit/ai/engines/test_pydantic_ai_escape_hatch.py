@@ -31,6 +31,7 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._chain import current_chain
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import make_plan
 from tests.integration.ai.conftest import make_ai_config
@@ -255,8 +256,9 @@ class TestTheAccessorRejoinsTheGuard:
             handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
 
             assert current_chain() == ()
-            async with native_agent(handle):
-                assert current_chain() == ("contract",)
+            with ExecutionScope(_IDENTITY):
+                async with native_agent(handle):
+                    assert current_chain() == ("contract",)
             assert current_chain() == ()
 
 
@@ -274,7 +276,7 @@ class TestTheBodysExceptionsAreNeverReclassified:
 
         async with _native_runtime() as runtime:
             handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
-            with pytest.raises(TimeoutError) as excinfo:
+            with ExecutionScope(_IDENTITY), pytest.raises(TimeoutError) as excinfo:
                 async with native_agent(handle):
                     raise original
 
@@ -285,7 +287,7 @@ class TestTheBodysExceptionsAreNeverReclassified:
 
         async with _native_runtime() as runtime:
             handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(_IDENTITY), pytest.raises(AgentRunError) as excinfo:
                 async with native_agent(handle):
                     raise original
 

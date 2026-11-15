@@ -29,7 +29,7 @@ try:
     )
 
     from loom.core.connections.clickhouse.client import open_async_client
-except ImportError as exc:  # pragma: no cover - only without the optional extra
+except ImportError as exc:  # pragma: no cover
     raise ImportError(_INSTALL_HINT) from exc
 
 __all__ = [
@@ -48,33 +48,6 @@ __all__ = [
 _CODE_LINE_RE = re.compile(r"Code:\s*\d+[^\n]*")
 _URL_RE = re.compile(r"https?://\S+")
 
-# --- Multi-role transport workaround (pending upstream) ----------------------
-#
-# ClickHouse activates several roles only through REPEATED HTTP parameters
-# ("role=a&role=b"); a comma-joined value is parsed as one role name and
-# rejected with code 511. clickhouse-connect 0.15.1 builds the request URL in
-# ``HttpClient._raw_request`` with ``urlencode(final_params)`` — without
-# ``doseq=True`` — so a sequence value would be sent as its repr
-# ("role=%5B%27a%27%2C+%27b%27%5D"), an invalid role name. Upstream ``main``
-# still encodes it the same way, so this is not fixed by a version bump.
-#
-# Rebinding the encoder the driver looks up is the smallest correct seam:
-# ``doseq=True`` produces byte-identical output for the ``str``/``int``/``bool``
-# values the driver builds today and only changes sequences, whose current
-# encoding is invalid anyway. Overriding ``_raw_request`` instead would mean
-# duplicating ~80 lines of driver internals (retry loop, session guard, error
-# handling) with no way to reuse the URL building alone.
-#
-# The rebinding is NOT applied at import: mutating a third-party namespace for
-# the whole process — including consumers that never touch Loom — as a side
-# effect of an import is exactly the hidden global state this framework
-# forbids. The registry enables it explicitly, and only for a connection that
-# can ever apply more than one role.
-#
-# ``supports_repeated_query_params`` re-checks the outcome so the registry can
-# fail closed on a driver that stops exposing the seam, and
-# ``tests/unit/core/sql/test_clickhouse_transport.py`` pins the patch point so
-# the workaround can never degrade silently.
 _MULTI_ROLE_PROBE: Mapping[str, Any] = {"role": ("loom_probe_a", "loom_probe_b")}
 _MULTI_ROLE_PROBE_ENCODED = "role=loom_probe_a&role=loom_probe_b"
 _URLENCODE_ATTR = "urlencode"

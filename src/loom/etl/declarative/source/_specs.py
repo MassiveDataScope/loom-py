@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
@@ -20,6 +20,27 @@ from loom.etl.schema._schema import ColumnSchema, LoomType
 
 if TYPE_CHECKING:
     from loom.core.expr.nodes import ExprNode
+
+
+class ExtraFieldsMode(StrEnum):
+    """How a source handles fields its declared schema does not cover."""
+
+    IGNORE = "ignore"
+    WARN = "warn"
+    CAPTURE = "capture"
+    ERROR = "error"
+
+    @classmethod
+    def _missing_(cls, value: object) -> ExtraFieldsMode:
+        """Refuse a value that names no mode.
+
+        Raises:
+            ValueError: Always, listing the valid modes.
+        """
+        raise ValueError(
+            f"on_extra_fields mode {value!r} is not valid. "
+            f"Choose one of: {sorted(mode.value for mode in cls)}"
+        )
 
 
 class SourceKind(StrEnum):
@@ -205,7 +226,7 @@ class MongoSourceSpec:
     filter: ExprNode | None = None
     projection: tuple[str, ...] | None = None
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
-    extra_fields_mode: Literal["ignore", "warn", "capture", "error"] = "ignore"
+    extra_fields_mode: ExtraFieldsMode = ExtraFieldsMode.IGNORE
     normalize_extended_json: bool = False
     batch_size: int = 2_000
     limit: int | None = None
@@ -263,7 +284,7 @@ class DynamoDbSourceSpec:
     filter: ExprNode | None = None
     projection: tuple[str, ...] | None = None
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
-    extra_fields_mode: Literal["ignore", "warn", "capture", "error"] = "ignore"
+    extra_fields_mode: ExtraFieldsMode = ExtraFieldsMode.IGNORE
     batch_size: int = 1_000
     limit: int | None = None
     consistent_read: bool = False
@@ -288,7 +309,6 @@ class DynamoDbSourceSpec:
         return SourceKind.DYNAMODB
 
 
-# Type alias — the union of all typed source spec variants.
 SourceSpec = (
     TableSourceSpec
     | FileSourceSpec

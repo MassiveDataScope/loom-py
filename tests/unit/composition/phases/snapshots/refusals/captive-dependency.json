@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "AcmeNeedsLedger -> ledger: AcmeAuditLedger -> trail: AcmeAuditTrail: an APPLICATION binding cannot hold a per-execution one",
+    "type": "loom.core.di.graph.DependencyGraphError"
+  },
+  "message": "Bootstrap failed: AcmeNeedsLedger -> ledger: AcmeAuditLedger -> trail: AcmeAuditTrail: an APPLICATION binding cannot hold a per-execution one",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

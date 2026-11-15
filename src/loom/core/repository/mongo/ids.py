@@ -23,7 +23,6 @@ from bson import ObjectId
 from loom.core.config import ConfigError
 from loom.core.model.introspection import ColumnFieldInfo, get_column_fields
 
-# Annotations that can hold the key either built-in policy generates.
 _GENERATED_KEY_TYPES = (str, UUID)
 
 

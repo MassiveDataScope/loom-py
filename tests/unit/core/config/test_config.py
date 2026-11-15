@@ -37,417 +37,365 @@ class AppSettings:
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_single_file(tmp_path: Path) -> None:
-    f = tmp_path / "config.yaml"
-    f.write_text("database:\n  url: sqlite:///dev.db\n  pool_size: 3\n")
-    cfg = load_config(str(f))
-    assert cfg.database.url == "sqlite:///dev.db"
-    assert cfg.database.pool_size == 3
-
-
-def test_load_config_returns_dictconfig(tmp_path: Path) -> None:
-    from omegaconf import DictConfig
-
-    f = tmp_path / "cfg.yaml"
-    f.write_text("key: value\n")
-    cfg = load_config(str(f))
-    assert isinstance(cfg, DictConfig)
-
-
-def test_load_config_dot_access(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("server:\n  host: 0.0.0.0\n  port: 8080\n")
-    cfg = load_config(str(f))
-    assert cfg.server.host == "0.0.0.0"
-    assert cfg.server.port == 8080
-
-
-# ---------------------------------------------------------------------------
-# load_config — multiple files (merge left-to-right)
-# ---------------------------------------------------------------------------
-
-
-def test_load_config_multiple_files_later_overrides(tmp_path: Path) -> None:
-    base = tmp_path / "base.yaml"
-    base.write_text("debug: false\nlog_level: INFO\n")
-    override = tmp_path / "local.yaml"
-    override.write_text("debug: true\n")
-
-    cfg = load_config(str(base), str(override))
-    assert cfg.debug is True
-    assert cfg.log_level == "INFO"
-
-
-def test_load_config_three_files_merge(tmp_path: Path) -> None:
-    a = tmp_path / "a.yaml"
-    a.write_text("x: 1\ny: 1\n")
-    b = tmp_path / "b.yaml"
-    b.write_text("y: 2\nz: 2\n")
-    c = tmp_path / "c.yaml"
-    c.write_text("z: 3\n")
-
-    cfg = load_config(str(a), str(b), str(c))
-    assert cfg.x == 1
-    assert cfg.y == 2
-    assert cfg.z == 3
-
-
-def test_load_config_nested_merge(tmp_path: Path) -> None:
-    base = tmp_path / "base.yaml"
-    base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
-    override = tmp_path / "prod.yaml"
-    override.write_text("database:\n  url: postgresql://prod/mydb\n")
-
-    cfg = load_config(str(base), str(override))
-    assert cfg.database.url == "postgresql://prod/mydb"
-    assert cfg.database.pool_size == 5  # from base
-
-
-# ---------------------------------------------------------------------------
-# load_config — env interpolation
-# ---------------------------------------------------------------------------
-
-
-def test_load_config_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DB_URL", "postgresql+asyncpg://prod-host/prod")
-    f = tmp_path / "cfg.yaml"
-    f.write_text("database:\n  url: ${oc.env:DB_URL}\n")
-    cfg = load_config(str(f))
-    assert cfg.database.url == "postgresql+asyncpg://prod-host/prod"
-
-
-# ---------------------------------------------------------------------------
-# load_config — error cases
-# ---------------------------------------------------------------------------
-
-
-def test_load_config_no_files_raises() -> None:
-    with pytest.raises(ConfigError, match="at least one"):
-        load_config()
-
-
-def test_load_config_file_not_found_raises() -> None:
-    with pytest.raises(ConfigError, match="not found"):
-        load_config("/nonexistent/path/config.yaml")
-
-
-def test_load_config_one_missing_among_many_raises(tmp_path: Path) -> None:
-    good = tmp_path / "good.yaml"
-    good.write_text("x: 1\n")
-    with pytest.raises(ConfigError, match="not found"):
-        load_config(str(good), "/nonexistent/missing.yaml")
-
-
-# ---------------------------------------------------------------------------
-# section — happy path
-# ---------------------------------------------------------------------------
-
-
-def test_section_msgspec_struct(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("database:\n  url: sqlite:///test.db\n  pool_size: 10\n")
-    cfg = load_config(str(f))
-    db = section(cfg, "database", DatabaseConfig)
-    assert isinstance(db, DatabaseConfig)
-    assert db.url == "sqlite:///test.db"
-    assert db.pool_size == 10
-
-
-def test_section_defaults_applied(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("database:\n  url: sqlite:///dev.db\n")
-    cfg = load_config(str(f))
-    db = section(cfg, "database", DatabaseConfig)
-    assert db.pool_size == 5  # default
-
-
-def test_section_nested_key(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("services:\n  cache:\n    host: redis-host\n    port: 6380\n")
-    cfg = load_config(str(f))
-    cache = section(cfg, "services.cache", CacheConfig)
-    assert cache.host == "redis-host"
-    assert cache.port == 6380
-
-
-def test_section_dataclass(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("app:\n  debug: true\n  log_level: DEBUG\n")
-    cfg = load_config(str(f))
-    app = section(cfg, "app", AppSettings)
-    assert app.debug is True
-    assert app.log_level == "DEBUG"
-
-
-def test_section_env_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REDIS_HOST", "my-redis")
-    f = tmp_path / "cfg.yaml"
-    f.write_text("cache:\n  host: ${oc.env:REDIS_HOST}\n")
-    cfg = load_config(str(f))
-    cache = section(cfg, "cache", CacheConfig)
-    assert cache.host == "my-redis"
-
-
-def test_section_scalar_leaf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_TOKEN", "tok-123")
-    f = tmp_path / "cfg.yaml"
-    f.write_text("api:\n  token: ${oc.env:API_TOKEN}\n  retries: '3'\n")
-    cfg = load_config(str(f))
-
-    assert section(cfg, "api.token", str) == "tok-123"
-    assert section(cfg, "api.retries", int) == 3
-
-
-# ---------------------------------------------------------------------------
-# section — error cases
-# ---------------------------------------------------------------------------
-
-
-def test_section_missing_key_raises(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("other: value\n")
-    cfg = load_config(str(f))
-    with pytest.raises(ConfigError, match="not found"):
-        section(cfg, "database", DatabaseConfig)
-
-
-def test_section_validation_failure_raises(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("database:\n  pool_size: not-a-number\n")  # url missing, pool_size wrong type
-    cfg = load_config(str(f))
-    with pytest.raises(ConfigError, match="validation"):
-        section(cfg, "database", DatabaseConfig)
-
-
-def test_section_nested_key_missing_intermediate_raises(tmp_path: Path) -> None:
-    f = tmp_path / "cfg.yaml"
-    f.write_text("services:\n  other: value\n")
-    cfg = load_config(str(f))
-    with pytest.raises(ConfigError, match="not found"):
-        section(cfg, "services.cache", CacheConfig)
-
-
-# ---------------------------------------------------------------------------
-# load_config — includes directive
-# ---------------------------------------------------------------------------
-
-
-def test_includes_merges_base_into_declaring_file(tmp_path: Path) -> None:
-    base = tmp_path / "base.yaml"
-    base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - base.yaml\napp:\n  name: myapp\n")
-
-    cfg = load_config(str(main))
-    assert cfg.app.name == "myapp"
-    assert cfg.database.url == "sqlite:///base.db"
-    assert cfg.database.pool_size == 5
-
-
-def test_includes_key_stripped_from_result(tmp_path: Path) -> None:
-    base = tmp_path / "base.yaml"
-    base.write_text("x: 1\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - base.yaml\ny: 2\n")
-
-    cfg = load_config(str(main))
-    assert not hasattr(cfg, "includes")
-    assert cfg.x == 1
-    assert cfg.y == 2
-
-
-def test_declaring_file_overrides_included_values(tmp_path: Path) -> None:
-    base = tmp_path / "base.yaml"
-    base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - base.yaml\ndatabase:\n  url: postgresql://prod/db\n")
-
-    cfg = load_config(str(main))
-    assert cfg.database.url == "postgresql://prod/db"
-    assert cfg.database.pool_size == 5  # from base
-
-
-def test_includes_multiple_files_in_order(tmp_path: Path) -> None:
-    a = tmp_path / "a.yaml"
-    a.write_text("x: 1\ny: 1\n")
-    b = tmp_path / "b.yaml"
-    b.write_text("y: 2\nz: 2\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - a.yaml\n  - b.yaml\nz: 3\n")
-
-    cfg = load_config(str(main))
-    assert cfg.x == 1
-    assert cfg.y == 2  # b overrides a
-    assert cfg.z == 3  # main overrides b
-
-
-def test_includes_resolved_relative_to_declaring_file(tmp_path: Path) -> None:
-    sub = tmp_path / "sub"
-    sub.mkdir()
-    base = sub / "base.yaml"
-    base.write_text("key: from_sub\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - sub/base.yaml\n")
-
-    cfg = load_config(str(main))
-    assert cfg.key == "from_sub"
-
-
-def test_includes_recursive(tmp_path: Path) -> None:
-    grandparent = tmp_path / "grandparent.yaml"
-    grandparent.write_text("level: grandparent\n")
-    parent = tmp_path / "parent.yaml"
-    parent.write_text("includes:\n  - grandparent.yaml\nlevel: parent\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - parent.yaml\n")
-
-    cfg = load_config(str(main))
-    assert cfg.level == "parent"  # parent overrides grandparent
-
-
-def test_includes_circular_reference_raises(tmp_path: Path) -> None:
-    a = tmp_path / "a.yaml"
-    b = tmp_path / "b.yaml"
-    a.write_text("includes:\n  - b.yaml\n")
-    b.write_text("includes:\n  - a.yaml\n")
-
-    with pytest.raises(ConfigError, match="[Cc]ircular"):
-        load_config(str(a))
-
-
-def test_includes_missing_file_raises(tmp_path: Path) -> None:
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - nonexistent.yaml\n")
-
-    with pytest.raises(ConfigError, match="not found"):
-        load_config(str(main))
-
-
-def test_includes_resolves_env_interpolation_in_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("VARIANT", "prod")
-    (tmp_path / "values.prod.yaml").write_text("database:\n  url: postgresql://prod/db\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - values.${oc.env:VARIANT}.yaml\napp:\n  name: myapp\n")
-
-    cfg = load_config(str(main))
-
-    assert cfg.database.url == "postgresql://prod/db"
-    assert cfg.app.name == "myapp"
-
-
-def test_includes_resolves_env_interpolation_default_when_var_unset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("VARIANT", raising=False)
-    (tmp_path / "values.local.yaml").write_text("flag: from_default\n")
-    main = tmp_path / "app.yaml"
-    main.write_text("includes:\n  - values.${oc.env:VARIANT,local}.yaml\n")
-
-    cfg = load_config(str(main))
-
-    assert cfg.flag == "from_default"
-
-
-# ---------------------------------------------------------------------------
-# load_config — cloud URIs
-# ---------------------------------------------------------------------------
-
-
-def test_load_config_from_cloud_uri() -> None:
-    from io import StringIO
-    from unittest.mock import MagicMock, patch
-
-    yaml_content = "database:\n  url: postgresql://cloud-host/prod\n  pool_size: 10\n"
-
-    mock_open = MagicMock()
-    mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(yaml_content))
-    mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-    with patch("fsspec.open", mock_open):
-        cfg = load_config("s3://my-bucket/config/prod.yaml")
-
-    assert cfg.database.url == "postgresql://cloud-host/prod"
-    assert cfg.database.pool_size == 10
-    mock_open.assert_called_once_with("s3://my-bucket/config/prod.yaml", mode="r", encoding="utf-8")
-
-
-def test_load_config_cloud_uri_resolves_includes_relative_to_uri() -> None:
-    from io import StringIO
-    from unittest.mock import MagicMock, patch
-
-    contents = {
-        "s3://my-bucket/config/prod.yaml": "includes:\n  - base.yaml\ndatabase:\n  url: sqlite:///dev.db\n",
-        "s3://my-bucket/config/base.yaml": "database:\n  url: ignored\n  pool_size: 4\n",
-    }
-
-    def fake_open(uri: str, **kwargs: object) -> MagicMock:
-        handle = MagicMock()
-        handle.__enter__ = MagicMock(return_value=StringIO(contents[uri]))
-        handle.__exit__ = MagicMock(return_value=False)
-        return handle
-
-    with patch("fsspec.open", side_effect=fake_open):
-        cfg = load_config("s3://my-bucket/config/prod.yaml")
-
-    assert cfg.database.url == "sqlite:///dev.db"
-    assert cfg.database.pool_size == 4
-
-
-def test_load_config_cloud_uri_merged_with_local(tmp_path: Path) -> None:
-    from io import StringIO
-    from unittest.mock import MagicMock, patch
-
-    local = tmp_path / "base.yaml"
-    local.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
-
-    cloud_content = "database:\n  url: postgresql://prod/mydb\n"
-    mock_open = MagicMock()
-    mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(cloud_content))
-    mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-    with patch("fsspec.open", mock_open):
-        cfg = load_config(str(local), "s3://bucket/prod.yaml")
-
-    assert cfg.database.url == "postgresql://prod/mydb"
-    assert cfg.database.pool_size == 5  # from local base
-
-
-# ---------------------------------------------------------------------------
-# load_config — custom resolvers
-# ---------------------------------------------------------------------------
-
-
-def test_load_config_custom_resolver(tmp_path: Path) -> None:
-    from loom.core.config import ConfigResolver
-
-    class FakeResolver:
-        name = "fake"
-
-        def resolve(self, key: str) -> str:
-            return f"resolved:{key}"
-
-    assert isinstance(FakeResolver(), ConfigResolver)
-
-    f = tmp_path / "cfg.yaml"
-    f.write_text("database:\n  url: ${fake:my/secret/url}\n")
-
-    cfg = load_config(str(f), resolvers=[FakeResolver()])
-
-    assert cfg.database.url == "resolved:my/secret/url"
-
-
-def test_load_config_resolver_registration_is_idempotent(tmp_path: Path) -> None:
-    class FakeResolver2:
-        name = "fake2"
-
-        def resolve(self, key: str) -> str:
-            return f"v:{key}"
-
-    f = tmp_path / "cfg.yaml"
-    f.write_text("x: ${fake2:key}\n")
-
-    # Registering the same resolver twice must not raise
-    load_config(str(f), resolvers=[FakeResolver2()])
-    load_config(str(f), resolvers=[FakeResolver2()])
+class TestLoadConfigFiles:
+    def test_load_config_single_file(self, tmp_path: Path) -> None:
+        f = tmp_path / "config.yaml"
+        f.write_text("database:\n  url: sqlite:///dev.db\n  pool_size: 3\n")
+        cfg = load_config(str(f))
+        assert cfg.database.url == "sqlite:///dev.db"
+        assert cfg.database.pool_size == 3
+
+    def test_load_config_returns_dictconfig(self, tmp_path: Path) -> None:
+        from omegaconf import DictConfig
+
+        f = tmp_path / "cfg.yaml"
+        f.write_text("key: value\n")
+        cfg = load_config(str(f))
+        assert isinstance(cfg, DictConfig)
+
+    def test_load_config_dot_access(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("server:\n  host: 0.0.0.0\n  port: 8080\n")
+        cfg = load_config(str(f))
+        assert cfg.server.host == "0.0.0.0"
+        assert cfg.server.port == 8080
+
+    def test_load_config_multiple_files_later_overrides(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text("debug: false\nlog_level: INFO\n")
+        override = tmp_path / "local.yaml"
+        override.write_text("debug: true\n")
+
+        cfg = load_config(str(base), str(override))
+        assert cfg.debug is True
+        assert cfg.log_level == "INFO"
+
+    def test_load_config_three_files_merge(self, tmp_path: Path) -> None:
+        a = tmp_path / "a.yaml"
+        a.write_text("x: 1\ny: 1\n")
+        b = tmp_path / "b.yaml"
+        b.write_text("y: 2\nz: 2\n")
+        c = tmp_path / "c.yaml"
+        c.write_text("z: 3\n")
+
+        cfg = load_config(str(a), str(b), str(c))
+        assert cfg.x == 1
+        assert cfg.y == 2
+        assert cfg.z == 3
+
+    def test_load_config_nested_merge(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
+        override = tmp_path / "prod.yaml"
+        override.write_text("database:\n  url: postgresql://prod/mydb\n")
+
+        cfg = load_config(str(base), str(override))
+        assert cfg.database.url == "postgresql://prod/mydb"
+        assert cfg.database.pool_size == 5  # from base
+
+
+class TestLoadConfigEnvInterpolation:
+    def test_load_config_env_interpolation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DB_URL", "postgresql+asyncpg://prod-host/prod")
+        f = tmp_path / "cfg.yaml"
+        f.write_text("database:\n  url: ${oc.env:DB_URL}\n")
+        cfg = load_config(str(f))
+        assert cfg.database.url == "postgresql+asyncpg://prod-host/prod"
+
+
+class TestLoadConfigMissingFiles:
+    def test_load_config_no_files_raises(self) -> None:
+        with pytest.raises(ConfigError, match="at least one"):
+            load_config()
+
+    def test_load_config_file_not_found_raises(self) -> None:
+        with pytest.raises(ConfigError, match="not found"):
+            load_config("/nonexistent/path/config.yaml")
+
+    def test_load_config_one_missing_among_many_raises(self, tmp_path: Path) -> None:
+        good = tmp_path / "good.yaml"
+        good.write_text("x: 1\n")
+        with pytest.raises(ConfigError, match="not found"):
+            load_config(str(good), "/nonexistent/missing.yaml")
+
+
+class TestConfigSection:
+    def test_section_msgspec_struct(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("database:\n  url: sqlite:///test.db\n  pool_size: 10\n")
+        cfg = load_config(str(f))
+        db = section(cfg, "database", DatabaseConfig)
+        assert isinstance(db, DatabaseConfig)
+        assert db.url == "sqlite:///test.db"
+        assert db.pool_size == 10
+
+    def test_section_defaults_applied(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("database:\n  url: sqlite:///dev.db\n")
+        cfg = load_config(str(f))
+        db = section(cfg, "database", DatabaseConfig)
+        assert db.pool_size == 5  # default
+
+    def test_section_nested_key(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("services:\n  cache:\n    host: redis-host\n    port: 6380\n")
+        cfg = load_config(str(f))
+        cache = section(cfg, "services.cache", CacheConfig)
+        assert cache.host == "redis-host"
+        assert cache.port == 6380
+
+    def test_section_dataclass(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("app:\n  debug: true\n  log_level: DEBUG\n")
+        cfg = load_config(str(f))
+        app = section(cfg, "app", AppSettings)
+        assert app.debug is True
+        assert app.log_level == "DEBUG"
+
+    def test_section_env_interpolation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REDIS_HOST", "my-redis")
+        f = tmp_path / "cfg.yaml"
+        f.write_text("cache:\n  host: ${oc.env:REDIS_HOST}\n")
+        cfg = load_config(str(f))
+        cache = section(cfg, "cache", CacheConfig)
+        assert cache.host == "my-redis"
+
+    def test_section_scalar_leaf(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("API_TOKEN", "tok-123")
+        f = tmp_path / "cfg.yaml"
+        f.write_text("api:\n  token: ${oc.env:API_TOKEN}\n  retries: '3'\n")
+        cfg = load_config(str(f))
+
+        assert section(cfg, "api.token", str) == "tok-123"
+        assert section(cfg, "api.retries", int) == 3
+
+
+class TestConfigSectionErrors:
+    def test_section_missing_key_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("other: value\n")
+        cfg = load_config(str(f))
+        with pytest.raises(ConfigError, match="not found"):
+            section(cfg, "database", DatabaseConfig)
+
+    def test_section_validation_failure_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("database:\n  pool_size: not-a-number\n")  # url missing, pool_size wrong type
+        cfg = load_config(str(f))
+        with pytest.raises(ConfigError, match="validation"):
+            section(cfg, "database", DatabaseConfig)
+
+    def test_section_nested_key_missing_intermediate_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "cfg.yaml"
+        f.write_text("services:\n  other: value\n")
+        cfg = load_config(str(f))
+        with pytest.raises(ConfigError, match="not found"):
+            section(cfg, "services.cache", CacheConfig)
+
+
+class TestConfigIncludes:
+    def test_includes_merges_base_into_declaring_file(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - base.yaml\napp:\n  name: myapp\n")
+
+        cfg = load_config(str(main))
+        assert cfg.app.name == "myapp"
+        assert cfg.database.url == "sqlite:///base.db"
+        assert cfg.database.pool_size == 5
+
+    def test_includes_key_stripped_from_result(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text("x: 1\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - base.yaml\ny: 2\n")
+
+        cfg = load_config(str(main))
+        assert not hasattr(cfg, "includes")
+        assert cfg.x == 1
+        assert cfg.y == 2
+
+    def test_declaring_file_overrides_included_values(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.yaml"
+        base.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - base.yaml\ndatabase:\n  url: postgresql://prod/db\n")
+
+        cfg = load_config(str(main))
+        assert cfg.database.url == "postgresql://prod/db"
+        assert cfg.database.pool_size == 5  # from base
+
+    def test_includes_multiple_files_in_order(self, tmp_path: Path) -> None:
+        a = tmp_path / "a.yaml"
+        a.write_text("x: 1\ny: 1\n")
+        b = tmp_path / "b.yaml"
+        b.write_text("y: 2\nz: 2\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - a.yaml\n  - b.yaml\nz: 3\n")
+
+        cfg = load_config(str(main))
+        assert cfg.x == 1
+        assert cfg.y == 2  # b overrides a
+        assert cfg.z == 3  # main overrides b
+
+    def test_includes_resolved_relative_to_declaring_file(self, tmp_path: Path) -> None:
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        base = sub / "base.yaml"
+        base.write_text("key: from_sub\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - sub/base.yaml\n")
+
+        cfg = load_config(str(main))
+        assert cfg.key == "from_sub"
+
+    def test_includes_recursive(self, tmp_path: Path) -> None:
+        grandparent = tmp_path / "grandparent.yaml"
+        grandparent.write_text("level: grandparent\n")
+        parent = tmp_path / "parent.yaml"
+        parent.write_text("includes:\n  - grandparent.yaml\nlevel: parent\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - parent.yaml\n")
+
+        cfg = load_config(str(main))
+        assert cfg.level == "parent"  # parent overrides grandparent
+
+    def test_includes_circular_reference_raises(self, tmp_path: Path) -> None:
+        a = tmp_path / "a.yaml"
+        b = tmp_path / "b.yaml"
+        a.write_text("includes:\n  - b.yaml\n")
+        b.write_text("includes:\n  - a.yaml\n")
+
+        with pytest.raises(ConfigError, match="[Cc]ircular"):
+            load_config(str(a))
+
+    def test_includes_missing_file_raises(self, tmp_path: Path) -> None:
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - nonexistent.yaml\n")
+
+        with pytest.raises(ConfigError, match="not found"):
+            load_config(str(main))
+
+    def test_includes_resolves_env_interpolation_in_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VARIANT", "prod")
+        (tmp_path / "values.prod.yaml").write_text("database:\n  url: postgresql://prod/db\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - values.${oc.env:VARIANT}.yaml\napp:\n  name: myapp\n")
+
+        cfg = load_config(str(main))
+
+        assert cfg.database.url == "postgresql://prod/db"
+        assert cfg.app.name == "myapp"
+
+    def test_includes_resolves_env_interpolation_default_when_var_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VARIANT", raising=False)
+        (tmp_path / "values.local.yaml").write_text("flag: from_default\n")
+        main = tmp_path / "app.yaml"
+        main.write_text("includes:\n  - values.${oc.env:VARIANT,local}.yaml\n")
+
+        cfg = load_config(str(main))
+
+        assert cfg.flag == "from_default"
+
+
+class TestLoadConfigCloudUris:
+    def test_load_config_from_cloud_uri(self) -> None:
+        from io import StringIO
+        from unittest.mock import MagicMock, patch
+
+        yaml_content = "database:\n  url: postgresql://cloud-host/prod\n  pool_size: 10\n"
+
+        mock_open = MagicMock()
+        mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(yaml_content))
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("fsspec.open", mock_open):
+            cfg = load_config("s3://my-bucket/config/prod.yaml")
+
+        assert cfg.database.url == "postgresql://cloud-host/prod"
+        assert cfg.database.pool_size == 10
+        mock_open.assert_called_once_with(
+            "s3://my-bucket/config/prod.yaml", mode="r", encoding="utf-8"
+        )
+
+    def test_load_config_cloud_uri_resolves_includes_relative_to_uri(self) -> None:
+        from io import StringIO
+        from unittest.mock import MagicMock, patch
+
+        contents = {
+            "s3://my-bucket/config/prod.yaml": "includes:\n  - base.yaml\ndatabase:\n  url: sqlite:///dev.db\n",
+            "s3://my-bucket/config/base.yaml": "database:\n  url: ignored\n  pool_size: 4\n",
+        }
+
+        def fake_open(uri: str, **kwargs: object) -> MagicMock:
+            handle = MagicMock()
+            handle.__enter__ = MagicMock(return_value=StringIO(contents[uri]))
+            handle.__exit__ = MagicMock(return_value=False)
+            return handle
+
+        with patch("fsspec.open", side_effect=fake_open):
+            cfg = load_config("s3://my-bucket/config/prod.yaml")
+
+        assert cfg.database.url == "sqlite:///dev.db"
+        assert cfg.database.pool_size == 4
+
+    def test_load_config_cloud_uri_merged_with_local(self, tmp_path: Path) -> None:
+        from io import StringIO
+        from unittest.mock import MagicMock, patch
+
+        local = tmp_path / "base.yaml"
+        local.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
+
+        cloud_content = "database:\n  url: postgresql://prod/mydb\n"
+        mock_open = MagicMock()
+        mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(cloud_content))
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("fsspec.open", mock_open):
+            cfg = load_config(str(local), "s3://bucket/prod.yaml")
+
+        assert cfg.database.url == "postgresql://prod/mydb"
+        assert cfg.database.pool_size == 5  # from local base
+
+
+class TestLoadConfigCustomResolvers:
+    def test_load_config_custom_resolver(self, tmp_path: Path) -> None:
+        from loom.core.config import ConfigResolver
+
+        class FakeResolver:
+            name = "fake"
+
+            def resolve(self, key: str) -> str:
+                return f"resolved:{key}"
+
+        assert isinstance(FakeResolver(), ConfigResolver)
+
+        f = tmp_path / "cfg.yaml"
+        f.write_text("database:\n  url: ${fake:my/secret/url}\n")
+
+        cfg = load_config(str(f), resolvers=[FakeResolver()])
+
+        assert cfg.database.url == "resolved:my/secret/url"
+
+    def test_load_config_resolver_registration_is_idempotent(self, tmp_path: Path) -> None:
+        class FakeResolver2:
+            name = "fake2"
+
+            def resolve(self, key: str) -> str:
+                return f"v:{key}"
+
+        f = tmp_path / "cfg.yaml"
+        f.write_text("x: ${fake2:key}\n")
+
+        # Registering the same resolver twice must not raise
+        load_config(str(f), resolvers=[FakeResolver2()])
+        load_config(str(f), resolvers=[FakeResolver2()])

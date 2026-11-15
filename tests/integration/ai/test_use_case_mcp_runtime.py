@@ -19,6 +19,7 @@ from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._grants import McpGrantView
 from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
@@ -140,13 +141,14 @@ class TestServerDeclaredOnlyByAUseCase:
                 session=grant.session,
                 catalogue=grant.catalogue,
                 timeout_s=1.0,
-                identity=identity,
                 observability=None,
             )
-            assert view.tools() == ("search",)
-            result = await view.call_untyped("search", {})
+            with ExecutionScope(identity):
+                assert view.tools() == ("search",)
+            with ExecutionScope(identity):
+                result = await view.call_untyped("search", {})
             assert result == {"hits": 3}
-            with pytest.raises(AgentRunError) as excinfo:
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await view.call_untyped("delete", {})
             assert excinfo.value.code is AgentRunErrorCode.TOOL_UNKNOWN
 
@@ -260,10 +262,10 @@ class TestServerSharedWithAnAgent:
                 session=agent_grant.session,
                 catalogue=agent_grant.catalogue,
                 timeout_s=1.0,
-                identity=identity,
                 observability=None,
             )
-            assert agent_view.tools() == ("search",)
+            with ExecutionScope(identity):
+                assert agent_view.tools() == ("search",)
 
             use_case_grant = runtime.use_case_mcp_grant(_SERVER_A)
             assert use_case_grant is not None
@@ -277,11 +279,12 @@ class TestServerSharedWithAnAgent:
                 session=use_case_grant.session,
                 catalogue=use_case_grant.catalogue,
                 timeout_s=1.0,
-                identity=identity,
                 observability=None,
             )
-            assert use_case_view.tools() == ("delete",)
-            result = await use_case_view.call_untyped("delete", {})
+            with ExecutionScope(identity):
+                assert use_case_view.tools() == ("delete",)
+            with ExecutionScope(identity):
+                result = await use_case_view.call_untyped("delete", {})
             assert result == {"ok": True}
 
 
@@ -458,5 +461,7 @@ class TestAgentsOnlyDeployment:
         )
 
         async with runtime:
-            assert runtime.use_case_mcp_grant(_SERVER_A) is None
+            with pytest.raises(AgentRunError) as excinfo:
+                runtime.use_case_mcp_grant(_SERVER_A)
+            assert excinfo.value.code is AgentRunErrorCode.MCP_SERVER_NOT_GRANTED
             assert runtime.has_agent("analyst")

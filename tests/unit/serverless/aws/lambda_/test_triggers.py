@@ -408,18 +408,6 @@ class TestQueued:
         assert (result, ran) == ({"batchItemFailures": [{"itemIdentifier": "r"}]}, [])
 
 
-def test_the_same_job_binds_the_same_command_from_a_queue_and_an_event(
-    serve: Serve, ran: list[tuple[Any, Identity]]
-) -> None:
-    payload = {"number": "7", "note": "parity"}
-
-    serve({"source": "jobs"}, name="worker")(LambdaEvent.jobs(ImportInvoice, payload), None)
-    serve(_events())(LambdaEvent.eventbridge(payload), None)
-
-    (from_queue, _), (from_event, _) = ran
-    assert from_queue == from_event == Invoice(number="7", note="parity")
-
-
 class _Authenticator:
     name = "test"
     provides_roles = True
@@ -428,16 +416,27 @@ class _Authenticator:
         return None
 
 
-def test_startup_refuses_a_trigger_job_it_cannot_run(serve: Serve) -> None:
-    document = _events("Missing")
+class TestTriggerBoundaries:
+    def test_the_same_job_binds_the_same_command_from_a_queue_and_an_event(
+        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    ) -> None:
+        payload = {"number": "7", "note": "parity"}
 
-    with pytest.raises(ConfigError, match="'Missing', which is no discovered Job"):
-        serve(document)
+        serve({"source": "jobs"}, name="worker")(LambdaEvent.jobs(ImportInvoice, payload), None)
+        serve(_events())(LambdaEvent.eventbridge(payload), None)
 
+        (from_queue, _), (from_event, _) = ran
+        assert from_queue == from_event == Invoice(number="7", note="parity")
 
-def test_startup_refuses_an_authenticator_for_an_event_trigger(serve: Serve) -> None:
-    document = _events()
-    authenticator = _Authenticator()
+    def test_startup_refuses_a_trigger_job_it_cannot_run(self, serve: Serve) -> None:
+        document = _events("Missing")
 
-    with pytest.raises(ConfigError, match="applies to an http function only"):
-        serve(document, authenticator=authenticator)
+        with pytest.raises(ConfigError, match="'Missing', which is no discovered Job"):
+            serve(document)
+
+    def test_startup_refuses_an_authenticator_for_an_event_trigger(self, serve: Serve) -> None:
+        document = _events()
+        authenticator = _Authenticator()
+
+        with pytest.raises(ConfigError, match="applies to an http function only"):
+            serve(document, authenticator=authenticator)

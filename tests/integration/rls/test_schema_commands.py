@@ -55,65 +55,73 @@ async def _run(*args: str) -> tuple[int, str]:
     return result.exit_code, result.output
 
 
-async def test_the_pipeline_commands_bootstrap_verify_and_drop_one_expired_partition(
-    module_database_uri: str,
-    created_roles: set[str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    users = [f"{SCHEMA}_migrator", *(f"{SCHEMA}_{suffix}" for suffix in FIXTURE_USERS)]
-    passwords = {user: secrets.token_urlsafe(12) for user in users}
-    created_roles.update(
-        {*users, f"{SCHEMA}_owner", f"{SCHEMA}_readers", f"{SCHEMA}_writers", f"{SCHEMA}_auditor"}
-    )
-    database = _database(module_database_uri, passwords)
-    application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
-    config = tmp_path / f"{SCHEMA}.yaml"
-    _set_retention(config, 12)
-    monkeypatch.setenv("LOOM_SUPERUSER_URL", module_database_uri)
-    monkeypatch.setenv("LOOM_MIGRATOR_URL", database.migrator)
-    for user, password in passwords.items():
-        monkeypatch.setenv(f"LOOM_DB_PASSWORD_{user.upper()}", password)
+class TestSchemaCommands:
+    async def test_the_pipeline_commands_bootstrap_verify_and_drop_one_expired_partition(
+        self,
+        module_database_uri: str,
+        created_roles: set[str],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        users = [f"{SCHEMA}_migrator", *(f"{SCHEMA}_{suffix}" for suffix in FIXTURE_USERS)]
+        passwords = {user: secrets.token_urlsafe(12) for user in users}
+        created_roles.update(
+            {
+                *users,
+                f"{SCHEMA}_owner",
+                f"{SCHEMA}_readers",
+                f"{SCHEMA}_writers",
+                f"{SCHEMA}_auditor",
+            }
+        )
+        database = _database(module_database_uri, passwords)
+        application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
+        config = tmp_path / f"{SCHEMA}.yaml"
+        _set_retention(config, 12)
+        monkeypatch.setenv("LOOM_SUPERUSER_URL", module_database_uri)
+        monkeypatch.setenv("LOOM_MIGRATOR_URL", database.migrator)
+        for user, password in passwords.items():
+            monkeypatch.setenv(f"LOOM_DB_PASSWORD_{user.upper()}", password)
 
-    first = await _run("bootstrap", "--config", str(config))
-    second = await _run("bootstrap", "--config", str(config))
-    assert first[0] == 0, first[1]
-    assert second[0] == 0, second[1]
-    _set_retention(config, 6)
-    assert (await _run("bootstrap", "--config", str(config)))[0] == 0
-    assert await scalar(module_database_uri, RETENTION) == 6
+        first = await _run("bootstrap", "--config", str(config))
+        second = await _run("bootstrap", "--config", str(config))
+        assert first[0] == 0, first[1]
+        assert second[0] == 0, second[1]
+        _set_retention(config, 6)
+        assert (await _run("bootstrap", "--config", str(config)))[0] == 0
+        assert await scalar(module_database_uri, RETENTION) == 6
 
-    # the migrator logs in with the password the command set
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
-    )
-    _set_retention(config, 6)  # application_for rewrote the file without the audit block
+        # the migrator logs in with the password the command set
+        await create_schema(
+            database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
+        )
+        _set_retention(config, 6)  # application_for rewrote the file without the audit block
 
-    clean = await _run("verify", "--config", str(config))
-    assert clean[0] == 0, clean[1]
-    await execute(
-        database.migrator,
-        "SELECT create_audit_partition('2024-01-01 00:00:00+00')",
-        "SELECT create_audit_partition('2024-02-01 00:00:00+00')",
-    )
-    dropped = await _run("audit", "drop-expired")
-    assert dropped == (0, "dropped audit_log_p202401\n")
-    remaining = await scalar(
-        module_database_uri,
-        f"SELECT count(*) FROM pg_inherits WHERE inhparent = '{SCHEMA}.audit_log'::regclass "
-        "AND inhrelid::regclass::text LIKE '%audit_log_p2024%'",
-    )
-    assert remaining == 1
+        clean = await _run("verify", "--config", str(config))
+        assert clean[0] == 0, clean[1]
+        await execute(
+            database.migrator,
+            "SELECT create_audit_partition('2024-01-01 00:00:00+00')",
+            "SELECT create_audit_partition('2024-02-01 00:00:00+00')",
+        )
+        dropped = await _run("audit", "drop-expired")
+        assert dropped == (0, "dropped audit_log_p202401\n")
+        remaining = await scalar(
+            module_database_uri,
+            f"SELECT count(*) FROM pg_inherits WHERE inhparent = '{SCHEMA}.audit_log'::regclass "
+            "AND inhrelid::regclass::text LIKE '%audit_log_p2024%'",
+        )
+        assert remaining == 1
 
-    await execute(
-        module_database_uri,
-        *(f"ALTER EVENT TRIGGER {name} DISABLE" for name in GUARD_EVENT_TRIGGERS),
-        f"DROP TRIGGER loom_audit_record ON {SCHEMA}.memos",
-        *(f"ALTER EVENT TRIGGER {name} ENABLE ALWAYS" for name in GUARD_EVENT_TRIGGERS),
-    )
-    drifted = await _run("verify", "--config", str(config))
-    assert drifted[0] == 1
-    assert (
-        "audit trigger missing, disabled, wrong function or wrong events: books_cli.memos"
-        in drifted[1]
-    )
+        await execute(
+            module_database_uri,
+            *(f"ALTER EVENT TRIGGER {name} DISABLE" for name in GUARD_EVENT_TRIGGERS),
+            f"DROP TRIGGER loom_audit_record ON {SCHEMA}.memos",
+            *(f"ALTER EVENT TRIGGER {name} ENABLE ALWAYS" for name in GUARD_EVENT_TRIGGERS),
+        )
+        drifted = await _run("verify", "--config", str(config))
+        assert drifted[0] == 1
+        assert (
+            "audit trigger missing, disabled, wrong function or wrong events: books_cli.memos"
+            in drifted[1]
+        )

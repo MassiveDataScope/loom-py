@@ -13,20 +13,20 @@ class _SlotObj:
         self.b = b
 
 
-def test_clone_slots_copies_all_declared_slots() -> None:
-    src = _SlotObj(1, "x")
+class TestCloneSlots:
+    def test_clone_slots_copies_all_declared_slots(self) -> None:
+        src = _SlotObj(1, "x")
 
-    cloned = _clone_slots(src, _SlotObj, _SlotObj.__slots__)
+        cloned = _clone_slots(src, _SlotObj, _SlotObj.__slots__)
 
-    assert isinstance(cloned, _SlotObj)
-    assert cloned is not src
-    assert cloned.a == 1
-    assert cloned.b == "x"
+        assert isinstance(cloned, _SlotObj)
+        assert cloned is not src
+        assert cloned.a == 1
+        assert cloned.b == "x"
 
+    def test_clone_slots_is_shallow_copy(self) -> None:
+        src = _SlotObj(1, "x")
+        cloned = _clone_slots(src, _SlotObj, _SlotObj.__slots__)
 
-def test_clone_slots_is_shallow_copy() -> None:
-    src = _SlotObj(1, "x")
-    cloned = _clone_slots(src, _SlotObj, _SlotObj.__slots__)
-
-    cloned.a = 99
-    assert src.a == 1
+        cloned.a = 99
+        assert src.a == 1

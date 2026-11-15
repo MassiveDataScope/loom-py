@@ -11,7 +11,6 @@ of its own. These assertions are the inverse of the ones this file used to pin.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -25,6 +24,7 @@ from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
+from tests.unit.streaming.doubles import RecordingSinkPartition  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -35,27 +35,12 @@ _TRACE_IDS = (
 )
 
 
-class _RecordingObserver:
+class RecordingLifecycleObserver:
     def __init__(self) -> None:
         self.events: list[LifecycleEvent] = []
 
     def on_event(self, event: LifecycleEvent) -> None:
         self.events.append(event)
-
-
-class _RecordingPartition:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.batches: list[Sequence[Any]] = []
-        self._fail = fail
-
-    def write_batch(self, items: Sequence[Any]) -> int:
-        self.batches.append(list(items))
-        if self._fail:
-            raise RuntimeError("sink down")
-        return len(items)
-
-    def close(self) -> int:
-        return 0
 
 
 def _message(index: int, *, trace_id: str | None = "") -> Message[Result]:
@@ -66,7 +51,7 @@ def _message(index: int, *, trace_id: str | None = "") -> Message[Result]:
     )
 
 
-def _sink(partition: Any, recorder: _RecordingObserver) -> _storage._StorageSinkPartition:
+def _sink(partition: Any, recorder: RecordingLifecycleObserver) -> _storage._StorageSinkPartition:
     return _storage._StorageSinkPartition(
         partition,
         node_name="results_sink",
@@ -76,14 +61,14 @@ def _sink(partition: Any, recorder: _RecordingObserver) -> _storage._StorageSink
     )
 
 
-def _of_scope(recorder: _RecordingObserver, scope: Scope) -> list[LifecycleEvent]:
+def _of_scope(recorder: RecordingLifecycleObserver, scope: Scope) -> list[LifecycleEvent]:
     return [event for event in recorder.events if event.scope is scope]
 
 
 class TestStorageBatchTraceAttribution:
     def test_every_message_gets_its_own_terminal_span_in_its_own_trace(self) -> None:
-        recorder = _RecordingObserver()
-        partition = _RecordingPartition()
+        recorder = RecordingLifecycleObserver()
+        partition = RecordingSinkPartition()
 
         _sink(partition, recorder).write_batch([_message(0), _message(1), _message(2)])
 
@@ -114,9 +99,11 @@ class TestStorageBatchTraceAttribution:
             assert event.meta["sink"] == "results_sink"
 
     def test_the_batch_span_belongs_to_no_message_and_names_the_batch(self) -> None:
-        recorder = _RecordingObserver()
+        recorder = RecordingLifecycleObserver()
 
-        _sink(_RecordingPartition(), recorder).write_batch([_message(0), _message(1), _message(2)])
+        _sink(RecordingSinkPartition(), recorder).write_batch(
+            [_message(0), _message(1), _message(2)]
+        )
 
         writes = _of_scope(recorder, Scope.WRITE)
         assert [event.kind for event in writes] == [EventKind.START, EventKind.END]
@@ -135,9 +122,9 @@ class TestStorageBatchTraceAttribution:
         assert batch_ids == {batch_trace}
 
     def test_an_untraced_message_does_not_borrow_anybody_elses_trace(self) -> None:
-        recorder = _RecordingObserver()
+        recorder = RecordingLifecycleObserver()
 
-        _sink(_RecordingPartition(), recorder).write_batch(
+        _sink(RecordingSinkPartition(), recorder).write_batch(
             [_message(0, trace_id=None), _message(1)]
         )
 
@@ -156,9 +143,9 @@ class TestStorageBatchTraceAttribution:
         ]
 
     def test_a_failed_write_still_closes_every_message_and_re_raises(self) -> None:
-        recorder = _RecordingObserver()
+        recorder = RecordingLifecycleObserver()
 
-        sink = _sink(_RecordingPartition(fail=True), recorder)
+        sink = _sink(RecordingSinkPartition(fail=True), recorder)
         messages = [_message(0), _message(1)]
 
         with pytest.raises(RuntimeError, match="sink down"):
@@ -183,8 +170,8 @@ class TestStorageBatchTraceAttribution:
         ]
 
     def test_an_empty_epoch_stays_silent(self) -> None:
-        recorder = _RecordingObserver()
-        partition = _RecordingPartition()
+        recorder = RecordingLifecycleObserver()
+        partition = RecordingSinkPartition()
 
         _sink(partition, recorder).write_batch([])
 

@@ -273,7 +273,7 @@ def _add_public_detail(detail: dict[str, Any], error: LoomError) -> None:
     """
     try:
         extra = error.public_detail()
-    except Exception as exc:  # recovery: an application hook failed; answered as misdeclared
+    except Exception as exc:
         raise _Misdeclared(f"public_detail raised {type(exc).__name__}") from None
     if not isinstance(extra, Mapping):
         raise _Misdeclared("public_detail did not return a mapping")

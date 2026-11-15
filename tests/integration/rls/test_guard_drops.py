@@ -73,63 +73,65 @@ async def _drop_event_triggers(database: ScopedDatabase) -> None:
     )
 
 
-async def test_dropping_a_policy_outside_the_hatch_is_refused(
-    scoped_database: BootstrapFactory,
-) -> None:
-    database = await _guarded(scoped_database)
-    schema = database.schema
+class TestGuardDrops:
+    async def test_dropping_a_policy_outside_the_hatch_is_refused(
+        self,
+        scoped_database: BootstrapFactory,
+    ) -> None:
+        database = await _guarded(scoped_database)
+        schema = database.schema
 
-    state, message = await _outcome(database.migrator, f"DROP POLICY loom_select ON {schema}.t")
-    policies = await scalar(
-        database.migrator,
-        "SELECT count(*) FROM pg_policy WHERE polrelid = CAST(:t AS regclass) AND polname = :p",
-        t=f"{schema}.t",
-        p="loom_select",
-    )
-    await _drop_event_triggers(database)
+        state, message = await _outcome(database.migrator, f"DROP POLICY loom_select ON {schema}.t")
+        policies = await scalar(
+            database.migrator,
+            "SELECT count(*) FROM pg_policy WHERE polrelid = CAST(:t AS regclass) AND polname = :p",
+            t=f"{schema}.t",
+            p="loom_select",
+        )
+        await _drop_event_triggers(database)
 
-    assert state == "LG002"
-    assert "policy set differs from the registered canonical set" in message
-    assert policies == 1
+        assert state == "LG002"
+        assert "policy set differs from the registered canonical set" in message
+        assert policies == 1
 
+    async def test_dropping_the_owner_trigger_outside_the_hatch_is_refused(
+        self,
+        scoped_database: BootstrapFactory,
+    ) -> None:
+        database = await _guarded(scoped_database)
 
-async def test_dropping_the_owner_trigger_outside_the_hatch_is_refused(
-    scoped_database: BootstrapFactory,
-) -> None:
-    database = await _guarded(scoped_database)
+        state, message = await _outcome(
+            database.migrator, f"DROP TRIGGER loom_deny_owner_dml ON {database.schema}.t"
+        )
+        await _drop_event_triggers(database)
 
-    state, message = await _outcome(
-        database.migrator, f"DROP TRIGGER loom_deny_owner_dml ON {database.schema}.t"
-    )
-    await _drop_event_triggers(database)
+        assert state == "LG002"
+        assert "owner trigger missing" in message
 
-    assert state == "LG002"
-    assert "owner trigger missing" in message
+    async def test_dropping_a_plain_index_outside_the_hatch_is_allowed(
+        self,
+        scoped_database: BootstrapFactory,
+    ) -> None:
+        database = await _guarded(scoped_database)
 
+        outcome = await _outcome(database.migrator, f"DROP INDEX {database.schema}.t_note")
+        await _drop_event_triggers(database)
 
-async def test_dropping_a_plain_index_outside_the_hatch_is_allowed(
-    scoped_database: BootstrapFactory,
-) -> None:
-    database = await _guarded(scoped_database)
+        assert outcome == ("none", "")
 
-    outcome = await _outcome(database.migrator, f"DROP INDEX {database.schema}.t_note")
-    await _drop_event_triggers(database)
+    async def test_dropping_a_policy_under_the_hatch_is_refused_at_commit(
+        self,
+        scoped_database: BootstrapFactory,
+    ) -> None:
+        database = await _guarded(scoped_database)
+        schema = database.schema
 
-    assert outcome == ("none", "")
+        state, message = await _outcome(
+            database.migrator,
+            f"SELECT loom_guard_{schema}.open_hatch()",
+            f"DROP POLICY loom_select ON {schema}.t",
+        )
+        await _drop_event_triggers(database)
 
-
-async def test_dropping_a_policy_under_the_hatch_is_refused_at_commit(
-    scoped_database: BootstrapFactory,
-) -> None:
-    database = await _guarded(scoped_database)
-    schema = database.schema
-
-    state, message = await _outcome(
-        database.migrator,
-        f"SELECT loom_guard_{schema}.open_hatch()",
-        f"DROP POLICY loom_select ON {schema}.t",
-    )
-    await _drop_event_triggers(database)
-
-    assert state == "LG002"
-    assert "policy set differs from the registered canonical set" in message
+        assert state == "LG002"
+        assert "policy set differs from the registered canonical set" in message

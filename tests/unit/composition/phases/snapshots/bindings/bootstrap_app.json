@@ -1,0 +1,31 @@
+{
+  "bindings": {
+    "AppConfig": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "AppConfig",
+      "scope": "APPLICATION"
+    },
+    "Environment": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "Environment",
+      "scope": "APPLICATION"
+    },
+    "RuntimeExecutor": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "UseCaseFactory": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "UseCaseFactory",
+      "scope": "APPLICATION"
+    }
+  },
+  "executors": {
+    "constructed": 1,
+    "served": [
+      0
+    ]
+  },
+  "repo_bindings": {}
+}

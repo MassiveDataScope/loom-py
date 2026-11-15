@@ -9,15 +9,16 @@ It is intentionally kept thin — all validation happens during
 startup) and all request handling is delegated to
 :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
 
-Usage::
+An application normally gets it through :func:`~loom.composition.create_app`,
+which composes the kernel from configuration. Directly::
 
-    result = bootstrap_app(
+    kernel = create_kernel(
         config=cfg,
         use_cases=[CreateOrderUseCase, GetOrderUseCase],
         modules=[register_repositories],
     )
     app = create_fastapi_app(
-        result,
+        kernel,
         RouteSources(python=[OrderRestInterface]),
         observability_runtime=ObservabilityRuntime.noop(),
         title="Orders API",
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -42,18 +43,7 @@ from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults
 
-# Type alias for ASGI middleware classes accepted by FastAPI.add_middleware.
 _MiddlewareClass = Any
-
-
-def _resolve_executor(result: BootstrapResult) -> RuntimeExecutor:
-    """Return the application-scoped RuntimeExecutor registered at bootstrap."""
-    if not result.container.is_registered(RuntimeExecutor):
-        raise RuntimeError(
-            "RuntimeExecutor is not registered in the container. "
-            "Use bootstrap_app(...) or create_kernel(...) to build BootstrapResult."
-        )
-    return cast(RuntimeExecutor, result.container.resolve(RuntimeExecutor))
 
 
 def _require_route_sources(routes: object) -> RouteSources:
@@ -103,7 +93,12 @@ def compile_api(
         InterfaceCompilationError: If any interface fails structural validation.
     """
     resolved_routes = _require_route_sources(routes)
-    executor = _resolve_executor(result)
+    executor = result.container.resolve_or_none(RuntimeExecutor)
+    if executor is None:
+        raise RuntimeError(
+            "RuntimeExecutor is not registered in the container. "
+            "Use create_kernel(...) to build BootstrapResult."
+        )
     compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
         resolved_routes
     )
@@ -132,7 +127,7 @@ def create_fastapi_app(
 
     Args:
         result: Fully initialised :class:`~loom.core.bootstrap.bootstrap.BootstrapResult`
-            from :func:`~loom.core.bootstrap.bootstrap.bootstrap_app`.
+            from :func:`~loom.core.bootstrap.kernel.create_kernel`.
         routes: Which interfaces to mount and from which origin — see
             :class:`~loom.rest.compiler.RouteSources`. ``routes.config``
             compiles after ``routes.python``, deterministically; a

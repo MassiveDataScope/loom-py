@@ -238,64 +238,11 @@ class TestSortFieldsACursorCannotCarry:
         assert excinfo.value.reason == "cursor token is not valid"
 
 
-async def test_a_plain_enum_sort_walks_every_page(session_manager: SessionManager) -> None:
-    """The decoded key is the enum member; the predicate binds what the column stores."""
-    compile_all(_Swatch)
-    compiled = get_compiled(_Swatch)
-    assert compiled is not None
-    async with session_manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Swatch, cursor_codec=_CODEC
-    )
-    await repo.create_many([_CreateSwatch(shade=shade) for shade in _Shade])
-    query = QuerySpec(sort=(SortSpec("shade"),), pagination=PaginationMode.CURSOR, limit=2)
-
-    first = await repo.list_with_query(query)
-    assert isinstance(first, CursorResult)
-    second = await repo.list_with_query(
-        QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor)
-    )
-
-    assert isinstance(second, CursorResult)
-    walked = [item.shade for item in (*first.items, *second.items)]
-    assert walked == sorted(_Shade, key=lambda shade: shade.value)
-
-
 class _Shift(BaseModel):
     __tablename__ = "cursor_shifts"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
     starts_at: time = ColumnField()
-
-
-async def test_a_forged_aware_time_for_a_naive_time_column_is_refused(
-    session_manager: SessionManager,
-) -> None:
-    """A position is compared as a filter value is, offset rule included."""
-    compile_all(_Shift)
-    compiled = get_compiled(_Shift)
-    assert compiled is not None
-    async with session_manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    unsigned = CursorCodec(signing="unsigned")
-    repo: RepositorySQLAlchemy[_Shift, int] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Shift, cursor_codec=unsigned
-    )
-    query = QuerySpec(sort=(SortSpec("starts_at"),), pagination=PaginationMode.CURSOR, limit=2)
-    aware = time(9, 30, tzinfo=timezone(timedelta(hours=2)))
-    token = unsigned.encode(
-        Cursor(backend="sqlalchemy", keys=(aware,), tie_breaker=1),
-        model=_Shift,
-        query=query,
-        scope="",
-    )
-    forged = QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=token)
-
-    with pytest.raises(BoundaryValidationError) as excinfo:
-        await repo.list_with_query(forged)
-
-    assert excinfo.value.code == ErrorCode.QUERY_VALIDATION
 
 
 class _Ticket(BaseModel):
@@ -310,35 +257,93 @@ class _CreateTicket(Command, frozen=True):
     rank: int
 
 
-async def test_a_uuid_primary_key_breaks_ties_across_every_page(
-    session_manager: SessionManager,
-) -> None:
-    """The tie-breaker is a bare ``UUID`` key, a ``Uuid`` column, on every page."""
-    compile_all(_Ticket)
-    compiled = get_compiled(_Ticket)
-    assert compiled is not None
-    async with session_manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    repo: RepositorySQLAlchemy[_Ticket, UUID] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Ticket, cursor_codec=_CODEC
-    )
-    keys = [UUID(int=n) for n in (5, 2, 7, 1, 6, 3, 4)]
-    await repo.create_many([_CreateTicket(id=key, rank=1) for key in keys])
-    sort = (SortSpec("rank"),)
-
-    walked: list[UUID] = []
-    pages = 0
-    cursor: str | None = None
-    while True:
-        page = await repo.list_with_query(
-            QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+class TestCursorKeys:
+    async def test_a_plain_enum_sort_walks_every_page(
+        self, session_manager: SessionManager
+    ) -> None:
+        """The decoded key is the enum member; the predicate binds what the column stores."""
+        compile_all(_Swatch)
+        compiled = get_compiled(_Swatch)
+        assert compiled is not None
+        async with session_manager.engine.begin() as connection:
+            await connection.run_sync(compiled.metadata.create_all)
+        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Swatch, cursor_codec=_CODEC
         )
-        assert isinstance(page, CursorResult)
-        pages += 1
-        walked.extend(item.id for item in page.items)
-        if page.next_cursor is None:
-            break
-        cursor = page.next_cursor
+        await repo.create_many([_CreateSwatch(shade=shade) for shade in _Shade])
+        query = QuerySpec(sort=(SortSpec("shade"),), pagination=PaginationMode.CURSOR, limit=2)
 
-    assert pages == 4
-    assert walked == sorted(keys)
+        first = await repo.list_with_query(query)
+        assert isinstance(first, CursorResult)
+        second = await repo.list_with_query(
+            QuerySpec(
+                sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor
+            )
+        )
+
+        assert isinstance(second, CursorResult)
+        walked = [item.shade for item in (*first.items, *second.items)]
+        assert walked == sorted(_Shade, key=lambda shade: shade.value)
+
+    async def test_a_forged_aware_time_for_a_naive_time_column_is_refused(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """A position is compared as a filter value is, offset rule included."""
+        compile_all(_Shift)
+        compiled = get_compiled(_Shift)
+        assert compiled is not None
+        async with session_manager.engine.begin() as connection:
+            await connection.run_sync(compiled.metadata.create_all)
+        unsigned = CursorCodec(signing="unsigned")
+        repo: RepositorySQLAlchemy[_Shift, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Shift, cursor_codec=unsigned
+        )
+        query = QuerySpec(sort=(SortSpec("starts_at"),), pagination=PaginationMode.CURSOR, limit=2)
+        aware = time(9, 30, tzinfo=timezone(timedelta(hours=2)))
+        token = unsigned.encode(
+            Cursor(backend="sqlalchemy", keys=(aware,), tie_breaker=1),
+            model=_Shift,
+            query=query,
+            scope="",
+        )
+        forged = QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=token)
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            await repo.list_with_query(forged)
+
+        assert excinfo.value.code == ErrorCode.QUERY_VALIDATION
+
+    async def test_a_uuid_primary_key_breaks_ties_across_every_page(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """The tie-breaker is a bare ``UUID`` key, a ``Uuid`` column, on every page."""
+        compile_all(_Ticket)
+        compiled = get_compiled(_Ticket)
+        assert compiled is not None
+        async with session_manager.engine.begin() as connection:
+            await connection.run_sync(compiled.metadata.create_all)
+        repo: RepositorySQLAlchemy[_Ticket, UUID] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Ticket, cursor_codec=_CODEC
+        )
+        keys = [UUID(int=n) for n in (5, 2, 7, 1, 6, 3, 4)]
+        await repo.create_many([_CreateTicket(id=key, rank=1) for key in keys])
+        sort = (SortSpec("rank"),)
+
+        walked: list[UUID] = []
+        pages = 0
+        cursor: str | None = None
+        while True:
+            page = await repo.list_with_query(
+                QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+            )
+            assert isinstance(page, CursorResult)
+            pages += 1
+            walked.extend(item.id for item in page.items)
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+
+        assert pages == 4
+        assert walked == sorted(keys)

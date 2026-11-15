@@ -2,7 +2,7 @@
 
 The registry is an async context manager. Entering it creates one client per
 configured connection, asserts per-query role support on the driver and runs
-the sentinel-role startup probe (spec §2); leaving it closes every client.
+the sentinel-role startup probe; leaving it closes every client.
 :meth:`ClickHouseConnectionRegistry.check` runs the same checks and probe on
 temporary clients, so a prefork parent probes once before forking and its
 children open without probing again.
@@ -38,10 +38,6 @@ _logger = logging.getLogger(__name__)
 
 _PROBE_SQL = "SELECT 1"
 _SENTINEL_ROLE = "loom_probe_sentinel_role_does_not_exist"
-# Anchored to the error-code marker so an incidental "511" elsewhere in the
-# message can never satisfy the fail-closed probe. Case-insensitive to match
-# both the server body ("Code: 511. DB::Exception ...") and the driver
-# summary line ("Received ClickHouse exception, code: 511").
 _UNKNOWN_ROLE_CODE_RE = re.compile(r"\bcode:\s*511\b", re.IGNORECASE)
 
 
@@ -231,11 +227,9 @@ async def _verify_connection(
 def _client_kwargs(connection: SqlConnectionConfig) -> dict[str, Any]:
     """Exact ``get_async_client`` keyword arguments for one connection."""
     extra: dict[str, Any] = {
-        # Never rely on the driver's mutable global default (spec §2).
         "autogenerate_session_id": False,
     }
     if not connection.readonly:
-        # Driver retries could re-run non-idempotent statements (re-INSERT).
         extra["query_retries"] = 0
     return async_client_options(connection, **extra)
 
@@ -262,8 +256,6 @@ def _require_multi_role_transport(name: str, connection: SqlConnectionConfig) ->
     """
     if len(connection.allowed_roles) <= 1:
         return
-    # Enabled here and nowhere else: the driver workaround is a process-wide
-    # mutation, so it only happens for an application that actually needs it.
     enable_repeated_query_params()
     if supports_repeated_query_params():
         return

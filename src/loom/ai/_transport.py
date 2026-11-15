@@ -40,7 +40,7 @@ BODY_OVERHEAD_BYTES: Final[int] = 64 * 1024
 """Headroom over the declared field caps for the JSON envelope around them.
 
 The agent surface's body cap is ``max_prompt_bytes + max_state_bytes +
-BODY_OVERHEAD_BYTES`` (FR-015); anything larger is refused before buffering
+BODY_OVERHEAD_BYTES``; anything larger is refused before buffering
 beyond the cap. Every other surface using this constant has no ``state``
 field, so its own cap stays ``max_prompt_bytes + BODY_OVERHEAD_BYTES``.
 """
@@ -141,7 +141,7 @@ def require_caller(name: str, endpoint: AgentEndpointConfig | None) -> Identity:
 
     An unknown agent has no ``allow_anonymous`` opt-out, so an anonymous probe
     is refused with 401 whatever the name — which is what stops an agent
-    surface from being used as an agent directory (FR-029b).
+    surface from being used as an agent directory.
 
     Args:
         name: Agent the caller addressed.
@@ -269,8 +269,7 @@ def project_output(value: _WireResultT, output_type: LoomType) -> _WireResultT:
     The one place every surface — ``/run``, the SSE ``final`` frame and both
     A2A paths — projects the run's already-validated answer, so
     ``result_payload``, ``encode_sse_event``, ``_data_part`` and
-    ``_completed_task`` keep encoding whatever ``output`` already holds
-    (FR-010).
+    ``_completed_task`` keep encoding whatever ``output`` already holds.
 
     Args:
         value: Result or terminal event whose ``output`` is still the
@@ -284,16 +283,16 @@ def project_output(value: _WireResultT, output_type: LoomType) -> _WireResultT:
     return msgspec.structs.replace(value, output=output_type.to_builtins(value.output))
 
 
-async def projecting_final(
+async def with_projected_output(
     events: AsyncIterator[AgentEvent], output_type: LoomType
 ) -> AsyncIterator[AgentEvent]:
     """Relay *events*, projecting the terminal ``final`` event's ``output``.
 
     Every event but ``final`` is yielded unchanged; ``final`` is passed
     through :func:`project_output` first, so a consumer downstream — the SSE
-    encoder, the A2A projector — never sees the engine's validated instance
-    (FR-010). Both agent surfaces wrap their event stream with this generator
-    before their own projection consumes it.
+    encoder, the A2A projector — never sees the engine's validated instance. Both agent
+    surfaces wrap their event stream with this generator before their own projection
+    consumes it.
 
     Args:
         events: Run events, terminal event last.
@@ -363,8 +362,6 @@ async def _drain(pending: asyncio.Future[bytes | None] | None) -> None:
         try:
             await asyncio.shield(pending)
         except (Exception, asyncio.CancelledError):
-            # The consumer is already gone: neither the cancellation just
-            # requested nor a late failure has anybody left to be reported to.
             continue
 
 
@@ -377,7 +374,7 @@ async def with_heartbeats(
     :data:`HEARTBEAT_FRAME` and the race starts again. The awaited frame is
     shielded from the heartbeat — a timeout must not tear down the run it is
     keeping alive — and is cancelled and drained when the consumer goes away,
-    so no work outlives it (FR-033).
+    so no work outlives it.
 
     The race lives in this generator rather than in a background task feeding a
     queue: a background task survives the disconnect cancellation and keeps a

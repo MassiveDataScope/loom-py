@@ -8,7 +8,7 @@ and the credential reference when it was parsed, so nothing is re-checked here.
 
 Skill libraries resolve on the filesystem, offline: the directory is listed and
 the include/exclude filter applied at compile, so the plan carries exact skill
-names.  Reading a directory is not network access and keeps FR-010 intact.
+names.
 """
 
 from __future__ import annotations
@@ -54,15 +54,8 @@ from loom.core.sql.config import SqlConfig, roles_need_identity_binding
 from loom.core.symbols import import_symbol
 from loom.core.use_case.registry import UseCaseRegistry
 
-# Kinds that read application data or call application/remote code.  An agent
-# that opts out of authentication may hold none of them (FR-045a).  ``skills``
-# only injects packaged prompt material and ``native`` runs inside the model
-# provider, reading no application data and acting under no caller identity, so
-# both are exempt.
 _DATA_OR_REMOTE_KINDS: Final[frozenset[str]] = frozenset({"usecase", "sql", "python", "mcp", "a2a"})
 
-# A directory is one skill when it holds this manifest; a library is a
-# directory of such directories.  Same rule as ``pydantic-ai-harness``.
 _SKILL_MANIFEST: Final[str] = "SKILL.md"
 
 _LOCAL_LIBRARY_PREFIX: Final[str] = "./"
@@ -263,8 +256,6 @@ def _compile_sql(capability: SqlCapability, context: _Context) -> _HandlerResult
                 component=context.component, connection=capability.connection
             )
         )
-    # Defensive: the v1 struct already makes absent or non-positive bounds
-    # unrepresentable, but a spec built through another path must not pass.
     if capability.max_rows < 1 or capability.max_result_bytes < 1:
         issues.append(
             AgentErrorCode.SQL_RESULT_BOUND_MISSING.issue(
@@ -558,9 +549,6 @@ def _compile_native(capability: NativeCapability, context: _Context) -> _Handler
     return CompiledNativeCapability(tool=capability.tool), []
 
 
-# Dispatch map keyed by the declared capability type.  ``Any`` in the handler
-# parameter is the dispatch boundary: each handler is statically typed for its
-# own capability, and the map guarantees the pairing.
 _HANDLERS: Final[Mapping[type[CapabilitySpec], Callable[[Any, _Context], _HandlerResult]]] = {
     UsecaseCapability: _compile_usecase,
     NativeCapability: _compile_native,

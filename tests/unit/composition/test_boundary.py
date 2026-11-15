@@ -34,20 +34,6 @@ print(json.dumps(sorted(
 """
 
 
-def test_importing_the_composition_loads_no_transport() -> None:
-    result = subprocess.run(
-        # Not -I: it ignores PYTHONPATH, and the check must run against this tree.
-        [sys.executable, "-s", "-c", _SCRIPT],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": str(_SRC)},
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == []
-
-
 # The Celery job service loads ``celery`` itself, and creating a Celery app
 # imports ``celery.signals``: neither is the worker. Its adapter, its
 # bootstrap and the prefork pool are.
@@ -108,17 +94,31 @@ celery:
 """
 
 
-def test_composing_and_opening_with_celery_loads_no_worker(tmp_path: Path) -> None:
-    config = tmp_path / "app.yaml"
-    config.write_text(_CONFIG, encoding="utf-8")
+class TestCompositionBoundary:
+    def test_importing_the_composition_loads_no_transport(self) -> None:
+        result = subprocess.run(
+            # Not -I: it ignores PYTHONPATH, and the check must run against this tree.
+            [sys.executable, "-s", "-c", _SCRIPT],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(_SRC)},
+        )
 
-    result = subprocess.run(
-        [sys.executable, "-I", "-c", _OPEN_SCRIPT, str(_SRC), str(config), json.dumps(_WORKER)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=tmp_path,
-    )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == []
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1]) == []
+    def test_composing_and_opening_with_celery_loads_no_worker(self, tmp_path: Path) -> None:
+        config = tmp_path / "app.yaml"
+        config.write_text(_CONFIG, encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", _OPEN_SCRIPT, str(_SRC), str(config), json.dumps(_WORKER)],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == []

@@ -15,6 +15,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
+from loom.core.execution import execution_identity
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case.markers import Agent, Caller
 from loom.core.use_case.use_case import UseCase
@@ -60,11 +61,14 @@ class NoAgentUseCase(UseCase[object, str]):
 
 
 def _resolver(calls: list[tuple[str, Identity]]) -> Any:
-    def _resolve(name: str, identity: Identity) -> _FakeHandle:
-        calls.append((name, identity))
-        return _FakeHandle(name, identity)
+    class Resolver:
+        def resolve(self, declaration: object, annotation: object) -> _FakeHandle:
+            name = declaration.name
+            identity = execution_identity()
+            calls.append((name, identity))
+            return _FakeHandle(name, identity)
 
-    return _resolve
+    return Resolver()
 
 
 # ---------------------------------------------------------------------------
@@ -72,113 +76,104 @@ def _resolver(calls: list[tuple[str, Identity]]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_the_marker_compiles_into_an_agent_binding() -> None:
-    plan = UseCaseCompiler().compile(TriageUseCase)
-    assert [ab.name for ab in plan.agent_bindings] == ["triage"]
-    assert plan.agent_bindings[0].agent == "incident-triage"
+class TestAgentMarker:
+    def test_the_marker_compiles_into_an_agent_binding(self) -> None:
+        plan = UseCaseCompiler().compile(TriageUseCase)
+        assert [ab.name for ab in plan.agent_bindings] == ["triage"]
+        assert plan.agent_bindings[0].agent == "incident-triage"
 
+    def test_the_agent_parameter_is_not_a_primitive_parameter(self) -> None:
+        """It must not fall through to ``ParamBinding``, or callers would supply it."""
+        plan = UseCaseCompiler().compile(TriageUseCase)
+        assert [pb.name for pb in plan.param_bindings] == []
 
-def test_the_agent_parameter_is_not_a_primitive_parameter() -> None:
-    """It must not fall through to ``ParamBinding``, or callers would supply it."""
-    plan = UseCaseCompiler().compile(TriageUseCase)
-    assert [pb.name for pb in plan.param_bindings] == []
+    def test_several_agent_markers_compile_in_declaration_order(self) -> None:
+        plan = UseCaseCompiler().compile(TwoAgentsUseCase)
+        assert [(ab.name, ab.agent) for ab in plan.agent_bindings] == [
+            ("first", "triage"),
+            ("second", "summariser"),
+        ]
 
+    def test_a_use_case_without_the_marker_has_no_agent_bindings(self) -> None:
+        plan = UseCaseCompiler().compile(NoAgentUseCase)
+        assert plan.agent_bindings == ()
 
-def test_several_agent_markers_compile_in_declaration_order() -> None:
-    plan = UseCaseCompiler().compile(TwoAgentsUseCase)
-    assert [(ab.name, ab.agent) for ab in plan.agent_bindings] == [
-        ("first", "triage"),
-        ("second", "summariser"),
-    ]
+    # ---------------------------------------------------------------------------
+    # Execution
+    # ---------------------------------------------------------------------------
 
+    async def test_the_resolved_handle_is_bound_to_the_verified_caller(self) -> None:
+        """The identity closed over by the handle is this execution's caller, not
 
-def test_a_use_case_without_the_marker_has_no_agent_bindings() -> None:
-    plan = UseCaseCompiler().compile(NoAgentUseCase)
-    assert plan.agent_bindings == ()
+        a parameter the use case body could have gotten wrong: there is no
+        identity argument in the signature for the author to pass at all.
+        """
+        calls: list[tuple[str, Identity]] = []
+        compiler = UseCaseCompiler()
+        compiler.compile(TriageUseCase)
+        executor = RuntimeExecutor(compiler)
+        executor.bind_agent_resolver(_resolver(calls))
 
+        subject, agent_name = await executor.execute(TriageUseCase(), identity=_ALICE)
 
-# ---------------------------------------------------------------------------
-# Execution
-# ---------------------------------------------------------------------------
+        assert subject == "alice"
+        assert agent_name == "incident-triage"
+        assert calls == [("incident-triage", _ALICE)]
 
+    async def test_an_anonymous_identity_still_resolves_a_handle(self) -> None:
+        """Binding succeeds even for ANONYMOUS: the handle itself must refuse it,
 
-async def test_the_resolved_handle_is_bound_to_the_verified_caller() -> None:
-    """The identity closed over by the handle is this execution's caller, not
+        not the executor — the refusal belongs right before the model call, not
+        merely because a parameter is bound (see the AI-pillar handle tests).
+        """
+        calls: list[tuple[str, Identity]] = []
+        compiler = UseCaseCompiler()
+        compiler.compile(TriageUseCase)
+        executor = RuntimeExecutor(compiler)
+        executor.bind_agent_resolver(_resolver(calls))
 
-    a parameter the use case body could have gotten wrong: there is no
-    identity argument in the signature for the author to pass at all.
-    """
-    calls: list[tuple[str, Identity]] = []
-    compiler = UseCaseCompiler()
-    compiler.compile(TriageUseCase)
-    executor = RuntimeExecutor(compiler)
-    executor.bind_agent_resolver(_resolver(calls))
+        subject, _ = await executor.execute(TriageUseCase(), identity=ANONYMOUS)
 
-    subject, agent_name = await executor.execute(TriageUseCase(), identity=_ALICE)
+        assert subject == ""
+        assert calls == [("incident-triage", ANONYMOUS)]
 
-    assert subject == "alice"
-    assert agent_name == "incident-triage"
-    assert calls == [("incident-triage", _ALICE)]
+    async def test_a_missing_identity_is_refused_instead_of_defaulted(self) -> None:
+        """Fail-closed, exactly like ``Caller()``: no identity is a transport bug."""
+        compiler = UseCaseCompiler()
+        compiler.compile(TriageUseCase)
+        executor = RuntimeExecutor(compiler)
+        executor.bind_agent_resolver(_resolver([]))
+        use_case = TriageUseCase()
 
+        with pytest.raises(Unauthenticated, match="TriageUseCase"):
+            await executor.execute(use_case)
 
-async def test_an_anonymous_identity_still_resolves_a_handle() -> None:
-    """Binding succeeds even for ANONYMOUS: the handle itself must refuse it,
+    async def test_no_resolver_bound_fails_with_a_named_error(self) -> None:
+        """A use case declaring Agent() before the AI runtime is wired fails loudly."""
+        compiler = UseCaseCompiler()
+        compiler.compile(TriageUseCase)
+        executor = RuntimeExecutor(compiler)
+        use_case = TriageUseCase()
 
-    not the executor — the refusal belongs right before the model call, not
-    merely because a parameter is bound (see the AI-pillar handle tests).
-    """
-    calls: list[tuple[str, Identity]] = []
-    compiler = UseCaseCompiler()
-    compiler.compile(TriageUseCase)
-    executor = RuntimeExecutor(compiler)
-    executor.bind_agent_resolver(_resolver(calls))
+        with pytest.raises(RuntimeError, match="no 'agent' resolver is bound"):
+            await executor.execute(use_case, identity=_ALICE)
 
-    subject, _ = await executor.execute(TriageUseCase(), identity=ANONYMOUS)
+    async def test_binding_a_resolver_twice_is_refused(self) -> None:
+        executor = RuntimeExecutor(UseCaseCompiler())
+        executor.bind_agent_resolver(_resolver([]))
+        second_resolver = _resolver([])
 
-    assert subject == ""
-    assert calls == [("incident-triage", ANONYMOUS)]
+        with pytest.raises(RuntimeError):
+            executor.bind_agent_resolver(second_resolver)
 
+    async def test_a_use_case_with_no_agent_marker_never_calls_the_resolver(self) -> None:
+        calls: list[tuple[str, Identity]] = []
+        compiler = UseCaseCompiler()
+        compiler.compile(NoAgentUseCase)
+        executor = RuntimeExecutor(compiler)
+        executor.bind_agent_resolver(_resolver(calls))
 
-async def test_a_missing_identity_is_refused_instead_of_defaulted() -> None:
-    """Fail-closed, exactly like ``Caller()``: no identity is a transport bug."""
-    compiler = UseCaseCompiler()
-    compiler.compile(TriageUseCase)
-    executor = RuntimeExecutor(compiler)
-    executor.bind_agent_resolver(_resolver([]))
-    use_case = TriageUseCase()
+        result = await executor.execute(NoAgentUseCase(), identity=_ALICE)
 
-    with pytest.raises(Unauthenticated, match="TriageUseCase"):
-        await executor.execute(use_case)
-
-
-async def test_no_resolver_bound_fails_with_a_named_error() -> None:
-    """A use case declaring Agent() before the AI runtime is wired fails loudly."""
-    compiler = UseCaseCompiler()
-    compiler.compile(TriageUseCase)
-    executor = RuntimeExecutor(compiler)
-    use_case = TriageUseCase()
-
-    with pytest.raises(RuntimeError, match="agent resolver"):
-        await executor.execute(use_case, identity=_ALICE)
-
-
-async def test_binding_a_resolver_twice_is_refused() -> None:
-    executor = RuntimeExecutor(UseCaseCompiler())
-    executor.bind_agent_resolver(_resolver([]))
-    second_resolver = _resolver([])
-
-    with pytest.raises(RuntimeError):
-        executor.bind_agent_resolver(second_resolver)
-
-
-async def test_a_use_case_with_no_agent_marker_never_calls_the_resolver() -> None:
-    calls: list[tuple[str, Identity]] = []
-    compiler = UseCaseCompiler()
-    compiler.compile(NoAgentUseCase)
-    executor = RuntimeExecutor(compiler)
-    executor.bind_agent_resolver(_resolver(calls))
-
-    result = await executor.execute(NoAgentUseCase(), identity=_ALICE)
-
-    assert result == "no agents here"
-    assert calls == []
+        assert result == "no agents here"
+        assert calls == []

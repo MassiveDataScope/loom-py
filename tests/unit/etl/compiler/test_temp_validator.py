@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 import pytest
 
 from loom.etl import (
-    ETLParams,
     ETLPipeline,
     ETLProcess,
     ETLStep,
@@ -19,44 +17,41 @@ from loom.etl import (
 )
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.compiler._validators import validate_plan_temps
+from tests.unit.etl.doubles import RunDateETLParams
 
 
-class P(ETLParams):
-    run_date: date
-
-
-class ProduceStep(ETLStep[P]):
+class OrdersTempProduceStep(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTemp("orders_temp")
 
-    def execute(self, params: P, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
-class ConsumeStep(ETLStep[P]):
+class OrdersTempConsumeStep(ETLStep[RunDateETLParams]):
     orders_temp = FromTemp("orders_temp")
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: P, *, orders_temp: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders_temp: Any) -> Any:
         return orders_temp
 
 
-class ValidProc(ETLProcess[P]):
-    steps = [ProduceStep, ConsumeStep]
+class ValidProc(ETLProcess[RunDateETLParams]):
+    steps = [OrdersTempProduceStep, OrdersTempConsumeStep]
 
 
-class ValidPipeline(ETLPipeline[P]):
+class ValidPipeline(ETLPipeline[RunDateETLParams]):
     processes = [ValidProc]
 
 
-# ---------------------------------------------------------------------------
-# Valid temp flow passes
-# ---------------------------------------------------------------------------
+class TestValidTempFlow:
+    # ---------------------------------------------------------------------------
+    # Valid temp flow passes
+    # ---------------------------------------------------------------------------
 
-
-def test_valid_temp_flow_passes() -> None:
-    plan = ETLCompiler().compile(ValidPipeline)
-    validate_plan_temps(plan)
+    def test_valid_temp_flow_passes(self) -> None:
+        plan = ETLCompiler().compile(ValidPipeline)
+        validate_plan_temps(plan)
 
 
 # ---------------------------------------------------------------------------
@@ -64,20 +59,21 @@ def test_valid_temp_flow_passes() -> None:
 # ---------------------------------------------------------------------------
 
 
-class ConsumeFirstProc(ETLProcess[P]):
-    steps = [ConsumeStep, ProduceStep]
+class ConsumeFirstProc(ETLProcess[RunDateETLParams]):
+    steps = [OrdersTempConsumeStep, OrdersTempProduceStep]
 
 
-class ConsumeFirstPipeline(ETLPipeline[P]):
+class ConsumeFirstPipeline(ETLPipeline[RunDateETLParams]):
     processes = [ConsumeFirstProc]
 
 
-def test_forward_temp_reference_raises() -> None:
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
-        compiler.compile(ConsumeFirstPipeline)
+class TestForwardTempReference:
+    def test_forward_temp_reference_raises(self) -> None:
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
+            compiler.compile(ConsumeFirstPipeline)
 
-    assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
+        assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
 
 
 # ---------------------------------------------------------------------------
@@ -85,20 +81,21 @@ def test_forward_temp_reference_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-class OrphanConsumeProc(ETLProcess[P]):
-    steps = [ConsumeStep]
+class OrphanConsumeProc(ETLProcess[RunDateETLParams]):
+    steps = [OrdersTempConsumeStep]
 
 
-class OrphanConsumePipeline(ETLPipeline[P]):
+class OrphanConsumePipeline(ETLPipeline[RunDateETLParams]):
     processes = [OrphanConsumeProc]
 
 
-def test_orphan_temp_reference_raises() -> None:
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
-        compiler.compile(OrphanConsumePipeline)
+class TestOrphanTempReference:
+    def test_orphan_temp_reference_raises(self) -> None:
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
+            compiler.compile(OrphanConsumePipeline)
 
-    assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
+        assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
 
 
 # ---------------------------------------------------------------------------
@@ -106,35 +103,35 @@ def test_orphan_temp_reference_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-class ProduceStep2(ETLStep[P]):
+class ProduceStep2(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTemp("orders_temp")  # same name, no append=True
 
-    def execute(self, params: P, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
-class DuplicateStrictProc(ETLProcess[P]):
-    steps = [ProduceStep, ProduceStep2, ConsumeStep]
+class DuplicateStrictProc(ETLProcess[RunDateETLParams]):
+    steps = [OrdersTempProduceStep, ProduceStep2, OrdersTempConsumeStep]
 
 
-class DuplicateStrictPipeline(ETLPipeline[P]):
+class DuplicateStrictPipeline(ETLPipeline[RunDateETLParams]):
     processes = [DuplicateStrictProc]
 
 
-def test_duplicate_strict_temp_raises() -> None:
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="already written"):
-        compiler.compile(DuplicateStrictPipeline)
+class TestDuplicateStrictTemp:
+    def test_duplicate_strict_temp_raises(self) -> None:
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError, match="already written"):
+            compiler.compile(DuplicateStrictPipeline)
 
+    def test_duplicate_strict_temp_error_code(self) -> None:
+        from loom.etl.compiler._errors import ETLErrorCode
 
-def test_duplicate_strict_temp_error_code() -> None:
-    from loom.etl.compiler._errors import ETLErrorCode
-
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError) as exc_info:
-        compiler.compile(DuplicateStrictPipeline)
-    assert exc_info.value.code == ETLErrorCode.DUPLICATE_TEMP_NAME
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError) as exc_info:
+            compiler.compile(DuplicateStrictPipeline)
+        assert exc_info.value.code == ETLErrorCode.DUPLICATE_TEMP_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -142,41 +139,42 @@ def test_duplicate_strict_temp_error_code() -> None:
 # ---------------------------------------------------------------------------
 
 
-class AppendPart1(ETLStep[P]):
+class AppendPart1(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTemp("parts", append=True)
 
-    def execute(self, params: P, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
-class AppendPart2(ETLStep[P]):
+class AppendPart2(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTemp("parts", append=True)  # same name, both append=True
 
-    def execute(self, params: P, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
-class ConsumeParts(ETLStep[P]):
+class ConsumeParts(ETLStep[RunDateETLParams]):
     parts = FromTemp("parts")
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: P, *, parts: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, parts: Any) -> Any:
         return parts
 
 
-class FanInProc(ETLProcess[P]):
+class FanInProc(ETLProcess[RunDateETLParams]):
     steps = [AppendPart1, AppendPart2, ConsumeParts]
 
 
-class FanInPipeline(ETLPipeline[P]):
+class FanInPipeline(ETLPipeline[RunDateETLParams]):
     processes = [FanInProc]
 
 
-def test_fan_in_append_passes() -> None:
-    plan = ETLCompiler().compile(FanInPipeline)
-    validate_plan_temps(plan)
+class TestFanInAppend:
+    def test_fan_in_append_passes(self) -> None:
+        plan = ETLCompiler().compile(FanInPipeline)
+        validate_plan_temps(plan)
 
 
 # ---------------------------------------------------------------------------
@@ -184,32 +182,32 @@ def test_fan_in_append_passes() -> None:
 # ---------------------------------------------------------------------------
 
 
-class MixedAppendStep(ETLStep[P]):
+class MixedAppendStep(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
-    target = IntoTemp("orders_temp", append=True)  # mixes with ProduceStep (append=False)
+    target = IntoTemp("orders_temp", append=True)  # mixes with OrdersTempProduceStep (append=False)
 
-    def execute(self, params: P, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
-class MixedModeProc(ETLProcess[P]):
-    steps = [ProduceStep, MixedAppendStep, ConsumeStep]
+class MixedModeProc(ETLProcess[RunDateETLParams]):
+    steps = [OrdersTempProduceStep, MixedAppendStep, OrdersTempConsumeStep]
 
 
-class MixedModePipeline(ETLPipeline[P]):
+class MixedModePipeline(ETLPipeline[RunDateETLParams]):
     processes = [MixedModeProc]
 
 
-def test_mixed_append_modes_raises() -> None:
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="mixes append"):
-        compiler.compile(MixedModePipeline)
+class TestMixedAppendModes:
+    def test_mixed_append_modes_raises(self) -> None:
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError, match="mixes append"):
+            compiler.compile(MixedModePipeline)
 
+    def test_mixed_append_modes_error_code(self) -> None:
+        from loom.etl.compiler._errors import ETLErrorCode
 
-def test_mixed_append_modes_error_code() -> None:
-    from loom.etl.compiler._errors import ETLErrorCode
-
-    compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError) as exc_info:
-        compiler.compile(MixedModePipeline)
-    assert exc_info.value.code == ETLErrorCode.INVALID_TEMP_APPEND_MIX
+        compiler = ETLCompiler()
+        with pytest.raises(ETLCompilationError) as exc_info:
+            compiler.compile(MixedModePipeline)
+        assert exc_info.value.code == ETLErrorCode.INVALID_TEMP_APPEND_MIX

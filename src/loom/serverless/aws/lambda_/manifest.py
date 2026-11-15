@@ -209,7 +209,6 @@ def _http_event(
     source: CompositionSource, functions: Mapping[str, LambdaFunction], name: str
 ) -> dict[str, Any]:
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
-    # The rest extra is needed only by an http function.
     from loom.rest.compiler import InterfaceCompilationError, published_routes
     from loom.rest.fastapi.adapter import served_routes
 

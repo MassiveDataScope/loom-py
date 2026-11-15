@@ -61,7 +61,6 @@ def _resolve_column_default(spec: ColumnFieldSpec) -> Any:
     if spec.field.default is not msgspec.UNSET:
         return spec.field.default
     if spec.field.primary_key and spec.field.autoincrement:
-        # Avoid propagating msgspec.UNSET into INSERT bind parameters.
         return None
     return UNSET
 
@@ -132,7 +131,7 @@ class LoomStructMeta(_StructMeta):
         return struct_cls
 
 
-class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass]  # LoomStructMeta + msgspec StructMeta combo not supported by mypy
+class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass]
     """Base for all loom domain models.
 
     Subclasses must declare ``__tablename__`` and provide typed attributes.

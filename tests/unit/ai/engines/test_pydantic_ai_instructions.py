@@ -56,7 +56,7 @@ def _plan_with(
 
 
 @dataclass
-class _Bundle:
+class _InstructionStateBundle:
     state: Any
 
 
@@ -64,7 +64,7 @@ class _Bundle:
 class _FakeRunContext:
     """Stands in for ``RunContext``: the render closure only reads ``.deps``."""
 
-    deps: _Bundle
+    deps: _InstructionStateBundle
 
 
 class TestTemplatingExtraCheck:
@@ -189,7 +189,7 @@ class TestBlockDispatch:
 
         (item,) = build_instructions(plan)
         assert callable(item)
-        ctx = _FakeRunContext(deps=_Bundle(state={"marca": "civic"}))
+        ctx = _FakeRunContext(deps=_InstructionStateBundle(state={"marca": "civic"}))
 
         rendered = await item(ctx)  # type: ignore[arg-type]
 
@@ -219,7 +219,7 @@ class TestBlockDispatch:
 
         (item,) = build_instructions(plan)
         assert callable(item)
-        ctx = _FakeRunContext(deps=_Bundle(state={}))
+        ctx = _FakeRunContext(deps=_InstructionStateBundle(state={}))
 
         rendered = await item(ctx)  # type: ignore[arg-type]
 

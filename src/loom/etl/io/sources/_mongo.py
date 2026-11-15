@@ -10,7 +10,7 @@ import polars as pl
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
-from loom.etl.declarative.source._specs import MongoSourceSpec
+from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.io.sources._mongo_batch import (
     BatchProcessorProtocol,
     MongoBatchProcessor,
@@ -48,7 +48,7 @@ class MongoSourceReader:
         self._database = database
 
     def read(self, spec: Any, params_instance: Any, /) -> pl.LazyFrame:
-        from polars.io.plugins import register_io_source  # unstable in Polars 1.x
+        from polars.io.plugins import register_io_source
 
         if self._client is None:
             raise RuntimeError(
@@ -96,10 +96,6 @@ class MongoSourceReader:
         return register_io_source(
             _io_source,
             schema=registered_schema,
-            # validate_schema=False: MongoDB documents are schema-free — field types can vary
-            # across batches (schema drift, sparse fields, type widening). Per-batch alignment
-            # in _finalize_batch normalises each batch to registered_schema before yielding,
-            # so Polars sees a consistent type stream without needing to validate.
             validate_schema=False,
             is_pure=False,
         )
@@ -122,17 +118,12 @@ class MongoSourceReader:
     ) -> dict[str, pl.DataType]:
         if declared_schema:
             schema = dict(declared_schema)
-            if spec.extra_fields_mode == "capture":
+            if spec.extra_fields_mode == ExtraFieldsMode.CAPTURE:
                 schema["_extra"] = pl.String()
             return schema
         return _infer_schema_from_first_batch(
             collection, filter_dict, projection, spec, batch_processor
         )
-
-
-# ---------------------------------------------------------------------------
-# Cursor + scan helpers
-# ---------------------------------------------------------------------------
 
 
 def _normalize_null_dtypes(schema: dict[str, pl.DataType]) -> dict[str, pl.DataType]:
@@ -208,7 +199,7 @@ def _finalize_batch(
     frame: pl.DataFrame,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
-    extra_fields_mode: str,
+    extra_fields_mode: ExtraFieldsMode,
     schema_name: str,
     with_columns: list[str] | None,
     n_rows: int | None,

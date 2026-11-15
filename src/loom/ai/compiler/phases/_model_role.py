@@ -24,7 +24,7 @@ def resolve_model_role(
 
     Returns:
         The resolved :class:`InferenceTarget` (or ``None``) and a
-        ``MODEL_ROLE_UNBOUND`` issue when the role is absent (research R-002).
+        ``MODEL_ROLE_UNBOUND`` issue when the role is absent.
     """
     target = models.get(role)
     if target is None:

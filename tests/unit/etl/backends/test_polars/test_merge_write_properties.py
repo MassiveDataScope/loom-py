@@ -66,21 +66,22 @@ def _assert_commit_carries_metadata(path: Path) -> None:
         assert last_commit[key] == value
 
 
-@pytest.mark.parametrize(
-    "spec",
-    [
-        pytest.param(UpsertSpec(table_ref=TableRef(_REF), upsert_keys=("id",)), id="upsert"),
-        pytest.param(UpdateSpec(table_ref=TableRef(_REF), keys=("id",)), id="update"),
-    ],
-)
-def test_merge_writes_parquet_and_commit_with_route_settings(
-    tmp_path: Path, spec: UpsertSpec | UpdateSpec
-) -> None:
-    path = _seed(tmp_path)
-    before = set(DeltaTable(str(path)).file_uris())
-    batch = pl.LazyFrame({"id": [2, 6], "status": ["done", "new"]})
+class TestMergeWriteProperties:
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(UpsertSpec(table_ref=TableRef(_REF), upsert_keys=("id",)), id="upsert"),
+            pytest.param(UpdateSpec(table_ref=TableRef(_REF), keys=("id",)), id="update"),
+        ],
+    )
+    def test_merge_writes_parquet_and_commit_with_route_settings(
+        self, tmp_path: Path, spec: UpsertSpec | UpdateSpec
+    ) -> None:
+        path = _seed(tmp_path)
+        before = set(DeltaTable(str(path)).file_uris())
+        batch = pl.LazyFrame({"id": [2, 6], "status": ["done", "new"]})
 
-    _writer(tmp_path).write(batch, spec, None)
+        _writer(tmp_path).write(batch, spec, None)
 
-    _assert_written_with_route_settings(_files_added_by_last_commit(path, before))
-    _assert_commit_carries_metadata(path)
+        _assert_written_with_route_settings(_files_added_by_last_commit(path, before))
+        _assert_commit_carries_metadata(path)

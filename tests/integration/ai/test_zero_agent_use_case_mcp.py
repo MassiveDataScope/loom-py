@@ -1,6 +1,6 @@
 """Zero compiled agent artifacts, one declaring use case (spec 015, T204).
 
-Owner decision D1: ``effective_agent_specs`` tolerates an empty artifact set
+``AiConfig.artifact_specs`` tolerates an empty artifact set
 only when at least one compiled use case declares an ``Mcp()`` marker — a
 deployment whose only AI usage is ``Mcp()`` no longer has to ship a filler
 agent artifact it never runs. Every other empty-artifact deployment still
@@ -169,9 +169,8 @@ class TestOnlyMcpWithNoAgentArtefacts:
     def test_an_unknown_server_dies_as_marker_unknown_not_as_server_unknown(
         self, tmp_path: Path
     ) -> None:
-        """H9/T202: ``verify_mcp_markers`` must catch the unknown name before
-        ``compile_use_case_mcp``/``compile_mcp_capability`` ever see it, so
-        ``MCP_SERVER_UNKNOWN`` must never appear here."""
+        """``MarkerDeclarations.verify`` catches the unknown name before
+        ``compile_mcp_capability`` sees it: ``MCP_SERVER_UNKNOWN`` never appears."""
         config_path = _write_project(tmp_path, declares_use_case=True)
         # A missing server in 'ai.mcp_servers' recreates the same YAML this
         # fixture writes, minus the one entry the use case's Mcp() names.

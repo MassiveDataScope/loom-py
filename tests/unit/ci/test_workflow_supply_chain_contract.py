@@ -94,63 +94,62 @@ def _pip_install_is_locked_and_verified(command: str) -> bool:
     )
 
 
-@pytest.mark.parametrize("workflow_path", _workflow_paths(), ids=lambda path: path.name)
-def test_pip_installs_are_pinned_and_installed_without_running_setup_scripts(
-    workflow_path: Path,
-) -> None:
-    unverified = [
-        command
-        for command in _run_commands(workflow_path)
-        if "pip install" in command and not _pip_install_is_locked_and_verified(command)
-    ]
+class TestSupplyChainContract:
+    @pytest.mark.parametrize("workflow_path", _workflow_paths(), ids=lambda path: path.name)
+    def test_pip_installs_are_pinned_and_installed_without_running_setup_scripts(
+        self,
+        workflow_path: Path,
+    ) -> None:
+        unverified = [
+            command
+            for command in _run_commands(workflow_path)
+            if "pip install" in command and not _pip_install_is_locked_and_verified(command)
+        ]
 
-    assert unverified == []
+        assert unverified == []
 
+    @pytest.mark.parametrize("workflow_path", _workflow_paths(), ids=lambda path: path.name)
+    def test_uv_run_installs_only_pinned_extra_dependencies(self, workflow_path: Path) -> None:
+        unpinned = [
+            value
+            for command in _run_commands(workflow_path)
+            for flag, value in zip(_tokens(command), _tokens(command)[1:], strict=False)
+            if flag == "--with" and "==" not in value
+        ]
 
-@pytest.mark.parametrize("workflow_path", _workflow_paths(), ids=lambda path: path.name)
-def test_uv_run_installs_only_pinned_extra_dependencies(workflow_path: Path) -> None:
-    unpinned = [
-        value
-        for command in _run_commands(workflow_path)
-        for flag, value in zip(_tokens(command), _tokens(command)[1:], strict=False)
-        if flag == "--with" and "==" not in value
-    ]
+        assert unpinned == []
 
-    assert unpinned == []
-
-
-def test_every_workflow_installs_the_same_pinned_uv() -> None:
-    installed_uv = {
-        path.name: {
-            specifier
-            for command in _run_commands(path)
-            for specifier in _installed_specifiers(_tokens(command))
-            if specifier.startswith("uv==")
+    def test_every_workflow_installs_the_same_pinned_uv(self) -> None:
+        installed_uv = {
+            path.name: {
+                specifier
+                for command in _run_commands(path)
+                for specifier in _installed_specifiers(_tokens(command))
+                if specifier.startswith("uv==")
+            }
+            for path in _workflow_paths()
         }
-        for path in _workflow_paths()
-    }
-    workflows_installing_uv = {
-        name: specifiers for name, specifiers in installed_uv.items() if specifiers
-    }
+        workflows_installing_uv = {
+            name: specifiers for name, specifiers in installed_uv.items() if specifiers
+        }
 
-    assert workflows_installing_uv
-    assert all(specifiers == {PINNED_UV} for specifiers in workflows_installing_uv.values())
+        assert workflows_installing_uv
+        assert all(specifiers == {PINNED_UV} for specifiers in workflows_installing_uv.values())
 
+    def test_a_job_that_delegates_pins_what_it_calls(self) -> None:
+        """A called workflow runs commands this repository cannot audit, so it is pinned."""
+        delegating = {
+            (path.name, name): cast(str, job["uses"])
+            for path in _workflow_paths()
+            for name, job in cast(
+                dict[str, Any],
+                cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))["jobs"],
+            ).items()
+            if "uses" in cast(dict[str, Any], job)
+        }
 
-def test_a_job_that_delegates_pins_what_it_calls() -> None:
-    """A called workflow runs commands this repository cannot audit, so it is pinned."""
-    delegating = {
-        (path.name, name): cast(str, job["uses"])
-        for path in _workflow_paths()
-        for name, job in cast(
-            dict[str, Any],
-            cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))["jobs"],
-        ).items()
-        if "uses" in cast(dict[str, Any], job)
-    }
-
-    assert delegating, "no job delegates; drop this test with the last caller"
-    for (workflow, job), uses in delegating.items():
-        _, separator, revision = uses.partition("@")
-        assert separator, f"{workflow}:{job} calls {uses} without a revision"
-        assert len(revision) == 40, f"{workflow}:{job} pins {revision}, not a commit"
+        assert delegating, "no job delegates; drop this test with the last caller"
+        for (workflow, job), uses in delegating.items():
+            _, separator, revision = uses.partition("@")
+            assert separator, f"{workflow}:{job} calls {uses} without a revision"
+            assert len(revision) == 40, f"{workflow}:{job} pins {revision}, not a commit"

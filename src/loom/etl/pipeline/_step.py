@@ -51,9 +51,9 @@ _RESERVED_NAMES: frozenset[str] = frozenset(
 
 
 class _SourceForm(Enum):
-    INLINE = "inline"  # Form 1: class-level FromTable / FromFile attributes
-    GROUPED = "grouped"  # Form 2: sources = Sources(...) or SourceSet instance
-    NONE = "none"  # step declares no sources (generator steps)
+    INLINE = "inline"
+    GROUPED = "grouped"
+    NONE = "none"
 
 
 class ETLStep(Generic[ParamsT]):
@@ -107,7 +107,6 @@ class ETLStep(Generic[ParamsT]):
     target: ClassVar[IntoTable | IntoHistory | IntoFile | IntoTemp | IntoClient | None] = None
     streaming: ClassVar[bool] = False
 
-    # Set by __init_subclass__
     _params_type: ClassVar[type[Any] | None] = None
     _source_form: ClassVar[_SourceForm] = _SourceForm.NONE
     _inline_sources: ClassVar[dict[str, FromTable | FromFile | FromTemp]]
@@ -143,11 +142,6 @@ class ETLStep(Generic[ParamsT]):
             Transformed DataFrame (type must match the active backend).
         """
         raise NotImplementedError(f"{type(self).__qualname__} must implement execute()")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _validate_and_classify_sources(cls: type[Any]) -> None:

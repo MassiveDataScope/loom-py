@@ -143,20 +143,21 @@ class TestOverrideVariables:
         assert override_variables() == {"LOOM__APP__NAME": "x"}
 
 
-@pytest.mark.parametrize(
-    "module", ["loom.core.environment", "loom.core.config.overrides", "loom.core.checks"]
-)
-def test_each_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
-    src = Path(__file__).resolve().parents[3] / "src"
-    result = subprocess.run(
-        [sys.executable, "-c", f"import {module}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={"PYTHONPATH": str(src)},
+class TestEnvironmentImportsInAFreshInterpreter:
+    @pytest.mark.parametrize(
+        "module", ["loom.core.environment", "loom.core.config.overrides", "loom.core.checks"]
     )
+    def test_each_module_imports_first_in_a_fresh_interpreter(self, module: str) -> None:
+        src = Path(__file__).resolve().parents[3] / "src"
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PYTHONPATH": str(src)},
+        )
 
-    assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, result.stderr
 
 
 class TestConfirmEnvironment:

@@ -14,6 +14,7 @@ authenticator that has never heard of a token.
 from __future__ import annotations
 
 import pathlib
+import secrets
 import tempfile
 import time
 from typing import Any
@@ -23,7 +24,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.event import LifecycleEvent
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.config import SqlEndpointConfig
 from loom.core.sql.service import SqlQueryService
@@ -39,14 +39,15 @@ from tests.unit.core.sql._fakes import (
     make_connection_config,
     make_sql_config,
 )
+from tests.unit.rest.doubles import RecordingLifecycleObserver
 
 ROLES_CLAIM = "loom_sql_roles"
 ROLE_A = "role_viz_reader"
 ROLE_B = "role_viz_sales"
 ROLE_FORBIDDEN = "role_admin_evil"
-SECRET = "unit-test-secret-of-thirty-two-bytes"
+SHARED_HS256 = secrets.token_urlsafe(32)
 SECRET_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "hs.key")
-pathlib.Path(SECRET_PATH).write_text(SECRET)
+pathlib.Path(SECRET_PATH).write_text(SHARED_HS256)
 AUDIENCE = "loom-api"
 SUBJECT_HEADER = "x-subject"
 ROLES_HEADER = "x-roles"
@@ -69,17 +70,7 @@ class _RoleAuthenticator:
         return Identity(subject=subject, roles=roles, mechanism=self.name)
 
 
-class _RecordingObserver:
-    """Captures every lifecycle event emitted through the observability runtime."""
-
-    def __init__(self) -> None:
-        self.events: list[LifecycleEvent] = []
-
-    def on_event(self, event: LifecycleEvent) -> None:
-        self.events.append(event)
-
-
-class _IdentityMiddleware:
+class AcmeFixedIdentityMiddleware:
     """Publishes a fixed identity, standing in for any authentication mechanism."""
 
     def __init__(self, app: Any, *, identity: Identity | None) -> None:
@@ -127,7 +118,7 @@ def _client(
     **conn_overrides: Any,
 ) -> TestClient:
     app = _app(executor, runtime=runtime, **conn_overrides)
-    app.add_middleware(_IdentityMiddleware, identity=identity)
+    app.add_middleware(AcmeFixedIdentityMiddleware, identity=identity)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -139,131 +130,6 @@ def _post(client: TestClient, **body: Any) -> Any:
 
 def _identity(roles: tuple[str, ...], *, subject: str = "user-1") -> Identity:
     return Identity(subject=subject, roles=roles, mechanism="test")
-
-
-# ---------------------------------------------------------------------------
-# The identity is the only source of authorization
-# ---------------------------------------------------------------------------
-
-
-def test_denies_when_the_request_carries_no_identity() -> None:
-    """No identity in the request context means no caller: 403, nothing executed."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=None))
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_denies_an_anonymous_identity() -> None:
-    """The anonymous identity authorizes nothing; it is not a caller."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=Identity(subject="")))
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_denies_when_the_identity_holds_no_role() -> None:
-    """An authenticated caller without roles is not an implicit 'everything'."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=_identity(())))
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_denies_with_the_standard_error_body() -> None:
-    """Denials reuse the framework error body so callers get code + trace_id."""
-    detail = _post(_client(FakeSqlExecutor(), identity=None)).json()["detail"]
-    assert (detail["code"], "trace_id" in detail) == ("forbidden", True)
-
-
-def test_accepts_a_single_role_identity() -> None:
-    """One role is the degenerate case of the same contract."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=_identity((ROLE_A,))))
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
-
-
-# ---------------------------------------------------------------------------
-# Intersection with the allowlist — the identity can never widen it
-# ---------------------------------------------------------------------------
-
-
-def test_intersects_the_identity_roles_with_the_connection_allowlist() -> None:
-    """A held role outside ``allowed_roles`` is dropped, the rest still runs."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=_identity((ROLE_A, ROLE_FORBIDDEN))))
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
-
-
-def test_denies_when_no_held_role_survives_the_allowlist() -> None:
-    """An empty intersection is a denial, never a fallback."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=_identity((ROLE_FORBIDDEN,))))
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_default_role_never_replaces_the_identity_intersection() -> None:
-    """``default_role`` is not a fallback once roles are bound to the identity."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_FORBIDDEN,)), default_role=ROLE_A)
-    response = _post(client)
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_a_missing_identity_does_not_fall_back_to_the_default_role() -> None:
-    """Without an identity the query never runs with ``default_role`` either."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=None, default_role=ROLE_A))
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-# ---------------------------------------------------------------------------
-# The body may only narrow
-# ---------------------------------------------------------------------------
-
-
-def test_applies_every_authorized_role_when_the_body_asks_for_none() -> None:
-    """Without ``roles`` in the body the query runs with the union of the identity's."""
-    executor = FakeSqlExecutor()
-    response = _post(_client(executor, identity=_identity((ROLE_A, ROLE_B))))
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
-
-
-def test_body_narrows_the_authorized_roles() -> None:
-    """A body subset restricts the query to exactly those roles."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
-    response = _post(client, roles=[ROLE_B])
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_B,))
-
-
-def test_body_cannot_request_a_role_the_identity_does_not_hold() -> None:
-    """An allowlisted role the caller does not hold is still refused: no widening."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_A,)))
-    response = _post(client, roles=[ROLE_B])
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_body_cannot_request_a_role_outside_the_allowlist() -> None:
-    """The allowlist stays the last barrier even for a held role."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_A, ROLE_FORBIDDEN)))
-    response = _post(client, roles=[ROLE_FORBIDDEN])
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_empty_body_roles_behave_like_an_absent_field() -> None:
-    """``roles: []`` narrows to nothing, so it is read as 'no narrowing'."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
-    response = _post(client, roles=[])
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
-
-
-def test_singular_role_field_is_rejected_by_the_schema() -> None:
-    """The body field is ``roles``; the removed singular ``role`` no longer decides."""
-    executor = FakeSqlExecutor()
-    client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
-    response = _post(client, role=ROLE_B)
-    assert (response.status_code, executor.calls) == (422, [])
 
 
 # ---------------------------------------------------------------------------
@@ -301,83 +167,9 @@ def _token(roles: Any, *, subject: str = "user-1") -> str:
             "exp": int(time.time()) + 3600,
             ROLES_CLAIM: roles,
         },
-        SECRET,
+        SHARED_HS256,
         algorithm="HS256",
     )
-
-
-def test_roles_flow_from_a_real_verified_token() -> None:
-    """The whole chain: signed token → verified identity → effective roles."""
-    executor = FakeSqlExecutor()
-    response = _jwt_client(executor).post(
-        _SQL_PATH,
-        json=_SELECT_ONE,
-        headers={"Authorization": f"Bearer {_token([ROLE_A, ROLE_B])}"},
-    )
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
-
-
-def test_a_malformed_roles_claim_is_refused_end_to_end() -> None:
-    """A claim that is not a string or a list of strings authorizes nothing."""
-    executor = FakeSqlExecutor()
-    response = _jwt_client(executor).post(
-        _SQL_PATH,
-        json=_SELECT_ONE,
-        headers={"Authorization": f"Bearer {_token([ROLE_A, 7])}"},
-    )
-    assert (response.status_code, executor.calls) == (403, [])
-
-
-def test_unauthenticated_request_never_reaches_the_endpoint() -> None:
-    """Without a token the middleware answers 401 before any role resolution."""
-    executor = FakeSqlExecutor()
-    response = _jwt_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
-    assert (response.status_code, executor.calls) == (401, [])
-
-
-def test_a_non_jwt_mechanism_derives_the_same_roles() -> None:
-    """Agnosticism: swapping the mechanism changes no rule and no SQL config."""
-    executor = FakeSqlExecutor()
-    response = _header_client(executor).post(
-        _SQL_PATH,
-        json=_SELECT_ONE,
-        headers={SUBJECT_HEADER: "user-1", ROLES_HEADER: f"{ROLE_A},{ROLE_FORBIDDEN}"},
-    )
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
-
-
-def test_a_non_jwt_mechanism_narrows_through_the_body_too() -> None:
-    """The body rule is the endpoint's, not the mechanism's: it holds for both."""
-    executor = FakeSqlExecutor()
-    response = _header_client(executor).post(
-        _SQL_PATH,
-        json={**_SELECT_ONE, "roles": [ROLE_B]},
-        headers={SUBJECT_HEADER: "user-1", ROLES_HEADER: f"{ROLE_A},{ROLE_B}"},
-    )
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_B,))
-
-
-def test_a_non_jwt_mechanism_refuses_an_unknown_caller() -> None:
-    """The refusal path is the mechanism's, the 401 shape is the framework's."""
-    executor = FakeSqlExecutor()
-    response = _header_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
-    assert (response.status_code, executor.calls) == (401, [])
-
-
-def test_span_labels_the_effective_roles_the_subject_and_the_mechanism() -> None:
-    """Auditability: the span states who ran the query, how, and with which privileges."""
-    observer = _RecordingObserver()
-    client = _client(
-        FakeSqlExecutor(),
-        identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
-        runtime=ObservabilityRuntime([observer]),
-    )
-
-    response = _post(client, roles=[ROLE_B])
-
-    assert response.status_code == 200
-    meta = observer.events[0].meta
-    assert (meta["roles"], meta["subject"], meta["mechanism"]) == (ROLE_B, "user-42", "test")
 
 
 # ---------------------------------------------------------------------------
@@ -403,56 +195,277 @@ def _single_role_app(executor: FakeSqlExecutor) -> FastAPI:
     return app
 
 
-def test_a_single_role_connection_still_serves_under_a_role_binding_mechanism() -> None:
-    """The mechanism is global, ``allowed_roles`` is per connection.
+class TestMissingOrEmptyRolesAreDenied:
+    def test_denies_when_the_request_carries_no_identity(
+        self,
+    ) -> None:
+        """No identity in the request context means no caller: 403, nothing executed."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=None))
+        assert (response.status_code, executor.calls) == (403, [])
 
-    Binding a connection with an empty allowlist would intersect against nothing
-    and deny every request — a silent deployment trap for any application mixing
-    a multi-role connection with a single-role one.
-    """
-    executor = FakeSqlExecutor()
-    app = _single_role_app(executor)
-    app.add_middleware(_IdentityMiddleware, identity=_identity((ROLE_B,)))
-    client = TestClient(app, raise_server_exceptions=False)
+    def test_denies_an_anonymous_identity(
+        self,
+    ) -> None:
+        """The anonymous identity authorizes nothing; it is not a caller."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=Identity(subject="")))
+        assert (response.status_code, executor.calls) == (403, [])
 
-    response = _post(client)
+    def test_denies_when_the_identity_holds_no_role(
+        self,
+    ) -> None:
+        """An authenticated caller without roles is not an implicit 'everything'."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=_identity(())))
+        assert (response.status_code, executor.calls) == (403, [])
 
-    assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
-
-
-def test_a_single_role_connection_still_rejects_caller_supplied_roles() -> None:
-    """The empty allowlist stays the barrier: the body may not pick a role."""
-    executor = FakeSqlExecutor()
-    app = _single_role_app(executor)
-    app.add_middleware(_IdentityMiddleware, identity=_identity((ROLE_B,)))
-    client = TestClient(app, raise_server_exceptions=False)
-
-    response = _post(client, roles=[ROLE_B])
-
-    assert (response.status_code, executor.calls) == (403, [])
+    def test_denies_with_the_standard_error_body(
+        self,
+    ) -> None:
+        """Denials reuse the framework error body so callers get code + trace_id."""
+        detail = _post(_client(FakeSqlExecutor(), identity=None)).json()["detail"]
+        assert (detail["code"], "trace_id" in detail) == ("forbidden", True)
 
 
-def test_the_span_names_the_default_role_of_a_single_role_connection() -> None:
-    """The audit label must state the privileges the query really ran with."""
-    observer = _RecordingObserver()
-    executor = FakeSqlExecutor()
-    connection = make_connection_config(
-        allowed_roles=(),
-        default_role=ROLE_A,
-        sql_endpoint=SqlEndpointConfig(enabled=True, auth="identity"),
-    )
-    config = make_sql_config(analytics=connection)
-    app = FastAPI()
-    bind_sql_endpoints(
-        app,
-        service=SqlQueryService(executors={"analytics": executor}, config=config),
-        config=config,
-        authenticator=_RoleAuthenticator(),
-        observability_runtime=ObservabilityRuntime([observer]),
-    )
-    app.add_middleware(_IdentityMiddleware, identity=_identity((ROLE_B,)))
+class TestRoleAllowlistIntersection:
+    def test_accepts_a_single_role_identity(
+        self,
+    ) -> None:
+        """One role is the degenerate case of the same contract."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=_identity((ROLE_A,))))
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
 
-    response = _post(TestClient(app, raise_server_exceptions=False))
+    def test_intersects_the_identity_roles_with_the_connection_allowlist(
+        self,
+    ) -> None:
+        """A held role outside ``allowed_roles`` is dropped, the rest still runs."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=_identity((ROLE_A, ROLE_FORBIDDEN))))
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
 
-    assert response.status_code == 200
-    assert observer.events[0].meta["roles"] == ROLE_A
+    def test_denies_when_no_held_role_survives_the_allowlist(
+        self,
+    ) -> None:
+        """An empty intersection is a denial, never a fallback."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=_identity((ROLE_FORBIDDEN,))))
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_default_role_never_replaces_the_identity_intersection(
+        self,
+    ) -> None:
+        """``default_role`` is not a fallback once roles are bound to the identity."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_FORBIDDEN,)), default_role=ROLE_A)
+        response = _post(client)
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_a_missing_identity_does_not_fall_back_to_the_default_role(
+        self,
+    ) -> None:
+        """Without an identity the query never runs with ``default_role`` either."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=None, default_role=ROLE_A))
+        assert (response.status_code, executor.calls) == (403, [])
+
+
+class TestBodyNarrowsAuthorizedRoles:
+    def test_applies_every_authorized_role_when_the_body_asks_for_none(
+        self,
+    ) -> None:
+        """Without ``roles`` in the body the query runs with the union of the identity's."""
+        executor = FakeSqlExecutor()
+        response = _post(_client(executor, identity=_identity((ROLE_A, ROLE_B))))
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
+
+    def test_body_narrows_the_authorized_roles(
+        self,
+    ) -> None:
+        """A body subset restricts the query to exactly those roles."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
+        response = _post(client, roles=[ROLE_B])
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_B,))
+
+    def test_body_cannot_request_a_role_the_identity_does_not_hold(
+        self,
+    ) -> None:
+        """An allowlisted role the caller does not hold is still refused: no widening."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_A,)))
+        response = _post(client, roles=[ROLE_B])
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_body_cannot_request_a_role_outside_the_allowlist(
+        self,
+    ) -> None:
+        """The allowlist stays the last barrier even for a held role."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_A, ROLE_FORBIDDEN)))
+        response = _post(client, roles=[ROLE_FORBIDDEN])
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_empty_body_roles_behave_like_an_absent_field(
+        self,
+    ) -> None:
+        """``roles: []`` narrows to nothing, so it is read as 'no narrowing'."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
+        response = _post(client, roles=[])
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
+
+    def test_singular_role_field_is_rejected_by_the_schema(
+        self,
+    ) -> None:
+        """The body field is ``roles``; the removed singular ``role`` no longer decides."""
+        executor = FakeSqlExecutor()
+        client = _client(executor, identity=_identity((ROLE_A, ROLE_B)))
+        response = _post(client, role=ROLE_B)
+        assert (response.status_code, executor.calls) == (422, [])
+
+
+class TestRolesFromAVerifiedToken:
+    def test_roles_flow_from_a_real_verified_token(
+        self,
+    ) -> None:
+        """The whole chain: signed token → verified identity → effective roles."""
+        executor = FakeSqlExecutor()
+        response = _jwt_client(executor).post(
+            _SQL_PATH,
+            json=_SELECT_ONE,
+            headers={"Authorization": f"Bearer {_token([ROLE_A, ROLE_B])}"},
+        )
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A, ROLE_B))
+
+    def test_a_malformed_roles_claim_is_refused_end_to_end(
+        self,
+    ) -> None:
+        """A claim that is not a string or a list of strings authorizes nothing."""
+        executor = FakeSqlExecutor()
+        response = _jwt_client(executor).post(
+            _SQL_PATH,
+            json=_SELECT_ONE,
+            headers={"Authorization": f"Bearer {_token([ROLE_A, 7])}"},
+        )
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_unauthenticated_request_never_reaches_the_endpoint(
+        self,
+    ) -> None:
+        """Without a token the middleware answers 401 before any role resolution."""
+        executor = FakeSqlExecutor()
+        response = _jwt_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
+        assert (response.status_code, executor.calls) == (401, [])
+
+
+class TestNonJwtMechanismDerivesRoles:
+    def test_a_non_jwt_mechanism_derives_the_same_roles(
+        self,
+    ) -> None:
+        """Agnosticism: swapping the mechanism changes no rule and no SQL config."""
+        executor = FakeSqlExecutor()
+        response = _header_client(executor).post(
+            _SQL_PATH,
+            json=_SELECT_ONE,
+            headers={SUBJECT_HEADER: "user-1", ROLES_HEADER: f"{ROLE_A},{ROLE_FORBIDDEN}"},
+        )
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
+
+    def test_a_non_jwt_mechanism_narrows_through_the_body_too(
+        self,
+    ) -> None:
+        """The body rule is the endpoint's, not the mechanism's: it holds for both."""
+        executor = FakeSqlExecutor()
+        response = _header_client(executor).post(
+            _SQL_PATH,
+            json={**_SELECT_ONE, "roles": [ROLE_B]},
+            headers={SUBJECT_HEADER: "user-1", ROLES_HEADER: f"{ROLE_A},{ROLE_B}"},
+        )
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_B,))
+
+    def test_a_non_jwt_mechanism_refuses_an_unknown_caller(
+        self,
+    ) -> None:
+        """The refusal path is the mechanism's, the 401 shape is the framework's."""
+        executor = FakeSqlExecutor()
+        response = _header_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
+        assert (response.status_code, executor.calls) == (401, [])
+
+    def test_span_labels_the_effective_roles_the_subject_and_the_mechanism(
+        self,
+    ) -> None:
+        """Auditability: the span states who ran the query, how, and with which privileges."""
+        observer = RecordingLifecycleObserver()
+        client = _client(
+            FakeSqlExecutor(),
+            identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
+            runtime=ObservabilityRuntime([observer]),
+        )
+
+        response = _post(client, roles=[ROLE_B])
+
+        assert response.status_code == 200
+        meta = observer.events[0].meta
+        assert (meta["roles"], meta["subject"], meta["mechanism"]) == (ROLE_B, "user-42", "test")
+
+
+class TestSingleRoleConnection:
+    def test_a_single_role_connection_still_serves_under_a_role_binding_mechanism(
+        self,
+    ) -> None:
+        """The mechanism is global, ``allowed_roles`` is per connection.
+
+        Binding a connection with an empty allowlist would intersect against nothing
+        and deny every request — a silent deployment trap for any application mixing
+        a multi-role connection with a single-role one.
+        """
+        executor = FakeSqlExecutor()
+        app = _single_role_app(executor)
+        app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = _post(client)
+
+        assert (response.status_code, executor.calls[0].options.roles) == (200, (ROLE_A,))
+
+    def test_a_single_role_connection_still_rejects_caller_supplied_roles(
+        self,
+    ) -> None:
+        """The empty allowlist stays the barrier: the body may not pick a role."""
+        executor = FakeSqlExecutor()
+        app = _single_role_app(executor)
+        app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = _post(client, roles=[ROLE_B])
+
+        assert (response.status_code, executor.calls) == (403, [])
+
+    def test_the_span_names_the_default_role_of_a_single_role_connection(
+        self,
+    ) -> None:
+        """The audit label must state the privileges the query really ran with."""
+        observer = RecordingLifecycleObserver()
+        executor = FakeSqlExecutor()
+        connection = make_connection_config(
+            allowed_roles=(),
+            default_role=ROLE_A,
+            sql_endpoint=SqlEndpointConfig(enabled=True, auth="identity"),
+        )
+        config = make_sql_config(analytics=connection)
+        app = FastAPI()
+        bind_sql_endpoints(
+            app,
+            service=SqlQueryService(executors={"analytics": executor}, config=config),
+            config=config,
+            authenticator=_RoleAuthenticator(),
+            observability_runtime=ObservabilityRuntime([observer]),
+        )
+        app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
+
+        response = _post(TestClient(app, raise_server_exceptions=False))
+
+        assert response.status_code == 200
+        assert observer.events[0].meta["roles"] == ROLE_A

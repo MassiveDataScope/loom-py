@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
-import msgspec
 import pytest
 from pydantic import BaseModel, ConfigDict
 
 from loom.ai.abc import StateShape
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _BoundAgentHandle
+from loom.ai.runtime._handle import _AgentHandle
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.sql.service import NullSqlQueryService
@@ -29,30 +29,18 @@ from tests.integration.ai.conftest import (
     make_ai_config,
     make_plan,
 )
+from tests.unit.ai.runtime.doubles import AcmeDefaultedState, AcmeRequiredState
 
 _AGENT = "appraiser"
 _AUTHENTICATED = Identity(subject="ada", mechanism="test")
 
 
-class _DefaultedState(msgspec.Struct, forbid_unknown_fields=True):
-    """A state shape whose every field carries a declared default."""
-
-    marca: str = ""
-    km: int = 0
-
-
-_SCHEMA_STATE = StateShape(schema={"type": "object"}, loom_type=msgspec_type(_DefaultedState))
-
-
-class _RequiredState(msgspec.Struct, forbid_unknown_fields=True):
-    """A state shape with one field carrying no declared default."""
-
-    marca: str
+_SCHEMA_STATE = StateShape(schema={"type": "object"}, loom_type=msgspec_type(AcmeDefaultedState))
 
 
 _REQUIRED_SCHEMA_STATE = StateShape(
     schema={"type": "object", "properties": {"marca": {"type": "string"}}, "required": ["marca"]},
-    loom_type=msgspec_type(_RequiredState),
+    loom_type=msgspec_type(AcmeRequiredState),
 )
 
 
@@ -124,15 +112,15 @@ class TestStateReachesTheEngine:
         """The same channel, driven from ``AgentHandle.run`` (FR-007)."""
         engine = RecordingScriptedEngine()
         runtime = _runtime(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
-        handle = _BoundAgentHandle(
+        handle = _AgentHandle(
             name=_AGENT,
             runtime=runtime,
-            identity=_AUTHENTICATED,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
         async with runtime:
-            await handle.run("hola", state={"marca": "civic", "km": 7})
+            with ExecutionScope(_AUTHENTICATED):
+                await handle.run("hola", state={"marca": "civic", "km": 7})
         assert engine.states == [{"marca": "civic", "km": 7}]
 
 
@@ -174,7 +162,7 @@ class TestNoneStateAgainstARequiredField:
         assert engine.states == []
 
 
-class TestStateAgainstNoDeclaredShape:
+class TestRuntimeStateAgainstNoDeclaredShape:
     async def test_fails_before_any_provider_call_with_no_usage_and_no_health_record(
         self,
     ) -> None:

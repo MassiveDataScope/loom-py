@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loom.dev/schemas/agent-spec/v1.json",
   "title": "Loom AgentSpec v1",
-  "description": "Declarative, engine-agnostic and vendor-agnostic agent definition. Published per spec version (FR-009) so generators and editors can validate without the platform runtime.",
+  "description": "Declarative, engine-agnostic and vendor-agnostic agent definition. Published per spec version so generators and editors can validate without the platform runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": [

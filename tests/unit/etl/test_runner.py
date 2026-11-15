@@ -26,65 +26,43 @@ from loom.etl.runner import ETLRunner
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.helpers.version_limited_extras import require_pyspark
+from tests.unit.etl.doubles import (
+    OrdersStagingAStep,
+    OrdersStagingBStep,
+    OrdersStagingCStep,
+    RunDateIgnoredParams,
+)
 
 RunnerFactory = Callable[..., ETLRunner]
 
 
-class P(ETLParams):  # type: ignore[misc]
-    run_date: date
+class OrdersStagingABProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [OrdersStagingAStep, OrdersStagingBStep]
 
 
-class StepA(ETLStep[P]):
-    orders = FromTable("raw.orders")
-    target = IntoTable("staging.a").replace()
-
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
-        return orders
+class ProcC(ETLProcess[RunDateIgnoredParams]):
+    steps = [OrdersStagingCStep]
 
 
-class StepB(ETLStep[P]):
-    orders = FromTable("raw.orders")
-    target = IntoTable("staging.b").replace()
-
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
-        return orders
+class OrdersStagingParallelProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [[OrdersStagingAStep, OrdersStagingBStep]]
 
 
-class StepC(ETLStep[P]):
-    orders = FromTable("raw.orders")
-    target = IntoTable("staging.c").replace()
-
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
-        return orders
+class PipelineAll(ETLPipeline[RunDateIgnoredParams]):
+    processes = [OrdersStagingABProcess, ProcC]
 
 
-class ProcAB(ETLProcess[P]):
-    steps = [StepA, StepB]
+class PipelineParallelProcs(ETLPipeline[RunDateIgnoredParams]):
+    processes = [[OrdersStagingABProcess, ProcC]]
 
 
-class ProcC(ETLProcess[P]):
-    steps = [StepC]
-
-
-class ProcParallel(ETLProcess[P]):
-    steps = [[StepA, StepB]]
-
-
-class PipelineAll(ETLPipeline[P]):
-    processes = [ProcAB, ProcC]
-
-
-class PipelineParallelProcs(ETLPipeline[P]):
-    processes = [[ProcAB, ProcC]]
-
-
-class PipelineParallelSteps(ETLPipeline[P]):
-    processes = [ProcParallel]
+class PipelineParallelSteps(ETLPipeline[RunDateIgnoredParams]):
+    processes = [OrdersStagingParallelProcess]
 
 
 @pytest.fixture
-def params() -> P:
-    return P(run_date=date(2024, 1, 1))
+def params() -> RunDateIgnoredParams:
+    return RunDateIgnoredParams(run_date=date(2024, 1, 1))
 
 
 @pytest.fixture
@@ -100,7 +78,7 @@ def runner_factory() -> RunnerFactory:
     return _make
 
 
-def _compile(pipeline_type: type[ETLPipeline[P]]) -> PipelinePlan:
+def _compile(pipeline_type: type[ETLPipeline[RunDateIgnoredParams]]) -> PipelinePlan:
     return ETLCompiler().compile(pipeline_type)
 
 
@@ -108,16 +86,24 @@ class TestFilterPlan:
     @pytest.mark.parametrize(
         "include,expected_process,expected_steps",
         [
-            (frozenset({"StepA"}), ProcAB, ("StepA",)),
-            (frozenset({"StepA", "StepB"}), ProcAB, ("StepA", "StepB")),
-            (frozenset({"ProcAB"}), ProcAB, ("StepA", "StepB")),
-            (frozenset({"ProcC"}), ProcC, ("StepC",)),
+            (frozenset({"OrdersStagingAStep"}), OrdersStagingABProcess, ("OrdersStagingAStep",)),
+            (
+                frozenset({"OrdersStagingAStep", "OrdersStagingBStep"}),
+                OrdersStagingABProcess,
+                ("OrdersStagingAStep", "OrdersStagingBStep"),
+            ),
+            (
+                frozenset({"OrdersStagingABProcess"}),
+                OrdersStagingABProcess,
+                ("OrdersStagingAStep", "OrdersStagingBStep"),
+            ),
+            (frozenset({"ProcC"}), ProcC, ("OrdersStagingCStep",)),
         ],
     )
     def test_filter_regular_pipeline(
         self,
         include: frozenset[str],
-        expected_process: type[ETLProcess[P]],
+        expected_process: type[ETLProcess[RunDateIgnoredParams]],
         expected_steps: tuple[str, ...],
     ) -> None:
         filtered = filter_plan(_compile(PipelineAll), include)
@@ -133,15 +119,27 @@ class TestFilterPlan:
     @pytest.mark.parametrize(
         "pipeline_type,include,expect_parallel,expected_len,first_step",
         [
-            (PipelineParallelSteps, frozenset({"StepA"}), False, 1, "StepA"),
-            (PipelineParallelSteps, frozenset({"StepA", "StepB"}), True, 2, None),
+            (
+                PipelineParallelSteps,
+                frozenset({"OrdersStagingAStep"}),
+                False,
+                1,
+                "OrdersStagingAStep",
+            ),
+            (
+                PipelineParallelSteps,
+                frozenset({"OrdersStagingAStep", "OrdersStagingBStep"}),
+                True,
+                2,
+                None,
+            ),
             (PipelineParallelProcs, frozenset({"ProcC"}), False, 1, None),
-            (PipelineParallelProcs, frozenset({"ProcAB", "ProcC"}), True, 2, None),
+            (PipelineParallelProcs, frozenset({"OrdersStagingABProcess", "ProcC"}), True, 2, None),
         ],
     )
     def test_filter_parallel_shapes(
         self,
-        pipeline_type: type[ETLPipeline[P]],
+        pipeline_type: type[ETLPipeline[RunDateIgnoredParams]],
         include: frozenset[str],
         expect_parallel: bool,
         expected_len: int,
@@ -178,32 +176,39 @@ class TestFilterPlan:
     def test_filter_reports_every_unknown_name_in_sorted_order(self) -> None:
         plan = _compile(PipelineAll)
         with pytest.raises(InvalidStageError) as exc_info:
-            filter_plan(plan, ["StepA", "Phantom", "Ghost"])
+            filter_plan(plan, ["OrdersStagingAStep", "Phantom", "Ghost"])
         assert exc_info.value.unknown == frozenset({"Ghost", "Phantom"})
         assert "names: ['Ghost', 'Phantom']" in str(exc_info.value)
 
     def test_filter_refuses_a_bare_string(self) -> None:
-        with pytest.raises(TypeError, match=r"not the string 'StepA'.*include=\{'StepA'\}"):
-            filter_plan(_compile(PipelineAll), "StepA")
+        plan = _compile(PipelineAll)
+
+        with pytest.raises(
+            TypeError,
+            match=r"not the string 'OrdersStagingAStep'.*include=\{'OrdersStagingAStep'\}",
+        ):
+            filter_plan(plan, "OrdersStagingAStep")
 
     def test_filter_accepts_any_iterable_of_names(self) -> None:
         plan = _compile(PipelineAll)
-        filtered = filter_plan(plan, (name for name in ["StepB", "StepC"]))
+        filtered = filter_plan(
+            plan, (name for name in ["OrdersStagingBStep", "OrdersStagingCStep"])
+        )
         assert [step.step_type.__name__ for step in iter_all_steps(filtered)] == [
-            "StepB",
-            "StepC",
+            "OrdersStagingBStep",
+            "OrdersStagingCStep",
         ]
 
     def test_filter_returns_a_new_plan_and_leaves_the_input_untouched(self) -> None:
         plan = _compile(PipelineAll)
-        filtered = filter_plan(plan, {"StepC"})
+        filtered = filter_plan(plan, {"OrdersStagingCStep"})
         assert filtered is not plan
         assert filtered.pipeline_type is plan.pipeline_type
         assert filtered.params_type is plan.params_type
         assert [step.step_type.__name__ for step in iter_all_steps(plan)] == [
-            "StepA",
-            "StepB",
-            "StepC",
+            "OrdersStagingAStep",
+            "OrdersStagingBStep",
+            "OrdersStagingCStep",
         ]
 
     def test_filter_with_an_empty_include_keeps_nothing(self) -> None:
@@ -215,12 +220,12 @@ class TestRunnerRun:
         "include,expected_steps",
         [
             (None, 3),
-            (["StepA"], 1),
+            (["OrdersStagingAStep"], 1),
         ],
     )
     def test_runner_run_counts_steps(
         self,
-        params: P,
+        params: RunDateIgnoredParams,
         runner_factory: RunnerFactory,
         include: list[str] | None,
         expected_steps: int,
@@ -233,7 +238,7 @@ class TestRunnerRun:
 
     def test_runner_run_invalid_include_raises(
         self,
-        params: P,
+        params: RunDateIgnoredParams,
         runner_factory: RunnerFactory,
     ) -> None:
         factory = runner_factory()
@@ -242,7 +247,7 @@ class TestRunnerRun:
 
     def test_runner_run_flushes_prometheus_observers_after_success(
         self,
-        params: P,
+        params: RunDateIgnoredParams,
     ) -> None:
         from loom.core.observability.event import LifecycleEvent
 
@@ -272,7 +277,7 @@ class TestRunnerRun:
 
     def test_runner_run_flushes_prometheus_observers_after_failure(
         self,
-        params: P,
+        params: RunDateIgnoredParams,
     ) -> None:
         from loom.core.observability.event import LifecycleEvent
 
@@ -287,17 +292,17 @@ class TestRunnerRun:
             def flush(self) -> None:
                 self.flush_count += 1
 
-        class FailingStep(ETLStep[P]):
+        class FailingStep(ETLStep[RunDateIgnoredParams]):
             orders = FromTable("raw.orders")
             target = IntoTable("staging.fail").replace()
 
-            def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+            def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
                 raise RuntimeError("boom")
 
-        class FailingProcess(ETLProcess[P]):
+        class FailingProcess(ETLProcess[RunDateIgnoredParams]):
             steps = [FailingStep]
 
-        class FailingPipeline(ETLPipeline[P]):
+        class FailingPipeline(ETLPipeline[RunDateIgnoredParams]):
             processes = [FailingProcess]
 
         spy = _PrometheusSpy()

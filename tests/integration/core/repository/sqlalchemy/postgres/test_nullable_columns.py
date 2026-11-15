@@ -53,26 +53,28 @@ async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
         reset_registry()
 
 
-async def test_an_optional_field_left_as_none_is_stored_and_read_back(
-    manager: SessionManager,
-) -> None:
-    repo: RepositorySQLAlchemy[Gauge, int] = RepositorySQLAlchemy(
-        session_manager=manager,
-        model=Gauge,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
+class TestNullableColumns:
+    async def test_an_optional_field_left_as_none_is_stored_and_read_back(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        repo: RepositorySQLAlchemy[Gauge, int] = RepositorySQLAlchemy(
+            session_manager=manager,
+            model=Gauge,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
-    created = await repo.create(CreateGauge(label="idle"))
-    stored = await repo.get_by_id(created.id)
+        created = await repo.create(CreateGauge(label="idle"))
+        stored = await repo.get_by_id(created.id)
 
-    assert stored is not None
-    assert (stored.label, stored.level) == ("idle", None)
+        assert stored is not None
+        assert (stored.label, stored.level) == ("idle", None)
 
-
-async def test_a_field_that_does_not_admit_none_is_not_null_in_the_database(
-    manager: SessionManager,
-) -> None:
-    statement = text(f"INSERT INTO {_TABLE} (label) VALUES (NULL)")
-    async with manager.engine.connect() as conn:
-        with pytest.raises(IntegrityError):
-            await conn.execute(statement)
+    async def test_a_field_that_does_not_admit_none_is_not_null_in_the_database(
+        self,
+        manager: SessionManager,
+    ) -> None:
+        statement = text(f"INSERT INTO {_TABLE} (label) VALUES (NULL)")
+        async with manager.engine.connect() as conn:
+            with pytest.raises(IntegrityError):
+                await conn.execute(statement)

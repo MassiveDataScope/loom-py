@@ -70,7 +70,7 @@ def _http_test_harness() -> Any:
     """Import ``HttpTestHarness``, naming the ``rest`` extra when its dependencies are missing."""
     try:
         from loom.testing.http_harness import HttpTestHarness as _HttpTestHarness
-    except ImportError as exc:  # pragma: no cover - exercised only when REST deps are absent
+    except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "HttpTestHarness requires the 'rest' extra (fastapi, pydantic, uvicorn). "
             "Install loom-kernel with the 'rest' extra to use HTTP test harnesses."

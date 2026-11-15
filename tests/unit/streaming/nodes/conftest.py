@@ -18,11 +18,7 @@ from loom.streaming import (
     RecordStep,
     StreamFlow,
 )
-
-
-class _Order(LoomStruct):
-    order_id: str
-    amount: int
+from tests.unit.streaming.doubles import AcmeAmountOrder
 
 
 class _AnalyticsEvent(LoomStruct):
@@ -34,13 +30,13 @@ class _FulfillmentRequest(LoomStruct):
     quantity: int
 
 
-class _ToAnalytics(RecordStep[_Order, _AnalyticsEvent]):
-    def execute(self, message: Message[_Order], **kwargs: object) -> _AnalyticsEvent:
+class _ToAnalytics(RecordStep[AcmeAmountOrder, _AnalyticsEvent]):
+    def execute(self, message: Message[AcmeAmountOrder], **kwargs: object) -> _AnalyticsEvent:
         return _AnalyticsEvent(order_id=message.payload.order_id)
 
 
-class _ToFulfillment(RecordStep[_Order, _FulfillmentRequest]):
-    def execute(self, message: Message[_Order], **kwargs: object) -> _FulfillmentRequest:
+class _ToFulfillment(RecordStep[AcmeAmountOrder, _FulfillmentRequest]):
+    def execute(self, message: Message[AcmeAmountOrder], **kwargs: object) -> _FulfillmentRequest:
         return _FulfillmentRequest(
             order_id=message.payload.order_id,
             quantity=message.payload.amount,
@@ -48,10 +44,10 @@ class _ToFulfillment(RecordStep[_Order, _FulfillmentRequest]):
 
 
 @pytest.fixture
-def broadcast_flow() -> StreamFlow[_Order, Any]:
+def broadcast_flow() -> StreamFlow[AcmeAmountOrder, Any]:
     return StreamFlow(
         name="orders_broadcast",
-        source=FromTopic("orders.raw", payload=_Order),
+        source=FromTopic("orders.raw", payload=AcmeAmountOrder),
         process=Process(
             Broadcast(
                 BroadcastRoute(
@@ -68,10 +64,10 @@ def broadcast_flow() -> StreamFlow[_Order, Any]:
 
 
 @pytest.fixture
-def broadcast_bad_flow() -> StreamFlow[_Order, _Order]:
+def broadcast_bad_flow() -> StreamFlow[AcmeAmountOrder, AcmeAmountOrder]:
     return StreamFlow(
         name="bad",
-        source=FromTopic("orders.raw", payload=_Order),
+        source=FromTopic("orders.raw", payload=AcmeAmountOrder),
         process=Process(
             Broadcast(
                 BroadcastRoute(
@@ -80,15 +76,15 @@ def broadcast_bad_flow() -> StreamFlow[_Order, _Order]:
                 ),
             )
         ),
-        output=IntoTopic("extra_output", payload=_Order),
+        output=IntoTopic("extra_output", payload=AcmeAmountOrder),
     )
 
 
 @pytest.fixture
-def broadcast_messages() -> list[Message[_Order]]:
+def broadcast_messages() -> list[Message[AcmeAmountOrder]]:
     return [
         Message(
-            payload=_Order(order_id=f"ORD-{i}", amount=i),
+            payload=AcmeAmountOrder(order_id=f"ORD-{i}", amount=i),
             meta=MessageMeta(message_id=f"m{i}"),
         )
         for i in range(3)
@@ -96,9 +92,9 @@ def broadcast_messages() -> list[Message[_Order]]:
 
 
 @pytest.fixture
-def broadcast_message() -> Message[_Order]:
+def broadcast_message() -> Message[AcmeAmountOrder]:
     return Message(
-        payload=_Order(order_id="ORD-1", amount=3),
+        payload=AcmeAmountOrder(order_id="ORD-1", amount=3),
         meta=MessageMeta(message_id="m1"),
     )
 

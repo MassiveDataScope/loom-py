@@ -13,8 +13,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.registration import classify_key
 from loom.core.use_case import Created
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
@@ -60,7 +61,7 @@ class Undocumented(RestInterface[Any]):
     )
 
 
-class Orders(RestInterface[Any]):
+class AcmeOrderStatusApi(RestInterface[Any]):
     prefix = "/orders"
     routes = (
         RestRoute(use_case=CreateOrder, method="PUT", path="/{order_id}"),
@@ -76,7 +77,7 @@ class AcceptedOrders(RestInterface[Any]):
 def _client(interface: type[RestInterface[Any]]) -> TestClient:
     use_cases = [route.use_case for route in interface.routes]
     compiler = UseCaseCompiler()
-    factory = UseCaseFactory(LoomContainer())
+    factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     for use_case in use_cases:
         compiler.compile(use_case)
         factory.register(use_case)
@@ -93,59 +94,64 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
     return TestClient(app)
 
 
-def test_a_created_result_without_location_sends_no_location() -> None:
-    response = _client(Orders).put("/orders/fresh-1")
+class TestResultStatus:
+    def test_a_created_result_without_location_sends_no_location(
+        self,
+    ) -> None:
+        response = _client(AcmeOrderStatusApi).put("/orders/fresh-1")
 
-    assert response.status_code == 201
-    assert "Location" not in response.headers
+        assert response.status_code == 201
+        assert "Location" not in response.headers
 
-
-@pytest.mark.parametrize(
-    ("interface", "url", "status"),
-    [(Orders, "/orders/old-1", 200), (AcceptedOrders, "/accepted/old-1", 202)],
-)
-def test_any_other_result_answers_the_route_status(
-    interface: type[RestInterface[Any]], url: str, status: int
-) -> None:
-    response = _client(interface).put(url)
-
-    assert (response.status_code, response.json()) == (status, {"order_id": "old-1"})
-
-
-def test_openapi_documents_both_statuses_with_the_same_schema() -> None:
-    responses = (
-        _client(Orders)
-        .get("/openapi.json")
-        .json()["paths"]["/orders/{order_id}"]["put"]["responses"]
+    @pytest.mark.parametrize(
+        ("interface", "url", "status"),
+        [(AcmeOrderStatusApi, "/orders/old-1", 200), (AcceptedOrders, "/accepted/old-1", 202)],
     )
+    def test_any_other_result_answers_the_route_status(
+        self, interface: type[RestInterface[Any]], url: str, status: int
+    ) -> None:
+        response = _client(interface).put(url)
 
-    expected = {"$ref": "#/components/schemas/OrderView"}
-    assert responses["200"]["content"]["application/json"]["schema"] == expected
-    assert responses["201"]["content"]["application/json"]["schema"] == expected
-    assert responses["201"]["headers"] == {
-        "Location": {
-            "description": "URI of the created resource, when the use case gives one.",
-            "schema": {"type": "string", "format": "uri-reference"},
+        assert (response.status_code, response.json()) == (status, {"order_id": "old-1"})
+
+    def test_openapi_documents_both_statuses_with_the_same_schema(
+        self,
+    ) -> None:
+        responses = (
+            _client(AcmeOrderStatusApi)
+            .get("/openapi.json")
+            .json()["paths"]["/orders/{order_id}"]["put"]["responses"]
+        )
+
+        expected = {"$ref": "#/components/schemas/OrderView"}
+        assert responses["200"]["content"]["application/json"]["schema"] == expected
+        assert responses["201"]["content"]["application/json"]["schema"] == expected
+        assert responses["201"]["headers"] == {
+            "Location": {
+                "description": "URI of the created resource, when the use case gives one.",
+                "schema": {"type": "string", "format": "uri-reference"},
+            }
         }
-    }
-    assert "headers" not in responses["200"]
+        assert "headers" not in responses["200"]
 
+    def test_openapi_of_a_route_without_created_is_unchanged(
+        self,
+    ) -> None:
+        responses = (
+            _client(AcmeOrderStatusApi)
+            .get("/openapi.json")
+            .json()["paths"]["/orders/{order_id}"]["get"]["responses"]
+        )
 
-def test_openapi_of_a_route_without_created_is_unchanged() -> None:
-    responses = (
-        _client(Orders)
-        .get("/openapi.json")
-        .json()["paths"]["/orders/{order_id}"]["get"]["responses"]
-    )
+        assert "201" not in responses
+        assert responses["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/OrderView"
+        }
 
-    assert "201" not in responses
-    assert responses["200"]["content"]["application/json"]["schema"] == {
-        "$ref": "#/components/schemas/OrderView"
-    }
+    @pytest.mark.parametrize("path", ["/undocumented/anything", "/undocumented/opaque"])
+    def test_a_result_without_json_schema_documents_no_success_body(self, path: str) -> None:
+        responses = (
+            _client(Undocumented).get("/openapi.json").json()["paths"][path]["get"]["responses"]
+        )
 
-
-@pytest.mark.parametrize("path", ["/undocumented/anything", "/undocumented/opaque"])
-def test_a_result_without_json_schema_documents_no_success_body(path: str) -> None:
-    responses = _client(Undocumented).get("/openapi.json").json()["paths"][path]["get"]["responses"]
-
-    assert set(responses) == {"200"}
+        assert set(responses) == {"200"}

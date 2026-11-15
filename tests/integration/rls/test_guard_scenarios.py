@@ -237,10 +237,12 @@ def _all_assertions() -> str:
     return "SELECT " + ", ".join(f"loom_guard_{s}.assert_scoped_schema()" for s in SCHEMAS)
 
 
-async def test_a0_three_schemas_rendered_from_one_template_all_assertions_pass(
-    guarded: Guarded,
-) -> None:
-    assert await _run(guarded, statement=_all_assertions()) == "none"
+class TestRenderedSchemas:
+    async def test_a0_three_schemas_rendered_from_one_template_all_assertions_pass(
+        self,
+        guarded: Guarded,
+    ) -> None:
+        assert await _run(guarded, statement=_all_assertions()) == "none"
 
 
 class TestCombinationAndElevation:

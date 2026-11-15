@@ -1,4 +1,4 @@
-"""Provider and engine failures → the coded run-time taxonomy (FR-028).
+"""Provider and engine failures → the coded run-time taxonomy.
 
 Classification is a lookup, not a chain of ``isinstance`` branches over
 message text: the HTTP status decides the infrastructure sub-class, and the
@@ -26,7 +26,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
 )
 
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import DENIALS, AgentRunError, AgentRunErrorCode
 
 _UNMEASURED_SPEND_WARNINGS: tuple[type[Warning], ...] = tuple(
     warning
@@ -55,22 +55,11 @@ _STATUS_CODES: Mapping[int, AgentRunErrorCode] = MappingProxyType(
 
 _EXCEPTION_CODES: Mapping[type[Exception], AgentRunErrorCode] = MappingProxyType(
     {
-        # The engine raises this one exception for every ``UsageLimits`` field:
-        # the engine's own request-count default, and every ``policies`` spend
-        # cap FR-040 declares, land on the same coded failure. Distinct from
-        # ``MAX_ITERATIONS_EXCEEDED``, which is loom's own supervisor counting
-        # tool calls over the event stream (``runtime/_limits.py``) — a
-        # different counter, raised from a different place, never from here
-        # (FR-046).
         UsageLimitExceeded: AgentRunErrorCode.USAGE_LIMIT_EXCEEDED,
         UnexpectedModelBehavior: AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION,
         ModelAPIError: AgentRunErrorCode.PROVIDER_UNAVAILABLE,
         TimeoutError: AgentRunErrorCode.RUN_TIMEOUT,
-        # They subclass ``Warning``, not ``UserWarning``; see "Spend caps" in
-        # docs/ai/artifacts.md for why that makes this mapping load-bearing
-        # under ``-W error``. ``test_pydantic_ai_errors.py`` walks every
-        # ``pydantic_ai._warnings`` subclass of ``Warning`` that is not a
-        # ``UserWarning`` and fails the day a new one is left unmapped.
+        **dict.fromkeys(DENIALS, AgentRunErrorCode.UNAUTHORIZED),
         **dict.fromkeys(_UNMEASURED_SPEND_WARNINGS, AgentRunErrorCode.COST_NOT_MEASURABLE),
     }
 )
@@ -99,12 +88,6 @@ def classify(error: BaseException) -> AgentRunErrorCode:
         return error.code
     if isinstance(error, ModelHTTPError):
         return _http_code(error)
-    # Walk the error's own MRO rather than the mapping: the most specific
-    # mapped ancestor wins by construction, so the day someone maps an
-    # exception that is an ancestor of another — pydantic-ai's own
-    # ``AgentRunError`` is the base of three entries here — the answer cannot
-    # come to depend on dict insertion order. It is also cheaper: a dict
-    # lookup per ancestor, against an ``isinstance`` per catalogue entry.
     for ancestor in type(error).__mro__:
         code = _EXCEPTION_CODES.get(ancestor)
         if code is not None:

@@ -299,7 +299,6 @@ def _command_request_schema(
         public_struct = _build_public_command_struct(command_type)
         return _safe_schema(public_struct, component_registry)
 
-    # Fallback for user-defined plain types (dataclass/pydantic/typing).
     return _safe_schema(command_type, component_registry)
 
 

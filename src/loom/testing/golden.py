@@ -22,6 +22,7 @@ from typing import Any
 
 import msgspec
 
+from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
@@ -30,6 +31,7 @@ from loom.core.engine.plan import ExecutionPlan
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
+from loom.testing.runner import AgentHandleDouble, McpHandleDouble, _AgentDoubles, _McpDoubles
 
 
 def _qname(obj: Any) -> str:
@@ -132,10 +134,12 @@ class _ErrorProxy:
 
 
 class GoldenHarness:
-    """Executes use cases in isolation with fake repositories.
+    """Executes use cases in isolation with fake repositories, fake ports and doubles.
 
-    Allows injecting fake repo instances, forcing errors on specific methods,
-    and asserting performance baselines — all without a real database.
+    Allows injecting fake repo instances, binding adapters or fake ports,
+    standing doubles in for ``Agent()`` and ``Mcp()`` markers, forcing
+    errors on specific methods, and asserting performance baselines — all
+    without a real database, model or MCP server.
 
     Example::
 
@@ -146,9 +150,12 @@ class GoldenHarness:
     """
 
     def __init__(self) -> None:
-        self._repos: dict[type, Any] = {}
+        self._providers: dict[type, tuple[Callable[..., Any], Scope]] = {}
+        self._instances: dict[type, Any] = {}
         self._model_map: dict[type, type] = {}
         self._error_overrides: dict[tuple[type, str], Exception] = {}
+        self._agent_doubles: dict[str, AgentHandleDouble] = {}
+        self._mcp_doubles: dict[str, McpHandleDouble] = {}
         self._compiler = UseCaseCompiler()
 
     def inject_repo(
@@ -167,9 +174,58 @@ class GoldenHarness:
                 enabling auto-injection for use cases that inherit the default
                 ``UseCase.__init__``.
         """
-        self._repos[interface] = fake_instance
+        self.register_instance(interface, fake_instance)
         if model is not None:
             self._model_map[model] = interface
+
+    def register(
+        self, interface: type, provider: Callable[..., Any], *, scope: Scope = Scope.REQUEST
+    ) -> None:
+        """Bind *provider*, typically an adapter class, to *interface*.
+
+        Its constructor's ``Agent()`` and ``Mcp()`` markers resolve through
+        the doubles of :meth:`with_agent` and :meth:`with_mcp`.
+
+        Args:
+            interface: The port used as the DI resolution key.
+            provider: As in :meth:`~loom.core.di.container.LoomContainer.register`.
+            scope: Lifetime scope. Defaults to :attr:`~Scope.REQUEST`.
+        """
+        self._providers[interface] = (provider, scope)
+
+    def register_instance(self, interface: type, instance: Any) -> None:
+        """Bind an already-built fake to *interface*, replacing any provider bound to it.
+
+        No provider of *interface* is built and no marker of one is resolved.
+        :meth:`force_error` applies to it.
+
+        Args:
+            interface: The port used as the DI resolution key.
+            instance: The fake every resolution of *interface* returns.
+        """
+        self._instances[interface] = instance
+
+    def with_agent(self, name: str, double: AgentHandleDouble) -> GoldenHarness:
+        """Stand *double* in for every ``Agent(name)`` marker, in ``execute()`` or a constructor.
+
+        Without it such a marker fails closed with a :class:`RuntimeError`.
+
+        Returns:
+            ``self`` for chaining.
+        """
+        self._agent_doubles[name] = double
+        return self
+
+    def with_mcp(self, server: str, double: McpHandleDouble) -> GoldenHarness:
+        """Stand *double* in for every ``Mcp(server, ...)`` marker, narrowed to its ``include``.
+
+        Without it such a marker fails closed with a :class:`RuntimeError`.
+
+        Returns:
+            ``self`` for chaining.
+        """
+        self._mcp_doubles[server] = double
+        return self
 
     def force_error(self, interface: type, method: str, error: Exception) -> None:
         """Force a specific repository method to raise an error.
@@ -201,21 +257,11 @@ class GoldenHarness:
         return _ErrorProxy(instance, overrides) if overrides else instance
 
     def _build_container(self) -> LoomContainer:
-        container = LoomContainer()
-
-        def _make_provider(instance: Any) -> Callable[[], Any]:
-            def _provider() -> Any:
-                return instance
-
-            return _provider
-
-        for interface, instance in self._repos.items():
-            effective = self._wrap(interface, instance)
-            container.register(
-                interface,
-                _make_provider(effective),
-                scope=Scope.APPLICATION,
-            )
+        container = KernelRecipe.container()
+        for interface, (provider, scope) in self._providers.items():
+            container.register(interface, provider, scope=scope)
+        for interface, instance in self._instances.items():
+            container.register_instance(interface, self._wrap(interface, instance))
         for model, interface in self._model_map.items():
             container.register_repo(model, interface)
         return container
@@ -228,7 +274,10 @@ class GoldenHarness:
         payload: dict[str, Any] | None = None,
         identity: Identity | None = None,
     ) -> Any:
-        """Execute a use case with injected fake repositories.
+        """Build and execute a use case with its fakes, adapters and doubles.
+
+        The use case is built inside its execution, so a constructor
+        ``Caller()`` receives *identity*, as on every other entry point.
 
         Args:
             use_case_type: UseCase subclass to execute.
@@ -244,14 +293,29 @@ class GoldenHarness:
 
         Raises:
             loom.core.errors.Unauthenticated: If the use case declares
-                ``Caller()`` and no *identity* is given.
+                ``Caller()``, in ``execute()`` or in its constructor, or
+                resolves an ``Agent()`` or ``Mcp()`` marker inside its
+                execution, and no *identity* is given.
+            RuntimeError: If an ``Agent(name)`` or ``Mcp(server, ...)``
+                marker has no double from :meth:`with_agent` or :meth:`with_mcp`.
         """
         self._compiler.compile(use_case_type)
         container = self._build_container()
-        factory = UseCaseFactory(container)
-        executor = RuntimeExecutor(self._compiler)
-        uc = factory.build(use_case_type)
-        return await executor.execute(uc, params=params, payload=payload, identity=identity)
+        declarer = f"{use_case_type.__qualname__} or a dependency it builds"
+        harness = type(self).__name__
+        executor = RuntimeExecutor(
+            self._compiler,
+            resolvers=container.kinds,
+            agent_resolver=_AgentDoubles(declarer, harness, self._agent_doubles),
+            mcp_resolver=_McpDoubles(declarer, harness, self._mcp_doubles),
+        )
+        return await executor.run(
+            use_case_type,
+            factory=UseCaseFactory(container),
+            params=params,
+            payload=payload,
+            identity=identity,
+        )
 
     async def run_with_baseline(
         self,

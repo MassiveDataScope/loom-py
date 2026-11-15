@@ -31,32 +31,33 @@ def _wiring(
     return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [("ACTIVE", True), ("UPDATING", True), ("CREATING", False), ("DELETING", False)],
-)
-async def test_readiness_reflects_the_table_status(
-    monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, status: str, expected: bool
-) -> None:
-    fake_client.table_status["products"] = status
-    wiring = _wiring(monkeypatch, fake_client, "products")
+class TestDynamoReadiness:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [("ACTIVE", True), ("UPDATING", True), ("CREATING", False), ("DELETING", False)],
+    )
+    async def test_readiness_reflects_the_table_status(
+        self, monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, status: str, expected: bool
+    ) -> None:
+        fake_client.table_status["products"] = status
+        wiring = _wiring(monkeypatch, fake_client, "products")
 
-    assert wiring.readiness is not None
-    assert await wiring.readiness() is expected
+        assert wiring.readiness is not None
+        assert await wiring.readiness() is expected
 
+    @pytest.mark.asyncio
+    async def test_readiness_is_false_when_the_table_is_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        wiring = _wiring(monkeypatch, fake_client, "missing")
 
-@pytest.mark.asyncio
-async def test_readiness_is_false_when_the_table_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-    fake_client: FakeClient,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    wiring = _wiring(monkeypatch, fake_client, "missing")
+        assert wiring.readiness is not None
+        with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
+            assert await wiring.readiness() is False
 
-    assert wiring.readiness is not None
-    with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
-        assert await wiring.readiness() is False
-
-    assert "readiness" in caplog.text
-    assert "missing" in caplog.text
+        assert "readiness" in caplog.text
+        assert "missing" in caplog.text

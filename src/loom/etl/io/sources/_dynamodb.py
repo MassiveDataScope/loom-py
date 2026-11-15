@@ -15,7 +15,7 @@ import polars as pl
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDb
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec
+from loom.etl.declarative.source._specs import DynamoDbSourceSpec, ExtraFieldsMode
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (
@@ -54,7 +54,7 @@ class DynamoDbSourceReader:
         self._client = client
 
     def read(self, spec: Any, params_instance: Any, /) -> pl.LazyFrame:
-        from polars.io.plugins import register_io_source  # unstable in Polars 1.x
+        from polars.io.plugins import register_io_source
 
         if self._client is None:
             raise RuntimeError(
@@ -94,10 +94,6 @@ class DynamoDbSourceReader:
         return register_io_source(
             _io_source,
             schema=registered_schema,
-            # validate_schema=False: DynamoDB items are schema-free — attribute types can
-            # vary across pages (schema drift, sparse attributes, type widening). Per-batch
-            # alignment in _finalize_batch normalises each batch to registered_schema before
-            # yielding, so Polars sees a consistent type stream without needing to validate.
             validate_schema=False,
             is_pure=False,
         )
@@ -121,15 +117,10 @@ class DynamoDbSourceReader:
     ) -> dict[str, pl.DataType]:
         if declared_schema:
             schema = dict(declared_schema)
-            if spec.extra_fields_mode == "capture":
+            if spec.extra_fields_mode == ExtraFieldsMode.CAPTURE:
                 schema["_extra"] = pl.String()
             return schema
         return _infer_schema_from_sample(client, scan_kwargs, spec, batch_processor)
-
-
-# ---------------------------------------------------------------------------
-# Scan request construction
-# ---------------------------------------------------------------------------
 
 
 def _build_scan_kwargs(spec: DynamoDbSourceSpec, params_instance: Any) -> dict[str, Any]:
@@ -153,11 +144,6 @@ def _build_scan_kwargs(spec: DynamoDbSourceSpec, params_instance: Any) -> dict[s
     if values:
         kwargs["ExpressionAttributeValues"] = values
     return kwargs
-
-
-# ---------------------------------------------------------------------------
-# Item sources — sequential and parallel
-# ---------------------------------------------------------------------------
 
 
 def _sequential_items(
@@ -271,7 +257,7 @@ class _ParallelSegmentScanner:
         for future in self._futures:
             if future.cancelled():
                 continue
-            exc = future.exception()  # sentinels received → producers are returning; brief wait
+            exc = future.exception()
             if exc is not None:
                 self._abort(exc)
 
@@ -323,11 +309,6 @@ def _open_item_source(
     if spec.total_segments is not None:
         return _ParallelSegmentScanner(client, scan_kwargs, spec.total_segments)
     return _sequential_items(client, scan_kwargs, effective_limit)
-
-
-# ---------------------------------------------------------------------------
-# Scan helpers
-# ---------------------------------------------------------------------------
 
 
 def _normalize_null_dtypes(schema: dict[str, pl.DataType]) -> dict[str, pl.DataType]:
@@ -384,7 +365,7 @@ def _finalize_batch(
     frame: pl.DataFrame,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
-    extra_fields_mode: str,
+    extra_fields_mode: ExtraFieldsMode,
     schema_name: str,
     with_columns: list[str] | None,
     n_rows: int | None,

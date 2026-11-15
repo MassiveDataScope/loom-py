@@ -11,7 +11,7 @@ from loom.etl import ETLParams, ETLStep, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 
 
-class _Params(ETLParams):  # type: ignore[misc]
+class EmptyIgnoredParams(ETLParams):  # type: ignore[misc]
     pass
 
 
@@ -19,68 +19,68 @@ def _compiler() -> ETLCompiler:
     return ETLCompiler()
 
 
-class _ValidUpsert(ETLStep[_Params]):
+class OrdersValidUpsert(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(keys=("order_id",))
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _UpsertWithPartitions(ETLStep[_Params]):
+class _UpsertWithPartitions(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(
         keys=("order_id",),
         partition_cols=("year", "month"),
     )
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _UpsertWithExclude(ETLStep[_Params]):
+class OrdersUpsertExcludingCreatedAt(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(
         keys=("order_id",),
         exclude=("created_at",),
     )
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _UpsertWithInclude(ETLStep[_Params]):
+class OrdersUpsertIncludingStatus(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(
         keys=("order_id",),
         include=("status", "updated_at"),
     )
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _EmptyKeys(ETLStep[_Params]):
+class _EmptyKeys(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(keys=())
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _ExcludeAndInclude(ETLStep[_Params]):
+class _ExcludeAndInclude(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(
         keys=("id",),
         exclude=("created_at",),
         include=("status",),
     )
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
-class _ExcludeOverlapsKeys(ETLStep[_Params]):
+class _ExcludeOverlapsKeys(ETLStep[EmptyIgnoredParams]):
     target = IntoTable("test.orders").upsert(
         keys=("order_id",),
         exclude=("order_id", "created_at"),
     )
 
-    def execute(self, params: _Params) -> Any:  # type: ignore[override]
+    def execute(self, params: EmptyIgnoredParams) -> Any:  # type: ignore[override]
         return None
 
 
@@ -89,7 +89,7 @@ class TestCompileUpsertSpecs:
         "step_type,assertion",
         [
             (
-                _ValidUpsert,
+                OrdersValidUpsert,
                 lambda spec: spec.upsert_keys == ("order_id",),
             ),
             (
@@ -99,18 +99,18 @@ class TestCompileUpsertSpecs:
                 ),
             ),
             (
-                _UpsertWithExclude,
+                OrdersUpsertExcludingCreatedAt,
                 lambda spec: spec.upsert_exclude == ("created_at",),
             ),
             (
-                _UpsertWithInclude,
+                OrdersUpsertIncludingStatus,
                 lambda spec: spec.upsert_include == ("status", "updated_at"),
             ),
         ],
     )
     def test_valid_specs_compile(
         self,
-        step_type: type[ETLStep[_Params]],
+        step_type: type[ETLStep[EmptyIgnoredParams]],
         assertion: Callable[[Any], bool],
     ) -> None:
         spec = _compiler().compile_step(step_type).target_binding.spec
@@ -130,7 +130,7 @@ class TestCompileUpsertSpecs:
     )
     def test_invalid_specs_raise(
         self,
-        step_type: type[ETLStep[_Params]],
+        step_type: type[ETLStep[EmptyIgnoredParams]],
         error: str,
         code: ETLErrorCode,
     ) -> None:

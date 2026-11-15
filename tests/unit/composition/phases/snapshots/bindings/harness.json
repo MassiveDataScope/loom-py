@@ -1,0 +1,83 @@
+{
+  "bindings": {
+    "('repo', AcmeRecord)": {
+      "provider": "HttpTestHarness._build_module.<locals>._make_provider.<locals>._provider",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "AppConfig": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "AppConfig",
+      "scope": "APPLICATION"
+    },
+    "ApplicationInvoker": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "AppInvoker",
+      "scope": "APPLICATION"
+    },
+    "CachedCalls": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "_UnconfiguredCalls",
+      "scope": "APPLICATION"
+    },
+    "CallerBoundSql": {
+      "provider": "register_sql_collaborators.<locals>.<lambda>",
+      "resolved": "CallerBoundSql",
+      "scope": "APPLICATION"
+    },
+    "Environment": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "Environment",
+      "scope": "APPLICATION"
+    },
+    "JobService": {
+      "provider": "configure_job_service.<locals>.<lambda>",
+      "resolved": "InlineJobService",
+      "scope": "APPLICATION"
+    },
+    "ObservabilityRuntime": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "ObservabilityRuntime",
+      "scope": "APPLICATION"
+    },
+    "RepositoryDecorator": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "function",
+      "scope": "APPLICATION"
+    },
+    "RuntimeExecutor": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "RuntimeExecutor",
+      "scope": "APPLICATION"
+    },
+    "SqlQueryService": {
+      "provider": "register_sql_collaborators.<locals>.<lambda>",
+      "resolved": "NullSqlQueryService",
+      "scope": "APPLICATION"
+    },
+    "StoreCatalog": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "StoreCatalog",
+      "scope": "APPLICATION"
+    },
+    "UseCaseFactory": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "UseCaseFactory",
+      "scope": "APPLICATION"
+    },
+    "UseCaseRegistry": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "UseCaseRegistry",
+      "scope": "APPLICATION"
+    }
+  },
+  "executors": {
+    "constructed": 1,
+    "served": [
+      0
+    ]
+  },
+  "repo_bindings": {
+    "AcmeRecord": "('repo', AcmeRecord)"
+  }
+}

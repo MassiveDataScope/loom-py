@@ -38,8 +38,8 @@ from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.adapter import RestDeclaration, compose_rest, mount_request_stack
 from loom.rest.fastapi.app import CompiledApi, compile_api
 from loom.rest.fastapi.router_runtime import (
-    _build_route_runtime,
-    _dispatch_route,
+    _RouteHandler,
+    _RouteRuntime,
     path_param_annotation,
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
@@ -132,8 +132,6 @@ def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observabili
     method = compiled.route.method.upper()
     endpoint = _RouteEndpoint(compiled, api, observability)
     route = Route(compiled.full_path, endpoint.handle, methods=[method])
-    # Starlette adds HEAD to a GET route; FastAPI does not, so neither its 405
-    # nor its Allow header would match.
     route.methods = {method}
     return route
 
@@ -144,13 +142,12 @@ class _RouteEndpoint:
     def __init__(
         self, compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime
     ) -> None:
-        self._runtime = _build_route_runtime(compiled)
-        self._api = api
-        self._observability = observability
+        runtime = _RouteRuntime.of(compiled)
+        self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)
         param_types = dict(compiled.execute_param_types)
         self._coercers: dict[str, TypeAdapter[Any]] = {
             name: TypeAdapter(path_param_annotation(name, param_types))
-            for name in self._runtime.path_params
+            for name in runtime.path_params
         }
 
     async def handle(self, request: Request) -> Response:
@@ -160,14 +157,7 @@ class _RouteEndpoint:
             RequestValidationError: Listing every path parameter that fails,
                 each at ``("path", name)``.
         """
-        return await _dispatch_route(
-            request,
-            self._path_kwargs(request.path_params),
-            self._runtime,
-            self._api.factory,
-            self._api.executor,
-            self._observability,
-        )
+        return await self._handler(request, **self._path_kwargs(request.path_params))
 
     def _path_kwargs(self, raw: Mapping[str, Any]) -> dict[str, Any]:
         values: dict[str, Any] = {}
@@ -205,7 +195,6 @@ class LambdaHTTPHandler:
 
     def __init__(self, app: Starlette, application: Application) -> None:
         host = LoopHost(application)
-        # Built on the host's loop: without a current loop Mangum makes one of its own.
         self._mangum = Mangum(app, lifespan="off")
         host.start()
         self._host = host

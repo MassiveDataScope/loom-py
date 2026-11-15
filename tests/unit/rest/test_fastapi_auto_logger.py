@@ -40,101 +40,109 @@ def _declaration(cors: CorsConfig | None = None) -> RestDeclaration:
     )
 
 
-def test_the_request_stack_always_mounts_the_trace_middleware() -> None:
-    app = FastAPI()
+class TestRequestObservabilityStack:
+    def test_the_request_stack_always_mounts_the_trace_middleware(
+        self,
+    ) -> None:
+        app = FastAPI()
 
-    mount_request_stack(app, _declaration())
+        mount_request_stack(app, _declaration())
 
-    assert TraceIdMiddleware in [m.cls for m in app.user_middleware]
+        assert TraceIdMiddleware in [m.cls for m in app.user_middleware]
 
+    def test_the_request_stack_mounts_metrics_between_cors_and_tracing(
+        self,
+    ) -> None:
+        app = FastAPI()
+        declared = _declaration(CorsConfig(allow_origins=("https://app.example",)))
 
-def test_the_request_stack_mounts_metrics_between_cors_and_tracing() -> None:
-    app = FastAPI()
-    declared = _declaration(CorsConfig(allow_origins=("https://app.example",)))
+        mount_request_stack(
+            app,
+            declared,
+            mount_metrics=partial(_mount_metrics, app, declared.metrics_cfg, CollectorRegistry()),
+        )
 
-    mount_request_stack(
-        app,
-        declared,
-        mount_metrics=partial(_mount_metrics, app, declared.metrics_cfg, CollectorRegistry()),
-    )
+        outer_to_inner: list[Any] = [m.cls for m in app.user_middleware]
+        assert outer_to_inner == [
+            CORSMiddleware,
+            PrometheusMiddleware,
+            TraceIdMiddleware,
+            BodySizeLimitMiddleware,
+        ]
 
-    outer_to_inner: list[Any] = [m.cls for m in app.user_middleware]
-    assert outer_to_inner == [
-        CORSMiddleware,
-        PrometheusMiddleware,
-        TraceIdMiddleware,
-        BodySizeLimitMiddleware,
-    ]
+    def test_create_app_uses_observability_section(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        raw = OmegaConf.create(
+            {
+                "app": {"name": "demo"},
+                "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
+                # Development refuses an unsigned cursor keyring. The section under
+                # test is observability; the opt-out only lets composition finish.
+                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "observability": {
+                    "log": {"enabled": False},
+                    "prometheus": {"enabled": False, "config": {"path": "/metrics"}},
+                },
+            }
+        )
+        captured: dict[str, Any] = {}
+        runtime = ObservabilityRuntime.noop()
 
+        def _fake_load(
+            *config_paths: str, resolvers: Any = (), environment: Any = None
+        ) -> ConfigContext:
+            del config_paths, resolvers, environment
+            return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
-def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) -> None:
-    raw = OmegaConf.create(
-        {
-            "app": {"name": "demo"},
-            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-            # Development refuses an unsigned cursor keyring. The section under
-            # test is observability; the opt-out only lets composition finish.
-            "persistence": {"cursors": {"signing": "ephemeral"}},
-            "observability": {
-                "log": {"enabled": False},
-                "prometheus": {"enabled": False, "config": {"path": "/metrics"}},
-            },
-        }
-    )
-    captured: dict[str, Any] = {}
-    runtime = ObservabilityRuntime.noop()
+        def _fake_from_config(
+            cls: type[ObservabilityRuntime],
+            config: ObservabilityConfig,
+            *,
+            environment: Environment,
+        ) -> ObservabilityRuntime:
+            captured["observability_config"] = config
+            captured["environment"] = environment
+            return runtime
 
-    def _fake_load(
-        *config_paths: str, resolvers: Any = (), environment: Any = None
-    ) -> ConfigContext:
-        del config_paths, resolvers, environment
-        return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
+        def _fake_configure_job_service(*args: Any, **kwargs: Any) -> tuple[()]:
+            del args, kwargs
+            return ()
 
-    def _fake_from_config(
-        cls: type[ObservabilityRuntime],
-        config: ObservabilityConfig,
-        *,
-        environment: Environment,
-    ) -> ObservabilityRuntime:
-        captured["observability_config"] = config
-        captured["environment"] = environment
-        return runtime
+        def _fake_create_fastapi_app(
+            result: Any,
+            routes: Any,
+            *,
+            observability_runtime: ObservabilityRuntime | None = None,
+            **kwargs: Any,
+        ) -> FastAPI:
+            del result, routes, kwargs
+            captured["runtime"] = observability_runtime
+            return FastAPI()
 
-    def _fake_configure_job_service(*args: Any, **kwargs: Any) -> tuple[()]:
-        del args, kwargs
-        return ()
+        monkeypatch.setattr("loom.composition.source.load_application_config", _fake_load)
+        monkeypatch.setattr(ObservabilityRuntime, "from_config", classmethod(_fake_from_config))
+        # The config names no interface module. An empty result lets recipe()
+        # continue so create_app still mounts the middlewares under test.
+        monkeypatch.setattr(
+            "loom.rest.fastapi.adapter._discover_components",
+            lambda _source: DiscoveryResult(models=(), use_cases=(), interfaces=()),
+        )
+        monkeypatch.setattr(
+            "loom.composition.phases.configure_job_service",
+            _fake_configure_job_service,
+        )
+        monkeypatch.setattr(
+            "loom.rest.fastapi.adapter.create_fastapi_app", _fake_create_fastapi_app
+        )
+        monkeypatch.setattr(
+            "loom.composition.source.add_code_path",
+            lambda code_path, config_dir: Path(code_path),
+        )
 
-    def _fake_create_fastapi_app(
-        result: Any,
-        routes: Any,
-        *,
-        observability_runtime: ObservabilityRuntime | None = None,
-        **kwargs: Any,
-    ) -> FastAPI:
-        del result, routes, kwargs
-        captured["runtime"] = observability_runtime
-        return FastAPI()
+        app = create_app("config.yaml", environment="development")
 
-    monkeypatch.setattr("loom.composition.build.load_application_config", _fake_load)
-    monkeypatch.setattr(ObservabilityRuntime, "from_config", classmethod(_fake_from_config))
-    # The config names no interface module. An empty result lets recipe()
-    # continue so create_app still mounts the middlewares under test.
-    monkeypatch.setattr(
-        "loom.rest.fastapi.adapter._discover_components",
-        lambda _source: DiscoveryResult(models=(), use_cases=(), interfaces=()),
-    )
-    monkeypatch.setattr("loom.composition.build.configure_job_service", _fake_configure_job_service)
-    monkeypatch.setattr("loom.rest.fastapi.adapter.create_fastapi_app", _fake_create_fastapi_app)
-    monkeypatch.setattr(
-        "loom.composition.build.add_code_path",
-        lambda code_path, config_dir: Path(code_path),
-    )
-
-    app = create_app("config.yaml", environment="development")
-
-    assert captured["observability_config"].log.enabled is False
-    assert captured["environment"] is Environment.DEVELOPMENT
-    assert captured["runtime"] is runtime
-    classes: list[Any] = [m.cls for m in app.user_middleware]
-    assert TraceIdMiddleware in classes
-    assert PrometheusMiddleware not in classes
+        assert captured["observability_config"].log.enabled is False
+        assert captured["environment"] is Environment.DEVELOPMENT
+        assert captured["runtime"] is runtime
+        classes: list[Any] = [m.cls for m in app.user_middleware]
+        assert TraceIdMiddleware in classes
+        assert PrometheusMiddleware not in classes

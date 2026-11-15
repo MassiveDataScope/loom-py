@@ -55,14 +55,22 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _capabilities
 from loom.ai.engines.pydantic_ai._events import translate
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
-from loom.ai.errors import AgentCompilationError, AgentRunErrorCode
-from loom.ai.runtime import AgentRunError
+from loom.ai.errors import (
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunErrorClass,
+    AgentRunErrorCode,
+    run_error_class,
+)
+from loom.ai.runtime import AgentRunError, AgentRuntime
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
+from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.errors import Forbidden
+from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.model.redaction import Dsn
 from loom.core.sql.abc import SqlColumn, SqlQueryResult
@@ -70,7 +78,9 @@ from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.sql.service import SqlQueryService
 from loom.core.use_case import Caller
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
+from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
 from tests.integration.ai.conftest import make_plan, make_policies
 
 _HARNESS_MISSING = pytest.mark.skipif(
@@ -130,6 +140,20 @@ class WhoAmIUseCase(UseCase[object, str]):
         return caller.subject
 
 
+class RenameProduct(Command, frozen=True):
+    """The command a rename carries as its payload."""
+
+    name: str
+
+
+class RenameProductUseCase(UseCase[object, str]):
+    """Granted operation taking a parameter and a command payload."""
+
+    async def execute(self, product_id: str, cmd: RenameProduct = Input()) -> str:
+        """Return a confirmation for the rename."""
+        return f"renamed {product_id} to {cmd.name}"
+
+
 def _compile_use_cases() -> None:
     compiler = UseCaseCompiler()
     for use_case in (
@@ -137,6 +161,7 @@ def _compile_use_cases() -> None:
         GetProductUseCase,
         DeleteProductUseCase,
         WhoAmIUseCase,
+        RenameProductUseCase,
     ):
         compiler.compile(use_case)
 
@@ -208,13 +233,14 @@ class RecordedInvocation:
         use_case: Type the capability asked the invoker to run.
         params: Primitive parameters handed over.
         payload: Command payload handed over, if any.
-        identity: Ambient identity *inside* the invocation (FR-043).
+        identity: The identity acting when the invoker was called, the one
+            the real ``AppInvoker``'s executor acts as.
     """
 
     use_case: type[Compilable]
     params: Mapping[str, Any]
     payload: Mapping[str, Any] | None
-    identity: Identity
+    identity: Identity | None
 
 
 class RecordingInvoker:
@@ -238,7 +264,7 @@ class RecordingInvoker:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> str:
-        """Record the call, the ambient identity, and return the fixed result."""
+        """Record the call and the identity acting, and return the fixed result."""
         self.calls.append(
             RecordedInvocation(
                 use_case=use_case,
@@ -346,15 +372,10 @@ class CapabilityDeps:
     """Dependency bundle satisfying the capability boundary contract (D1).
 
     Attributes:
-        identity: Verified caller of this invocation.
         container: Application container the capability resolves from.
-        invoker: Application invoker bound to ``identity``, or ``None`` for a
-            plan whose capabilities never invoke a use case.
     """
 
-    identity: Identity
     container: LoomContainer
-    invoker: ApplicationInvoker | None = None
 
 
 class CapabilityDepsFactory:
@@ -366,17 +387,44 @@ class CapabilityDepsFactory:
         container: LoomContainer,
         state: Mapping[str, Any] | None = None,
     ) -> object:
-        """Return the bundle carrying the caller, the container and the invoker."""
-        registered = container.is_registered(ApplicationInvoker)
-        invoker = container.resolve(ApplicationInvoker) if registered else None
-        return CapabilityDeps(identity=identity, container=container, invoker=invoker)
+        """Return the bundle carrying the container."""
+        return CapabilityDeps(container=container)
 
 
-class IdentitylessDepsFactory:
-    """Factory producing a bundle that carries no identity at all.
+@dataclass(frozen=True)
+class InvokerBundle:
+    """A deployment's own bundle carrying an invoker of its own beside the container.
+
+    Attributes:
+        container: Application container the capability resolves from.
+        invoker: The deployment's invoker, for its own tools only.
+    """
+
+    container: LoomContainer
+    invoker: RecordingInvoker
+
+
+@dataclass(frozen=True)
+class InvokerBundleFactory:
+    """Per-invocation factory producing an :class:`InvokerBundle` around one invoker."""
+
+    invoker: RecordingInvoker
+
+    def build(
+        self,
+        identity: Identity,
+        container: LoomContainer,
+        state: Mapping[str, Any] | None = None,
+    ) -> object:
+        """Return the bundle carrying the container and the deployment's invoker."""
+        return InvokerBundle(container=container, invoker=self.invoker)
+
+
+class ContainerlessDepsFactory:
+    """Factory producing a bundle that exposes none of the contract's attributes.
 
     Models the deployment that wires a dependency bundle of its own: the
-    capability boundary must fail closed rather than substitute ``ANONYMOUS``.
+    capability boundary must fail closed.
     """
 
     def build(
@@ -503,7 +551,8 @@ class TestContainment:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == sorted(GRANTED_TOOLS)
 
@@ -525,7 +574,7 @@ class TestContainment:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert failure.value.code is AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION
@@ -550,7 +599,8 @@ class TestIdentity:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert [call.identity for call in invoker.calls] == [ANALYST]
 
@@ -572,45 +622,122 @@ class TestIdentity:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert invoker.calls == []
 
-    async def test_the_run_is_refused_when_the_deps_bundle_carries_no_identity(
-        self, app_container: LoomContainer
+    async def test_a_bundle_exposing_no_container_is_refused_before_any_query(
+        self, app_container: LoomContainer, sql_service: RecordingSqlQueryService
     ) -> None:
-        """A bundle without the contract's attributes fails closed (design D1)."""
-        model = ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),))
+        """A bundle without a container fails closed where the tool reads it."""
+        model = ScriptedToolModel(calls=((SQL_TOOL, {"sql": "SELECT 1"}),))
         engine = build_engine(
-            capabilities=(usecase_capability(),),
+            capabilities=(sql_capability(),),
             model=model,
             container=app_container,
-            deps=IdentitylessDepsFactory(),
+            deps=ContainerlessDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
-        assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
+        assert (failure.value.code, sql_service.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
 
-    async def test_no_operation_is_invoked_when_the_deps_bundle_carries_no_identity(
+
+class TestInvocation:
+    async def test_the_parameters_and_the_payload_reach_the_invoker_as_the_identity_acting(
         self, app_container: LoomContainer, invoker: RecordingInvoker
     ) -> None:
-        """The refusal happens before the application is ever touched."""
-        model = ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),))
+        """What the model sends is what the use case receives, as the caller."""
+        arguments = {"product_id": "p-1", "cmd": {"name": "widget"}}
+        model = ScriptedToolModel(calls=(("usecase_product_rename", arguments),))
         engine = build_engine(
-            capabilities=(usecase_capability(),),
+            capabilities=(
+                CompiledUsecaseCapability(
+                    keys=("product:rename",), use_cases=(RenameProductUseCase,)
+                ),
+            ),
             model=model,
             container=app_container,
-            deps=IdentitylessDepsFactory(),
+            deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
-        assert (failure.value.code, invoker.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
+        assert invoker.calls == [
+            RecordedInvocation(
+                use_case=RenameProductUseCase,
+                params={"product_id": "p-1"},
+                payload={"name": "widget"},
+                identity=ANALYST,
+            )
+        ]
+
+    async def test_runs_through_the_containers_invoker_not_the_bundles(
+        self, app_container: LoomContainer, invoker: RecordingInvoker
+    ) -> None:
+        """A bundle's own invoker is never what a ``usecase`` tool invokes through."""
+        bundle_invoker = RecordingInvoker()
+        engine = build_engine(
+            capabilities=(usecase_capability(),),
+            model=ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),)),
+            container=app_container,
+            deps=InvokerBundleFactory(bundle_invoker),
+        )
+
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
+
+        assert ([call.identity for call in invoker.calls], bundle_invoker.calls) == ([ANALYST], [])
+
+    def test_refuses_the_build_when_the_container_holds_no_invoker(self) -> None:
+        """Without an invoker the engine is never built, naming the agent."""
+        capabilities = (usecase_capability(),)
+        model = ScriptedToolModel(calls=())
+        container = LoomContainer()
+        deps = CapabilityDepsFactory()
+
+        with pytest.raises(AgentCompilationError) as failure:
+            build_engine(capabilities=capabilities, model=model, container=container, deps=deps)
+
+        assert [issue.code for issue in failure.value.issues] == [
+            AgentErrorCode.USECASE_INVOKER_MISSING
+        ]
+
+    def test_refuses_the_build_when_the_container_holds_a_bound_invoker(self) -> None:
+        kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
+        kernel.container.register_instance(ApplicationInvoker, kernel.app.for_identity(ANALYST))
+        capabilities = (usecase_capability(),)
+        model = ScriptedToolModel(calls=())
+        deps = CapabilityDepsFactory()
+
+        with pytest.raises(AgentCompilationError) as failure:
+            build_engine(
+                capabilities=capabilities, model=model, container=kernel.container, deps=deps
+            )
+
+        assert [issue.code for issue in failure.value.issues] == [AgentErrorCode.INVOKER_BOUND]
+
+    async def test_runs_through_the_invoker_the_container_held_when_the_engine_was_built(
+        self, app_container: LoomContainer, invoker: RecordingInvoker
+    ) -> None:
+        """The invoker is resolved once, at build: one registered later is not used."""
+        engine = build_engine(
+            capabilities=(usecase_capability(),),
+            model=ScriptedToolModel(calls=(("usecase_product_create", {"name": "widget"}),)),
+            container=app_container,
+            deps=CapabilityDepsFactory(),
+        )
+        later = RecordingInvoker()
+        app_container.register_instance(ApplicationInvoker, later)
+
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
+
+        assert (len(invoker.calls), later.calls) == (1, [])
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +758,8 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert [call.roles for call in sql_service.calls] == [(ALLOWED_ROLE,)]
 
@@ -649,7 +777,8 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         unbound = [call for call in sql_service.calls if not call.roles]
         assert (len(sql_service.calls), unbound) == (2, [])
@@ -666,7 +795,7 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, sql_service.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -683,7 +812,7 @@ class TestSqlRolesAreBoundToTheCaller:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ROLELESS):
             await engine.run("hello", identity=ROLELESS)
 
         assert (failure.value.code, sql_service.calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -709,7 +838,8 @@ class TestResultBounds:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (bool(model.tool_returns), CANARY in model.shown) == (True, False)
 
@@ -727,7 +857,8 @@ class TestResultBounds:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (bool(model.tool_returns), CANARY in model.shown) == (True, False)
 
@@ -844,7 +975,7 @@ class TestSkillsCapability:
         directory = write_skill_library(tmp_path)
         plan = make_plan(capabilities=(skills_capability(directory, "pricing", "forecast"),))
 
-        capabilities = _capabilities.build_capabilities(plan, LoomContainer())
+        capabilities = _capabilities.build_capabilities(plan)
 
         assert len(capabilities) == 1
         skills = capabilities[0]
@@ -858,7 +989,7 @@ class TestSkillsCapability:
         directory = write_skill_library(tmp_path)
         plan = make_plan(capabilities=(skills_capability(directory, "pricing"),))
 
-        skills = _capabilities.build_capabilities(plan, LoomContainer())[0]
+        skills = _capabilities.build_capabilities(plan)[0]
 
         assert isinstance(skills, Skills)
         assert skills.include == frozenset({"pricing"})
@@ -872,7 +1003,7 @@ class TestSkillsCapability:
         directory = write_skill_library(tmp_path)
         plan = make_plan(capabilities=(skills_capability(directory, "pricing"),))
 
-        skills = _capabilities.build_capabilities(plan, LoomContainer())[0]
+        skills = _capabilities.build_capabilities(plan)[0]
 
         assert isinstance(skills.workspace, ReadOnlyWorkspace)
 
@@ -892,7 +1023,7 @@ class TestSkillsCapability:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError, match="invented"):
+        with pytest.raises(AgentRunError, match="invented"), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
     def test_builds_no_toolset_when_the_capability_is_skills(
@@ -910,7 +1041,7 @@ class TestSkillsCapability:
         """A plan without a library asks nothing of the optional harness."""
         plan = make_plan(capabilities=(sql_capability(),))
 
-        assert _capabilities.build_capabilities(plan, LoomContainer()) == ()
+        assert _capabilities.build_capabilities(plan) == ()
 
     async def test_the_agent_responds_when_the_plan_grants_a_library(
         self, tmp_path: Path, app_container: LoomContainer
@@ -925,7 +1056,8 @@ class TestSkillsCapability:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert result.output == {"answer": "42"}
 
@@ -982,7 +1114,7 @@ class TestCapabilityRunsAreNotReplayed:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError):
+        with pytest.raises(AgentRunError), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 1
@@ -1000,7 +1132,7 @@ class TestCapabilityRunsAreNotReplayed:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError):
+        with pytest.raises(AgentRunError), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert model.responses > 1
@@ -1028,7 +1160,8 @@ class TestContainedApplicationFailures:
             policies=REPLAYING_POLICIES,
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 1
 
@@ -1047,7 +1180,8 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ("refused" in model.shown, BACKEND_CANARY in model.shown) == (True, False)
 
@@ -1070,7 +1204,8 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ("refused" in model.shown, BACKEND_CANARY in model.shown) == (True, False)
 
@@ -1089,7 +1224,7 @@ class TestContainedApplicationFailures:
             policies=REPLAYING_POLICIES,
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert (failure.value.code, len(invoker.calls)) == (AgentRunErrorCode.UNAUTHORIZED, 1)
@@ -1109,7 +1244,7 @@ class TestContainedApplicationFailures:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert BACKEND_CANARY not in str(failure.value)
@@ -1139,7 +1274,7 @@ def python_capability(calls: list[str]) -> CompiledPythonCapability:
 
 def stub_mcp_server(
     calls: list[str],
-) -> Callable[[CompiledMcpCapability, Any], AbstractToolset[Any]]:
+) -> Callable[[Any, CompiledMcpCapability, str], AbstractToolset[Any]]:
     """Stand in for the MCP client, which is an optional dependency.
 
     The client is not installed in the test environment, so the remote toolset
@@ -1152,8 +1287,8 @@ def stub_mcp_server(
         calls.append("remote_ping")
         return "pong"
 
-    def _server(capability: CompiledMcpCapability, context: Any) -> AbstractToolset[Any]:
-        del capability, context
+    def _server(shared: Any, capability: CompiledMcpCapability, agent: str) -> AbstractToolset[Any]:
+        del shared, capability, agent
         return FunctionToolset([remote_ping])
 
     return _server
@@ -1161,7 +1296,7 @@ def stub_mcp_server(
 
 def stub_mcp_catalogue(
     *tool_names: str,
-) -> Callable[[CompiledMcpCapability, Any], AbstractToolset[Any]]:
+) -> Callable[[Any, CompiledMcpCapability, str], AbstractToolset[Any]]:
     """Stand in for an MCP server offering ``tool_names`` and nothing else."""
 
     def _named_tool(name: str) -> Tool[Any]:
@@ -1176,8 +1311,8 @@ def stub_mcp_catalogue(
             takes_ctx=False,
         )
 
-    def _server(capability: CompiledMcpCapability, context: Any) -> AbstractToolset[Any]:
-        del capability, context
+    def _server(shared: Any, capability: CompiledMcpCapability, agent: str) -> AbstractToolset[Any]:
+        del shared, capability, agent
         return FunctionToolset([_named_tool(name) for name in tool_names])
 
     return _server
@@ -1262,7 +1397,8 @@ class TestEngineSignalsSurviveTheGuard:
             policies=make_policies(retries=2),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert any("bad argument, try X" in prompt for prompt in model.retry_prompts)
         assert "refused" not in model.shown
@@ -1286,7 +1422,7 @@ class TestEngineSignalsSurviveTheGuard:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
         assert "deferred" in str(failure.value).lower()
@@ -1311,7 +1447,8 @@ class TestForeignToolsetsCannotDictateTheirSummary:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         part = model.tool_parts[0]
         metadata = part.metadata or {}
@@ -1345,7 +1482,8 @@ class TestToolCallsAreCounted:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert len(invoker.calls) == 2
         assert result.usage.tool_calls == 2
@@ -1361,7 +1499,8 @@ class TestToolCallsAreCounted:
             deps=CapabilityDepsFactory(),
         )
 
-        result = await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            result = await engine.run("hello", identity=ANALYST)
 
         assert result.usage.tool_calls == 0
 
@@ -1380,7 +1519,7 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -1398,7 +1537,8 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert calls == ["ping"]
 
@@ -1407,7 +1547,7 @@ class TestForeignToolsetsAreGuarded:
     ) -> None:
         """An unauthenticated run must not reach a remote MCP server."""
         calls: list[str] = []
-        monkeypatch.setattr(_capabilities, "_mcp_server", stub_mcp_server(calls))
+        monkeypatch.setattr(SharedMcpToolsets, "for_build", stub_mcp_server(calls))
         model = ScriptedToolModel(calls=(("remote_ping", {}),))
         engine = build_engine(
             capabilities=(CompiledMcpCapability(server="tools", url="https://tools.internal/mcp"),),
@@ -1416,7 +1556,7 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError) as failure:
+        with pytest.raises(AgentRunError) as failure, ExecutionScope(ANONYMOUS):
             await engine.run("hello", identity=ANONYMOUS)
 
         assert (failure.value.code, calls) == (AgentRunErrorCode.UNAUTHORIZED, [])
@@ -1426,7 +1566,7 @@ class TestForeignToolsetsAreGuarded:
     ) -> None:
         """The guard leaves an authenticated MCP call working."""
         calls: list[str] = []
-        monkeypatch.setattr(_capabilities, "_mcp_server", stub_mcp_server(calls))
+        monkeypatch.setattr(SharedMcpToolsets, "for_build", stub_mcp_server(calls))
         model = ScriptedToolModel(calls=(("remote_ping", {}),))
         engine = build_engine(
             capabilities=(CompiledMcpCapability(server="tools", url="https://tools.internal/mcp"),),
@@ -1435,21 +1575,22 @@ class TestForeignToolsetsAreGuarded:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert calls == ["remote_ping"]
 
 
 class TestMcpToolFilter:
-    """The artifact's ``include``/``exclude`` are globs, applied at build (FR-025)."""
+    """The artifact's ``include``/``exclude`` are globs, applied at build."""
 
     async def test_offers_only_the_included_family_when_include_is_a_glob(
         self, app_container: LoomContainer, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``search_*`` selects a family of tools, not a literal name."""
         monkeypatch.setattr(
-            _capabilities,
-            "_mcp_server",
+            SharedMcpToolsets,
+            "for_build",
             stub_mcp_catalogue("search_web", "search_docs", "delete_index"),
         )
         model = ScriptedToolModel(calls=(("search_web", {}),))
@@ -1466,7 +1607,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == ["search_docs", "search_web"]
 
@@ -1475,8 +1617,8 @@ class TestMcpToolFilter:
     ) -> None:
         """``exclude`` is applied after ``include``, so an admitted tool can still go."""
         monkeypatch.setattr(
-            _capabilities,
-            "_mcp_server",
+            SharedMcpToolsets,
+            "for_build",
             stub_mcp_catalogue("search_web", "search_admin", "delete_index"),
         )
         model = ScriptedToolModel(calls=(("search_web", {}),))
@@ -1494,7 +1636,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert model.offered_tools == ("search_web",)
 
@@ -1503,7 +1646,7 @@ class TestMcpToolFilter:
     ) -> None:
         """No filter grants the whole surface: an empty ``include`` means all."""
         monkeypatch.setattr(
-            _capabilities, "_mcp_server", stub_mcp_catalogue("search_web", "delete_index")
+            SharedMcpToolsets, "for_build", stub_mcp_catalogue("search_web", "delete_index")
         )
         model = ScriptedToolModel(calls=(("search_web", {}),))
         engine = build_engine(
@@ -1513,7 +1656,8 @@ class TestMcpToolFilter:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert sorted(model.offered_tools) == ["delete_index", "search_web"]
 
@@ -1536,7 +1680,8 @@ class TestStatementBound:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (sql_service.calls, "max_sql_bytes" in model.shown) == ([], True)
 
@@ -1557,7 +1702,8 @@ class TestRowBoundCountsTheRowsHandedOver:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert (CANARY in model.shown, "max_rows" in model.shown) == (False, True)
 
@@ -1599,7 +1745,8 @@ class TestPublishedToolNames:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert model.offered_tools == ("sql_sales_eu",)
 
@@ -1642,7 +1789,8 @@ class TestRefusalsAreVisibleInTheStream:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
         events = [translate(FunctionToolResultEvent(part=part)) for part in model.tool_parts]
 
         assert [
@@ -1661,7 +1809,8 @@ class TestRefusalsAreVisibleInTheStream:
             deps=CapabilityDepsFactory(),
         )
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
         events = [translate(FunctionToolResultEvent(part=part)) for part in model.tool_parts]
 
         assert [
@@ -1704,7 +1853,8 @@ class TestIdentityReachesTheExecutor:
         """The subject of the agent's caller reaches the ``Caller()`` binding."""
         engine, model = self._engine_and_model()
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert ANALYST.subject in model.shown
 
@@ -1712,6 +1862,66 @@ class TestIdentityReachesTheExecutor:
         """No ``Unauthenticated``: the executor is handed the caller explicitly."""
         engine, model = self._engine_and_model()
 
-        await engine.run("hello", identity=ANALYST)
+        with ExecutionScope(ANALYST):
+            await engine.run("hello", identity=ANALYST)
 
         assert "the operation failed" not in model.shown
+
+    async def test_a_tool_called_past_the_delegation_fails_the_run_as_authorization(
+        self, past_the_window: Callable[[], None]
+    ) -> None:
+        engine, _ = self._engine_and_model()
+
+        with ExecutionScope(ANALYST):
+            past_the_window()
+            with pytest.raises(AgentRunError) as raised:
+                await engine.run("hello", identity=ANALYST)
+
+        assert run_error_class(raised.value.code) is AgentRunErrorClass.AUTHORIZATION
+
+
+class TestTheRuntimeStartChecksTheInvoker:
+    @staticmethod
+    def _runtime(container: LoomContainer, provider: CountingEngineProvider) -> AgentRuntime:
+        return AgentRuntime(
+            plans=[make_plan("analyst", capabilities=(whoami_capability(),))],
+            config=make_ai_config(),
+            engine_provider=provider,  # type: ignore[arg-type]
+            deps=StubDepsFactory(),
+            container=container,
+        )
+
+    async def test_refuses_an_invoker_bound_after_the_kernel_was_created(self) -> None:
+        kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
+        kernel.container.register_instance(ApplicationInvoker, kernel.app.for_identity(ANALYST))
+        provider = CountingEngineProvider()
+
+        with pytest.raises(AgentCompilationError) as failure:
+            async with self._runtime(kernel.container, provider):
+                pass
+
+        assert [issue.code for issue in failure.value.issues] == [AgentErrorCode.INVOKER_BOUND]
+        assert provider.calls == []
+
+    async def test_refuses_a_plan_granting_use_cases_when_the_container_holds_no_invoker(
+        self,
+    ) -> None:
+        provider = CountingEngineProvider()
+
+        with pytest.raises(AgentCompilationError) as failure:
+            async with self._runtime(LoomContainer(), provider):
+                pass
+
+        issues = failure.value.issues
+        assert [issue.code for issue in issues] == [AgentErrorCode.USECASE_INVOKER_MISSING]
+        assert "analyst" in issues[0].message
+        assert provider.calls == []
+
+    async def test_starts_with_the_kernels_unbound_invoker(self) -> None:
+        kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
+        provider = CountingEngineProvider()
+
+        async with self._runtime(kernel.container, provider):
+            pass
+
+        assert provider.calls == ["analyst"]

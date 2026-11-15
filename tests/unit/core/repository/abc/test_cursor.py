@@ -259,7 +259,7 @@ class TestStrictDecoding:
         assert excinfo.value.reason == "cursor token does not match the sort"
 
 
-class _Status(StrEnum):
+class AcmeCursorStatus(StrEnum):
     OPEN = "open"
     CLOSED = "closed"
 
@@ -271,7 +271,7 @@ _TYPED: dict[str, Any] = {
     "starts_at": time,
     "rank": int,
     "code": str,
-    "status": _Status,
+    "status": AcmeCursorStatus,
     "amount": Decimal,
     "ref": UUID,
     "account_id": int,
@@ -371,7 +371,7 @@ class TestTypedValues:
             ("starts_at", time(9, 30)),
             ("rank", 7),
             ("code", "0123"),
-            ("status", _Status.CLOSED),
+            ("status", AcmeCursorStatus.CLOSED),
             ("amount", Decimal("19.90")),
             ("ref", UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")),
         ],

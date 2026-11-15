@@ -71,41 +71,42 @@ async def _run(use_case: UseCase[object, SqlQueryResult], **kwargs: object) -> S
     return result
 
 
-async def test_the_marked_identity_parameter_is_not_a_caller_supplied_param() -> None:
-    """``Caller()`` takes the parameter out of the params the caller writes."""
-    plan = UseCaseCompiler().compile(ListSales)
-    assert plan.caller_binding is not None
-    assert [binding.name for binding in plan.param_bindings] == []
+class TestCallerBoundSqlIntegration:
+    async def test_the_marked_identity_parameter_is_not_a_caller_supplied_param(self) -> None:
+        """``Caller()`` takes the parameter out of the params the caller writes."""
+        plan = UseCaseCompiler().compile(ListSales)
+        assert plan.caller_binding is not None
+        assert [binding.name for binding in plan.param_bindings] == []
 
+    async def test_the_query_runs_with_the_verified_identity_not_the_supplied_one(
+        self,
+        fake_executor: FakeSqlExecutor,
+    ) -> None:
+        """Params carrying an identity cannot displace the one the transport verified."""
+        use_case = ListSales(_caller_bound(fake_executor))
+        await _run(use_case, identity=_VERIFIED, params={"identity": _FORGED})
+        assert fake_executor.calls[0].options.roles == ("role_viz_sales",)
 
-async def test_the_query_runs_with_the_verified_identity_not_the_supplied_one(
-    fake_executor: FakeSqlExecutor,
-) -> None:
-    """Params carrying an identity cannot displace the one the transport verified."""
-    use_case = ListSales(_caller_bound(fake_executor))
-    await _run(use_case, identity=_VERIFIED, params={"identity": _FORGED})
-    assert fake_executor.calls[0].options.roles == ("role_viz_sales",)
+    async def test_an_unmarked_identity_parameter_runs_with_the_supplied_identity(
+        self,
+        fake_executor: FakeSqlExecutor,
+    ) -> None:
+        """Why the marker is mandatory: without it, the params decide who the caller is.
 
+        This is the shape the docstring must never show. It is pinned here so the
+        test above cannot pass for the wrong reason.
+        """
+        use_case = ListSalesUnmarked(_caller_bound(fake_executor))
+        await _run(use_case, identity=_VERIFIED, params={"identity": _FORGED})
+        assert fake_executor.calls[0].options.roles == ("role_viz_reader",)
 
-async def test_an_unmarked_identity_parameter_runs_with_the_supplied_identity(
-    fake_executor: FakeSqlExecutor,
-) -> None:
-    """Why the marker is mandatory: without it, the params decide who the caller is.
-
-    This is the shape the docstring must never show. It is pinned here so the
-    test above cannot pass for the wrong reason.
-    """
-    use_case = ListSalesUnmarked(_caller_bound(fake_executor))
-    await _run(use_case, identity=_VERIFIED, params={"identity": _FORGED})
-    assert fake_executor.calls[0].options.roles == ("role_viz_reader",)
-
-
-async def test_the_verified_caller_is_still_refused_when_it_holds_no_allowlisted_role(
-    fake_executor: FakeSqlExecutor,
-) -> None:
-    """The refusal follows the verified identity, whatever the params claim."""
-    use_case = ListSales(_caller_bound(fake_executor))
-    intruder = Identity(subject="mallory", roles=("role_intruder",), mechanism="jwt")
-    with pytest.raises(RolesNotBoundError):
-        await _run(use_case, identity=intruder, params={"identity": _VERIFIED})
-    assert fake_executor.calls == []
+    async def test_the_verified_caller_is_still_refused_when_it_holds_no_allowlisted_role(
+        self,
+        fake_executor: FakeSqlExecutor,
+    ) -> None:
+        """The refusal follows the verified identity, whatever the params claim."""
+        use_case = ListSales(_caller_bound(fake_executor))
+        intruder = Identity(subject="mallory", roles=("role_intruder",), mechanism="jwt")
+        with pytest.raises(RolesNotBoundError):
+            await _run(use_case, identity=intruder, params={"identity": _VERIFIED})
+        assert fake_executor.calls == []

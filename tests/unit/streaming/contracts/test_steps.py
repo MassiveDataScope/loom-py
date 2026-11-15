@@ -18,13 +18,13 @@ from loom.streaming import (
     StreamFlow,
 )
 from tests.unit.streaming.contracts.cases import (
+    AcmeContractValidatedOrder,
+    AcmeContractValidateOrder,
     Client,
     ClientFactory,
     Context,
     NamedValidateOrder,
     Order,
-    ValidatedOrder,
-    ValidateOrder,
 )
 
 
@@ -39,21 +39,21 @@ class TestSteps:
         assert context.resource is client
 
     def test_step_names_resolve_from_class_or_explicit_name(self) -> None:
-        assert ValidateOrder.step_name() == "ValidateOrder"
+        assert AcmeContractValidateOrder.step_name() == "AcmeContractValidateOrder"
         assert NamedValidateOrder.step_name() == "custom"
 
     def test_step_receives_injected_resources(self) -> None:
-        task = ValidateOrder()
+        task = AcmeContractValidateOrder()
         message = Message(payload=Order(order_id="o-1"), meta=MessageMeta(message_id="msg-1"))
 
         result = task.execute(message, client="mock-client")
 
-        assert result == ValidatedOrder(order_id="o-1")
+        assert result == AcmeContractValidatedOrder(order_id="o-1")
 
     def test_process_requires_nodes_and_preserves_order(self) -> None:
-        target = IntoTopic("orders.out", payload=ValidatedOrder)
-        task = ValidateOrder()
-        process = Process[Order, ValidatedOrder](task, target)
+        target = IntoTopic("orders.out", payload=AcmeContractValidatedOrder)
+        task = AcmeContractValidateOrder()
+        process = Process[Order, AcmeContractValidatedOrder](task, target)
 
         assert process.nodes == (task, target)
         assert list(process) == [task, target]
@@ -61,16 +61,16 @@ class TestSteps:
 
     def test_process_rejects_empty_graph(self) -> None:
         with pytest.raises(ValueError, match="at least one node"):
-            Process[Order, ValidatedOrder]()
+            Process[Order, AcmeContractValidatedOrder]()
 
     def test_stream_flow_captures_source_process_output_and_error_routes(self) -> None:
         source = FromTopic("orders.in", payload=Order)
-        output = IntoTopic("orders.out", payload=ValidatedOrder)
+        output = IntoTopic("orders.out", payload=AcmeContractValidatedOrder)
         dlq: IntoTopic[LoomStruct | LoomFrozenStruct] = IntoTopic(
             "orders.dlq",
-            payload=ValidatedOrder,
+            payload=AcmeContractValidatedOrder,
         )
-        process = Process[Order, ValidatedOrder](ValidateOrder())
+        process = Process[Order, AcmeContractValidatedOrder](AcmeContractValidateOrder())
         flow = StreamFlow(
             name="orders",
             source=source,
@@ -87,7 +87,7 @@ class TestSteps:
 
     def test_stream_flow_accepts_single_error_sink_for_all_kinds(self) -> None:
         source = FromTopic("orders.in", payload=Order)
-        process = Process[Order, ValidatedOrder](ValidateOrder())
+        process = Process[Order, AcmeContractValidatedOrder](AcmeContractValidateOrder())
         error_sink: IntoTopic[LoomStruct | LoomFrozenStruct] = IntoTopic("orders.errors")
 
         flow = StreamFlow(
@@ -104,7 +104,7 @@ class TestSteps:
 
     def test_stream_flow_accepts_error_route_groups(self) -> None:
         source = FromTopic("orders.in", payload=Order)
-        process = Process[Order, ValidatedOrder](ValidateOrder())
+        process = Process[Order, AcmeContractValidatedOrder](AcmeContractValidateOrder())
         error_sink: IntoTopic[LoomStruct | LoomFrozenStruct] = IntoTopic("orders.errors")
 
         flow = StreamFlow(
@@ -121,7 +121,7 @@ class TestSteps:
 
     def test_stream_flow_rejects_empty_name(self) -> None:
         source = FromTopic("orders.in", payload=Order)
-        process = Process[Order, ValidatedOrder](ValidateOrder())
+        process = Process[Order, AcmeContractValidatedOrder](AcmeContractValidateOrder())
 
         with pytest.raises(ValueError, match="name"):
             StreamFlow(name="", source=source, process=process)

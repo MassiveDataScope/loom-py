@@ -58,81 +58,68 @@ def _compiler(*uc_types: type[UseCase[Any, Any]]) -> UseCaseCompiler:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_no_uow_factory_runs_without_transaction() -> None:
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler)  # no uow_factory
-    uc = _SimpleUC()
-    result = await executor.execute(uc)
-    assert result == "ok"
+class TestExecutorUnitOfWork:
+    @pytest.mark.asyncio
+    async def test_no_uow_factory_runs_without_transaction(self) -> None:
+        compiler = _compiler(_SimpleUC)
+        executor = RuntimeExecutor(compiler)  # no uow_factory
+        uc = _SimpleUC()
+        result = await executor.execute(uc)
+        assert result == "ok"
 
+    @pytest.mark.asyncio
+    async def test_uow_factory_creates_uow_per_execution(self) -> None:
+        factory, uow = _make_uow_factory()
+        compiler = _compiler(_SimpleUC)
+        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
-# ---------------------------------------------------------------------------
-# UoW factory present — lifecycle on success
-# ---------------------------------------------------------------------------
+        uc = _SimpleUC()
+        await executor.execute(uc)
 
+        factory.create.assert_called_once()
 
-@pytest.mark.asyncio
-async def test_uow_factory_creates_uow_per_execution() -> None:
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+    @pytest.mark.asyncio
+    async def test_uow_entered_through_the_context_manager_protocol(self) -> None:
+        """FR-001: the executor never calls ``begin`` itself."""
+        factory, uow = _make_uow_factory()
+        compiler = _compiler(_SimpleUC)
+        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
-    uc = _SimpleUC()
-    await executor.execute(uc)
+        await executor.execute(_SimpleUC())
 
-    factory.create.assert_called_once()
+        uow.__aenter__.assert_awaited_once()
+        uow.begin.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_uow_exited_cleanly_on_success(self) -> None:
+        """FR-001: a clean ``__aexit__`` is the commit; the executor calls no method."""
+        factory, uow = _make_uow_factory()
+        compiler = _compiler(_SimpleUC)
+        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
-@pytest.mark.asyncio
-async def test_uow_entered_through_the_context_manager_protocol() -> None:
-    """FR-001: the executor never calls ``begin`` itself."""
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+        await executor.execute(_SimpleUC())
 
-    await executor.execute(_SimpleUC())
+        uow.__aexit__.assert_awaited_once_with(None, None, None)
+        uow.commit.assert_not_awaited()
+        uow.rollback.assert_not_awaited()
 
-    uow.__aenter__.assert_awaited_once()
-    uow.begin.assert_not_awaited()
+    @pytest.mark.asyncio
+    async def test_uow_exited_with_the_error_on_failure(self) -> None:
+        """FR-001: the failure reaches ``__aexit__``; the adapter decides the rollback."""
+        factory, uow = _make_uow_factory()
+        compiler = _compiler(_FailingUC)
+        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
+        failing_uc = _FailingUC()
+        with pytest.raises(RuntimeError, match="intentional") as info:
+            await executor.execute(failing_uc)
 
-@pytest.mark.asyncio
-async def test_uow_exited_cleanly_on_success() -> None:
-    """FR-001: a clean ``__aexit__`` is the commit; the executor calls no method."""
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
-
-    await executor.execute(_SimpleUC())
-
-    uow.__aexit__.assert_awaited_once_with(None, None, None)
-    uow.commit.assert_not_awaited()
-    uow.rollback.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# UoW lifecycle on exception
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_uow_exited_with_the_error_on_failure() -> None:
-    """FR-001: the failure reaches ``__aexit__``; the adapter decides the rollback."""
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_FailingUC)
-    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
-
-    failing_uc = _FailingUC()
-    with pytest.raises(RuntimeError, match="intentional") as info:
-        await executor.execute(failing_uc)
-
-    uow.__aexit__.assert_awaited_once()
-    exc_type, exc_val, _ = uow.__aexit__.await_args.args
-    assert exc_type is RuntimeError
-    assert exc_val is info.value
-    uow.commit.assert_not_awaited()
-    uow.rollback.assert_not_awaited()
+        uow.__aexit__.assert_awaited_once()
+        exc_type, exc_val, _ = uow.__aexit__.await_args.args
+        assert exc_type is RuntimeError
+        assert exc_val is info.value
+        uow.commit.assert_not_awaited()
+        uow.rollback.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -150,55 +137,53 @@ class _NestingUC(UseCase[Any, str]):
         return await self._executor.execute(_SimpleUC())
 
 
-@pytest.mark.asyncio
-async def test_nested_execution_does_not_open_second_uow() -> None:
-    factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(
-        _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
+class TestNestedExecutionUnitOfWork:
+    @pytest.mark.asyncio
+    async def test_nested_execution_does_not_open_second_uow(self) -> None:
+        factory, _ = _make_uow_factory()
+        executor = RuntimeExecutor(
+            _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
-    await executor.execute(_NestingUC(executor))
+        await executor.execute(_NestingUC(executor))
 
-    factory.create.assert_called_once()
+        factory.create.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_nested_execution_does_not_commit(self) -> None:
+        factory, uow = _make_uow_factory()
+        executor = RuntimeExecutor(
+            _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
-@pytest.mark.asyncio
-async def test_nested_execution_does_not_commit() -> None:
-    factory, uow = _make_uow_factory()
-    executor = RuntimeExecutor(
-        _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
+        await executor.execute(_NestingUC(executor))
 
-    await executor.execute(_NestingUC(executor))
+        uow.__aexit__.assert_awaited_once_with(None, None, None)
 
-    uow.__aexit__.assert_awaited_once_with(None, None, None)
+    @pytest.mark.asyncio
+    async def test_no_scope_is_published_after_execution(self) -> None:
+        factory, _ = _make_uow_factory()
+        executor = RuntimeExecutor(
+            _compiler(_SimpleUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
+        await executor.execute(_SimpleUC())
 
-@pytest.mark.asyncio
-async def test_no_scope_is_published_after_execution() -> None:
-    factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(
-        _compiler(_SimpleUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
+        assert current_scope() is None
 
-    await executor.execute(_SimpleUC())
+    @pytest.mark.asyncio
+    async def test_no_scope_is_published_after_failed_execution(self) -> None:
+        factory, _ = _make_uow_factory()
+        executor = RuntimeExecutor(
+            _compiler(_FailingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
-    assert current_scope() is None
+        use_case = _FailingUC()
 
+        with pytest.raises(RuntimeError):
+            await executor.execute(use_case)
 
-@pytest.mark.asyncio
-async def test_no_scope_is_published_after_failed_execution() -> None:
-    factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(
-        _compiler(_FailingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
-    )
-
-    use_case = _FailingUC()
-
-    with pytest.raises(RuntimeError):
-        await executor.execute(use_case)
-
-    assert current_scope() is None
+        assert current_scope() is None
 
 
 # ---------------------------------------------------------------------------
@@ -211,59 +196,59 @@ class _EntityUC(UseCase[Any, str]):
         return f"loaded:{entity_id}"
 
 
-@pytest.mark.asyncio
-async def test_load_default_profile_passed_to_repo() -> None:
-    from loom.core.use_case.markers import LoadById
-    from loom.core.use_case.use_case import UseCase
+class TestLoadProfilePassedToRepo:
+    @pytest.mark.asyncio
+    async def test_load_default_profile_passed_to_repo(self) -> None:
+        from loom.core.use_case.markers import LoadById
+        from loom.core.use_case.use_case import UseCase
 
-    class MyEntity:
-        pass
+        class MyEntity:
+            pass
 
-    class LoadUC(UseCase[Any, str]):
-        async def execute(
-            self,
-            entity_id: str,
-            entity: MyEntity = LoadById(MyEntity, by="entity_id"),
-        ) -> str:
-            return "ok"
+        class LoadUC(UseCase[Any, str]):
+            async def execute(
+                self,
+                entity_id: str,
+                entity: MyEntity = LoadById(MyEntity, by="entity_id"),
+            ) -> str:
+                return "ok"
 
-    repo = MagicMock()
-    repo.get_by_id = AsyncMock(return_value=MyEntity())
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=MyEntity())
 
-    compiler = _compiler(LoadUC)
-    executor = RuntimeExecutor(compiler)
-    await executor.execute(
-        LoadUC(),
-        params={"entity_id": "42"},
-        dependencies={MyEntity: repo},
-    )
-    repo.get_by_id.assert_awaited_once_with("42", profile="default")
+        compiler = _compiler(LoadUC)
+        executor = RuntimeExecutor(compiler)
+        await executor.execute(
+            LoadUC(),
+            params={"entity_id": "42"},
+            dependencies={MyEntity: repo},
+        )
+        repo.get_by_id.assert_awaited_once_with("42", profile="default")
 
+    @pytest.mark.asyncio
+    async def test_load_custom_profile_passed_to_repo(self) -> None:
+        from loom.core.use_case.markers import LoadById
+        from loom.core.use_case.use_case import UseCase
 
-@pytest.mark.asyncio
-async def test_load_custom_profile_passed_to_repo() -> None:
-    from loom.core.use_case.markers import LoadById
-    from loom.core.use_case.use_case import UseCase
+        class MyEntity:
+            pass
 
-    class MyEntity:
-        pass
+        class LoadUC(UseCase[Any, str]):
+            async def execute(
+                self,
+                entity_id: str,
+                entity: MyEntity = LoadById(MyEntity, by="entity_id", profile="detail"),
+            ) -> str:
+                return "ok"
 
-    class LoadUC(UseCase[Any, str]):
-        async def execute(
-            self,
-            entity_id: str,
-            entity: MyEntity = LoadById(MyEntity, by="entity_id", profile="detail"),
-        ) -> str:
-            return "ok"
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=MyEntity())
 
-    repo = MagicMock()
-    repo.get_by_id = AsyncMock(return_value=MyEntity())
-
-    compiler = _compiler(LoadUC)
-    executor = RuntimeExecutor(compiler)
-    await executor.execute(
-        LoadUC(),
-        params={"entity_id": "7"},
-        dependencies={MyEntity: repo},
-    )
-    repo.get_by_id.assert_awaited_once_with("7", profile="detail")
+        compiler = _compiler(LoadUC)
+        executor = RuntimeExecutor(compiler)
+        await executor.execute(
+            LoadUC(),
+            params={"entity_id": "7"},
+            dependencies={MyEntity: repo},
+        )
+        repo.get_by_id.assert_awaited_once_with("7", profile="detail")

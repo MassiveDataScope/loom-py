@@ -151,7 +151,7 @@ def build_call_codec(func: Callable[..., Any]) -> ResultCodec | None:
 
     The msgspec grammar :func:`build_result_codec` implements is tried first;
     a pydantic type falls through to a single ``TypeAdapter``. A mapping is
-    refused by decision — parameterised, bare, a ``TypedDict``, or nested
+    refused — parameterised, bare, a ``TypedDict``, or nested
     anywhere inside the annotation — as are ``Any``, a missing annotation, a
     coroutine declared ``-> None`` (which has nothing to cache; ``get_type_hints``
     normalises it to ``NoneType``, so the missing-annotation guard does not
@@ -182,9 +182,8 @@ def _mentions_mapping(annotation: Any) -> bool:
 
     Only the outermost check is not enough: ``dict[str, Any] | None`` and
     ``list[dict[str, Any]]`` have a union and a list at the top, fall through
-    the msgspec grammar, and a ``TypeAdapter`` builds for them happily — so a
-    mapping the owner decided is out of the grammar would be cached inside a
-    container. The walk descends through every type argument.
+    the msgspec grammar, and a ``TypeAdapter`` builds for them. The walk
+    descends through every type argument.
 
     Args:
         annotation: Resolved return annotation, or one of its arguments.

@@ -1,22 +1,20 @@
-"""Compiled capability grants → engine toolsets (US5).
+"""Compiled capability grants → engine toolsets.
 
 A compiled grant is the **only** source of a tool. Every toolset built here
 comes from the tuples the compiler already resolved — never from a registry
 lookup, never from reflection at run time — so an operation the artifact did
-not grant has no tool at all and is unreachable by construction (FR-042).
+not grant has no tool at all and is unreachable by construction.
 
 Two of the four invariants of a capability call hold here; the other two hold
 in :mod:`~loom.ai.engines.pydantic_ai._guards` and
 :mod:`~loom.ai.engines.pydantic_ai._returns`:
 
-* **SQL roles are bound to that identity.** ``roles_bound`` is hard-coded
-  ``True`` at the single :func:`~loom.core.sql.roles.resolve_query_roles` call
-  site, and the resolved tuple is re-checked for emptiness: an empty tuple
-  reaching ``SqlQueryService.execute`` falls through to the connection's
-  *shared* ``default_role``, which is exactly the regression FR-043a forbids.
+* **SQL roles are bound to the acting identity.** Every ``sql`` call resolves
+  them through :meth:`~loom.ai.compiler.CompiledSqlCapability.roles_of`, never
+  from a caller-supplied argument, and an empty result is refused.
 * **Result bounds are applied before the model's context.** ``max_sql_bytes``
   is checked on the way in, and the bounds on the way back are applied by
-  :func:`~loom.ai.engines.pydantic_ai._returns.bounded_return` (FR-046b).
+  :func:`~loom.ai.engines.pydantic_ai._returns.bounded_return`.
 """
 
 from __future__ import annotations
@@ -34,8 +32,6 @@ from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from loom.ai._filters import admits
-from loom.ai._roles import bound_query_roles
-from loom.ai._usecase import invoke_as, require_invoker
 from loom.ai.abc import McpSession, ToolsetContext
 from loom.ai.compiler import (
     AgentPlan,
@@ -51,21 +47,17 @@ from loom.ai.compiler import (
 from loom.ai.engines.pydantic_ai._a2a import require_a2a_sdk, send_to_remote_agent
 from loom.ai.engines.pydantic_ai._guards import (
     BuildContext,
-    CapabilityDeps,
-    authenticated_caller,
+    bundle_container,
     capability_call,
-    capability_deps,
     guarded,
     guarded_toolset,
-    require_authenticated,
 )
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
-from loom.ai.engines.pydantic_ai._native import native_capability as _native_capability
+from loom.ai.engines.pydantic_ai._native import native_capability
 from loom.ai.engines.pydantic_ai._returns import (
     bounded_return,
     ok_return,
     refusal,
-    summary_of,
 )
 from loom.ai.engines.pydantic_ai._schemas import (
     a2a_schema,
@@ -74,20 +66,27 @@ from loom.ai.engines.pydantic_ai._schemas import (
     tool_name,
     usecase_schema,
 )
-from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
+from loom.ai.errors import (
+    INVOKER_MISSING_REASON,
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunError,
+    AgentRunErrorCode,
+    require_authenticated,
+)
 from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.identity import Identity
 from loom.core.sql.abc import SqlQueryResult
 from loom.core.sql.service import SqlQueryService
+from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)
 
 
 class _UsecaseGrant:
-    """One granted use case, with its tool name and argument split fixed."""
+    """One granted use case, with its tool name, argument split and invoker fixed."""
 
     def __init__(
         self,
@@ -96,41 +95,77 @@ class _UsecaseGrant:
         key: str,
         use_case: type[Compilable],
         execution: ExecutionPlan,
+        invoker: ApplicationInvoker,
     ) -> None:
         self.tool_name = tool_name
         self.key = key
         self.use_case = use_case
+        self.invoker = invoker
         self.param_names = tuple(binding.name for binding in execution.param_bindings)
         self.payload_name = (
             execution.input_binding.name if execution.input_binding is not None else None
         )
         self.schema = usecase_schema(execution)
 
+    @property
+    def description(self) -> str:
+        """The first line of the use case's docstring, or a generic one naming its key."""
+        doc = (self.use_case.__doc__ or "").strip()
+        return doc.splitlines()[0] if doc else f"Run the '{self.key}' operation."
 
-# ---------------------------------------------------------------------------
-# usecase (T121, T124)
-# ---------------------------------------------------------------------------
+    async def invoke(self, arguments: Mapping[str, Any]) -> object:
+        """Invoke the granted use case through the application's invoker, as the identity acting.
+
+        Args:
+            arguments: The model's tool arguments.
+
+        Returns:
+            What the use case returned.
+        """
+        params = {name: arguments[name] for name in self.param_names if name in arguments}
+        return await self.invoker.invoke(
+            self.use_case, params=params, payload=self._payload(arguments)
+        )
+
+    def _payload(self, arguments: Mapping[str, Any]) -> dict[str, Any] | None:
+        if self.payload_name is None:
+            return None
+        supplied = arguments.get(self.payload_name)
+        return dict(supplied) if isinstance(supplied, Mapping) else None
 
 
-def _grant(key: str, use_case: type[Compilable]) -> _UsecaseGrant:
+def _grant(
+    key: str, use_case: type[Compilable], invoker: ApplicationInvoker | None, agent: str
+) -> _UsecaseGrant:
     execution = use_case.__execution_plan__
     if execution is None:
         raise AgentCompilationError([AgentErrorCode.USECASE_NOT_COMPILED.issue(key=key)])
+    if invoker is None:
+        raise AgentCompilationError(
+            [
+                AgentErrorCode.USECASE_INVOKER_MISSING.issue(
+                    agents=[agent], reason=INVOKER_MISSING_REASON
+                )
+            ]
+        )
+    if getattr(invoker, "identity", None) is not None:
+        raise AgentCompilationError([AgentErrorCode.INVOKER_BOUND.issue()])
     return _UsecaseGrant(
-        tool_name=tool_name("usecase", key), key=key, use_case=use_case, execution=execution
+        tool_name=tool_name("usecase", key),
+        key=key,
+        use_case=use_case,
+        execution=execution,
+        invoker=invoker,
     )
 
 
 def _usecase_toolset(
     capability: CompiledUsecaseCapability, context: BuildContext
 ) -> AbstractToolset[Any]:
-    """One tool per granted key, and nothing else.
-
-    Name collisions are rejected once for the whole plan in
-    :func:`build_toolsets`, because two capabilities can collide with each other.
-    """
+    """One tool per granted key, each invoking through the container's application invoker."""
+    invoker = context.container.resolve_or_none(ApplicationInvoker)
     grants = tuple(
-        _grant(key, use_case)
+        _grant(key, use_case, invoker, context.agent)
         for key, use_case in zip(capability.keys, capability.use_cases, strict=True)
     )
     return FunctionToolset([_usecase_tool(grant, context) for grant in grants])
@@ -138,42 +173,18 @@ def _usecase_toolset(
 
 def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
     async def call(run: RunContext[Any], **arguments: Any) -> ToolReturn:
-        deps = capability_deps(run)
-        require_authenticated(deps.identity, grant.tool_name)
-        async with capability_call(context, "usecase", grant.tool_name, deps.identity):
-            return await guarded(
-                grant.tool_name, lambda: _invoke(grant, deps, arguments), ok_return
-            )
+        del run
+        caller = require_authenticated(f"tool '{grant.tool_name}'")
+        async with capability_call(context, "usecase", grant.tool_name, caller):
+            return await guarded(grant.tool_name, lambda: grant.invoke(arguments), ok_return)
 
     return Tool.from_schema(
         call,
         name=grant.tool_name,
-        description=summary_of(grant.use_case) or f"Run the '{grant.key}' operation.",
+        description=grant.description,
         json_schema=grant.schema,
         takes_ctx=True,
     )
-
-
-async def _invoke(
-    grant: _UsecaseGrant, deps: CapabilityDeps, arguments: Mapping[str, Any]
-) -> object:
-    """Invoke the granted use case as the caller, ambient identity included."""
-    invoker = require_invoker(deps, f"tool '{grant.tool_name}'")
-    params = {name: arguments[name] for name in grant.param_names if name in arguments}
-    payload = _payload_of(grant, arguments)
-    return await invoke_as(invoker, grant.use_case, deps.identity, params=params, payload=payload)
-
-
-def _payload_of(grant: _UsecaseGrant, arguments: Mapping[str, Any]) -> dict[str, Any] | None:
-    if grant.payload_name is None:
-        return None
-    supplied = arguments.get(grant.payload_name)
-    return dict(supplied) if isinstance(supplied, Mapping) else None
-
-
-# ---------------------------------------------------------------------------
-# sql (T122, T123)
-# ---------------------------------------------------------------------------
 
 
 def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> AbstractToolset[Any]:
@@ -181,16 +192,16 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
     name = tool_name("sql", capability.connection)
 
     async def call(run: RunContext[Any], sql: str) -> ToolReturn:
-        deps = capability_deps(run)
-        require_authenticated(deps.identity, name)
+        container = bundle_container(run)
+        caller = require_authenticated(f"tool '{name}'")
         oversized = _oversized_statement(capability, sql)
         if oversized is not None:
             return oversized
-        roles = _bound_roles(capability, deps.identity)
-        async with capability_call(context, "sql", name, deps.identity):
+        roles = capability.roles_of(caller)
+        async with capability_call(context, "sql", name, caller):
             return await guarded(
                 name,
-                lambda: _query(capability, deps, sql, roles),
+                lambda: _query(capability, container, sql, roles),
                 lambda result: bounded_return(capability, result),
             )
 
@@ -219,59 +230,24 @@ def _oversized_statement(capability: CompiledSqlCapability, sql: str) -> ToolRet
     )
 
 
-def _bound_roles(capability: CompiledSqlCapability, identity: Identity) -> tuple[str, ...]:
-    """Resolve the caller's roles; the shared ``default_role`` is unreachable.
-
-    Delegates to :func:`loom.ai._roles.bound_query_roles`, the single rule
-    this model-facing tool and the marker-facing
-    :class:`~loom.ai.runtime._grants.SqlGrantView` both apply.
-    """
-    return bound_query_roles(capability, identity)
-
-
 async def _query(
     capability: CompiledSqlCapability,
-    deps: CapabilityDeps,
+    container: LoomContainer,
     sql: str,
     roles: tuple[str, ...],
 ) -> SqlQueryResult:
-    service: SqlQueryService = deps.container.resolve(SqlQueryService)
+    service: SqlQueryService = container.resolve(SqlQueryService)
     return await service.execute(
         sql, connection=capability.connection, roles=roles, limit=capability.max_rows
     )
 
 
-# ---------------------------------------------------------------------------
-# mcp (T127)
-# ---------------------------------------------------------------------------
-
-
 def _mcp_toolset(capability: CompiledMcpCapability, context: BuildContext) -> AbstractToolset[Any]:
-    """Filter the engine's MCP toolset, then put it behind the call boundary.
-
-    A remote server is reachable only by an authenticated caller, and only
-    within the plan's tool timeout.
-    """
-    toolset: AbstractToolset[Any] = _mcp_server(capability, context)
+    """Filter the worker's shared toolset of the grant's server, then guard it."""
+    toolset: AbstractToolset[Any] = context.mcp.for_build(capability, context.agent)
     if capability.include or capability.exclude:
         toolset = toolset.filtered(_tool_predicate(capability.include, capability.exclude))
-    return guarded_toolset(toolset, context, "mcp", authenticated_caller)
-
-
-def _mcp_server(capability: CompiledMcpCapability, context: BuildContext) -> AbstractToolset[Any]:
-    """Return the worker's shared toolset for the grant's server.
-
-    The same object serves the runtime's start-up client, so a run can never
-    reach a server start-up validated under different connection rules, and a
-    worker holds one connection per server however many agents were granted it
-    (FR-026). A deployment that wired some other MCP client factory is refused
-    here rather than silently given a second, unvalidated connection.
-
-    The filter and the call boundary the caller wraps around it are
-    ``WrapperToolset`` composition: each holds a reference and mutates nothing,
-    so two agents keep independent views over this one shared toolset.
-    """
-    return context.mcp.for_build(capability, context.agent)
+    return guarded_toolset(toolset, context, "mcp")
 
 
 def _tool_predicate(
@@ -289,11 +265,6 @@ def _tool_predicate(
         return admits(definition.name, include=include, exclude=exclude)
 
     return allowed
-
-
-# ---------------------------------------------------------------------------
-# skills (T128) and python (T129)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,12 +308,7 @@ class _PythonToolsetContext:
 def _python_context(
     capability: CompiledPythonCapability, context: BuildContext
 ) -> _PythonToolsetContext:
-    """Build the factory's context over the plan's own ``mcp`` grants.
-
-    Each is the connection's own session, the one the agent's ``mcp`` grant and
-    every grant view use, so a factory that reuses a remote shares the worker's
-    one connection to it, and its renewals, rather than opening a second.
-    """
+    """Build the factory's context over the shared sessions of the plan's own ``mcp`` grants."""
     remotes = {
         grant.server: context.mcp.session_for(grant, context.agent) for grant in context.mcp_grants
     }
@@ -357,13 +323,7 @@ def _python_context(
 def _python_toolset(
     capability: CompiledPythonCapability, context: BuildContext
 ) -> AbstractToolset[Any]:
-    """Call the resolved factory once, at build, with its toolset context.
-
-    The declared ``params`` are splatted as keyword arguments. The produced
-    toolset is first-party code that can reach anything the container reaches,
-    so its tools sit behind the same authenticated boundary a ``usecase`` tool
-    does.
-    """
+    """Call the factory once, at build, with its context and ``params``; guard its tools."""
     toolset = _call_factory(capability, context)
     if not isinstance(toolset, AbstractToolset):
         raise AgentCompilationError(
@@ -373,17 +333,11 @@ def _python_toolset(
                 )
             ]
         )
-    return guarded_toolset(toolset, context, "python", authenticated_caller)
+    return guarded_toolset(toolset, context, "python")
 
 
 def _call_factory(capability: CompiledPythonCapability, context: BuildContext) -> object:
-    """Run the factory, turning anything it raises into a coded issue.
-
-    A refusal the context itself raised (``PYTHON_REMOTE_NOT_GRANTED``) passes
-    through untouched. Any other exception is reported by class name only: its
-    text could echo a ``params`` value, and the artifact's issues are shown to
-    whoever deploys it.
-    """
+    """Run the factory; anything but a context refusal becomes an issue naming its class only."""
     python_context: ToolsetContext = _python_context(capability, context)
     try:
         return capability.factory(python_context, **capability.params)
@@ -401,18 +355,13 @@ def _call_factory(capability: CompiledPythonCapability, context: BuildContext) -
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# a2a (T147, T148)
-# ---------------------------------------------------------------------------
-
-
 def _a2a_toolset(capability: CompiledA2ACapability, context: BuildContext) -> AbstractToolset[Any]:
     """One delegation tool per remote agent, behind the call boundary.
 
-    **Why one tool and not one per skill.** A2A ``SendMessage`` carries no
-    skill selector — the remote agent routes the message itself — so a tool per
-    skill would publish names that differ only in their description while
-    sending byte-identical requests, promising the model a routing guarantee
+    A2A ``SendMessage`` carries no skill selector — the remote agent routes
+    the message itself — so a tool per skill would publish names that differ
+    only in their description while sending byte-identical requests, promising
+    the model a routing guarantee
     the protocol does not give. The card, which is the only authority on what
     the remote really exposes, is not available here either: this build is
     synchronous and start-up is where the network is allowed. The granted
@@ -424,12 +373,12 @@ def _a2a_toolset(capability: CompiledA2ACapability, context: BuildContext) -> Ab
 
     Delegation is a remote call on the caller's behalf, so it sits behind the
     same authenticated boundary, the same ``tool_timeout_ms`` and the same
-    ``Scope.TOOL`` span as ``mcp`` (FR-040).
+    ``Scope.TOOL`` span as ``mcp``.
     """
     require_a2a_sdk()
     name = tool_name("a2a", capability.agent)
     toolset = FunctionToolset([_a2a_tool(capability, name)])
-    return guarded_toolset(toolset, context, "a2a", authenticated_caller)
+    return guarded_toolset(toolset, context, "a2a")
 
 
 def _a2a_tool(capability: CompiledA2ACapability, name: str) -> Tool[Any]:
@@ -466,7 +415,7 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
     """Delegate one prompt, mapping any transport failure to ``TOOL_UNAVAILABLE``.
 
     Every failure of a remote agent is infrastructure to *this* agent, and the
-    contract fixes the code (FR-040): ``TOOL_UNAVAILABLE`` is retriable, where
+    contract fixes the code: ``TOOL_UNAVAILABLE`` is retriable, where
     the generic refusal :func:`guarded` would otherwise produce is not, and a
     time-out is left to propagate so the enclosing bound reports
     ``TOOL_TIMEOUT``. The cause is logged server-side only: a remote agent is
@@ -484,11 +433,6 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# The kinds this engine serves
-# ---------------------------------------------------------------------------
-
-
 class _Destination(Enum):
     """Where the engine puts what a grant builds."""
 
@@ -504,16 +448,15 @@ class _KindBinding(NamedTuple):
 
     Attributes:
         destination: Whether the built object is a toolset or a capability.
-        builder: Builds one object from one grant, with the agent's build context.
+        builder: Builds one object from one grant; a toolset builder also
+            takes the agent's build context.
     """
 
     destination: _Destination
-    builder: Callable[[Any, BuildContext], Any]
+    builder: Callable[..., Any]
 
 
-def _skills_capability(
-    capability: CompiledSkillsCapability, context: BuildContext
-) -> AbstractCapability[Any]:
+def _skills_capability(capability: CompiledSkillsCapability) -> AbstractCapability[Any]:
     """Build the harness capability of one ``skills`` grant.
 
     A skill library is prompt material, not a tool: the harness loads the
@@ -526,12 +469,10 @@ def _skills_capability(
 
     Args:
         capability: Compiled grant carrying the resolved directory and names.
-        context: Unused; a skill library needs no per-agent wiring.
 
     Raises:
         AgentCompilationError: When the ``ai-harness`` extra is not installed.
     """
-    del context
     sdk = cast(
         _SkillsSdk,
         require_provider_sdk("skills", "loom.ai.engines.pydantic_ai.extras.skills", "ai-harness"),
@@ -558,7 +499,7 @@ _KINDS: Final[Mapping[type[CompiledCapability], _KindBinding]] = MappingProxyTyp
         CompiledPythonCapability: _KindBinding(_Destination.TOOLSET, _python_toolset),
         CompiledA2ACapability: _KindBinding(_Destination.TOOLSET, _a2a_toolset),
         CompiledSkillsCapability: _KindBinding(_Destination.CAPABILITY, _skills_capability),
-        CompiledNativeCapability: _KindBinding(_Destination.CAPABILITY, _native_capability),
+        CompiledNativeCapability: _KindBinding(_Destination.CAPABILITY, native_capability),
     }
 )
 """The one place that says which kinds this engine serves, and how.
@@ -600,15 +541,11 @@ def build_toolsets(
     return tuple(_build(plan, _Destination.TOOLSET, context))
 
 
-def build_capabilities(
-    plan: AgentPlan, container: LoomContainer
-) -> tuple[AbstractCapability[Any], ...]:
+def build_capabilities(plan: AgentPlan) -> tuple[AbstractCapability[Any], ...]:
     """Build one engine capability per grant of ``plan`` whose kind produces one.
 
     Args:
         plan: Compiled plan whose capabilities carry resolved handles.
-        container: Application container, for symmetry with the toolsets: no
-            capability kind consumes it today.
 
     Returns:
         The capabilities, in the plan's capability order; empty when no grant is
@@ -618,15 +555,11 @@ def build_capabilities(
         AgentCompilationError: When an optional dependency the kind needs is not
             installed.
     """
-    # ``mcp`` is bound to ``_Destination.TOOLSET``, so no capability built here
-    # can reach a server: the store handed over is a fresh, empty one rather
-    # than the worker's.
-    context = BuildContext.of(plan, container, SharedMcpToolsets())
-    return tuple(_build(plan, _Destination.CAPABILITY, context))
+    return tuple(_build(plan, _Destination.CAPABILITY))
 
 
-def _build(plan: AgentPlan, destination: _Destination, context: BuildContext) -> Iterator[Any]:
-    """Yield what every grant of ``plan`` bound to ``destination`` builds.
+def _build(plan: AgentPlan, destination: _Destination, *context: BuildContext) -> Iterator[Any]:
+    """Yield what every grant of ``plan`` bound to ``destination`` builds, given ``context``.
 
     Raises:
         AgentCompilationError: When a grant's kind has no entry in :data:`_KINDS`,
@@ -638,9 +571,9 @@ def _build(plan: AgentPlan, destination: _Destination, context: BuildContext) ->
             raise AgentCompilationError(
                 [
                     AgentErrorCode.CAPABILITY_KIND_NO_BUILDER.issue(
-                        component=context.agent, kind=capability.kind
+                        component=plan.name, kind=capability.kind
                     )
                 ]
             )
         if binding.destination is destination:
-            yield binding.builder(capability, context)
+            yield binding.builder(capability, *context)

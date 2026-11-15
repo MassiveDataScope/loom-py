@@ -23,6 +23,7 @@ Spec types (internal — compiler and executor only):
 * :class:`ClickHouseSourceSpec`
 * :data:`SourceSpec`   — union type alias
 * :class:`SourceKind`  — physical kind enum
+* :class:`ExtraFieldsMode` — handling of fields the schema does not cover
 * :class:`JsonColumnSpec`
 """
 
@@ -34,6 +35,7 @@ from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import (
     ClickHouseSourceSpec,
     DynamoDbSourceSpec,
+    ExtraFieldsMode,
     FileSourceSpec,
     JsonColumnSpec,
     MongoSourceSpec,
@@ -56,6 +58,7 @@ __all__ = [
     "SourceSet",
     "SourceSpec",
     "SourceKind",
+    "ExtraFieldsMode",
     "TableSourceSpec",
     "FileSourceSpec",
     "TempSourceSpec",

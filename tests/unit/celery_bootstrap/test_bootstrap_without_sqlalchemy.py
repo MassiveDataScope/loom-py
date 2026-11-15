@@ -72,24 +72,30 @@ def _write_worker_config(tmp_path: Path, extra: dict[str, Any] | None = None) ->
     return config_path
 
 
-def test_create_app_without_database_section_starts_without_sqlalchemy(tmp_path: Path) -> None:
-    """A worker whose config has no ``database`` section boots with ``sqlalchemy`` hidden."""
-    config_path = _write_worker_config(tmp_path)
+class TestBootstrapWithoutSqlAlchemy:
+    def test_create_app_without_database_section_starts_without_sqlalchemy(
+        self, tmp_path: Path
+    ) -> None:
+        """A worker whose config has no ``database`` section boots with ``sqlalchemy`` hidden."""
+        config_path = _write_worker_config(tmp_path)
 
-    result = _run_in_clean_interpreter(_CREATE_APP_SCRIPT, str(config_path))
+        result = _run_in_clean_interpreter(_CREATE_APP_SCRIPT, str(config_path))
 
-    assert result.returncode == 0, f"create_app failed:\n{result.stderr}"
+        assert result.returncode == 0, f"create_app failed:\n{result.stderr}"
 
+    def test_a_database_section_names_the_sqlalchemy_extra_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``database`` section without the SQLAlchemy extra raises a hinting error."""
+        monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.backend", None)
+        config_path = _write_worker_config(
+            tmp_path,
+            {
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}
+                }
+            },
+        )
 
-def test_a_database_section_names_the_sqlalchemy_extra_when_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A ``database`` section without the SQLAlchemy extra raises a hinting error."""
-    monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.backend", None)
-    config_path = _write_worker_config(
-        tmp_path,
-        {"stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}}},
-    )
-
-    with pytest.raises(ConfigError, match=r"loom-kernel\[sqlalchemy\]"):
-        boot.bootstrap_worker(str(config_path), jobs=[_PureJob])
+        with pytest.raises(ConfigError, match=r"loom-kernel\[sqlalchemy\]"):
+            boot.bootstrap_worker(str(config_path), jobs=[_PureJob])

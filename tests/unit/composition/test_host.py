@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import pytest
-import pytest_asyncio
 
 from loom.composition import ApplicationHost, CompositionErrorCode, CompositionStateError
 from loom.composition.resources import Resource, ResourceKind, closing
@@ -39,19 +38,6 @@ def _store(*, check: Callable[[], Awaitable[None]] | None = None) -> Resource:
         manager=closing(_noop),
         check=check,
     )
-
-
-@pytest_asyncio.fixture
-async def loop_errors() -> AsyncIterator[list[dict[str, object]]]:
-    """Capture loop exception reports and restore the previous handler."""
-    loop = asyncio.get_running_loop()
-    handler = loop.get_exception_handler()
-    reported: list[dict[str, object]] = []
-    loop.set_exception_handler(lambda _, context: reported.append(context))
-    try:
-        yield reported
-    finally:
-        loop.set_exception_handler(handler)
 
 
 class _Gate:

@@ -10,7 +10,7 @@ a worker wires at start-up: several concurrent calls over the session
 ``mcp_session_for`` hands back for a declared, already-open connection run
 in parallel, not queued.
 
-``TestCancelarNoBloqueaLaSesion`` pins the other side of not holding a
+``TestCancellingDoesNotBlockTheSession`` pins the other side of not holding a
 lock: ``_ToolsetSession.call_tool`` does **not** shield its round trip from
 the caller's own cancellation -- cancelling one call returns to the caller
 immediately, and a neighbour sharing the same ``MCPToolset`` keeps running
@@ -26,14 +26,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from types import SimpleNamespace
 from typing import Any
 
 import anyio
+import pytest
 
 from loom.ai.abc import ConcurrentMcpSession
-from loom.ai.engines.pydantic_ai._mcp import _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
 from loom.ai.runtime._mcp import mcp_session_for
 
 _CALL_DELAY = 0.05
@@ -81,21 +82,21 @@ class _FakeToolset:
                 await asyncio.sleep(0)
 
 
-class TestElAdaptadorDelMotorDeclaraConcurrencia:
+class TestTheEngineAdapterDeclaresConcurrency:
     """``_ToolsetSession`` reference-counts a shared ``MCPToolset``: no lock needed."""
 
-    def test_toolset_session_declara_concurrent_mcp_session(self) -> None:
+    def test_toolset_session_declares_a_concurrent_mcp_session(self) -> None:
         # ``object()`` basta: la anotacion del toolset es solo de tipos (future
         # annotations), y el constructor no toca el objeto que recibe.
-        session = _ToolsetSession(object())  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.of(object()))  # type: ignore[arg-type]
         assert isinstance(session, ConcurrentMcpSession)
 
-    async def test_las_llamadas_de_una_concesion_corren_en_paralelo_de_verdad(self) -> None:
+    async def test_calls_under_one_grant_really_run_in_parallel(self) -> None:
         # El mismo camino que ``AgentRuntime`` recorre al abrir una conexion:
         # la sesion del motor, pasada por el unico punto que decide envolver o
         # no (``mcp_session_for``).
         toolset = _FakeToolset(delay=_CALL_DELAY)
-        engine_session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+        engine_session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
         session = mcp_session_for(engine_session, label="crm")
         start = time.monotonic()
         await asyncio.gather(*(session.call_tool(f"tool{i}", {}) for i in range(8)))
@@ -104,23 +105,32 @@ class TestElAdaptadorDelMotorDeclaraConcurrencia:
         assert elapsed < _CALL_DELAY * 3
 
 
-class TestElResultadoDeErrorSeTraduce:
+class TestTheErrorResultIsTranslated:
     """``call_tool`` traduce el ``is_error`` del protocolo al ``ok`` propio."""
 
-    async def test_is_error_false_se_traduce_en_ok_true(self) -> None:
-        toolset = _FakeToolset(delay=0.0, is_error=False)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
-        result = await session.call_tool("tool", {})
+    @pytest.fixture
+    def error_result(self) -> Callable[..., Awaitable[Any]]:
+        async def translate(*, is_error: bool) -> Any:
+            toolset = _FakeToolset(delay=0.0, is_error=is_error)
+            session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+            return await session.call_tool("tool", {})
+
+        return translate
+
+    async def test_is_error_false_translates_to_ok_true(
+        self, error_result: Callable[..., Awaitable[Any]]
+    ) -> None:
+        result = await error_result(is_error=False)
         assert result.ok is True
 
-    async def test_is_error_true_se_traduce_en_ok_false(self) -> None:
-        toolset = _FakeToolset(delay=0.0, is_error=True)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
-        result = await session.call_tool("tool", {})
+    async def test_is_error_true_translates_to_ok_false(
+        self, error_result: Callable[..., Awaitable[Any]]
+    ) -> None:
+        result = await error_result(is_error=True)
         assert result.ok is False
 
 
-class TestCancelarNoBloqueaLaSesion:
+class TestCancellingDoesNotBlockTheSession:
     """``_ToolsetSession.call_tool`` ya no escuda el viaje (B1, regresion de
     ``tool_timeout_ms`` en la ruta ``kind: python``): sin candado que
     sostener, cancelar una llamada corta de inmediato en lugar de esperar a
@@ -130,9 +140,16 @@ class TestCancelarNoBloqueaLaSesion:
     (ver ``tests/unit/ai/runtime/test_mcp_session.py``).
     """
 
-    async def test_cancelar_devuelve_el_control_de_inmediato(self) -> None:
+    @pytest.fixture
+    def slow_session(self) -> tuple[_FakeToolset, _ToolsetSession]:
         toolset = _FakeToolset(delay=0.1)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        return toolset, session
+
+    async def test_cancel_returns_control_immediately(
+        self, slow_session: tuple[_FakeToolset, _ToolsetSession]
+    ) -> None:
+        toolset, session = slow_session
         task = asyncio.create_task(session.call_tool("victim", {}))
         await asyncio.sleep(0.01)
         task.cancel()
@@ -146,9 +163,10 @@ class TestCancelarNoBloqueaLaSesion:
         # antes de que el remoto -- que tarda 0.1s -- llegase a responder.
         assert "victim" not in toolset.client.finished
 
-    async def test_cancelar_una_no_bloquea_a_su_vecina_concurrente(self) -> None:
-        toolset = _FakeToolset(delay=0.1)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+    async def test_cancelling_one_does_not_block_its_concurrent_neighbour(
+        self, slow_session: tuple[_FakeToolset, _ToolsetSession]
+    ) -> None:
+        toolset, session = slow_session
         start = time.monotonic()
         victim = asyncio.create_task(session.call_tool("victim", {}))
         neighbour = asyncio.create_task(session.call_tool("neighbour", {}))
@@ -167,9 +185,10 @@ class TestCancelarNoBloqueaLaSesion:
             raise AssertionError("expected the cancelled call to re-raise")
         assert "neighbour" in toolset.client.finished
 
-    async def test_la_sesion_sigue_usable_tras_cancelar_una_llamada(self) -> None:
-        toolset = _FakeToolset(delay=0.1)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+    async def test_the_session_stays_usable_after_cancelling_one_call(
+        self, slow_session: tuple[_FakeToolset, _ToolsetSession]
+    ) -> None:
+        _toolset, session = slow_session
         task = asyncio.create_task(session.call_tool("victim", {}))
         await asyncio.sleep(0.01)
         task.cancel()
@@ -182,9 +201,10 @@ class TestCancelarNoBloqueaLaSesion:
         result = await session.call_tool("after", {})
         assert result.ok is True
 
-    async def test_el_refcount_del_toolset_vuelve_a_cero_tras_cancelar(self) -> None:
-        toolset = _FakeToolset(delay=0.1)
-        session = _ToolsetSession(toolset)  # type: ignore[arg-type]
+    async def test_the_toolset_refcount_returns_to_zero_after_cancel(
+        self, slow_session: tuple[_FakeToolset, _ToolsetSession]
+    ) -> None:
+        toolset, session = slow_session
         task = asyncio.create_task(session.call_tool("victim", {}))
         await asyncio.sleep(0.01)
         # Todavia en curso: la llamada ya tomo su referencia al entrar en el

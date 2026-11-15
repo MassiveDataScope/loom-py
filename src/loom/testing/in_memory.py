@@ -298,7 +298,7 @@ def _refuse_composite_key(entity_type: type) -> None:
         return
     try:
         key = get_id_attributes(entity_type)
-    except ValueError:  # a model with no key, which this repository accepts
+    except ValueError:
         return
     if len(key) > 1:
         raise ConfigError(

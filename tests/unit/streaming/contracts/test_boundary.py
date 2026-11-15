@@ -21,7 +21,7 @@ from loom.streaming import (
 from tests.unit.streaming.contracts.cases import Order
 
 
-class _OrderPartitionStrategy:
+class AcmeOrderIdPartitionStrategy:
     def partition_key(self, message: Message[Order]) -> bytes | str | None:
         return message.payload.order_id
 
@@ -55,7 +55,7 @@ class TestBoundaryContracts:
         assert target.payload is None
 
     def test_into_topic_can_declare_partitioning_policy(self) -> None:
-        strategy: PartitionStrategy[Order] = _OrderPartitionStrategy()
+        strategy: PartitionStrategy[Order] = AcmeOrderIdPartitionStrategy()
         policy = PartitionPolicy(
             strategy=strategy,
             guarantee=PartitionGuarantee.ENTITY_STABLE,

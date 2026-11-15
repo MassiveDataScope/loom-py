@@ -9,20 +9,22 @@ from loom.ai.declarative import AgentSpecV1
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
 
-def test_reports_model_role_unbound_when_role_is_absent_from_ai_models(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    issue = single_issue_for(spec_factory(model_role="unbound-role"))
-    assert (issue.code, issue.field) == (
-        AgentErrorCode.MODEL_ROLE_UNBOUND,
-        "model_role",
-    )
+class TestModelRoleBinding:
+    def test_reports_model_role_unbound_when_role_is_absent_from_ai_models(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        issue = single_issue_for(spec_factory(model_role="unbound-role"))
+        assert (issue.code, issue.field) == (
+            AgentErrorCode.MODEL_ROLE_UNBOUND,
+            "model_role",
+        )
 
-
-def test_compiles_clean_when_declared_role_is_bound_in_ai_models(
-    spec_factory: Callable[..., AgentSpecV1],
-    compiler_factory: Callable[..., object],
-) -> None:
-    plan = compiler_factory().compile(spec_factory(model_role="reasoning"))  # type: ignore[attr-defined]
-    assert plan.name == "subject-agent"
+    def test_compiles_clean_when_declared_role_is_bound_in_ai_models(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        compiler_factory: Callable[..., object],
+    ) -> None:
+        plan = compiler_factory().compile(spec_factory(model_role="reasoning"))  # type: ignore[attr-defined]
+        assert plan.name == "subject-agent"

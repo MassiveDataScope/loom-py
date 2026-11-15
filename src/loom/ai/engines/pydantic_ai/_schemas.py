@@ -1,6 +1,6 @@
 """Published tool names and the argument schemas they are declared with.
 
-A tool name is derived from the granted handle alone (design R2), so the whole
+A tool name is derived from the granted handle alone, so the whole
 plan can be checked at build time: two grants of *any* capability deriving one
 name, or a name longer than a provider accepts, fails the build instead of
 silently shadowing an operation at run time.
@@ -31,7 +31,7 @@ _MAX_TOOL_NAME = 64
 """Longest tool name providers accept (``^[a-zA-Z0-9_-]{1,64}$``)."""
 
 _NON_TOOL_NAME = re.compile(r"\W", re.ASCII)
-"""Every character a tool name may not carry (design R2).
+"""Every character a tool name may not carry.
 
 ``re.ASCII`` keeps ``\\W`` restricted to non-``[A-Za-z0-9_]`` characters —
 provider tool names are ASCII-only, so the concise class must not treat
@@ -46,7 +46,7 @@ _JSON_TYPES: Mapping[type[Any], str] = MappingProxyType(
 
 
 def tool_name(prefix: str, granted: str) -> str:
-    """Derive one published tool name from a granted handle (design R2)."""
+    """Derive one published tool name from a granted handle."""
     return f"{prefix}_{_NON_TOOL_NAME.sub('_', granted)}"
 
 

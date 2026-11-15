@@ -25,39 +25,41 @@ class _FakeManager:
         return None
 
 
-def test_session_manager_for_reuses_same_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[DatabaseConfig, RuntimeProfile]] = []
+class TestSessionManagerFor:
+    def test_session_manager_for_reuses_same_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[tuple[DatabaseConfig, RuntimeProfile]] = []
 
-    def _build(config: DatabaseConfig, profile: RuntimeProfile) -> _FakeManager:
-        calls.append((config, profile))
-        return _FakeManager()
+        def _build(config: DatabaseConfig, profile: RuntimeProfile) -> _FakeManager:
+            calls.append((config, profile))
+            return _FakeManager()
 
-    monkeypatch.setattr(session_manager_module, "build_session_manager", _build)
+        monkeypatch.setattr(session_manager_module, "build_session_manager", _build)
 
-    manager = ResourceManager(cast(AsyncBridge, object()))
-    config = DatabaseConfig(
-        url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
-    )
-    first = manager.session_manager_for(config)
-    second = manager.session_manager_for(
-        DatabaseConfig(
+        manager = ResourceManager(cast(AsyncBridge, object()))
+        config = DatabaseConfig(
             url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
         )
-    )
+        first = manager.session_manager_for(config)
+        second = manager.session_manager_for(
+            DatabaseConfig(
+                url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
+            )
+        )
 
-    assert first is second
-    assert calls == [(config, STREAMING_PROFILE)]
+        assert first is second
+        assert calls == [(config, STREAMING_PROFILE)]
 
+    def test_a_different_pool_gets_its_own_session_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            session_manager_module, "build_session_manager", lambda config, profile: _FakeManager()
+        )
+        manager = ResourceManager(cast(AsyncBridge, object()))
 
-def test_a_different_pool_gets_its_own_session_manager(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        session_manager_module, "build_session_manager", lambda config, profile: _FakeManager()
-    )
-    manager = ResourceManager(cast(AsyncBridge, object()))
+        first = manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")))
+        second = manager.session_manager_for(
+            DatabaseConfig(url=Dsn("sqlite+aiosqlite:///"), pool=PoolConfig(size=1))
+        )
 
-    first = manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")))
-    second = manager.session_manager_for(
-        DatabaseConfig(url=Dsn("sqlite+aiosqlite:///"), pool=PoolConfig(size=1))
-    )
-
-    assert first is not second
+        assert first is not second

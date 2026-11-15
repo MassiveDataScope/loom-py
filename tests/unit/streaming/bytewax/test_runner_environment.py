@@ -29,7 +29,7 @@ from tests.helpers.deploy_checks import (  # noqa: E402
     FailingCheckModule,
     write_failing_check_module,
 )
-from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
+from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult  # noqa: E402
 
 _KAFKA: dict[str, Any] = {
     "consumer": {
@@ -54,98 +54,111 @@ def _config(check: FailingCheckModule) -> dict[str, Any]:
     return {"kafka": _KAFKA, "checks": check.checks_section(), area: {key: True}}
 
 
-@pytest.mark.parametrize("environment", ["production", "staging"])
-def test_a_deployed_runner_runs_the_deploy_checks(
-    bytewax_stream_flow: StreamFlow[Order, Result],
-    check: FailingCheckModule,
-    environment: str,
-) -> None:
-    config = _config(check)
+class TestDeployedRunnerChecks:
+    @pytest.mark.parametrize("environment", ["production", "staging"])
+    def test_a_deployed_runner_runs_the_deploy_checks(
+        self,
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
+        check: FailingCheckModule,
+        environment: str,
+    ) -> None:
+        config = _config(check)
 
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        StreamingRunner.from_dict(bytewax_stream_flow, config, environment=environment)
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            StreamingRunner.from_dict(bytewax_stream_flow, config, environment=environment)
 
+    def test_the_selector_variable_reaches_the_runner(
+        self,
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
+        check: FailingCheckModule,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
 
-def test_the_selector_variable_reaches_the_runner(
-    bytewax_stream_flow: StreamFlow[Order, Result],
-    check: FailingCheckModule,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+        config = _config(check)
 
-    config = _config(check)
-
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        StreamingRunner.from_dict(bytewax_stream_flow, config)
-
-
-def test_a_local_runner_runs_no_check(
-    bytewax_stream_flow: StreamFlow[Order, Result], check: FailingCheckModule
-) -> None:
-    runner = StreamingRunner.from_dict(
-        bytewax_stream_flow, _config(check), environment="development"
-    )
-
-    assert isinstance(runner, StreamingRunner)
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            StreamingRunner.from_dict(bytewax_stream_flow, config)
 
 
-def test_run_with_a_config_runs_the_deploy_checks(
-    bytewax_stream_flow: StreamFlow[Order, Result],
-    check: FailingCheckModule,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "loom.streaming.bytewax.runner._prepare_run",
-        lambda plan, **kwargs: SimpleNamespace(dataflow=Dataflow("t"), shutdown=lambda: None),
-    )
-    monkeypatch.setattr("loom.streaming.bytewax.runner.cli_main", lambda *_a, **_kw: None)
-    config = ConfigContext.from_dict(_config(check))
+class TestLocalRunner:
+    def test_a_local_runner_runs_no_check(
+        self, bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult], check: FailingCheckModule
+    ) -> None:
+        runner = StreamingRunner.from_dict(
+            bytewax_stream_flow, _config(check), environment="development"
+        )
 
-    runner = StreamingRunner()
-
-    with pytest.raises(DeployCheckError, match=check.check_id):
-        runner.run(flow=bytewax_stream_flow, config=config, environment="production")
+        assert isinstance(runner, StreamingRunner)
 
 
-def test_the_logger_takes_the_environment_of_the_runner(
-    bytewax_stream_flow: StreamFlow[Order, Result], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        "loom.core.observability.runtime.configure_logging_from_values",
-        lambda **kwargs: captured.update(kwargs),
-    )
-    config = {"kafka": _KAFKA, "observability": {"log": {"config": {"level": "INFO"}}}}
+class TestRunWithConfigChecks:
+    def test_run_with_a_config_runs_the_deploy_checks(
+        self,
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
+        check: FailingCheckModule,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "loom.streaming.bytewax.runner._prepare_run",
+            lambda plan, **kwargs: SimpleNamespace(dataflow=Dataflow("t"), shutdown=lambda: None),
+        )
+        monkeypatch.setattr("loom.streaming.bytewax.runner.cli_main", lambda *_a, **_kw: None)
+        config = ConfigContext.from_dict(_config(check))
 
-    StreamingRunner.from_dict(bytewax_stream_flow, config, environment="test")
+        runner = StreamingRunner()
 
-    assert captured["environment"] is Environment.TEST
-
-
-def test_an_override_variable_reaches_the_runtime(
-    bytewax_stream_flow: StreamFlow[Order, Result],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "streaming.yaml"
-    path.write_text(yaml.safe_dump({"kafka": _KAFKA}), encoding="utf-8")
-    monkeypatch.setenv("LOOM__STREAMING__RUNTIME__WORKERS_PER_PROCESS", "3")
-
-    runner = StreamingRunner.from_yaml(bytewax_stream_flow, str(path), environment="development")
-
-    assert runner._runtime.workers_per_process == 3
+        with pytest.raises(DeployCheckError, match=check.check_id):
+            runner.run(flow=bytewax_stream_flow, config=config, environment="production")
 
 
-def test_a_config_directory_layers_the_overlay_of_the_environment(
-    bytewax_stream_flow: StreamFlow[Order, Result], tmp_path: Path
-) -> None:
-    base = {"kafka": _KAFKA, "streaming": {"runtime": {"workers_per_process": 1}}}
-    (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
-    overlay = {"streaming": {"runtime": {"workers_per_process": 4}}}
-    (tmp_path / "development.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+class TestRunnerLoggerEnvironment:
+    def test_the_logger_takes_the_environment_of_the_runner(
+        self,
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            "loom.core.observability.runtime.configure_logging_from_values",
+            lambda **kwargs: captured.update(kwargs),
+        )
+        config = {"kafka": _KAFKA, "observability": {"log": {"config": {"level": "INFO"}}}}
 
-    runner = StreamingRunner.from_yaml(
-        bytewax_stream_flow, str(tmp_path), environment="development"
-    )
+        StreamingRunner.from_dict(bytewax_stream_flow, config, environment="test")
 
-    assert runner._runtime.workers_per_process == 4
+        assert captured["environment"] is Environment.TEST
+
+
+class TestRuntimeOverrideVariable:
+    def test_an_override_variable_reaches_the_runtime(
+        self,
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        path = tmp_path / "streaming.yaml"
+        path.write_text(yaml.safe_dump({"kafka": _KAFKA}), encoding="utf-8")
+        monkeypatch.setenv("LOOM__STREAMING__RUNTIME__WORKERS_PER_PROCESS", "3")
+
+        runner = StreamingRunner.from_yaml(
+            bytewax_stream_flow, str(path), environment="development"
+        )
+
+        assert runner._runtime.workers_per_process == 3
+
+
+class TestConfigDirectoryOverlay:
+    def test_a_config_directory_layers_the_overlay_of_the_environment(
+        self, bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult], tmp_path: Path
+    ) -> None:
+        base = {"kafka": _KAFKA, "streaming": {"runtime": {"workers_per_process": 1}}}
+        (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
+        overlay = {"streaming": {"runtime": {"workers_per_process": 4}}}
+        (tmp_path / "development.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+
+        runner = StreamingRunner.from_yaml(
+            bytewax_stream_flow, str(tmp_path), environment="development"
+        )
+
+        assert runner._runtime.workers_per_process == 4

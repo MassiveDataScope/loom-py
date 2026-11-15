@@ -34,7 +34,7 @@ from loom.streaming.bytewax.runner import (  # noqa: E402
 )
 from loom.streaming.core._errors import ErrorKind  # noqa: E402
 from loom.streaming.mongo import MongoCDCEvent  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
+from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -42,7 +42,7 @@ pytestmark = pytest.mark.bytewax
 class TestStreamingRunner:
     def test_run_generates_a_poll_cycle_id(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -86,7 +86,7 @@ class TestStreamingRunner:
 
     def test_run_uses_bytewax_cli_main_with_runtime_config(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -124,7 +124,7 @@ class TestStreamingRunner:
 
     def test_run_calls_shutdown_when_cli_main_raises(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -152,7 +152,7 @@ class TestStreamingRunner:
 
     def test_from_context_loads_runtime_section(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
     ) -> None:
         runner = StreamingRunner.from_context(
@@ -170,7 +170,7 @@ class TestStreamingRunner:
 
     def test_from_dict_loads_streaming_observability_section(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -188,7 +188,7 @@ class TestStreamingRunner:
 
     def test_from_yaml_loads_runtime_section(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
     ) -> None:
         config_path = tmp_path / "streaming.yaml"
@@ -245,7 +245,7 @@ class TestPrepareRun:
 
     def test_prepare_run_releases_previous_shutdown_before_rebuilding(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -301,7 +301,7 @@ class TestBytewaxRuntimeConfig:
 class TestRunFlowSpan:
     def test_run_emits_flow_start_and_end(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -335,7 +335,7 @@ class TestRunFlowSpan:
 
     def test_run_emits_flow_error_when_cli_main_raises(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -371,7 +371,7 @@ class TestRunFlowSpan:
 
     def test_run_emits_poll_cycle_end_when_prepare_run_fails(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -409,7 +409,7 @@ class TestRunFlowSpan:
 class TestPrepareRunErrorSinks:
     def test_prepare_run_accepts_error_sinks_and_passes_them_through(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -490,7 +490,7 @@ class _RegistryFakeSink:
 class TestRegisterSink:
     def test_register_sink_stores_in_registry(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
     ) -> None:
         """AC-1 at runner level: register_sink delegates to the internal SinkRegistry."""
@@ -503,7 +503,7 @@ class TestRegisterSink:
 
     def test_run_with_config_path_resolves_registered_sinks(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -557,7 +557,7 @@ streaming:
 
     def test_explicit_error_sinks_override_registered_sinks(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -611,7 +611,7 @@ streaming:
 
     def test_prepare_run_direct_without_run_ignores_registry(
         self,
-        bytewax_stream_flow: StreamFlow[Order, Result],
+        bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         bytewax_runtime_config_dict: dict[str, object],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

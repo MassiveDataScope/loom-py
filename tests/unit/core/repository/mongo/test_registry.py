@@ -31,7 +31,7 @@ from loom.core.repository.mongo.uow import MongoSessions
 
 from ._fake import FakeMongoClient
 from .conftest import Article
-from .test_repository import ArticleCreate, Note, NoteCreate
+from .test_repository import AcmeMongoNote, ArticleCreate, NoteCreate
 
 
 def _database(client: FakeMongoClient) -> MongoDatabase:
@@ -47,7 +47,7 @@ def _container(
     container = LoomContainer()
     module = build_mongo_repository_registration_module(
         _database(client),
-        (Article, Note),
+        (Article, AcmeMongoNote),
         collections=collections or {},
         id_policy=id_policy or Uuid4IdPolicy(),
         session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
@@ -58,87 +58,84 @@ def _container(
     return container
 
 
-def test_module_registers_default_builder() -> None:
-    container = _container(FakeMongoClient())
+class TestMongoRegistry:
+    def test_module_registers_default_builder(self) -> None:
+        container = _container(FakeMongoClient())
 
-    assert isinstance(container.resolve(DefaultRepositoryBuilder), MongoDefaultRepositoryBuilder)
+        assert isinstance(
+            container.resolve(DefaultRepositoryBuilder), MongoDefaultRepositoryBuilder
+        )
 
+    def test_module_registers_capability_bindings(self) -> None:
+        container = _container(FakeMongoClient())
 
-def test_module_registers_capability_bindings() -> None:
-    container = _container(FakeMongoClient())
+        assert isinstance(container.resolve(Readable[Article]), RepositoryMongo)
+        assert container.resolve_repo(Article) is not None
 
-    assert isinstance(container.resolve(Readable[Article]), RepositoryMongo)
-    assert container.resolve_repo(Article) is not None
+    @pytest.mark.asyncio
+    async def test_model_binds_to_the_collection_named_by_tablename(self) -> None:
+        client = FakeMongoClient()
+        container = _container(client)
 
+        await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
 
-@pytest.mark.asyncio
-async def test_model_binds_to_the_collection_named_by_tablename() -> None:
-    client = FakeMongoClient()
-    container = _container(client)
+        assert "a" in client.collection("articles").documents
 
-    await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
+    @pytest.mark.asyncio
+    async def test_collections_override_replaces_the_table_name(self) -> None:
+        client = FakeMongoClient()
+        container = _container(client, collections={"Article": "posts"})
 
-    assert "a" in client.collection("articles").documents
+        await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
 
+        assert "a" in client.collection("posts").documents
+        assert "articles" not in client.collections
 
-@pytest.mark.asyncio
-async def test_collections_override_replaces_the_table_name() -> None:
-    client = FakeMongoClient()
-    container = _container(client, collections={"Article": "posts"})
+    @pytest.mark.asyncio
+    async def test_id_policy_is_applied_to_generated_keys(self) -> None:
+        client = FakeMongoClient()
+        container = _container(client, id_policy=ObjectIdPolicy())
 
-    await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
+        created = await container.resolve(Creatable[AcmeMongoNote]).create(NoteCreate(body="hi"))
 
-    assert "a" in client.collection("posts").documents
-    assert "articles" not in client.collections
+        assert ObjectIdPolicy().to_storage(created.id) in client.collection("notes").documents
 
+    def test_builder_rejects_non_persistible_types(self) -> None:
+        client = FakeMongoClient()
+        builder = MongoDefaultRepositoryBuilder(
+            database=_database(client),
+            collections={},
+            id_policy=Uuid4IdPolicy(),
+            session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
-@pytest.mark.asyncio
-async def test_id_policy_is_applied_to_generated_keys() -> None:
-    client = FakeMongoClient()
-    container = _container(client, id_policy=ObjectIdPolicy())
+        class NotAModel:
+            pass
 
-    created = await container.resolve(Creatable[Note]).create(NoteCreate(body="hi"))
+        context = RepositoryBuildContext(model=cast(Any, NotAModel))
 
-    assert ObjectIdPolicy().to_storage(created.id) in client.collection("notes").documents
+        with pytest.raises(RuntimeError, match="NotAModel"):
+            builder(context)
 
+    @pytest.mark.asyncio
+    async def test_the_registered_codec_verifies_the_cursors_repositories_issue(self) -> None:
+        container = _container(FakeMongoClient())
+        for slug in ("a", "b", "c"):
+            await container.resolve(Creatable[Article]).create(ArticleCreate(slug=slug, title=slug))
+        query = QuerySpec(sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
+        page = await container.resolve(Listable[Article]).list_with_query(query)
+        assert isinstance(page, CursorResult)
+        assert page.next_cursor is not None
 
-def test_builder_rejects_non_persistible_types() -> None:
-    client = FakeMongoClient()
-    builder = MongoDefaultRepositoryBuilder(
-        database=_database(client),
-        collections={},
-        id_policy=Uuid4IdPolicy(),
-        session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
+        position = container.resolve(CursorCodec).decode(
+            page.next_cursor,
+            backend="mongo",
+            model=f"{Article.__module__}.Article",
+            query=query,
+            scope="",
+            columns=scalar_column_annotations(Article),
+            primary_key=("slug",),
+        )
 
-    class NotAModel:
-        pass
-
-    context = RepositoryBuildContext(model=cast(Any, NotAModel))
-
-    with pytest.raises(RuntimeError, match="NotAModel"):
-        builder(context)
-
-
-@pytest.mark.asyncio
-async def test_the_registered_codec_verifies_the_cursors_repositories_issue() -> None:
-    container = _container(FakeMongoClient())
-    for slug in ("a", "b", "c"):
-        await container.resolve(Creatable[Article]).create(ArticleCreate(slug=slug, title=slug))
-    query = QuerySpec(sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
-    page = await container.resolve(Listable[Article]).list_with_query(query)
-    assert isinstance(page, CursorResult)
-    assert page.next_cursor is not None
-
-    position = container.resolve(CursorCodec).decode(
-        page.next_cursor,
-        backend="mongo",
-        model=f"{Article.__module__}.Article",
-        query=query,
-        scope="",
-        columns=scalar_column_annotations(Article),
-        primary_key=("slug",),
-    )
-
-    assert position.keys == ("b",)
+        assert position.keys == ("b",)

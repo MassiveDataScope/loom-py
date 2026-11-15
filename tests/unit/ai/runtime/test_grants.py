@@ -17,6 +17,7 @@ from loom.ai.abc import McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime._grants import McpGrantView, SqlGrantView
+from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
@@ -75,7 +76,6 @@ def _view(
         session=session,  # type: ignore[arg-type]
         catalogue=catalogue,
         timeout_s=1.0,
-        identity=_CALLER,
         observability=None,
     )
 
@@ -92,7 +92,7 @@ class TestTheMcpGrantsFilter:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call_untyped("write_orders", {})
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_UNKNOWN
@@ -114,7 +114,7 @@ class TestTheMcpGrantsFilter:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call_untyped("delete_incident", {})
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_UNKNOWN
@@ -123,17 +123,32 @@ class TestTheMcpGrantsFilter:
             "tools this grant admits: search_incident"
         )
 
-    def test_tools_lists_only_what_the_filter_admits(self) -> None:
+    @pytest.fixture
+    def filtered(self) -> McpGrantView:
         capability = make_mcp_capability(include=("read_*",))
         catalogue = (
             McpToolInfo(name="read_orders", has_output_schema=True),
             McpToolInfo(name="write_orders", has_output_schema=True),
         )
-        view = _view(
+        return _view(
             capability=capability, session=FakeSession(tools=catalogue), catalogue=catalogue
         )
 
-        assert view.tools() == ("read_orders",)
+    def test_tools_lists_only_what_the_filter_admits(self, filtered: McpGrantView) -> None:
+        with ExecutionScope(_CALLER):
+            tools = filtered.tools()
+
+        assert tools == ("read_orders",)
+
+    def test_tools_refuses_an_anonymous_caller(self, filtered: McpGrantView) -> None:
+        with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
+            filtered.tools()
+
+        assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
+
+    def test_tools_refuses_outside_any_execution(self, filtered: McpGrantView) -> None:
+        with pytest.raises(ExecutionRequired):
+            filtered.tools()
 
 
 class TestTypedCall:
@@ -148,7 +163,8 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        result = await view.call("severity", {}, expect=_Severity)
+        with ExecutionScope(_CALLER):
+            result = await view.call("severity", {}, expect=_Severity)
 
         assert result == _Severity(level=4)
 
@@ -158,7 +174,7 @@ class TestTypedCall:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("untyped_tool", {}, expect=_Severity)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_UNTYPED
@@ -171,7 +187,7 @@ class TestTypedCall:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("legacy_lookup", {}, expect=_Severity)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_UNTYPED
@@ -188,7 +204,7 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=_Severity)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED
@@ -204,7 +220,7 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=_Severity)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_CALL_FAILED
@@ -218,7 +234,7 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=_Severity)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_DECODE_FAILED
@@ -233,7 +249,8 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        result = await view.call("severity", {}, expect=_SeverityModel)
+        with ExecutionScope(_CALLER):
+            result = await view.call("severity", {}, expect=_SeverityModel)
 
         assert result == _SeverityModel(level=4)
 
@@ -252,7 +269,7 @@ class TestTypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=_SeverityModel)
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_DECODE_FAILED
@@ -266,7 +283,7 @@ class TestTypedCall:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=_Severity | _SeverityModel)  # type: ignore[arg-type]
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_DECODE_FAILED
@@ -281,7 +298,7 @@ class TestTypedCall:
         session = FakeSession(tools=catalogue)
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call("severity", {}, expect=object())  # type: ignore[arg-type]
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_DECODE_FAILED
@@ -298,7 +315,8 @@ class TestUntypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        result = await view.call_untyped("raw_tool", {})
+        with ExecutionScope(_CALLER):
+            result = await view.call_untyped("raw_tool", {})
 
         assert result == {"anything": True}
 
@@ -312,7 +330,8 @@ class TestUntypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        result = await view.call_untyped("raw_tool", {})
+        with ExecutionScope(_CALLER):
+            result = await view.call_untyped("raw_tool", {})
 
         assert result == {}
 
@@ -326,22 +345,16 @@ class TestUntypedCall:
         )
         view = _view(capability=capability, session=session, catalogue=catalogue)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(_CALLER), pytest.raises(AgentRunError) as excinfo:
             await view.call_untyped("raw_tool", {})
 
         assert excinfo.value.code is AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED
         assert "list" in str(excinfo.value)
 
 
-def _sql_view(
-    *, capability: CompiledSqlCapability, identity: Identity, service: SqlQueryService
-) -> SqlGrantView:
+def _sql_view(*, capability: CompiledSqlCapability, service: SqlQueryService) -> SqlGrantView:
     return SqlGrantView(
-        agent=_AGENT,
-        capability=capability,
-        sql_query_service=service,
-        identity=identity,
-        observability=None,
+        agent=_AGENT, capability=capability, sql_query_service=service, observability=None
     )
 
 
@@ -395,9 +408,10 @@ class TestTheSqlGrantsRoles:
             ),
         )
         service = FakeSqlQueryService(_result())
-        view = _sql_view(capability=capability, identity=_CALLER, service=service)
+        view = _sql_view(capability=capability, service=service)
 
-        await view.query("select 1")
+        with ExecutionScope(_CALLER):
+            await view.query("select 1")
 
         assert service.roles == ("analyst",)
 
@@ -413,9 +427,9 @@ class TestTheSqlGrantsRoles:
             ),
         )
         service = FakeSqlQueryService(_result())
-        view = _sql_view(capability=capability, identity=ANONYMOUS, service=service)
+        view = _sql_view(capability=capability, service=service)
 
-        with pytest.raises(AgentRunError) as excinfo:
+        with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
             await view.query("select 1")
 
         assert excinfo.value.code is AgentRunErrorCode.UNAUTHORIZED
@@ -439,9 +453,10 @@ class TestTheSqlResultBounds:
         )
         rows = tuple((i, f"row-{i}") for i in range(20))
         service = FakeSqlQueryService(_result(*rows))
-        view = _sql_view(capability=capability, identity=_CALLER, service=service)
+        view = _sql_view(capability=capability, service=service)
 
-        result = await view.query("select * from t")
+        with ExecutionScope(_CALLER):
+            result = await view.query("select * from t")
 
         assert len(result) < len(rows)
         assert len(msgspec.json.encode(list(result))) <= capability.max_result_bytes
@@ -474,9 +489,10 @@ class TestTheSqlResultBounds:
         )
         rows = ((1, "a"), (2, "b"))
         service = FakeSqlQueryService(_result(*rows))
-        view = _sql_view(capability=capability, identity=_CALLER, service=service)
+        view = _sql_view(capability=capability, service=service)
 
-        result = await view.query("select * from t")
+        with ExecutionScope(_CALLER):
+            result = await view.query("select * from t")
 
         assert len(result) == expected_rows
         assert len(msgspec.json.encode(list(result))) <= max_result_bytes

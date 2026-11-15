@@ -62,7 +62,6 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
     _cursor_columns: Mapping[str, Any]
-    # Pre-computed at init to avoid per-request/per-object reflection.
     _output_column_keys: tuple[str, ...] | None = None
     _all_sa_column_keys: tuple[str, ...] | None = None
     _output_sa_columns: tuple[Any, ...] | None = None

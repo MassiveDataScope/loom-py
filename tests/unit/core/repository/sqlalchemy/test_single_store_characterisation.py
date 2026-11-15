@@ -225,135 +225,6 @@ def _spy_units(monkeypatch: pytest.MonkeyPatch, application: Application) -> lis
     return opened
 
 
-async def test_a_use_case_that_creates_a_row_commits_it_on_success(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    application, (use_case,), _model = _compose(
-        _project(fixture_project, db_path, "commit"), _creating(fail=False)
-    )
-
-    async with application.running():
-        await application.kernel.app.invoke(use_case, payload={"name": "kept"})
-
-    assert _count_rows(db_path, _RECORD) == 1
-
-
-async def test_an_exception_in_execute_after_create_rolls_the_row_back(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    application, (use_case,), _model = _compose(
-        _project(fixture_project, db_path, "rollback"), _creating(fail=True)
-    )
-
-    async def invoke_failing() -> None:
-        async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "lost"})
-
-    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
-        await invoke_failing()
-
-    assert _count_rows(db_path, _RECORD) == 0
-
-
-async def test_a_nested_use_case_joins_the_outer_unit_of_work_and_commits_once(
-    fixture_project: ProjectFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    db_path = tmp_path / "store.db"
-    application, (outer, _inner), _model = _compose(
-        _project(fixture_project, db_path, "nested_commit"), _nesting(fail=False)
-    )
-    commits = _spy_commits(monkeypatch)
-    opened = _spy_units(monkeypatch, application)
-
-    async with application.running():
-        await application.kernel.app.invoke(outer, payload={"name": "outer"})
-
-    assert len(opened) == 1
-    assert len(commits) == 1
-    assert _count_rows(db_path, _RECORD) == 2
-
-
-async def test_a_nested_write_rolls_back_when_the_outer_use_case_fails(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    application, (outer, _inner), _model = _compose(
-        _project(fixture_project, db_path, "nested_rollback"), _nesting(fail=True)
-    )
-
-    async def invoke_failing() -> None:
-        async with application.running():
-            await application.kernel.app.invoke(outer, payload={"name": "outer"})
-
-    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
-        await invoke_failing()
-
-    assert _count_rows(db_path, _RECORD) == 0
-
-
-async def test_a_read_outside_any_unit_of_work_sees_committed_rows(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    application, (use_case,), model = _compose(
-        _project(fixture_project, db_path, "read"), _returning_id
-    )
-
-    async with application.running():
-        created_id = await application.kernel.app.invoke(use_case, payload={"name": "kept"})
-        assert current_scope() is None
-        repository = application.kernel.container.resolve_repo(model)
-        found = await repository.get_by_id(created_id)
-        page = await repository.list_paginated(PageParams(page=1, limit=10))
-
-    assert found is not None
-    assert found.name == "kept"
-    assert [item.name for item in page.items] == ["kept"]
-    assert _count_rows(db_path, _RECORD) == 1
-
-
-async def test_a_post_commit_action_runs_after_commit_and_sees_the_row(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    seen: list[int] = []
-
-    def record() -> None:
-        seen.append(_count_rows(db_path, _RECORD))
-
-    application, (use_case,), _model = _compose(
-        _project(fixture_project, db_path, "post_commit"), _enqueueing(record, fail=False)
-    )
-
-    async with application.running():
-        await application.kernel.app.invoke(use_case, payload={"name": "kept"})
-
-    assert seen == [1]
-
-
-async def test_a_post_commit_action_does_not_run_when_execute_raises(
-    fixture_project: ProjectFactory, tmp_path: Path
-) -> None:
-    db_path = tmp_path / "store.db"
-    seen: list[int] = []
-    application, (use_case,), _model = _compose(
-        _project(fixture_project, db_path, "post_commit_fail"),
-        _enqueueing(lambda: seen.append(_count_rows(db_path, _RECORD)), fail=True),
-    )
-
-    async def invoke_failing() -> None:
-        async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "lost"})
-
-    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
-        await invoke_failing()
-
-    assert seen == []
-    assert _count_rows(db_path, _RECORD) == 0
-
-
 def _session_manager(path: Path) -> SessionManager:
     return SessionManager(
         _sqlite_url(path),
@@ -399,21 +270,6 @@ def _note_repo(manager: SessionManager) -> RepositorySQLAlchemy[_Note, int]:
     )
 
 
-async def test_a_repository_of_another_engine_refuses_the_active_session(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    first, second, first_path, second_path = two_stores
-    other = _note_repo(second)
-
-    note = _NoteCommand(name="audit")
-    async with SQLAlchemyUnitOfWork(first):
-        with pytest.raises(ForeignSessionError, match="cannot join the active session") as raised:
-            await other.create(note)
-
-    assert raised.value.code == "foreign_session"
-    assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
-
-
 class _NoteService:
     """A service boundary over one store, opening its own transaction when none is active."""
 
@@ -426,94 +282,237 @@ class _NoteService:
         await self._notes.create(_NoteCommand(name=name))
 
 
-async def test_a_transactional_service_of_another_store_refuses_the_active_session(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    first, second, first_path, second_path = two_stores
-    service = _NoteService(second)
-
-    async with SQLAlchemyUnitOfWork(first):
-        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-            await service.record("audit")
-
-    assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
-
-
-async def test_an_elevation_sink_of_another_store_refuses_to_set_a_flag(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    first, second, _, _ = two_stores
-    sink = sink_for(second, "editor")
-
-    async with SQLAlchemyUnitOfWork(first):
-        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-            await sink.set_flag("editor")
-
-
-async def test_an_elevation_sink_of_another_store_refuses_its_transaction(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    first, second, _, _ = two_stores
-    sink = sink_for(second, "editor")
-    editor = frozenset({"editor"})
-
-    async with SQLAlchemyUnitOfWork(first):
-        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-            sink.in_transaction(editor)
-
-
 _WRITE = Permission("rows.write")
 _CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
 _BOUNDARY = Scope.of("b1")
 
 
-async def test_an_elevation_refused_by_another_store_leaves_the_scope_unelevated(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    first, second, _, _ = two_stores
-    decision = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=_BOUNDARY))
+class TestSingleStoreCharacterisation:
+    async def test_a_use_case_that_creates_a_row_commits_it_on_success(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        application, (use_case,), _model = _compose(
+            _project(fixture_project, db_path, "commit"), _creating(fail=False)
+        )
 
-    async with (
-        SQLAlchemyUnitOfWork(first),
-        elevation_scope(owns_transaction=False, sink=sink_for(second, "editor")),
-    ):
-        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-            await elevate_scope(
-                "editor", decision, at=_BOUNDARY, permission=_WRITE, catalog=_CATALOG
-            )
-        assert elevated_scopes() == frozenset()
+        async with application.running():
+            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
 
+        assert _count_rows(db_path, _RECORD) == 1
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_B)
-async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
-    two_stores: tuple[SessionManager, SessionManager, Path, Path],
-) -> None:
-    # Inside SQLAlchemyUnitOfWork on the first engine a repository of the
-    # second engine refuses the active session (fault A fails closed), so the
-    # literal shape of fault B never writes. The own-session path is
-    # RepositorySQLAlchemy._session_scope -> session_manager.session() ->
-    # commit(), and it runs only when no active session is bound. A task
-    # started with a fresh contextvars.Context() is that path: it stands in
-    # for a store with its own context variable ("one context variable per
-    # backend" in ADR 0008). The first engine's row must still roll back.
-    first, second, first_path, second_path = two_stores
-    primary = _note_repo(first)
-    other = _note_repo(second)
+    async def test_an_exception_in_execute_after_create_rolls_the_row_back(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        application, (use_case,), _model = _compose(
+            _project(fixture_project, db_path, "rollback"), _creating(fail=True)
+        )
 
-    async def write_other() -> None:
-        await other.create(_NoteCommand(name="other"))
+        async def invoke_failing() -> None:
+            async with application.running():
+                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
 
-    async def write_then_fail() -> None:
+        with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+            await invoke_failing()
+
+        assert _count_rows(db_path, _RECORD) == 0
+
+    async def test_a_nested_use_case_joins_the_outer_unit_of_work_and_commits_once(
+        self, fixture_project: ProjectFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        application, (outer, _inner), _model = _compose(
+            _project(fixture_project, db_path, "nested_commit"), _nesting(fail=False)
+        )
+        commits = _spy_commits(monkeypatch)
+        opened = _spy_units(monkeypatch, application)
+
+        async with application.running():
+            await application.kernel.app.invoke(outer, payload={"name": "outer"})
+
+        assert len(opened) == 1
+        assert len(commits) == 1
+        assert _count_rows(db_path, _RECORD) == 2
+
+    async def test_a_nested_write_rolls_back_when_the_outer_use_case_fails(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        application, (outer, _inner), _model = _compose(
+            _project(fixture_project, db_path, "nested_rollback"), _nesting(fail=True)
+        )
+
+        async def invoke_failing() -> None:
+            async with application.running():
+                await application.kernel.app.invoke(outer, payload={"name": "outer"})
+
+        with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+            await invoke_failing()
+
+        assert _count_rows(db_path, _RECORD) == 0
+
+    async def test_a_read_outside_any_unit_of_work_sees_committed_rows(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        application, (use_case,), model = _compose(
+            _project(fixture_project, db_path, "read"), _returning_id
+        )
+
+        async with application.running():
+            created_id = await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            assert current_scope() is None
+            repository = application.kernel.container.resolve_repo(model)
+            found = await repository.get_by_id(created_id)
+            page = await repository.list_paginated(PageParams(page=1, limit=10))
+
+        assert found is not None
+        assert found.name == "kept"
+        assert [item.name for item in page.items] == ["kept"]
+        assert _count_rows(db_path, _RECORD) == 1
+
+    async def test_a_post_commit_action_runs_after_commit_and_sees_the_row(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        seen: list[int] = []
+
+        def record() -> None:
+            seen.append(_count_rows(db_path, _RECORD))
+
+        application, (use_case,), _model = _compose(
+            _project(fixture_project, db_path, "post_commit"), _enqueueing(record, fail=False)
+        )
+
+        async with application.running():
+            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+
+        assert seen == [1]
+
+    async def test_a_post_commit_action_does_not_run_when_execute_raises(
+        self, fixture_project: ProjectFactory, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "store.db"
+        seen: list[int] = []
+        application, (use_case,), _model = _compose(
+            _project(fixture_project, db_path, "post_commit_fail"),
+            _enqueueing(lambda: seen.append(_count_rows(db_path, _RECORD)), fail=True),
+        )
+
+        async def invoke_failing() -> None:
+            async with application.running():
+                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+
+        with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+            await invoke_failing()
+
+        assert seen == []
+        assert _count_rows(db_path, _RECORD) == 0
+
+    async def test_a_repository_of_another_engine_refuses_the_active_session(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        first, second, first_path, second_path = two_stores
+        other = _note_repo(second)
+
+        note = _NoteCommand(name="audit")
         async with SQLAlchemyUnitOfWork(first):
-            await primary.create(_NoteCommand(name="primary"))
-            await asyncio.create_task(write_other(), context=contextvars.Context())
-            raise RuntimeError(_OUTER_FAILED)
+            with pytest.raises(
+                ForeignSessionError, match="cannot join the active session"
+            ) as raised:
+                await other.create(note)
 
-    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
-        await write_then_fail()
+        assert raised.value.code == "foreign_session"
+        assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
 
-    in_first = _count_rows(first_path, _NOTE)
-    in_second = _count_rows(second_path, _NOTE)
-    if in_first != 0:
-        raise RuntimeError(f"db1 kept {in_first} row(s) after rollback")
-    assert in_second == 0
+    async def test_a_transactional_service_of_another_store_refuses_the_active_session(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        first, second, first_path, second_path = two_stores
+        service = _NoteService(second)
+
+        async with SQLAlchemyUnitOfWork(first):
+            with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+                await service.record("audit")
+
+        assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
+
+    async def test_an_elevation_sink_of_another_store_refuses_to_set_a_flag(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        first, second, _, _ = two_stores
+        sink = sink_for(second, "editor")
+
+        async with SQLAlchemyUnitOfWork(first):
+            with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+                await sink.set_flag("editor")
+
+    async def test_an_elevation_sink_of_another_store_refuses_its_transaction(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        first, second, _, _ = two_stores
+        sink = sink_for(second, "editor")
+        editor = frozenset({"editor"})
+
+        async with SQLAlchemyUnitOfWork(first):
+            with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+                sink.in_transaction(editor)
+
+    async def test_an_elevation_refused_by_another_store_leaves_the_scope_unelevated(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        first, second, _, _ = two_stores
+        decision = Decision(
+            allowed=True, grant=Grant(subject="ana", role="editor", scope=_BOUNDARY)
+        )
+
+        async with (
+            SQLAlchemyUnitOfWork(first),
+            elevation_scope(owns_transaction=False, sink=sink_for(second, "editor")),
+        ):
+            with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+                await elevate_scope(
+                    "editor", decision, at=_BOUNDARY, permission=_WRITE, catalog=_CATALOG
+                )
+            assert elevated_scopes() == frozenset()
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_B)
+    async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
+        self,
+        two_stores: tuple[SessionManager, SessionManager, Path, Path],
+    ) -> None:
+        # Inside SQLAlchemyUnitOfWork on the first engine a repository of the
+        # second engine refuses the active session (fault A fails closed), so the
+        # literal shape of fault B never writes. The own-session path is
+        # RepositorySQLAlchemy._session_scope -> session_manager.session() ->
+        # commit(), and it runs only when no active session is bound. A task
+        # started with a fresh contextvars.Context() is that path: it stands in
+        # for a store with its own context variable ("one context variable per
+        # backend" in ADR 0008). The first engine's row must still roll back.
+        first, second, first_path, second_path = two_stores
+        primary = _note_repo(first)
+        other = _note_repo(second)
+
+        async def write_other() -> None:
+            await other.create(_NoteCommand(name="other"))
+
+        async def write_then_fail() -> None:
+            async with SQLAlchemyUnitOfWork(first):
+                await primary.create(_NoteCommand(name="primary"))
+                await asyncio.create_task(write_other(), context=contextvars.Context())
+                raise RuntimeError(_OUTER_FAILED)
+
+        with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+            await write_then_fail()
+
+        in_first = _count_rows(first_path, _NOTE)
+        in_second = _count_rows(second_path, _NOTE)
+        if in_first != 0:
+            raise RuntimeError(f"db1 kept {in_first} row(s) after rollback")
+        assert in_second == 0

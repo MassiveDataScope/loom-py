@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.identity import Identity, current_identity
+from loom.core.identity import Identity, captured_delegation
+from loom.core.job.callback import refuse_reserved_payload
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.handle import JobGroup, JobHandle
@@ -37,7 +38,8 @@ class DispatchedJob:
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
-    identity: Identity
+    identity: Identity | None
+    """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
 
 
 class RecordingJobService:
@@ -97,14 +99,22 @@ class RecordingJobService:
         priority: int | None = None,
         eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Record *job_type* once the current execution commits."""
-        _ = (on_success, on_failure, countdown, priority, eta)
+        """Record *job_type* once the current execution commits.
+
+        Raises:
+            ValueError: When a callback is attached and *payload* holds
+                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+        """
+        _ = (countdown, priority, eta)
+        payload = payload or {}
+        if on_success is not None or on_failure is not None:
+            refuse_reserved_payload(payload)
         record = DispatchedJob(
             job_type=job_type,
-            payload=copy.deepcopy(payload or {}),
+            payload=copy.deepcopy(payload),
             params=copy.deepcopy(params),
             queue=queue or self._settings.of(job_type).queue,
-            identity=current_identity(),
+            identity=captured_delegation().caller,
         )
         add_pending_publish(functools.partial(self.dispatched.append, record))
         return JobHandle(

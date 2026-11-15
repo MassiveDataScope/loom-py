@@ -33,7 +33,7 @@ from __future__ import annotations
 
 try:
     import pytest
-except ModuleNotFoundError as exc:  # pragma: no cover - packaging guard
+except ModuleNotFoundError as exc:  # pragma: no cover
     raise ModuleNotFoundError(
         "loom.etl.testing defines pytest fixtures: install loom-kernel[testing]"
     ) from exc

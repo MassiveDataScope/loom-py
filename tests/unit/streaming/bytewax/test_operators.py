@@ -53,15 +53,15 @@ class _FakeAsyncCM:
         self.exited += 1
 
 
-class _Payload(LoomStruct):
+class AcmeOperatorPayload(LoomStruct):
     value: str = "x"
 
 
 class TestSyncResourceLifecycle:
     def test_open_worker_enters_contexts_and_preserves_plain_deps(self) -> None:
         client = _FakeSyncCM()
-        node: With[_Payload, _Payload] = With(
-            process=Process(IntoTopic("out", payload=_Payload)),
+        node: With[AcmeOperatorPayload, AcmeOperatorPayload] = With(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             client=client,
             retries=3,
         )
@@ -80,8 +80,8 @@ class TestSyncResourceLifecycle:
     def test_open_batch_rolls_back_entered_contexts_on_failure(self) -> None:
         first = _FakeSyncCM()
         second = _FakeSyncCM(fail_on_enter=True)
-        node: With[_Payload, _Payload] = With(
-            process=Process(IntoTopic("out", payload=_Payload)),
+        node: With[AcmeOperatorPayload, AcmeOperatorPayload] = With(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             scope=ResourceScope.BATCH,
             first=first,
             second=second,
@@ -102,8 +102,8 @@ class TestSyncResourceLifecycle:
             created.append(cm)
             return cm
 
-        node: With[_Payload, _Payload] = With(
-            process=Process(IntoTopic("out", payload=_Payload)),
+        node: With[AcmeOperatorPayload, AcmeOperatorPayload] = With(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             scope=ResourceScope.BATCH,
             client=ContextFactory(_factory),
         )
@@ -122,8 +122,8 @@ class TestSyncResourceLifecycle:
 class TestAsyncResourceLifecycle:
     def test_open_worker_enters_async_contexts_and_preserves_plain_deps(self) -> None:
         client = _FakeAsyncCM()
-        node: WithAsync[_Payload, _Payload] = WithAsync(
-            process=Process(IntoTopic("out", payload=_Payload)),
+        node: WithAsync[AcmeOperatorPayload, AcmeOperatorPayload] = WithAsync(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             client=client,
             validator="plain",
         )
@@ -146,8 +146,8 @@ class TestAsyncResourceLifecycle:
     def test_open_batch_rolls_back_async_contexts_on_failure(self) -> None:
         first = _FakeAsyncCM()
         second = _FakeAsyncCM(fail_on_enter=True)
-        node: WithAsync[_Payload, _Payload] = WithAsync(
-            process=Process(IntoTopic("out", payload=_Payload)),
+        node: WithAsync[AcmeOperatorPayload, AcmeOperatorPayload] = WithAsync(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             scope=ResourceScope.BATCH,
             first=first,
             second=second,
@@ -165,8 +165,8 @@ class TestAsyncResourceLifecycle:
             bridge.shutdown()
 
     def test_lifecycle_for_requires_bridge_for_async_nodes(self) -> None:
-        node: WithAsync[_Payload, _Payload] = WithAsync(
-            process=Process(IntoTopic("out", payload=_Payload))
+        node: WithAsync[AcmeOperatorPayload, AcmeOperatorPayload] = WithAsync(
+            process=Process(IntoTopic("out", payload=AcmeOperatorPayload))
         )
 
         with pytest.raises(ValueError, match="AsyncBridge"):

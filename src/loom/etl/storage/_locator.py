@@ -44,14 +44,16 @@ class TableLocation:
         storage_options: Cloud credentials / connection settings.
                          See https://delta-io.github.io/delta-rs/api/delta_writer/
         writer:          Parquet writer settings → ``WriterProperties(**writer)``.
-                         See https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.WriterProperties
+                         See
+                         https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.WriterProperties
         target_file_size:
                          Optional target output file size in bytes forwarded to
                          ``write_deltalake(..., target_file_size=...)``.
         delta_config:    Delta table properties written to the transaction log.
                          See https://docs.delta.io/latest/table-properties.html
         commit:          Commit metadata → ``CommitProperties(**commit)``.
-                         See https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.CommitProperties
+                         See
+                         https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.CommitProperties
     """
 
     uri: str
@@ -61,7 +63,7 @@ class TableLocation:
     delta_config: dict[str, str | None] = field(default_factory=dict)
     commit: dict[str, Any] = field(default_factory=dict)
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic only
+    def __repr__(self) -> str:  # pragma: no cover
         masked = _mask_storage_options(self.storage_options)
         return (
             f"TableLocation(uri={self.uri!r}, storage_options={masked!r}, "
@@ -78,7 +80,6 @@ def _mask_storage_options(opts: dict[str, str]) -> dict[str, str]:
     masked: dict[str, str] = {}
     for k, v in opts.items():
         lk = k.lower()
-        # ``aws_endpoint_url`` matches "key" too loosely — exclude hostnames.
         if any(f in lk for f in _SECRET_KEY_FRAGMENTS) and "endpoint" not in lk:
             masked[k] = "***"
         else:
@@ -131,14 +132,16 @@ class PrefixLocator:
         storage_options: Cloud credentials.
                          See https://delta-io.github.io/delta-rs/api/delta_writer/
         writer:          Parquet writer settings → ``WriterProperties(**writer)``.
-                         See https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.WriterProperties
+                         See
+                         https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.WriterProperties
         target_file_size:
                          Optional target output file size in bytes forwarded to
                          ``write_deltalake(..., target_file_size=...)``.
         delta_config:    Delta table properties.
                          See https://docs.delta.io/latest/table-properties.html
         commit:          Commit metadata → ``CommitProperties(**commit)``.
-                         See https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.CommitProperties
+                         See
+                         https://delta-io.github.io/delta-rs/api/delta_writer/#deltalake.CommitProperties
 
     Example::
 
@@ -167,7 +170,7 @@ class PrefixLocator:
     ) -> None:
         self._root = str(root).rstrip("/")
         self._location_defaults = TableLocation(
-            uri="",  # filled per-call in locate()
+            uri="",
             storage_options=storage_options or {},
             writer=writer or {},
             target_file_size=target_file_size,

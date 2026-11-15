@@ -39,11 +39,6 @@ _LOOM_OWNER_PK = "_loom_owner_pk"
 _USELIST_CARDINALITIES = frozenset({Cardinality.ONE_TO_MANY, Cardinality.MANY_TO_MANY})
 
 
-# ---------------------------------------------------------------------------
-# Compiled plan structures
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class CoreRelationStep:
     """Compiled batch-load descriptor for one relation in a Core read profile.
@@ -87,11 +82,6 @@ class CoreProfilePlan:
     id_attr: str
 
 
-# ---------------------------------------------------------------------------
-# Core entity adapter — bridges RowMapping + relation data to memory loaders
-# ---------------------------------------------------------------------------
-
-
 class _CoreEntityAdapter:
     """Wraps a Core ``RowMapping`` plus pre-loaded relation data.
 
@@ -114,11 +104,6 @@ class _CoreEntityAdapter:
             return row[name]
         except KeyError:
             raise AttributeError(name) from None
-
-
-# ---------------------------------------------------------------------------
-# CoreModel — public read artifact
-# ---------------------------------------------------------------------------
 
 
 class CoreModel:
@@ -244,10 +229,6 @@ class CoreModel:
         stripped_rows = [{k: value for k, value in row.items() if k != total_alias} for row in rows]
         return await self._assemble(session, stripped_rows, plan), total_count
 
-    # ------------------------------------------------------------------
-    # Internal assembly
-    # ------------------------------------------------------------------
-
     async def _assemble(
         self,
         session: AsyncSession,
@@ -266,11 +247,6 @@ class CoreModel:
             _build_struct(self._struct_cls, row, i, plan, relation_data, projection_values)
             for i, row in enumerate(rows)
         ]
-
-
-# ---------------------------------------------------------------------------
-# Assembly helpers
-# ---------------------------------------------------------------------------
 
 
 async def _load_relations(
@@ -314,11 +290,6 @@ def _build_struct(
     return to_struct(
         struct_cls, {**dict(row), **relation_kwargs, **projection_values.get(index, {})}
     )
-
-
-# ---------------------------------------------------------------------------
-# Relation batch fetchers
-# ---------------------------------------------------------------------------
 
 
 async def _fetch_relation_batch(

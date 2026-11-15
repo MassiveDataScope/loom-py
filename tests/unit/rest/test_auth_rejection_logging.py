@@ -60,75 +60,73 @@ def middleware() -> AuthenticationMiddleware:
     return AuthenticationMiddleware(_app, authenticator=RefusingAuthenticator())
 
 
-async def test_a_refusal_is_logged_above_debug(
-    middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
-) -> None:
-    """At DEBUG it does not survive a production log level, which is where it matters."""
-    with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
-        await _call(middleware)
+class TestAuthRejectionLogging:
+    async def test_a_refusal_is_logged_above_debug(
+        self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """At DEBUG it does not survive a production log level, which is where it matters."""
+        with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
+            await _call(middleware)
 
-    assert caplog.records
-    assert all(record.levelno >= logging.INFO for record in caplog.records)
+        assert caplog.records
+        assert all(record.levelno >= logging.INFO for record in caplog.records)
 
+    async def test_the_log_says_where_and_what_was_attempted(
+        self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Correlation is the point: one refusal is noise, a burst from one client is not."""
+        with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
+            await _call(middleware)
 
-async def test_the_log_says_where_and_what_was_attempted(
-    middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Correlation is the point: one refusal is noise, a burst from one client is not."""
-    with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
-        await _call(middleware)
+        logged = caplog.text
+        assert "/v1/catalog/search" in logged
+        assert "203.0.113.7" in logged
 
-    logged = caplog.text
-    assert "/v1/catalog/search" in logged
-    assert "203.0.113.7" in logged
+    async def test_the_log_never_carries_the_credential(
+        self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A log that holds the bearer token turns log access into API access."""
+        token = "eyJhbGciOiJFZERTQSJ9.c3VwZXItc2VjcmV0.c2lnbmF0dXJl"
+        with caplog.at_level(logging.DEBUG, logger="loom.rest.auth.middleware"):
+            await _call(middleware, headers=[(b"authorization", f"Bearer {token}".encode())])
 
+        assert token not in caplog.text
+        assert "c3VwZXItc2VjcmV0" not in caplog.text
 
-async def test_the_log_never_carries_the_credential(
-    middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A log that holds the bearer token turns log access into API access."""
-    token = "eyJhbGciOiJFZERTQSJ9.c3VwZXItc2VjcmV0.c2lnbmF0dXJl"
-    with caplog.at_level(logging.DEBUG, logger="loom.rest.auth.middleware"):
-        await _call(middleware, headers=[(b"authorization", f"Bearer {token}".encode())])
+    async def test_an_accepted_request_is_not_logged_as_a_refusal(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Otherwise the signal drowns: every request would look like a refusal."""
+        from loom.core.identity import Identity
 
-    assert token not in caplog.text
-    assert "c3VwZXItc2VjcmV0" not in caplog.text
+        accepted = AuthenticationMiddleware(
+            _app, authenticator=AcceptingAuthenticator(Identity(subject="a@b.c", roles=("r",)))
+        )
 
+        with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
+            await _call(accepted)
 
-async def test_an_accepted_request_is_not_logged_as_a_refusal(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Otherwise the signal drowns: every request would look like a refusal."""
-    from loom.core.identity import Identity
+        assert not caplog.records
 
-    accepted = AuthenticationMiddleware(
-        _app, authenticator=AcceptingAuthenticator(Identity(subject="a@b.c", roles=("r",)))
-    )
+    async def test_an_excluded_path_is_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        excluded = AuthenticationMiddleware(
+            _app, authenticator=RefusingAuthenticator(), exclude_paths=("/health",)
+        )
 
-    with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
-        await _call(accepted)
+        with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
+            await _call(excluded, path="/health")
 
-    assert not caplog.records
+        assert not caplog.records
 
+    async def test_a_client_without_an_address_still_logs(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """ASGI allows `client` to be absent; a missing address must not lose the event."""
+        middleware = AuthenticationMiddleware(_app, authenticator=RefusingAuthenticator())
 
-async def test_an_excluded_path_is_not_logged(caplog: pytest.LogCaptureFixture) -> None:
-    excluded = AuthenticationMiddleware(
-        _app, authenticator=RefusingAuthenticator(), exclude_paths=("/health",)
-    )
+        with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
+            await _call(middleware, client=None)
 
-    with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
-        await _call(excluded, path="/health")
-
-    assert not caplog.records
-
-
-async def test_a_client_without_an_address_still_logs(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """ASGI allows `client` to be absent; a missing address must not lose the event."""
-    middleware = AuthenticationMiddleware(_app, authenticator=RefusingAuthenticator())
-
-    with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
-        await _call(middleware, client=None)
-
-    assert caplog.records
+        assert caplog.records

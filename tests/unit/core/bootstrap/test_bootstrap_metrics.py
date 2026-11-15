@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.bootstrap import bootstrap_app
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.model import LoomStruct
@@ -39,7 +39,7 @@ class TestBootstrapResultCarriesMetrics:
 
 
 class TestCreateFastapiAppWiresMetrics:
-    def test_executor_receives_metrics_adapter(self) -> None:
+    async def test_executor_receives_metrics_adapter(self) -> None:
         """bootstrap_app must register RuntimeExecutor with the metrics adapter."""
         pytest.importorskip("fastapi")
 
@@ -48,8 +48,11 @@ class TestCreateFastapiAppWiresMetrics:
         from loom.rest.model import RestInterface, RestRoute
 
         class _Adapter:
+            def __init__(self) -> None:
+                self.kinds: list[EventKind] = []
+
             def on_event(self, event: RuntimeEvent) -> None:
-                pass
+                self.kinds.append(event.kind)
 
         adapter = _Adapter()
         result = bootstrap_app(
@@ -63,7 +66,8 @@ class TestCreateFastapiAppWiresMetrics:
             routes = (RestRoute(use_case=_SimpleUseCase, method="GET", path="/"),)
 
         executor = result.container.resolve(RuntimeExecutor)
-        assert executor._metrics is adapter
+        await executor.execute(_SimpleUseCase())
+        assert adapter.kinds[-2:] == [EventKind.EXEC_START, EventKind.EXEC_DONE]
         app = create_fastapi_app(result, RouteSources(python=[_Iface]))
         assert app is not None
 

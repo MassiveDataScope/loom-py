@@ -386,23 +386,19 @@ class TestIntoHistoryValidation:
                 valid_to="period",
             )
 
-    def test_log_eff_date_equals_valid_from_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "effective_date",
+        [
+            pytest.param("valid_from", id="log_eff_date_equals_valid_from_raises"),
+            pytest.param("valid_to", id="log_eff_date_equals_valid_to_raises"),
+        ],
+    )
+    def test_log_eff_date_equal_to_a_validity_column_raises(self, effective_date: str) -> None:
         with pytest.raises(ValueError, match="must not match"):
             IntoHistory(
                 "t",
                 keys=("id",),
-                effective_date="valid_from",
-                mode="log",
-                valid_from="valid_from",
-                valid_to="valid_to",
-            )
-
-    def test_log_eff_date_equals_valid_to_raises(self) -> None:
-        with pytest.raises(ValueError, match="must not match"):
-            IntoHistory(
-                "t",
-                keys=("id",),
-                effective_date="valid_to",
+                effective_date=effective_date,
                 mode="log",
                 valid_from="valid_from",
                 valid_to="valid_to",
@@ -418,33 +414,33 @@ class TestIntoHistoryValidation:
         assert spec.keys == ("player_id",)
         assert spec.track == ("team_id", "salary")
 
-    def test_overwrite_overlaps_keys_raises(self) -> None:
-        with pytest.raises(ValueError, match="'overwrite' cannot overlap with 'keys'"):
+    @pytest.mark.parametrize(
+        ("match", "column"),
+        [
+            pytest.param(
+                "'overwrite' cannot overlap with 'keys'",
+                "player_id",
+                id="overwrite_overlaps_keys_raises",
+            ),
+            pytest.param(
+                "'overwrite' cannot overlap with 'track'",
+                "team_id",
+                id="overwrite_overlaps_track_raises",
+            ),
+            pytest.param(
+                "cannot contain boundary columns",
+                "valid_from",
+                id="overwrite_contains_boundary_col_raises",
+            ),
+        ],
+    )
+    def test_invalid_overwrite_raises(self, match: str, column: str) -> None:
+        with pytest.raises(ValueError, match=match):
             IntoHistory(
                 "t",
                 keys=("player_id",),
                 track=("team_id",),
-                overwrite=("player_id", "email"),
-                effective_date=params.run_date,
-            )
-
-    def test_overwrite_overlaps_track_raises(self) -> None:
-        with pytest.raises(ValueError, match="'overwrite' cannot overlap with 'track'"):
-            IntoHistory(
-                "t",
-                keys=("player_id",),
-                track=("team_id",),
-                overwrite=("team_id", "email"),
-                effective_date=params.run_date,
-            )
-
-    def test_overwrite_contains_boundary_col_raises(self) -> None:
-        with pytest.raises(ValueError, match="cannot contain boundary columns"):
-            IntoHistory(
-                "t",
-                keys=("player_id",),
-                track=("team_id",),
-                overwrite=("valid_from", "email"),
+                overwrite=(column, "email"),
                 effective_date=params.run_date,
             )
 
@@ -649,24 +645,24 @@ class TestHistorifyRepairReport:
         assert len(report.dates_requiring_rerun) == 0
 
 
-# ---------------------------------------------------------------------------
-# Public API surface
-# ---------------------------------------------------------------------------
+class TestPublicHistoryApi:
+    # ---------------------------------------------------------------------------
+    # Public API surface
+    # ---------------------------------------------------------------------------
 
+    @pytest.mark.parametrize(
+        "module,symbol",
+        [
+            ("loom.etl", "IntoHistory"),
+            ("loom.etl", "HistorifySpec"),
+            ("loom.etl", "DeletePolicy"),
+            ("loom.etl", "HistorifyDateCollisionError"),
+            ("loom.etl", "HistorifyDeleteMarkerError"),
+            ("loom.etl.declarative.target", "IntoHistory"),
+        ],
+    )
+    def test_public_api_importable(self, module: str, symbol: str) -> None:
+        import importlib
 
-@pytest.mark.parametrize(
-    "module,symbol",
-    [
-        ("loom.etl", "IntoHistory"),
-        ("loom.etl", "HistorifySpec"),
-        ("loom.etl", "DeletePolicy"),
-        ("loom.etl", "HistorifyDateCollisionError"),
-        ("loom.etl", "HistorifyDeleteMarkerError"),
-        ("loom.etl.declarative.target", "IntoHistory"),
-    ],
-)
-def test_public_api_importable(module: str, symbol: str) -> None:
-    import importlib
-
-    mod = importlib.import_module(module)
-    assert hasattr(mod, symbol)
+        mod = importlib.import_module(module)
+        assert hasattr(mod, symbol)

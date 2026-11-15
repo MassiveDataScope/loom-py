@@ -37,31 +37,40 @@ class _SlowClient:
         return {}
 
 
-async def test_sixteen_calls_progress_in_parallel_on_a_sixteen_thread_executor() -> None:
-    client = _SlowClient()
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
-            client, "products", Product, executor=executor
-        )
-
-        started = time.perf_counter()
-        await asyncio.gather(*(repository.get_by_id(i) for i in range(16)))
-        elapsed = time.perf_counter() - started
-
-    assert elapsed < _BLOCK_SECONDS * 3
+@pytest.fixture
+def slow_client() -> _SlowClient:
+    return _SlowClient()
 
 
-async def test_the_caller_context_is_visible_inside_the_executor_thread() -> None:
-    client = _SlowClient()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
-            client, "products", Product, executor=executor
-        )
-        _REQUEST.set("req-42")
+class TestDynamoExecutorParallelism:
+    async def test_sixteen_calls_progress_in_parallel_on_a_sixteen_thread_executor(
+        self,
+        slow_client: _SlowClient,
+    ) -> None:
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+                slow_client, "products", Product, executor=executor
+            )
 
-        await repository.get_by_id(1)
+            started = time.perf_counter()
+            await asyncio.gather(*(repository.get_by_id(i) for i in range(16)))
+            elapsed = time.perf_counter() - started
 
-    assert client.seen_requests == ["req-42"]
+        assert elapsed < _BLOCK_SECONDS * 3
+
+    async def test_the_caller_context_is_visible_inside_the_executor_thread(
+        self,
+        slow_client: _SlowClient,
+    ) -> None:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+                slow_client, "products", Product, executor=executor
+            )
+            _REQUEST.set("req-42")
+
+            await repository.get_by_id(1)
+
+        assert slow_client.seen_requests == ["req-42"]
 
 
 def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> PersistenceWiring:
@@ -95,37 +104,38 @@ def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return sizes
 
 
-async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
-    monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, created: list[int]
-) -> None:
-    wiring = _wiring(monkeypatch, fake_client)
-    assert wiring.readiness is not None
-    answers: list[bool] = []
+class TestDynamoExecutorLifespan:
+    async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
+        self, monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, created: list[int]
+    ) -> None:
+        wiring = _wiring(monkeypatch, fake_client)
+        assert wiring.readiness is not None
+        answers: list[bool] = []
 
-    for _ in range(2):
+        for _ in range(2):
+            async with wiring.lifespan_init():
+                answers.append(await wiring.readiness())
+
+        assert answers == [True, True]
+        assert created == [16, 16]
+
+    async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: FakeClient,
+        created: list[int],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        wiring = _wiring(monkeypatch, fake_client)
+        assert wiring.readiness is not None
         async with wiring.lifespan_init():
-            answers.append(await wiring.readiness())
+            pass
 
-    assert answers == [True, True]
-    assert created == [16, 16]
+        with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
+            ready = await wiring.readiness()
 
-
-async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
-    monkeypatch: pytest.MonkeyPatch,
-    fake_client: FakeClient,
-    created: list[int],
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    wiring = _wiring(monkeypatch, fake_client)
-    assert wiring.readiness is not None
-    async with wiring.lifespan_init():
-        pass
-
-    with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
-        ready = await wiring.readiness()
-
-    assert ready is False
-    [record] = caplog.records
-    assert record.exc_info is not None
-    assert record.exc_info[0] is RuntimeError
-    assert created == [16]
+        assert ready is False
+        [record] = caplog.records
+        assert record.exc_info is not None
+        assert record.exc_info[0] is RuntimeError
+        assert created == [16]

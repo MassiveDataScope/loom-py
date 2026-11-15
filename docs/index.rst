@@ -62,6 +62,12 @@ Companion demo application:
 
 .. toctree::
    :maxdepth: 2
+   :caption: Guides
+
+   guides/ports-and-adapters
+
+.. toctree::
+   :maxdepth: 2
    :caption: REST
 
    rest/autocrud

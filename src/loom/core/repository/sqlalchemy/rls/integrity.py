@@ -49,9 +49,6 @@ AUDIT_SHAPE: Final = (
     "quote_ident(:schema) || '.', '') FROM pg_index i, log WHERE i.indrelid = log.rel"
     ") shape ORDER BY kind, position, line"
 )
-# Whether the guard has the audit log's revision: its registry of audited tables.
-# Read from the catalogue, not through to_regclass: the application role has
-# no USAGE on the guard schema, and startup asks this as that role.
 AUDIT_SUPPORTED: Final = (
     "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c"
     " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
@@ -160,7 +157,6 @@ _AUDIT_SHAPE: Final = text(AUDIT_SHAPE)
 _AUDIT_SUPPORTED: Final = text(AUDIT_SUPPORTED)
 _AUDIT_READABLE: Final = text(AUDIT_READABLE)
 AUDIT_TRIGGER: Final = "loom_audit_record"
-# The catalogue, not the guard: the application role reads pg_trigger.
 AUDIT_TRIGGERS: Final = (
     "SELECT c.relname FROM pg_catalog.pg_trigger g"
     " JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid"
@@ -168,10 +164,6 @@ AUDIT_TRIGGERS: Final = (
     " WHERE n.nspname = :schema AND g.tgname = 'loom_audit_record' AND g.tgenabled = 'A'"
 )
 _AUDIT_TRIGGERS: Final = text(AUDIT_TRIGGERS)
-# Consecutive UTC months, from this one, that a partition of the log covers; 0
-# when this month is missing, NULL without a log. Read by partition name from the
-# catalogue, so the application role can ask: the guard names every partition
-# ``audit_log_pYYYYMM`` after the UTC month its bounds span.
 AUDIT_MONTHS_COVERED: Final = (
     "WITH log AS (SELECT to_regclass("
     "quote_ident(coalesce(CAST(:schema AS text), current_schema())) || '.audit_log') AS rel),"
@@ -185,7 +177,6 @@ AUDIT_MONTHS_COVERED: Final = (
     " ELSE coalesce(min(m.i) FILTER (WHERE m.relname NOT IN (SELECT relname FROM parts)), 37)"
     " END AS covered FROM months m"
 )
-# Fewer covered months than this is a warning at startup and a finding in verify.
 AUDIT_HORIZON_WARNING_MONTHS: Final = 3
 _AUDIT_MONTHS_COVERED: Final = text(AUDIT_MONTHS_COVERED)
 _CATALOG: Final = text(_CATALOG_SQL)
@@ -245,7 +236,7 @@ async def startup_problems(
 ) -> list[Problem]:
     """Everything the application user can check at startup: guard, scoped tables, audit log.
 
-    The audit log is checked whenever it exists, marked tables or not (FR-018),
+    The audit log is checked whenever it exists, marked tables or not,
     and an application with audited tables needs revision 3 and the log.
     *recording* names the tables that must carry their audit trigger, so a
     model marked but never migrated does not write unrecorded rows.

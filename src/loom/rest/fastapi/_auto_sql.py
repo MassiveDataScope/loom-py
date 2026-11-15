@@ -9,16 +9,12 @@ from loom.core.config.errors import ConfigError
 from loom.core.sql import SqlConfig
 from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
-from loom.rest.fastapi._auto_auth import _AuthWiring, _require_jwt_audience
+from loom.rest.fastapi._auto_auth import _AuthWiring
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism
 
 
 def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
-    """Refuse an ``sql:`` section whose endpoints the authentication cannot guard.
-
-    Runs before discovery, so a misdeclared endpoint fails first. The registry
-    and services are built later by the composition (spec §4).
-    """
+    """Refuse an ``sql:`` section whose endpoints the authentication cannot guard."""
     reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
     sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
     if sql_cfg is not None:
@@ -26,27 +22,16 @@ def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
 
 
 def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
-    """Enforce the startup gates of every mounted identity-bound endpoint (§4)."""
+    """Enforce the startup gates of every mounted identity-bound endpoint."""
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
         if not endpoint.enabled or not endpoint.binds_identity:
             continue
-        authenticator = _require_authenticator(name, auth)
-        if auth.jwt_config is not None:
-            _require_jwt_audience(f"SQL connection {name!r}", auth.jwt_config)
+        subject = f"SQL connection {name!r}"
+        authenticator = auth.require_authenticator(subject)
+        auth.require_jwt_audience(subject)
         _require_role_binding(name, connection.allowed_roles, authenticator)
-        _require_authenticated_path(name, endpoint.path or f"/sql/{name}", auth.exclude_paths)
-
-
-def _require_authenticator(name: str, auth: _AuthWiring) -> Authenticator:
-    """An identity-bound endpoint without a mechanism has no identity to bind (§4)."""
-    if auth.authenticator is not None:
-        return auth.authenticator
-    raise ConfigError(
-        f"SQL connection {name!r}: sql_endpoint.auth requires a verified caller but the "
-        "application configures no authentication. Add the 'app.rest.auth.jwt' section, "
-        "pass create_app(authenticator=...), or switch the endpoint to auth: external."
-    )
+        auth.refuse_excluded(subject, endpoint.mount_path(name))
 
 
 def _require_role_binding(
@@ -54,7 +39,7 @@ def _require_role_binding(
     allowed_roles: tuple[str, ...],
     authenticator: Authenticator,
 ) -> None:
-    """A mounted multi-role endpoint must bind its roles to the identity (§4)."""
+    """Refuse a mounted multi-role endpoint whose mechanism binds no role to the caller."""
     if not roles_need_identity_binding(
         allowed_roles, mechanism_binds_roles=authenticator.provides_roles
     ):
@@ -69,19 +54,8 @@ def _require_role_binding(
     )
 
 
-def _require_authenticated_path(name: str, path: str, exclude_paths: tuple[str, ...]) -> None:
-    """A mounted SQL path listed in the exclusions would bypass auth (§4)."""
-    if path not in exclude_paths:
-        return
-    raise ConfigError(
-        f"SQL connection {name!r}: the endpoint path {path!r} is listed in the "
-        "authentication 'exclude_paths', which would serve SQL without "
-        "authentication. Remove it from the exclusion list."
-    )
-
-
 def _warn_sql_endpoints(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
-    """Emit the spec §4 startup warnings for enabled SQL endpoints."""
+    """Emit the startup warnings for enabled SQL endpoints."""
     mechanism = _roles_mechanism(auth.authenticator)
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
@@ -95,9 +69,7 @@ def _warn_sql_endpoints(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
             )
         if endpoint.auth is None:
             continue
-        path = endpoint.path or f"/sql/{name}"
-        # Narrowed per connection: a global mechanism does not bind the roles of
-        # a connection whose allowlist is empty (see _connection_mechanism).
+        path = endpoint.mount_path(name)
         bound = _connection_mechanism(connection, mechanism)
         warnings.warn(
             f"SQL endpoint mounted at {path} (connection={name!r}, "
@@ -112,11 +84,7 @@ def _warn_sql_endpoints(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
 
 
 def _roles_source_detail(auth: _AuthWiring, bound_mechanism: str | None) -> str:
-    """Name the JWT claim carrying the roles, when the JWT mechanism is in use.
-
-    The agnostic layers only know "the mechanism binds roles"; the composition
-    root knows which claim, and operators need that to debug a denied caller.
-    """
+    """Name the JWT claim carrying the roles, when the JWT mechanism is in use."""
     jwt_cfg = auth.jwt_config
     if bound_mechanism is None or jwt_cfg is None or jwt_cfg.roles_claim is None:
         return ""

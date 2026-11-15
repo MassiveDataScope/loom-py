@@ -97,96 +97,92 @@ class _HybridLoader:
         return 10 + len(getattr(obj, self.relation))
 
 
-@pytest.mark.asyncio
-async def test_runtime_respects_projection_dependencies() -> None:
-    projections = {
-        "base": Projection(loader=_BackendLoader()),
-        "derived": Projection(
-            loader=_MemoryDependsOnBackend(),
-            depends_on=("projection:base",),
-        ),
-    }
-    plan = build_projection_plan(projections)
+class TestProjectionRuntime:
+    @pytest.mark.asyncio
+    async def test_runtime_respects_projection_dependencies(self) -> None:
+        projections = {
+            "base": Projection(loader=_BackendLoader()),
+            "derived": Projection(
+                loader=_MemoryDependsOnBackend(),
+                depends_on=("projection:base",),
+            ),
+        }
+        plan = build_projection_plan(projections)
 
-    values = await execute_projection_plan(
-        plan,
-        objs=[_Obj(id=1, value=10, rel=[1, 2]), _Obj(id=2, value=20, rel=[1])],
-        id_attr="id",
-        backend_context=object(),
-    )
-
-    assert values[0]["base"] == 2
-    assert values[0]["derived"] == 4
-    assert values[1]["base"] == 4
-    assert values[1]["derived"] == 5
-
-
-@pytest.mark.asyncio
-async def test_runtime_omits_value_when_default_not_defined() -> None:
-    projections = {
-        "score": Projection(
-            loader=_EmptyBackendLoader(),
-            default=PROJECTION_DEFAULT_MISSING,
-        )
-    }
-    plan = build_projection_plan(projections)
-    values = await execute_projection_plan(
-        plan,
-        objs=[_Obj(id=1, value=0, rel=[])],
-        id_attr="id",
-        backend_context=object(),
-    )
-    assert "score" not in values[0]
-
-
-def test_runtime_detects_projection_cycles() -> None:
-    projections = {
-        "a": Projection(
-            loader=_MemoryDependsOnBackend(),
-            depends_on=("projection:b",),
-        ),
-        "b": Projection(
-            loader=_MemoryDependsOnBackend(),
-            depends_on=("projection:a",),
-        ),
-    }
-
-    with pytest.raises(ValueError, match="cycle"):
-        build_projection_plan(projections)
-
-
-@pytest.mark.asyncio
-async def test_runtime_backend_loader_requires_backend_context() -> None:
-    plan = build_projection_plan({"base": Projection(loader=_BackendLoader())})
-    objs = [_Obj(id=1, value=0, rel=[])]
-    with pytest.raises(RuntimeError, match="requires backend context"):
-        await execute_projection_plan(
+        values = await execute_projection_plan(
             plan,
-            objs=objs,
+            objs=[_Obj(id=1, value=10, rel=[1, 2]), _Obj(id=2, value=20, rel=[1])],
             id_attr="id",
-            backend_context=None,
+            backend_context=object(),
         )
 
+        assert values[0]["base"] == 2
+        assert values[0]["derived"] == 4
+        assert values[1]["base"] == 4
+        assert values[1]["derived"] == 5
 
-@pytest.mark.asyncio
-async def test_runtime_memory_loader_used_when_load_from_object_present() -> None:
-    plan = build_projection_plan({"score": Projection(loader=_HybridLoader())})
-    values = await execute_projection_plan(
-        plan,
-        objs=[_Obj(id=1, value=0, rel=[1, 2])],
-        id_attr="id",
-        backend_context=object(),
-    )
-    assert values[0]["score"] == 12
+    @pytest.mark.asyncio
+    async def test_runtime_omits_value_when_default_not_defined(self) -> None:
+        projections = {
+            "score": Projection(
+                loader=_EmptyBackendLoader(),
+                default=PROJECTION_DEFAULT_MISSING,
+            )
+        }
+        plan = build_projection_plan(projections)
+        values = await execute_projection_plan(
+            plan,
+            objs=[_Obj(id=1, value=0, rel=[])],
+            id_attr="id",
+            backend_context=object(),
+        )
+        assert "score" not in values[0]
 
+    def test_runtime_detects_projection_cycles(self) -> None:
+        projections = {
+            "a": Projection(
+                loader=_MemoryDependsOnBackend(),
+                depends_on=("projection:b",),
+            ),
+            "b": Projection(
+                loader=_MemoryDependsOnBackend(),
+                depends_on=("projection:a",),
+            ),
+        }
 
-@pytest.mark.asyncio
-async def test_runtime_memory_loader_works_for_msgspec_struct() -> None:
-    plan = build_projection_plan({"score": Projection(loader=_HybridLoader())})
-    values = await execute_projection_plan(
-        plan,
-        objs=[_StructObj(id=1, rel=[1, 2])],
-        id_attr="id",
-        backend_context=object(),
-    )
-    assert values[0]["score"] == 12
+        with pytest.raises(ValueError, match="cycle"):
+            build_projection_plan(projections)
+
+    @pytest.mark.asyncio
+    async def test_runtime_backend_loader_requires_backend_context(self) -> None:
+        plan = build_projection_plan({"base": Projection(loader=_BackendLoader())})
+        objs = [_Obj(id=1, value=0, rel=[])]
+        with pytest.raises(RuntimeError, match="requires backend context"):
+            await execute_projection_plan(
+                plan,
+                objs=objs,
+                id_attr="id",
+                backend_context=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_runtime_memory_loader_used_when_load_from_object_present(self) -> None:
+        plan = build_projection_plan({"score": Projection(loader=_HybridLoader())})
+        values = await execute_projection_plan(
+            plan,
+            objs=[_Obj(id=1, value=0, rel=[1, 2])],
+            id_attr="id",
+            backend_context=object(),
+        )
+        assert values[0]["score"] == 12
+
+    @pytest.mark.asyncio
+    async def test_runtime_memory_loader_works_for_msgspec_struct(self) -> None:
+        plan = build_projection_plan({"score": Projection(loader=_HybridLoader())})
+        values = await execute_projection_plan(
+            plan,
+            objs=[_StructObj(id=1, rel=[1, 2])],
+            id_attr="id",
+            backend_context=object(),
+        )
+        assert values[0]["score"] == 12

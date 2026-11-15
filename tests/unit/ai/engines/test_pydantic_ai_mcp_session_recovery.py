@@ -13,10 +13,11 @@ from typing import Any
 import pytest
 
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
-from loom.ai.engines.pydantic_ai._mcp import _ToolsetSession
+from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
+from tests.unit.ai.engines.doubles import AcmeToolsetFactory
 
 
-class _Toolset:
+class _DeadSessionToolset:
     """A toolset double: counts its calls and fails them while ``dead``."""
 
     def __init__(self, label: str, *, dead: bool = False, connects: bool = True) -> None:
@@ -28,7 +29,7 @@ class _Toolset:
         self.exited = 0
         self.client = SimpleNamespace(call_tool_mcp=self._call)
 
-    async def __aenter__(self) -> _Toolset:
+    async def __aenter__(self) -> _DeadSessionToolset:
         if not self.connects:
             raise ConnectionError(f"{self.label} refused")
         self.entered += 1
@@ -49,28 +50,18 @@ class _Toolset:
         return SimpleNamespace(is_error=name == "fails", structured_content={"by": self.label})
 
 
-class _Factory:
-    """Hands out the toolsets it was given, in order, and counts how many it built."""
-
-    def __init__(self, *toolsets: _Toolset) -> None:
-        self._toolsets = list(toolsets)
-        self.built = 0
-
-    def __call__(self) -> Any:
-        self.built += 1
-        return self._toolsets.pop(0)
-
-
-async def _session(first: _Toolset, factory: _Factory | None) -> _ToolsetSession:
+async def _session(
+    first: _DeadSessionToolset, factory: AcmeToolsetFactory | None
+) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: holding the first toolset's entry."""
     await first.__aenter__()
-    return _ToolsetSession(first, rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 class TestTheCallThatFoundTheSessionDead:
     async def test_it_is_raised_as_interrupted_and_never_run_a_second_time(self) -> None:
-        first, second = _Toolset("first", dead=True), _Toolset("second")
-        factory = _Factory(second)
+        first, second = _DeadSessionToolset("first", dead=True), _DeadSessionToolset("second")
+        factory = AcmeToolsetFactory(second)
         session = await _session(first, factory)
 
         with pytest.raises(McpCallInterrupted) as raised:
@@ -83,8 +74,8 @@ class TestTheCallThatFoundTheSessionDead:
         assert factory.built == 0
 
     async def test_the_next_call_is_served_by_a_new_toolset(self) -> None:
-        first, second = _Toolset("first", dead=True), _Toolset("second")
-        session = await _session(first, _Factory(second))
+        first, second = _DeadSessionToolset("first", dead=True), _DeadSessionToolset("second")
+        session = await _session(first, AcmeToolsetFactory(second))
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("read_orders", {})
 
@@ -95,11 +86,11 @@ class TestTheCallThatFoundTheSessionDead:
         assert first.entered - first.exited == 0
 
     async def test_listing_tools_also_goes_through_the_new_toolset(self) -> None:
-        first, second = _Toolset("first", dead=True), _Toolset("second")
+        first, second = _DeadSessionToolset("first", dead=True), _DeadSessionToolset("second")
         second.list_tools = lambda: _async(  # type: ignore[attr-defined]
             [SimpleNamespace(name="read_orders", output_schema=None)]
         )
-        session = await _session(first, _Factory(second))
+        session = await _session(first, AcmeToolsetFactory(second))
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("read_orders", {})
 
@@ -110,8 +101,8 @@ class TestTheCallThatFoundTheSessionDead:
 
 class TestWhatDoesNotRenewASession:
     async def test_a_tools_own_error_is_a_result_not_a_dead_session(self) -> None:
-        first = _Toolset("first")
-        factory = _Factory(_Toolset("never"))
+        first = _DeadSessionToolset("first")
+        factory = AcmeToolsetFactory(_DeadSessionToolset("never"))
         session = await _session(first, factory)
 
         failed = await session.call_tool("fails", {})
@@ -122,7 +113,7 @@ class TestWhatDoesNotRenewASession:
         assert first.calls == ["fails", "read_orders"]
 
     async def test_a_session_without_a_rebuild_keeps_its_toolset_for_life(self) -> None:
-        first = _Toolset("first", dead=True)
+        first = _DeadSessionToolset("first", dead=True)
         session = await _session(first, None)
 
         for _ in range(2):
@@ -134,8 +125,8 @@ class TestWhatDoesNotRenewASession:
 
 class TestRenewal:
     async def test_concurrent_calls_that_find_it_dead_renew_it_once(self) -> None:
-        first, second = _Toolset("first", dead=True), _Toolset("second")
-        factory = _Factory(second, _Toolset("one too many"))
+        first, second = _DeadSessionToolset("first", dead=True), _DeadSessionToolset("second")
+        factory = AcmeToolsetFactory(second, _DeadSessionToolset("one too many"))
         session = await _session(first, factory)
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("read_orders", {})
@@ -146,9 +137,9 @@ class TestRenewal:
         assert [result.structured for result in results] == [{"by": "second"}] * 8
 
     async def test_a_renewal_that_cannot_connect_is_tried_again_by_the_next_call(self) -> None:
-        first = _Toolset("first", dead=True)
-        down, back = _Toolset("down", connects=False), _Toolset("back")
-        factory = _Factory(down, back)
+        first = _DeadSessionToolset("first", dead=True)
+        down, back = _DeadSessionToolset("down", connects=False), _DeadSessionToolset("back")
+        factory = AcmeToolsetFactory(down, back)
         session = await _session(first, factory)
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("read_orders", {})
@@ -162,8 +153,8 @@ class TestRenewal:
         assert factory.built == 2
 
     async def test_closing_the_session_closes_every_toolset_it_still_holds(self) -> None:
-        first, second = _Toolset("first", dead=True), _Toolset("second")
-        session = await _session(first, _Factory(second))
+        first, second = _DeadSessionToolset("first", dead=True), _DeadSessionToolset("second")
+        session = await _session(first, AcmeToolsetFactory(second))
         with pytest.raises(McpCallInterrupted):
             await session.call_tool("read_orders", {})
         await session.call_tool("read_orders", {})
@@ -186,7 +177,7 @@ class TestWithoutTheMcpClient:
     ) -> None:
         import sys
 
-        from loom.ai.engines.pydantic_ai._failures import Outcome, classify
+        from loom.ai.engines.pydantic_ai._failures import Outcome
 
         monkeypatch.setitem(sys.modules, "mcp", None)
-        assert classify(ConnectionError("Connection closed")) is Outcome.UNSAFE
+        assert Outcome.of(ConnectionError("Connection closed")) is Outcome.UNSAFE

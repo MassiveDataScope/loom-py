@@ -55,50 +55,49 @@ def _spec() -> Any:
     return IntoTable("silver.dim_dealer").replace(allow_empty=False)._to_spec()
 
 
-def test_the_frame_is_persisted_counted_written_and_released(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    writer = _writer(tmp_path, monkeypatch)
-    frame = _ConnectLikeFrame(rows=2)
-    written: list[Any] = []
+class TestPinRowsWithoutLocalCheckpoint:
+    def test_the_frame_is_persisted_counted_written_and_released(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = _writer(tmp_path, monkeypatch)
+        frame = _ConnectLikeFrame(rows=2)
+        written: list[Any] = []
 
-    def replace(written_frame: Any, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
-        written.append((written_frame, list(frame.calls)))
+        def replace(written_frame: Any, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
+            written.append((written_frame, list(frame.calls)))
 
-    monkeypatch.setattr(writer, "_replace", replace)
+        monkeypatch.setattr(writer, "_replace", replace)
 
-    writer.write(frame, _spec(), None)  # type: ignore[arg-type]
+        writer.write(frame, _spec(), None)  # type: ignore[arg-type]
 
-    assert written == [(frame, [("persist", StorageLevel.MEMORY_AND_DISK), ("count", None)])]
-    assert frame.calls[-1][0] == "unpersist"
+        assert written == [(frame, [("persist", StorageLevel.MEMORY_AND_DISK), ("count", None)])]
+        assert frame.calls[-1][0] == "unpersist"
 
+    def test_an_empty_frame_is_released_before_the_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = _writer(tmp_path, monkeypatch)
+        frame = _ConnectLikeFrame(rows=0)
+        spec = _spec()
 
-def test_an_empty_frame_is_released_before_the_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    writer = _writer(tmp_path, monkeypatch)
-    frame = _ConnectLikeFrame(rows=0)
-    spec = _spec()
+        with pytest.raises(EmptyReplaceError, match="silver.dim_dealer"):
+            writer.write(frame, spec, None)  # type: ignore[arg-type]
 
-    with pytest.raises(EmptyReplaceError, match="silver.dim_dealer"):
-        writer.write(frame, spec, None)  # type: ignore[arg-type]
+        assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]
 
-    assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]
+    def test_the_frame_is_released_when_the_write_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = _writer(tmp_path, monkeypatch)
+        frame = _ConnectLikeFrame(rows=1)
 
+        def fail(written_frame: Any, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
+            raise RuntimeError("write failed")
 
-def test_the_frame_is_released_when_the_write_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    writer = _writer(tmp_path, monkeypatch)
-    frame = _ConnectLikeFrame(rows=1)
+        monkeypatch.setattr(writer, "_replace", fail)
+        spec = _spec()
 
-    def fail(written_frame: Any, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
-        raise RuntimeError("write failed")
+        with pytest.raises(RuntimeError, match="write failed"):
+            writer.write(frame, spec, None)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(writer, "_replace", fail)
-    spec = _spec()
-
-    with pytest.raises(RuntimeError, match="write failed"):
-        writer.write(frame, spec, None)  # type: ignore[arg-type]
-
-    assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]
+        assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]

@@ -54,121 +54,115 @@ def plain_yaml(tmp_path: Path) -> str:
     return str(path)
 
 
-def test_load_config_registers_no_default_resolvers(plain_yaml: str) -> None:
-    load_config(plain_yaml)
+class TestDefaultResolvers:
+    def test_load_config_registers_no_default_resolvers(self, plain_yaml: str) -> None:
+        load_config(plain_yaml)
 
-    assert not OmegaConf.has_resolver("secrets")
-    assert not OmegaConf.has_resolver("ssm")
+        assert not OmegaConf.has_resolver("secrets")
+        assert not OmegaConf.has_resolver("ssm")
 
+    def test_explicit_resolver_replaces_earlier_registration(self, secrets_yaml: str) -> None:
+        first = load_config(secrets_yaml, resolvers=[StubResolver("secrets", "first")])
+        assert first.token == "first:k"
 
-def test_explicit_resolver_replaces_earlier_registration(secrets_yaml: str) -> None:
-    first = load_config(secrets_yaml, resolvers=[StubResolver("secrets", "first")])
-    assert first.token == "first:k"
+        second = load_config(secrets_yaml, resolvers=[StubResolver("secrets", "second")])
 
-    second = load_config(secrets_yaml, resolvers=[StubResolver("secrets", "second")])
+        assert second.token == "second:k"
 
-    assert second.token == "second:k"
+    def test_merge_resolvers_drops_default_taken_by_explicit(self) -> None:
+        vault = StubResolver("secrets", "vault")
 
+        merged = merge_resolvers([vault], default_resolvers())
 
-def test_merge_resolvers_drops_default_taken_by_explicit() -> None:
-    vault = StubResolver("secrets", "vault")
+        assert merged[0] is vault
+        assert _names(merged) == ("secrets", "ssm", "file")
 
-    merged = merge_resolvers([vault], default_resolvers())
+    def test_merge_resolvers_drops_default_already_registered(self, secrets_yaml: str) -> None:
+        load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
 
-    assert merged[0] is vault
-    assert _names(merged) == ("secrets", "ssm", "file")
+        merged = merge_resolvers((), default_resolvers())
 
+        assert _names(merged) == ("ssm", "file")
+        assert load_config(secrets_yaml, resolvers=merged).token == "vault:k"
 
-def test_merge_resolvers_drops_default_already_registered(secrets_yaml: str) -> None:
-    load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
+    def test_merge_resolvers_logs_skipped_default_already_registered(
+        self, secrets_yaml: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
 
-    merged = merge_resolvers((), default_resolvers())
+        with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
+            merge_resolvers((), default_resolvers())
 
-    assert _names(merged) == ("ssm", "file")
-    assert load_config(secrets_yaml, resolvers=merged).token == "vault:k"
+        assert caplog.messages == [
+            "config resolver 'secrets' already registered; loom default skipped"
+        ]
 
+    def test_merge_resolvers_does_not_log_default_taken_by_explicit(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
+            merge_resolvers([StubResolver("secrets", "vault")], default_resolvers())
 
-def test_merge_resolvers_logs_skipped_default_already_registered(
-    secrets_yaml: str, caplog: pytest.LogCaptureFixture
-) -> None:
-    load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
+        assert caplog.messages == []
 
-    with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
-        merge_resolvers((), default_resolvers())
+    def test_with_default_resolvers_matches_merge_of_defaults(self) -> None:
+        vault = StubResolver("secrets", "vault")
 
-    assert caplog.messages == ["config resolver 'secrets' already registered; loom default skipped"]
+        merged = with_default_resolvers([vault])
 
+        assert merged[0] is vault
+        assert _names(merged) == ("secrets", "ssm", "file")
+        assert _names(with_default_resolvers()) == ("secrets", "ssm", "file")
 
-def test_merge_resolvers_does_not_log_default_taken_by_explicit(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
-        merge_resolvers([StubResolver("secrets", "vault")], default_resolvers())
+    def test_importing_config_package_does_not_import_omegaconf(self) -> None:
+        script = "import sys; import loom.core.config; print('omegaconf' in sys.modules)"
 
-    assert caplog.messages == []
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
 
+        assert result.stdout.strip() == "False"
 
-def test_with_default_resolvers_matches_merge_of_defaults() -> None:
-    vault = StubResolver("secrets", "vault")
+    def test_merge_resolvers_keeps_free_defaults(self) -> None:
+        merged = merge_resolvers((), default_resolvers())
 
-    merged = with_default_resolvers([vault])
+        assert _names(merged) == ("secrets", "ssm", "file")
 
-    assert merged[0] is vault
-    assert _names(merged) == ("secrets", "ssm", "file")
-    assert _names(with_default_resolvers()) == ("secrets", "ssm", "file")
+    def test_merge_resolvers_keeps_explicit_order(self) -> None:
+        a = StubResolver("a", "a")
+        b = StubResolver("b", "b")
 
+        assert merge_resolvers([a, b], ()) == (a, b)
 
-def test_importing_config_package_does_not_import_omegaconf() -> None:
-    script = "import sys; import loom.core.config; print('omegaconf' in sys.modules)"
+    def test_default_resolvers_construct_without_boto3(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        without_boto3(monkeypatch)
 
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=True
-    )
+        resolvers = default_resolvers()
 
-    assert result.stdout.strip() == "False"
+        assert _names(resolvers) == ("secrets", "ssm", "file")
+        for resolver in resolvers[:2]:
+            with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+                resolver.resolve("/x")
 
+    def test_no_client_created_without_placeholders(
+        self, plain_yaml: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boto3 = MagicMock()
+        with_boto3(monkeypatch, boto3)
 
-def test_merge_resolvers_keeps_free_defaults() -> None:
-    merged = merge_resolvers((), default_resolvers())
+        cfg = load_config(plain_yaml, resolvers=default_resolvers())
 
-    assert _names(merged) == ("secrets", "ssm", "file")
+        assert cfg.app.name == "demo"
+        boto3.Session.assert_not_called()
 
+    def test_default_secrets_resolver_reports_the_extra_on_access(
+        self, secrets_yaml: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        without_boto3(monkeypatch)
+        cfg = load_config(secrets_yaml, resolvers=default_resolvers())
 
-def test_merge_resolvers_keeps_explicit_order() -> None:
-    a = StubResolver("a", "a")
-    b = StubResolver("b", "b")
-
-    assert merge_resolvers([a, b], ()) == (a, b)
-
-
-def test_default_resolvers_construct_without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
-    without_boto3(monkeypatch)
-
-    resolvers = default_resolvers()
-
-    assert _names(resolvers) == ("secrets", "ssm", "file")
-    for resolver in resolvers[:2]:
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
-            resolver.resolve("/x")
-
-
-def test_no_client_created_without_placeholders(
-    plain_yaml: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    boto3 = MagicMock()
-    with_boto3(monkeypatch, boto3)
-
-    cfg = load_config(plain_yaml, resolvers=default_resolvers())
-
-    assert cfg.app.name == "demo"
-    boto3.Session.assert_not_called()
-
-
-def test_default_secrets_resolver_reports_the_extra_on_access(
-    secrets_yaml: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    without_boto3(monkeypatch)
-    cfg = load_config(secrets_yaml, resolvers=default_resolvers())
-
-    with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[config-ssm\]"):
-        _ = cfg.token
+        with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[config-ssm\]"):
+            _ = cfg.token

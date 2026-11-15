@@ -49,6 +49,7 @@ from loom.ai.config import (
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
+from loom.composition._ai import AgentDepsFactory
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
@@ -59,11 +60,12 @@ from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import LifecycleEvent
 from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.repository.registration import classify_key
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case import Agent, Caller, Input, UseCase
-from loom.core.use_case.factory import UseCaseFactory
-from loom.core.use_case.invoker import AppInvoker
+from loom.core.use_case.factory import UseCaseFactory, main_repository
+from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.keys import use_case_key
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.ai import (
@@ -351,15 +353,6 @@ class FakeUowFactory:
         return FakeUow(self.log)
 
 
-@dataclass(frozen=True)
-class RecordingDeps:
-    """Bundle shaped as the composition root's: caller, container, bound invoker."""
-
-    identity: Identity
-    container: LoomContainer
-    invoker: AppInvoker
-
-
 @dataclass
 class RecordingDepsFactory:
     """Deps factory running real use cases through a real executor, no database.
@@ -367,7 +360,7 @@ class RecordingDepsFactory:
     Built the way the composition root builds it: the use cases are compiled
     by a :class:`UseCaseCompiler`, executed by a :class:`RuntimeExecutor` over
     a recording unit of work, resolved through a :class:`UseCaseRegistry`, and
-    the invoker handed to each bundle is bound to that invocation's caller.
+    each bundle is the composition root's :class:`AgentDepsFactory` bundle.
 
     Args:
         use_cases: Use-case types to compile and register.
@@ -394,11 +387,17 @@ class RecordingDepsFactory:
         container: LoomContainer,
         state: Mapping[str, Any] | None = None,
     ) -> object:
-        """Return the bundle for one invocation, its invoker bound to ``identity``."""
-        invoker = AppInvoker(UseCaseFactory(container), self._executor, self._registry)
-        return RecordingDeps(
-            identity=identity, container=container, invoker=invoker.for_identity(identity)
-        )
+        """Return the composition root's bundle for one invocation over *container*."""
+        return AgentDepsFactory(self.invoker(container)).build(identity, container, state)
+
+    def invoker(self, container: LoomContainer) -> AppInvoker:
+        """Return the application's invoker over *container*."""
+        return AppInvoker(UseCaseFactory(container), self._executor, self._registry)
+
+    def registered_in(self, container: LoomContainer) -> RecordingDepsFactory:
+        """Register the application's invoker in *container*, as the kernel does; return self."""
+        container.register_instance(ApplicationInvoker, self.invoker(container))
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +573,7 @@ def identity() -> Identity:
 @pytest.fixture
 def container() -> LoomContainer:
     """Empty application container; no test resolves anything from it."""
-    return LoomContainer()
+    return LoomContainer(classify_key=classify_key, implicit=main_repository)
 
 
 @pytest.fixture
@@ -838,9 +837,9 @@ def conversation_recorder(container: LoomContainer) -> ConversationRecorder:
 
 
 @pytest.fixture
-def conversation_deps() -> RecordingDepsFactory:
+def conversation_deps(container: LoomContainer) -> RecordingDepsFactory:
     """Deps factory serving the hook and the loader through a real executor."""
-    return RecordingDepsFactory((RecordTurn, LoadHistory))
+    return RecordingDepsFactory((RecordTurn, LoadHistory)).registered_in(container)
 
 
 # ---------------------------------------------------------------------------

@@ -188,62 +188,62 @@ _READING_VALUES: dict[str, Any] = {
 }
 
 
-@pytest.mark.parametrize(
-    "item",
-    [_Reading(id=1, **_READING_VALUES), _PlainReading(**_READING_VALUES)],
-    ids=["loom_model", "plain_struct"],
-)
-def test_into_table_columns_match_core_columns_for_the_same_fields(
-    bridge: AsyncBridge, item: Any
-) -> None:
-    statement, _ = _write(bridge, item)
+class TestIntoTableColumns:
+    @pytest.mark.parametrize(
+        "item",
+        [_Reading(id=1, **_READING_VALUES), _PlainReading(**_READING_VALUES)],
+        ids=["loom_model", "plain_struct"],
+    )
+    def test_into_table_columns_match_core_columns_for_the_same_fields(
+        self, bridge: AsyncBridge, item: Any
+    ) -> None:
+        statement, _ = _write(bridge, item)
 
-    core_types = _ddl_types(compile_model(_Reading, metadata=MetaData()).__table__.columns)
-    sink_types = _ddl_types(statement.table.columns)
-    assert sink_types == {name: core_types[name] for name in sink_types}
-    assert set(core_types) - set(sink_types) <= {"id"}
+        core_types = _ddl_types(compile_model(_Reading, metadata=MetaData()).__table__.columns)
+        sink_types = _ddl_types(statement.table.columns)
+        assert sink_types == {name: core_types[name] for name in sink_types}
+        assert set(core_types) - set(sink_types) <= {"id"}
 
+    def test_a_plain_enum_and_a_struct_are_written_as_core_writes_them(
+        self, bridge: AsyncBridge
+    ) -> None:
+        _, row = _write(bridge, _Setting(mode=_Mode.MANUAL, origin=_Point(x=1, y=2)))
 
-def test_a_plain_enum_and_a_struct_are_written_as_core_writes_them(bridge: AsyncBridge) -> None:
-    _, row = _write(bridge, _Setting(mode=_Mode.MANUAL, origin=_Point(x=1, y=2)))
+        assert row == {"mode": "manual", "origin": {"x": 1, "y": 2}}
 
-    assert row == {"mode": "manual", "origin": {"x": 1, "y": 2}}
+    def test_a_relation_field_is_neither_a_column_nor_a_value(self, bridge: AsyncBridge) -> None:
+        statement, row = _write(bridge, _Asset(id=7, owner_id=3))
 
+        assert [column.name for column in statement.table.columns] == ["owner_id", "id"]
+        assert row == {"owner_id": 3, "id": 7}
 
-def test_a_relation_field_is_neither_a_column_nor_a_value(bridge: AsyncBridge) -> None:
-    statement, row = _write(bridge, _Asset(id=7, owner_id=3))
+    @pytest.mark.parametrize(
+        ("payload", "field"),
+        [
+            (_UndeclaredMode, "_UndeclaredMode.mode"),
+            (_UndeclaredAmount, "_UndeclaredAmount.amount"),
+            (_UndeclaredKind, "_UndeclaredKind.kind"),
+        ],
+        ids=["plain_enum", "decimal", "literal"],
+    )
+    def test_a_field_without_a_declared_column_type_is_refused(
+        self, bridge: AsyncBridge, payload: type[Any], field: str
+    ) -> None:
+        sink = _sink(payload)
+        config = _sink_config()
+        session_manager = _RecordingSessionManager()
 
-    assert [column.name for column in statement.table.columns] == ["owner_id", "id"]
-    assert row == {"owner_id": 3, "id": 7}
+        with pytest.raises(ValueError, match=rf"^{re.escape(field)}: no column type is inferred"):
+            sink.build_partition(config, 0, 1, bridge=bridge, session_manager=session_manager)
 
+    def test_a_time_with_an_offset_is_refused_for_a_time_column_as_the_repository_refuses_it(
+        self,
+        bridge: AsyncBridge,
+    ) -> None:
+        opening = _Opening(opening_id=1, opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
 
-@pytest.mark.parametrize(
-    ("payload", "field"),
-    [
-        (_UndeclaredMode, "_UndeclaredMode.mode"),
-        (_UndeclaredAmount, "_UndeclaredAmount.amount"),
-        (_UndeclaredKind, "_UndeclaredKind.kind"),
-    ],
-    ids=["plain_enum", "decimal", "literal"],
-)
-def test_a_field_without_a_declared_column_type_is_refused(
-    bridge: AsyncBridge, payload: type[Any], field: str
-) -> None:
-    sink = _sink(payload)
-    config = _sink_config()
-    session_manager = _RecordingSessionManager()
+        with pytest.raises(BoundaryValidationError) as refused:
+            _write(bridge, opening)
 
-    with pytest.raises(ValueError, match=rf"^{re.escape(field)}: no column type is inferred"):
-        sink.build_partition(config, 0, 1, bridge=bridge, session_manager=session_manager)
-
-
-def test_a_time_with_an_offset_is_refused_for_a_time_column_as_the_repository_refuses_it(
-    bridge: AsyncBridge,
-) -> None:
-    opening = _Opening(opening_id=1, opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
-
-    with pytest.raises(BoundaryValidationError) as refused:
-        _write(bridge, opening)
-
-    assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
-    assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
+        assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)

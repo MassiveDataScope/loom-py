@@ -95,11 +95,7 @@ class DynamoDBBackend:
         del ctx
         aws = written_aws(spec.config)
         dynamo_cfg = decode_aws(aws, spec.settings(), spec.path, DynamoDBRepositoryConfig)
-        # The low-level client, not the resource: it is thread-safe, and
-        # repository calls share it across the executor's threads.
         client = build_aws_client("dynamodb", dynamo_cfg)
-        # One pool of threads per backend, as wide as the client's connection
-        # pool: the default executor would cap parallel calls at cpu + 4.
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),

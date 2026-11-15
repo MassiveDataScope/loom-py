@@ -1,10 +1,7 @@
 """FR-050 pinned by execution: no ``ai:`` section means no ``loom.ai`` import.
 
-``resolve_ai`` and ``verify_agent_markers`` (in ``loom.composition._ai``)
-both carry a docstring or an inline comment arguing that an application with
-no ``ai:`` section must never pull the AI pillar in — but until this test,
-nothing ran ``create_app`` on such an application and inspected
-``sys.modules`` to check. The check runs in a subprocess
+An application with no ``ai:`` section never imports the AI pillar: this
+test runs ``create_app`` on one and inspects ``sys.modules``. The check runs in a subprocess
 (``_no_marker_app.py``) because this test session, and this very module's
 own package (``tests.integration.ai``), already import ``loom.ai.abc`` for
 every other suite in this directory — a same-process assertion could never

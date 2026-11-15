@@ -21,7 +21,7 @@ debugging. Strict decoding applies in every mode: a malformed token, a naive
 datetime, a key of an unknown type, a token of another backend or for another
 sort or primary key, or holding a value of another type than its column, is
 refused with :class:`~loom.core.errors.UnsupportedQuery`,
-whose message never echoes the token. See ADR 0004.
+whose message never echoes the token.
 """
 
 from __future__ import annotations
@@ -77,10 +77,7 @@ _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
 _OPT_OUT: Final = "persistence.cursors.signing: ephemeral in development.yaml"
-# Types a decoded value must already have: msgspec would otherwise parse a
-# string into them, and the keyset predicate would bind that string.
 _CARRIED_TYPES: Final = (datetime, date, time, UUID, Decimal)
-# Column types a token carries a value of; an Enum is carried as its value.
 _SORTABLE_TYPES: Final = (bool, int, float, str, datetime, date, time, UUID, Decimal, Enum)
 
 
@@ -378,7 +375,6 @@ class CursorCodec:
         try:
             record = msgspec.json.decode(payload, type=_Token)
         except msgspec.DecodeError:
-            # The decoder's message may quote the payload: never chain it.
             raise UnsupportedQuery(_INVALID, backend=backend, model=label) from None
         sort_types = tuple(columns.get(spec.field) for spec in query.sort)
         id_types = tuple(columns.get(name) for name in primary_key)
@@ -434,7 +430,7 @@ def _read_key(key_id: str, spec: CursorKeySource) -> bytes:
             raise ConfigError(f"cursor key {key_id!r}: its file could not be read") from None
     try:
         return base64.b64decode(text.strip(), validate=True)
-    except ValueError:  # binascii.Error included
+    except ValueError:
         raise ConfigError(f"cursor key {key_id!r} is not standard base64") from None
 
 
@@ -669,9 +665,8 @@ def _b64decode(text: str) -> bytes | None:
         return None
     try:
         data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except ValueError:  # binascii.Error included
+    except ValueError:
         return None
-    # Unused trailing bits would let several texts decode to the same bytes.
     return data if _b64encode(data) == text else None
 
 

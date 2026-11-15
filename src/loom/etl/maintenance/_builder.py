@@ -64,10 +64,6 @@ class MaintainTable:
         self._table_ref = table_ref
         self._ops: list[VacuumSpec | CompactSpec | ZOrderSpec] = []
 
-    # ------------------------------------------------------------------
-    # Fluent setters
-    # ------------------------------------------------------------------
-
     def vacuum(
         self,
         retention_hours: int | None = None,
@@ -118,10 +114,6 @@ class MaintainTable:
         self._ops.append(ZOrderSpec(columns=list(columns), target_size=target_size))
         return self
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
     def _to_spec(self) -> MaintenanceSpec:
         """Compile to an immutable :class:`MaintenanceSpec`."""
         _assert_no_conflicting_ops(self._ops, f"MaintainTable({self._table_ref!r})")
@@ -129,7 +121,7 @@ class MaintainTable:
 
     def resolve(self, config: StorageConfig) -> list[MaintenanceSpec]:
         """Implement :class:`~loom.etl.maintenance._protocol.OperationDeclaration`."""
-        _ = config  # MaintainTable is explicit — no config needed
+        _ = config
         return [self._to_spec()]
 
     def __repr__(self) -> str:
@@ -157,10 +149,6 @@ class MaintainSchema:
             raise ValueError("MaintainSchema: schema_prefix must be a non-empty string")
         self._schema_prefix = schema_prefix.strip()
         self._ops: list[VacuumSpec | CompactSpec | ZOrderSpec] = []
-
-    # ------------------------------------------------------------------
-    # Fluent setters (mirror MaintainTable)
-    # ------------------------------------------------------------------
 
     def vacuum(
         self,
@@ -199,10 +187,6 @@ class MaintainSchema:
             )
         self._ops.append(ZOrderSpec(columns=list(columns), target_size=target_size))
         return self
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _expand(self, config: StorageConfig) -> list[MaintenanceSpec]:
         """Expand to one :class:`MaintenanceSpec` per matching table route.

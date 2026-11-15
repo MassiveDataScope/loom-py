@@ -25,7 +25,7 @@ from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.protocol import SpanFlusher
 
-if TYPE_CHECKING:  # SDK types are extras-only: never import them at runtime here.
+if TYPE_CHECKING:
     from opentelemetry.sdk._logs import LoggingHandler
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
@@ -138,8 +138,6 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
     except ImportError as exc:
         raise ImportError(_ERR_MISSING_SDK) from exc
 
-    # Imported here rather than at module scope: the whole module reaches the
-    # SDK, which is extras-only (see module docstring).
     from loom.core.observability.otel_ids import LoomMessageIdGenerator, build_sampler
 
     resource_attrs = {SERVICE_NAME: config.service_name, **config.resource_attributes}
@@ -151,8 +149,6 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
     provider.add_span_processor(
         BatchSpanProcessor(exporter, **reveal_for_driver(config.span_processor_kwargs))
     )
-    # After the generator is in place: ``get_tracer`` snapshots it, so a tracer
-    # taken before this point would silently keep random trace ids.
     tracer = provider.get_tracer(config.tracer_name, config.tracer_version or None)
     return tracer, provider
 
@@ -183,8 +179,6 @@ def _host_tracer(config: OtelConfig) -> Tracer:
     from loom.core.observability.otel_ids import adopt_host_id_generator
 
     adopt_host_id_generator(provider)
-    # Taken after the install either way: on failure the provider is unchanged,
-    # so this is the same tracer the non-adopting branch would have returned.
     return provider.get_tracer(config.tracer_name, config.tracer_version or None)
 
 

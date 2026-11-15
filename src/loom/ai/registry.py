@@ -1,7 +1,7 @@
 """Engine and provider resolution for the AI pillar.
 
 Resolves the configured engine through :mod:`loom.core.plugins.entrypoints`
-(group ``loom.ai.engines``, duplicates rejected — FR-021) and offers the two
+(group ``loom.ai.engines``, duplicates rejected) and offers the two
 helpers engines use to fail fast on missing provider SDKs and settings.
 
 This module never imports a concrete engine: the entry point is loaded by
@@ -15,8 +15,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
-if TYPE_CHECKING:  # import cycle at runtime: runtime.py imports the compiler,
-    # which imports abc; the aliases are only needed for annotations.
+if TYPE_CHECKING:
     from loom.ai.runtime import A2AClientFactory, McpClientFactory
 
 from types import ModuleType
@@ -83,8 +82,6 @@ def resolve_engine_provider(name: str) -> AgentEngineProvider:
         ) from exc
     provider = loaded() if isinstance(loaded, type) else loaded
     _verify_engine_api(name, provider)
-    # The handshake above is the structural runtime check; the protocol is not
-    # runtime-checkable by design, so the cast records the contract.
     return cast(AgentEngineProvider, provider)
 
 
@@ -142,8 +139,6 @@ def _verify_engine_api(name: str, provider: object) -> None:
     try:
         check_api_version(provider, _ENGINE_API_REQUIREMENT)
     except ApiVersionMismatchError as exc:
-        # A version that is not an integer is reported as 0: the code says
-        # "cannot speak it", and there is no version to name.
         found = exc.declared if type(exc.declared) is int else 0
         raise AgentCompilationError(
             [
@@ -229,7 +224,7 @@ def engine_client_factories(
     composition root importing ``loom.ai.engines.<engine>`` directly is what
     would make ``create_app`` fail on a deployment running a third-party engine
     without that one installed, undoing the entry-point seam the pillar exists
-    for (FR-016, FR-051).
+    for.
 
     Optional by design and read with ``getattr``, the same handshake shape as
     ``LOOM_AI_ENGINE_API``: an engine that serves neither ``mcp`` nor ``a2a``
@@ -260,7 +255,7 @@ def configure_engine_mcp_connect_timeout(provider: object, seconds: float) -> No
     ``configure_mcp_connect_timeout`` method is silently left at its own
     default. :func:`resolve_engine_provider` constructs every provider with
     no arguments, so ``ai.startup_timeout_ms`` can only reach the engine
-    after resolution, through this call (FR-051).
+    after resolution, through this call.
 
     Args:
         provider: Engine provider resolved from the entry point group.

@@ -37,21 +37,22 @@ class _MapMongoEvent(RecordStep[MongoCDCEvent, _Envelope]):
         )
 
 
-def test_streaming_test_runner_accepts_mongo_source_payloads() -> None:
-    flow: StreamFlow[MongoCDCEvent, _Envelope] = StreamFlow(
-        name="mongo_runner_flow",
-        source=FromMongoCDC("domain_events", collections=("orders",)),
-        process=Process(_MapMongoEvent()),
-        output=IntoTopic("orders.out", payload=_Envelope),
-    )
-    runner = StreamingTestRunner.from_dict(flow, _mongo_runner_config())
+class TestMongoStreamingTestRunner:
+    def test_streaming_test_runner_accepts_mongo_source_payloads(self) -> None:
+        flow: StreamFlow[MongoCDCEvent, _Envelope] = StreamFlow(
+            name="mongo_runner_flow",
+            source=FromMongoCDC("domain_events", collections=("orders",)),
+            process=Process(_MapMongoEvent()),
+            output=IntoTopic("orders.out", payload=_Envelope),
+        )
+        runner = StreamingTestRunner.from_dict(flow, _mongo_runner_config())
 
-    runner.with_payloads([_mongo_event("evt-1")]).run()
+        runner.with_payloads([_mongo_event("evt-1")]).run()
 
-    assert len(runner.output) == 1
-    result = runner.output[0]
-    assert isinstance(result, Message)
-    assert result.payload == _Envelope(event_id="evt-1", operation_type="insert")
+        assert len(runner.output) == 1
+        result = runner.output[0]
+        assert isinstance(result, Message)
+        assert result.payload == _Envelope(event_id="evt-1", operation_type="insert")
 
 
 def _mongo_event(event_id: str) -> MongoCDCEvent:

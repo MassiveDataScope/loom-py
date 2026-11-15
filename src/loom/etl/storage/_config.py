@@ -643,14 +643,7 @@ def _is_cloud_uri(path: str) -> bool:
     parsed = urlparse(path.strip())
     if parsed.scheme.lower() not in CLOUD_SCHEMES:
         return False
-    # Cloud roots must include authority/bucket/container to avoid accepting
-    # incomplete URIs like "s3://".
     return bool(parsed.netloc)
-
-
-# ---------------------------------------------------------------------------
-# Internal validators — construct delta-rs objects to fail fast at startup
-# ---------------------------------------------------------------------------
 
 
 def _validate_writer(writer: dict[str, Any], *, context: str) -> None:

@@ -54,92 +54,94 @@ def _compile(
 _BEDROCK = InferenceTarget(provider="bedrock", model="anthropic.claude-x", region="eu-west-1")
 
 
-def test_compiles_when_the_model_admits_the_tool() -> None:
-    """A tool the binding admits becomes a compiled grant."""
-    compiled, issues = _compile(
-        _spec("web_search"),
-        inference=_BEDROCK,
-        native_tools=lambda _t: frozenset({"web_search"}),
-    )
-
-    assert issues == []
-    assert compiled == (CompiledNativeCapability(tool="web_search"),)
-
-
-def test_fails_naming_provider_model_role_and_admitted_tools() -> None:
-    """The message says what was asked for and what the binding does admit."""
-    _compiled, issues = _compile(
-        _spec("web_search"),
-        inference=_BEDROCK,
-        native_tools=lambda _t: frozenset({"code_execution"}),
-    )
-
-    assert len(issues) == 1
-    issue = issues[0]
-    assert issue.code is AgentErrorCode.NATIVE_TOOL_UNSUPPORTED
-    assert issue.field == "capabilities.tool"
-    for expected in ("bedrock", "anthropic.claude-x", "default", "web_search", "code_execution"):
-        assert expected in issue.message
-
-
-def test_fails_once_when_the_same_tool_is_granted_twice() -> None:
-    """A tool granted twice is one issue, not two grants."""
-    _compiled, issues = _compile(
-        _spec("web_search", "web_search"),
-        inference=_BEDROCK,
-        native_tools=lambda _t: frozenset({"web_search"}),
-    )
-
-    assert [issue.code for issue in issues] == [AgentErrorCode.NATIVE_TOOL_DUPLICATE]
-
-
-def test_adds_no_issue_when_the_role_is_unbound() -> None:
-    """An unbound role is reported by role resolution, not twice."""
-    compiled, issues = _compile(_spec("web_search"), inference=None, native_tools=None)
-
-    assert issues == []
-    assert compiled == ()
-
-
-def test_propagates_the_oracles_issue_when_the_sdk_is_missing() -> None:
-    """A provider SDK missing is the oracle's issue, not a traceback."""
-
-    def _missing(_target: InferenceTarget) -> frozenset[str]:
-        raise AgentCompilationError(
-            [AgentErrorCode.PROVIDER_NOT_INSTALLED.issue(component="openai", extra="ai-openai")]
+class TestNativeCapabilityAdmission:
+    def test_compiles_when_the_model_admits_the_tool(self) -> None:
+        """A tool the binding admits becomes a compiled grant."""
+        compiled, issues = _compile(
+            _spec("web_search"),
+            inference=_BEDROCK,
+            native_tools=lambda _t: frozenset({"web_search"}),
         )
 
-    _compiled, issues = _compile(_spec("web_search"), inference=_BEDROCK, native_tools=_missing)
+        assert issues == []
+        assert compiled == (CompiledNativeCapability(tool="web_search"),)
 
-    assert [issue.code for issue in issues] == [AgentErrorCode.PROVIDER_NOT_INSTALLED]
+    def test_fails_naming_provider_model_role_and_admitted_tools(self) -> None:
+        """The message says what was asked for and what the binding does admit."""
+        _compiled, issues = _compile(
+            _spec("web_search"),
+            inference=_BEDROCK,
+            native_tools=lambda _t: frozenset({"code_execution"}),
+        )
 
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue.code is AgentErrorCode.NATIVE_TOOL_UNSUPPORTED
+        assert issue.field == "capabilities.tool"
+        for expected in (
+            "bedrock",
+            "anthropic.claude-x",
+            "default",
+            "web_search",
+            "code_execution",
+        ):
+            assert expected in issue.message
 
-def test_rejects_the_kind_when_the_engine_provides_no_oracle() -> None:
-    """Without an oracle the grant cannot be checked, so it is refused."""
-    _compiled, issues = _compile(_spec("web_search"), inference=_BEDROCK, native_tools=None)
+    def test_fails_once_when_the_same_tool_is_granted_twice(self) -> None:
+        """A tool granted twice is one issue, not two grants."""
+        _compiled, issues = _compile(
+            _spec("web_search", "web_search"),
+            inference=_BEDROCK,
+            native_tools=lambda _t: frozenset({"web_search"}),
+        )
 
-    assert [issue.code for issue in issues] == [AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED]
+        assert [issue.code for issue in issues] == [AgentErrorCode.NATIVE_TOOL_DUPLICATE]
 
+    def test_adds_no_issue_when_the_role_is_unbound(self) -> None:
+        """An unbound role is reported by role resolution, not twice."""
+        compiled, issues = _compile(_spec("web_search"), inference=None, native_tools=None)
 
-@pytest.mark.parametrize("tool", ["web_search", "web_fetch", "code_execution"])
-def test_accepts_every_tool_in_the_vocabulary(tool: str) -> None:
-    """Every name the artifact schema admits compiles."""
-    compiled, issues = _compile(
-        _spec(tool), inference=_BEDROCK, native_tools=lambda _t: frozenset({tool})
-    )
+        assert issues == []
+        assert compiled == ()
 
-    assert issues == []
-    assert compiled == (CompiledNativeCapability(tool=tool),)
+    def test_propagates_the_oracles_issue_when_the_sdk_is_missing(self) -> None:
+        """A provider SDK missing is the oracle's issue, not a traceback."""
 
+        def _missing(_target: InferenceTarget) -> frozenset[str]:
+            raise AgentCompilationError(
+                [AgentErrorCode.PROVIDER_NOT_INSTALLED.issue(component="openai", extra="ai-openai")]
+            )
 
-def test_an_anonymous_agent_may_grant_a_provider_tool() -> None:
-    """``native`` is exempt from the anonymous gate: it reads no application data."""
-    compiled, issues = _compile(
-        _spec("web_search"),
-        inference=_BEDROCK,
-        native_tools=lambda _t: frozenset({"web_search"}),
-        endpoints={"searcher": AgentEndpointConfig(enabled=True, auth="jwt", allow_anonymous=True)},
-    )
+        _compiled, issues = _compile(_spec("web_search"), inference=_BEDROCK, native_tools=_missing)
 
-    assert issues == []
-    assert compiled == (CompiledNativeCapability(tool="web_search"),)
+        assert [issue.code for issue in issues] == [AgentErrorCode.PROVIDER_NOT_INSTALLED]
+
+    def test_rejects_the_kind_when_the_engine_provides_no_oracle(self) -> None:
+        """Without an oracle the grant cannot be checked, so it is refused."""
+        _compiled, issues = _compile(_spec("web_search"), inference=_BEDROCK, native_tools=None)
+
+        assert [issue.code for issue in issues] == [AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED]
+
+    @pytest.mark.parametrize("tool", ["web_search", "web_fetch", "code_execution"])
+    def test_accepts_every_tool_in_the_vocabulary(self, tool: str) -> None:
+        """Every name the artifact schema admits compiles."""
+        compiled, issues = _compile(
+            _spec(tool), inference=_BEDROCK, native_tools=lambda _t: frozenset({tool})
+        )
+
+        assert issues == []
+        assert compiled == (CompiledNativeCapability(tool=tool),)
+
+    def test_an_anonymous_agent_may_grant_a_provider_tool(self) -> None:
+        """``native`` is exempt from the anonymous gate: it reads no application data."""
+        compiled, issues = _compile(
+            _spec("web_search"),
+            inference=_BEDROCK,
+            native_tools=lambda _t: frozenset({"web_search"}),
+            endpoints={
+                "searcher": AgentEndpointConfig(enabled=True, auth="jwt", allow_anonymous=True)
+            },
+        )
+
+        assert issues == []
+        assert compiled == (CompiledNativeCapability(tool="web_search"),)

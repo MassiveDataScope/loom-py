@@ -30,13 +30,13 @@ from loom.core.cache.result_codec import build_call_codec
 T = TypeVar("T")
 
 
-class StructDoc(msgspec.Struct):
+class AcmeCodecStructDoc(msgspec.Struct):
     """Return type inside the msgspec grammar."""
 
     name: str
 
 
-class PydanticDoc(BaseModel):
+class AcmeCodecPydanticDoc(BaseModel):
     """Plain pydantic model, outside the msgspec grammar."""
 
     name: str
@@ -78,16 +78,16 @@ class DataclassDoc:
     name: str
 
 
-class LooseDoc(BaseModel):
+class AcmeCodecLooseDoc(BaseModel):
     """Model with an imprecise field type, pinning the documented limit."""
 
     when: Any
 
 
-async def struct_list() -> list[StructDoc]: ...
+async def struct_list() -> list[AcmeCodecStructDoc]: ...
 
 
-async def pydantic_doc() -> PydanticDoc: ...
+async def pydantic_doc() -> AcmeCodecPydanticDoc: ...
 
 
 async def aliased_doc() -> AliasedDoc: ...
@@ -102,13 +102,13 @@ async def generic_doc() -> GenericDoc[int]: ...
 async def dataclass_doc() -> DataclassDoc: ...
 
 
-async def optional_pydantic_doc() -> PydanticDoc | None: ...
+async def optional_pydantic_doc() -> AcmeCodecPydanticDoc | None: ...
 
 
-async def optional_pydantic_list() -> list[PydanticDoc] | None: ...
+async def optional_pydantic_list() -> list[AcmeCodecPydanticDoc] | None: ...
 
 
-async def loose_doc() -> LooseDoc: ...
+async def loose_doc() -> AcmeCodecLooseDoc: ...
 
 
 class MappingDoc(TypedDict):
@@ -172,14 +172,14 @@ class TestTheMsgspecGrammarIsTriedFirst:
     """A msgspec return type never reaches the pydantic branch."""
 
     def test_a_struct_list_uses_the_msgspec_codec(self) -> None:
-        """``list[StructDoc]`` is inside the grammar ``build_result_codec`` knows."""
+        """``list[AcmeCodecStructDoc]`` is inside the grammar ``build_result_codec`` knows."""
         codec = build_call_codec(struct_list)
         assert codec is not None
         assert codec._loom_type.library == "msgspec"
 
     def test_a_struct_list_round_trips(self) -> None:
         """Hit and miss agree on value and type."""
-        docs = [StructDoc(name="a"), StructDoc(name="b")]
+        docs = [AcmeCodecStructDoc(name="a"), AcmeCodecStructDoc(name="b")]
 
         miss, hit, _ = _round_trip(struct_list, docs)
 
@@ -193,13 +193,13 @@ class TestPydanticReturnTypesRoundTrip:
     @pytest.mark.parametrize(
         ("func", "result"),
         [
-            (pydantic_doc, PydanticDoc(name="a", score=1)),
+            (pydantic_doc, AcmeCodecPydanticDoc(name="a", score=1)),
             (root_doc, RootDoc(["a", "b"])),
             (generic_doc, GenericDoc[int](item=3)),
             (dataclass_doc, DataclassDoc(name="a")),
-            (optional_pydantic_doc, PydanticDoc(name="a", score=1)),
+            (optional_pydantic_doc, AcmeCodecPydanticDoc(name="a", score=1)),
             (optional_pydantic_doc, None),
-            (optional_pydantic_list, [PydanticDoc(name="a", score=1)]),
+            (optional_pydantic_list, [AcmeCodecPydanticDoc(name="a", score=1)]),
             (optional_pydantic_list, None),
         ],
     )
@@ -239,7 +239,7 @@ class TestAnImpreciseFieldTypeChangesShapeSilently:
 
     def test_a_datetime_in_an_any_field_comes_back_a_string(self) -> None:
         """No exception, and both paths answer a ``str``."""
-        doc = LooseDoc(when=datetime(2026, 9, 8, tzinfo=UTC))
+        doc = AcmeCodecLooseDoc(when=datetime(2026, 9, 8, tzinfo=UTC))
 
         miss, hit, _ = _round_trip(loose_doc, doc)
 

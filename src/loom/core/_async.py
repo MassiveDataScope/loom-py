@@ -14,7 +14,7 @@ _held: set[asyncio.Task[Any]] = set()
 async def run_to_completion(
     step: Coroutine[Any, Any, _T],
     *,
-    timeout: float,  # NOSONAR S7483 - absorbs cancellation, so the bound lives inside
+    timeout: float,  # NOSONAR S7483
 ) -> _T:
     """Run ``step`` in a task of its own until it finishes or ``timeout`` runs out.
 
@@ -41,7 +41,7 @@ async def run_to_completion(
     while not task.done():
         try:
             await asyncio.wait([task])
-        except asyncio.CancelledError as exc:  # NOSONAR S7497 - re-raised once step ends
+        except asyncio.CancelledError as exc:  # NOSONAR S7497
             cancelled = cancelled or exc
     if cancelled is not None:
         discard_outcome(task)

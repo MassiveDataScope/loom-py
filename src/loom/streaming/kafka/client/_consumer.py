@@ -201,8 +201,7 @@ class KafkaConsumerClient:
 
         This is the message's birth: the first span of its trace, opened in the
         trace id the producer put on the wire, so the story of this message
-        continues the story of whatever produced it. It was previously an
-        unpaired ``END`` event, which no tracing backend can render as a span.
+        continues the story of whatever produced it.
 
         The span is a root, and its trace id comes from the Kafka header rather
         than from the ambient context, which is what makes a trace continuous

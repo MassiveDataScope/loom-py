@@ -29,6 +29,7 @@ _DEFAULT_500_CODES: frozenset[AgentRunErrorCode] = frozenset(
     {
         AgentRunErrorCode.CANCELLED,
         AgentRunErrorCode.MCP_GRANT_UNKNOWN,
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED,
         AgentRunErrorCode.SQL_GRANT_UNKNOWN,
         AgentRunErrorCode.TOOL_UNKNOWN,
         AgentRunErrorCode.TOOL_UNTYPED,
@@ -49,23 +50,22 @@ _DEFAULT_500_CODES: frozenset[AgentRunErrorCode] = frozenset(
 )
 
 
-def test_toda_clase_de_error_de_ejecucion_esta_mapeada() -> None:
-    """``run_error_class`` raises ``KeyError`` for a code it does not know."""
-    assert set(_RUN_ERROR_CLASSES) == set(AgentRunErrorCode)
+class TestErrorCatalogueTotality:
+    def test_every_run_error_class_is_mapped(self) -> None:
+        """``run_error_class`` raises ``KeyError`` for a code it does not know."""
+        assert set(_RUN_ERROR_CLASSES) == set(AgentRunErrorCode)
 
+    def test_every_a2a_detail_is_mapped(self) -> None:
+        """The A2A detail catalogue degrades silently, so a gap ships unnoticed."""
+        assert set(RUN_ERROR_DETAILS) == set(AgentRunErrorCode)
 
-def test_todo_detalle_a2a_esta_mapeado() -> None:
-    """The A2A detail catalogue degrades silently, so a gap ships unnoticed."""
-    assert set(RUN_ERROR_DETAILS) == set(AgentRunErrorCode)
+    def test_every_run_error_code_maps_to_a_status_or_is_declared_a_default_500(self) -> None:
+        """Every code is either given a status or named as a deliberate default.
 
-
-def test_every_run_error_code_maps_to_a_status_or_is_declared_a_default_500() -> None:
-    """Every code is either given a status or named as a deliberate default.
-
-    A code present in neither set is not "deliberately a 500" — it is
-    unmapped by omission, which is exactly the gap that let
-    ``USAGE_LIMIT_EXCEEDED`` fall through to a 500 instead of the 422 every
-    other ``LIMIT``-class code publishes.
-    """
-    assert not set(_STATUS_BY_CODE) & _DEFAULT_500_CODES
-    assert set(_STATUS_BY_CODE) | _DEFAULT_500_CODES == set(AgentRunErrorCode)
+        A code present in neither set is not "deliberately a 500" — it is
+        unmapped by omission, which is exactly the gap that let
+        ``USAGE_LIMIT_EXCEEDED`` fall through to a 500 instead of the 422 every
+        other ``LIMIT``-class code publishes.
+        """
+        assert not set(_STATUS_BY_CODE) & _DEFAULT_500_CODES
+        assert set(_STATUS_BY_CODE) | _DEFAULT_500_CODES == set(AgentRunErrorCode)

@@ -64,18 +64,17 @@ def _diff(name: str) -> str:
     return "\n".join(line for line in lines if not line.startswith(("---", "+++")))
 
 
-def test_the_replaced_functions_are_exactly_the_reviewed_set() -> None:
-    assert sorted(_REPLACED) == sorted(EXPECTED_DIFFS)
+class TestReplacedGuardFunctions:
+    def test_the_replaced_functions_are_exactly_the_reviewed_set(self) -> None:
+        assert sorted(_REPLACED) == sorted(EXPECTED_DIFFS)
 
+    def test_every_replaced_function_replaces_an_earlier_definition(self) -> None:
+        assert set(_REPLACED) <= set(_previous())
 
-def test_every_replaced_function_replaces_an_earlier_definition() -> None:
-    assert set(_REPLACED) <= set(_previous())
+    @pytest.mark.parametrize("name", sorted(EXPECTED_DIFFS))
+    def test_a_replaced_function_changes_only_by_its_reviewed_delta(self, name: str) -> None:
+        delta = _diff(name)
+        digest = hashlib.sha256(delta.encode()).hexdigest()
 
-
-@pytest.mark.parametrize("name", sorted(EXPECTED_DIFFS))
-def test_a_replaced_function_changes_only_by_its_reviewed_delta(name: str) -> None:
-    delta = _diff(name)
-    digest = hashlib.sha256(delta.encode()).hexdigest()
-
-    review = f"{name} changed; review the delta and pin {digest}:\n{delta}"
-    assert digest == EXPECTED_DIFFS[name], review
+        review = f"{name} changed; review the delta and pin {digest}:\n{delta}"
+        assert digest == EXPECTED_DIFFS[name], review

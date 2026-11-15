@@ -5,7 +5,7 @@ declares one keyed use case and one agent — no models, no interfaces, no
 ``stores`` section but ``stores.default.backend: none``. The engine provider is
 defined here and does what a real engine does with a ``usecase`` grant: it
 builds the per-invocation bundle through the ``DepsFactory`` it was handed and
-runs the granted use case through the bound invoker, so the call travels the
+runs the granted use case through the bundle's invoker, so the call travels the
 kernel executor exactly as in production.
 
 ``ScriptedEngine`` (conftest) discards ``deps``/``container`` and the
@@ -44,6 +44,7 @@ from loom.core.plugins import entrypoints as entrypoints_module
 from loom.core.use_case.keys import use_case_key
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.composition import coordinator_of
 from tests.integration.ai._entrypoints import fake_entry_points
 
 _MANIFEST_MODULE = "tests.integration.ai._agents_only_manifest"
@@ -85,7 +86,7 @@ class PingUseCase(UseCase[Any, str]):
 
 
 class _PingEngine:
-    """Engine that runs the granted use case through the bound invoker.
+    """Engine that runs the granted use case through the bundle's invoker.
 
     Attributes:
         executor: The kernel executor observed through the invoker of the last
@@ -189,15 +190,15 @@ def manifest(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def executed(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
-    """Spy on ``RuntimeExecutor.execute`` and collect the use-case types it ran."""
+    """Spy on ``RuntimeExecutor.run`` and collect the use-case types it built and ran."""
     seen: list[type[Any]] = []
-    original = RuntimeExecutor.execute
+    original = RuntimeExecutor.run
 
-    async def _spy(self: RuntimeExecutor, compilable: Any, *args: Any, **kwargs: Any) -> Any:
-        seen.append(type(compilable))
-        return await original(self, compilable, *args, **kwargs)
+    async def _spy(self: RuntimeExecutor, use_case_type: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(use_case_type)
+        return await original(self, use_case_type, *args, **kwargs)
 
-    monkeypatch.setattr(RuntimeExecutor, "execute", _spy)
+    monkeypatch.setattr(RuntimeExecutor, "run", _spy)
     return seen
 
 
@@ -274,4 +275,4 @@ class TestAgentsOnlyApp:
         assert executed == [PingUseCase]
         (engine,) = _EngineProvider.engines
         assert isinstance(engine.executor, RuntimeExecutor)
-        assert engine.executor._coordinator is None  # noqa: SLF001
+        assert coordinator_of(engine.executor) is None

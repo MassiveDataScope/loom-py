@@ -19,46 +19,44 @@ class Second(BaseModel, RowScoped):
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
 
-def test_compiling_into_a_given_metadata_leaves_the_shared_one_untouched() -> None:
-    reset_registry()
-    own = MetaData()
+class TestApplicationMetadata:
+    def test_compiling_into_a_given_metadata_leaves_the_shared_one_untouched(self) -> None:
+        reset_registry()
+        own = MetaData()
 
-    compile_all(First, metadata=own)
+        compile_all(First, metadata=own)
 
-    assert "first" in own.tables
-    assert "first" not in get_metadata().tables
+        assert "first" in own.tables
+        assert "first" not in get_metadata().tables
 
+    def test_two_applications_in_one_process_keep_separate_tables_and_registries(self) -> None:
+        reset_registry()
+        first_metadata = MetaData()
+        second_metadata = MetaData()
 
-def test_two_applications_in_one_process_keep_separate_tables_and_registries() -> None:
-    reset_registry()
-    first_metadata = MetaData()
-    second_metadata = MetaData()
+        compile_all(First, metadata=first_metadata)
+        compile_all(Second, metadata=second_metadata)
 
-    compile_all(First, metadata=first_metadata)
-    compile_all(Second, metadata=second_metadata)
+        assert set(first_metadata.tables) == {"first"}
+        assert set(second_metadata.tables) == {"second"}
+        assert set(scoped_tables(first_metadata)) == {(None, "first")}
+        assert set(scoped_tables(second_metadata)) == {(None, "second")}
 
-    assert set(first_metadata.tables) == {"first"}
-    assert set(second_metadata.tables) == {"second"}
-    assert set(scoped_tables(first_metadata)) == {(None, "first")}
-    assert set(scoped_tables(second_metadata)) == {(None, "second")}
+    def test_the_same_model_can_be_compiled_into_two_metadatas(self) -> None:
+        reset_registry()
+        one = MetaData()
+        two = MetaData()
 
+        compile_all(First, metadata=one)
+        compile_all(First, metadata=two)
 
-def test_the_same_model_can_be_compiled_into_two_metadatas() -> None:
-    reset_registry()
-    one = MetaData()
-    two = MetaData()
+        assert one.tables["first"] is not two.tables["first"]
 
-    compile_all(First, metadata=one)
-    compile_all(First, metadata=two)
+    def test_omitting_metadata_keeps_the_shared_registry_behaviour(self) -> None:
+        reset_registry()
 
-    assert one.tables["first"] is not two.tables["first"]
+        compile_all(First)
 
-
-def test_omitting_metadata_keeps_the_shared_registry_behaviour() -> None:
-    reset_registry()
-
-    compile_all(First)
-
-    assert "first" in get_metadata().tables
-    assert set(scoped_tables()) == {(None, "first")}
-    reset_registry()
+        assert "first" in get_metadata().tables
+        assert set(scoped_tables()) == {(None, "first")}
+        reset_registry()

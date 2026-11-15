@@ -38,80 +38,73 @@ def _codes(error: AgentCompilationError) -> list[AgentErrorCode]:
     return [issue.code for issue in error.issues]
 
 
-def test_a_string_artifact_still_decodes_unchanged() -> None:
-    """A bare string keeps meaning exactly what it means today."""
-    spec = _decode("Read the incident description and return a report.")
+class TestInstructionArtifacts:
+    def test_a_string_artifact_still_decodes_unchanged(self) -> None:
+        """A bare string keeps meaning exactly what it means today."""
+        spec = _decode("Read the incident description and return a report.")
 
-    assert spec.instructions == "Read the incident description and return a report."
+        assert spec.instructions == "Read the incident description and return a report."
 
+    def test_a_sequence_artifact_decodes_into_blocks_in_order(self) -> None:
+        """Every block decodes in the order it was authored."""
+        spec = _decode(
+            [
+                {"text": "You are the triage assistant."},
+                {"text": "Context: {{summary}}", "name": "context", "template": "handlebars"},
+            ]
+        )
 
-def test_a_sequence_artifact_decodes_into_blocks_in_order() -> None:
-    """Every block decodes in the order it was authored."""
-    spec = _decode(
-        [
-            {"text": "You are the triage assistant."},
-            {"text": "Context: {{summary}}", "name": "context", "template": "handlebars"},
-        ]
-    )
+        assert spec.instructions == (
+            InstructionBlock(text="You are the triage assistant."),
+            InstructionBlock(text="Context: {{summary}}", name="context", template="handlebars"),
+        )
 
-    assert spec.instructions == (
-        InstructionBlock(text="You are the triage assistant."),
-        InstructionBlock(text="Context: {{summary}}", name="context", template="handlebars"),
-    )
+    def test_an_empty_sequence_is_rejected(self) -> None:
+        """A sequence with no block carries nothing to author."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode([])
 
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
+        assert "instructions" in exc.value.issues[0].message
 
-def test_an_empty_sequence_is_rejected() -> None:
-    """A sequence with no block carries nothing to author."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode([])
+    def test_a_block_name_containing_a_colon_is_rejected_and_names_the_field(self) -> None:
+        """The engine rejects a colon in an instruction name; loom rejects it at decode."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode([{"text": "hi", "name": "a:b"}])
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
-    assert "instructions" in exc.value.issues[0].message
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
+        assert exc.value.issues[0].field == "instructions[0].name"
 
+    def test_a_block_named_agent_is_rejected_and_names_the_field(self) -> None:
+        """The engine reserves the name 'agent'; loom rejects it at decode."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode([{"text": "hi", "name": "agent"}])
 
-def test_a_block_name_containing_a_colon_is_rejected_and_names_the_field() -> None:
-    """The engine rejects a colon in an instruction name; loom rejects it at decode."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode([{"text": "hi", "name": "a:b"}])
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
+        assert exc.value.issues[0].field == "instructions[0].name"
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
-    assert exc.value.issues[0].field == "instructions[0].name"
+    def test_a_block_with_an_extra_key_is_rejected(self) -> None:
+        """Options are not part of v1: an extra key is rejected, never dropped (FR-025)."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode([{"text": "hi", "dynamic": True}])
 
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_UNKNOWN_FIELD]
 
-def test_a_block_named_agent_is_rejected_and_names_the_field() -> None:
-    """The engine reserves the name 'agent'; loom rejects it at decode."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode([{"text": "hi", "name": "agent"}])
+    def test_a_block_with_no_text_is_rejected(self) -> None:
+        """``text`` is the whole declaration of a literal block; it is required."""
+        with pytest.raises(AgentCompilationError) as exc:
+            _decode([{"name": "context"}])
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
-    assert exc.value.issues[0].field == "instructions[0].name"
+        assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
 
+    def test_a_block_is_frozen(self) -> None:
+        """An authored block cannot be mutated after decoding."""
+        block = InstructionBlock(text="hi")
 
-def test_a_block_with_an_extra_key_is_rejected() -> None:
-    """Options are not part of v1: an extra key is rejected, never dropped (FR-025)."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode([{"text": "hi", "dynamic": True}])
+        with pytest.raises(AttributeError):
+            block.text = "bye"  # type: ignore[misc]
 
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_UNKNOWN_FIELD]
-
-
-def test_a_block_with_no_text_is_rejected() -> None:
-    """``text`` is the whole declaration of a literal block; it is required."""
-    with pytest.raises(AgentCompilationError) as exc:
-        _decode([{"name": "context"}])
-
-    assert _codes(exc.value) == [AgentErrorCode.SPEC_MALFORMED]
-
-
-def test_a_block_is_frozen() -> None:
-    """An authored block cannot be mutated after decoding."""
-    block = InstructionBlock(text="hi")
-
-    with pytest.raises(AttributeError):
-        block.text = "bye"  # type: ignore[misc]
-
-
-def test_a_block_is_keyword_only() -> None:
-    """A block's fields cannot be supplied positionally."""
-    with pytest.raises(TypeError):
-        InstructionBlock("hi")  # type: ignore[call-arg]
+    def test_a_block_is_keyword_only(self) -> None:
+        """A block's fields cannot be supplied positionally."""
+        with pytest.raises(TypeError):
+            InstructionBlock("hi")  # type: ignore[call-arg]

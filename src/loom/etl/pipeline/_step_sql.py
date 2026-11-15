@@ -39,7 +39,6 @@ class StepSQL(ETLStep[ParamsT], Generic[ParamsT, FrameT]):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         params_type, frame_type = _extract_stepsql_types(cls)
-        # Override _params_type from ETLStep (reads ETLStep[T], not StepSQL[T, F])
         if params_type is not None:
             cls._params_type = params_type
         if frame_type is not None:

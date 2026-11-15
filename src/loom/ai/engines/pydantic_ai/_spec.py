@@ -74,7 +74,7 @@ def build_agent_spec(plan: AgentPlan) -> AgentSpec:
     """Project a compiled plan onto the engine's own spec type.
 
     ``output_schema`` instructs the model on the shape to produce; it does not
-    validate the answer on its own (research R-004). For a ``msgspec.Struct``
+    validate the answer on its own. For a ``msgspec.Struct``
     output the plan's :class:`~loom.core.model.LoomType` owns validation at the
     boundary (see ``_output``): one loom decode over the model's own bytes. For
     a pydantic output, :func:`build_output_type` hands pydantic-ai the model
@@ -83,8 +83,8 @@ def build_agent_spec(plan: AgentPlan) -> AgentSpec:
     projects the validated instance back to builtins at the wire. How the
     engine asks for the shape (tool call or native structured output) is not
     part of the spec; :func:`build_output_type` overrides it when the binding
-    pins a mode. ``instructions`` and ``description`` are left unset; see this
-    module's docstring for why both travel as keywords instead.
+    pins a mode. ``instructions`` and ``description`` are left unset; both
+    travel as keywords instead.
 
     Args:
         plan: Compiled agent plan.
@@ -113,7 +113,7 @@ def build_output_type(plan: AgentPlan) -> ToolOutput[Any] | NativeOutput[Any] | 
     For a pydantic output, the model class itself is wrapped the same way
     ``expect=`` wraps a run-level override — ``ToolOutput(cls)``,
     ``NativeOutput(cls)`` — so pydantic-ai owns the schema, the validation and
-    the retries (D7, FR-012). Absent a pinned mode, the bare class is returned
+    the retries. Absent a pinned mode, the bare class is returned
     rather than ``None``: unlike a msgspec Struct, there is no
     ``output_schema`` for the engine to fall back on, so ``Agent.from_spec``
     must receive ``output_type=cls`` to learn the answer is a pydantic model
@@ -144,10 +144,6 @@ def build_output_type(plan: AgentPlan) -> ToolOutput[Any] | NativeOutput[Any] | 
     target: Any = loom_type.type if native else StructuredDict(dict(plan.output.schema))
     if declared is None:
         return target if native else None
-    # The struct field is ``str`` (msgspec would reject a Literal during the
-    # decode, before the config check could name the role), so the narrowing
-    # happens here, where the dispatch below either handles the value or
-    # refuses it.
     mode = cast("OutputMode", declared)
     if mode == "tool":
         return ToolOutput(target)

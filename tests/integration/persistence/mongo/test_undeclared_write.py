@@ -28,7 +28,7 @@ from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, RolledBack, StoreOutcome
 from loom.core.uow.scope import Frame, invocation
-from tests.unit.core.repository.contract.conftest import CreateOrder, Order, OrderStatus
+from tests.unit.core.repository.contract.conftest import AcmeContractOrder, CreateOrder, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
 
@@ -55,7 +55,7 @@ class _Commands(CommandListener):
 class _Audit:
     client: AsyncMongoClient[Any]
     commands: _Commands
-    orders: RepositoryMongo[Order, int]
+    orders: RepositoryMongo[AcmeContractOrder, int]
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ async def audit(mongo_database: Any) -> AsyncIterator[_Audit]:
     # A transaction cannot create the collection implicitly on 4.2.
     await collection.database.create_collection(collection.name)
     orders = RepositoryMongo(
-        Order,
+        AcmeContractOrder,
         collection,
         session_provider=MongoSessions(client, AUDIT),
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -104,66 +104,64 @@ def _order() -> CreateOrder:
     )
 
 
-async def test_an_undeclared_write_sends_no_command(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit
-) -> None:
-    order = _order()
-    async with (
-        invocation(_coordinator(mongo_client, audit)) as scope,
-        scope.frame(Frame(DEFAULT_STORE)),
-    ):
-        with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
-            await audit.orders.create(order)
+class TestUndeclaredWrite:
+    async def test_an_undeclared_write_sends_no_command(
+        self, mongo_client: AsyncMongoClient[Any], audit: _Audit
+    ) -> None:
+        order = _order()
+        async with (
+            invocation(_coordinator(mongo_client, audit)) as scope,
+            scope.frame(Frame(DEFAULT_STORE)),
+        ):
+            with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
+                await audit.orders.create(order)
 
-    assert audit.commands.names == []
+        assert audit.commands.names == []
 
-
-async def test_a_joined_write_commits_with_the_invocation(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit
-) -> None:
-    async with (
-        invocation(_coordinator(mongo_client, audit)) as scope,
-        scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
-    ):
-        await audit.orders.create(_order())
-
-    assert audit.commands.names[-2:] == ["insert", "commitTransaction"]
-    assert await audit.orders.count() == 1
-
-
-async def test_each_store_joins_a_session_of_its_own_client(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit
-) -> None:
-    async with (
-        invocation(_coordinator(mongo_client, audit)) as scope,
-        scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
-    ):
-        default = MongoSessions(mongo_client, store=DEFAULT_STORE).active_session
-        joined = MongoSessions(audit.client, AUDIT).active_session
-        assert default is not None
-        assert joined is not None
-        assert default.client is mongo_client
-        assert joined.client is audit.client
-        foreign = MongoSessions(audit.client, store=DEFAULT_STORE)
-        with pytest.raises(ForeignSessionError):
-            foreign(True)
-
-
-async def test_a_commit_the_server_refuses_sends_no_abort(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit, caplog: pytest.LogCaptureFixture
-) -> None:
-    async with invocation(_audit_only(audit)) as scope:
-        async with scope.frame(Frame(AUDIT)):
+    async def test_a_joined_write_commits_with_the_invocation(
+        self, mongo_client: AsyncMongoClient[Any], audit: _Audit
+    ) -> None:
+        async with (
+            invocation(_coordinator(mongo_client, audit)) as scope,
+            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+        ):
             await audit.orders.create(_order())
-            await mongo_client.admin.command({"killSessions": [_lsid(audit)]})
-        with caplog.at_level(logging.ERROR):
-            outcome = await scope.coordinator.finish(scope, None)
 
-    assert _outcome_types(outcome) == [RolledBack]
-    assert audit.commands.names[-1] == "commitTransaction"
-    assert "abortTransaction" not in audit.commands.names
-    assert "UoWRollbackFailed" not in caplog.text
-    assert await audit.orders.count() == 0
+        assert audit.commands.names[-2:] == ["insert", "commitTransaction"]
+        assert await audit.orders.count() == 1
+
+    async def test_each_store_joins_a_session_of_its_own_client(
+        self, mongo_client: AsyncMongoClient[Any], audit: _Audit
+    ) -> None:
+        async with (
+            invocation(_coordinator(mongo_client, audit)) as scope,
+            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+        ):
+            default = MongoSessions(mongo_client, store=DEFAULT_STORE).active_session
+            joined = MongoSessions(audit.client, AUDIT).active_session
+            assert default is not None
+            assert joined is not None
+            assert default.client is mongo_client
+            assert joined.client is audit.client
+            foreign = MongoSessions(audit.client, store=DEFAULT_STORE)
+            with pytest.raises(ForeignSessionError):
+                foreign(True)
+
+    async def test_a_commit_the_server_refuses_sends_no_abort(
+        self, mongo_client: AsyncMongoClient[Any], audit: _Audit, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async with invocation(_audit_only(audit)) as scope:
+            async with scope.frame(Frame(AUDIT)):
+                await audit.orders.create(_order())
+                await mongo_client.admin.command({"killSessions": [_lsid(audit)]})
+            with caplog.at_level(logging.ERROR):
+                outcome = await scope.coordinator.finish(scope, None)
+
+        assert _outcome_types(outcome) == [RolledBack]
+        assert audit.commands.names[-1] == "commitTransaction"
+        assert "abortTransaction" not in audit.commands.names
+        assert "UoWRollbackFailed" not in caplog.text
+        assert await audit.orders.count() == 0
 
 
 def _audit_only(audit: _Audit) -> OrderedCommits:

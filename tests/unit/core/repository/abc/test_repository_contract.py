@@ -5,7 +5,7 @@ import asyncio
 import msgspec
 
 
-class DummyOutput(msgspec.Struct):
+class AcmeRepositoryOutput(msgspec.Struct):
     id: int
     name: str
 
@@ -21,23 +21,23 @@ class DummyUpdate(msgspec.Struct, kw_only=True):
 
 class InMemoryRepository:
     def __init__(self) -> None:
-        self._items: dict[int, DummyOutput] = {}
+        self._items: dict[int, AcmeRepositoryOutput] = {}
 
-    async def create(self, data: DummyCreate) -> DummyOutput:
-        obj = DummyOutput(id=data.id, name=data.name)
+    async def create(self, data: DummyCreate) -> AcmeRepositoryOutput:
+        obj = AcmeRepositoryOutput(id=data.id, name=data.name)
         self._items[obj.id] = obj
         return obj
 
-    async def get_by_id(self, obj_id: int, profile: str = "default") -> DummyOutput | None:
+    async def get_by_id(self, obj_id: int, profile: str = "default") -> AcmeRepositoryOutput | None:
         _ = profile
         return self._items.get(obj_id)
 
-    async def update(self, obj_id: int, data: DummyUpdate) -> DummyOutput | None:
+    async def update(self, obj_id: int, data: DummyUpdate) -> AcmeRepositoryOutput | None:
         existing = self._items.get(obj_id)
         if existing is None:
             return None
         fields = msgspec.to_builtins(data)
-        obj = DummyOutput(id=obj_id, name=fields.get("name", existing.name))
+        obj = AcmeRepositoryOutput(id=obj_id, name=fields.get("name", existing.name))
         self._items[obj_id] = obj
         return obj
 

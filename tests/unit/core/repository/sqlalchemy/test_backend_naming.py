@@ -69,68 +69,70 @@ def _names(metadata: MetaData) -> dict[str, set[str]]:
     }
 
 
-def test_runtime_compilation_names_constraints_as_the_migration_metadata_does(
-    tmp_path: Path,
-) -> None:
-    path = _config_file(tmp_path, rosters.NAMING_CONVENTION)
-    application = load_application(str(path))
-    wiring = build_backend(
-        SQLAlchemyBackend(), ConfigContext.from_yaml(str(path)), rosters.MODELS, SERVER_PROFILE
-    )
+class TestNamingConvention:
+    def test_runtime_compilation_names_constraints_as_the_migration_metadata_does(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = _config_file(tmp_path, rosters.NAMING_CONVENTION)
+        application = load_application(str(path))
+        wiring = build_backend(
+            SQLAlchemyBackend(), ConfigContext.from_yaml(str(path)), rosters.MODELS, SERVER_PROFILE
+        )
 
-    assert wiring.prepare_models is not None
-    wiring.prepare_models(rosters.MODELS)
+        assert wiring.prepare_models is not None
+        wiring.prepare_models(rosters.MODELS)
 
-    runtime = _names(_store_metadata(wiring))
-    assert runtime == _names(application.metadata)
-    assert "fk_seats_tenant_id_roster_id" in runtime["seats"]
+        runtime = _names(_store_metadata(wiring))
+        assert runtime == _names(application.metadata)
+        assert "fk_seats_tenant_id_roster_id" in runtime["seats"]
 
+    def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(
+        self, tmp_path: Path
+    ) -> None:
+        path = _config_file(tmp_path, {"primary": "pk_%(table_name)s"})
 
-def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path: Path) -> None:
-    path = _config_file(tmp_path, {"primary": "pk_%(table_name)s"})
+        backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
+        with pytest.raises(
+            ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
+        ):
+            build_backend(backend, context, rosters.MODELS, SERVER_PROFILE)
 
-    backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
-    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"):
-        build_backend(backend, context, rosters.MODELS, SERVER_PROFILE)
+    def test_resetting_the_registry_without_a_convention_keeps_the_one_set(self) -> None:
+        reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
 
+        reset_registry()
 
-def test_resetting_the_registry_without_a_convention_keeps_the_one_set() -> None:
-    reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
+        assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
 
-    reset_registry()
+    def test_resetting_the_registry_with_none_restores_the_default_convention(self) -> None:
+        reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
 
-    assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
+        reset_registry(naming_convention=None)
 
+        assert get_metadata().naming_convention == MetaData().naming_convention
 
-def test_resetting_the_registry_with_none_restores_the_default_convention() -> None:
-    reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
+    async def test_closing_leaves_the_compiled_naming_convention(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {
+                "app": {"name": "demo"},
+                "stores": {
+                    "default": {
+                        "backend": "sqlalchemy",
+                        "url": "sqlite+aiosqlite:///",
+                        "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+                    }
+                },
+                "persistence": {"cursors": {"signing": "ephemeral"}},
+            }
+        )
+        wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
+        assert wiring.prepare_models is not None
+        assert wiring.lifespan_init is not None
+        wiring.prepare_models(())
 
-    reset_registry(naming_convention=None)
+        metadata = _store_metadata(wiring)
+        async with wiring.lifespan_init():
+            assert metadata.naming_convention["pk"] == "pk_%(table_name)s"
 
-    assert get_metadata().naming_convention == MetaData().naming_convention
-
-
-async def test_closing_leaves_the_compiled_naming_convention() -> None:
-    ctx = ConfigContext.from_dict(
-        {
-            "app": {"name": "demo"},
-            "stores": {
-                "default": {
-                    "backend": "sqlalchemy",
-                    "url": "sqlite+aiosqlite:///",
-                    "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
-                }
-            },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
-        }
-    )
-    wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
-    assert wiring.prepare_models is not None
-    assert wiring.lifespan_init is not None
-    wiring.prepare_models(())
-
-    metadata = _store_metadata(wiring)
-    async with wiring.lifespan_init():
         assert metadata.naming_convention["pk"] == "pk_%(table_name)s"
-
-    assert metadata.naming_convention["pk"] == "pk_%(table_name)s"

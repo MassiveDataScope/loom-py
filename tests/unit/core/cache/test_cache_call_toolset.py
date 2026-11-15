@@ -34,7 +34,7 @@ from loom.core.cache.wiring import cache_module  # noqa: E402
 from loom.core.di.container import LoomContainer  # noqa: E402
 
 from ._doubles import SERIALIZED_BACKEND  # noqa: E402
-from ._toolset_module import CursorTools, Doc, SearchTools  # noqa: E402
+from ._toolset_module import AcmeToolsetDoc, CursorTools, SearchTools  # noqa: E402
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ class TestBindingIntoAToolset:
         hints = search.__annotations__
 
         assert hints["query"] is str
-        assert hints["return"] == list[Doc]
+        assert hints["return"] == list[AcmeToolsetDoc]
         assert get_args(hints["limit"])[0] is int
         assert get_args(hints["limit"])[1].description == "Never more than this many documents."
 

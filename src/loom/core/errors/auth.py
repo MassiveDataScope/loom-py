@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from loom.core.errors.base import DomainError
+from loom.core.errors.base import DomainError, SystemError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -93,6 +93,49 @@ class InsufficientAuthentication(Unauthenticated):
         self.acr_values: tuple[str, ...] = values
 
 
+class DelegationExpired(Unauthenticated):
+    """Raised when work acts as a caller past the deadline of its delegation.
+
+    Work a request causes acts as its caller for at most
+    ``identity.max_delegation_seconds`` after the request started. The caller
+    fixes it by sending a new request; long background work runs as a system
+    identity instead.
+
+    Args:
+        message: Description of the refusal, with the supported paths.
+    """
+
+    default_message: ClassVar[str] = (
+        "Authentication required: the delegation of this caller has expired. Work a request "
+        "causes acts as its caller for at most identity.max_delegation_seconds after the "
+        "request started; run later work as a system identity, switching explicitly with "
+        "executor.run(UseCase, identity=...)."
+    )
+
+    def __init__(self, message: str = default_message) -> None:
+        super().__init__(message)
+
+
+class MissingCaller(Unauthenticated):
+    """Raised when an execution declaring a caller-bound parameter carried no identity.
+
+    Args:
+        use_case: Qualified name of the use case.
+        parameter: Name of the declaring parameter of ``execute``.
+        marker: The marker it declares, as written (``Caller()``, ``Agent()``, ``Mcp()``).
+    """
+
+    def __init__(self, use_case: str, parameter: str, marker: str) -> None:
+        super().__init__(
+            f"{use_case}.execute declares '{parameter} = {marker}' but this execution carried "
+            "no identity. The transport must pass identity=... to the executor (pass "
+            "ANONYMOUS explicitly to run without a caller)."
+        )
+        self.use_case = use_case
+        self.parameter = parameter
+        self.marker = marker
+
+
 class Forbidden(DomainError):
     """Raised when an action is not permitted for the caller.
 
@@ -131,3 +174,28 @@ class Forbidden(DomainError):
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
         self.missing: tuple[str, ...] = permissions
+
+
+class IdentityFixed(SystemError):
+    """Raised by :func:`~loom.core.identity.set_identity` inside work whose identity is fixed.
+
+    An execution fixes its identity when it starts, and a task it started
+    keeps it, even one that outlives it. Changing who acts there silently
+    would let one request's work act as someone else, so the only way is an
+    explicit switch, which opens work of its own and is logged:
+    ``executor.run(UseCase, identity=...)``, ``invoker.for_identity(...)``
+    or ``ExecutionScope(...)``.
+
+    Args:
+        message: Description of the refusal, with the supported switches.
+    """
+
+    retryable = False
+    default_message: ClassVar[str] = (
+        "The identity is fixed for the work in progress and every task it started: only an "
+        "explicit switch changes it, executor.run(UseCase, identity=...), "
+        "invoker.for_identity(...) or ExecutionScope(...), which is logged."
+    )
+
+    def __init__(self, message: str = default_message) -> None:
+        super().__init__(message)

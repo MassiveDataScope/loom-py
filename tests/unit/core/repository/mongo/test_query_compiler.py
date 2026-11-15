@@ -18,7 +18,7 @@ from .conftest import Article
 _REF = UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")
 
 
-class Ledger(BaseModel):
+class AcmeMongoLedger(BaseModel):
     """Every type the repository stores as a string."""
 
     __tablename__ = "ledger"
@@ -43,7 +43,7 @@ def _single(spec: FilterSpec) -> FilterGroup:
 
 @pytest.fixture
 def ledger() -> MongoQueryCompiler:
-    return MongoQueryCompiler(Ledger, "id")
+    return MongoQueryCompiler(AcmeMongoLedger, "id")
 
 
 class TestFieldMapping:
@@ -114,19 +114,23 @@ class TestOperators:
 
         assert compiler.compile_filter(group) == {"$and": [{"views": {"$in": [1, 2]}}]}
 
-    def test_like_translates_sql_wildcards_and_escapes_the_rest(
-        self, compiler: MongoQueryCompiler
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [
+            pytest.param(
+                "a%b_c.d(e",
+                "^a.*b.c\\.d\\(e$",
+                id="like_translates_sql_wildcards_and_escapes_the_rest",
+            ),
+            pytest.param("%%%%x", "^.*x$", id="like_collapses_runs_of_percent"),
+        ],
+    )
+    def test_like_translates_sql_wildcards(
+        self, pattern: str, expected: str, compiler: MongoQueryCompiler
     ) -> None:
-        group = _single(FilterSpec("title", FilterOp.LIKE, "a%b_c.d(e"))
+        group = _single(FilterSpec("title", FilterOp.LIKE, pattern))
 
-        assert compiler.compile_filter(group) == {
-            "$and": [{"title": {"$regex": r"^a.*b.c\.d\(e$"}}]
-        }
-
-    def test_like_collapses_runs_of_percent(self, compiler: MongoQueryCompiler) -> None:
-        group = _single(FilterSpec("title", FilterOp.LIKE, "%%%%x"))
-
-        assert compiler.compile_filter(group) == {"$and": [{"title": {"$regex": "^.*x$"}}]}
+        assert compiler.compile_filter(group) == {"$and": [{"title": {"$regex": expected}}]}
 
     @pytest.mark.parametrize("op", [FilterOp.LIKE, FilterOp.ILIKE])
     def test_like_caps_the_number_of_wildcards(

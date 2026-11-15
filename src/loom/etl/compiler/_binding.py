@@ -109,11 +109,6 @@ def resolve_agent_bindings(step_type: type[ETLStep[Any]]) -> tuple[AgentBinding,
     )
 
 
-# ---------------------------------------------------------------------------
-# Internals
-# ---------------------------------------------------------------------------
-
-
 def _bindings_from_inline(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding, ...]:
     return tuple(
         SourceBinding(alias=alias, spec=src._to_spec(alias))
@@ -122,10 +117,6 @@ def _bindings_from_inline(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding,
 
 
 def _bindings_from_grouped(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding, ...]:
-    # ETLStep.__init_subclass__ sets the GROUPED form only when ``sources`` is
-    # a Sources or a SourceSet, and both provide ``_to_specs``. Replacing
-    # ``sources`` on the class after it is defined fails here with an
-    # AttributeError, not a coded error.
     grouped = cast(_GroupedSourcesLike, step_type.sources)
     return tuple(SourceBinding(alias=spec.alias, spec=spec) for spec in grouped._to_specs())
 

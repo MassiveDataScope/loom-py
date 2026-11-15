@@ -80,7 +80,6 @@ class SparkSourceReader(SourceReader):
         else:
             df = self._spark.read.format("delta").load(target.location.uri)
 
-        # Apply predicates
         for pred in spec.predicates:
             df = df.filter(predicate_to_sql(pred, params))
 

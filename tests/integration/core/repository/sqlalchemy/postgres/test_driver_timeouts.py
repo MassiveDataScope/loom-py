@@ -22,17 +22,22 @@ _READ_TIMEOUT = 1
 _SLEEP_SECONDS = 4
 
 
-async def test_a_statement_longer_than_read_timeout_fails_at_the_bound(pg_admin_uri: str) -> None:
-    config = DatabaseConfig(url=Dsn(pg_admin_uri), connect_timeout=5, read_timeout=_READ_TIMEOUT)
-    manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
-    started = time.perf_counter()
-    try:
-        with pytest.raises(Exception) as raised:
-            async with manager.engine.connect() as connection:
-                await connection.execute(text("SELECT pg_sleep(:s)"), {"s": _SLEEP_SECONDS})
-    finally:
-        await manager.dispose()
-    elapsed = time.perf_counter() - started
+class TestDriverTimeouts:
+    async def test_a_statement_longer_than_read_timeout_fails_at_the_bound(
+        self, pg_admin_uri: str
+    ) -> None:
+        config = DatabaseConfig(
+            url=Dsn(pg_admin_uri), connect_timeout=5, read_timeout=_READ_TIMEOUT
+        )
+        manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
+        started = time.perf_counter()
+        try:
+            with pytest.raises(Exception) as raised:
+                async with manager.engine.connect() as connection:
+                    await connection.execute(text("SELECT pg_sleep(:s)"), {"s": _SLEEP_SECONDS})
+        finally:
+            await manager.dispose()
+        elapsed = time.perf_counter() - started
 
-    assert "timeout" in f"{type(raised.value).__name__} {raised.value}".lower()
-    assert elapsed < _SLEEP_SECONDS - 1
+        assert "timeout" in f"{type(raised.value).__name__} {raised.value}".lower()
+        assert elapsed < _SLEEP_SECONDS - 1

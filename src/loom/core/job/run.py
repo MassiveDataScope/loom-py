@@ -34,7 +34,10 @@ async def run_job(
             payload_size=len(envelope.payload or {}),
         ),
     ):
-        instance = factory.build(job_type)
-        return await executor.execute(
-            instance, params=envelope.params, payload=envelope.payload or {}, identity=caller
+        return await executor.run(
+            job_type,
+            factory=factory,
+            params=envelope.params,
+            payload=envelope.payload or {},
+            identity=caller,
         )

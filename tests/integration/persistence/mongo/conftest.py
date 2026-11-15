@@ -34,7 +34,7 @@ from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
 from loom.core.repository.registration import capabilities_of
 from tests.unit.core.repository.contract import conftest as contract
-from tests.unit.core.repository.contract.conftest import BackendCase, Order
+from tests.unit.core.repository.contract.conftest import AcmeContractOrder, BackendCase
 
 URI_ENV_VAR = "LOOM_MONGO_IT_URI"
 DEFAULT_URI = "mongodb://localhost:27017/?replicaSet=rs0"
@@ -99,12 +99,14 @@ async def mongo_client(mongo_database: _SessionDatabase) -> AsyncIterator[AsyncM
 
 @pytest.fixture
 def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) -> BackendCase:
-    collection = mongo_client[mongo_database.name][f"{Order.__tablename__}_{uuid4().hex}"]
+    collection = mongo_client[mongo_database.name][
+        f"{AcmeContractOrder.__tablename__}_{uuid4().hex}"
+    ]
 
     @asynccontextmanager
-    async def open_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
+    async def open_repository() -> AsyncIterator[RepositoryMongo[AcmeContractOrder, int]]:
         yield RepositoryMongo(
-            Order,
+            AcmeContractOrder,
             collection,
             session_provider=MongoSessions(mongo_client, store=DEFAULT_STORE),
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -113,7 +115,7 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
     return BackendCase(
         name="mongo",
         repository_factory=open_repository,
-        model=Order,
+        model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(RepositoryMongo)),
         transactions=True,
         unit_of_work=lambda _repository: MongoUnitOfWork(mongo_client, store=DEFAULT_STORE),

@@ -36,145 +36,135 @@ class _Store:
             raise RuntimeError("store failed to close")
 
 
-@pytest.fixture
-def host_of() -> Iterator[Callable[[_Store], LoopHost]]:
-    """Build loop hosts over stores, closed after the test whatever it asserted."""
-    hosts: list[LoopHost] = []
+class TestLoopHost:
+    @pytest.fixture
+    def host_of(self) -> Iterator[Callable[[_Store], LoopHost]]:
+        """Build loop hosts over stores, closed after the test whatever it asserted."""
+        hosts: list[LoopHost] = []
 
-    def build(store: _Store) -> LoopHost:
-        host = LoopHost(application_of(store.resource()))
-        hosts.append(host)
-        return host
+        def build(store: _Store) -> LoopHost:
+            host = LoopHost(application_of(store.resource()))
+            hosts.append(host)
+            return host
 
-    yield build
-    for host in hosts:
-        with suppress(Exception):
+        yield build
+        for host in hosts:
+            with suppress(Exception):
+                host.close()
+
+    def test_building_the_host_makes_its_loop_current(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host_of(_Store())
+
+        assert event_loops.made_current == event_loops.created
+
+    def test_start_opens_the_application_once(self, host_of: Callable[[_Store], LoopHost]) -> None:
+        store = _Store()
+        host = host_of(store)
+
+        host.start()
+
+        assert store.events == ["open"]
+
+    def test_run_returns_the_coroutines_result_on_the_hosts_loop(
+        self,
+        host_of: Callable[[_Store], LoopHost],
+        event_loops: RecordedLoops,
+    ) -> None:
+        host = host_of(_Store())
+        host.start()
+
+        async def running_loop() -> asyncio.AbstractEventLoop:
+            return asyncio.get_running_loop()
+
+        assert host.run(running_loop()) is event_loops.created[0]
+
+    def test_run_makes_the_hosts_loop_current_again(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store())
+        host.start()
+        stray = asyncio.new_event_loop()
+        asyncio.set_event_loop(stray)
+
+        host.run(asyncio.sleep(0))
+
+        assert event_loops.made_current[-1] is event_loops.created[0]
+        stray.close()
+
+    def test_close_closes_the_application(self, host_of: Callable[[_Store], LoopHost]) -> None:
+        store = _Store()
+        host = host_of(store)
+        host.start()
+
+        host.close()
+
+        assert store.events == ["open", "close"]
+
+    @pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
+    def test_close_closes_the_loop(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops, closes: int
+    ) -> None:
+        host = host_of(_Store())
+        host.start()
+
+        for _ in range(closes):
             host.close()
 
+        assert event_loops.created[0].is_closed()
 
-def test_building_the_host_makes_its_loop_current(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host_of(_Store())
+    def test_close_unsets_the_loop(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store())
+        host.start()
 
-    assert event_loops.made_current == event_loops.created
-
-
-def test_start_opens_the_application_once(host_of: Callable[[_Store], LoopHost]) -> None:
-    store = _Store()
-    host = host_of(store)
-
-    host.start()
-
-    assert store.events == ["open"]
-
-
-def test_run_returns_the_coroutines_result_on_the_hosts_loop(
-    host_of: Callable[[_Store], LoopHost],
-    event_loops: RecordedLoops,
-) -> None:
-    host = host_of(_Store())
-    host.start()
-
-    async def running_loop() -> asyncio.AbstractEventLoop:
-        return asyncio.get_running_loop()
-
-    assert host.run(running_loop()) is event_loops.created[0]
-
-
-def test_run_makes_the_hosts_loop_current_again(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store())
-    host.start()
-    stray = asyncio.new_event_loop()
-    asyncio.set_event_loop(stray)
-
-    host.run(asyncio.sleep(0))
-
-    assert event_loops.made_current[-1] is event_loops.created[0]
-    stray.close()
-
-
-def test_close_closes_the_application(host_of: Callable[[_Store], LoopHost]) -> None:
-    store = _Store()
-    host = host_of(store)
-    host.start()
-
-    host.close()
-
-    assert store.events == ["open", "close"]
-
-
-@pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
-def test_close_closes_the_loop(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops, closes: int
-) -> None:
-    host = host_of(_Store())
-    host.start()
-
-    for _ in range(closes):
         host.close()
 
-    assert event_loops.created[0].is_closed()
+        assert event_loops.made_current[-1] is None
 
+    def test_a_failure_to_close_still_closes_the_loop(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store(fail_close=True))
+        host.start()
 
-def test_close_unsets_the_loop(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store())
-    host.start()
+        with pytest.raises(RuntimeError, match="store failed to close"):
+            host.close()
+        assert event_loops.created[0].is_closed()
 
-    host.close()
+    def test_a_failure_to_open_propagates(self, host_of: Callable[[_Store], LoopHost]) -> None:
+        host = host_of(_Store(fail_open=True))
 
-    assert event_loops.made_current[-1] is None
+        with pytest.raises(ConnectionError, match="store unreachable"):
+            host.start()
 
+    def test_a_failure_to_open_closes_the_loop(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store(fail_open=True))
 
-def test_a_failure_to_close_still_closes_the_loop(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store(fail_close=True))
-    host.start()
+        with pytest.raises(ConnectionError):
+            host.start()
+        assert event_loops.created[0].is_closed()
 
-    with pytest.raises(RuntimeError, match="store failed to close"):
+    def test_a_failure_to_open_unsets_the_loop(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store(fail_open=True))
+
+        with pytest.raises(ConnectionError):
+            host.start()
+        assert event_loops.made_current[-1] is None
+
+    def test_closing_after_a_failure_to_open_does_nothing(
+        self, host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
+    ) -> None:
+        host = host_of(_Store(fail_open=True))
+        with pytest.raises(ConnectionError):
+            host.start()
+
         host.close()
-    assert event_loops.created[0].is_closed()
 
-
-def test_a_failure_to_open_propagates(host_of: Callable[[_Store], LoopHost]) -> None:
-    host = host_of(_Store(fail_open=True))
-
-    with pytest.raises(ConnectionError, match="store unreachable"):
-        host.start()
-
-
-def test_a_failure_to_open_closes_the_loop(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store(fail_open=True))
-
-    with pytest.raises(ConnectionError):
-        host.start()
-    assert event_loops.created[0].is_closed()
-
-
-def test_a_failure_to_open_unsets_the_loop(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store(fail_open=True))
-
-    with pytest.raises(ConnectionError):
-        host.start()
-    assert event_loops.made_current[-1] is None
-
-
-def test_closing_after_a_failure_to_open_does_nothing(
-    host_of: Callable[[_Store], LoopHost], event_loops: RecordedLoops
-) -> None:
-    host = host_of(_Store(fail_open=True))
-    with pytest.raises(ConnectionError):
-        host.start()
-
-    host.close()
-
-    assert event_loops.made_current.count(None) == 1
+        assert event_loops.made_current.count(None) == 1

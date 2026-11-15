@@ -61,7 +61,6 @@ def parsed(text: Any, what: str) -> Any:
     try:
         return _JSON.decode_json(text)
     except BoundaryValidationError:
-        # From None: the decode error quotes the document.
         raise MalformedJobMessage(f"{what} is not JSON") from None
 
 

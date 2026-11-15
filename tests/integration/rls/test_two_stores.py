@@ -291,177 +291,6 @@ def _expected(subject: str | None, key: StoreKey) -> tuple[int, tuple[str, ...]]
     return len(bodies), bodies
 
 
-async def test_no_tenant_sees_another_tenant_s_rows_through_either_store(
-    two_servers: TwoServers,
-) -> None:
-    async with _started(two_servers.context()) as stores:
-        seen = {
-            (key, subject): await _as(subject, lambda store=store: _visible(store))
-            for key, store in stores.items()
-            for subject in (U1, U2, None)
-        }
-
-    assert seen == {
-        (key, subject): _expected(subject, key) for key in STORES for subject in (U1, U2, None)
-    }
-
-
-@pytest.mark.parametrize("privileged", STORES)
-async def test_a_bypass_role_is_refused_on_its_store_while_the_other_store_starts(
-    two_servers: TwoServers, privileged: StoreKey
-) -> None:
-    healthy = OTHER[privileged]
-    ctx = two_servers.context(urls={privileged: two_servers.databases[privileged].bypass})
-    async with _wired(ctx) as stores:
-        await stores[healthy].wiring.startup_checks()
-        seen = await _as(U1, lambda: _visible(stores[healthy]))
-        with pytest.raises(
-            ConfigError, match=rf"stores\.{privileged}\.url connects as a superuser"
-        ):
-            await stores[privileged].wiring.startup_checks()
-
-    assert seen == _expected(U1, healthy)
-
-
-@pytest.mark.parametrize("broken", STORES)
-async def test_the_guard_check_refuses_only_the_store_whose_table_lost_its_protection(
-    two_servers: TwoServers, broken: StoreKey
-) -> None:
-    database = two_servers.databases[broken]
-    schema = database.schema
-    await _force_row_security(database, force=False)
-    try:
-        async with _wired(two_servers.context()) as stores:
-            await stores[OTHER[broken]].wiring.startup_checks()
-            with pytest.raises(
-                ConfigError,
-                match=rf"loom_guard_{schema} or the scoped tables differ"
-                r".*table\.rls notes: not forced",
-            ):
-                await stores[broken].wiring.startup_checks()
-    finally:
-        # A table left unforced blocks every later bootstrap of the module's database.
-        await _force_row_security(database, force=True)
-
-
-@pytest.mark.parametrize("unscoped", STORES)
-async def test_a_store_without_scope_settings_fails_closed_on_its_own(
-    two_servers: TwoServers, unscoped: StoreKey
-) -> None:
-    async with _wired(two_servers.context(unscoped=frozenset({unscoped}))) as stores:
-        await stores[OTHER[unscoped]].wiring.startup_checks()
-        with pytest.raises(
-            ConfigError, match=rf"cannot protect scoped tables .*stores\.{unscoped}\.schema\.mode"
-        ):
-            await stores[unscoped].wiring.startup_checks()
-        bare = stores[unscoped].manager
-
-        async def read() -> tuple[str, ...]:
-            async with bare.session() as session:
-                return await _bodies(session)
-
-        seen = await _as(U1, read)
-
-    assert bare.has_session_settings is False
-    assert seen == ()
-
-
-async def test_settings_pools_and_context_never_cross_the_two_servers(
-    two_servers: TwoServers,
-) -> None:
-    async with _started(two_servers.context()) as stores:
-        names = {key: store.manager.engine.url.database for key, store in stores.items()}
-        foreign = {
-            key: await scalar(
-                two_servers.databases[key].write,
-                "SELECT count(*) FROM pg_database WHERE datname = :name",
-                name=names[OTHER[key]],
-            )
-            for key in STORES
-        }
-        across = {
-            key: await _as(U1, lambda store=store: _seen_across(store, stores[OTHER[store.key]]))
-            for key, store in stores.items()
-        }
-        for store in stores.values():
-            await _as(U2, lambda store=store: _visible(store))
-            with pytest.raises(DBAPIError, match="division by zero"):
-                await _as(U2, lambda store=store: _failing(store))
-        cancelled = {
-            key: await _as(U1, lambda store=store: _cancelled(store))
-            for key, store in stores.items()
-        }
-        checked_out = {key: store.checked_out() for key, store in stores.items()}
-        residue = {key: await _residue(store) for key, store in stores.items()}
-        context = (current_scope(), current_identity())
-
-    assert names[DEFAULT_STORE] != names[AUDIT]
-    assert foreign == {DEFAULT_STORE: 0, AUDIT: 0}
-    assert across == {DEFAULT_STORE: (U1, ""), AUDIT: (U1, "")}
-    assert cancelled == {DEFAULT_STORE: True, AUDIT: True}
-    assert checked_out == {DEFAULT_STORE: 0, AUDIT: 0}
-    assert residue == {DEFAULT_STORE: "", AUDIT: ""}
-    assert context == (None, ANONYMOUS)
-    assert elevated_scopes() == frozenset()
-
-
-async def test_concurrent_invocations_with_different_identities_share_no_settings_or_sessions(
-    two_servers: TwoServers,
-) -> None:
-    subjects = (U1, U2, U1, U2)
-    barrier = asyncio.Barrier(len(subjects))
-
-    async with _started(two_servers.context()) as stores:
-
-        async def snapshot(session: AsyncSession) -> tuple[str, tuple[str, ...], int]:
-            owner = (await session.execute(OWNER)).scalar_one()
-            pid = (await session.execute(BACKEND_PID)).scalar_one()
-            return owner, await _bodies(session), pid
-
-        async def invocation() -> tuple[dict[StoreKey, Any], dict[StoreKey, Any]]:
-            async with (
-                stores[DEFAULT_STORE].manager.session() as a,
-                stores[AUDIT].manager.session() as b,
-            ):
-                sessions = {DEFAULT_STORE: a, AUDIT: b}
-                first = {key: await snapshot(session) for key, session in sessions.items()}
-                await barrier.wait()
-                second = {key: await snapshot(session) for key, session in sessions.items()}
-            return first, second
-
-        results = await asyncio.gather(*(_as(subject, invocation) for subject in subjects))
-
-    observed = [
-        {key: (owner, bodies) for key, (owner, bodies, _) in second.items()}
-        for _, second in results
-    ]
-    pids = {key: {first[key][2] for first, _ in results} for key in STORES}
-    assert observed == [
-        {key: (subject, SEEDS[key][subject]) for key in STORES} for subject in subjects
-    ]
-    assert [first for first, _ in results] == [second for _, second in results]
-    assert {key: len(found) for key, found in pids.items()} == {
-        DEFAULT_STORE: len(subjects),
-        AUDIT: len(subjects),
-    }
-
-
-@pytest.mark.parametrize(("outer", "inner"), [(DEFAULT_STORE, AUDIT), (AUDIT, DEFAULT_STORE)])
-async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
-    two_servers: TwoServers, outer: StoreKey, inner: StoreKey
-) -> None:
-    before = await two_servers.row_counts()
-    async with _started(two_servers.context()) as stores:
-        with pytest.raises(
-            UndeclaredStoreWrite,
-            match=rf"a write to store '{inner}' .* declares only store '{outer}'; ",
-        ):
-            await _as(U1, lambda: _write_both(stores[outer], stores[inner]))
-
-    assert await two_servers.row_counts() == before
-    assert before == {key: sum(map(len, SEEDS[key].values())) for key in STORES}
-
-
 def _both(stores: Mapping[StoreKey, Store]) -> OrderedCommits:
     """One coordinator over both stores, as the composition builds it."""
     factories = {key: store.wiring.uow_factory for key, store in stores.items()}
@@ -488,18 +317,6 @@ async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: Sto
             }
 
 
-@pytest.mark.parametrize("elevated", STORES)
-async def test_an_elevation_flag_is_set_on_its_own_store_s_session_only(
-    two_servers: TwoServers, elevated: StoreKey
-) -> None:
-    async with _started(two_servers.context()) as stores:
-        flags = await _as(U1, lambda: _flags_after_elevating(stores, elevated))
-        residue = {key: await _residue(store) for key, store in stores.items()}
-
-    assert flags == {elevated: "on", OTHER[elevated]: ""}
-    assert residue == {DEFAULT_STORE: "", AUDIT: ""}
-
-
 async def _provider_flag_after_elevating(
     stores: Mapping[StoreKey, Store], elevated: StoreKey
 ) -> str:
@@ -515,26 +332,6 @@ async def _provider_flag_after_elevating(
     ):
         await elevate("editor", DECISION, at=Scope.of(U1))
         return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
-
-
-@pytest.mark.parametrize("elevated", STORES)
-async def test_an_elevation_before_the_transaction_arrives_through_the_provider(
-    two_servers: TwoServers, elevated: StoreKey
-) -> None:
-    async with _started(two_servers.context()) as stores:
-        flag = await _as(U1, lambda: _provider_flag_after_elevating(stores, elevated))
-
-    assert flag == "on"
-
-
-async def test_the_same_elevable_scope_in_both_stores_is_refused_at_startup(
-    two_servers: TwoServers,
-) -> None:
-    async with _wired(two_servers.context()) as stores:
-        elevations = {k: s.elevation for k, s in stores.items() if s.elevation is not None}
-        assert elevations.keys() == set(STORES)
-        with pytest.raises(ElevableScopeInSeveralStores, match="stores audit, default"):
-            ScopedElevationSink(elevations)
 
 
 async def _session_setting_left_behind(store: Store) -> tuple[int, str]:
@@ -566,28 +363,227 @@ async def pool_round_trip(two_servers: TwoServers) -> dict[StoreKey, tuple[tuple
     return trips
 
 
-@pytest.mark.parametrize("key", STORES)
-def test_the_pool_hands_the_same_connection_back(
-    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
-) -> None:
-    (left_pid, _), (back_pid, _) = pool_round_trip[key]
+class TestTwoStores:
+    async def test_no_tenant_sees_another_tenant_s_rows_through_either_store(
+        self,
+        two_servers: TwoServers,
+    ) -> None:
+        async with _started(two_servers.context()) as stores:
+            seen = {
+                (key, subject): await _as(subject, lambda store=store: _visible(store))
+                for key, store in stores.items()
+                for subject in (U1, U2, None)
+            }
 
-    assert back_pid == left_pid
+        assert seen == {
+            (key, subject): _expected(subject, key) for key in STORES for subject in (U1, U2, None)
+        }
 
+    @pytest.mark.parametrize("privileged", STORES)
+    async def test_a_bypass_role_is_refused_on_its_store_while_the_other_store_starts(
+        self, two_servers: TwoServers, privileged: StoreKey
+    ) -> None:
+        healthy = OTHER[privileged]
+        ctx = two_servers.context(urls={privileged: two_servers.databases[privileged].bypass})
+        async with _wired(ctx) as stores:
+            await stores[healthy].wiring.startup_checks()
+            seen = await _as(U1, lambda: _visible(stores[healthy]))
+            with pytest.raises(
+                ConfigError, match=rf"stores\.{privileged}\.url connects as a superuser"
+            ):
+                await stores[privileged].wiring.startup_checks()
 
-@pytest.mark.parametrize("key", STORES)
-def test_the_setting_was_set_on_that_connection(
-    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
-) -> None:
-    (_, left), _ = pool_round_trip[key]
+        assert seen == _expected(U1, healthy)
 
-    assert left == "left"
+    @pytest.mark.parametrize("broken", STORES)
+    async def test_the_guard_check_refuses_only_the_store_whose_table_lost_its_protection(
+        self, two_servers: TwoServers, broken: StoreKey
+    ) -> None:
+        database = two_servers.databases[broken]
+        schema = database.schema
+        await _force_row_security(database, force=False)
+        try:
+            async with _wired(two_servers.context()) as stores:
+                await stores[OTHER[broken]].wiring.startup_checks()
+                with pytest.raises(
+                    ConfigError,
+                    match=rf"loom_guard_{schema} or the scoped tables differ"
+                    r".*table\.rls notes: not forced",
+                ):
+                    await stores[broken].wiring.startup_checks()
+        finally:
+            # A table left unforced blocks every later bootstrap of the module's database.
+            await _force_row_security(database, force=True)
 
+    @pytest.mark.parametrize("unscoped", STORES)
+    async def test_a_store_without_scope_settings_fails_closed_on_its_own(
+        self, two_servers: TwoServers, unscoped: StoreKey
+    ) -> None:
+        async with _wired(two_servers.context(unscoped=frozenset({unscoped}))) as stores:
+            await stores[OTHER[unscoped]].wiring.startup_checks()
+            with pytest.raises(
+                ConfigError,
+                match=rf"cannot protect scoped tables .*stores\.{unscoped}\.schema\.mode",
+            ):
+                await stores[unscoped].wiring.startup_checks()
+            bare = stores[unscoped].manager
 
-@pytest.mark.parametrize("key", STORES)
-def test_a_session_level_setting_is_reset_when_the_connection_returns(
-    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
-) -> None:
-    _, (_, back) = pool_round_trip[key]
+            async def read() -> tuple[str, ...]:
+                async with bare.session() as session:
+                    return await _bodies(session)
 
-    assert back == ""
+            seen = await _as(U1, read)
+
+        assert bare.has_session_settings is False
+        assert seen == ()
+
+    async def test_settings_pools_and_context_never_cross_the_two_servers(
+        self,
+        two_servers: TwoServers,
+    ) -> None:
+        async with _started(two_servers.context()) as stores:
+            names = {key: store.manager.engine.url.database for key, store in stores.items()}
+            foreign = {
+                key: await scalar(
+                    two_servers.databases[key].write,
+                    "SELECT count(*) FROM pg_database WHERE datname = :name",
+                    name=names[OTHER[key]],
+                )
+                for key in STORES
+            }
+            across = {
+                key: await _as(
+                    U1, lambda store=store: _seen_across(store, stores[OTHER[store.key]])
+                )
+                for key, store in stores.items()
+            }
+            for store in stores.values():
+                await _as(U2, lambda store=store: _visible(store))
+                with pytest.raises(DBAPIError, match="division by zero"):
+                    await _as(U2, lambda store=store: _failing(store))
+            cancelled = {
+                key: await _as(U1, lambda store=store: _cancelled(store))
+                for key, store in stores.items()
+            }
+            checked_out = {key: store.checked_out() for key, store in stores.items()}
+            residue = {key: await _residue(store) for key, store in stores.items()}
+            context = (current_scope(), current_identity())
+
+        assert names[DEFAULT_STORE] != names[AUDIT]
+        assert foreign == {DEFAULT_STORE: 0, AUDIT: 0}
+        assert across == {DEFAULT_STORE: (U1, ""), AUDIT: (U1, "")}
+        assert cancelled == {DEFAULT_STORE: True, AUDIT: True}
+        assert checked_out == {DEFAULT_STORE: 0, AUDIT: 0}
+        assert residue == {DEFAULT_STORE: "", AUDIT: ""}
+        assert context == (None, ANONYMOUS)
+        assert elevated_scopes() == frozenset()
+
+    async def test_concurrent_invocations_with_different_identities_share_no_settings_or_sessions(
+        self,
+        two_servers: TwoServers,
+    ) -> None:
+        subjects = (U1, U2, U1, U2)
+        barrier = asyncio.Barrier(len(subjects))
+
+        async with _started(two_servers.context()) as stores:
+
+            async def snapshot(session: AsyncSession) -> tuple[str, tuple[str, ...], int]:
+                owner = (await session.execute(OWNER)).scalar_one()
+                pid = (await session.execute(BACKEND_PID)).scalar_one()
+                return owner, await _bodies(session), pid
+
+            async def invocation() -> tuple[dict[StoreKey, Any], dict[StoreKey, Any]]:
+                async with (
+                    stores[DEFAULT_STORE].manager.session() as a,
+                    stores[AUDIT].manager.session() as b,
+                ):
+                    sessions = {DEFAULT_STORE: a, AUDIT: b}
+                    first = {key: await snapshot(session) for key, session in sessions.items()}
+                    await barrier.wait()
+                    second = {key: await snapshot(session) for key, session in sessions.items()}
+                return first, second
+
+            results = await asyncio.gather(*(_as(subject, invocation) for subject in subjects))
+
+        observed = [
+            {key: (owner, bodies) for key, (owner, bodies, _) in second.items()}
+            for _, second in results
+        ]
+        pids = {key: {first[key][2] for first, _ in results} for key in STORES}
+        assert observed == [
+            {key: (subject, SEEDS[key][subject]) for key in STORES} for subject in subjects
+        ]
+        assert [first for first, _ in results] == [second for _, second in results]
+        assert {key: len(found) for key, found in pids.items()} == {
+            DEFAULT_STORE: len(subjects),
+            AUDIT: len(subjects),
+        }
+
+    @pytest.mark.parametrize(("outer", "inner"), [(DEFAULT_STORE, AUDIT), (AUDIT, DEFAULT_STORE)])
+    async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
+        self, two_servers: TwoServers, outer: StoreKey, inner: StoreKey
+    ) -> None:
+        before = await two_servers.row_counts()
+        async with _started(two_servers.context()) as stores:
+            with pytest.raises(
+                UndeclaredStoreWrite,
+                match=rf"a write to store '{inner}' .* declares only store '{outer}'; ",
+            ):
+                await _as(U1, lambda: _write_both(stores[outer], stores[inner]))
+
+        assert await two_servers.row_counts() == before
+        assert before == {key: sum(map(len, SEEDS[key].values())) for key in STORES}
+
+    @pytest.mark.parametrize("elevated", STORES)
+    async def test_an_elevation_flag_is_set_on_its_own_store_s_session_only(
+        self, two_servers: TwoServers, elevated: StoreKey
+    ) -> None:
+        async with _started(two_servers.context()) as stores:
+            flags = await _as(U1, lambda: _flags_after_elevating(stores, elevated))
+            residue = {key: await _residue(store) for key, store in stores.items()}
+
+        assert flags == {elevated: "on", OTHER[elevated]: ""}
+        assert residue == {DEFAULT_STORE: "", AUDIT: ""}
+
+    @pytest.mark.parametrize("elevated", STORES)
+    async def test_an_elevation_before_the_transaction_arrives_through_the_provider(
+        self, two_servers: TwoServers, elevated: StoreKey
+    ) -> None:
+        async with _started(two_servers.context()) as stores:
+            flag = await _as(U1, lambda: _provider_flag_after_elevating(stores, elevated))
+
+        assert flag == "on"
+
+    async def test_the_same_elevable_scope_in_both_stores_is_refused_at_startup(
+        self,
+        two_servers: TwoServers,
+    ) -> None:
+        async with _wired(two_servers.context()) as stores:
+            elevations = {k: s.elevation for k, s in stores.items() if s.elevation is not None}
+            assert elevations.keys() == set(STORES)
+            with pytest.raises(ElevableScopeInSeveralStores, match="stores audit, default"):
+                ScopedElevationSink(elevations)
+
+    @pytest.mark.parametrize("key", STORES)
+    def test_the_pool_hands_the_same_connection_back(
+        self, pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+    ) -> None:
+        (left_pid, _), (back_pid, _) = pool_round_trip[key]
+
+        assert back_pid == left_pid
+
+    @pytest.mark.parametrize("key", STORES)
+    def test_the_setting_was_set_on_that_connection(
+        self, pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+    ) -> None:
+        (_, left), _ = pool_round_trip[key]
+
+        assert left == "left"
+
+    @pytest.mark.parametrize("key", STORES)
+    def test_a_session_level_setting_is_reset_when_the_connection_returns(
+        self, pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+    ) -> None:
+        _, (_, back) = pool_round_trip[key]
+
+        assert back == ""

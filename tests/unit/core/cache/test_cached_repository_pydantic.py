@@ -29,7 +29,7 @@ from ._doubles import CountingCacheBackend
 pydantic = pytest.importorskip("pydantic")
 
 
-class PydanticDoc(pydantic.BaseModel):
+class AcmeRepositoryPydanticDoc(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
 
     id: int
@@ -41,16 +41,20 @@ class PydanticRowRepository:
 
     entity_name = "docs"
 
-    def __init__(self, rows: dict[int, PydanticDoc]) -> None:
-        self.model = PydanticDoc
+    def __init__(self, rows: dict[int, AcmeRepositoryPydanticDoc]) -> None:
+        self.model = AcmeRepositoryPydanticDoc
         self.storage = dict(rows)
         self.get_by_id_calls = 0
 
-    async def get_by_id(self, obj_id: int, profile: str = "default") -> PydanticDoc | None:
+    async def get_by_id(
+        self, obj_id: int, profile: str = "default"
+    ) -> AcmeRepositoryPydanticDoc | None:
         self.get_by_id_calls += 1
         return self.storage.get(obj_id)
 
-    async def get_by(self, field: str, value: Any, profile: str = "default") -> PydanticDoc | None:
+    async def get_by(
+        self, field: str, value: Any, profile: str = "default"
+    ) -> AcmeRepositoryPydanticDoc | None:
         raise NotImplementedError
 
     async def exists_by(self, field: str, value: Any) -> bool:
@@ -64,7 +68,7 @@ class PydanticRowRepository:
         page_params: PageParams,
         filter_params: FilterParams | None = None,
         profile: str = "default",
-    ) -> PageResult[PydanticDoc]:
+    ) -> PageResult[AcmeRepositoryPydanticDoc]:
         raise NotImplementedError
 
 
@@ -86,7 +90,7 @@ class TestPydanticModelRoundTrip:
     """``get_by_id`` round-trips a pydantic model through the real miss and hit paths."""
 
     async def test_a_miss_then_a_hit_return_an_equal_model_and_load_once(self) -> None:
-        doc = PydanticDoc(id=1, name="a")
+        doc = AcmeRepositoryPydanticDoc(id=1, name="a")
         repository = PydanticRowRepository({1: doc})
         wrapper, _backend = _wrap(repository)
 
@@ -95,7 +99,7 @@ class TestPydanticModelRoundTrip:
 
         assert first == doc
         assert second == doc
-        assert isinstance(second, PydanticDoc)
+        assert isinstance(second, AcmeRepositoryPydanticDoc)
         assert repository.get_by_id_calls == 1
 
     async def test_a_subclass_instance_with_an_extra_field_is_cached_in_the_declared_shape(
@@ -107,7 +111,7 @@ class TestPydanticModelRoundTrip:
         declared strict model and fail with ``BoundaryValidationError``.
         """
 
-        class SubPydanticDoc(PydanticDoc):
+        class SubPydanticDoc(AcmeRepositoryPydanticDoc):
             extra_field: str = "unused"
 
         doc = SubPydanticDoc(id=1, name="a")
@@ -118,12 +122,12 @@ class TestPydanticModelRoundTrip:
         second = await wrapper.get_by_id(1)
 
         assert first == doc
-        assert second == PydanticDoc(id=1, name="a")
-        assert type(second) is PydanticDoc
+        assert second == AcmeRepositoryPydanticDoc(id=1, name="a")
+        assert type(second) is AcmeRepositoryPydanticDoc
         assert repository.get_by_id_calls == 1
 
 
-class StructDoc(msgspec.Struct):
+class AcmePayloadStructDoc(msgspec.Struct):
     """Struct instance, still rendered through ``msgspec.to_builtins``."""
 
     name: str
@@ -133,17 +137,20 @@ class TestToPayload:
     """``to_payload`` renders every shape it knows and leaves the rest untouched."""
 
     def test_a_pydantic_instance_renders_as_builtins(self) -> None:
-        doc = PydanticDoc(id=1, name="a")
+        doc = AcmeRepositoryPydanticDoc(id=1, name="a")
 
         assert to_payload(doc) == {"id": 1, "name": "a"}
 
     def test_a_list_of_pydantic_instances_renders_as_builtins(self) -> None:
-        docs = [PydanticDoc(id=1, name="a"), PydanticDoc(id=2, name="b")]
+        docs = [
+            AcmeRepositoryPydanticDoc(id=1, name="a"),
+            AcmeRepositoryPydanticDoc(id=2, name="b"),
+        ]
 
         assert to_payload(docs) == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
 
     def test_a_struct_renders_as_builtins(self) -> None:
-        assert to_payload(StructDoc(name="a")) == {"name": "a"}
+        assert to_payload(AcmePayloadStructDoc(name="a")) == {"name": "a"}
 
     def test_an_arbitrary_object_is_returned_untouched(self) -> None:
         sentinel = object()

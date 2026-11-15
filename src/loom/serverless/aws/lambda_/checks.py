@@ -74,7 +74,6 @@ def check_triggers(ctx: ConfigContext) -> None:
     consumes_jobs = any(isinstance(f.trigger, JobsTrigger) for f in functions.values())
     if not events and not consumes_jobs:
         return
-    # A jobs function runs what discovery finds: a misdeclared app.discovery fails here too.
     jobs = _discovered_jobs(ctx)
     for name, trigger in events.items():
         trigger_job(name, trigger, jobs)

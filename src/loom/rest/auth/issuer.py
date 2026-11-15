@@ -62,8 +62,6 @@ class JwtIssuer:
     def __init__(self, config: JwtIssuerConfig) -> None:
         self._config = config
         self._jwt = load_pyjwt()
-        # Kept as the Secret: tools that capture frame locals and ``self`` on an
-        # error see ``***``; the material is revealed only for each signature.
         self._key = config.signing_key
         self._max_ttl = timedelta(seconds=config.ttl_seconds)
         headers = {"kid": config.kid, "typ": config.typ}
@@ -80,11 +78,10 @@ class JwtIssuer:
         """
         try:
             self._jwt.encode({"probe": 0}, self._key.reveal(), algorithm=self._config.algorithm)
-        except Exception:  # noqa: BLE001 - any parse or sign failure means unusable
+        except Exception:  # noqa: BLE001
             pass
         else:
             return
-        # Raised outside the handler, so no ``__context__`` keeps the backend error.
         raise ConfigError(f"The JWT issuer signing key cannot sign with {self._config.algorithm}.")
 
     def issue(self, identity: Identity, *, ttl: timedelta | None = None) -> IssuedToken:
@@ -170,8 +167,6 @@ class JwtIssuer:
             raise ValueError("cannot issue a token for an identity with no subject")
         roles_claim = self._config.roles_claim
         if not identity.roles:
-            # A caller with zero privilege is a role translation that failed, not
-            # a legitimate request: a valid token with no role still authenticates.
             raise ValueError(
                 f"cannot issue a token with an empty {roles_claim!r}: "
                 "an identity with no roles is a translation bug"

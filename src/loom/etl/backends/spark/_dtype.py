@@ -18,16 +18,11 @@ from loom.etl.schema._schema import (
     StructType,
 )
 
-# ---------------------------------------------------------------------------
-# Mapping tables
-# ---------------------------------------------------------------------------
-
 _LOOM_TO_SPARK: dict[LoomDtype, T.DataType] = {
     LoomDtype.INT8: T.ByteType(),
     LoomDtype.INT16: T.ShortType(),
     LoomDtype.INT32: T.IntegerType(),
     LoomDtype.INT64: T.LongType(),
-    # Spark has no unsigned types — widen to the next signed tier
     LoomDtype.UINT8: T.ShortType(),
     LoomDtype.UINT16: T.IntegerType(),
     LoomDtype.UINT32: T.LongType(),
@@ -40,8 +35,8 @@ _LOOM_TO_SPARK: dict[LoomDtype, T.DataType] = {
     LoomDtype.BOOLEAN: T.BooleanType(),
     LoomDtype.DATE: T.DateType(),
     LoomDtype.DATETIME: T.TimestampType(),
-    LoomDtype.DURATION: T.LongType(),  # no native duration in Spark
-    LoomDtype.TIME: T.LongType(),  # no native time-of-day in Spark
+    LoomDtype.DURATION: T.LongType(),
+    LoomDtype.TIME: T.LongType(),
     LoomDtype.NULL: T.NullType(),
 }
 

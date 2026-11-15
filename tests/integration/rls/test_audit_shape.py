@@ -35,17 +35,18 @@ async def _lines(url: str, query: str, **parameters: str) -> tuple[str, ...]:
         await engine.dispose()
 
 
-async def test_the_log_has_exactly_the_contracted_shape(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(SCHEMA)
-    await create_schema(
-        database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
-    )
-    log = f"{SCHEMA}.audit_log"
+class TestAuditShape:
+    async def test_the_log_has_exactly_the_contracted_shape(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(SCHEMA)
+        await create_schema(
+            database.migrator, application_for(bookkeeping, database, tmp_path, schema=SCHEMA)
+        )
+        log = f"{SCHEMA}.audit_log"
 
-    shape = await _lines(database.superuser, AUDIT_SHAPE, schema=SCHEMA)
-    triggers = await _lines(database.superuser, TRIGGERS, log=log)
+        shape = await _lines(database.superuser, AUDIT_SHAPE, schema=SCHEMA)
+        triggers = await _lines(database.superuser, TRIGGERS, log=log)
 
-    assert shape == AUDIT_LOG_SHAPE
-    assert triggers == EXPECTED_TRIGGERS
+        assert shape == AUDIT_LOG_SHAPE
+        assert triggers == EXPECTED_TRIGGERS

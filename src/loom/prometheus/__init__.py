@@ -11,26 +11,16 @@ Provides:
 - :class:`PrometheusMiddleware` — pure ASGI middleware that records
   HTTP-level metrics (request counts, durations by path template).
 
-Example::
+Example — :func:`~loom.composition.create_app` wires both, and serves the
+scrape path, when ``observability.prometheus.enabled`` is set::
 
-    import prometheus_client
-    from loom.prometheus import PrometheusMetricsAdapter, PrometheusMiddleware
-    from loom.rest.middleware import TraceIdMiddleware
+    # config/app.yaml
+    #   observability:
+    #     prometheus:
+    #       enabled: true
+    from loom.composition import create_app
 
-    adapter = PrometheusMetricsAdapter()
-
-    result = bootstrap_app(
-        config=cfg,
-        use_cases=[CreateOrderUseCase, GetOrderUseCase],
-        modules=[register_repositories],
-        metrics=adapter,
-    )
-    app = create_fastapi_app(
-        result,
-        RouteSources(python=[OrderRestInterface]),
-        middleware=[TraceIdMiddleware, PrometheusMiddleware],
-    )
-    # Expose /metrics as an exact route in the FastAPI app.
+    app = create_app("config/app.yaml")
 """
 
 from loom.prometheus.adapter import PrometheusMetricsAdapter

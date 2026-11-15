@@ -122,16 +122,20 @@ class TestBuildTracerSdkGuard:
 class TestLogEndpointResolution:
     """The logs endpoint is derived from the traces one, or overridden."""
 
-    def test_derives_the_logs_path_from_a_traces_endpoint(self) -> None:
-        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
-        assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
-
-    def test_keeps_an_endpoint_that_already_names_logs(self) -> None:
-        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/logs"))
-        assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
-
-    def test_appends_the_logs_path_to_a_bare_endpoint(self) -> None:
-        config = OtelConfig(endpoint=Dsn("http://collector:4318/"))
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            pytest.param(
+                "http://collector:4318/v1/traces", id="derives_the_logs_path_from_a_traces_endpoint"
+            ),
+            pytest.param(
+                "http://collector:4318/v1/logs", id="keeps_an_endpoint_that_already_names_logs"
+            ),
+            pytest.param("http://collector:4318/", id="appends_the_logs_path_to_a_bare_endpoint"),
+        ],
+    )
+    def test_resolves_the_logs_endpoint(self, dsn: str) -> None:
+        config = OtelConfig(endpoint=Dsn(dsn))
         assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
 
     def test_returns_none_without_an_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:

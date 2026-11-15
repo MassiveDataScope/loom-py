@@ -1,15 +1,14 @@
 """Spend caps projected onto the engine's own ``UsageLimits``, and the pricing of its responses.
 
-``PolicySpec`` carries five caps (FR-040), four of them optional and one,
+``PolicySpec`` carries five caps, four of them optional and one,
 ``max_requests``, always set to a default; :func:`usage_limits` projects all
 five one-to-one onto :class:`pydantic_ai.usage.UsageLimits`, built once per
 plan at engine construction and passed on every run. An absent optional cap
 is ``None``, which the engine treats as "disable that limit".
 
-See "Spend caps" in ``docs/ai/artifacts.md`` for why ``input_tokens_limit``
-and ``output_tokens_limit`` are deliberately not projected, for how each
-projected limit enforces (preemptive or after the fact), and for why a
-model's cost can be permanently unpriceable.
+``input_tokens_limit`` and ``output_tokens_limit`` are not projected. See
+"Spend caps" in ``docs/ai/artifacts.md`` for how each projected limit
+enforces (preemptive or after the fact).
 """
 
 from __future__ import annotations
@@ -146,9 +145,7 @@ def warn_if_model_not_priceable(
     because billing itself prices on the built model's reported name. Both
     ``LookupError`` and ``ValueError`` from :func:`~genai_prices.calc_price`
     are treated as "not priceable", the same pair pydantic-ai itself treats
-    as expected and degrades at run time. See "Spend caps" in
-    ``docs/ai/artifacts.md`` for why a model's cost can be permanently
-    unpriceable.
+    as expected and degrades at run time.
 
     Args:
         model_name: ``model_name`` of the built pydantic-ai model.

@@ -18,10 +18,7 @@ from loom.streaming import (
 )
 from loom.streaming.graph._flow import Process
 from loom.streaming.nodes._boundary import IntoTopic
-
-
-class _Payload(LoomStruct):
-    value: str
+from tests.unit.streaming.doubles import AcmePayload
 
 
 class _Result(LoomStruct):
@@ -65,10 +62,10 @@ class _FakeSyncClient:
         return f"sync:{value}"
 
 
-class _AsyncStep(RecordStep[_Payload, _Result]):
+class _AsyncStep(RecordStep[AcmePayload, _Result]):
     async def execute(
         self,
-        message: Message[_Payload],
+        message: Message[AcmePayload],
         *,
         client: _FakeAsyncClient,
         **kwargs: Any,
@@ -77,10 +74,10 @@ class _AsyncStep(RecordStep[_Payload, _Result]):
         return _Result(value=await client.process(message.payload.value))
 
 
-class _SyncStep(RecordStep[_Payload, _Result]):
+class _SyncStep(RecordStep[AcmePayload, _Result]):
     def execute(
         self,
-        message: Message[_Payload],
+        message: Message[AcmePayload],
         *,
         client: _FakeSyncClient,
         **kwargs: Any,
@@ -89,7 +86,7 @@ class _SyncStep(RecordStep[_Payload, _Result]):
         return _Result(value=client.process(message.payload.value))
 
 
-def _make_process(step: RecordStep[_Payload, _Result]) -> Process[_Payload, _Result]:
+def _make_process(step: RecordStep[AcmePayload, _Result]) -> Process[AcmePayload, _Result]:
     return Process(step, IntoTopic("results", payload=_Result))
 
 
@@ -97,7 +94,7 @@ class TestWithAsync:
     def test_with_async_detects_async_context_managers(self) -> None:
         """WithAsync classifies async CMs into async_contexts."""
         client = _FakeAsyncClient()
-        adapter: WithAsync[_Payload, _Result] = WithAsync(
+        adapter: WithAsync[AcmePayload, _Result] = WithAsync(
             process=_make_process(_AsyncStep()), client=client, max_concurrency=5
         )
 
@@ -109,7 +106,7 @@ class TestWithAsync:
         """With detects the sync CM, opens it, and the task receives the injected client."""
         client = _FakeSyncClient()
         step = _SyncStep()
-        adapter: With[_Payload, _Result] = With(process=_make_process(step), client=client)
+        adapter: With[AcmePayload, _Result] = With(process=_make_process(step), client=client)
 
         assert adapter.sync_contexts == {"client": client}
         assert adapter.plain_deps == {}
@@ -118,8 +115,8 @@ class TestWithAsync:
             results = [
                 step.execute(msg, client=client)
                 for msg in [
-                    Message(payload=_Payload(value="a"), meta=MessageMeta(message_id="m1")),
-                    Message(payload=_Payload(value="b"), meta=MessageMeta(message_id="m2")),
+                    Message(payload=AcmePayload(value="a"), meta=MessageMeta(message_id="m1")),
+                    Message(payload=AcmePayload(value="b"), meta=MessageMeta(message_id="m2")),
                 ]
             ]
 
@@ -131,7 +128,7 @@ class TestWithAsync:
         """WithAsync separates async CMs from plain deps."""
         async_cm = _FakeAsyncClient()
         step = _AsyncStep()
-        adapter: WithAsync[_Payload, _Result] = WithAsync(
+        adapter: WithAsync[AcmePayload, _Result] = WithAsync(
             process=_make_process(step),
             client=async_cm,
             validator="plain",
@@ -148,11 +145,11 @@ class TestWithAsync:
             WithAsync(process=process, max_concurrency=0)
 
     def test_with_async_defaults_task_timeout_to_none(self) -> None:
-        adapter: WithAsync[_Payload, _Result] = WithAsync(process=_make_process(_AsyncStep()))
+        adapter: WithAsync[AcmePayload, _Result] = WithAsync(process=_make_process(_AsyncStep()))
         assert adapter.task_timeout_ms is None
 
     def test_with_async_accepts_positive_task_timeout(self) -> None:
-        adapter: WithAsync[_Payload, _Result] = WithAsync(
+        adapter: WithAsync[AcmePayload, _Result] = WithAsync(
             process=_make_process(_SyncStep()), task_timeout_ms=500
         )
 
@@ -183,7 +180,7 @@ class TestWithAsync:
 
 class TestWith:
     def test_with_keeps_plain_dependencies(self) -> None:
-        adapter: With[_Payload, _Result] = With(
+        adapter: With[AcmePayload, _Result] = With(
             process=_make_process(_SyncStep()), validator="plain", retries=3
         )
 
@@ -193,7 +190,7 @@ class TestWith:
     def test_context_factory_detected_as_factory(self) -> None:
         """ContextFactory is stored in context_factories, not contexts or plain_deps."""
         factory = ContextFactory(lambda: _FakeSyncClient())
-        adapter: With[_Payload, _Result] = With(process=_make_process(_SyncStep()), db=factory)
+        adapter: With[AcmePayload, _Result] = With(process=_make_process(_SyncStep()), db=factory)
 
         assert adapter.context_factories == {"db": factory}
         assert adapter.sync_contexts == {}

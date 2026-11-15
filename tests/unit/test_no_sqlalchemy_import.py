@@ -102,11 +102,12 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_every_module_imports_with_sqlalchemy_blocked() -> None:
-    """Only the allow-listed module may fail to import with ``sqlalchemy`` blocked."""
-    result = _run_in_clean_interpreter(_WALK_WITHOUT_SQLALCHEMY_SCRIPT)
+class TestNoSqlalchemyImport:
+    def test_every_module_imports_with_sqlalchemy_blocked(self) -> None:
+        """Only the allow-listed module may fail to import with ``sqlalchemy`` blocked."""
+        result = _run_in_clean_interpreter(_WALK_WITHOUT_SQLALCHEMY_SCRIPT)
 
-    assert result.returncode == 0, f"module walk failed:\n{result.stderr}"
-    broken = set(result.stdout.split())
-    unexpected = sorted(broken ^ _SQLALCHEMY_HARD_MODULES)
-    assert not unexpected, f"modules importing sqlalchemy eagerly: {unexpected}"
+        assert result.returncode == 0, f"module walk failed:\n{result.stderr}"
+        broken = set(result.stdout.split())
+        unexpected = sorted(broken ^ _SQLALCHEMY_HARD_MODULES)
+        assert not unexpected, f"modules importing sqlalchemy eagerly: {unexpected}"

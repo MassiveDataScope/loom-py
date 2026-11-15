@@ -33,7 +33,7 @@ def compile_instructions(
         declared: Value decoded from the artifact's ``instructions``.
         state: State shape :func:`~loom.ai.compiler.phases._state.compile_state`
             resolved for the same artifact, or ``None`` when it declares no
-            state. A templated block requires this to be set (FR-027).
+            state. A templated block requires this to be set.
         component: Artifact path or agent name the issues point at.
 
     Returns:

@@ -10,11 +10,7 @@ from omegaconf import DictConfig
 from loom.core.model import LoomStruct
 from loom.streaming import Fork, ForkRoute, FromTopic, IntoTopic, Message, Process, StreamFlow
 from loom.streaming.compiler import compile_flow
-
-
-class _Order(LoomStruct):
-    channel: str
-    order_id: str
+from tests.unit.streaming.doubles import AcmeChannelOrder, AcmeChannelSelector
 
 
 class _BranchA(LoomStruct):
@@ -30,24 +26,19 @@ class _BranchDefault(LoomStruct):
 
 
 class _HasChannelA:
-    def matches(self, message: Message[_Order]) -> bool:
+    def matches(self, message: Message[AcmeChannelOrder]) -> bool:
         return message.payload.channel == "a"
 
 
 class _HasChannelB:
-    def matches(self, message: Message[_Order]) -> bool:
+    def matches(self, message: Message[AcmeChannelOrder]) -> bool:
         return message.payload.channel == "b"
 
 
-class _ChannelSelector:
-    def select(self, message: Message[_Order]) -> object:
-        return message.payload.channel
-
-
-def _fork_when_flow() -> StreamFlow[_Order, Any]:
+def _fork_when_flow() -> StreamFlow[AcmeChannelOrder, Any]:
     return StreamFlow(
         name="orders_fork_when",
-        source=FromTopic("orders.raw", payload=_Order),
+        source=FromTopic("orders.raw", payload=AcmeChannelOrder),
         process=Process(
             Fork.when(
                 (
@@ -66,13 +57,13 @@ def _fork_when_flow() -> StreamFlow[_Order, Any]:
     )
 
 
-def _fork_by_flow() -> StreamFlow[_Order, Any]:
+def _fork_by_flow() -> StreamFlow[AcmeChannelOrder, Any]:
     return StreamFlow(
         name="orders_fork_by",
-        source=FromTopic("orders.raw", payload=_Order),
+        source=FromTopic("orders.raw", payload=AcmeChannelOrder),
         process=Process(
             Fork.by(
-                selector=_ChannelSelector(),
+                selector=AcmeChannelSelector(),
                 branches={
                     "a": Process(IntoTopic("orders.a", payload=_BranchA)),
                     "b": Process(IntoTopic("orders.b", payload=_BranchB)),
@@ -85,7 +76,7 @@ def _fork_by_flow() -> StreamFlow[_Order, Any]:
 
 class TestForkDSL:
     def test_fork_by_rejects_empty_branches(self) -> None:
-        selector = _ChannelSelector()
+        selector = AcmeChannelSelector()
         with pytest.raises(ValueError, match="Fork.by requires at least one keyed route"):
             Fork.by(selector, {})
 
@@ -94,7 +85,9 @@ class TestForkDSL:
             Fork.when(())
 
     def test_fork_by_marks_keyed_kind(self) -> None:
-        node = Fork.by(_ChannelSelector(), {"a": Process(IntoTopic("orders.a", payload=_BranchA))})
+        node = Fork.by(
+            AcmeChannelSelector(), {"a": Process(IntoTopic("orders.a", payload=_BranchA))}
+        )
 
         assert node.kind is not None
         assert node.kind.value == "keyed"

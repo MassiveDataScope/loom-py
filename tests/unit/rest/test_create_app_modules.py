@@ -17,6 +17,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.scope import Scope
 from loom.rest.fastapi.auto import create_app
@@ -105,34 +106,35 @@ def _bind_clock_class(container: LoomContainer) -> None:
     container.register(Clock, FixedClock)
 
 
-@pytest.mark.parametrize("module", [_bind_clock_instance, _bind_clock_class])
-def test_a_module_binding_reaches_the_use_case(
-    config_path: str, module: Callable[[LoomContainer], None]
-) -> None:
-    app = create_app(config_path, modules=[module])
+class TestCreateAppModules:
+    @pytest.mark.parametrize("module", [_bind_clock_instance, _bind_clock_class])
+    def test_a_module_binding_reaches_the_use_case(
+        self, config_path: str, module: Callable[[LoomContainer], None]
+    ) -> None:
+        app = create_app(config_path, modules=[module])
 
-    with TestClient(app) as client:
-        response = client.get("/now/")
+        with TestClient(app) as client:
+            response = client.get("/now/")
 
-    assert response.status_code == 200, response.text
-    assert response.json() == _FIXED_NOW
+        assert response.status_code == 200, response.text
+        assert response.json() == _FIXED_NOW
 
+    def test_modules_run_in_the_given_order(self, config_path: str) -> None:
+        calls: list[str] = []
 
-def test_modules_run_in_the_given_order(config_path: str) -> None:
-    calls: list[str] = []
+        def first(container: LoomContainer) -> None:
+            calls.append("first")
+            _bind_clock_instance(container)
 
-    def first(container: LoomContainer) -> None:
-        calls.append("first")
-        _bind_clock_instance(container)
+        def second(_: LoomContainer) -> None:
+            calls.append("second")
 
-    def second(_: LoomContainer) -> None:
-        calls.append("second")
+        create_app(config_path, modules=(first, second))
 
-    create_app(config_path, modules=(first, second))
+        assert calls == ["first", "second"]
 
-    assert calls == ["first", "second"]
+    def test_startup_fails_without_the_module(self, config_path: str) -> None:
+        with pytest.raises(BootstrapError, match=r"NowUseCase -> clock: .*Clock") as caught:
+            create_app(config_path)
 
-
-def test_startup_fails_without_the_module(config_path: str) -> None:
-    with pytest.raises(ResolutionError, match=r"NowUseCase injects clock: .*Clock"):
-        create_app(config_path)
+        assert isinstance(caught.value.__cause__, ResolutionError)

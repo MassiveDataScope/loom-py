@@ -46,6 +46,10 @@ from loom.streaming.compiler import (  # noqa: E402
 from loom.streaming.nodes._branches import iter_branches  # noqa: E402
 from loom.streaming.nodes._expand_routes import ExpandRoutes  # noqa: E402
 from loom.streaming.nodes._fork import ForkKind  # noqa: E402
+from tests.unit.streaming.doubles import (  # noqa: E402
+    AcmeChannelOrder,
+    AcmeChannelSelector,
+)
 
 _RAW_TOPIC = "orders.raw"
 _TOPIC_A = "orders.a"
@@ -55,66 +59,56 @@ _TOPIC_ANALYTICS = "events.analytics"
 _TOPIC_FULFILLMENT = "orders.fulfillment"
 
 
-class _Order(LoomStruct):
-    channel: str
-    order_id: str
-
-
 class _Routed(LoomStruct):
     order_id: str
 
 
-class _StoreRow(LoomStruct):
+class AcmeBranchStoreRow(LoomStruct):
     order_id: str
 
 
-class _AuditRow(LoomStruct):
+class AcmeBranchAuditRow(LoomStruct):
     order_id: str
 
 
-class _MarkRouted(RecordStep[_Order, _Routed]):
-    def execute(self, message: Message[_Order], **kwargs: object) -> _Routed:
+class _MarkRouted(RecordStep[AcmeChannelOrder, _Routed]):
+    def execute(self, message: Message[AcmeChannelOrder], **kwargs: object) -> _Routed:
         del kwargs
         return _Routed(order_id=message.payload.order_id)
 
 
-class _ChannelSelector:
-    def select(self, message: Message[_Order]) -> object:
-        return message.payload.channel
-
-
 class _IsChannelA:
-    def matches(self, message: Message[_Order]) -> bool:
+    def matches(self, message: Message[AcmeChannelOrder]) -> bool:
         return message.payload.channel == "a"
 
 
 class _IsChannelB:
-    def matches(self, message: Message[_Order]) -> bool:
+    def matches(self, message: Message[AcmeChannelOrder]) -> bool:
         return message.payload.channel == "b"
 
 
 class _OrderExpander:
-    outputs: ClassVar[tuple[type, ...]] = (_StoreRow, _AuditRow)
+    outputs: ClassVar[tuple[type, ...]] = (AcmeBranchStoreRow, AcmeBranchAuditRow)
 
     @classmethod
-    def expand(cls, event: _Order) -> dict[type, list[Any]]:
+    def expand(cls, event: AcmeChannelOrder) -> dict[type, list[Any]]:
         return {
-            _StoreRow: [_StoreRow(order_id=event.order_id)],
-            _AuditRow: [_AuditRow(order_id=event.order_id)],
+            AcmeBranchStoreRow: [AcmeBranchStoreRow(order_id=event.order_id)],
+            AcmeBranchAuditRow: [AcmeBranchAuditRow(order_id=event.order_id)],
         }
 
 
-def _flow(process: Process[Any, Any]) -> StreamFlow[_Order, Any]:
+def _flow(process: Process[Any, Any]) -> StreamFlow[AcmeChannelOrder, Any]:
     return StreamFlow(
         name="branch_indexing",
-        source=FromTopic(_RAW_TOPIC, payload=_Order),
+        source=FromTopic(_RAW_TOPIC, payload=AcmeChannelOrder),
         process=process,
     )
 
 
-def _fork_by_node() -> Fork[_Order]:
+def _fork_by_node() -> Fork[AcmeChannelOrder]:
     return Fork.by(
-        _ChannelSelector(),
+        AcmeChannelSelector(),
         {
             "a": Process(IntoTopic(_TOPIC_A, payload=_Routed)),
             "b": Process(IntoTopic(_TOPIC_B, payload=_Routed)),
@@ -123,7 +117,7 @@ def _fork_by_node() -> Fork[_Order]:
     )
 
 
-def _fork_when_node() -> Fork[_Order]:
+def _fork_when_node() -> Fork[AcmeChannelOrder]:
     return Fork.when(
         (
             ForkRoute(when=_IsChannelA(), process=Process(IntoTopic(_TOPIC_A, payload=_Routed))),
@@ -133,7 +127,7 @@ def _fork_when_node() -> Fork[_Order]:
     )
 
 
-def _broadcast_node() -> Broadcast[_Order]:
+def _broadcast_node() -> Broadcast[AcmeChannelOrder]:
     return Broadcast(
         BroadcastRoute(
             process=Process(_MarkRouted()),
@@ -146,15 +140,15 @@ def _broadcast_node() -> Broadcast[_Order]:
     )
 
 
-def _expand_routes_node() -> ExpandRoutes[_Order]:
+def _expand_routes_node() -> ExpandRoutes[AcmeChannelOrder]:
     return ExpandRoutes(
         expander=_OrderExpander,
-        routes={_StoreRow: Process(IntoTopic(_TOPIC_A, payload=_StoreRow))},
-        default=Process(IntoTopic(_TOPIC_DEFAULT, payload=_AuditRow)),
+        routes={AcmeBranchStoreRow: Process(IntoTopic(_TOPIC_A, payload=AcmeBranchStoreRow))},
+        default=Process(IntoTopic(_TOPIC_DEFAULT, payload=AcmeBranchAuditRow)),
     )
 
 
-def _router_when_node() -> Router[_Order, _Routed]:
+def _router_when_node() -> Router[AcmeChannelOrder, _Routed]:
     return Router.when(
         (
             Route(
@@ -170,9 +164,9 @@ def _router_when_node() -> Router[_Order, _Routed]:
     )
 
 
-def _router_keyed_and_predicate_node() -> Router[_Order, _Routed]:
+def _router_keyed_and_predicate_node() -> Router[AcmeChannelOrder, _Routed]:
     return Router(
-        selector=_ChannelSelector(),
+        selector=AcmeChannelSelector(),
         routes={"a": Process(_MarkRouted(), IntoTopic(_TOPIC_A, payload=_Routed))},
         predicate_routes=(
             Route(
@@ -271,8 +265,8 @@ class TestBranchEnumeration:
     def test_expand_routes_indexes_declared_types_then_the_default(self) -> None:
         branches = list(iter_branches(_expand_routes_node()))
 
-        assert [(b.index, b.label) for b in branches] == [(0, "_StoreRow"), (1, "default")]
-        assert [b.key for b in branches] == [_StoreRow, None]
+        assert [(b.index, b.label) for b in branches] == [(0, "AcmeBranchStoreRow"), (1, "default")]
+        assert [b.key for b in branches] == [AcmeBranchStoreRow, None]
 
     def test_every_branch_index_is_unique_and_contiguous(self) -> None:
         for node in (
@@ -380,7 +374,7 @@ class TestForkKindConsistency:
     """A fork declares one dispatch family, so only that family's routes exist."""
 
     def test_keyed_fork_rejects_predicate_routes(self) -> None:
-        selector = _ChannelSelector()
+        selector = AcmeChannelSelector()
         routes: Mapping[object, Process[Any, Any]] = {
             "a": Process(IntoTopic(_TOPIC_A, payload=_Routed))
         }
@@ -426,7 +420,7 @@ class TestForkDefaultBranchIsValidated:
         flow = _flow(
             Process(
                 Fork.by(
-                    _ChannelSelector(),
+                    AcmeChannelSelector(),
                     {"a": Process(IntoTopic(_TOPIC_A, payload=_Routed))},
                     default=Process(_MarkRouted()),
                 )
@@ -446,7 +440,7 @@ class TestForkDefaultBranchIsValidated:
     def test_walking_the_process_tree_reaches_the_fork_default_branch(self) -> None:
         marker = _MarkRouted()
         fork = Fork.by(
-            _ChannelSelector(),
+            AcmeChannelSelector(),
             {"a": Process(IntoTopic(_TOPIC_A, payload=_Routed))},
             default=Process(marker, IntoTopic(_TOPIC_DEFAULT, payload=_Routed)),
         )

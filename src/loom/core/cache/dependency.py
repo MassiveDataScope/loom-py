@@ -108,9 +108,6 @@ class GenerationalDependencyResolver(DependencyResolver, BatchFingerprintResolve
         bump_keys: set[str] = set()
         for event in events:
             bump_keys.add(self._tag_key(f"{event.entity}:list"))
-            # Creates bump per id too: a scope="entity" read may cache a
-            # non-None value (a count of 0, an empty summary) for a key that
-            # does not exist yet.
             for entity_id in event.ids:
                 bump_keys.add(self._tag_key(f"{event.entity}:id:{entity_id}"))
             for tag in event.tags:

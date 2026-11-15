@@ -49,48 +49,46 @@ class DictQueryUseCase(UseCase[Any, int]):
         return len(query)
 
 
-def test_query_compiles_to_a_param_binding_and_a_query_binding() -> None:
-    plan = UseCaseCompiler().compile(ListOrders)
+class TestQueryBinding:
+    def test_query_compiles_to_a_param_binding_and_a_query_binding(self) -> None:
+        plan = UseCaseCompiler().compile(ListOrders)
 
-    assert plan.param_bindings == (ParamBinding(name="query", annotation=OrderQuery),)
-    assert plan.query_binding == QueryBinding(name="query", query_type=OrderQuery)
+        assert plan.param_bindings == (ParamBinding(name="query", annotation=OrderQuery),)
+        assert plan.query_binding == QueryBinding(name="query", query_type=OrderQuery)
 
+    def test_two_query_parameters_are_refused(self) -> None:
+        compiler = UseCaseCompiler()
 
-def test_two_query_parameters_are_refused() -> None:
-    compiler = UseCaseCompiler()
+        with pytest.raises(CompilationError, match="only one Query"):
+            compiler.compile(TwoQueries)
 
-    with pytest.raises(CompilationError, match="only one Query"):
-        compiler.compile(TwoQueries)
+    @pytest.mark.parametrize("use_case", [LaxQueryUseCase, DictQueryUseCase])
+    def test_a_query_type_that_is_not_a_strict_model_is_refused(
+        self,
+        use_case: type[UseCase[Any, int]],
+    ) -> None:
+        compiler = UseCaseCompiler()
 
+        with pytest.raises(CompilationError) as excinfo:
+            compiler.compile(use_case)
+        assert f"{use_case.__qualname__}.execute" in str(excinfo.value)
+        assert "'query'" in str(excinfo.value)
+        assert isinstance(excinfo.value.__cause__, UnsupportedBoundaryType)
 
-@pytest.mark.parametrize("use_case", [LaxQueryUseCase, DictQueryUseCase])
-def test_a_query_type_that_is_not_a_strict_model_is_refused(
-    use_case: type[UseCase[Any, int]],
-) -> None:
-    compiler = UseCaseCompiler()
+    async def test_a_query_that_is_not_an_instance_of_its_type_is_refused(self) -> None:
+        compiler = UseCaseCompiler()
+        compiler.compile(ListOrders)
+        executor = RuntimeExecutor(compiler)
+        use_case = ListOrders()
 
-    with pytest.raises(CompilationError) as excinfo:
-        compiler.compile(use_case)
-    assert f"{use_case.__qualname__}.execute" in str(excinfo.value)
-    assert "'query'" in str(excinfo.value)
-    assert isinstance(excinfo.value.__cause__, UnsupportedBoundaryType)
+        with pytest.raises(ParameterBindingError) as excinfo:
+            await executor.execute(use_case, params={"query": 424242})
+        assert "'query'" in str(excinfo.value)
+        assert "OrderQuery" in str(excinfo.value)
+        assert "424242" not in str(excinfo.value)
 
+    def test_a_job_that_declares_query_is_refused(self) -> None:
+        compiler = UseCaseCompiler()
 
-async def test_a_query_that_is_not_an_instance_of_its_type_is_refused() -> None:
-    compiler = UseCaseCompiler()
-    compiler.compile(ListOrders)
-    executor = RuntimeExecutor(compiler)
-    use_case = ListOrders()
-
-    with pytest.raises(ParameterBindingError) as excinfo:
-        await executor.execute(use_case, params={"query": 424242})
-    assert "'query'" in str(excinfo.value)
-    assert "OrderQuery" in str(excinfo.value)
-    assert "424242" not in str(excinfo.value)
-
-
-def test_a_job_that_declares_query_is_refused() -> None:
-    compiler = UseCaseCompiler()
-
-    with pytest.raises(CompilationError, match=r"ListOrdersJob\.execute: a Job cannot"):
-        compiler.compile(ListOrdersJob)
+        with pytest.raises(CompilationError, match=r"ListOrdersJob\.execute: a Job cannot"):
+            compiler.compile(ListOrdersJob)

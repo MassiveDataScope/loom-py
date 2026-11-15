@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
+from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor, ThreadDispatcher
 from loom.etl.lineage._records import (
@@ -22,6 +22,7 @@ from loom.etl.lineage._records import (
     RunStatus as LineageRunStatus,
 )
 from loom.etl.testing import StubRunObserver, StubSourceReader, StubTargetWriter
+from tests.unit.etl.doubles import OrdersStagingAStep, RunDateIgnoredParams
 
 ExecutorFactory = Callable[..., tuple[ETLExecutor, StubTargetWriter, StubRunObserver]]
 
@@ -32,73 +33,61 @@ def _table_ref(spec: Any) -> Any:
     return table_ref
 
 
-class RunParams(ETLParams):  # type: ignore[misc]
-    run_date: date
-
-
 SENTINEL_A = object()
 SENTINEL_B = object()
 
 
-class StepA(ETLStep[RunParams]):
-    orders = FromTable("raw.orders")
-    target = IntoTable("staging.a").replace()
-
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
-        return orders
-
-
-class StepB(ETLStep[RunParams]):
+class CustomersStagingBStep(ETLStep[RunDateIgnoredParams]):
     customers = FromTable("raw.customers")
     target = IntoTable("staging.b").replace()
 
-    def execute(self, params: RunParams, *, customers: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, customers: Any) -> Any:  # type: ignore[override]
         return customers
 
 
-class StepNoSources(ETLStep[RunParams]):
+class GeneratedCalendarStep(ETLStep[RunDateIgnoredParams]):
     target = IntoTable("staging.calendar").replace()
 
-    def execute(self, params: RunParams) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams) -> Any:  # type: ignore[override]
         return {"generated": True}
 
 
-class StepStreaming(ETLStep[RunParams]):
+class StepStreaming(ETLStep[RunDateIgnoredParams]):
     streaming = True
     orders = FromTable("raw.orders")
     target = IntoTable("staging.stream").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class FailingStep(ETLStep[RunParams]):
+class FailingStep(ETLStep[RunDateIgnoredParams]):
     orders = FromTable("raw.orders")
     target = IntoTable("staging.fail").replace()
 
-    def execute(self, params: RunParams, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
         raise ValueError("intentional failure")
 
 
-class ProcAB(ETLProcess[RunParams]):
-    steps = [StepA, StepB]
+class OrdersCustomersProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [OrdersStagingAStep, CustomersStagingBStep]
 
 
-class ProcParallel(ETLProcess[RunParams]):
-    steps = [[StepA, StepB]]
+class OrdersCustomersParallelProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [[OrdersStagingAStep, CustomersStagingBStep]]
 
 
-class PipelineSeq(ETLPipeline[RunParams]):
-    processes = [ProcAB]
+class PipelineSeq(ETLPipeline[RunDateIgnoredParams]):
+    processes = [OrdersCustomersProcess]
 
 
-class PipelineParallel(ETLPipeline[RunParams]):
-    processes = [[ProcAB]]
+class PipelineParallel(ETLPipeline[RunDateIgnoredParams]):
+    processes = [[OrdersCustomersProcess]]
 
 
 @pytest.fixture
-def params() -> RunParams:
-    return RunParams(run_date=date(2024, 1, 5))
+def params() -> RunDateIgnoredParams:
+    return RunDateIgnoredParams(run_date=date(2024, 1, 5))
 
 
 @pytest.fixture
@@ -131,17 +120,17 @@ class TestRunStep:
     @pytest.mark.parametrize(
         "step_type,expected_frame,expected_target",
         [
-            (StepA, SENTINEL_A, "staging.a"),
-            (StepB, SENTINEL_B, "staging.b"),
-            (StepNoSources, {"generated": True}, "staging.calendar"),
+            (OrdersStagingAStep, SENTINEL_A, "staging.a"),
+            (CustomersStagingBStep, SENTINEL_B, "staging.b"),
+            (GeneratedCalendarStep, {"generated": True}, "staging.calendar"),
         ],
     )
     def test_run_step_writes_expected_output(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
-        step_type: type[ETLStep[RunParams]],
+        step_type: type[ETLStep[RunDateIgnoredParams]],
         expected_frame: object,
         expected_target: str,
     ) -> None:
@@ -157,10 +146,10 @@ class TestRunStep:
     def test_run_step_observer_success_and_metadata(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
-        plan = compiler.compile_step(StepA)
+        plan = compiler.compile_step(OrdersStagingAStep)
         executor, _, observer = executor_factory()
         context = LineageRunContext(run_id="fixed-run-id")
         executor.run_step(plan, params, context)
@@ -168,17 +157,17 @@ class TestRunStep:
         assert observer.event_names == [LineageEventName.STEP_START, LineageEventName.STEP_END]
         assert observer.step_statuses == [LineageRunStatus.SUCCESS]
         start_event = next(data for name, data in observer.events if name == "step_start")
-        assert start_event["step"] == "StepA"
+        assert start_event["step"] == "OrdersStagingAStep"
         assert start_event["run_id"] == "fixed-run-id"
 
     def test_run_step_forwards_streaming_flag_to_writer(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
         streaming_plan = compiler.compile_step(StepStreaming)
-        normal_plan = compiler.compile_step(StepA)
+        normal_plan = compiler.compile_step(OrdersStagingAStep)
         executor, writer, _ = executor_factory()
 
         executor.run_step(streaming_plan, params)
@@ -189,7 +178,7 @@ class TestRunStep:
     def test_streaming_step_invokes_read_streaming(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
     ) -> None:
         """A streaming step routes through reader.read_streaming, not read."""
 
@@ -223,7 +212,7 @@ class TestRunStep:
     def test_streaming_step_without_capability_raises(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
     ) -> None:
         """A streaming step refuses to fall back to non-streaming read."""
 
@@ -244,7 +233,7 @@ class TestRunStep:
     def test_run_step_error_events_and_order(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
         plan = compiler.compile_step(FailingStep)
@@ -262,16 +251,16 @@ class TestRunProcess:
     @pytest.mark.parametrize(
         "process_type,expect_order",
         [
-            (ProcAB, True),
-            (ProcParallel, False),
+            (OrdersCustomersProcess, True),
+            (OrdersCustomersParallelProcess, False),
         ],
     )
     def test_run_process_writes_steps(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
-        process_type: type[ETLProcess[RunParams]],
+        process_type: type[ETLProcess[RunDateIgnoredParams]],
         expect_order: bool,
     ) -> None:
         plan = compiler.compile_process(process_type)
@@ -291,10 +280,10 @@ class TestRunProcess:
     def test_run_process_observer_success_events(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
-        plan = compiler.compile_process(ProcAB)
+        plan = compiler.compile_process(OrdersCustomersProcess)
         executor, _, observer = executor_factory()
         executor.run_process(plan, params)
         assert LineageEventName.PROCESS_START in observer.event_names
@@ -304,10 +293,10 @@ class TestRunProcess:
     def test_run_process_failed_status_on_step_error(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
-        class ProcFail(ETLProcess[RunParams]):
+        class ProcFail(ETLProcess[RunDateIgnoredParams]):
             steps = [FailingStep]
 
         plan = compiler.compile_process(ProcFail)
@@ -327,9 +316,9 @@ class TestRunPipeline:
     def test_run_pipeline_writes_expected_rows(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
-        pipeline_type: type[ETLPipeline[RunParams]],
+        pipeline_type: type[ETLPipeline[RunDateIgnoredParams]],
     ) -> None:
         plan = compiler.compile(pipeline_type)
         executor, writer, _ = executor_factory()
@@ -339,7 +328,7 @@ class TestRunPipeline:
     def test_run_pipeline_observer_start_end_and_success(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
         plan = compiler.compile(PipelineSeq)
@@ -352,13 +341,13 @@ class TestRunPipeline:
     def test_run_pipeline_failed_status_on_step_error(
         self,
         compiler: ETLCompiler,
-        params: RunParams,
+        params: RunDateIgnoredParams,
         executor_factory: ExecutorFactory,
     ) -> None:
-        class ProcFail(ETLProcess[RunParams]):
+        class ProcFail(ETLProcess[RunDateIgnoredParams]):
             steps = [FailingStep]
 
-        class PipelineFail(ETLPipeline[RunParams]):
+        class PipelineFail(ETLPipeline[RunDateIgnoredParams]):
             processes = [ProcFail]
 
         plan = compiler.compile(PipelineFail)

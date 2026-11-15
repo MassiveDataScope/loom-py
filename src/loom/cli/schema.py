@@ -29,11 +29,9 @@ if TYPE_CHECKING:
     from loom.core.repository.sqlalchemy.rls import BootstrapConfig
     from loom.core.repository.sqlalchemy.rls.verify import Report
 
-# The commands below import SQLAlchemy inside their bodies: the CLI loads
-# without it, and only these commands require it.
 
 _T = TypeVar("_T")
-_STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
+_STORES = str(ConfigKey.STORES)
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
 

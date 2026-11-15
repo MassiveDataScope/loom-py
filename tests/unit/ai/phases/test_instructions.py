@@ -15,97 +15,99 @@ from loom.ai.declarative import AgentSpecV1, InstructionBlock
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
 
-def test_a_string_artifact_and_a_one_block_artifact_compile_to_the_same_plan_shape(
-    spec_factory: Callable[..., AgentSpecV1],
-    plan_for: Callable[..., Any],
-) -> None:
-    string_plan = plan_for(
-        spec_factory(instructions="Answer using only the prompt. Say so when unsure.")
-    )
-    block_plan = plan_for(
-        spec_factory(
-            instructions=(
-                InstructionBlock(text="Answer using only the prompt. Say so when unsure."),
+class TestInstructionCompilation:
+    def test_a_string_artifact_and_a_one_block_artifact_compile_to_the_same_plan_shape(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        plan_for: Callable[..., Any],
+    ) -> None:
+        string_plan = plan_for(
+            spec_factory(instructions="Answer using only the prompt. Say so when unsure.")
+        )
+        block_plan = plan_for(
+            spec_factory(
+                instructions=(
+                    InstructionBlock(text="Answer using only the prompt. Say so when unsure."),
+                )
             )
         )
-    )
 
-    assert string_plan.instructions == block_plan.instructions
-    assert string_plan.instructions == (
-        CompiledInstruction(
-            text="Answer using only the prompt. Say so when unsure.", name=None, template=None
-        ),
-    )
-
-
-def test_a_block_sequence_compiles_preserving_authored_order(
-    spec_factory: Callable[..., AgentSpecV1],
-    plan_for: Callable[..., Any],
-) -> None:
-    spec = spec_factory(
-        instructions=(
-            InstructionBlock(text="First.", name="opening"),
-            InstructionBlock(text="Second."),
-            InstructionBlock(text="Third.", name="closing"),
+        assert string_plan.instructions == block_plan.instructions
+        assert string_plan.instructions == (
+            CompiledInstruction(
+                text="Answer using only the prompt. Say so when unsure.", name=None, template=None
+            ),
         )
-    )
 
-    plan = plan_for(spec)
-
-    assert [block.text for block in plan.instructions] == ["First.", "Second.", "Third."]
-    assert [block.name for block in plan.instructions] == ["opening", None, "closing"]
-
-
-def test_two_blocks_named_the_same_report_one_issue_naming_both_positions(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    spec = spec_factory(
-        instructions=(
-            InstructionBlock(text="First.", name="base"),
-            InstructionBlock(text="Second."),
-            InstructionBlock(text="Third.", name="base"),
+    def test_a_block_sequence_compiles_preserving_authored_order(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        plan_for: Callable[..., Any],
+    ) -> None:
+        spec = spec_factory(
+            instructions=(
+                InstructionBlock(text="First.", name="opening"),
+                InstructionBlock(text="Second."),
+                InstructionBlock(text="Third.", name="closing"),
+            )
         )
-    )
 
-    issue = single_issue_for(spec)
+        plan = plan_for(spec)
 
-    assert issue.code == AgentErrorCode.INSTRUCTION_BLOCK_INVALID
-    assert "base" in issue.message
-    assert "0" in issue.message
-    assert "2" in issue.message
+        assert [block.text for block in plan.instructions] == ["First.", "Second.", "Third."]
+        assert [block.name for block in plan.instructions] == ["opening", None, "closing"]
 
-
-def test_a_template_block_with_no_declared_state_fails_naming_what_is_missing(
-    spec_factory: Callable[..., AgentSpecV1],
-    single_issue_for: Callable[..., AgentCompilationIssue],
-) -> None:
-    spec = spec_factory(
-        instructions=(
-            InstructionBlock(text="Hello {{name}}", name="greeting", template="handlebars"),
+    def test_two_blocks_named_the_same_report_one_issue_naming_both_positions(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        spec = spec_factory(
+            instructions=(
+                InstructionBlock(text="First.", name="base"),
+                InstructionBlock(text="Second."),
+                InstructionBlock(text="Third.", name="base"),
+            )
         )
-    )
 
-    issue = single_issue_for(spec)
+        issue = single_issue_for(spec)
 
-    assert issue.code == AgentErrorCode.INSTRUCTION_BLOCK_INVALID
-    assert "greeting" in issue.message
-    assert "state" in issue.message
+        assert issue.code == AgentErrorCode.INSTRUCTION_BLOCK_INVALID
+        assert "base" in issue.message
+        assert "0" in issue.message
+        assert "2" in issue.message
 
+    def test_a_template_block_with_no_declared_state_fails_naming_what_is_missing(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        single_issue_for: Callable[..., AgentCompilationIssue],
+    ) -> None:
+        spec = spec_factory(
+            instructions=(
+                InstructionBlock(text="Hello {{name}}", name="greeting", template="handlebars"),
+            )
+        )
 
-def test_a_template_block_with_declared_state_compiles(
-    spec_factory: Callable[..., AgentSpecV1],
-    plan_for: Callable[..., Any],
-) -> None:
-    spec = spec_factory(
-        instructions=(
-            InstructionBlock(text="Hello {{name}}", name="greeting", template="handlebars"),
-        ),
-        deps_type="dict",
-    )
+        issue = single_issue_for(spec)
 
-    plan = plan_for(spec)
+        assert issue.code == AgentErrorCode.INSTRUCTION_BLOCK_INVALID
+        assert "greeting" in issue.message
+        assert "state" in issue.message
 
-    assert plan.instructions == (
-        CompiledInstruction(text="Hello {{name}}", name="greeting", template="handlebars"),
-    )
+    def test_a_template_block_with_declared_state_compiles(
+        self,
+        spec_factory: Callable[..., AgentSpecV1],
+        plan_for: Callable[..., Any],
+    ) -> None:
+        spec = spec_factory(
+            instructions=(
+                InstructionBlock(text="Hello {{name}}", name="greeting", template="handlebars"),
+            ),
+            deps_type="dict",
+        )
+
+        plan = plan_for(spec)
+
+        assert plan.instructions == (
+            CompiledInstruction(text="Hello {{name}}", name="greeting", template="handlebars"),
+        )

@@ -60,7 +60,6 @@ class SQLAlchemyStoreElevation:
         return self._open_session().invalidate()
 
     def _open_session(self) -> AsyncSession:
-        # Called only while in_transaction() holds, so the participant holds one.
         return cast("AsyncSession", self._session_manager.active_session)
 
 

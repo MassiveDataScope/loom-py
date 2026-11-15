@@ -46,24 +46,25 @@ def _flow_yaml(write_config: ConfigWriter, topic_arn: str) -> Path:
     return write_config({"notifications": [notification]})
 
 
-def test_a_completed_flow_reaches_the_topic(
-    write_config: ConfigWriter, aws: AwsClientFactory, subscribed: _Subscribed
-) -> None:
-    assert subscribed.topic_arn.split(":")[3] == REGION
-    path = _flow_yaml(write_config, subscribed.topic_arn)
-    raw: Any = OmegaConf.to_container(load_config(str(path)))
-    (notifier,) = build_notifiers(raw["notifications"], aws=raw["aws"])
+class TestSnsNotifier:
+    def test_a_completed_flow_reaches_the_topic(
+        self, write_config: ConfigWriter, aws: AwsClientFactory, subscribed: _Subscribed
+    ) -> None:
+        assert subscribed.topic_arn.split(":")[3] == REGION
+        path = _flow_yaml(write_config, subscribed.topic_arn)
+        raw: Any = OmegaConf.to_container(load_config(str(path)))
+        (notifier,) = build_notifiers(raw["notifications"], aws=raw["aws"])
 
-    notifier.notify(
-        NotifyEvent(
-            flow_name="daily-orders",
-            flow_run_name="run-1",
-            flow_run_url="",
-            state="Completed",
-            correlation_id="c-1",
+        notifier.notify(
+            NotifyEvent(
+                flow_name="daily-orders",
+                flow_run_name="run-1",
+                flow_run_url="",
+                state="Completed",
+                correlation_id="c-1",
+            )
         )
-    )
 
-    response = aws("sqs").receive_message(QueueUrl=subscribed.queue_url, WaitTimeSeconds=5)
-    (message,) = response["Messages"]
-    assert message["Body"].startswith("daily-orders -> Completed")
+        response = aws("sqs").receive_message(QueueUrl=subscribed.queue_url, WaitTimeSeconds=5)
+        (message,) = response["Messages"]
+        assert message["Body"].startswith("daily-orders -> Completed")

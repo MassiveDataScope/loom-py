@@ -40,86 +40,80 @@ def _spec(*, allow_empty: bool) -> Any:
     return IntoTable(_REF).replace(allow_empty=allow_empty)._to_spec()
 
 
-def test_an_empty_frame_leaves_the_existing_table_untouched(tmp_path: Path) -> None:
-    path = _seed(tmp_path)
-    version = DeltaTable(str(path)).version()
+class TestReplaceAllowEmpty:
+    def test_an_empty_frame_leaves_the_existing_table_untouched(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        version = DeltaTable(str(path)).version()
 
-    with pytest.raises(EmptyReplaceError, match="silver.dim_dealer") as exc_info:
-        _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=False), None)
+        with pytest.raises(EmptyReplaceError, match="silver.dim_dealer") as exc_info:
+            _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=False), None)
 
-    assert exc_info.value.table_ref == "silver.dim_dealer"
-    assert DeltaTable(str(path)).version() == version
-    assert _rows(path) == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        assert exc_info.value.table_ref == "silver.dim_dealer"
+        assert DeltaTable(str(path)).version() == version
+        assert _rows(path) == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
 
+    def test_an_empty_frame_does_not_create_a_missing_table(self, tmp_path: Path) -> None:
+        with pytest.raises(EmptyReplaceError):
+            _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=False), None)
 
-def test_an_empty_frame_does_not_create_a_missing_table(tmp_path: Path) -> None:
-    with pytest.raises(EmptyReplaceError):
-        _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=False), None)
+        assert not table_path(tmp_path, _REF).exists()
 
-    assert not table_path(tmp_path, _REF).exists()
+    def test_rows_replace_the_table_as_usual(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        frame = pl.DataFrame({"id": [3], "name": ["c"]}).lazy()
 
+        _writer(tmp_path).write(frame, _spec(allow_empty=False), None)
 
-def test_rows_replace_the_table_as_usual(tmp_path: Path) -> None:
-    path = _seed(tmp_path)
-    frame = pl.DataFrame({"id": [3], "name": ["c"]}).lazy()
+        assert _rows(path) == [{"id": 3, "name": "c"}]
 
-    _writer(tmp_path).write(frame, _spec(allow_empty=False), None)
+    def test_by_default_an_empty_frame_still_empties_the_table(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
 
-    assert _rows(path) == [{"id": 3, "name": "c"}]
+        _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=True), None)
 
+        assert _rows(path) == []
 
-def test_by_default_an_empty_frame_still_empties_the_table(tmp_path: Path) -> None:
-    path = _seed(tmp_path)
+    def test_the_write_collects_the_frame_once(self, tmp_path: Path) -> None:
+        _seed(tmp_path)
+        batches: list[int] = []
 
-    _writer(tmp_path).write(_EMPTY.lazy(), _spec(allow_empty=True), None)
+        def _count(frame: pl.DataFrame) -> pl.DataFrame:
+            batches.append(frame.height)
+            return frame
 
-    assert _rows(path) == []
+        counted = _EMPTY.lazy().map_batches(_count, schema=_EMPTY.schema)
 
+        with pytest.raises(EmptyReplaceError):
+            _writer(tmp_path).write(counted, _spec(allow_empty=False), None)
 
-def test_the_write_collects_the_frame_once(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    batches: list[int] = []
+        assert batches == [0]
 
-    def _count(frame: pl.DataFrame) -> pl.DataFrame:
-        batches.append(frame.height)
-        return frame
+    def test_a_streamed_empty_frame_leaves_the_table_untouched(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        spec = IntoTable(_REF).replace(streaming=True, allow_empty=False)._to_spec()
 
-    counted = _EMPTY.lazy().map_batches(_count, schema=_EMPTY.schema)
+        with pytest.raises(EmptyReplaceError):
+            _writer(tmp_path).write(_EMPTY.lazy(), spec, None, streaming=True)
 
-    with pytest.raises(EmptyReplaceError):
-        _writer(tmp_path).write(counted, _spec(allow_empty=False), None)
+        assert _rows(path) == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
 
-    assert batches == [0]
+    def test_an_empty_frame_does_not_overwrite_the_schema(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        version = DeltaTable(str(path)).version()
+        spec = IntoTable(_REF).replace(schema=SchemaMode.OVERWRITE, allow_empty=False)._to_spec()
+        reshaped = pl.DataFrame({"code": []}, schema={"code": pl.String}).lazy()
 
+        with pytest.raises(EmptyReplaceError):
+            _writer(tmp_path).write(reshaped, spec, None)
 
-def test_a_streamed_empty_frame_leaves_the_table_untouched(tmp_path: Path) -> None:
-    path = _seed(tmp_path)
-    spec = IntoTable(_REF).replace(streaming=True, allow_empty=False)._to_spec()
+        assert DeltaTable(str(path)).version() == version
+        assert pl.read_delta(str(path)).columns == ["id", "name"]
 
-    with pytest.raises(EmptyReplaceError):
-        _writer(tmp_path).write(_EMPTY.lazy(), spec, None, streaming=True)
+    def test_a_null_typed_column_is_reported_before_the_empty_frame(self, tmp_path: Path) -> None:
+        untyped = pl.DataFrame({"id": [], "name": []}).lazy()
+        assert untyped.collect_schema()["name"] == pl.Null
 
-    assert _rows(path) == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+        with pytest.raises(SchemaError, match="Null dtype"):
+            _writer(tmp_path).write(untyped, _spec(allow_empty=False), None)
 
-
-def test_an_empty_frame_does_not_overwrite_the_schema(tmp_path: Path) -> None:
-    path = _seed(tmp_path)
-    version = DeltaTable(str(path)).version()
-    spec = IntoTable(_REF).replace(schema=SchemaMode.OVERWRITE, allow_empty=False)._to_spec()
-    reshaped = pl.DataFrame({"code": []}, schema={"code": pl.String}).lazy()
-
-    with pytest.raises(EmptyReplaceError):
-        _writer(tmp_path).write(reshaped, spec, None)
-
-    assert DeltaTable(str(path)).version() == version
-    assert pl.read_delta(str(path)).columns == ["id", "name"]
-
-
-def test_a_null_typed_column_is_reported_before_the_empty_frame(tmp_path: Path) -> None:
-    untyped = pl.DataFrame({"id": [], "name": []}).lazy()
-    assert untyped.collect_schema()["name"] == pl.Null
-
-    with pytest.raises(SchemaError, match="Null dtype"):
-        _writer(tmp_path).write(untyped, _spec(allow_empty=False), None)
-
-    assert not table_path(tmp_path, _REF).exists()
+        assert not table_path(tmp_path, _REF).exists()

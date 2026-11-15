@@ -159,8 +159,6 @@ def adopt_host_id_generator(provider: object) -> bool:
             },
         )
         return False
-    # The SDK narrows the ``id_generator`` attribute annotation to its concrete
-    # default while its constructor accepts any ``IdGenerator``.
     provider.id_generator = LoomMessageIdGenerator(provider.id_generator)  # type: ignore[assignment]
     return True
 

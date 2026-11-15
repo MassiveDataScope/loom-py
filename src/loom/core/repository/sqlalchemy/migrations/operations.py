@@ -171,7 +171,6 @@ class EnsureRangePartitionsOp(MigrateOperation):
         operations.invoke(cls(table, start, end, interval))
 
     def reverse(self) -> NoReturn:
-        # Refused: dropping the whole range would drop partitions that existed before.
         raise ConfigError(
             f"the downgrade of {self.table!r} must detach only the partitions this revision "
             f"created: write op.detach_range_partitions({self.table!r}, <start>, <end>, "
@@ -253,8 +252,6 @@ class HandWrittenProtectOp(MigrateOperation):
         return ("hand_written_protect", self.table)
 
 
-# A string, so it is not evaluated at import: the docs build mocks alembic, and
-# the decorated operation classes are then not types.
 _PartitionOp: TypeAlias = "EnsureRangePartitionsOp | DetachRangePartitionsOp | DropPartitionsOp"
 
 
@@ -294,7 +291,7 @@ def run_guard_operation(operations: GuardOperations, op: MigrateOperation) -> No
     try:
         _call_guard(bind, str(schema), op)
     except DBAPIError:
-        aborted = True  # the rollback of the aborted transaction undoes the local path
+        aborted = True
         raise
     finally:
         if not aborted:

@@ -56,7 +56,6 @@ from loom.celery._discovery import (
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
 from loom.celery.runner import (
     _CeleryAsyncRuntime,
-    _make_callback_error_task,
     _make_callback_task,
     _make_job_task,
 )
@@ -78,6 +77,7 @@ from loom.core.discovery.worker import (
     use_cases_from_interfaces,
 )
 from loom.core.engine.compilable import Compilable
+from loom.core.job.callback import CallbackOutcome
 from loom.core.persistence import WORKER_PROFILE
 from loom.core.runner import shutdown_runner
 
@@ -96,11 +96,6 @@ _SIGNAL_UIDS = {
     worker_process_shutdown: "loom.celery.worker.process_shutdown",
     worker_shutdown: "loom.celery.worker.shutdown",
 }
-
-
-# ---------------------------------------------------------------------------
-# Celery worker lifecycle signals
-# ---------------------------------------------------------------------------
 
 
 class _AsyncRuntimeProtocol(Protocol):
@@ -172,7 +167,6 @@ class _WorkerLifecycle:
         """
         try:
             if _is_prefork(worker):
-                # No bridge in the parent: a thread must not cross the fork.
                 asyncio.run(self._application.check())
             else:
                 self._open(check=True)
@@ -259,11 +253,6 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
         signal.connect(handler, weak=False, dispatch_uid=uid)
 
 
-# ---------------------------------------------------------------------------
-# Task registration
-# ---------------------------------------------------------------------------
-
-
 def _register_tasks(
     celery_app: Celery,
     declared: _Declared,
@@ -271,7 +260,7 @@ def _register_tasks(
     async_runtime: _CeleryAsyncRuntime,
     metrics: MetricsAdapter | None,
 ) -> None:
-    """Register one task per job and two per callback class."""
+    """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
     for job_type in declared.jobs:
         _make_job_task(
@@ -285,25 +274,15 @@ def _register_tasks(
             settings=application.job_settings,
         )
     for callback_type in declared.callbacks:
-        _make_callback_task(
-            celery_app,
-            callback_type,
-            kernel.factory,
-            async_runtime,
-            observability_runtime=observability,
-        )
-        _make_callback_error_task(
-            celery_app,
-            callback_type,
-            kernel.factory,
-            async_runtime,
-            observability_runtime=observability,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
+        for outcome in CallbackOutcome:
+            _make_callback_task(
+                celery_app,
+                callback_type,
+                outcome,
+                kernel.factory,
+                async_runtime,
+                observability_runtime=observability,
+            )
 
 
 @dataclass(frozen=True)
@@ -385,7 +364,6 @@ class CeleryAdapter:
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
                 models=resolved.models,
-                # Jobs compile and register like any use case.
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
                 jobs=resolved.jobs,
@@ -393,9 +371,7 @@ class CeleryAdapter:
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,
-            # Without models the worker serves only a unit of work: no cursor
-            # codec is built, and the shared metadata the caller compiled into
-            # stays as it is.
+            callbacks=resolved.callbacks,
             connection_only=not resolved.models,
         )
 

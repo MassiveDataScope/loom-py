@@ -117,10 +117,6 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         self._missing_table_policy = missing_table_policy
         self._audit_config: AuditConfig = audit_config or AuditConfig()
 
-    # ========================================================================
-    # Public API (from TargetWriter)
-    # ========================================================================
-
     def write(
         self,
         frame: InputFrameT,
@@ -186,10 +182,6 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 self._do_historify(frame, target, spec, params_instance)
             case _:
                 raise TypeError(f"Unsupported target spec: {type(spec)!r}")
-
-    # ========================================================================
-    # Template Methods (shared policy)
-    # ========================================================================
 
     def _prepare_write(
         self,
@@ -549,10 +541,6 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         else:
             self._replace(result, target, schema_mode=spec.schema_mode)
 
-    # ========================================================================
-    # Audit Hook (overrideable — default is a no-op)
-    # ========================================================================
-
     def _apply_audit_columns(
         self,
         frame: InputFrameT,
@@ -576,10 +564,6 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             Frame with audit columns added (or the original frame unchanged).
         """
         return frame
-
-    # ========================================================================
-    # Abstract Hooks (backend-specific implementations)
-    # ========================================================================
 
     @abstractmethod
     def _physical_schema(self, target: ResolvedTarget) -> PhysicalSchemaT | None:

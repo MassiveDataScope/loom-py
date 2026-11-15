@@ -15,7 +15,10 @@ from loom.core.config import default_resolvers
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
+from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
+
+pytest_plugins = ["tests.helpers.delegation"]
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"
@@ -153,6 +156,19 @@ def assert_output_snapshot(update_golden: bool) -> Any:
         )
 
     return _assert
+
+
+@pytest.fixture(autouse=True)
+def _entry_points_read_afresh() -> Iterator[None]:
+    """Read the installed entry points afresh in each test.
+
+    ``list_entry_points`` keeps each group for the life of the process; a test
+    that replaces ``entry_points`` or installs a distribution would otherwise
+    resolve plugins from what an earlier test read.
+    """
+    list_entry_points.cache_clear()
+    yield
+    list_entry_points.cache_clear()
 
 
 @pytest.fixture(scope="session", autouse=True)

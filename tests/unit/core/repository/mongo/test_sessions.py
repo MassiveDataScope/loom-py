@@ -26,7 +26,7 @@ def _client(fake: FakeMongoClient) -> AsyncMongoClient[Any]:
     return cast(AsyncMongoClient[Any], fake)
 
 
-class _Stores:
+class AcmeMongoSessionStores:
     """Two transactional Mongo stores, each on a client of its own."""
 
     def __init__(self) -> None:
@@ -51,7 +51,7 @@ class _Stores:
 
 class TestWriteIntent:
     async def test_a_write_from_a_gather_child_is_refused_even_when_not_enlisted(self) -> None:
-        stores = _Stores()
+        stores = AcmeMongoSessionStores()
 
         async def write() -> object:
             return stores.audit_sessions(True)
@@ -62,7 +62,7 @@ class TestWriteIntent:
                 await child
 
     async def test_a_write_marks_the_participant(self) -> None:
-        stores = _Stores()
+        stores = AcmeMongoSessionStores()
 
         async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
             stores.default_sessions(True)

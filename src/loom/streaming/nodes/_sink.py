@@ -18,7 +18,7 @@ from loom.core.async_bridge import AsyncBridge
 from loom.streaming.core._message import StreamPayload
 
 EventT_contra = TypeVar("EventT_contra", bound=StreamPayload, contravariant=True)
-EventT = TypeVar("EventT", bound=StreamPayload)  # invariant — used where type[T] appears
+EventT = TypeVar("EventT", bound=StreamPayload)
 
 
 class SinkPartition(Protocol[EventT_contra]):

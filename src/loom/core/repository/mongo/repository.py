@@ -3,7 +3,7 @@
 The repository speaks to one ``AsyncCollection`` through pymongo's native
 async client, so every driver call is awaited directly. The model's primary
 key is stored as ``_id`` and mapped back on read, so a model declaring
-``slug`` as its key never sees ``_id`` (FR-013). The key is minted by an
+``slug`` as its key never sees ``_id``. The key is minted by an
 :class:`~loom.core.repository.mongo.ids.IdPolicy` when the input carries
 none.
 
@@ -82,7 +82,6 @@ _log = get_logger(__name__).bind(component="repository")
 _ID = "_id"
 _ID_ASCENDING: tuple[str, int] = (_ID, 1)
 _DUPLICATE_KEY = 11000
-# BSON encodes datetime natively; every other rich type is stored as a string.
 _NATIVE_TYPES = (datetime,)
 
 
@@ -225,7 +224,6 @@ class RepositoryMongo(
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
-        # Documents order any column; the sort check keeps the types a token carries.
         self._cursor_columns = column_annotations(model)
         self._naive_datetime_fields = frozenset(
             name
@@ -548,7 +546,6 @@ class RepositoryMongo(
         }
         payload = cast(dict[str, Any], builtins)
         internal = {encoded_to_internal.get(key, key): value for key, value in payload.items()}
-        # ``to_builtins`` already stringified every other rich type; only ``datetime`` converts.
         return {
             name: to_storage_value(value)
             for name, value in internal.items()

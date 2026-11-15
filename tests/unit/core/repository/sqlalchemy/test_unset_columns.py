@@ -69,19 +69,19 @@ async def _stored_row(session_manager: SessionManager, badge_id: int) -> tuple[A
         return tuple(result.one())
 
 
-async def test_an_unset_field_left_out_on_create_is_stored_as_null(
-    repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
-) -> None:
-    created = await repo.create(_CreateBadge(label="first"))
+class TestUnsetColumns:
+    async def test_an_unset_field_left_out_on_create_is_stored_as_null(
+        self, repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
+    ) -> None:
+        created = await repo.create(_CreateBadge(label="first"))
 
-    assert await _stored_row(session_manager, created.id) == ("first", None)
-    assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note=None)
+        assert await _stored_row(session_manager, created.id) == ("first", None)
+        assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note=None)
 
+    async def test_an_unset_field_given_on_create_is_stored_as_its_scalar_value(
+        self, repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
+    ) -> None:
+        created = await repo.create(_CreateBadge(label="first", note="kept"))
 
-async def test_an_unset_field_given_on_create_is_stored_as_its_scalar_value(
-    repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
-) -> None:
-    created = await repo.create(_CreateBadge(label="first", note="kept"))
-
-    assert await _stored_row(session_manager, created.id) == ("first", "kept")
-    assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note="kept")
+        assert await _stored_row(session_manager, created.id) == ("first", "kept")
+        assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note="kept")

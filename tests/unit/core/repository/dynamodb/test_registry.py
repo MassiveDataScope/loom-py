@@ -24,30 +24,30 @@ def _container(fake_client: FakeClient) -> LoomContainer:
     return container
 
 
-def test_module_registers_default_builder(fake_client: FakeClient) -> None:
-    container = _container(fake_client)
+class TestDynamoRegistry:
+    def test_module_registers_default_builder(self, fake_client: FakeClient) -> None:
+        container = _container(fake_client)
 
-    builder = container.resolve(DefaultRepositoryBuilder)
-    assert isinstance(builder, DynamoDBDefaultRepositoryBuilder)
+        builder = container.resolve(DefaultRepositoryBuilder)
+        assert isinstance(builder, DynamoDBDefaultRepositoryBuilder)
 
+    def test_module_registers_capability_bindings(self, fake_client: FakeClient) -> None:
+        container = _container(fake_client)
 
-def test_module_registers_capability_bindings(fake_client: FakeClient) -> None:
-    container = _container(fake_client)
+        repo = container.resolve(Readable[Product])
+        assert isinstance(repo, RepositoryDynamoDB)
+        assert container.resolve_repo(Product) is not None
 
-    repo = container.resolve(Readable[Product])
-    assert isinstance(repo, RepositoryDynamoDB)
-    assert container.resolve_repo(Product) is not None
+    @pytest.mark.asyncio
+    async def test_registered_repository_persists_through_fake_client(
+        self,
+        fake_client: FakeClient,
+    ) -> None:
+        container = _container(fake_client)
 
+        repo = container.resolve(Creatable[Product])
+        created = await repo.create(ProductCreate(id=1, name="Widget", price=2.5))
+        assert created == Product(id=1, name="Widget", price=2.5)
 
-@pytest.mark.asyncio
-async def test_registered_repository_persists_through_fake_client(
-    fake_client: FakeClient,
-) -> None:
-    container = _container(fake_client)
-
-    repo = container.resolve(Creatable[Product])
-    created = await repo.create(ProductCreate(id=1, name="Widget", price=2.5))
-    assert created == Product(id=1, name="Widget", price=2.5)
-
-    reader = container.resolve(Readable[Product])
-    assert await reader.get_by_id(1) == Product(id=1, name="Widget", price=2.5)
+        reader = container.resolve(Readable[Product])
+        assert await reader.get_by_id(1) == Product(id=1, name="Widget", price=2.5)

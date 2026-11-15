@@ -46,9 +46,6 @@ __all__ = [
     "supported_crud_ops",
 ]
 
-# ---------------------------------------------------------------------------
-# Operation metadata
-# ---------------------------------------------------------------------------
 
 _ALL_OPS: tuple[CrudOp, ...] = tuple(CrudOp)
 
@@ -79,10 +76,6 @@ CRUD_OP_CAPABILITY: dict[CrudOp, type] = {
 }
 """Repository capability protocol each CRUD operation needs."""
 
-# ---------------------------------------------------------------------------
-# ID coercion
-# ---------------------------------------------------------------------------
-
 
 def _id_coerce(model: type[Any]) -> Callable[[Any], Any]:
     """Return ``int`` coercer when model declares ``id: int``, else identity.
@@ -109,11 +102,6 @@ def _id_annotation(model: type[Any]) -> Any:
         return str
     annotation = hints.get("id", str)
     return annotation if annotation is not Any else str
-
-
-# ---------------------------------------------------------------------------
-# Input struct derivation
-# ---------------------------------------------------------------------------
 
 
 def _server_generated_names(model: type[Any]) -> frozenset[str]:
@@ -241,11 +229,6 @@ def _derive_update_struct(model: type[Any]) -> type[Command]:
             frozen=True,
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# UseCase class factories
-# ---------------------------------------------------------------------------
 
 
 def _make_create(model: type[Any], create_input: type[Any]) -> type[UseCase[Any, Any]]:
@@ -390,10 +373,6 @@ def _make_delete(
     return AutoDelete
 
 
-# ---------------------------------------------------------------------------
-# Per-model cache
-# ---------------------------------------------------------------------------
-
 _UC_CACHE: dict[type[Any], dict[str, Any]] = {}
 
 
@@ -431,11 +410,6 @@ def _get_or_create(model: type[Any]) -> dict[str, Any]:
         set_use_case_key(use_case_type, f"{entity}{KEY_SEPARATOR}{operation}")
     _UC_CACHE[model] = result
     return result
-
-
-# ---------------------------------------------------------------------------
-# Capability detection
-# ---------------------------------------------------------------------------
 
 
 def supported_crud_ops(repository_type: type[Any]) -> frozenset[CrudOp]:
@@ -520,11 +494,6 @@ def crud_op_of(use_case_type: type[Any]) -> CrudOp:
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def build_auto_routes(
     model: type[Any],
     include: tuple[str, ...],
@@ -553,7 +522,7 @@ def build_auto_routes(
 
         routes = build_auto_routes(User, include=("create", "get", "list"))
     """
-    from loom.rest.model import RestRoute  # lazy — avoids circular import
+    from loom.rest.model import RestRoute
 
     key = _composite_key(model)
     by_id = [str(op) for op in include if op in _BY_ID_OPS]

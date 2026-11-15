@@ -31,7 +31,7 @@ from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.model.types import Integer, String, Text
 
 
-class Note(BaseModel, RowScoped):
+class AcmeScopedNote(BaseModel, RowScoped):
     __tablename__ = "notes"
     key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
@@ -91,205 +91,192 @@ def _ddl(table: Table, event: str) -> list[tuple[str, Any]]:
     return connection.calls
 
 
-def test_parameterless_guard_calls_are_fixed_statements() -> None:
-    assert OPEN_HATCH == "SELECT open_hatch()"
-    assert ASSERT_SCHEMA == "SELECT assert_scoped_schema()"
+class TestScopedGuardStatements:
+    def test_parameterless_guard_calls_are_fixed_statements(self) -> None:
+        assert OPEN_HATCH == "SELECT open_hatch()"
+        assert ASSERT_SCHEMA == "SELECT assert_scoped_schema()"
 
-
-@pytest.mark.parametrize(
-    ("statement", "parameter"),
-    [
-        (PROTECT, ":schema"),
-        (PROTECT, ":table"),
-        (PROTECT, ":scopes"),
-        (PROTECT, ":privileges"),
-        (UNPROTECT, ":schema"),
-        (UNPROTECT, ":table"),
-        (GRANT_TABLE, ":readers"),
-        (GRANT_TABLE, ":writers"),
-        (GUARD_FIRST, ":guard"),
-        (APP_FIRST, ":schema"),
-        (APP_FIRST, ":guard"),
-        (MISSING_EVENT_TRIGGERS, ":guard"),
-    ],
-)
-def test_every_guard_call_binds_its_parameters(statement: str, parameter: str) -> None:
-    assert parameter in statement
-
-
-def test_the_guard_comes_first_for_its_calls_and_last_for_the_ddl() -> None:
-    assert GUARD_FIRST.index(":guard") < GUARD_FIRST.index("pg_catalog")
-    assert APP_FIRST.index(":schema") < APP_FIRST.index(":guard")
-
-
-def test_an_event_trigger_is_trusted_by_owner_not_by_superuser_flag() -> None:
-    assert "rolsuper" not in MISSING_EVENT_TRIGGERS
-    assert "evtowner = n.nspowner" in MISSING_EVENT_TRIGGERS
-
-
-def test_protect_passes_the_table_the_scopes_json_and_the_privileges() -> None:
-    scoped = scoped_tables(_metadata_of(Note))[(None, "notes")]
-
-    parameters = protect_parameters("s1", "notes", scoped)
-
-    assert parameters["schema"] == "s1"
-    assert parameters["table"] == "notes"
-    assert json.loads(parameters["scopes"]) == [
-        {"col": "key", "scope": "holder", "on": "both", "elevable": False},
-        {"col": "editor", "scope": "editor", "on": "write", "elevable": True},
-    ]
-    assert parameters["privileges"] == ["SELECT", "INSERT", "UPDATE", "DELETE"]
-
-
-def test_privileges_follow_the_guard_canonical_order() -> None:
-    names = privilege_names(frozenset({Privilege.DELETE, Privilege.SELECT}))
-
-    assert names == ["SELECT", "DELETE"]
-
-
-def test_global_table_grants_go_to_the_groups_as_privilege_lists() -> None:
-    parameters = grant_parameters("s1", "kinds", KIND_PRIVILEGES)
-
-    assert parameters == {
-        "schema": "s1",
-        "table": "kinds",
-        "readers": ["SELECT"],
-        "writers": ["INSERT"],
-    }
-
-
-def test_a_group_without_privileges_gets_an_empty_list() -> None:
-    parameters = grant_parameters("s1", "kinds", {"readers": frozenset({Privilege.SELECT})})
-
-    assert parameters["writers"] == []
-
-
-@pytest.mark.parametrize("bad", ["my-schema", "1st", "a.b", "drop table", "pg_x", "public"])
-def test_bad_schema_names_are_rejected(bad: str) -> None:
-    with pytest.raises(ValueError, match="identifier"):
-        table_parameters(bad, "notes")
-
-
-def test_a_schema_longer_than_the_guard_allows_is_rejected() -> None:
-    with pytest.raises(ValueError, match="at most 47"):
-        table_parameters("s" * 48, "notes")
-
-
-@pytest.mark.parametrize("bad", ["Notes", "a-b", "select"])
-def test_bad_table_names_are_rejected(bad: str) -> None:
-    with pytest.raises(ValueError, match="identifier"):
-        table_parameters("s1", bad)
-
-
-def test_a_scope_column_that_is_not_an_identifier_is_rejected() -> None:
-    scoped = ScopedTable(
-        schema=None,
-        name="notes",
-        scopes=(ScopeColumn(column="Bad-Col", scope="holder", on="both", elevable=False),),
-        privileges=frozenset({Privilege.SELECT}),
+    @pytest.mark.parametrize(
+        ("statement", "parameter"),
+        [
+            (PROTECT, ":schema"),
+            (PROTECT, ":table"),
+            (PROTECT, ":scopes"),
+            (PROTECT, ":privileges"),
+            (UNPROTECT, ":schema"),
+            (UNPROTECT, ":table"),
+            (GRANT_TABLE, ":readers"),
+            (GRANT_TABLE, ":writers"),
+            (GUARD_FIRST, ":guard"),
+            (APP_FIRST, ":schema"),
+            (APP_FIRST, ":guard"),
+            (MISSING_EVENT_TRIGGERS, ":guard"),
+        ],
     )
+    def test_every_guard_call_binds_its_parameters(self, statement: str, parameter: str) -> None:
+        assert parameter in statement
 
-    with pytest.raises(ValueError, match="identifier"):
-        scope_documents(scoped)
+    def test_the_guard_comes_first_for_its_calls_and_last_for_the_ddl(self) -> None:
+        assert GUARD_FIRST.index(":guard") < GUARD_FIRST.index("pg_catalog")
+        assert APP_FIRST.index(":schema") < APP_FIRST.index(":guard")
 
+    def test_an_event_trigger_is_trusted_by_owner_not_by_superuser_flag(self) -> None:
+        assert "rolsuper" not in MISSING_EVENT_TRIGGERS
+        assert "evtowner = n.nspowner" in MISSING_EVENT_TRIGGERS
 
-def test_a_scope_with_an_unknown_reach_is_rejected() -> None:
-    scoped = ScopedTable(
-        schema=None,
-        name="notes",
-        scopes=(ScopeColumn(column="key", scope="holder", on="never", elevable=False),),
-        privileges=frozenset({Privilege.SELECT}),
+    def test_protect_passes_the_table_the_scopes_json_and_the_privileges(self) -> None:
+        scoped = scoped_tables(_metadata_of(AcmeScopedNote))[(None, "notes")]
+
+        parameters = protect_parameters("s1", "notes", scoped)
+
+        assert parameters["schema"] == "s1"
+        assert parameters["table"] == "notes"
+        assert json.loads(parameters["scopes"]) == [
+            {"col": "key", "scope": "holder", "on": "both", "elevable": False},
+            {"col": "editor", "scope": "editor", "on": "write", "elevable": True},
+        ]
+        assert parameters["privileges"] == ["SELECT", "INSERT", "UPDATE", "DELETE"]
+
+    def test_privileges_follow_the_guard_canonical_order(self) -> None:
+        names = privilege_names(frozenset({Privilege.DELETE, Privilege.SELECT}))
+
+        assert names == ["SELECT", "DELETE"]
+
+    def test_global_table_grants_go_to_the_groups_as_privilege_lists(self) -> None:
+        parameters = grant_parameters("s1", "kinds", KIND_PRIVILEGES)
+
+        assert parameters == {
+            "schema": "s1",
+            "table": "kinds",
+            "readers": ["SELECT"],
+            "writers": ["INSERT"],
+        }
+
+    def test_a_group_without_privileges_gets_an_empty_list(self) -> None:
+        parameters = grant_parameters("s1", "kinds", {"readers": frozenset({Privilege.SELECT})})
+
+        assert parameters["writers"] == []
+
+    @pytest.mark.parametrize("bad", ["my-schema", "1st", "a.b", "drop table", "pg_x", "public"])
+    def test_bad_schema_names_are_rejected(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="identifier"):
+            table_parameters(bad, "notes")
+
+    def test_a_schema_longer_than_the_guard_allows_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at most 47"):
+            table_parameters("s" * 48, "notes")
+
+    @pytest.mark.parametrize("bad", ["Notes", "a-b", "select"])
+    def test_bad_table_names_are_rejected(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="identifier"):
+            table_parameters("s1", bad)
+
+    @pytest.mark.parametrize(
+        ("column", "on", "match"),
+        [
+            pytest.param(
+                "Bad-Col",
+                "both",
+                "identifier",
+                id="a_scope_column_that_is_not_an_identifier_is_rejected",
+            ),
+            pytest.param("key", "never", "reach", id="a_scope_with_an_unknown_reach_is_rejected"),
+        ],
     )
+    def test_an_invalid_scope_is_rejected(self, column: str, on: str, match: str) -> None:
+        scoped = ScopedTable(
+            schema=None,
+            name="notes",
+            scopes=(ScopeColumn(column=column, scope="holder", on=on, elevable=False),),
+            privileges=frozenset({Privilege.SELECT}),
+        )
 
-    with pytest.raises(ValueError, match="reach"):
-        scope_documents(scoped)
+        with pytest.raises(ValueError, match=match):
+            scope_documents(scoped)
+
+    def test_compile_registers_hatch_and_protect_listeners_on_a_scoped_table(self) -> None:
+        metadata = _metadata()
+
+        compile_all(AcmeScopedNote, metadata=metadata)
+
+        table = metadata.tables["notes"]
+        assert _ddl(table, "before_create") == [(OPEN_HATCH, {})]
+        assert _ddl(table, "after_create") == [
+            (PROTECT, protect_parameters("s1", "notes", scoped_tables(metadata)[(None, "notes")]))
+        ]
+
+    def test_compile_registers_grant_listeners_on_a_global_table_with_privileges(self) -> None:
+        metadata = _metadata()
+
+        compile_all(Kind, metadata=metadata)
+
+        assert _ddl(metadata.tables["kinds"], "after_create") == [
+            (GRANT_TABLE, grant_parameters("s1", "kinds", KIND_PRIVILEGES))
+        ]
+
+    def test_repeated_compile_registers_the_listeners_once_per_metadata(self) -> None:
+        metadata = _metadata()
+
+        compile_all(AcmeScopedNote, metadata=metadata)
+        compile_all(AcmeScopedNote, metadata=metadata)
+
+        assert len(_ddl(metadata.tables["notes"], "after_create")) == 1
+
+    def test_without_a_schema_in_the_metadata_nothing_is_registered(self) -> None:
+        metadata = MetaData()
+
+        compile_all(AcmeScopedNote, Kind, metadata=metadata)
+
+        assert _ddl(metadata.tables["notes"], "after_create") == []
+        assert _ddl(metadata.tables["kinds"], "after_create") == []
 
 
-def test_compile_registers_hatch_and_protect_listeners_on_a_scoped_table() -> None:
-    metadata = _metadata()
-
-    compile_all(Note, metadata=metadata)
-
-    table = metadata.tables["notes"]
-    assert _ddl(table, "before_create") == [(OPEN_HATCH, {})]
-    assert _ddl(table, "after_create") == [
-        (PROTECT, protect_parameters("s1", "notes", scoped_tables(metadata)[(None, "notes")]))
-    ]
-
-
-def test_compile_registers_grant_listeners_on_a_global_table_with_privileges() -> None:
-    metadata = _metadata()
-
-    compile_all(Kind, metadata=metadata)
-
-    assert _ddl(metadata.tables["kinds"], "after_create") == [
-        (GRANT_TABLE, grant_parameters("s1", "kinds", KIND_PRIVILEGES))
-    ]
-
-
-def test_repeated_compile_registers_the_listeners_once_per_metadata() -> None:
-    metadata = _metadata()
-
-    compile_all(Note, metadata=metadata)
-    compile_all(Note, metadata=metadata)
-
-    assert len(_ddl(metadata.tables["notes"], "after_create")) == 1
-
-
-def test_without_a_schema_in_the_metadata_nothing_is_registered() -> None:
-    metadata = MetaData()
-
-    compile_all(Note, Kind, metadata=metadata)
-
-    assert _ddl(metadata.tables["notes"], "after_create") == []
-    assert _ddl(metadata.tables["kinds"], "after_create") == []
-
-
-class Ledger(BaseModel, RowScoped):
+class AcmeDdlLedger(BaseModel, RowScoped):
     __tablename__ = "ledger"
     holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True)
 
 
-def test_listeners_emit_only_on_postgres() -> None:
-    metadata = _metadata()
-    compile_all(Ledger, metadata=metadata)
-    engine = create_engine("sqlite://")
+class TestScopedListeners:
+    def test_listeners_emit_only_on_postgres(self) -> None:
+        metadata = _metadata()
+        compile_all(AcmeDdlLedger, metadata=metadata)
+        engine = create_engine("sqlite://")
 
-    metadata.create_all(engine)
+        metadata.create_all(engine)
 
-    with engine.connect() as connection:
-        assert "ledger" in engine.dialect.get_table_names(connection)
-    assert _ddl(metadata.tables["ledger"], "after_create")[0][0] == PROTECT
+        with engine.connect() as connection:
+            assert "ledger" in engine.dialect.get_table_names(connection)
+        assert _ddl(metadata.tables["ledger"], "after_create")[0][0] == PROTECT
 
+    def test_scoped_models_on_another_dialect_raise_unless_explicitly_allowed(self) -> None:
+        metadata = _metadata()
+        compile_all(AcmeScopedNote, metadata=metadata)
+        scoped = scoped_tables(metadata)
 
-def test_scoped_models_on_another_dialect_raise_unless_explicitly_allowed() -> None:
-    metadata = _metadata()
-    compile_all(Note, metadata=metadata)
-    scoped = scoped_tables(metadata)
+        with pytest.raises(ConfigError, match=r"sqlite.*notes"):
+            check_dialect("sqlite", scoped, allow_unprotected=False, path="stores.default")
 
-    with pytest.raises(ConfigError, match=r"sqlite.*notes"):
-        check_dialect("sqlite", scoped, allow_unprotected=False, path="stores.default")
+        assert check_dialect("sqlite", scoped, allow_unprotected=True, path="stores.default") == (
+            "notes",
+        )
+        assert (
+            check_dialect("postgresql", scoped, allow_unprotected=False, path="stores.default")
+            == ()
+        )
 
-    assert check_dialect("sqlite", scoped, allow_unprotected=True, path="stores.default") == (
-        "notes",
-    )
-    assert check_dialect("postgresql", scoped, allow_unprotected=False, path="stores.default") == ()
+    def test_a_guard_call_inside_create_schema_resolves_the_guard_first(self) -> None:
+        metadata = _metadata_of(AcmeScopedNote)
+        connection = _Connection({GUARD_PATH: {"schema": "s1", "guard": "g1"}})
 
+        _fire(metadata.tables["notes"], "after_create", connection)
 
-def test_a_guard_call_inside_create_schema_resolves_the_guard_first() -> None:
-    metadata = _metadata_of(Note)
-    connection = _Connection({GUARD_PATH: {"schema": "s1", "guard": "g1"}})
+        assert connection.statements == [GUARD_FIRST, PROTECT, APP_FIRST]
 
-    _fire(metadata.tables["notes"], "after_create", connection)
+    def test_a_guard_call_outside_create_schema_runs_alone(self) -> None:
+        metadata = _metadata_of(AcmeScopedNote)
+        connection = _Connection()
 
-    assert connection.statements == [GUARD_FIRST, PROTECT, APP_FIRST]
+        _fire(metadata.tables["notes"], "before_create", connection)
 
-
-def test_a_guard_call_outside_create_schema_runs_alone() -> None:
-    metadata = _metadata_of(Note)
-    connection = _Connection()
-
-    _fire(metadata.tables["notes"], "before_create", connection)
-
-    assert connection.statements == [OPEN_HATCH]
+        assert connection.statements == [OPEN_HATCH]

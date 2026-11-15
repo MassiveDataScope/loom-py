@@ -25,7 +25,15 @@ from time import perf_counter
 from typing import Self
 
 from opentelemetry.context import Context
-from opentelemetry.trace import Link, Span, SpanContext, StatusCode, Tracer, use_span
+from opentelemetry.trace import (
+    Link,
+    Span,
+    SpanContext,
+    StatusCode,
+    Tracer,
+    get_current_span,
+    use_span,
+)
 
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
@@ -342,10 +350,6 @@ class LoomSpan:
         if not self._closing:
             return
         attributes = event.otel_attributes()
-        # Filtered from what the event produced rather than looked up key by
-        # key: the day ``otel_attributes`` drops a meta entry — a ``None``, an
-        # empty mapping — a lookup would raise inside ``_close``, before the
-        # span is ended, and the failure would escape into the caller.
         self._span.set_attributes(
             {key: value for key, value in attributes.items() if key in self._closing}
         )
@@ -364,4 +368,13 @@ class LoomSpan:
         self._on_closed()
 
 
-__all__ = ["LoomSpan"]
+def annotate_current_span(attributes: Mapping[str, str]) -> None:
+    """Set *attributes* on the span current in this context, if any.
+
+    The one way a layer under observability (the acting identity) marks the
+    span it runs in without importing OpenTelemetry itself.
+    """
+    get_current_span().set_attributes(attributes)
+
+
+__all__ = ["LoomSpan", "annotate_current_span"]

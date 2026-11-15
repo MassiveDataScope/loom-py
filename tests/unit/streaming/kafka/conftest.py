@@ -14,7 +14,7 @@ from loom.streaming.kafka import (
     build_message,
 )
 from tests.unit.streaming.kafka.cases import OrderCreated, ProductEvent
-from tests.unit.streaming.kafka.fakes import RawConsumerStub, RawProducerStub
+from tests.unit.streaming.kafka.doubles import RawConsumerStub, RawProducerStub
 
 _ORDER_CREATED_TYPE = "order.created"
 

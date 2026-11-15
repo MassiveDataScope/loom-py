@@ -25,25 +25,24 @@ def _error() -> WorkerNotOpenError:
         return error
 
 
-def test_the_message_names_the_cause_type_and_masks_its_password() -> None:
-    error = _error()
+class TestWorkerNotOpenError:
+    def test_the_message_names_the_cause_type_and_masks_its_password(self) -> None:
+        error = _error()
 
-    assert "secret" not in str(error)
-    assert "_ConnectFailed" in str(error)
-    assert "postgresql://u:***@host/db" in str(error)
+        assert "secret" not in str(error)
+        assert "_ConnectFailed" in str(error)
+        assert "postgresql://u:***@host/db" in str(error)
 
+    def test_the_full_cause_stays_on_the_chain_only(self) -> None:
+        error = _error()
 
-def test_the_full_cause_stays_on_the_chain_only() -> None:
-    error = _error()
+        assert isinstance(error.__cause__, _ConnectFailed)
+        assert "secret" not in repr(vars(error))
+        assert b"secret" not in pickle.dumps(error)
 
-    assert isinstance(error.__cause__, _ConnectFailed)
-    assert "secret" not in repr(vars(error))
-    assert b"secret" not in pickle.dumps(error)
+    def test_a_dsn_after_a_query_or_fragment_is_masked_too(self) -> None:
+        cause = _ConnectFailed(f"retry?attempt=2 then {_DSN} #3 redis://:pw@cache:6379/0")
 
+        message = str(WorkerNotOpenError(cause))
 
-def test_a_dsn_after_a_query_or_fragment_is_masked_too() -> None:
-    cause = _ConnectFailed(f"retry?attempt=2 then {_DSN} #3 redis://:pw@cache:6379/0")
-
-    message = str(WorkerNotOpenError(cause))
-
-    assert ("secret" in message, "pw@" in message) == (False, False)
+        assert ("secret" in message, "pw@" in message) == (False, False)

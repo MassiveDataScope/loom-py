@@ -1,21 +1,10 @@
-"""The capability call boundary: who runs a tool, and what may escape it.
+"""The capability call boundary: the identity a tool runs as, its bound, and what escapes it.
 
-Two of the four invariants of a capability call hold here (US5):
-
-* **The call runs as the caller, or it does not run.** The dependency bundle
-  must carry a verified :class:`~loom.core.identity.Identity` *and* the
-  application container. A bundle carrying neither fails closed with
-  ``UNAUTHORIZED``; it is never degraded to ``ANONYMOUS`` (FR-043, FR-045).
-* **No raw application failure escapes a tool.** An authorisation denial is
-  re-raised as ``UNAUTHORIZED`` — an ``AUTHORIZATION`` code the retry policy
-  never replays — and every other failure is logged server-side and answered
-  with a generic refusal value. Were it allowed to escape, the engine's
-  classifier would read it as ``PROVIDER_UNAVAILABLE``, the run would be
-  replayed, and an already-successful mutating use case would run again.
-
-Every guard lives **inside** a tool body, never at engine build: a
-pure-language agent holds no capability, so its dependency bundle may
-legitimately be ``None`` and building its engine must not require one.
+Every tool acts as the identity of the execution in progress, refused past
+its deadline and when anonymous
+(:func:`~loom.ai.errors.require_authenticated`).  An application denial
+leaves a tool as ``UNAUTHORIZED``; every other application failure leaves it
+as a refusal value, logged server-side.
 """
 
 from __future__ import annotations
@@ -25,7 +14,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Final, Protocol, TypeVar, cast
+from typing import Any, Final, TypeVar
 
 from pydantic_ai import ToolReturn
 from pydantic_ai.exceptions import (
@@ -40,23 +29,23 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._returns import foreign_return, refusal
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import (
+    DENIALS,
+    DENIED_MESSAGE,
+    AgentRunError,
+    AgentRunErrorCode,
+    require_authenticated,
+)
 from loom.core.di import LoomContainer
-from loom.core.errors import Forbidden, Unauthenticated
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
-from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)
 
 
 _MS_PER_SECOND = 1000.0
 
-
-_DENIED_MESSAGE = "the caller is not allowed to perform this operation"
-"""Authorisation denials read alike, as ``core.sql.roles._deny`` already does."""
 
 _FAILED_MESSAGE = "the operation failed; the detail is recorded server-side and is not shown here"
 """Generic cause: no driver text, no DSN, no schema name, no statement."""
@@ -68,39 +57,10 @@ _ENGINE_SIGNALS: Final[tuple[type[Exception], ...]] = (
     CallDeferred,
     ApprovalRequired,
 )
-"""Engine control-flow signals, which are never a capability failure.
-
-All four subclass ``Exception``, so the guard's catch-all would otherwise turn
-the model's own retry guidance and the deferred/approval protocols into silent
-refusals.
-"""
+"""Engine control-flow signals a tool may raise; they leave the guard untouched."""
 
 
 _T = TypeVar("_T")
-
-
-class CapabilityDeps(Protocol):
-    """Dependency bundle every capability call requires.
-
-    Structural on purpose: the deployment owns its bundle type and only has to
-    carry these attributes. A bundle that does not is refused inside the tool
-    body rather than silently replaced by an anonymous caller.
-
-    ``identity`` and ``container`` gate every capability; ``invoker`` is read
-    by ``usecase`` grants alone, and is already bound to ``identity`` by the
-    composition root that built the bundle — so a granted use case declaring
-    ``Caller()`` receives the agent's caller instead of failing as
-    unauthenticated (FR-043).
-
-    Attributes:
-        identity: Verified caller this invocation runs as.
-        container: Application container the capability resolves services from.
-        invoker: Application invoker already bound to ``identity``.
-    """
-
-    identity: Identity
-    container: LoomContainer
-    invoker: ApplicationInvoker
 
 
 @dataclass(frozen=True)
@@ -109,17 +69,12 @@ class BuildContext:
 
     Attributes:
         agent: Name of the plan being built, reported on every span.
-        container: Application container a ``python`` factory receives.
+        container: Application container the toolsets are built from.
         observability: Runtime the capability spans open on, or ``None``.
         timeout_s: The plan's ``tool_timeout_ms``, in seconds.
-        mcp: The worker's MCP toolsets, so every agent granted a server works
-            over the one connection the runtime opened for it. Required: a
-            default would be an isolated store, and omitting it is exactly how
-            per-agent connections would come back unnoticed.
+        mcp: The worker's shared MCP toolsets.
         mcp_grants: The plan's ``mcp`` grants, in declaration order: the only
             servers a ``python`` factory may reach through its context.
-            Required for the same reason ``mcp`` is: a default would make
-            every ``remote()`` on a hand-built context miss silently.
     """
 
     agent: str
@@ -144,7 +99,7 @@ class BuildContext:
         return cls(
             agent=plan.name,
             container=container,
-            observability=_observability(container),
+            observability=container.resolve_or_none(ObservabilityRuntime),
             timeout_s=plan.policies.tool_timeout_ms / _MS_PER_SECOND,
             mcp=mcp,
             mcp_grants=tuple(
@@ -153,42 +108,25 @@ class BuildContext:
         )
 
 
-def capability_deps(run: RunContext[Any]) -> CapabilityDeps:
-    """Read the dependency bundle, fail-closed on an incomplete one."""
-    bundle = run.deps
-    identity = getattr(bundle, "identity", None)
-    container = getattr(bundle, "container", None)
-    if not isinstance(identity, Identity) or not isinstance(container, LoomContainer):
+def bundle_container(run: RunContext[Any]) -> LoomContainer:
+    """Return the container the run's dependency bundle carries.
+
+    Args:
+        run: The engine's run context of the tool call.
+
+    Returns:
+        The bundle's ``container``.
+
+    Raises:
+        AgentRunError: ``UNAUTHORIZED`` when the bundle exposes no container.
+    """
+    container = getattr(run.deps, "container", None)
+    if not isinstance(container, LoomContainer):
         raise AgentRunError(
             AgentRunErrorCode.UNAUTHORIZED,
-            "the invocation carries no verified caller: a capability call requires a "
-            "dependency bundle exposing 'identity' and 'container'",
+            "a capability call requires a dependency bundle exposing 'container'",
         )
-    return cast(CapabilityDeps, bundle)
-
-
-def require_authenticated(identity: Identity, tool: str) -> None:
-    """Refuse an unauthenticated caller before any side effect (design R3)."""
-    if not identity.is_authenticated:
-        raise AgentRunError(
-            AgentRunErrorCode.UNAUTHORIZED,
-            f"tool '{tool}' requires an authenticated caller",
-        )
-
-
-def authenticated_caller(run: RunContext[Any], tool: str) -> Identity:
-    """Identity strategy of a capability that must not run as nobody."""
-    deps = capability_deps(run)
-    require_authenticated(deps.identity, tool)
-    return deps.identity
-
-
-def _observability(container: LoomContainer) -> ObservabilityRuntime | None:
-    """Resolve the observability runtime, or ``None`` when none is registered."""
-    if not container.is_registered(ObservabilityRuntime):
-        return None
-    resolved = container.resolve(ObservabilityRuntime)
-    return resolved if isinstance(resolved, ObservabilityRuntime) else None
+    return container
 
 
 def _span(
@@ -227,25 +165,7 @@ async def guarded(
     operation: Callable[[], Awaitable[_T]],
     present: Callable[[_T], ToolReturn],
 ) -> ToolReturn:
-    """Run one application call so that no raw failure escapes the tool.
-
-    A raw exception leaving a tool body is classified ``PROVIDER_UNAVAILABLE``
-    by the engine's classifier, which the retry policy replays — re-invoking a
-    mutating use case the model already ran. So an authorisation denial becomes
-    ``UNAUTHORIZED`` (class ``AUTHORIZATION``, never retried) and every other
-    failure becomes a refusal *value*: the model may self-correct, the run is
-    not replayed, and no backend text reaches the caller.
-
-    ``BaseException`` is deliberately not caught: ``asyncio.CancelledError``
-    must keep propagating for the enclosing tool timeout to work.
-
-    :data:`_ENGINE_SIGNALS` is re-raised for the opposite reason. Those four are
-    plain ``Exception`` subclasses, but they are the engine's *control flow*,
-    not failures: ``ModelRetry`` carries the guidance a tool wrote for the model
-    ("bad argument, try X"), and ``CallDeferred`` / ``ApprovalRequired`` drive
-    the deferred and approval protocols. Swallowing them into a generic refusal
-    would lose the guidance and silently answer a protocol the engine is waiting
-    on, so they pass through untouched.
+    """Run one application call so that no raw application failure escapes the tool.
 
     Args:
         tool: Published tool name, named in the refusal and in the log record.
@@ -253,11 +173,12 @@ async def guarded(
         present: Turns the call's value into the tool return, bounds included.
 
     Returns:
-        The presented value, or the generic refusal.
+        The presented value, or the generic refusal when the call failed.
 
     Raises:
-        AgentRunError: When the call is refused by the application, or when the
-            body already raised a coded error.
+        AgentRunError: ``UNAUTHORIZED`` on an application denial, or the coded
+            error the body raised.
+        Exception: An engine control-flow signal, untouched.
     """
     try:
         return present(await operation())
@@ -265,9 +186,9 @@ async def guarded(
         raise
     except _ENGINE_SIGNALS:
         raise
-    except (Forbidden, Unauthenticated, RoleNotAllowedError, RolesNotBoundError) as exc:
+    except DENIALS as exc:
         raise AgentRunError(
-            AgentRunErrorCode.UNAUTHORIZED, f"tool '{tool}': {_DENIED_MESSAGE}"
+            AgentRunErrorCode.UNAUTHORIZED, f"tool '{tool}': {DENIED_MESSAGE}"
         ) from exc
     except Exception:
         _logger.exception("capability tool '%s' failed", tool)
@@ -278,22 +199,17 @@ async def guarded(
 class _GuardedToolset(WrapperToolset[Any]):
     """Applies loom's call boundary to a toolset loom did not author.
 
-    ``mcp`` and ``python`` publish their own tools, so their calls would
-    otherwise bypass the dependency bundle, the identity guard and the plan's
-    ``tool_timeout_ms`` entirely. Wrapping the toolset puts every one of their
-    tools behind the same boundary a ``usecase`` tool passes through.
+    Every tool of the wrapped toolset acts as the authenticated identity
+    acting (:func:`~loom.ai.errors.require_authenticated`), within the plan's
+    ``tool_timeout_ms``, inside a ``Scope.TOOL`` span.
 
     Attributes:
         context: Build facts of the plan, carrying the tool timeout.
         kind: Capability kind, reported on the span.
-        caller: Identity strategy; ``authenticated_caller`` for every
-            capability wrapped here, all of which can reach data or a remote
-            server.
     """
 
     context: BuildContext
     kind: str
-    caller: Callable[[RunContext[Any], str], Identity]
 
     async def call_tool(
         self,
@@ -302,15 +218,8 @@ class _GuardedToolset(WrapperToolset[Any]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        """Guard, then bound, one call to a tool of the wrapped toolset.
-
-        The wrapped call goes through :func:`guarded` for the same reason a
-        ``usecase`` call does: a raw exception from an MCP transport or from a
-        first-party python toolset is classified ``PROVIDER_UNAVAILABLE`` and
-        replayed by the retry policy, which would re-invoke any mutating
-        operation the model already completed in that attempt.
-        """
-        identity = self.caller(ctx, name)
+        """Guard, then bound, one call to a tool of the wrapped toolset, through :func:`guarded`."""
+        identity = require_authenticated(f"tool '{name}'")
         async with capability_call(self.context, self.kind, name, identity):
             return await guarded(
                 name,
@@ -320,10 +229,7 @@ class _GuardedToolset(WrapperToolset[Any]):
 
 
 def guarded_toolset(
-    toolset: AbstractToolset[Any],
-    context: BuildContext,
-    kind: str,
-    caller: Callable[[RunContext[Any], str], Identity],
+    toolset: AbstractToolset[Any], context: BuildContext, kind: str
 ) -> AbstractToolset[Any]:
     """Put a foreign toolset behind loom's capability call boundary."""
-    return _GuardedToolset(wrapped=toolset, context=context, kind=kind, caller=caller)
+    return _GuardedToolset(wrapped=toolset, context=context, kind=kind)

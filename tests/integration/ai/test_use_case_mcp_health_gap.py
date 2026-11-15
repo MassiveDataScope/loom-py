@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import pytest
 
+from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import mcp_marker_resolver
+from loom.ai.runtime._handle import McpMarkerResolver
 from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
+from loom.core.use_case import Mcp
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     StubDepsFactory,
@@ -73,8 +76,8 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
             assert health.status == "ok"
             assert _SERVER not in health.checks
 
-            resolve = mcp_marker_resolver(runtime, observability=None)
-            handle = resolve(_SERVER, ("search",), identity)
-            with pytest.raises(AgentRunError) as excinfo:
+            resolver = McpMarkerResolver(runtime, observability=None)
+            handle = resolver.resolve(Mcp(_SERVER, include=["search"]), McpHandle)
+            with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})
             assert excinfo.value.code is AgentRunErrorCode.TOOL_UNAVAILABLE

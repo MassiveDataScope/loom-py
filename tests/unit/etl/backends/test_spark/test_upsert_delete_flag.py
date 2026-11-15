@@ -24,22 +24,22 @@ def _writer() -> SparkTargetWriter:
     return SparkTargetWriter.__new__(SparkTargetWriter)
 
 
-def test_spark_do_upsert_rejects_delete_flag() -> None:
-    with pytest.raises(
-        UnsupportedUpsertDeleteFlagError,
-        match=r"SparkTargetWriter does not support upsert\(delete_flag='_deleted'\)",
-    ):
-        _writer()._do_upsert(cast(Any, None), cast(Any, None), _spec(), False)
+class TestSparkUpsertDeleteFlag:
+    def test_spark_do_upsert_rejects_delete_flag(self) -> None:
+        with pytest.raises(
+            UnsupportedUpsertDeleteFlagError,
+            match=r"SparkTargetWriter does not support upsert\(delete_flag='_deleted'\)",
+        ):
+            _writer()._do_upsert(cast(Any, None), cast(Any, None), _spec(), False)
 
-
-def test_spark_upsert_rejects_delete_flag() -> None:
-    with pytest.raises(
-        UnsupportedUpsertDeleteFlagError,
-        match=r"SparkTargetWriter does not support upsert\(delete_flag='_deleted'\)",
-    ):
-        _writer()._upsert(
-            cast(Any, None),
-            cast(Any, None),
-            spec=_spec(),
-            existing_schema=cast(Any, None),
-        )
+    def test_spark_upsert_rejects_delete_flag(self) -> None:
+        with pytest.raises(
+            UnsupportedUpsertDeleteFlagError,
+            match=r"SparkTargetWriter does not support upsert\(delete_flag='_deleted'\)",
+        ):
+            _writer()._upsert(
+                cast(Any, None),
+                cast(Any, None),
+                spec=_spec(),
+                existing_schema=cast(Any, None),
+            )

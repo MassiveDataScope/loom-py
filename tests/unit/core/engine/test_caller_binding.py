@@ -61,105 +61,93 @@ async def _run(use_case_type: type[UseCase[object, str]], **kwargs: object) -> s
 # ---------------------------------------------------------------------------
 
 
-def test_the_marker_compiles_into_a_caller_binding() -> None:
-    """``Caller()`` is recognised at startup, exactly like the other markers."""
-    plan = UseCaseCompiler().compile(WhoAmIUseCase)
-    assert plan.caller_binding is not None
-    assert plan.caller_binding.name == "caller"
+class TestCallerBinding:
+    def test_the_marker_compiles_into_a_caller_binding(self) -> None:
+        """``Caller()`` is recognised at startup, exactly like the other markers."""
+        plan = UseCaseCompiler().compile(WhoAmIUseCase)
+        assert plan.caller_binding is not None
+        assert plan.caller_binding.name == "caller"
 
+    def test_the_caller_parameter_is_not_a_primitive_parameter(self) -> None:
+        """It must not fall through to ``ParamBinding``, or callers would supply it."""
+        plan = UseCaseCompiler().compile(WhoAmIUseCase)
+        assert [pb.name for pb in plan.param_bindings] == []
 
-def test_the_caller_parameter_is_not_a_primitive_parameter() -> None:
-    """It must not fall through to ``ParamBinding``, or callers would supply it."""
-    plan = UseCaseCompiler().compile(WhoAmIUseCase)
-    assert [pb.name for pb in plan.param_bindings] == []
+    def test_primitive_parameters_still_compile_alongside_the_caller(self) -> None:
+        """Declaring an identity does not disturb the rest of the signature."""
+        plan = UseCaseCompiler().compile(GreetUseCase)
+        assert [pb.name for pb in plan.param_bindings] == ["greeting"]
 
+    def test_a_use_case_without_the_marker_has_no_caller_binding(self) -> None:
+        """The binding is opt-in: nothing changes for use cases that ignore it."""
+        plan = UseCaseCompiler().compile(NoCallerUseCase)
+        assert plan.caller_binding is None
 
-def test_primitive_parameters_still_compile_alongside_the_caller() -> None:
-    """Declaring an identity does not disturb the rest of the signature."""
-    plan = UseCaseCompiler().compile(GreetUseCase)
-    assert [pb.name for pb in plan.param_bindings] == ["greeting"]
+    def test_two_caller_parameters_fail_at_startup(self) -> None:
+        """A second ``Caller()`` would be silently dropped: refuse it at compile time."""
 
+        class TwoCallersUseCase(UseCase[object, str]):
+            async def execute(self, a: Identity = Caller(), b: Identity = Caller()) -> str:
+                return f"{a.subject}{b.subject}"
 
-def test_a_use_case_without_the_marker_has_no_caller_binding() -> None:
-    """The binding is opt-in: nothing changes for use cases that ignore it."""
-    plan = UseCaseCompiler().compile(NoCallerUseCase)
-    assert plan.caller_binding is None
+        compiler = UseCaseCompiler()
+        with pytest.raises(CompilationError, match="Caller"):
+            compiler.compile(TwoCallersUseCase)
 
+    # ---------------------------------------------------------------------------
+    # Execution
+    # ---------------------------------------------------------------------------
 
-def test_two_caller_parameters_fail_at_startup() -> None:
-    """A second ``Caller()`` would be silently dropped: refuse it at compile time."""
+    async def test_the_declared_identity_reaches_execute(self) -> None:
+        """The executor injects exactly the identity the transport handed it."""
+        assert await _run(WhoAmIUseCase, identity=_ALICE) == "alice"
 
-    class TwoCallersUseCase(UseCase[object, str]):
-        async def execute(self, a: Identity = Caller(), b: Identity = Caller()) -> str:
-            return f"{a.subject}{b.subject}"
+    async def test_the_identity_coexists_with_primitive_parameters(self) -> None:
+        """Params and identity are bound independently."""
+        result = await _run(GreetUseCase, params={"greeting": "hi"}, identity=_ALICE)
+        assert result == "hi alice"
 
-    compiler = UseCaseCompiler()
-    with pytest.raises(CompilationError, match="Caller"):
-        compiler.compile(TwoCallersUseCase)
+    async def test_an_explicit_anonymous_identity_is_delivered_as_such(self) -> None:
+        """An anonymous caller is a legitimate answer; the use case decides what to do."""
+        assert await _run(WhoAmIUseCase, identity=ANONYMOUS) == ""
 
+    async def test_a_missing_identity_is_refused_instead_of_defaulted(self) -> None:
+        """Fail-closed: a transport that delivers no identity never yields ANONYMOUS."""
+        compiler = UseCaseCompiler()
+        compiler.compile(WhoAmIUseCase)
+        executor = RuntimeExecutor(compiler)
+        use_case = WhoAmIUseCase()
 
-# ---------------------------------------------------------------------------
-# Execution
-# ---------------------------------------------------------------------------
+        with pytest.raises(Unauthenticated):
+            await executor.execute(use_case)
 
+    async def test_the_refusal_names_the_use_case_and_the_parameter(self) -> None:
+        """The message must tell a developer which wiring is missing."""
+        compiler = UseCaseCompiler()
+        compiler.compile(WhoAmIUseCase)
+        executor = RuntimeExecutor(compiler)
+        use_case = WhoAmIUseCase()
 
-async def test_the_declared_identity_reaches_execute() -> None:
-    """The executor injects exactly the identity the transport handed it."""
-    assert await _run(WhoAmIUseCase, identity=_ALICE) == "alice"
+        with pytest.raises(Unauthenticated, match="WhoAmIUseCase"):
+            await executor.execute(use_case)
 
+    async def test_an_identity_passed_to_a_use_case_that_declares_none_is_ignored(self) -> None:
+        """Transports always pass the identity; only declared parameters receive it."""
+        assert await _run(NoCallerUseCase, identity=_ALICE) == "anyone"
 
-async def test_the_identity_coexists_with_primitive_parameters() -> None:
-    """Params and identity are bound independently."""
-    result = await _run(GreetUseCase, params={"greeting": "hi"}, identity=_ALICE)
-    assert result == "hi alice"
+    async def test_concurrent_executions_never_cross_identities(self) -> None:
+        """Two callers running at once must each see their own identity."""
+        compiler = UseCaseCompiler()
+        compiler.compile(WhoAmIUseCase)
+        executor = RuntimeExecutor(compiler)
 
+        results = await asyncio.gather(
+            executor.execute(WhoAmIUseCase(), identity=_ALICE),
+            executor.execute(WhoAmIUseCase(), identity=_BOB),
+        )
 
-async def test_an_explicit_anonymous_identity_is_delivered_as_such() -> None:
-    """An anonymous caller is a legitimate answer; the use case decides what to do."""
-    assert await _run(WhoAmIUseCase, identity=ANONYMOUS) == ""
+        assert results == ["alice", "bob"]
 
-
-async def test_a_missing_identity_is_refused_instead_of_defaulted() -> None:
-    """Fail-closed: a transport that delivers no identity never yields ANONYMOUS."""
-    compiler = UseCaseCompiler()
-    compiler.compile(WhoAmIUseCase)
-    executor = RuntimeExecutor(compiler)
-    use_case = WhoAmIUseCase()
-
-    with pytest.raises(Unauthenticated):
-        await executor.execute(use_case)
-
-
-async def test_the_refusal_names_the_use_case_and_the_parameter() -> None:
-    """The message must tell a developer which wiring is missing."""
-    compiler = UseCaseCompiler()
-    compiler.compile(WhoAmIUseCase)
-    executor = RuntimeExecutor(compiler)
-    use_case = WhoAmIUseCase()
-
-    with pytest.raises(Unauthenticated, match="WhoAmIUseCase"):
-        await executor.execute(use_case)
-
-
-async def test_an_identity_passed_to_a_use_case_that_declares_none_is_ignored() -> None:
-    """Transports always pass the identity; only declared parameters receive it."""
-    assert await _run(NoCallerUseCase, identity=_ALICE) == "anyone"
-
-
-async def test_concurrent_executions_never_cross_identities() -> None:
-    """Two callers running at once must each see their own identity."""
-    compiler = UseCaseCompiler()
-    compiler.compile(WhoAmIUseCase)
-    executor = RuntimeExecutor(compiler)
-
-    results = await asyncio.gather(
-        executor.execute(WhoAmIUseCase(), identity=_ALICE),
-        executor.execute(WhoAmIUseCase(), identity=_BOB),
-    )
-
-    assert results == ["alice", "bob"]
-
-
-def test_the_executor_is_constructible_without_identity_support() -> None:
-    """The parameter is additive: existing composition roots keep working."""
-    assert isinstance(_executor(), RuntimeExecutor)
+    def test_the_executor_is_constructible_without_identity_support(self) -> None:
+        """The parameter is additive: existing composition roots keep working."""
+        assert isinstance(_executor(), RuntimeExecutor)

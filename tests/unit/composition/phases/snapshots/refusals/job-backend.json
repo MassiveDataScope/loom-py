@@ -1,0 +1,6 @@
+{
+  "cause": null,
+  "message": "app.job_service 'rabbit' names no job backend: use inline, celery, sqs or a module:Class reference",
+  "type": "loom.composition.errors.JobBackendError",
+  "wrapped": false
+}

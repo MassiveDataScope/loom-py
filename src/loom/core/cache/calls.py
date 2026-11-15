@@ -74,9 +74,8 @@ def cached_calls(container: LoomContainer) -> CachedCalls:
     Returns:
         The registered binder, or a fresh pass-through.
     """
-    if container.is_registered(CachedCalls):
-        return cast(CachedCalls, container.resolve(CachedCalls))
-    return _UnconfiguredCalls()
+    calls: CachedCalls | None = container.resolve_or_none(CachedCalls)
+    return _UnconfiguredCalls() if calls is None else calls
 
 
 def _discriminated(value: Any, rendered: Any) -> list[Any]:
@@ -223,10 +222,6 @@ def _render_leaf(value: Any) -> list[Any]:
         rendered = msgspec.to_builtins(value)
     except (TypeError, ValueError) as error:
         raise _Unrenderable(f"no canonical rendering: {error}") from error
-    # The only place the check is needed: a float reaches the leaf whether it
-    # arrived as one or msgspec produced it (an ``Enum`` valued ``nan``), and
-    # ``nan``, ``inf`` and ``-inf`` all encode as ``null``, so they would share
-    # one entry with each other.
     _reject_non_finite(rendered)
     if isinstance(rendered, Mapping | list | tuple | set | frozenset):
         return _discriminated(value, _render(rendered))
@@ -466,12 +461,6 @@ class _ConfiguredCalls:
             return await self._call(spec, args, kwargs)
 
         wrapper.__cache_call_wrapped__ = True  # type: ignore[attr-defined]
-        # The wrapper answers for itself: ``functools.wraps`` would leave it
-        # carrying the string annotations of another module, resolvable only by
-        # following ``__wrapped__``.  ``include_extras=True`` is load-bearing —
-        # a tool parameter's description and constraints live in
-        # ``Annotated[...]``, and resolving without them strips every
-        # description from the schema a toolset generates.
         wrapper.__annotations__ = resolve_type_hints(func, include_extras=True)
         return wrapper
 
@@ -528,9 +517,8 @@ class _ConfiguredCalls:
 
         A payload written before the declared type gained a field no longer
         fits it, and nothing about the entry changes when the type does.
-        Raising here would fail every caller of a warm key for a whole TTL, in
-        a cache that by decision has no invalidation, so the entry is treated
-        as a miss and the load that follows overwrites it.
+        The entry is treated as a miss and the load that follows overwrites
+        it.
 
         Returns:
             The decoded value, or :data:`_UNDECODABLE`, which is not ``None``
@@ -538,11 +526,6 @@ class _ConfiguredCalls:
         """
         try:
             return spec.codec.decode(payload)
-        # ``pydantic.ValidationError`` is a ``ValueError``; naming it would
-        # import pydantic eagerly, which this package must not do.  Only the
-        # class name is logged: pydantic renders ``input_value=`` into its text,
-        # so the error itself would carry another caller's cached answer into a
-        # WARNING record.
         except (msgspec.ValidationError, ValueError, TypeError) as error:
             self._warn_once(
                 "CacheCallPayloadMismatch", spec.func, key=key, error=type(error).__name__
@@ -569,14 +552,6 @@ class _ConfiguredCalls:
         try:
             await self._cache.set_value(key, encoded.payload, ttl=self._write_ttl(spec.policy))
         except Exception as error:
-            # Divergence from ``CachedRepository``, which lets this propagate:
-            # the answer is already produced, and a cache write must not fail a
-            # call that succeeded.  Wider than ``CacheWriteError``, which the
-            # gateway raises only for a value its serializer refused: a backend
-            # that is unreachable raises whatever its transport defines, and
-            # that must degrade the call to an uncached one rather than fail
-            # it.  Only the store is inside the guard — the body's own errors
-            # were raised before it and propagate untouched.
             self._warn_once(
                 "CacheCallWriteFailed",
                 spec.func,

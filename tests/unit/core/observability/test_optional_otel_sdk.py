@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import loom
+from tests.helpers.source_tree import parsed
 
 _BLOCKED_PREFIXES = ("opentelemetry.sdk", "opentelemetry.exporter")
 
@@ -273,7 +274,7 @@ class TestCoreImportHygiene:
         for path in scanned:
             if path.name in _SDK_ONLY_MODULES:
                 continue
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parsed(path)
             for node in _module_scope_imports(tree):
                 for module in _imported_modules(node):
                     if module.startswith(_BLOCKED_PREFIXES):
@@ -298,7 +299,7 @@ class TestCoreImportHygiene:
         }
         offenders: list[str] = []
         for path in sorted(_CORE_ROOT.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parsed(path)
             for node in _module_scope_imports(tree):
                 for module in _imported_modules(node):
                     if module in exempt_paths:

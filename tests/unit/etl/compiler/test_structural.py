@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 import pytest
@@ -15,45 +14,36 @@ from loom.etl.compiler._validators import (
     validate_execute_signature,
     validate_params_compat,
 )
+from tests.unit.etl.compiler.doubles import RunDateCountryETLParams
+from tests.unit.etl.doubles import RunDateETLParams
 
 # ---------------------------------------------------------------------------
 # Params fixtures
 # ---------------------------------------------------------------------------
 
 
-class BaseParams(ETLParams):
-    run_date: date
-
-
-class ExtendedParams(ETLParams):
-    run_date: date
-    country: str
-
-
-class UnrelatedParams(ETLParams):
+class OnlyFieldParams(ETLParams):
     only_field: str
 
 
-# ---------------------------------------------------------------------------
-# validate_params_compat
-# ---------------------------------------------------------------------------
+class TestParamsCompat:
+    # ---------------------------------------------------------------------------
+    # validate_params_compat
+    # ---------------------------------------------------------------------------
 
+    def test_params_compat_same_type_passes(self) -> None:
+        validate_params_compat(object, RunDateETLParams, RunDateETLParams)
 
-def test_params_compat_same_type_passes() -> None:
-    validate_params_compat(object, BaseParams, BaseParams)
+    def test_params_compat_subclass_passes(self) -> None:
+        # RunDateCountryETLParams is structurally compatible — has all RunDateETLParams fields
+        validate_params_compat(object, RunDateETLParams, RunDateCountryETLParams)
 
+    def test_params_compat_missing_field_raises_naming_the_field_and_the_type(self) -> None:
+        with pytest.raises(ETLCompilationError, match="run_date") as exc_info:
+            validate_params_compat(object, RunDateETLParams, OnlyFieldParams)
 
-def test_params_compat_subclass_passes() -> None:
-    # ExtendedParams is structurally compatible — has all BaseParams fields
-    validate_params_compat(object, BaseParams, ExtendedParams)
-
-
-def test_params_compat_missing_field_raises_naming_the_field_and_the_type() -> None:
-    with pytest.raises(ETLCompilationError, match="run_date") as exc_info:
-        validate_params_compat(object, BaseParams, UnrelatedParams)
-
-    assert exc_info.value.code is ETLErrorCode.MISSING_PARAMS_FIELDS
-    assert "UnrelatedParams" in str(exc_info.value)
+        assert exc_info.value.code is ETLErrorCode.MISSING_PARAMS_FIELDS
+        assert "OnlyFieldParams" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -61,11 +51,11 @@ def test_params_compat_missing_field_raises_naming_the_field_and_the_type() -> N
 # ---------------------------------------------------------------------------
 
 
-class _ValidStep(ETLStep[BaseParams]):
+class _ValidStep(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: BaseParams, *, orders: Any) -> Any:
+    def execute(self, params: RunDateETLParams, *, orders: Any) -> Any:
         return orders
 
 
@@ -77,19 +67,21 @@ def _bindings_for(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding, ...]:
     )
 
 
-def test_valid_execute_signature_passes() -> None:
-    validate_execute_signature(_ValidStep, BaseParams, _bindings_for(_ValidStep))
+class TestValidExecuteSignature:
+    def test_valid_execute_signature_passes(self) -> None:
+        validate_execute_signature(_ValidStep, RunDateETLParams, _bindings_for(_ValidStep))
 
 
-class _NoSourceStep(ETLStep[BaseParams]):
+class EmptyNoSourceStep(ETLStep[RunDateETLParams]):
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: BaseParams) -> Any:
+    def execute(self, params: RunDateETLParams) -> Any:
         return None
 
 
-def test_no_source_step_passes() -> None:
-    validate_execute_signature(_NoSourceStep, BaseParams, ())
+class TestNoSourceExecuteSignature:
+    def test_no_source_step_passes(self) -> None:
+        validate_execute_signature(EmptyNoSourceStep, RunDateETLParams, ())
 
 
 # ---------------------------------------------------------------------------
@@ -97,45 +89,48 @@ def test_no_source_step_passes() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _MissingFrameStep(ETLStep[BaseParams]):
+class _MissingFrameStep(ETLStep[RunDateETLParams]):
     orders = FromTable("raw.orders")
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: BaseParams) -> Any:  # missing *, orders
+    def execute(self, params: RunDateETLParams) -> Any:  # missing *, orders
         return None
 
 
-def test_missing_frame_raises() -> None:
-    bindings = _bindings_for(_MissingFrameStep)
-    with pytest.raises(ETLCompilationError, match="orders") as exc_info:
-        validate_execute_signature(_MissingFrameStep, BaseParams, bindings)
+class TestMissingSourceParam:
+    def test_missing_frame_raises(self) -> None:
+        bindings = _bindings_for(_MissingFrameStep)
+        with pytest.raises(ETLCompilationError, match="orders") as exc_info:
+            validate_execute_signature(_MissingFrameStep, RunDateETLParams, bindings)
 
-    assert exc_info.value.code is ETLErrorCode.MISSING_SOURCE_PARAMS
+        assert exc_info.value.code is ETLErrorCode.MISSING_SOURCE_PARAMS
 
 
-class _ExtraFrameStep(ETLStep[BaseParams]):
+class _ExtraFrameStep(ETLStep[RunDateETLParams]):
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: BaseParams, *, ghost: Any) -> Any:  # no source named ghost
+    def execute(self, params: RunDateETLParams, *, ghost: Any) -> Any:  # no source named ghost
         return None
 
 
-def test_extra_frame_raises() -> None:
-    with pytest.raises(ETLCompilationError, match="ghost") as exc_info:
-        validate_execute_signature(_ExtraFrameStep, BaseParams, ())
+class TestExtraSourceParam:
+    def test_extra_frame_raises(self) -> None:
+        with pytest.raises(ETLCompilationError, match="ghost") as exc_info:
+            validate_execute_signature(_ExtraFrameStep, RunDateETLParams, ())
 
-    assert exc_info.value.code is ETLErrorCode.EXTRA_SOURCE_PARAMS
+        assert exc_info.value.code is ETLErrorCode.EXTRA_SOURCE_PARAMS
 
 
-class _WrongParamNameStep(ETLStep[BaseParams]):
+class _WrongParamNameStep(ETLStep[RunDateETLParams]):
     target = IntoTable("staging.out").replace()
 
-    def execute(self, context: BaseParams) -> Any:  # named 'context' not 'params'
+    def execute(self, context: RunDateETLParams) -> Any:  # named 'context' not 'params'
         return None
 
 
-def test_wrong_params_name_raises() -> None:
-    with pytest.raises(ETLCompilationError, match="named 'params'") as exc_info:
-        validate_execute_signature(_WrongParamNameStep, BaseParams, ())
+class TestWrongParamsName:
+    def test_wrong_params_name_raises(self) -> None:
+        with pytest.raises(ETLCompilationError, match="named 'params'") as exc_info:
+            validate_execute_signature(_WrongParamNameStep, RunDateETLParams, ())
 
-    assert exc_info.value.code is ETLErrorCode.INVALID_PARAMS_NAME
+        assert exc_info.value.code is ETLErrorCode.INVALID_PARAMS_NAME

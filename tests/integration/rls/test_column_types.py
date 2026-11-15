@@ -23,49 +23,51 @@ OTHER = "22222222-2222-2222-2222-222222222222"
 FINGERPRINT = b"\x00\xffloom\x80"
 
 
-async def test_bytes_and_inet_values_are_written_and_read_back_by_their_owner_only(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(devices.SCHEMA)
-    application = application_for(devices, database, tmp_path)
-    await create_schema(database.migrator, application)
-    reset_registry()
-    compile_all(*devices.MODELS)
-    manager = SessionManager(
-        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
-    )
-    repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
-        session_manager=manager,
-        model=devices.Device,
-        cursor_codec=CursorCodec(signing="ephemeral"),
-    )
-    identity = set_identity(Identity(subject=OWNER))
-    try:
-        host = await repository.create(
-            devices.RegisterDevice(owner_id=OWNER, fingerprint=FINGERPRINT, address="10.1.2.3")
-        )
-        network = await repository.create(
-            devices.RegisterDevice(owner_id=OWNER, fingerprint=b"", address="2001:db8::1/64")
-        )
-        read_host = await repository.get_by_id((host.id, OWNER))
-        read_network = await repository.get_by_id((network.id, OWNER))
-    finally:
-        reset_identity(identity)
-    other = set_identity(Identity(subject=OTHER))
-    try:
-        hidden = await repository.get_by_id((host.id, OWNER))
-    finally:
-        reset_identity(other)
-        await manager.dispose()
+class TestColumnTypes:
+    async def test_bytes_and_inet_values_are_written_and_read_back_by_their_owner_only(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(devices.SCHEMA)
+        application = application_for(devices, database, tmp_path)
+        await create_schema(database.migrator, application)
         reset_registry()
+        compile_all(*devices.MODELS)
+        manager = SessionManager(
+            database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+        )
+        repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
+            session_manager=manager,
+            model=devices.Device,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        identity = set_identity(Identity(subject=OWNER))
+        try:
+            host = await repository.create(
+                devices.RegisterDevice(owner_id=OWNER, fingerprint=FINGERPRINT, address="10.1.2.3")
+            )
+            network = await repository.create(
+                devices.RegisterDevice(owner_id=OWNER, fingerprint=b"", address="2001:db8::1/64")
+            )
+            read_host = await repository.get_by_id((host.id, OWNER))
+            read_network = await repository.get_by_id((network.id, OWNER))
+        finally:
+            reset_identity(identity)
+        other = set_identity(Identity(subject=OTHER))
+        try:
+            hidden = await repository.get_by_id((host.id, OWNER))
+        finally:
+            reset_identity(other)
+            await manager.dispose()
+            reset_registry()
 
-    assert (host.fingerprint, host.address) == (FINGERPRINT, "10.1.2.3")
-    assert read_host is not None
-    assert (read_host.fingerprint, read_host.address) == (FINGERPRINT, "10.1.2.3")
-    assert read_network is not None
-    assert read_network.address == "2001:db8::1/64"
-    assert hidden is None
-    stored = "SELECT encode(fingerprint, 'hex') || ' ' || host(address) FROM devices.devices"
-    assert (
-        await scalar(database.bypass, f"{stored} WHERE id = {host.id}") == "00ff6c6f6f6d80 10.1.2.3"
-    )
+        assert (host.fingerprint, host.address) == (FINGERPRINT, "10.1.2.3")
+        assert read_host is not None
+        assert (read_host.fingerprint, read_host.address) == (FINGERPRINT, "10.1.2.3")
+        assert read_network is not None
+        assert read_network.address == "2001:db8::1/64"
+        assert hidden is None
+        stored = "SELECT encode(fingerprint, 'hex') || ' ' || host(address) FROM devices.devices"
+        assert (
+            await scalar(database.bypass, f"{stored} WHERE id = {host.id}")
+            == "00ff6c6f6f6d80 10.1.2.3"
+        )

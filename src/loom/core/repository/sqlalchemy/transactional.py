@@ -115,7 +115,6 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
             the running execution did not declare it.
     """
     store = session_manager.store
-    # Without a frame the checkpoint refuses every write; a store not enlisted is named here.
     if not (scope.frames or store in scope.participants):
         scope.require_owner()
     elif scope.participant_for(store, session_manager, write=True) is not None:
@@ -128,7 +127,6 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
 
 
 def _reject_repository_owner(owner: Any) -> None:
-    # Local import: ``repository`` imports this module for ``record_mutation``.
     from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 
     if isinstance(owner, RepositorySQLAlchemy):

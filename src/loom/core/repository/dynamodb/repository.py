@@ -39,7 +39,6 @@ from loom.core.uow.scope import InvocationScope, current_scope
 
 _ResultT = TypeVar("_ResultT")
 
-# DynamoDB error code returned when a ``ConditionExpression`` is not satisfied.
 _CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailedException"
 
 
@@ -84,8 +83,6 @@ class RepositoryDynamoDB(
     def __init__(
         self, client: Any, table_name: str, model: type, *, executor: Executor | None = None
     ) -> None:
-        # Lazy import: boto3 is an optional dependency (loom[dynamodb]) and must
-        # not be required at module import time by SQLAlchemy-backed apps.
         from boto3.dynamodb.types import (  # type: ignore[import-untyped]
             TypeDeserializer,
             TypeSerializer,

@@ -42,47 +42,6 @@ def _imported_modules(source: str) -> set[str]:
     return modules
 
 
-def test_auto_imports_no_repository_backend() -> None:
-    leaked = {m for m in _imported_modules(_AUTO_SOURCE) if m.startswith("loom.core.repository")}
-
-    assert leaked == set()
-
-
-def test_auto_compares_no_backend_name() -> None:
-    assert _BACKEND_COMPARISON.search(_AUTO_SOURCE) is None
-
-
-def test_dynamodb_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
-    config_path = write_project(
-        tmp_path,
-        store={
-            "backend": "dynamodb",
-            "region": "eu-west-1",
-            "table": "records",
-            "url": "http://localhost:8000",
-        },
-    )
-    env = {
-        **os.environ,
-        "PYTHONPATH": os.pathsep.join([str(_SRC), str(_SRC.parent)]),
-        "AWS_ACCESS_KEY_ID": "test",
-        "AWS_SECRET_ACCESS_KEY": "test",
-    }
-
-    _assert_boots_without_sqlalchemy(config_path, env)
-
-
-def test_mongo_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
-    config_path = write_project(
-        tmp_path,
-        store={"backend": "mongo", "url": "mongodb://localhost:27017", "database": "records"},
-        id_field=UUID4_ID_FIELD,
-    )
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(_SRC), str(_SRC.parent)])}
-
-    _assert_boots_without_sqlalchemy(config_path, env)
-
-
 def _assert_boots_without_sqlalchemy(config_path: str, env: dict[str, str]) -> None:
     result = subprocess.run(
         [sys.executable, "-c", _NON_RELATIONAL_APP_SCRIPT, config_path],
@@ -93,3 +52,50 @@ def _assert_boots_without_sqlalchemy(config_path: str, env: dict[str, str]) -> N
     )
 
     assert result.returncode == 0, f"create_app failed:\n{result.stderr}"
+
+
+class TestAutoImportsNoRepositoryBackend:
+    def test_auto_imports_no_repository_backend(
+        self,
+    ) -> None:
+        leaked = {
+            m for m in _imported_modules(_AUTO_SOURCE) if m.startswith("loom.core.repository")
+        }
+
+        assert leaked == set()
+
+    def test_auto_compares_no_backend_name(
+        self,
+    ) -> None:
+        assert _BACKEND_COMPARISON.search(_AUTO_SOURCE) is None
+
+
+class TestAppBootsWithoutSqlalchemy:
+    def test_dynamodb_app_boots_without_sqlalchemy(self, tmp_path: Path) -> None:
+        config_path = write_project(
+            tmp_path,
+            store={
+                "backend": "dynamodb",
+                "region": "eu-west-1",
+                "table": "records",
+                "url": "http://localhost:8000",
+            },
+        )
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join([str(_SRC), str(_SRC.parent)]),
+            "AWS_ACCESS_KEY_ID": "test",
+            "AWS_SECRET_ACCESS_KEY": "test",
+        }
+
+        _assert_boots_without_sqlalchemy(config_path, env)
+
+    def test_mongo_app_boots_without_sqlalchemy(self, tmp_path: Path) -> None:
+        config_path = write_project(
+            tmp_path,
+            store={"backend": "mongo", "url": "mongodb://localhost:27017", "database": "records"},
+            id_field=UUID4_ID_FIELD,
+        )
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(_SRC), str(_SRC.parent)])}
+
+        _assert_boots_without_sqlalchemy(config_path, env)

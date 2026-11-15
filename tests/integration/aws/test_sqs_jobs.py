@@ -162,64 +162,6 @@ def _receive(sqs: Any, queue: _Queue, wait: int = 5) -> list[dict[str, Any]]:
     return messages
 
 
-@pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
-def test_a_committed_dispatch_reaches_the_queue_as_a_job_envelope(
-    producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]
-) -> None:
-    job_id = _dispatch(producer, job_type)
-
-    (message,) = _receive(sqs, queues.of(job_type))
-    envelope = decode_job_envelope(message["Body"])
-    assert (envelope.job_name, envelope.params, envelope.payload) == (
-        job_type.__qualname__,
-        {"marker": "m-1"},
-        {"customer": "c-7"},
-    )
-    if job_type is OrderJob:
-        attributes = message["Attributes"]
-        assert attributes["MessageGroupId"] == hashlib.sha256(b"c-7").hexdigest()
-        assert attributes["MessageDeduplicationId"] == job_id
-
-
-@pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
-def test_a_failed_execution_sends_nothing(
-    producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]
-) -> None:
-    with pytest.raises(_Rollback):
-        _dispatch(producer, job_type, fail=True)
-
-    assert _receive(sqs, queues.of(job_type), wait=1) == []
-
-
-@pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
-def test_the_lambda_sqs_adapter_runs_the_received_message(
-    producer: Application,
-    sqs: Any,
-    queues: _Queues,
-    config_path: Path,
-    tmp_path: Path,
-    job_type: type[Job[Any]],
-) -> None:
-    _dispatch(producer, job_type)
-    queue = queues.of(job_type)
-    (message,) = _receive(sqs, queue)
-    event = LambdaEvent.sqs_record(
-        message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
-    )
-    adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
-    consumer = build_application(
-        str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)
-    )
-    handler = adapter.bind(consumer)
-    try:
-        result = handler(event, None)
-    finally:
-        adapter.close()
-
-    assert result == {"batchItemFailures": []}
-    assert _runs == [(job_type.__qualname__, "m-1")]
-
-
 @pytest.fixture
 def sqs_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The name of each SQS send operation any boto3 client makes."""
@@ -246,19 +188,77 @@ def _drain(sqs: Any, queue: _Queue, count: int) -> list[str]:
     return markers
 
 
-@pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
-def test_one_execution_sends_its_jobs_in_batches_of_ten(
-    producer: Application,
-    sqs: Any,
-    queues: _Queues,
-    sqs_calls: list[str],
-    job_type: type[Job[Any]],
-) -> None:
-    use_case = producer.kernel.factory.build(DispatchMany)
-    params = {"job": job_type.__qualname__, "count": 25}
-    asyncio.run(producer.kernel.executor.execute(use_case, params=params))
+class TestSqsJobs:
+    @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
+    def test_a_committed_dispatch_reaches_the_queue_as_a_job_envelope(
+        self, producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]
+    ) -> None:
+        job_id = _dispatch(producer, job_type)
 
-    assert sqs_calls == ["SendMessageBatch"] * 3
-    markers = _drain(sqs, queues.of(job_type), 25)
-    arrived = markers if job_type is OrderJob else sorted(markers, key=int)
-    assert arrived == [str(n) for n in range(25)]
+        (message,) = _receive(sqs, queues.of(job_type))
+        envelope = decode_job_envelope(message["Body"])
+        assert (envelope.job_name, envelope.params, envelope.payload) == (
+            job_type.__qualname__,
+            {"marker": "m-1"},
+            {"customer": "c-7"},
+        )
+        if job_type is OrderJob:
+            attributes = message["Attributes"]
+            assert attributes["MessageGroupId"] == hashlib.sha256(b"c-7").hexdigest()
+            assert attributes["MessageDeduplicationId"] == job_id
+
+    @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
+    def test_a_failed_execution_sends_nothing(
+        self, producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]
+    ) -> None:
+        with pytest.raises(_Rollback):
+            _dispatch(producer, job_type, fail=True)
+
+        assert _receive(sqs, queues.of(job_type), wait=1) == []
+
+    @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
+    def test_the_lambda_sqs_adapter_runs_the_received_message(
+        self,
+        producer: Application,
+        sqs: Any,
+        queues: _Queues,
+        config_path: Path,
+        tmp_path: Path,
+        job_type: type[Job[Any]],
+    ) -> None:
+        _dispatch(producer, job_type)
+        queue = queues.of(job_type)
+        (message,) = _receive(sqs, queue)
+        event = LambdaEvent.sqs_record(
+            message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
+        )
+        adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
+        consumer = build_application(
+            str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)
+        )
+        handler = adapter.bind(consumer)
+        try:
+            result = handler(event, None)
+        finally:
+            adapter.close()
+
+        assert result == {"batchItemFailures": []}
+        assert _runs == [(job_type.__qualname__, "m-1")]
+
+    @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
+    def test_one_execution_sends_its_jobs_in_batches_of_ten(
+        self,
+        producer: Application,
+        sqs: Any,
+        queues: _Queues,
+        sqs_calls: list[str],
+        job_type: type[Job[Any]],
+    ) -> None:
+        use_case = producer.kernel.factory.build(DispatchMany)
+        params = {"job": job_type.__qualname__, "count": 25}
+        asyncio.run(producer.kernel.executor.execute(use_case, params=params))
+
+        assert sqs_calls == ["SendMessageBatch"] * 3
+        markers = _drain(sqs, queues.of(job_type), 25)
+        arrived = markers if job_type is OrderJob else sorted(markers, key=int)
+        assert arrived == [str(n) for n in range(25)]

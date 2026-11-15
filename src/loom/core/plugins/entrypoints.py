@@ -10,6 +10,7 @@ handling, missing-plugin reporting and the optional API-version handshake.
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
@@ -115,19 +116,26 @@ def check_api_version(obj: object, requirement: ApiVersionRequirement) -> None:
             integer, or names an unsupported version.
     """
     declared = getattr(obj, requirement.attribute, None)
-    # ``type is int`` rather than isinstance: a bool would be a mistake, not a
-    # version.
     if type(declared) is int and declared in requirement.supported:
         return
     raise ApiVersionMismatchError(obj, declared, requirement)
 
 
+@functools.cache
 def list_entry_points(group: str) -> tuple[EntryPoint, ...]:
     """List every entry point registered under ``group``.
 
     Hosts use this to report what is installed (for example in a
     "plugin not found, available: ..." message) against exactly the same
     registrations `select_entry_point` resolves from.
+
+    The installed distributions are read once per group for the life of the
+    process: reading them takes milliseconds, and a composition resolves a
+    plugin per store. A group with no entry point is cached too, so a lookup
+    that found nothing keeps finding nothing. A distribution installed after
+    the first lookup of its group is not seen until the process restarts; a
+    long-lived process that installs a plugin later calls
+    ``list_entry_points.cache_clear()`` first.
 
     Args:
         group: Entry-point group to scan.

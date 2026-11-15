@@ -10,11 +10,13 @@ run time, catching what a module pulls in transitively:
 from __future__ import annotations
 
 import ast
+from functools import cache
 from pathlib import Path
 
 import pytest
 
 from tests.helpers.imports import imported_modules
+from tests.helpers.source_tree import parsed, source_files
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -35,6 +37,26 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.serverless.aws.lambda_.handler",
         ),
     ),
+    # The acting identity sits under everything that acts: it reads no execution (spec 011, T09a).
+    "loom.core.identity": (
+        (
+            "loom.core.execution",
+            "loom.core.engine",
+            "loom.core.di",
+            "loom.core.use_case",
+            "loom.core.uow",
+            "opentelemetry",
+        ),
+        (),
+    ),
+    # The execution context sits under the container, the engine and the use cases (spec 011).
+    "loom.core.execution": (
+        ("loom.core.di", "loom.core.engine", "loom.core.use_case", "loom.ai"),
+        (),
+    ),
+    # The container reads keys through an injected classifier, never the packages above it.
+    "loom.core.di": (("loom.core.repository", "loom.core.use_case", "loom.ai"), ()),
+    "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
     "loom.rest": (("loom.serverless",), ()),
     # A job backend raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),
@@ -62,7 +84,7 @@ def test_a_layer_imports_nothing_outside_it(
     offenders = []
     for path in sorted((_SRC / Path(*layer.split("."))).rglob("*.py")):
         module, package = _module_of(path)
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parsed(path)
         for imported in sorted(imported_modules(tree, package=package)):
             if any(_within(imported, banned) for banned in forbidden) and not any(
                 _within(imported, kept) for kept in allowed
@@ -81,11 +103,109 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "    from loom.celery.service import CeleryJobService\n"
         "from ..rest import errors\n"
         "from . import sibling\n"
+        "from loom import composition\n"
     )
 
     assert imported_modules(sample, package="loom.core.engine") == {
         "typing",
+        "typing.TYPE_CHECKING",
         "loom.celery.service",
+        "loom.celery.service.CeleryJobService",
         "loom.core.rest",
+        "loom.core.rest.errors",
         "loom.core.engine",
+        "loom.core.engine.sibling",
+        "loom",
+        "loom.composition",
     }
+
+
+# Who may write the acting identity (spec 011, T09a): transports install it,
+# work fixes it, and only the modules that touch each name may name it, matched
+# exactly (a package entry is its ``__init__``, a re-export). ``_log`` is not
+# fenced: it is the module-local logger's name in many modules.
+_IDENTITY, _IDENTITY_CONTEXT = "loom.core.identity", "loom.core.identity.context"
+_EXECUTION = "loom.core.execution.context"
+_WRITERS: dict[str, tuple[str, ...]] = {
+    "set_identity": (
+        _IDENTITY,
+        _IDENTITY_CONTEXT,
+        "loom.rest.auth.middleware",
+        "loom.core.job.envelope",
+        "loom.core.job.service",
+    ),
+    "pinned_for": (_IDENTITY_CONTEXT, _EXECUTION),
+    "enter": (
+        "loom.core.execution",
+        _EXECUTION,
+        "loom.core.engine.executor",
+    ),
+    "configure_delegation": (
+        _IDENTITY,
+        _IDENTITY_CONTEXT,
+        "loom.composition.phases",
+    ),
+    "_max_delegation_seconds": (_IDENTITY_CONTEXT,),
+    "_acting": (_IDENTITY_CONTEXT, _EXECUTION),
+    "_NO_EXECUTION_ACTING": (_EXECUTION,),
+    "_CLOSED_CONTEXT_ACTING": (_EXECUTION,),
+}
+
+
+def _read_names(tree: ast.AST) -> frozenset[str]:
+    """Every name *tree* reads, as a name or an attribute, or imports under any alias."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return frozenset(names)
+
+
+@cache
+def _names_in(path: Path) -> frozenset[str]:
+    return _read_names(parsed(path))
+
+
+class TestIdentityWriters:
+    @pytest.mark.parametrize(("writer", "allowed"), _WRITERS.items(), ids=list(_WRITERS))
+    def test_only_the_allowed_modules_write_the_acting_identity(
+        self, writer: str, allowed: tuple[str, ...]
+    ) -> None:
+        offenders = []
+        for path in source_files():
+            module, _ = _module_of(path)
+            if module not in allowed and writer in _names_in(path):
+                offenders.append(module)
+
+        assert offenders == []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "set_identity(a)",
+            "identity.set_identity(a)",
+            "install = set_identity",
+            "install = identity.set_identity",
+            "from loom.core.identity import set_identity as install",
+            "from loom.core.identity.context import set_identity",
+        ],
+        ids=[
+            "plain-call",
+            "qualified-call",
+            "name-load",
+            "attribute-load",
+            "aliased-import",
+            "module-import",
+        ],
+    )
+    def test_the_check_sees_every_way_to_reach_a_writer(self, source: str) -> None:
+        assert "set_identity" in _read_names(ast.parse(source))
+
+    def test_the_check_ignores_the_reset(self) -> None:
+        assert "set_identity" not in _read_names(
+            ast.parse("reset_identity(t)\nfrom x import reset_identity")
+        )

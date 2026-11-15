@@ -84,34 +84,6 @@ async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_puts_the_caller_in_the_envelope() -> None:
-    """The identity is captured at dispatch, when the caller is still known."""
-    envelope = await _dispatch_kwargs(CALLER)
-    assert envelope[_IDENTITY_KEY] == {
-        "subject": _SUBJECT,
-        "roles": list(_ROLES),
-        "attributes": dict(_ATTRIBUTES),
-        "mechanism": _MECHANISM,
-    }
-
-
-async def test_dispatch_without_a_caller_sends_no_identity() -> None:
-    """An unauthenticated dispatch must not invent a caller for the worker."""
-    envelope = await _dispatch_kwargs(None)
-    assert envelope[_IDENTITY_KEY] is None
-
-
-async def test_an_anonymous_caller_sends_no_identity() -> None:
-    """Anonymity is the absence of a caller, encoded as such."""
-    envelope = await _dispatch_kwargs(ANONYMOUS)
-    assert envelope[_IDENTITY_KEY] is None
-
-
-# ---------------------------------------------------------------------------
-# Worker side
-# ---------------------------------------------------------------------------
-
-
 class _RecordingExecutor:
     """Captures what the worker hands to the executor, plus the live context."""
 
@@ -119,7 +91,7 @@ class _RecordingExecutor:
         self.identity: Identity | None = None
         self.context_identity: Identity | None = None
 
-    async def execute(self, instance: Any, **kwargs: Any) -> str:
+    async def run(self, job_type: Any, **kwargs: Any) -> str:
         self.identity = kwargs.get("identity")
         self.context_identity = current_identity()
         return "done"
@@ -148,42 +120,64 @@ def _drain(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def test_the_worker_hands_the_envelope_caller_to_the_executor() -> None:
-    """Round trip: the identity dispatched is the identity the job executes with."""
-    executor = _run_task({"subject": _SUBJECT, "roles": list(_ROLES), "mechanism": _MECHANISM})
-    assert executor.identity == Identity(subject=_SUBJECT, roles=_ROLES, mechanism=_MECHANISM)
+class TestIdentityPropagation:
+    async def test_dispatch_puts_the_caller_in_the_envelope(self) -> None:
+        """The identity is captured at dispatch, with the deadline of the caller's delegation."""
+        envelope = await _dispatch_kwargs(CALLER)
+        identity = dict(envelope[_IDENTITY_KEY])
+        assert isinstance(identity.pop("until"), float)
+        assert identity == {
+            "subject": _SUBJECT,
+            "roles": list(_ROLES),
+            "attributes": dict(_ATTRIBUTES),
+            "mechanism": _MECHANISM,
+        }
 
+    async def test_dispatch_without_a_caller_sends_no_identity(self) -> None:
+        """An unauthenticated dispatch must not invent a caller for the worker."""
+        envelope = await _dispatch_kwargs(None)
+        assert envelope[_IDENTITY_KEY] is None
 
-def test_the_worker_publishes_the_caller_in_the_context() -> None:
-    """Jobs dispatching further jobs must propagate the same caller onward."""
-    executor = _run_task({"subject": _SUBJECT})
-    assert executor.context_identity is not None
-    assert executor.context_identity.subject == _SUBJECT
+    async def test_an_anonymous_caller_sends_no_identity(self) -> None:
+        """Anonymity is the absence of a caller, encoded as such."""
+        envelope = await _dispatch_kwargs(ANONYMOUS)
+        assert envelope[_IDENTITY_KEY] is None
 
+    # ---------------------------------------------------------------------------
+    # Worker side
+    # ---------------------------------------------------------------------------
 
-def test_the_worker_restores_the_previous_context_afterwards() -> None:
-    """Worker processes reuse threads: a leaked identity would cross tasks."""
-    _run_task({"subject": _SUBJECT})
-    assert current_identity() is ANONYMOUS
+    def test_the_worker_hands_the_envelope_caller_to_the_executor(self) -> None:
+        """Round trip: the identity dispatched is the identity the job executes with."""
+        executor = _run_task({"subject": _SUBJECT, "roles": list(_ROLES), "mechanism": _MECHANISM})
+        assert executor.identity == Identity(subject=_SUBJECT, roles=_ROLES, mechanism=_MECHANISM)
 
+    def test_the_worker_publishes_the_caller_in_the_context(self) -> None:
+        """Jobs dispatching further jobs must propagate the same caller onward."""
+        executor = _run_task({"subject": _SUBJECT})
+        assert executor.context_identity is not None
+        assert executor.context_identity.subject == _SUBJECT
 
-def test_an_envelope_without_identity_delivers_none_to_the_executor() -> None:
-    """An envelope predating the contract carries no caller, and does not fake one."""
-    executor = _run_task(None)
-    assert executor.identity is None
+    def test_the_worker_restores_the_previous_context_afterwards(self) -> None:
+        """Worker processes reuse threads: a leaked identity would cross tasks."""
+        _run_task({"subject": _SUBJECT})
+        assert current_identity() is ANONYMOUS
 
+    def test_an_envelope_without_identity_delivers_none_to_the_executor(self) -> None:
+        """An envelope predating the contract carries no caller, and does not fake one."""
+        executor = _run_task(None)
+        assert executor.identity is None
 
-# ---------------------------------------------------------------------------
-# Fail-closed on the legacy envelope
-# ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # Fail-closed on the legacy envelope
+    # ---------------------------------------------------------------------------
 
+    async def test_a_job_declaring_a_caller_fails_closed_on_a_legacy_envelope(self) -> None:
+        """The job refuses to run rather than execute as an unknown caller."""
+        compiler = UseCaseCompiler()
+        compiler.compile(_ReportJob)
+        executor = RuntimeExecutor(compiler)
+        job = _ReportJob()
 
-async def test_a_job_declaring_a_caller_fails_closed_on_a_legacy_envelope() -> None:
-    """The job refuses to run rather than execute as an unknown caller."""
-    compiler = UseCaseCompiler()
-    compiler.compile(_ReportJob)
-    executor = RuntimeExecutor(compiler)
-    job = _ReportJob()
-
-    with pytest.raises(Unauthenticated, match="_ReportJob"):
-        await executor.execute(job)
+        with pytest.raises(Unauthenticated, match="_ReportJob"):
+            await executor.execute(job)

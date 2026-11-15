@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -40,12 +39,7 @@ from tests.unit.etl.backends._historify_contract import (  # noqa: E402
     _replacement_spec,
     _snapshot_spec,
 )
-
-
-@dataclass
-class _Params:
-    run_date: date
-
+from tests.unit.etl.backends.doubles import RunDateParams  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Concrete contract implementation — Polars backend
@@ -584,7 +578,11 @@ class TestTransformRepairReport:
         )
         incoming = pl.DataFrame({"player_id": [1], "team_id": ["LIV"]})
         _, report = scd2_transform(
-            PolarsHistorifyBackend(), incoming, existing, spec, _Params(run_date=date(2024, 3, 1))
+            PolarsHistorifyBackend(),
+            incoming,
+            existing,
+            spec,
+            RunDateParams(run_date=date(2024, 3, 1)),
         )
         assert report is not None
         assert report.affected_keys == frozenset({(1,)})
@@ -599,6 +597,10 @@ class TestTransformRepairReport:
         )
         incoming = pl.DataFrame({"player_id": [1], "team_id": ["RM"]})
         _, report = scd2_transform(
-            PolarsHistorifyBackend(), incoming, existing, spec, _Params(run_date=date(2024, 6, 1))
+            PolarsHistorifyBackend(),
+            incoming,
+            existing,
+            spec,
+            RunDateParams(run_date=date(2024, 6, 1)),
         )
         assert report is None

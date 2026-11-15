@@ -1,79 +1,63 @@
-"""The concrete :class:`~loom.ai.abc.McpHandle`/:class:`~loom.ai.abc.AgentHandle`
-an ``Mcp()`` or ``Agent()`` marker resolves to.
+"""The handles an ``Agent()`` or ``Mcp()`` marker resolves to, and the resolvers building them.
 
-Two markers, two resolvers, never one constructed by application code:
+:class:`AgentMarkerResolver` and :class:`McpMarkerResolver` implement
+:class:`~loom.core.execution.ExecutionResolver`: each returns one handle per
+declaration, built on its first resolve and holding no identity. Every call on
+a handle acts as the execution identity of the moment
+(:func:`~loom.core.execution.execution_identity`), so a handle held by a
+singleton, or by a task that outlived its execution, serves each caller as
+itself and is refused past the caller's delegation. The ``Mcp()`` handle looks
+its server's grant up on every call.
 
-* ``Agent()`` resolves through :func:`agent_marker_resolver`, handed to the
-  executor via
-  :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
-  Running the resolved handle reuses :meth:`AgentRuntime.run` unchanged, so
-  the same concurrency admission and the same policies a transport-driven
-  run goes through apply here too; nothing in this module opens a parallel
-  path around them.
-* ``Mcp()`` resolves through :func:`mcp_marker_resolver` (T302), handed to
-  the executor via
-  :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver` — a
-  second, differently-typed resolver, not an overload of the first (S7).
-  It builds a caller-bound :class:`~loom.ai.runtime._grants.McpGrantView`
-  over the server's shared substrate grant
-  (:meth:`AgentRuntime.use_case_mcp_grant`), filtered by the *resolving
-  binding's own* ``include`` — never by the shared grant's, which carries
-  none (see :mod:`~loom.ai.runtime._grants`'s module docstring and
-  ``plan.md``'s "Where the caller's include comes from"). A server tolerated
-  unreachable under ``ai.remote_clients: optional`` resolves to
-  :class:`_UnavailableMcpHandle` instead (T303).
+Running an ``Agent()`` handle goes through :meth:`AgentRuntime.run`, under the
+same admission and policies as a transport-driven run. Three run modes:
+``run(prompt)`` decodes into the artefact's declared output;
+``run(prompt, expect=X)`` decodes this call only into ``X``, without the
+artefact's own output check; ``run_text`` decodes nothing. Both overrides are
+refused before the model is called when the artefact's output hook declares
+the ``output`` field (:meth:`AgentRuntime.output_hook_shape_bound`).
 
-Three run modes (T304, ``Agent()`` path only): ``run(prompt)`` decodes into
-the artefact's own declared output; ``run(prompt, expect=X)`` decodes this
-call only into ``X``, skipping the artefact's own output check, which is
-compiled against the declared schema and cannot be asked to validate another
-one; ``run_text`` decodes nothing at all. Both overrides are refused before
-the model is called when the artefact's output hook declares the ``output``
-field — see :meth:`AgentRuntime.output_hook_shape_bound` — because that
-hook's command is compiled against the declared shape and cannot be handed
-another one. A hook declaring only conversation-bookkeeping fields is
-unaffected and keeps running with every mode.
-
-``mcp()`` and ``sql()`` (T301/T303) on the ``Agent()`` path return the
-artefact's own granted views, built by :mod:`~loom.ai.runtime._grants`: the
-same filtered session and the same bounded connection the model's own
-capabilities run over, never a second one.
+``mcp()`` and ``sql()`` on an ``Agent()`` handle return the artefact's own
+granted views (:mod:`~loom.ai.runtime._grants`), over the session and
+connection the model's own capabilities use.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from collections.abc import Hashable, Mapping
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from loom.ai.abc import AgentAnswer, AgentHandle, McpHandle, Prompt, SqlGrantHandle
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime._grants import AgentGrants, McpGrantView, SqlGrantView
+from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
+from loom.ai.runtime._grants import (
+    AgentGrants,
+    McpGrant,
+    McpGrantView,
+    SqlGrantView,
+)
 from loom.ai.runtime._lifecycle import AgentRuntime
+from loom.core.errors import IdentityFixed
+from loom.core.execution import ExecutionResolver, current_execution, execution_identity
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.sql.service import SqlQueryService
 
+_K = TypeVar("_K", bound=Hashable)
+_H = TypeVar("_H")
 
-class _BoundAgentHandle:
-    """One named agent, bound to the caller of a single use-case execution.
+
+class _AgentHandle:
+    """One named agent; each call acts as the execution identity of the moment.
 
     Args:
         name: Agent name as this deployment's runtime knows it.
         runtime: Live runtime the handle runs through.
-        identity: Verified caller of the execution that resolved this
-            handle. Never read from anywhere else, and never reassignable —
-            an ``AgentHandle`` closes over one identity for its whole life.
-        observability: Runtime the handle's own span opens on, or ``None`` to
-            open no span. ``None`` when no observability runtime is
-            registered, matching every other optional-observability
-            collaborator in this codebase (e.g.
-            :class:`~loom.core.sql.caller_bound.CallerBoundSql`).
-        sql_query_service: The application's single, already-resolved query
-            service, handed to every :class:`~loom.ai.runtime._grants.SqlGrantView`
-            this handle builds — this handle never reaches into the runtime
-            for it, and the runtime holds no container to reach into.
+        observability: Runtime the handle's own span opens on, or ``None``.
+        sql_query_service: The application's query service, handed to every
+            :class:`~loom.ai.runtime._grants.SqlGrantView` this handle builds.
     """
 
     def __init__(
@@ -81,13 +65,12 @@ class _BoundAgentHandle:
         *,
         name: str,
         runtime: AgentRuntime,
-        identity: Identity,
         observability: ObservabilityRuntime | None,
         sql_query_service: SqlQueryService,
     ) -> None:
         self._name = name
+        self._who = f"agent {name!r}"
         self._runtime = runtime
-        self._identity = identity
         self._observability = observability
         self._sql_query_service = sql_query_service
 
@@ -115,23 +98,25 @@ class _BoundAgentHandle:
             The decoded answer, this run's own usage and its interaction id.
 
         Raises:
-            AgentRunError: With ``UNAUTHORIZED`` when this handle's identity
-                is anonymous — checked before the model is called; with
-                ``AGENT_RUN_SHAPE_WITH_HOOK`` when ``expect`` is given and the
-                artefact's output hook declares the ``output`` field — also
-                checked before the model is called; with ``STATE_UNDECLARED``
-                when ``state`` is given and the artefact declares no state
-                shape; or with whatever code the run itself failed with.
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject; with ``AGENT_RUN_SHAPE_WITH_HOOK`` when ``expect`` is
+                given and the artefact's output hook declares the ``output``
+                field; both before the model is called; with
+                ``STATE_UNDECLARED`` when ``state`` is given and the artefact
+                declares no state shape; or with whatever code the run itself
+                failed with.
         """
-        self._require_authenticated()
+        caller = require_authenticated(self._who)
         if expect is not None:
             self._require_shape_allowed()
-        span = self._open_span()
+        span = self._open_span(caller)
         try:
             result = await self._runtime.run(
                 self._name,
                 prompt,
-                identity=self._identity,
+                identity=caller,
                 conversation_id=conversation_id,
                 output_type=expect,
                 state=state,
@@ -170,15 +155,13 @@ class _BoundAgentHandle:
                 or ``STATE_UNDECLARED``, for the same reasons :meth:`run`
                 raises them with ``expect`` and ``state``.
         """
-        answer = await self.run(prompt, expect=str, conversation_id=conversation_id, state=state)
-        return answer
+        return await self.run(prompt, expect=str, conversation_id=conversation_id, state=state)
 
     def native(self, *, state: object | None = None) -> object:
-        """Return the engine's own objects for this agent, bound to this caller.
+        """Return the engine's own objects for this agent, refused for no authenticated caller.
 
-        Opens no span and takes no admission slot: nothing is run here, and
-        what the caller then does with the returned objects is outside this
-        runtime's supervision. See :meth:`~loom.ai.abc.AgentHandle.native`.
+        Opens no span and takes no admission slot. See
+        :meth:`~loom.ai.abc.AgentHandle.native`.
 
         Args:
             state: This run's state, resolved against the artefact's declared
@@ -188,17 +171,18 @@ class _BoundAgentHandle:
             The engine-native objects, in the engine's own types.
 
         Raises:
-            AgentRunError: With ``UNAUTHORIZED`` when this handle's identity is
-                anonymous — the same refusal :meth:`run` makes, so the hatch
-                never yields a bundle the run path would have refused; with
-                ``STATE_UNDECLARED`` or ``STATE_REQUIRED`` when *state* does
-                not match the artefact's declared shape.
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject, as :meth:`run`; with ``STATE_UNDECLARED`` or
+                ``STATE_REQUIRED`` when *state* does not match the artefact's
+                declared shape.
             RuntimeError: When this handle's runtime was never entered.
             NotImplementedError: When the engine serving this agent declares
                 no native form.
         """
-        self._require_authenticated()
-        return self._runtime.native(self._name, identity=self._identity, state=state)
+        caller = require_authenticated(self._who)
+        return self._runtime.native(self._name, identity=caller, state=state)
 
     def mcp(self, server: str) -> McpHandle:
         """Return this artefact's own filtered view of one ``mcp`` grant.
@@ -219,7 +203,6 @@ class _BoundAgentHandle:
             session=grant.session,
             catalogue=grant.catalogue,
             timeout_s=grants.tool_timeout_s,
-            identity=self._identity,
             observability=self._observability,
         )
 
@@ -238,7 +221,6 @@ class _BoundAgentHandle:
             agent=self._name,
             capability=capability,
             sql_query_service=self._sql_query_service,
-            identity=self._identity,
             observability=self._observability,
         )
 
@@ -274,21 +256,8 @@ class _BoundAgentHandle:
             f"agent {self._name!r} grants no sql connection named {connection!r}; {detail}",
         )
 
-    def _require_authenticated(self) -> None:
-        """Refuse an anonymous caller before any network call (design R3).
-
-        Mirrors :func:`loom.ai.engines.pydantic_ai._guards.require_authenticated`:
-        the same refusal, for the same reason, on the path a use case opens
-        instead of the path a tool call opens.
-        """
-        if not self._identity.is_authenticated:
-            raise AgentRunError(
-                AgentRunErrorCode.UNAUTHORIZED,
-                f"agent {self._name!r} requires an authenticated caller",
-            )
-
     def _require_shape_allowed(self) -> None:
-        """Refuse a per-run shape when the output hook's command needs the declared one (T304)."""
+        """Refuse a per-run shape when the output hook's command needs the declared one."""
         if self._runtime.grants(self._name).output_shape_bound:
             raise AgentRunError(
                 AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK,
@@ -297,25 +266,16 @@ class _BoundAgentHandle:
                 "for the artefact's own declared output instead",
             )
 
-    def _open_span(self) -> LoomSpan | None:
-        """Open this run's own span; the transport opens none for this path.
-
-        ``AgentRuntime`` itself emits no span (its own docstring states the
-        transport owns that), and a marker-driven run has no transport at
-        all — so, unlike the HTTP and A2A surfaces, this is the only place
-        that can open one. Uses :meth:`~ObservabilityRuntime.open_span`
-        rather than the lexical-scope :meth:`~ObservabilityRuntime.span`
-        because the interaction id, annotated on close, is only known once
-        the run — awaited further down in :meth:`run` — has returned.
-        """
+    def _open_span(self, caller: Identity) -> LoomSpan | None:
+        """Open this run's own span, annotated with the interaction id when it closes."""
         if self._observability is None:
             return None
         return self._observability.open_span(
             Scope.AGENT,
             "agent_run",
             agent=self._name,
-            subject=self._identity.subject,
-            mechanism=self._identity.mechanism,
+            subject=caller.subject,
+            mechanism=caller.mechanism,
         )
 
     @staticmethod
@@ -335,83 +295,214 @@ class _BoundAgentHandle:
         span.fail(exc)
 
 
-def agent_marker_resolver(
-    runtime: AgentRuntime,
-    *,
-    sql_query_service: SqlQueryService,
-    observability: ObservabilityRuntime | None,
-) -> Any:
-    """Build the resolver ``RuntimeExecutor.bind_agent_resolver`` takes.
+class _MarkerResolver(ABC, Generic[_K, _H]):
+    """One handle per marker declaration, built on its first resolve or call."""
 
-    Kept a plain factory function, not a class, because it closes over
-    nothing but the collaborators every handle it builds needs — the live
-    runtime, the application's single query service and the observability
-    runtime the handle's span opens on. ``sql_query_service`` is resolved by
-    the caller, once, the same way the composition root resolves it for
-    every other consumer (M5): a handle never reaches into a container for
-    it, and ``AgentRuntime`` holds no container to reach into.
+    def __init__(self) -> None:
+        self._handles: dict[_K, _H] = {}
+
+    def resolve(self, declaration: Any, annotation: object) -> _H:
+        """Return the handle of *declaration*, built on its first resolve.
+
+        Args:
+            declaration: The marker of the parameter.
+            annotation: The parameter's annotation; not read.
+
+        Returns:
+            The declaration's handle.
+        """
+        key = self._key(declaration)
+        handle = self._handles.get(key)
+        return self._built(key) if handle is None else handle
+
+    def _handle(self, key: _K, identity: Identity | None, what: str) -> _H:
+        """Return the handle of *key*, refusing an identity other than the execution's.
+
+        Args:
+            key: The declaration's key.
+            identity: The identity the caller gave, or ``None``.
+            what: The declaration the handle serves, named in the error.
+
+        Returns:
+            The declaration's handle.
+
+        Raises:
+            IdentityFixed: When *identity* is given inside an execution acting
+                as another identity.
+        """
+        if (
+            identity is not None
+            and current_execution() is not None
+            and identity != execution_identity()
+        ):
+            raise IdentityFixed(
+                f"{what} acts as the execution identity of each call, not as the "
+                "identity given; act as another caller with executor.run(UseCase, "
+                "identity=...) or ExecutionScope(...)"
+            )
+        handle = self._handles.get(key)
+        return self._built(key) if handle is None else handle
+
+    def _built(self, key: _K) -> _H:
+        handle = self._handles[key] = self._build(key)
+        return handle
+
+    @staticmethod
+    @abstractmethod
+    def _key(declaration: Any) -> _K:
+        """Return the key of a marker declaration."""
+
+    @abstractmethod
+    def _build(self, key: _K) -> _H:
+        """Build the handle of *key*."""
+
+
+class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
+    """Resolves each ``Agent(name)`` declaration to its one handle, in either resolver shape.
 
     Args:
         runtime: Live agent runtime serving this deployment.
-        sql_query_service: The application's single query service, handed to
-            every ``sql`` grant view a resolved handle builds.
+        sql_query_service: The application's query service, handed to every
+            ``sql`` grant view a handle builds.
         observability: Runtime every handle's span opens on, or ``None``.
-
-    Returns:
-        A callable of ``(agent_name, identity) -> AgentHandle``, the shape
-        :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`
-        requires. Returned as ``Any`` because that boundary method lives in
-        ``loom.core`` and is typed to stay ignorant of this pillar.
     """
 
-    def _resolve(name: str, identity: Identity) -> _BoundAgentHandle:
-        return _BoundAgentHandle(
-            name=name,
-            runtime=runtime,
-            identity=identity,
-            observability=observability,
-            sql_query_service=sql_query_service,
+    def __init__(
+        self,
+        runtime: AgentRuntime,
+        *,
+        sql_query_service: SqlQueryService,
+        observability: ObservabilityRuntime | None,
+    ) -> None:
+        super().__init__()
+        self._runtime = runtime
+        self._sql_query_service = sql_query_service
+        self._observability = observability
+
+    def __call__(self, name: str, identity: Identity | None = None) -> AgentHandle[Any]:
+        """Return the handle of agent *name*, built on its first call.
+
+        Args:
+            name: Agent name as this deployment's runtime knows it.
+            identity: Checked, inside an execution, against the execution
+                identity; every call on the handle acts as the execution
+                identity of the moment.
+
+        Returns:
+            The agent's handle.
+
+        Raises:
+            IdentityFixed: When *identity* is given inside an execution acting
+                as another identity.
+        """
+        return self._handle(name, identity, f"agent {name!r}")
+
+    @staticmethod
+    def _key(declaration: Any) -> str:
+        return declaration.name
+
+    def _build(self, key: str) -> _AgentHandle:
+        return _AgentHandle(
+            name=key,
+            runtime=self._runtime,
+            observability=self._observability,
+            sql_query_service=self._sql_query_service,
         )
 
-    return _resolve
 
+class _McpHandle:
+    """One ``Mcp(server, include=...)`` declaration over the server's shared grant.
 
-class _UnavailableMcpHandle:
-    """The handle an ``Mcp()`` marker resolves to when its server never connected.
+    Every call looks the grant up (:meth:`AgentRuntime.use_case_mcp_grant`)
+    and goes through an :class:`~loom.ai.runtime._grants.McpGrantView` of it
+    filtered by this declaration's ``include``, built once per grant.
 
-    Reachable only under ``ai.remote_clients: optional`` (FR-07): a server
-    the marker granted but whose connection start-up tolerated as
-    unreachable (:meth:`AgentRuntime.use_case_mcp_grant` returning ``None``).
-    This is a different failure from a call naming a tool outside the
-    marker's own ``include`` — that one is ``TOOL_UNKNOWN``, raised by
-    :class:`~loom.ai.runtime._grants.McpGrantView` against a live catalogue.
-    Here there is no catalogue to check a tool name against: the server is
-    configured and granted, it simply never opened, so every call raises the
-    same ``TOOL_UNAVAILABLE`` regardless of which tool was named.
+    Args:
+        server: MCP server name the declaration names.
+        include: Glob patterns of the tools the declaration admits.
+        runtime: Live agent runtime serving this deployment.
+        observability: Runtime the view's span opens on, or ``None``.
     """
 
-    def __init__(self, server: str) -> None:
+    def __init__(
+        self,
+        *,
+        server: str,
+        include: tuple[str, ...],
+        runtime: AgentRuntime,
+        observability: ObservabilityRuntime | None,
+    ) -> None:
         self._server = server
+        self._include = include
+        self._who = f"mcp server {server!r}"
+        self._runtime = runtime
+        self._observability = observability
+        self._view: tuple[McpGrant, McpGrantView] | None = None
 
     def tools(self) -> tuple[str, ...]:
-        """Return no tools: an unreachable server publishes none to check against."""
-        return ()
+        """Return the tools this declaration admits; none while the server is unavailable.
 
-    async def call(
-        self,
-        tool: str,
-        arguments: Mapping[str, Any],
-        *,
-        expect: type[Any],
-    ) -> Any:
-        """Raise ``TOOL_UNAVAILABLE``; *arguments* and *expect* are never read."""
-        del arguments, expect
-        raise self._unavailable(tool)
+        Raises:
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject; with ``MCP_SERVER_NOT_GRANTED`` when no use case was
+                granted the server at startup.
+        """
+        require_authenticated(self._who)
+        view = self._current_view()
+        return () if view is None else view.tools()
+
+    async def call(self, tool: str, arguments: Mapping[str, Any], *, expect: type[Any]) -> Any:
+        """Call *tool* as the caller of the moment and decode its result into *expect*.
+
+        Raises:
+            ExecutionRequired: Outside any execution.
+            Unauthenticated: With no caller, or past the caller's delegation.
+            AgentRunError: With ``UNAUTHORIZED`` when the caller has no
+                subject; with ``MCP_SERVER_NOT_GRANTED`` when no use case was
+                granted the server at startup; with ``TOOL_UNAVAILABLE`` when
+                it never connected; or as :meth:`McpGrantView.call`.
+        """
+        require_authenticated(self._who)
+        view = self._current_view()
+        if view is None:
+            raise self._unavailable(tool)
+        return await view.call(tool, arguments, expect=expect)
 
     async def call_untyped(self, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Raise ``TOOL_UNAVAILABLE``; *arguments* is never read."""
-        del arguments
-        raise self._unavailable(tool)
+        """Call *tool* as the caller of the moment and return its structured content.
+
+        Raises:
+            AgentRunError: As :meth:`call`.
+        """
+        require_authenticated(self._who)
+        view = self._current_view()
+        if view is None:
+            raise self._unavailable(tool)
+        return await view.call_untyped(tool, arguments)
+
+    def _current_view(self) -> McpGrantView | None:
+        """Look the server's grant up and return this declaration's view of it, or ``None``."""
+        grant = self._runtime.use_case_mcp_grant(self._server)
+        if grant is None:
+            return None
+        cached = self._view
+        if cached is None or cached[0] is not grant:
+            cached = self._view = (
+                grant,
+                McpGrantView(
+                    span_attributes={"mcp_server": self._server},
+                    capability=grant.capability,
+                    include=self._include,
+                    exclude=(),
+                    session=grant.session,
+                    catalogue=grant.catalogue,
+                    timeout_s=grant.capability.timeout_ms / 1000,
+                    observability=self._observability,
+                ),
+            )
+        return cached[1]
 
     def _unavailable(self, tool: str) -> AgentRunError:
         return AgentRunError(
@@ -421,86 +512,71 @@ class _UnavailableMcpHandle:
         )
 
 
-def mcp_marker_resolver(
-    runtime: AgentRuntime,
-    *,
-    observability: ObservabilityRuntime | None,
-) -> Any:
-    """Build the resolver ``RuntimeExecutor.bind_mcp_resolver`` takes.
+class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle"]):
+    """Resolves each ``Mcp(server, include=...)`` declaration to its one handle, in either shape.
 
-    Mirrors :func:`agent_marker_resolver`'s shape, over a different runtime
-    query: each call reads the server-keyed shared substrate grant
-    (:meth:`AgentRuntime.use_case_mcp_grant`) and filters it by *this call's
-    own* ``include`` — the resolving ``Mcp()`` binding's, passed in by the
-    executor — never by the shared grant's own capability, whose
-    ``include``/``exclude`` are explicitly empty (see
-    :mod:`~loom.ai.runtime._grants`). Two markers naming the same server
-    therefore share one live session and one catalogue, and still resolve
-    to two independently filtered views.
-
-    A server tolerated unreachable resolves to :class:`_UnavailableMcpHandle`
-    instead of raising: the marker is granted, the connection simply never
-    opened, and that is a call-time failure (FR-07), not a bind-time one.
+    A ``Scope.TOOL`` span of a call carries ``mcp_server``, never ``agent``.
 
     Args:
         runtime: Live agent runtime serving this deployment.
-        observability: Runtime the resolved view's own span opens on, or
-            ``None``.
-
-    Returns:
-        A callable of ``(server, include, identity) -> McpHandle``, the
-        shape :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`
-        requires. Returned as ``Any`` for the same boundary reason
-        :func:`agent_marker_resolver` is.
-
-    Raises:
-        RuntimeError: From the returned callable, when the runtime was
-            never entered — :meth:`AgentRuntime.use_case_mcp_grant`'s own
-            guard, distinct from the tolerated-unreachable case above.
-
-    Note:
-        The resolved view's ``span_attributes`` carry ``{"mcp_server": ...}``,
-        named for what the value actually is. The design sketched
-        ``{"use_case": ...}``, but this resolver is typed to receive only the
-        marker's server, its ``include`` and the caller (S7): the executor
-        never crosses the declaring use case's own name over that boundary,
-        so that key could only have carried the server under a name that
-        denies it. Attributing a tool span to the use case that asked for it
-        would take the executor passing that name through, a change to the
-        resolver's signature that this does not make.
-
-        Either way this path's spans stay distinguishable from the agent
-        path's, which carry ``{"agent": ...}``. A ``Scope.TOOL`` span of an
-        MCP call therefore carries one key or the other, never both — see
-        "What the spans carry" in ``docs/ai/observability.md``.
+        observability: Runtime every handle's span opens on, or ``None``.
     """
 
-    def _resolve(server: str, include: tuple[str, ...], identity: Identity) -> McpHandle:
-        grant = runtime.use_case_mcp_grant(server)
-        if grant is None:
-            return _UnavailableMcpHandle(server)
-        return McpGrantView(
-            span_attributes={"mcp_server": server},  # see the Note above
-            capability=grant.capability,
+    def __init__(
+        self, runtime: AgentRuntime, *, observability: ObservabilityRuntime | None
+    ) -> None:
+        super().__init__()
+        self._runtime = runtime
+        self._observability = observability
+
+    def __call__(
+        self, server: str, include: tuple[str, ...], identity: Identity | None = None
+    ) -> McpHandle:
+        """Return the handle of one ``Mcp()`` declaration, built on its first call.
+
+        Args:
+            server: MCP server name the declaration names.
+            include: Glob patterns of the tools the declaration admits.
+            identity: Checked, inside an execution, against the execution
+                identity; every call on the handle acts as the execution
+                identity of the moment.
+
+        Returns:
+            The declaration's handle.
+
+        Raises:
+            IdentityFixed: When *identity* is given inside an execution acting
+                as another identity.
+        """
+        return self._handle((server, include), identity, f"mcp server {server!r}")
+
+    @staticmethod
+    def _key(declaration: Any) -> tuple[str, tuple[str, ...]]:
+        return declaration.server, declaration.include
+
+    def _build(self, key: tuple[str, tuple[str, ...]]) -> _McpHandle:
+        server, include = key
+        return _McpHandle(
+            server=server,
             include=include,
-            exclude=(),
-            session=grant.session,
-            catalogue=grant.catalogue,
-            timeout_s=grant.capability.timeout_ms / 1000,
-            identity=identity,
-            observability=observability,
+            runtime=self._runtime,
+            observability=self._observability,
         )
 
-    return _resolve
 
+if TYPE_CHECKING:
 
-if TYPE_CHECKING:  # the handle satisfies the public Protocol it stands in for (A3)
-
-    def _bound_handle_satisfies_agent_handle(handle: _BoundAgentHandle) -> AgentHandle[Any]:
+    def _agent_handle_satisfies_agent_handle(handle: _AgentHandle) -> AgentHandle[Any]:
         return handle
 
-    def _unavailable_handle_satisfies_mcp_handle(handle: _UnavailableMcpHandle) -> McpHandle:
+    def _mcp_handle_satisfies_mcp_handle(handle: _McpHandle) -> McpHandle:
         return handle
 
+    def _agent_resolver_satisfies_resolver(resolver: AgentMarkerResolver) -> ExecutionResolver:
+        return resolver
 
-__all__ = ["agent_marker_resolver", "mcp_marker_resolver"]
+    def _mcp_resolver_satisfies_resolver(resolver: McpMarkerResolver) -> ExecutionResolver:
+        return resolver
+
+
+__all__ = ["AgentMarkerResolver", "McpMarkerResolver"]

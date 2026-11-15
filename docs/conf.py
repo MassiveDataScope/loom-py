@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import importlib
 import os
 import sys
@@ -35,7 +36,12 @@ exclude_patterns = [
     "_inventories",
     "Thumbs.db",
     ".DS_Store",
-    "guides",
+    "guides/autocrud.md",
+    "guides/celery.md",
+    "guides/etl.md",
+    "guides/fake-repo-examples.md",
+    "guides/quickstart.md",
+    "guides/use-case-dsl.md",
     "architecture",
     "examples-repo",
 ]
@@ -130,10 +136,15 @@ _DUPLICATED_REEXPORTS = {
     ("loom.etl.lineage", "ETLObservabilityConfig"),
     ("loom.testing", "CompilationError"),
     ("loom.rest.model", "PaginationMode"),
+    ("loom.core.identity", "Delegation"),
+    ("loom.core.identity", "IdentityFixed"),
     *((_SQL_PACKAGE, symbol) for symbol in _SQL_REEXPORTED_NAMES),
     *((_AI_PACKAGE, symbol) for symbol in _AI_REEXPORTED_NAMES),
     *((_AI_COMPILER_PACKAGE, symbol) for symbol in _AI_COMPILER_REEXPORTED_NAMES),
 }
+
+
+_NAMEDTUPLE_FIELD = type(collections.namedtuple("_Probe", "field").field)
 
 
 def _skip_duplicate_reexports(
@@ -144,11 +155,20 @@ def _skip_duplicate_reexports(
     skip: bool,
     options: Any,
 ) -> bool:
-    """Skip known re-exported symbols that duplicate canonical API objects."""
-    del what, obj, options
+    """Skip known re-exported symbols that duplicate canonical API objects.
+
+    Also skips a ``NamedTuple`` field whose class documents it in an
+    ``Attributes:`` section: napoleon already renders that entry.
+    """
+    del what, options
     current_module = app.env.temp_data.get("autodoc:module")
     if (current_module, name) in _DUPLICATED_REEXPORTS:
         return True
+    if isinstance(obj, _NAMEDTUPLE_FIELD):
+        module = sys.modules.get(current_module or "")
+        owner = getattr(module, app.env.temp_data.get("autodoc:class") or "", None)
+        if "Attributes:" in (getattr(owner, "__doc__", None) or ""):
+            return True
     return skip
 
 

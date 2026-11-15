@@ -44,31 +44,29 @@ class NoMcpUseCase(UseCase[object, str]):
         return "no servers here"
 
 
-def test_the_marker_compiles_into_an_mcp_binding() -> None:
-    plan = UseCaseCompiler().compile(DocsSearchUseCase)
+class TestMcpMarkerCompilation:
+    def test_the_marker_compiles_into_an_mcp_binding(self) -> None:
+        plan = UseCaseCompiler().compile(DocsSearchUseCase)
 
-    assert [mb.name for mb in plan.mcp_bindings] == ["docs"]
-    assert plan.mcp_bindings[0].server == "docs-server"
-    assert plan.mcp_bindings[0].include == ("search",)
+        assert [mb.name for mb in plan.mcp_bindings] == ["docs"]
+        assert plan.mcp_bindings[0].server == "docs-server"
+        assert plan.mcp_bindings[0].include == ("search",)
 
+    def test_the_mcp_parameter_is_not_a_primitive_parameter(self) -> None:
+        """It must not fall through to ``ParamBinding``, or callers would supply it."""
+        plan = UseCaseCompiler().compile(DocsSearchUseCase)
 
-def test_the_mcp_parameter_is_not_a_primitive_parameter() -> None:
-    """It must not fall through to ``ParamBinding``, or callers would supply it."""
-    plan = UseCaseCompiler().compile(DocsSearchUseCase)
+        assert [pb.name for pb in plan.param_bindings] == []
 
-    assert [pb.name for pb in plan.param_bindings] == []
+    def test_two_markers_in_one_signature_compile_in_declaration_order(self) -> None:
+        plan = UseCaseCompiler().compile(TwoServersUseCase)
 
+        assert [(mb.name, mb.server, mb.include) for mb in plan.mcp_bindings] == [
+            ("first", "docs-server", ("search",)),
+            ("second", "billing-server", ("lookup", "refund")),
+        ]
 
-def test_two_markers_in_one_signature_compile_in_declaration_order() -> None:
-    plan = UseCaseCompiler().compile(TwoServersUseCase)
+    def test_a_plan_with_no_marker_keeps_mcp_bindings_empty(self) -> None:
+        plan = UseCaseCompiler().compile(NoMcpUseCase)
 
-    assert [(mb.name, mb.server, mb.include) for mb in plan.mcp_bindings] == [
-        ("first", "docs-server", ("search",)),
-        ("second", "billing-server", ("lookup", "refund")),
-    ]
-
-
-def test_a_plan_with_no_marker_keeps_mcp_bindings_empty() -> None:
-    plan = UseCaseCompiler().compile(NoMcpUseCase)
-
-    assert plan.mcp_bindings == ()
+        assert plan.mcp_bindings == ()

@@ -109,7 +109,7 @@ class _FakeClient:
 # ---------------------------------------------------------------------------
 
 
-class OrderDoc:
+class OrderIdStatusDoc:
     order_id: str
     status: str
 
@@ -264,17 +264,18 @@ class TestCallArgs:
 
 
 class TestLimit:
-    def test_limit_applied(self) -> None:
-        docs = [{"n": i} for i in range(10)]
+    @pytest.mark.parametrize(
+        ("available", "limit", "expected"),
+        [
+            pytest.param(10, 3, 3, id="limit_applied"),
+            pytest.param(5, None, 5, id="no_limit_returns_all"),
+        ],
+    )
+    def test_limit(self, available: int, limit: int | None, expected: int) -> None:
+        docs = [{"n": i} for i in range(available)]
         reader, _ = _reader(docs)
-        df = reader.read(_spec(limit=3), None).collect()
-        assert df.shape[0] == 3
-
-    def test_no_limit_returns_all(self) -> None:
-        docs = [{"n": i} for i in range(5)]
-        reader, _ = _reader(docs)
-        df = reader.read(_spec(limit=None), None).collect()
-        assert df.shape[0] == 5
+        df = reader.read(_spec(limit=limit), None).collect()
+        assert df.shape[0] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -1394,14 +1395,21 @@ class TestSchemaDrift:
 class TestValueRiskNotes:
     """_value_risk_notes must not produce false positives for native Python types."""
 
-    def test_int_for_int64_no_false_positive(self) -> None:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(42, id="int_for_int64_no_false_positive"),
+            pytest.param("123", id="convertible_str_for_int64_no_note"),
+        ],
+    )
+    def test_convertible_value_for_int64_has_no_note(self, value: object) -> None:
         from loom.etl.io.sources._mongo_batch import (
             _CanonicalValuePlan,
             _value_risk_notes,
         )
 
         plan = _CanonicalValuePlan(kind="scalar", dtype=pl.Int64)
-        assert _value_risk_notes(42, plan, "$.id") == []
+        assert _value_risk_notes(value, plan, "$.id") == []
 
     def test_float_for_float64_no_false_positive(self) -> None:
         from loom.etl.io.sources._mongo_batch import (
@@ -1422,15 +1430,6 @@ class TestValueRiskNotes:
         notes = _value_risk_notes("not-a-number", plan, "$.id")
         assert len(notes) == 1
         assert "unconvertible str" in notes[0]
-
-    def test_convertible_str_for_int64_no_note(self) -> None:
-        from loom.etl.io.sources._mongo_batch import (
-            _CanonicalValuePlan,
-            _value_risk_notes,
-        )
-
-        plan = _CanonicalValuePlan(kind="scalar", dtype=pl.Int64)
-        assert _value_risk_notes("123", plan, "$.id") == []
 
 
 class TestPhase2Improvements:

@@ -24,6 +24,27 @@ class EventKind(StrEnum):
     JOB_EXHAUSTED = "job_exhausted"
 
 
+class Status(StrEnum):
+    """Outcome label of a runtime event."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    RULE_FAILURE = "rule_failure"
+    RETRYING = "retrying"
+    EXHAUSTED = "exhausted"
+
+
+class Phase(StrEnum):
+    """The phase of an execution a failure is reported under, as its ``error_kind``."""
+
+    BEGIN = "begin"
+    BUSINESS = "business"
+    COMMIT = "commit"
+    BUILD = "build"
+    CANCELLED = "cancelled"
+    POST_COMMIT = "post_commit"
+
+
 @dataclass(frozen=True)
 class RuntimeEvent:
     """Immutable event emitted by the compiler and runtime executor.
@@ -36,12 +57,10 @@ class RuntimeEvent:
         use_case_name: Qualified name of the executing UseCase.
         step_name: Step label (e.g. ``"Load User"``), or ``None``.
         duration_ms: Wall-clock duration in milliseconds, or ``None``.
-        status: Outcome label (e.g. ``"success"``, ``"failure"``), or ``None``.
+        status: Outcome label, or ``None``.
         error: Exception instance if the event represents a failure, or ``None``.
         trace_id: Trace the execution ran under, or ``None``.
-        error_kind: Phase that failed on ``EXEC_ERROR`` (``"begin"``,
-            ``"business"``, ``"commit"``, ``"cancelled"``, ``"post_commit"``),
-            or ``None``.
+        error_kind: Phase that failed on ``EXEC_ERROR``, or ``None``.
         pipeline_ms: Time spent in the use-case pipeline, or ``None`` when
             the pipeline did not start.
         commit_ms: Time spent closing the unit of work, or ``None`` when no
@@ -53,7 +72,7 @@ class RuntimeEvent:
             kind=EventKind.EXEC_DONE,
             use_case_name="UpdateUserUseCase",
             duration_ms=12.4,
-            status="success",
+            status=Status.SUCCESS,
         )
     """
 
@@ -61,9 +80,9 @@ class RuntimeEvent:
     use_case_name: str
     step_name: str | None = None
     duration_ms: float | None = None
-    status: str | None = None
+    status: Status | None = None
     error: BaseException | None = None
     trace_id: str | None = None
-    error_kind: str | None = None
+    error_kind: Phase | None = None
     pipeline_ms: float | None = None
     commit_ms: float | None = None

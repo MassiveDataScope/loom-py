@@ -1,38 +1,15 @@
 """Outbound MCP transport: this agent calling a remote tool server.
 
-One ``MCPToolset`` per connection serves the whole worker, and
-:class:`SharedMcpToolsets` is what holds them:
-
-* :meth:`SharedMcpToolsets.open` is the
-  :data:`~loom.ai.runtime.McpClientFactory` the runtime opens at start-up.
-  Entering it connects the server and hands back a session, so an unreachable
-  server fails start-up as ``MCP_SERVER_UNREACHABLE`` and the declared tool
-  filters are validated against the tools the server really exposes (FR-025)
-  instead of being taken on trust.
-* :meth:`SharedMcpToolsets.for_build` is what the engine puts behind the
-  capability boundary for the run itself — the session :meth:`open` made, as a
-  toolset (:class:`_SessionToolset`) — so the start-up connection is the run's
-  connection and a worker holds one channel per server rather than one per
-  agent (FR-026).
-
-What is shared is the session. :class:`_ToolsetSession` — what a grant view
-(:meth:`~loom.ai.abc.AgentHandle.mcp`, a use case's ``Mcp()``), a ``python``
-factory's ``remote()`` and the model's own tool calls all go through —
-declares itself with :class:`~loom.ai.abc.ConcurrentMcpSession`, so the
-runtime leaves it unwrapped: every caller reaches the same reference-counted
-``MCPToolset`` concurrently, never queued behind
-:class:`~loom.ai.runtime.SharedMcpSession`'s single lock, and a renewal any of
-them triggers serves them all.
-
-:func:`build_mcp_toolset` holds the connection rules of one grant — its
-validated URL and its credential — once, so start-up cannot validate a server
-the run would not reach.  The credential itself is resolved by
-:mod:`loom.ai.remote_auth`, which is where the deployment's own strategy plugs in;
-this module only carries the result to the client.
-
-The MCP client ships as an optional ``pydantic-ai-slim`` dependency, so it is
-imported inside the function that needs it: importing it at module load would
-break every deployment that declares no ``mcp`` grant.
+One ``MCPToolset`` per connection serves the whole worker, held by
+:class:`SharedMcpToolsets`: :meth:`SharedMcpToolsets.open` is the
+:data:`~loom.ai.runtime.McpClientFactory` the runtime enters at start-up, and
+:meth:`SharedMcpToolsets.for_build` puts that same session behind the run's
+capability boundary (:class:`_SessionToolset`). :class:`_ToolsetSession` is a
+:class:`~loom.ai.abc.ConcurrentMcpSession`: grant views, ``python`` factories
+and the model's own calls reach one toolset concurrently and share its
+renewal. :func:`build_mcp_toolset` holds one grant's validated URL and
+credential; the credential comes from :mod:`loom.ai.remote_auth`. The MCP
+client, an optional ``pydantic-ai-slim`` dependency, is imported on first use.
 """
 
 from __future__ import annotations
@@ -50,7 +27,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 
 from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
-from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome, classify
+from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
@@ -91,13 +68,7 @@ def _sdk() -> _McpSdk:
 
 
 DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
-"""Fallback handshake deadline, seconds, matching
-:attr:`~loom.ai.config.AiConfig.startup_timeout_ms`'s own default. Production
-never relies on this: the composition root always hands
-:class:`SharedMcpToolsets` the deployment's real ``ai.startup_timeout_ms``.
-Used only by a direct construction — a test, a diagnostic — so it still
-carries a deadline rather than falling through to
-:class:`~pydantic_ai.mcp.MCPToolset`'s own ``5``-second default."""
+"""Handshake deadline, seconds, of a :class:`SharedMcpToolsets` built without one."""
 
 
 @dataclass(eq=False)
@@ -131,61 +102,79 @@ class _OpenToolset:
         transport = getattr(getattr(toolset, "client", None), "transport", None)
         return cls(toolset, getattr(transport, "pool", None), held=held)
 
+    async def shut(self) -> None:
+        """Release the session's entry of the toolset and its pool; calls still in flight are cut.
+
+        A close never raises: a toolset whose transport died raises from its
+        force-close or its exit, and neither stops the steps after it.
+        """
+        try:
+            try:
+                if self.in_flight:
+                    await self.toolset.client.close()  # type: ignore[no-untyped-call]
+            finally:
+                if self.held:
+                    await self.toolset.__aexit__(None, None, None)
+        except Exception:
+            _logger.warning("an mcp session did not close cleanly", exc_info=True)
+        await self._release()
+
+    @classmethod
+    async def entered(cls, toolset: MCPToolset[Any]) -> _OpenToolset:
+        """Enter a freshly built toolset and hold it.
+
+        Args:
+            toolset: The toolset to connect.
+
+        Returns:
+            The held toolset.
+
+        Raises:
+            BaseException: Whatever entering raised, after the pool it made is released.
+        """
+        held = cls.of(toolset)
+        try:
+            await toolset.__aenter__()
+        except BaseException:
+            await held._release()
+            raise
+        return held
+
+    async def _release(self) -> None:
+        if self.pool is None:
+            return
+        try:
+            await self.pool.release()
+        except Exception:
+            _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
+
 
 class _ToolsetSession(ConcurrentMcpSession):
-    """Adapts a connected ``MCPToolset`` to the runtime's session contract.
+    """Adapts a connected ``MCPToolset`` to a concurrent :class:`~loom.ai.abc.McpSession`.
 
-    The runtime asks a session for two things only — the tool names a server
-    exposes, and one tool call — so the adapter is the narrowing of the
-    toolset's much wider surface down to
-    :class:`~loom.ai.runtime.McpSession`. It subclasses
-    :class:`~loom.ai.abc.ConcurrentMcpSession` because the underlying
-    ``fastmcp`` client multiplexes concurrent calls by request id rather
-    than writing straight through a single unmatched stream, so the runtime
-    does not need to serialise calls made through this adapter with a second
-    lock. ``MCPToolset`` itself only reference-counts ``__aenter__`` /
-    ``__aexit__`` to decide when the connection opens and closes; that is a
-    connection-lifecycle concern, not what makes concurrent calls safe.
-
-    A failed call is classified (:func:`~._failures.classify`). One the
-    server answered passes through unchanged. One that provably never ran — the
-    server no longer knows the session — is sent once more on a renewed
-    toolset. Any other may have run on the server: it is raised as
-    :class:`~._failures.McpCallInterrupted`, never repeated, and the next call
-    renews first.
-
-    A renewal retires the toolset it replaces rather than closing it under a
-    call still in flight there; the last such call to return hands its close
-    off, so the call's own result and deadline are never touched by it. At
-    most two toolsets are open: a renewal that finds an earlier one still
-    draining closes it first, cutting the calls left on it. Every close runs in
-    a task of its own, so a caller cancelled while waiting for one never
-    leaves it half done, and :meth:`aclose` waits for all of them. A closed
-    session refuses every later call. The freeze check lives in the toolset's
-    pool (:class:`~._transport.EvictableTransport`), which sees every caller.
-
-    A session that does not hold its toolset -- one over a connection start-up
-    could not open -- keeps nothing connected: each use enters the toolset and
-    leaves it, so its first use connects, and a renewal swaps in a toolset it
-    does not hold either.
+    A failed call the server answered passes through unchanged; one that
+    provably never ran is sent once more on a renewed toolset; any other is
+    raised as :class:`~._failures.McpCallInterrupted` and the next call renews
+    first.  A renewal retires the toolset it replaces, which closes once its
+    last call in flight returns; at most two toolsets are open.  A closed
+    session refuses every later call.  A session that does not hold its
+    toolset enters and leaves it on each use.
 
     Args:
-        toolset: The toolset speaking to one server. When *held*, it is already
+        opened: The toolset speaking to one server. When held, it is already
             entered and the session holds that entry until :meth:`aclose`;
             otherwise it is not entered, and each use enters it alone.
         rebuild: Builds a new, not yet entered toolset for the same
             connection; ``None`` never replaces the one given.
-        held: Whether *toolset* is entered and held by the session.
     """
 
     def __init__(
         self,
-        toolset: MCPToolset[Any],
+        opened: _OpenToolset,
         *,
         rebuild: Callable[[], MCPToolset[Any]] | None = None,
-        held: bool = True,
     ) -> None:
-        self._current = _OpenToolset.of(toolset, held=held)
+        self._current = opened
         self._retired: _OpenToolset | None = None
         self._rebuild = rebuild
         self._renewing = asyncio.Lock()
@@ -196,12 +185,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         """Return the toolset to speak through, replacing a suspect one at most once.
 
         A renewal that cannot connect raises and leaves the suspect in place,
-        so the next call tries again. The session may close while a call waits
-        for the renewal, so it is checked again before the toolset is handed out.
-
-        No ``client.is_connected()`` check runs first: over streamable HTTP it
-        stays true through a server restart, so it would never catch the dead
-        connection it is meant for; the pool's freeze drop and the safe retry do.
+        so the next call tries again.
 
         Raises:
             RuntimeError: When the session is closed.
@@ -243,7 +227,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
     async def _listed(self, toolset: MCPToolset[Any]) -> _OpenToolset:
         """Enter *toolset* and list its tools; one that cannot is closed again."""
-        fresh = await _entered_toolset(toolset)
+        fresh = await _OpenToolset.entered(toolset)
         try:
             await fresh.toolset.list_tools()
         except BaseException:
@@ -253,7 +237,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
     def _close(self, held: _OpenToolset) -> asyncio.Task[None]:
         """Close *held* in a task of its own, tracked until it is done."""
-        task = asyncio.create_task(_shut(held))
+        task = asyncio.create_task(held.shut())
         self._closing.add(task)
         task.add_done_callback(self._closing.discard)
         return task
@@ -284,26 +268,9 @@ class _ToolsetSession(ConcurrentMcpSession):
     async def call_tool(self, name: str, arguments: Mapping[str, Any]) -> McpToolCallResult:
         """Invoke one tool and return its protocol-level result.
 
-        Goes straight to the underlying client's ``call_tool_mcp`` rather than
-        ``MCPToolset.direct_call_tool``: the latter is written for the model's
-        own retry loop and turns an ``is_error`` result into a raised
-        ``ModelRetry``/``ToolFailed`` before the caller ever sees the flag.
-        This adapter's caller is
-        :class:`~loom.ai.runtime._grants.McpGrantView`, which must inspect
-        ``ok`` itself — before deciding whether to decode — so the raw
-        protocol result is what it needs, with neither prose-fallback mapping
-        nor an engine-facing exception in the way.
-
-        Nothing here shields the round trip from the caller's own
-        cancellation: this adapter holds no lock over the shared
-        ``MCPToolset``, so cancelling a caller here never desynchronises a
-        neighbour the way it would on a locked, single-framed session — the
-        JSON-RPC client keeps every in-flight call's response matched to its
-        own request id regardless. A cancelled caller — including the plan's
-        own ``tool_timeout_ms``, enforced by
-        :func:`~loom.ai.engines.pydantic_ai._guards.capability_call` around
-        this call on the ``kind: python`` and ``kind: mcp`` routes — is
-        therefore free to return the moment it fires.
+        Calls the client's ``call_tool_mcp``, so an ``is_error`` result is
+        returned with ``ok`` false rather than raised. A cancelled caller
+        returns at once; the shared toolset holds no lock.
 
         Args:
             name: Tool name as the server exposes it.
@@ -328,7 +295,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
         Every caller goes through here -- a grant view's call, a listing, the
         model's own tool call -- so they share one renewal, one in-flight count
-        and one classification (:func:`~._failures.classify`). A failure the
+        and one classification (:meth:`~._failures.Outcome.of`). A failure the
         server answered passes through unchanged; one that never ran is sent
         once more on a renewed toolset; any other may have run, and is raised
         as :class:`~._failures.McpCallInterrupted`.
@@ -348,7 +315,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            outcome = classify(exc)
+            outcome = Outcome.of(exc)
             if self._rebuild is None or outcome is not Outcome.SAFE:
                 _raise_failure(held, exc, name, outcome)
             held.suspect = True
@@ -356,7 +323,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            _raise_failure(held, exc, name, classify(exc))
+            _raise_failure(held, exc, name, Outcome.of(exc))
 
     async def tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """The live toolset's tools for an agent run; a listing never renews.
@@ -439,9 +406,6 @@ class _SessionToolset(AbstractToolset[Any]):
         del visitor
         return self
 
-    # get_instructions is not forwarded: build_mcp_toolset leaves include_instructions
-    # off; turning it on would need forwarding to the session's live toolset.
-
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """List the live toolset's tools, never renewing it (:meth:`_ToolsetSession.tools`)."""
         return await self._session.tools(ctx)
@@ -471,44 +435,6 @@ def _raise_failure(
         raise exc
     held.suspect = True
     raise McpCallInterrupted(name) from exc
-
-
-async def _entered_toolset(toolset: MCPToolset[Any]) -> _OpenToolset:
-    """Enter a freshly built toolset; one that cannot connect releases the pool it made."""
-    held = _OpenToolset.of(toolset)
-    try:
-        await toolset.__aenter__()
-    except BaseException:
-        await _released(held)
-        raise
-    return held
-
-
-async def _shut(held: _OpenToolset) -> None:
-    """Release a session's entry of a toolset and its pool; calls still in flight are cut.
-
-    A close never raises: a toolset whose transport died raises from its
-    force-close or its exit, and neither stops the steps after it.
-    """
-    try:
-        try:
-            if held.in_flight:
-                await held.toolset.client.close()  # type: ignore[no-untyped-call]  # fastmcp
-        finally:
-            if held.held:
-                await held.toolset.__aexit__(None, None, None)
-    except Exception:
-        _logger.warning("an mcp session did not close cleanly", exc_info=True)
-    await _released(held)
-
-
-async def _released(held: _OpenToolset) -> None:
-    if held.pool is None:
-        return
-    try:
-        await held.pool.release()
-    except Exception:
-        _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
 
 
 def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float) -> MCPToolset[Any]:
@@ -553,8 +479,6 @@ def build_mcp_toolset(capability: CompiledMcpCapability, *, init_timeout: float)
     auth = _client_auth(sdk, shared_mcp_auth(capability.server, capability.auth))
     _refuse_per_run(capability.server, headers, auth)
     client = _http_transport(_mcp_client(component, capability), headers=headers, auth=auth)
-    # A transport built here carries the credentials itself; MCPToolset refuses
-    # them twice. Only an SSE URL still hands them to MCPToolset.
     credentials: dict[str, Any] = (
         {"headers": headers, "auth": auth} if isinstance(client, str) else {}
     )
@@ -700,51 +624,15 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
 class SharedMcpToolsets:
     """The MCP toolsets of one worker: one per distinct connection.
 
-    Every agent granted a server works over the same connection, which is what
-    makes a worker hold one channel per server instead of one per agent. The
-    runtime opens it at start-up (:meth:`open`) as a :class:`_ToolsetSession`,
-    kept here per connection: :meth:`for_build` hands an agent's ``mcp`` grant
-    that session (:class:`_SessionToolset`), and :meth:`session_for` hands it to
-    a ``python`` factory, so a grant view, the model's own calls and a python
-    tool share one renewal and one in-flight count. A connection start-up did
-    not open -- tolerated as unreachable -- gets a session too, created on
-    first use, which holds no connection: each use enters and leaves its
-    toolset, so it connects then.
-
-    Sharing the toolset — rather than a
-    :class:`~loom.ai.runtime.SharedMcpSession` over it — is what keeps the
-    runs concurrent: the session wrapper serialises every call on one lock,
-    so one agent's ``tool_timeout_ms`` would stop bounding anything for its
-    neighbours, queued behind it. :class:`_ToolsetSession` holds no such
-    lock, so a caller cancelled mid-call — the plan's own
-    ``tool_timeout_ms`` firing, in particular — returns immediately instead
-    of waiting for the call to drain; the underlying JSON-RPC client still
-    matches every in-flight response to its own request id, so an abandoned
-    call never desynchronises a neighbour sharing the connection.
-
-    All of that holds only while the runtime's ``mcp_client_factory`` and the
-    engine build read the *same* instance. :meth:`open` records every
-    connection it was asked for and :meth:`for_build` refuses one it was never
-    asked for, which is why the two are separate methods: a shared
-    build-and-cache helper would have made :meth:`open` satisfy its own check
-    and left the wiring unverified. The engine build runs strictly after the
-    runtime opened its clients, so a grant missing from that record can only
-    mean the runtime was handed some other factory — and the run would then
-    hold a second connection whose tool filters nothing validated (FR-025).
-
-    State is per instance and owned by the engine provider; nothing here is
-    module-level. One instance serves one runtime lifecycle: the toolsets are
-    never evicted, and an ``MCPToolset`` re-entered from a second event loop
-    would reuse a lock bound to the first.
-
-    This per-server deadline never fires first in production — see "The
-    per-server handshake deadline never fires first" in ``docs/ai/mcp.md``.
-
-    Every toolset built by an instance waits
-    :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its connection and
-    ``initialize`` handshake unless :meth:`set_connect_timeout` replaces that
-    deadline; production is handed the deployment's real
-    ``ai.startup_timeout_ms`` that way.
+    The runtime opens each connection at start-up (:meth:`open`) as a
+    :class:`_ToolsetSession`; :meth:`for_build` hands an agent's ``mcp``
+    grant that session and :meth:`session_for` hands it to a ``python``
+    factory. A connection start-up did not open (tolerated as unreachable)
+    gets a session created on first use that connects on each use.
+    :meth:`for_build` refuses a connection :meth:`open` was never asked for.
+    One instance serves one runtime lifecycle; toolsets are never evicted.
+    Each toolset waits :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its
+    connection and handshake unless :meth:`set_connect_timeout` replaces it.
 
     Example::
 
@@ -820,7 +708,7 @@ class SharedMcpToolsets:
         session = self._sessions.get(connection)
         if session is None:
             rebuild = self._builder(connection)
-            session = _ToolsetSession(rebuild(), rebuild=rebuild, held=False)
+            session = _ToolsetSession(_OpenToolset.of(rebuild(), held=False), rebuild=rebuild)
             self._sessions[connection] = session
         return session
 
@@ -890,8 +778,7 @@ async def _entered(
     toolset: MCPToolset[Any], *, rebuild: Callable[[], MCPToolset[Any]] | None = None
 ) -> AsyncIterator[_ToolsetSession]:
     """Enter *toolset* and hand that entry to a session, which closes all it holds on exit."""
-    await _entered_toolset(toolset)
-    session = _ToolsetSession(toolset, rebuild=rebuild)
+    session = _ToolsetSession(await _OpenToolset.entered(toolset), rebuild=rebuild)
     try:
         yield session
     finally:
@@ -904,7 +791,7 @@ async def create_mcp_client(
 ) -> AsyncIterator[_ToolsetSession]:
     """Open one throw-away session against an MCP server, outside any sharing.
 
-    Kept for a caller that needs a session of its own — a diagnostic, a probe,
+    For a caller that needs a session of its own — a diagnostic, a probe,
     a test. A composition root must **not** wire this as the runtime's
     ``mcp_client_factory``: it builds a toolset the engine's run path does not
     know about, so the worker would hold that connection plus one per agent.

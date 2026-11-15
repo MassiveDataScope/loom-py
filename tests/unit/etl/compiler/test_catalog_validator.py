@@ -2,63 +2,59 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 import pytest
 
-from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
+from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode, validate_plan_catalog
 from loom.etl.compiler._plan import PipelinePlan
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.testing import StubCatalog
+from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
-class P(ETLParams):  # type: ignore[misc]
-    run_date: date
-
-
-class ReplaceStepA(ETLStep[P]):
+class ReplaceStepA(ETLStep[RunDateIgnoredParams]):
     orders = FromTable("raw.orders")
     target = IntoTable("staging.out").replace()
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class OverwriteStepA(ETLStep[P]):
+class OverwriteStepA(ETLStep[RunDateIgnoredParams]):
     orders = FromTable("raw.orders")
     target = IntoTable("staging.out").replace(schema=SchemaMode.OVERWRITE)
 
-    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, orders: Any) -> Any:  # type: ignore[override]
         return orders
 
 
-class StepB(ETLStep[P]):
+class StagingSummaryStep(ETLStep[RunDateIgnoredParams]):
     staging = FromTable("staging.out")
     target = IntoTable("mart.summary").replace()
 
-    def execute(self, params: P, *, staging: Any) -> Any:  # type: ignore[override]
+    def execute(self, params: RunDateIgnoredParams, *, staging: Any) -> Any:  # type: ignore[override]
         return staging
 
 
-class ReplaceProcess(ETLProcess[P]):
-    steps = [ReplaceStepA, StepB]
+class ReplaceProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [ReplaceStepA, StagingSummaryStep]
 
 
-class OverwriteProcess(ETLProcess[P]):
-    steps = [OverwriteStepA, StepB]
+class OverwriteProcess(ETLProcess[RunDateIgnoredParams]):
+    steps = [OverwriteStepA, StagingSummaryStep]
 
 
-class ReplacePipeline(ETLPipeline[P]):
+class ReplacePipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [ReplaceProcess]
 
 
-class OverwritePipeline(ETLPipeline[P]):
+class OverwritePipeline(ETLPipeline[RunDateIgnoredParams]):
     processes = [OverwriteProcess]
 
 
-def _plan(pipeline_type: type[ETLPipeline[P]]) -> PipelinePlan:
+def _plan(pipeline_type: type[ETLPipeline[RunDateIgnoredParams]]) -> PipelinePlan:
     return ETLCompiler().compile(pipeline_type)
 
 

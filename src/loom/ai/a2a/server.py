@@ -1,6 +1,6 @@
 """Inbound A2A transport: one JSON-RPC endpoint and one card per published agent.
 
-Implements ``specs/001-ai-agent-layer/contracts/a2a.md`` on top of
+Serves the A2A protocol on top of
 :class:`~loom.ai.runtime.AgentRuntime`, reusing the pure projections of
 :mod:`loom.ai.a2a.card` and :mod:`loom.ai.a2a.events`. Nothing here re-derives
 the card or the event mapping: this module is transport only, and the rules
@@ -8,21 +8,11 @@ every agent transport shares — the body cap, the caller check, the span that
 survives a disconnect and the heartbeat race — come from
 :mod:`loom.ai._transport` rather than from the HTTP surface's private names.
 
-**Deviation from ``fasta2a.pydantic_ai.agent_to_a2a``.** The dependency is real
-— ``fasta2a.schema`` is the wire contract and the error taxonomy used below —
-but its ready-made application is not mounted, for four reasons:
-
-1. ``fasta2a.task_manager.TaskManager.stream_message`` raises
-   ``NotImplementedError``, so ``message/stream`` — the method this contract
-   requires (FR-039a) — is not served at all.
-2. Unimplemented methods surface as HTTP 500, not as the JSON-RPC error the
-   contract requires; the card it builds even advertises ``streaming: false``.
-3. ``agent_to_a2a`` requires a concrete ``pydantic_ai.Agent`` and drives the run
-   through its own worker, storage and broker. That bypasses the caller's
-   ``Identity``, ``max_concurrent_runs``, ``run_timeout_ms``, the run span and
-   the outward redaction — every guarantee the runtime exists to enforce.
-4. Its card is fixed (protocol 0.3.0, hardcoded modes, all capabilities false)
-   and derived from engine state, which is exactly what R-005 rejects.
+``fasta2a.schema`` supplies the wire contract and the error taxonomy; the
+ready-made ``fasta2a`` application is not mounted. Every run goes through
+:class:`~loom.ai.runtime.AgentRuntime`, under the caller's ``Identity``,
+``max_concurrent_runs``, ``run_timeout_ms``, the run span and the outward
+redaction.
 
 This module is composition only. The three layers it assembles each state
 their own rules: :mod:`loom.ai.a2a._rpc` owns the JSON-RPC envelope and the
@@ -111,8 +101,6 @@ def _make_rpc_handler(
         except RpcFault as exc:
             return error_response(request_id, exc.error)
         except Exception:
-            # An unanticipated failure carries file paths, DSNs and credential
-            # references in its text; the caller gets none of it.
             _logger.exception("Unhandled error in the a2a endpoint of agent %r", agent.name)
             return error_response(request_id, unexpected_error())
 
@@ -149,10 +137,10 @@ def bind_a2a_endpoints(
 ) -> None:
     """Publish the agents named in ``ai.a2a.expose`` over A2A.
 
-    With no ``ai.a2a`` section nothing is mounted and nothing is logged
-    (FR-041). Each published agent gets one anonymous card route and one
-    authenticated JSON-RPC route serving ``message/send`` and ``message/stream``;
-    every other A2A method answers a named JSON-RPC error, as its card says.
+    With no ``ai.a2a`` section nothing is mounted and nothing is logged. Each published
+    agent gets one anonymous card route and one authenticated JSON-RPC route serving
+    ``message/send`` and ``message/stream``; every other A2A method answers a named
+    JSON-RPC error, as its card says.
 
     Args:
         app: FastAPI application to mount the routes on.
@@ -164,7 +152,7 @@ def bind_a2a_endpoints(
         authenticator: Mechanism authenticating callers; its name selects the
             security scheme the card advertises.
         exclude_paths: Extra authentication exclusions to validate against the
-            invocation surface (FR-041b). The exclusions mounted on the
+            invocation surface. The exclusions mounted on the
             application's :class:`AuthenticationMiddleware` are read directly
             and always validated; this argument only adds to them.
         observability_runtime: Runtime emitting one span per run.

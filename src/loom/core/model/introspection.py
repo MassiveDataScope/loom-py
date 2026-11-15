@@ -444,8 +444,6 @@ def _is_classvar(annotation: Any) -> bool:
     return get_origin(annotation) is ClassVar
 
 
-# The placeholder of a Decimal with no declared column type; the SQLAlchemy
-# compiler refuses such a field, so it is never compiled.
 _UNDECLARED_DECIMAL: Final = Numeric()
 
 _SCALAR_TYPE_MAP: dict[type, ColumnType] = {

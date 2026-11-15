@@ -37,9 +37,9 @@ from loom.etl.declarative.expr._refs import UnboundColumnRef
 from loom.etl.declarative.source._from_mongo import SourceRef
 from loom.etl.io.sources._mongo_predicate import materialize_filter
 
-try:  # boto3 is an optional dependency — loom-kernel[dynamodb]
+try:
     from boto3.dynamodb import types as _ddb_types  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover - exercised only without boto3 installed
+except ImportError:  # pragma: no cover
     _ddb_types = None
 
 
@@ -91,17 +91,12 @@ def predicate_to_dynamo(node: Any, params_instance: Any) -> DynamoFilterExpressi
     )
 
 
-# ---------------------------------------------------------------------------
-# Value serialization
-# ---------------------------------------------------------------------------
-
-
 def _to_dynamo_value(value: Any) -> Any:
     """Coerce Python values to types accepted by boto3's ``TypeSerializer``."""
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, float):
-        return Decimal(str(value))  # TypeSerializer rejects float
+        return Decimal(str(value))
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, dict):
@@ -145,11 +140,6 @@ def _col(ref: Any) -> str:
     if isinstance(ref, str):
         return ref
     raise TypeError(f"predicate_to_dynamo: expected column reference, got {type(ref)!r}")
-
-
-# ---------------------------------------------------------------------------
-# Node translation
-# ---------------------------------------------------------------------------
 
 
 @singledispatch

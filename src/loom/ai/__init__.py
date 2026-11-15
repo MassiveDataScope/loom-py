@@ -5,10 +5,10 @@ optional engine extra may be imported here, so ``import loom.ai`` succeeds on a
 base installation, and engine types are never re-exported.
 
 The programmatic contracts exported here — these classes, protocols and
-functions — are experimental: they may change within a major line (FR-056).
+functions — are experimental: they may change within a major line.
 The artifact format is not experimental: an agent definition declaring
-``spec_version: 1`` keeps validating and compiling for the whole major line
-(FR-056a).  Author against the artifact; pin the Python API.
+``spec_version: 1`` keeps validating and compiling for the whole major line.  Author
+against the artifact; pin the Python API.
 """
 
 from __future__ import annotations

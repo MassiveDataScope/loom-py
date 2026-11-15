@@ -775,29 +775,31 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
 }
 
 
-@pytest.mark.parametrize(
-    ("build", "extra_config", "code", "message", "component", "field"),
-    list(_COMPILE_PATH_CASES.values()),
-    ids=list(_COMPILE_PATH_CASES),
-)
-def test_compiling_the_flow_reports_the_catalogued_issue(
-    streaming_kafka_config: DictConfig,
-    build: Callable[[], StreamFlow[Any, Any]],
-    extra_config: dict[str, object],
-    code: StreamingErrorCode,
-    message: str,
-    component: str,
-    field: str | None,
-) -> None:
-    """The compiler builds each issue on its real path, so a wrong parameter fails here."""
-    flow = build()
-    config = cast(
-        DictConfig, OmegaConf.merge(streaming_kafka_config, OmegaConf.create(extra_config))
+class TestCataloguedCompilationIssue:
+    @pytest.mark.parametrize(
+        ("build", "extra_config", "code", "message", "component", "field"),
+        list(_COMPILE_PATH_CASES.values()),
+        ids=list(_COMPILE_PATH_CASES),
     )
+    def test_compiling_the_flow_reports_the_catalogued_issue(
+        self,
+        streaming_kafka_config: DictConfig,
+        build: Callable[[], StreamFlow[Any, Any]],
+        extra_config: dict[str, object],
+        code: StreamingErrorCode,
+        message: str,
+        component: str,
+        field: str | None,
+    ) -> None:
+        """The compiler builds each issue on its real path, so a wrong parameter fails here."""
+        flow = build()
+        config = cast(
+            DictConfig, OmegaConf.merge(streaming_kafka_config, OmegaConf.create(extra_config))
+        )
 
-    with pytest.raises(CompilationError) as exc_info:
-        compile_flow(flow, config=config)
+        with pytest.raises(CompilationError) as exc_info:
+            compile_flow(flow, config=config)
 
-    issue = next(issue for issue in exc_info.value.issues if issue.code is code)
-    assert issue.message.startswith(message)
-    assert (issue.component, issue.field) == (component, field)
+        issue = next(issue for issue in exc_info.value.issues if issue.code is code)
+        assert issue.message.startswith(message)
+        assert (issue.component, issue.field) == (component, field)

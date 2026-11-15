@@ -184,45 +184,44 @@ def _order(client: TestClient, channel: str = "web") -> Any:
     return client.post("/v1/orders", json={"customerId": str(_CUSTOMER), "channel": channel})
 
 
-def test_the_openapi_document_matches_the_golden(assert_output_snapshot: Any) -> None:
-    document = _client().get("/openapi.json").json()
-    operations = {
-        f"{method.upper()} {path}": {
-            "parameters": operation.get("parameters", []),
-            "requestBody": operation.get("requestBody"),
-            "responses": {
-                status: response
-                for status, response in operation["responses"].items()
-                if status.startswith("2")
-            },
+class TestOrderRoutes:
+    def test_the_openapi_document_matches_the_golden(self, assert_output_snapshot: Any) -> None:
+        document = _client().get("/openapi.json").json()
+        operations = {
+            f"{method.upper()} {path}": {
+                "parameters": operation.get("parameters", []),
+                "requestBody": operation.get("requestBody"),
+                "responses": {
+                    status: response
+                    for status, response in operation["responses"].items()
+                    if status.startswith("2")
+                },
+            }
+            for path, methods in document["paths"].items()
+            for method, operation in methods.items()
         }
-        for path, methods in document["paths"].items()
-        for method, operation in methods.items()
-    }
-    schemas = {
-        name: schema
-        for name, schema in document["components"]["schemas"].items()
-        if name not in _FASTAPI_SCHEMAS
-    }
+        schemas = {
+            name: schema
+            for name, schema in document["components"]["schemas"].items()
+            if name not in _FASTAPI_SCHEMAS
+        }
 
-    assert_output_snapshot(
-        {"operations": operations, "schemas": schemas}, "rest_order_routes_openapi"
-    )
+        assert_output_snapshot(
+            {"operations": operations, "schemas": schemas}, "rest_order_routes_openapi"
+        )
 
+    def test_a_new_order_answers_201_and_a_repeated_one_200(self) -> None:
+        client = _client()
 
-def test_a_new_order_answers_201_and_a_repeated_one_200() -> None:
-    client = _client()
+        created = _order(client)
+        repeated = _order(client)
 
-    created = _order(client)
-    repeated = _order(client)
+        assert (created.status_code, repeated.status_code) == (201, 200)
+        assert created.json() == repeated.json()
+        assert created.headers["Location"] == f"/v1/orders/{created.json()['orderId']}"
 
-    assert (created.status_code, repeated.status_code) == (201, 200)
-    assert created.json() == repeated.json()
-    assert created.headers["Location"] == f"/v1/orders/{created.json()['orderId']}"
+    def test_a_spent_budget_answers_429_with_retry_after(self) -> None:
+        response = _order(_client(tokens=0))
 
-
-def test_a_spent_budget_answers_429_with_retry_after() -> None:
-    response = _order(_client(tokens=0))
-
-    assert (response.status_code, response.headers["Retry-After"]) == (429, "2")
-    assert response.json()["detail"]["code"] == "rate_limited"
+        assert (response.status_code, response.headers["Retry-After"]) == (429, "2")
+        assert response.json()["detail"]["code"] == "rate_limited"

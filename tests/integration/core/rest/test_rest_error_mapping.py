@@ -5,7 +5,8 @@ status code and that the response body contains the expected fields, without
 requiring a database or external service.
 
 Infrastructure:
-    - ``HttpTestHarness`` + ``InMemoryRepository`` (zero-dependency)
+    - ``HttpTestHarness`` + ``InMemoryProductRepository`` (zero-dependency), which
+      the harness binds under ``ProductRepo`` too
     - ``force_error`` / ``simulate_system_error`` to inject failures
 
 Response shape: FastAPI wraps HTTPException detail under the ``detail`` key.
@@ -19,8 +20,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from loom.core.errors import Conflict, Forbidden, NotFound
-from loom.testing import HttpTestHarness, InMemoryRepository
+from loom.testing import HttpTestHarness
 from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
+from tests.integration.fake_repo.product.fake import InMemoryProductRepository
 from tests.integration.fake_repo.product.interface import ProductRestInterface
 from tests.integration.fake_repo.product.model import Product
 
@@ -28,7 +30,7 @@ from tests.integration.fake_repo.product.model import Product
 @pytest.fixture
 def client_with_empty_repo():  # type: ignore[no-untyped-def]
     harness = HttpTestHarness()
-    harness.inject_repo(Product, InMemoryRepository(Product))
+    harness.inject_repo(Product, InMemoryProductRepository())
     return harness.build_app(interfaces=[ProductRestInterface])
 
 
@@ -188,7 +190,7 @@ class TestBoundaryValidation:
 class TestNotFoundErrors:
     def test_forced_not_found_returns_404(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "get_by_id", NotFound("Product", id=99))
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -202,7 +204,7 @@ class TestNotFoundErrors:
 
     def test_not_found_body_has_message(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "get_by_id", NotFound("Product", id=1))
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -220,7 +222,7 @@ class TestNotFoundErrors:
 class TestConflictErrors:
     def test_forced_conflict_returns_409(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "create", Conflict("Product already exists"))
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -240,7 +242,7 @@ class TestConflictErrors:
 class TestForbiddenErrors:
     def test_forced_forbidden_returns_403(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "update", Forbidden("not allowed"))
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -258,7 +260,7 @@ class TestForbiddenErrors:
 class TestSystemErrors:
     def test_simulated_system_error_returns_500(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.simulate_system_error(Product, "create")
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -271,7 +273,7 @@ class TestSystemErrors:
 
     def test_unhandled_runtime_error_returns_500(self) -> None:
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
+        harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "create", RuntimeError("unexpected crash"))
         client = harness.build_app(interfaces=[ProductRestInterface])
 
@@ -305,6 +307,17 @@ class TestSuccessfulOperations:
         assert resp.status_code == 201
         assert resp.json()["name"] == "keyboard"
 
+    def test_find_by_name_returns_the_created_product(
+        self, client_with_empty_repo: TestClient
+    ) -> None:
+        created = client_with_empty_repo.post(
+            "/products/", json={"name": "  Keyboard ", "price": 50.0}
+        ).json()
+
+        resp = client_with_empty_repo.get("/products/by-name/keyboard")
+
+        assert (resp.status_code, resp.json()) == (HTTPStatus.OK, created)
+
     def test_get_missing_returns_none_not_404(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
         resp = client_with_empty_repo.get("/products/999")
 
@@ -323,35 +336,37 @@ class TestSuccessfulOperations:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "error,method,path,http_method,payload,expected_status",
-    [
-        (NotFound("Product", id=1), "get_by_id", "/products/1", "GET", None, 404),
-        (Conflict("dup"), "create", "/products/", "POST", {"name": "W", "price": 1.0}, 409),
-        (Forbidden("no"), "update", "/products/1", "PATCH", {"price": 1.0}, 403),
-    ],
-)
-def test_error_detail_always_has_code_and_message(
-    error: Exception,
-    method: str,
-    path: str,
-    http_method: str,
-    payload: dict | None,
-    expected_status: int,
-) -> None:
-    harness = HttpTestHarness()
-    harness.inject_repo(Product, InMemoryRepository(Product))
-    harness.force_error(Product, method, error)
-    client = harness.build_app(interfaces=[ProductRestInterface])
+class TestErrorDetail:
+    @pytest.mark.parametrize(
+        "error,method,path,http_method,payload,expected_status",
+        [
+            (NotFound("Product", id=1), "get_by_id", "/products/1", "GET", None, 404),
+            (Conflict("dup"), "create", "/products/", "POST", {"name": "W", "price": 1.0}, 409),
+            (Forbidden("no"), "update", "/products/1", "PATCH", {"price": 1.0}, 403),
+        ],
+    )
+    def test_error_detail_always_has_code_and_message(
+        self,
+        error: Exception,
+        method: str,
+        path: str,
+        http_method: str,
+        payload: dict | None,
+        expected_status: int,
+    ) -> None:
+        harness = HttpTestHarness()
+        harness.inject_repo(Product, InMemoryProductRepository())
+        harness.force_error(Product, method, error)
+        client = harness.build_app(interfaces=[ProductRestInterface])
 
-    if http_method == "GET":
-        resp = client.get(path)
-    elif http_method == "POST":
-        resp = client.post(path, json=payload)
-    else:
-        resp = client.patch(path, json=payload)
+        if http_method == "GET":
+            resp = client.get(path)
+        elif http_method == "POST":
+            resp = client.post(path, json=payload)
+        else:
+            resp = client.patch(path, json=payload)
 
-    assert resp.status_code == expected_status
-    detail = _error_detail(resp)
-    assert "code" in detail
-    assert "message" in detail
+        assert resp.status_code == expected_status
+        detail = _error_detail(resp)
+        assert "code" in detail
+        assert "message" in detail

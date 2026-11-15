@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.backend.sqlalchemy import get_metadata
+from loom.core.identity import Acting
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
@@ -120,16 +121,15 @@ class SessionManager:
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
         self.store = store
-        factory_kwargs: dict[str, Any] = {}
+        session_class = type("LoomSession", (Session,), {})
+        event.listen(session_class, "after_begin", _refuse_an_expired_caller)
         if session_settings is not None:
-            session_class = type("SettingsSession", (Session,), {})
             install_session_settings(session_class, session_settings)
-            factory_kwargs["sync_session_class"] = session_class
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,
             expire_on_commit=False,
-            **factory_kwargs,
+            sync_session_class=session_class,
         )
         if inject_trace_id:
             _register_trace_id_listener(self._engine)
@@ -239,14 +239,12 @@ class SessionManager:
         if joined is not None:
             yield joined
             return
-        # Closing the session without a commit rolls its transaction back.
         async with self.session() as session:
             try:
                 yield session
                 if write:
                     await session.commit()
             except Exception as exc:
-                # The type only: a driver error's text holds bound parameters.
                 self._log.error(
                     "OperationSessionRollback", store=self.store, error=type(exc).__name__
                 )
@@ -363,7 +361,6 @@ def _engine_url(config: DatabaseConfig) -> str:
 
 def _default_pool_class(url: str) -> type[Pool]:
     parsed = make_url(url)
-    # Every concrete dialect derives from DefaultDialect, which owns get_pool_class.
     dialect = cast("type[DefaultDialect]", parsed.get_dialect())
     return dialect.get_pool_class(parsed)
 
@@ -405,3 +402,17 @@ def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
         else None,
     )
     return any(isinstance(level, str) and level.upper() == "AUTOCOMMIT" for level in levels)
+
+
+def _refuse_an_expired_caller(_session: Session, transaction: Any, _connection: Any) -> None:
+    """Refuse an outer SQLAlchemy transaction begun as a caller past its delegation.
+
+    The SQLAlchemy ``after_begin`` listener of every loom session; a
+    savepoint is not checked.
+
+    Raises:
+        DelegationExpired: When the caller acting is past its deadline.
+    """
+    if transaction.nested:
+        return
+    Acting.current().refuse_expired()

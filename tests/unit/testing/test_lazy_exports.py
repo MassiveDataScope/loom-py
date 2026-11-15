@@ -47,38 +47,37 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_loom_testing_imports_without_optional_extras() -> None:
-    """The eager exports import with ``sqlalchemy``, ``mangum`` and ``httpx`` hidden."""
-    result = _run_in_clean_interpreter(_IMPORT_TESTING_SCRIPT)
+class TestLazyExports:
+    def test_loom_testing_imports_without_optional_extras(self) -> None:
+        """The eager exports import with ``sqlalchemy``, ``mangum`` and ``httpx`` hidden."""
+        result = _run_in_clean_interpreter(_IMPORT_TESTING_SCRIPT)
 
-    assert result.returncode == 0, f"import loom.testing failed:\n{result.stderr}"
+        assert result.returncode == 0, f"import loom.testing failed:\n{result.stderr}"
 
+    @pytest.mark.parametrize("name", _SQLALCHEMY_EXPORTS)
+    def test_repository_harness_exports_resolve_lazily(self, name: str) -> None:
+        "Each SQLAlchemy-backed export resolves to the object defined in ``repository_harness``."
+        assert getattr(loom.testing, name) is getattr(repository_harness, name)
 
-@pytest.mark.parametrize("name", _SQLALCHEMY_EXPORTS)
-def test_repository_harness_exports_resolve_lazily(name: str) -> None:
-    """Each SQLAlchemy-backed export resolves to the object defined in ``repository_harness``."""
-    assert getattr(loom.testing, name) is getattr(repository_harness, name)
+    @pytest.mark.parametrize("name", _SQLALCHEMY_EXPORTS)
+    def test_repository_harness_exports_name_sqlalchemy_extra_when_missing(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resolving a SQLAlchemy-backed export without the extra raises a hinting ImportError."""
+        monkeypatch.setitem(sys.modules, "loom.testing.repository_harness", None)
 
+        with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
+            getattr(loom.testing, name)
 
-@pytest.mark.parametrize("name", _SQLALCHEMY_EXPORTS)
-def test_repository_harness_exports_name_sqlalchemy_extra_when_missing(
-    name: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Resolving a SQLAlchemy-backed export without the extra raises a hinting ImportError."""
-    monkeypatch.setitem(sys.modules, "loom.testing.repository_harness", None)
+    def test_lambda_test_client_names_its_extras_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "loom.testing.lambda_http", None)
 
-    with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        getattr(loom.testing, name)
+        with pytest.raises(ImportError, match=r"loom-kernel\[lambda,testing\]"):
+            _ = loom.testing.LambdaTestClient
 
-
-def test_lambda_test_client_names_its_extras_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "loom.testing.lambda_http", None)
-
-    with pytest.raises(ImportError, match=r"loom-kernel\[lambda,testing\]"):
-        _ = loom.testing.LambdaTestClient
-
-
-def test_unknown_attribute_raises_attribute_error() -> None:
-    """Names outside the lazy export set keep the standard ``AttributeError``."""
-    with pytest.raises(AttributeError, match="does_not_exist"):
-        _ = loom.testing.does_not_exist
+    def test_unknown_attribute_raises_attribute_error(self) -> None:
+        """Names outside the lazy export set keep the standard ``AttributeError``."""
+        with pytest.raises(AttributeError, match="does_not_exist"):
+            _ = loom.testing.does_not_exist

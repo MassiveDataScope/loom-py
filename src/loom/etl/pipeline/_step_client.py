@@ -86,9 +86,6 @@ class ClientStep(ETLStep[ParamsT], Generic[ParamsT]):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        # ETLStep.__init_subclass__ extracts _params_type from ETLStep[T], but
-        # ClientStep subclasses declare ClientStep[T] — not ETLStep[T] directly.
-        # Override _params_type here, mirroring the StepSQL pattern.
         params_type = _extract_client_step_params(cls)
         if params_type is not None:
             cls._params_type = params_type

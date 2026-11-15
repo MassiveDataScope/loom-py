@@ -30,11 +30,6 @@ def _related_values(obj: Any, relation: str) -> list[Any]:
     return [related]
 
 
-# ---------------------------------------------------------------------------
-# Public loader descriptors — declared on model classes
-# ---------------------------------------------------------------------------
-
-
 class ProjectionDescriptor(Protocol):
     """A public projection loader declared on a model class.
 
@@ -225,11 +220,6 @@ class JoinFieldsLoader:
         return _MemoryJoinFieldsLoader(relation=relation, value_columns=self.value_columns)
 
 
-# ---------------------------------------------------------------------------
-# Internal memory-path loaders — synthesized at compile time
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class _MemoryCountLoader:
     relation: str
@@ -276,11 +266,6 @@ class _MemoryJoinFieldsLoader:
             {field_name: getattr(row, field_name, None) for field_name in self.value_columns}
             for row in rows
         ]
-
-
-# ---------------------------------------------------------------------------
-# Loader resolution utilities
-# ---------------------------------------------------------------------------
 
 
 def make_memory_loader(loader: Any, rel_name: str) -> Any:

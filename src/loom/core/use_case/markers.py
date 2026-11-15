@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Generic, TypeVar
+from typing import Any, ClassVar, Generic, NoReturn, TypeVar
+
+from loom.core.errors import NotFound
+from loom.core.execution.errors import MarkerNotResolved
 
 EntityT = TypeVar("EntityT")
 
@@ -28,6 +31,21 @@ class OnMissing(StrEnum):
     RETURN_NONE = "return_none"
     RETURN_FALSE = "return_false"
 
+    def answer(self, entity_type: type, value: object) -> None | bool:
+        """What a lookup of *entity_type* by *value* that found nothing gives under this policy.
+
+        Returns:
+            ``None`` for :attr:`RETURN_NONE`, ``False`` for :attr:`RETURN_FALSE`.
+
+        Raises:
+            NotFound: For :attr:`RAISE`.
+        """
+        if self is OnMissing.RETURN_NONE:
+            return None
+        if self is OnMissing.RETURN_FALSE:
+            return False
+        raise NotFound(entity_type.__name__, id=value)
+
 
 class _InputMarker:
     """Marks a parameter as the command payload input.
@@ -41,6 +59,7 @@ class _InputMarker:
     """
 
     __slots__ = ()
+    spelling: ClassVar[str] = "Input()"
 
 
 def marks_input(default: object) -> bool:
@@ -48,7 +67,28 @@ def marks_input(default: object) -> bool:
     return isinstance(default, _InputMarker)
 
 
-class _CallerMarker:
+class _ExecutionMarker:
+    """A parameter default loom replaces with the object its resolver returns.
+
+    Loom resolves it in ``execute()`` and in the constructor of every class it
+    builds. One reaching code unresolved was built by a provider loom does not
+    read, so its first attribute use raises :class:`MarkerNotResolved` instead
+    of handing the sentinel on. Dunders and the marker's own unset slots raise
+    a plain :class:`AttributeError`, as copy, pickle and introspection expect.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> NoReturn:
+        if name.startswith("__") or name in type(self).__slots__:
+            raise AttributeError(name)
+        raise MarkerNotResolved(
+            f"{self!r}.{name}: the marker was never resolved; let loom build the class "
+            "declaring it (register(Port, Impl)) instead of constructing it in a provider"
+        )
+
+
+class _CallerMarker(_ExecutionMarker):
     """Marks a parameter as the verified identity running the execution.
 
     Carries no configuration — it is a pure marker, like ``_InputMarker``.
@@ -59,13 +99,18 @@ class _CallerMarker:
     """
 
     __slots__ = ()
+    spelling: ClassVar[str] = "Caller()"
+
+    def __repr__(self) -> str:
+        return self.spelling
 
 
 class _QueryMarker:
     __slots__ = ()
+    spelling: ClassVar[str] = "Query()"
 
 
-class _AgentMarker:
+class _AgentMarker(_ExecutionMarker):
     """Marks a parameter as a named agent handle bound to the verified caller.
 
     Carries only the agent's name — no configuration and no output type, like
@@ -86,12 +131,16 @@ class _AgentMarker:
     """
 
     __slots__ = ("name",)
+    spelling: ClassVar[str] = "Agent()"
 
     def __init__(self, name: str) -> None:
         self.name = name
 
+    def __repr__(self) -> str:
+        return f"Agent({self.name!r})"
 
-class _McpMarker:
+
+class _McpMarker(_ExecutionMarker):
     """Marks a parameter as a named MCP server handle bound to this execution.
 
     Carries only the server name and the tool filter — no output type, like
@@ -112,10 +161,14 @@ class _McpMarker:
     """
 
     __slots__ = ("server", "include")
+    spelling: ClassVar[str] = "Mcp()"
 
     def __init__(self, server: str, include: tuple[str, ...]) -> None:
         self.server = server
         self.include = include
+
+    def __repr__(self) -> str:
+        return f"Mcp({self.server!r}, include={list(self.include)!r})"
 
 
 class _LoadByIdMarker(Generic[EntityT]):
@@ -142,6 +195,7 @@ class _LoadByIdMarker(Generic[EntityT]):
     """
 
     __slots__ = ("entity_type", "by", "profile", "on_missing")
+    spelling: ClassVar[str] = "LoadById()"
 
     def __init__(
         self,
@@ -168,6 +222,7 @@ class _LoadMarker(Generic[EntityT]):
         "profile",
         "on_missing",
     )
+    spelling: ClassVar[str] = "Load()"
 
     def __init__(
         self,
@@ -191,6 +246,7 @@ class _ExistsMarker(Generic[EntityT]):
     """Marks a parameter as a boolean existence check."""
 
     __slots__ = ("entity_type", "from_kind", "from_name", "against", "on_missing")
+    spelling: ClassVar[str] = "Exists()"
 
     def __init__(
         self,
@@ -267,9 +323,9 @@ def Agent(name: str) -> Any:
     """Factory returning the runtime marker for a named agent handle parameter.
 
     The executor resolves *name* against the agents compiled for this
-    deployment and injects an ``AgentHandle`` bound to this execution's
-    verified caller — the only way a use case reaches an agent (constructor
-    injection is not offered for this resource). The output type the handle
+    deployment and injects an ``AgentHandle``. The handle holds no identity:
+    each call acts as the execution identity of that moment, so the same
+    marker also works as a constructor default of an adapter. The output type the handle
     carries is read from the parameter's own ``AgentHandle[...]`` annotation,
     never from this factory, and is checked at start-up against the named
     agent's declared output.
@@ -298,9 +354,9 @@ def Mcp(server: str, *, include: Sequence[str]) -> Any:
     """Factory returning the runtime marker for a named MCP server handle parameter.
 
     The executor resolves *server* against the MCP servers compiled for
-    this deployment and injects an ``McpHandle`` bound to this execution's
-    verified caller — the only way a use case reaches an MCP server
-    (constructor injection is not offered for this resource). Names in
+    this deployment and injects an ``McpHandle``. The handle holds no
+    identity: each call acts as the execution identity of that moment, so
+    the same marker also works as a constructor default of an adapter. Names in
     *include* are globs, matched by the same ``select_names``/``admits`` the
     model's own toolset filter uses; there is no ``exclude`` in this version
     because no caller has asked for one and a short allow-list already

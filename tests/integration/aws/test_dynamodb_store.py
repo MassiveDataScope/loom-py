@@ -55,29 +55,30 @@ def wiring(write_config: ConfigWriter, table: str) -> PersistenceWiring:
     return build_backend(DynamoDBBackend(), ConfigContext.from_yaml(str(path)), (Gadget,))
 
 
-async def test_the_readiness_probe_finds_the_table(wiring: PersistenceWiring) -> None:
-    assert wiring.readiness is not None
-    assert await wiring.readiness() is True
+class TestDynamodbStore:
+    async def test_the_readiness_probe_finds_the_table(self, wiring: PersistenceWiring) -> None:
+        assert wiring.readiness is not None
+        assert await wiring.readiness() is True
 
+    async def test_a_repository_round_trips_through_the_table(
+        self, wiring: PersistenceWiring, dynamodb: Any, table: str
+    ) -> None:
+        container = LoomContainer()
+        wiring.repo_registration_module(container)
 
-async def test_a_repository_round_trips_through_the_table(
-    wiring: PersistenceWiring, dynamodb: Any, table: str
-) -> None:
-    container = LoomContainer()
-    wiring.repo_registration_module(container)
+        created = await container.resolve(Creatable[Gadget]).create(Gadget(id=7, name="lamp"))
 
-    created = await container.resolve(Creatable[Gadget]).create(Gadget(id=7, name="lamp"))
+        assert created == Gadget(id=7, name="lamp")
+        assert await container.resolve(Readable[Gadget]).get_by_id(7) == created
+        item = dynamodb.get_item(TableName=table, Key={"id": {"N": "7"}})["Item"]
+        assert item["name"] == {"S": "lamp"}
 
-    assert created == Gadget(id=7, name="lamp")
-    assert await container.resolve(Readable[Gadget]).get_by_id(7) == created
-    item = dynamodb.get_item(TableName=table, Key={"id": {"N": "7"}})["Item"]
-    assert item["name"] == {"S": "lamp"}
+    async def test_a_delete_reports_whether_the_item_existed(
+        self, wiring: PersistenceWiring
+    ) -> None:
+        container = LoomContainer()
+        wiring.repo_registration_module(container)
+        await container.resolve(Creatable[Gadget]).create(Gadget(id=8, name="desk"))
+        deletes = container.resolve(Deletable[Gadget])
 
-
-async def test_a_delete_reports_whether_the_item_existed(wiring: PersistenceWiring) -> None:
-    container = LoomContainer()
-    wiring.repo_registration_module(container)
-    await container.resolve(Creatable[Gadget]).create(Gadget(id=8, name="desk"))
-    deletes = container.resolve(Deletable[Gadget])
-
-    assert [await deletes.delete(8), await deletes.delete(8)] == [True, False]
+        assert [await deletes.delete(8), await deletes.delete(8)] == [True, False]

@@ -52,42 +52,43 @@ async def _seed(bypass_url: str) -> None:
         await engine.dispose()
 
 
-async def test_every_key_is_re_emitted_and_reset_all_runs_when_the_connection_returns(
-    scoped_database: BootstrapFactory, tmp_path: Path
-) -> None:
-    database = await scoped_database(notes.SCHEMA)
-    application = application_for(notes, database, tmp_path)
-    await create_schema(database.migrator, application)
-    await _seed(database.bypass)
+class TestPoolResidue:
+    async def test_every_key_is_re_emitted_and_reset_all_runs_when_the_connection_returns(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database(notes.SCHEMA)
+        application = application_for(notes, database, tmp_path)
+        await create_schema(database.migrator, application)
+        await _seed(database.bypass)
 
-    manager = SessionManager(
-        database.write,
-        session_settings=rls_session_settings(application),
-        pool_size=1,
-        max_overflow=0,
-        store=DEFAULT_STORE,
-    )
-    install_pool_reset(manager.engine)
-    token = set_identity(Identity(subject=U1))
-    try:
-        async with manager.session() as session:
-            residue = (
-                "SELECT set_config('loom.scope.editor.any', 'on', false), "
-                f"set_config('loom.scope.owner', '{U2}', false)"
-            )
-            await session.execute(text(residue))
-            await session.commit()
+        manager = SessionManager(
+            database.write,
+            session_settings=rls_session_settings(application),
+            pool_size=1,
+            max_overflow=0,
+            store=DEFAULT_STORE,
+        )
+        install_pool_reset(manager.engine)
+        token = set_identity(Identity(subject=U1))
+        try:
+            async with manager.session() as session:
+                residue = (
+                    "SELECT set_config('loom.scope.editor.any', 'on', false), "
+                    f"set_config('loom.scope.owner', '{U2}', false)"
+                )
+                await session.execute(text(residue))
+                await session.commit()
 
-        async with manager.session() as session:
-            flag = (await session.execute(text(FLAG))).scalar()
-            rows = (await session.execute(text("SELECT count(*) FROM notes"))).scalar()
-            assert flag == ""
-            assert rows == 2
+            async with manager.session() as session:
+                flag = (await session.execute(text(FLAG))).scalar()
+                rows = (await session.execute(text("SELECT count(*) FROM notes"))).scalar()
+                assert flag == ""
+                assert rows == 2
 
-        async with manager.engine.connect() as raw:
-            assert (await raw.execute(text(FLAG))).scalar() == ""
-            owner = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
-            assert (await raw.execute(text(owner))).scalar() == ""
-    finally:
-        reset_identity(token)
-        await manager.dispose()
+            async with manager.engine.connect() as raw:
+                assert (await raw.execute(text(FLAG))).scalar() == ""
+                owner = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
+                assert (await raw.execute(text(owner))).scalar() == ""
+        finally:
+            reset_identity(token)
+            await manager.dispose()

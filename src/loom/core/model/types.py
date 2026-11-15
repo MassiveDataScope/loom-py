@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Annotated
 
 import msgspec
@@ -51,6 +52,9 @@ JsonStr = Annotated[str, _JsonMarker()]
 
 PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
 """An integer above zero: a size, a count or a timeout where zero makes no sense."""
+
+PositiveSeconds = Annotated[float, msgspec.Meta(gt=0, le=sys.float_info.max)]
+"""A finite number of seconds above zero: a window or a timeout; refuses ``inf`` and ``nan``."""
 
 NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
 """An integer at or above zero: an extra allowance where none at all is valid."""

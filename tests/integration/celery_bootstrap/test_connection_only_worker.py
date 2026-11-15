@@ -140,44 +140,46 @@ async def _has_table(database: str) -> bool:
         await engine.dispose()
 
 
-async def test_the_check_probes_once_and_leaves_no_connection(
-    tmp_path: Path, worker_url: str
-) -> None:
-    database = _database()
-    compile_all(_Unserved)
-    application = _worker(tmp_path, worker_url)
-    manager = application.kernel.container.resolve(SessionManager)
-    name = f"connection-only-{uuid.uuid4().hex[:12]}"
-    opened: list[str] = []
+class TestConnectionOnlyWorker:
+    async def test_the_check_probes_once_and_leaves_no_connection(
+        self, tmp_path: Path, worker_url: str
+    ) -> None:
+        database = _database()
+        compile_all(_Unserved)
+        application = _worker(tmp_path, worker_url)
+        manager = application.kernel.container.resolve(SessionManager)
+        name = f"connection-only-{uuid.uuid4().hex[:12]}"
+        opened: list[str] = []
 
-    @event.listens_for(manager.engine.sync_engine, "do_connect")
-    def _label(dialect: Any, record: Any, cargs: Any, cparams: dict[str, Any]) -> None:
-        cparams.setdefault("server_settings", {})["application_name"] = name
-        opened.append(name)
+        @event.listens_for(manager.engine.sync_engine, "do_connect")
+        def _label(dialect: Any, record: Any, cargs: Any, cparams: dict[str, Any]) -> None:
+            cparams.setdefault("server_settings", {})["application_name"] = name
+            opened.append(name)
 
-    try:
-        await application.check()
-
-        pool: Any = manager.engine.sync_engine.pool
-        assert opened == [name]
-        assert (pool.checkedout(), pool.checkedin()) == (0, 0)
-        assert await _settled_connections(database, name) == 0
-        assert not await _has_table(database)
-    finally:
-        await manager.dispose()
-
-
-async def test_a_superuser_fails_the_check_and_leaves_no_connection(tmp_path: Path) -> None:
-    """The test container's admin is a superuser: it would ignore row-level security."""
-    database = _database()
-    application = _worker(tmp_path, database)
-    manager = application.kernel.container.resolve(SessionManager)
-
-    try:
-        with pytest.raises(ConfigError, match="superuser or a bypass role"):
+        try:
             await application.check()
 
-        pool: Any = manager.engine.sync_engine.pool
-        assert (pool.checkedout(), pool.checkedin()) == (0, 0)
-    finally:
-        await manager.dispose()
+            pool: Any = manager.engine.sync_engine.pool
+            assert opened == [name]
+            assert (pool.checkedout(), pool.checkedin()) == (0, 0)
+            assert await _settled_connections(database, name) == 0
+            assert not await _has_table(database)
+        finally:
+            await manager.dispose()
+
+    async def test_a_superuser_fails_the_check_and_leaves_no_connection(
+        self, tmp_path: Path
+    ) -> None:
+        """The test container's admin is a superuser: it would ignore row-level security."""
+        database = _database()
+        application = _worker(tmp_path, database)
+        manager = application.kernel.container.resolve(SessionManager)
+
+        try:
+            with pytest.raises(ConfigError, match="superuser or a bypass role"):
+                await application.check()
+
+            pool: Any = manager.engine.sync_engine.pool
+            assert (pool.checkedout(), pool.checkedin()) == (0, 0)
+        finally:
+            await manager.dispose()

@@ -71,7 +71,7 @@ def _client(fake: FakeMongoClient) -> AsyncMongoClient[Any]:
     return cast(AsyncMongoClient[Any], fake)
 
 
-class _Stores:
+class AcmeUndeclaredWriteStores:
     """A transactional default store and an audit store, its articles seeded with ``a``."""
 
     def __init__(self, audit_rolls_back: bool) -> None:
@@ -99,34 +99,37 @@ class _Stores:
 
 
 @pytest.fixture(params=[True, False], ids=["transactional-audit", "audit-without-transactions"])
-def stores(request: pytest.FixtureRequest) -> _Stores:
-    return _Stores(audit_rolls_back=request.param)
+def stores(request: pytest.FixtureRequest) -> AcmeUndeclaredWriteStores:
+    return AcmeUndeclaredWriteStores(audit_rolls_back=request.param)
 
 
-@pytest.mark.parametrize("operation", sorted(_WRITES))
-async def test_an_undeclared_write_is_refused_before_the_driver(
-    stores: _Stores, operation: str
-) -> None:
-    async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-        with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
+class TestMongoUndeclaredWrite:
+    @pytest.mark.parametrize("operation", sorted(_WRITES))
+    async def test_an_undeclared_write_is_refused_before_the_driver(
+        self, stores: AcmeUndeclaredWriteStores, operation: str
+    ) -> None:
+        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
+                await _WRITES[operation](stores.articles)
+
+        assert stores.collection.calls == []
+
+    @pytest.mark.parametrize("operation", sorted(_WRITES))
+    async def test_a_joined_write_reaches_the_driver(
+        self, stores: AcmeUndeclaredWriteStores, operation: str
+    ) -> None:
+        joined = Frame(DEFAULT_STORE, frozenset({AUDIT}))
+
+        async with invocation(stores.coordinator()) as scope, scope.frame(joined):
             await _WRITES[operation](stores.articles)
 
-    assert stores.collection.calls == []
+        assert stores.collection.calls != []
 
+    async def test_a_read_of_an_undeclared_store_is_not_refused(
+        self, stores: AcmeUndeclaredWriteStores
+    ) -> None:
+        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            found = await stores.articles.get_by_id("a")
 
-@pytest.mark.parametrize("operation", sorted(_WRITES))
-async def test_a_joined_write_reaches_the_driver(stores: _Stores, operation: str) -> None:
-    joined = Frame(DEFAULT_STORE, frozenset({AUDIT}))
-
-    async with invocation(stores.coordinator()) as scope, scope.frame(joined):
-        await _WRITES[operation](stores.articles)
-
-    assert stores.collection.calls != []
-
-
-async def test_a_read_of_an_undeclared_store_is_not_refused(stores: _Stores) -> None:
-    async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-        found = await stores.articles.get_by_id("a")
-
-    assert found is not None
-    assert found.title == "A"
+        assert found is not None
+        assert found.title == "A"

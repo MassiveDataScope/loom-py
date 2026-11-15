@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import Enum
 from typing import Any, Protocol, TypeGuard
 
+from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     PipelinePlan,
@@ -18,12 +18,10 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source._specs import TableSourceSpec, TempSourceSpec
 from loom.etl.runtime.contracts import TableDiscovery
 
-_SCHEMA_MODE_OVERWRITE = "overwrite"
-
 
 class _TableTargetSpecLike(Protocol):
     table_ref: TableRef
-    schema_mode: object
+    schema_mode: SchemaMode
 
 
 class _TempTargetSpecLike(Protocol):
@@ -122,7 +120,7 @@ def _check_target(step: StepPlan, catalog: TableDiscovery, will_create: set[str]
     spec = raw_spec
     table_ref = spec.table_ref
     if (
-        _enum_value(spec.schema_mode) != _SCHEMA_MODE_OVERWRITE
+        spec.schema_mode != SchemaMode.OVERWRITE
         and table_ref.ref not in will_create
         and not catalog.exists(table_ref)
     ):
@@ -138,7 +136,7 @@ def _track_overwrite(step: StepPlan, will_create: set[str]) -> None:
     if not _is_table_target_spec(raw_spec):
         return
     spec = raw_spec
-    if _enum_value(spec.schema_mode) == _SCHEMA_MODE_OVERWRITE:
+    if spec.schema_mode == SchemaMode.OVERWRITE:
         will_create.add(spec.table_ref.ref)
 
 
@@ -148,16 +146,6 @@ def _is_table_target_spec(spec: object) -> TypeGuard[_TableTargetSpecLike]:
     if table_ref is None or schema_mode is None:
         return False
     return isinstance(getattr(table_ref, "ref", None), str)
-
-
-def _enum_value(value: object) -> str | None:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Enum):
-        raw = value.value
-        if isinstance(raw, str):
-            return raw
-    return None
 
 
 def _allow(*_: Any) -> None:

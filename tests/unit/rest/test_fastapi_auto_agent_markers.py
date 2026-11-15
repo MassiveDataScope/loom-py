@@ -1,10 +1,9 @@
 """Start-up verification of the ``Agent()`` marker (spec 014, T202).
 
-White-box unit tests of the two private helpers ``create_app`` calls between
-``resolve_ai`` and ``result.factory.verify()``: ``verify_agent_markers``
-aborts start-up on an unknown agent or a mismatched output type, and
-``bind_agent_resolver`` wires the executor's resolver once (and only once)
-an AI runtime exists.
+White-box unit tests of the two steps ``create_app`` runs after
+``AiWiring.build``: ``MarkerDeclarations.verify`` aborts start-up on an unknown
+agent or a mismatched output type, and ``AiWiring.bind_resolvers`` wires the
+executor's resolvers once (and only once) an AI runtime exists.
 """
 
 from __future__ import annotations
@@ -19,25 +18,24 @@ from loom.ai.compiler._plan import AgentPlan, CompiledInstruction, CompiledOutpu
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
-from loom.composition._ai import (
-    AiWiring,
-    bind_agent_resolver,
-    bind_mcp_resolver,
-    verify_agent_markers,
-)
+from loom.composition._ai import AiWiring
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.registration import classify_key
 from loom.core.sql.service import NullSqlQueryService, SqlQueryService
 from loom.core.use_case import Agent
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker
+from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.ai import declared_markers
 
 
 def _plan(name: str, *, output_type: type[Any] = dict) -> AgentPlan:
@@ -56,6 +54,10 @@ def _plan(name: str, *, output_type: type[Any] = dict) -> AgentPlan:
         policies=PolicySpec(),
         metadata={},
     )
+
+
+def _by_name(*plans: AgentPlan) -> dict[str, AgentPlan]:
+    return {plan.name: plan for plan in plans}
 
 
 class _Severity(msgspec.Struct):
@@ -83,36 +85,25 @@ class UnknownAgentUseCase(UseCase[object, object]):
         return triage
 
 
-class NoMarkerUseCase(UseCase[object, object]):
+class AcmeAgentUseCaseWithoutMarker(UseCase[object, object]):
     """Declares no Agent() marker at all — must never be inspected."""
 
     async def execute(self) -> object:
         return None
 
 
-def _compiled(*use_case_types: type[UseCase[Any, Any]]) -> tuple[UseCaseCompiler, UseCaseRegistry]:
-    compiler = UseCaseCompiler()
-    for uc in use_case_types:
-        compiler.compile(uc)
-    registry = UseCaseRegistry.build(list(use_case_types))
-    return compiler, registry
+class TestUseCaseWithoutAnAgentMarker:
+    def test_no_ai_section_and_no_markers_does_not_fail(self) -> None:
+        declared_markers(AcmeAgentUseCaseWithoutMarker).verify({})  # no raise
 
 
-class TestUnUsoSinMarcadorNuncaSeInspecciona:
-    def test_ninguna_seccion_ai_y_sin_marcadores_no_falla(self) -> None:
-        compiler, registry = _compiled(NoMarkerUseCase)
-        ai = AiWiring(config=None, runtime=None)
-
-        verify_agent_markers((NoMarkerUseCase,), compiler, registry, ai)  # no raise
-
-
-class TestAgenteDesconocido:
-    def test_un_nombre_que_ningun_plan_compila_aborta_el_arranque(self) -> None:
-        compiler, registry = _compiled(UnknownAgentUseCase)
-        ai = AiWiring(config=None, runtime=None, plans=(_plan("triage"),))
+class TestUnknownAgent:
+    def test_an_unknown_agent_name_aborts_startup(self) -> None:
+        declared = declared_markers(UnknownAgentUseCase)
+        plans = _by_name(_plan("triage"))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((UnknownAgentUseCase,), compiler, registry, ai)
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_UNKNOWN}
@@ -120,43 +111,39 @@ class TestAgenteDesconocido:
         assert "does-not-exist" in message
         assert "triage" in message
 
-    def test_sin_seccion_ai_el_mensaje_dice_que_no_hay_agentes(self) -> None:
-        compiler, registry = _compiled(UnknownAgentUseCase)
-        ai = AiWiring(config=None, runtime=None)
+    def test_without_an_ai_section_the_message_says_there_are_no_agents(self) -> None:
+        declared = declared_markers(UnknownAgentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((UnknownAgentUseCase,), compiler, registry, ai)
+            declared.verify({})
 
         assert "none" in str(excinfo.value)
 
 
-class TestTipoDeSalidaDesajustado:
-    def test_la_anotacion_que_no_coincide_con_el_output_declarado_aborta(self) -> None:
-        compiler, registry = _compiled(MismatchedOutputUseCase)
-        ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
+class TestMismatchedAgentOutput:
+    def test_an_annotation_that_mismatches_the_declared_output_aborts(self) -> None:
+        plans = _by_name(_plan("triage", output_type=dict))
+        declared = declared_markers(MismatchedOutputUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers((MismatchedOutputUseCase,), compiler, registry, ai)
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH}
 
-    def test_una_anotacion_coincidente_no_falla(self) -> None:
-        compiler, registry = _compiled(KnownAgentUseCase)
-        ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
+    def test_a_matching_annotation_does_not_fail(self) -> None:
+        plans = _by_name(_plan("triage", output_type=dict))
 
-        verify_agent_markers((KnownAgentUseCase,), compiler, registry, ai)  # no raise
+        declared_markers(KnownAgentUseCase).verify(plans)  # no raise
 
 
-class TestAgregacionDeProblemas:
-    def test_dos_problemas_distintos_se_reportan_juntos(self) -> None:
-        compiler, registry = _compiled(UnknownAgentUseCase, MismatchedOutputUseCase)
-        ai = AiWiring(config=None, runtime=None, plans=(_plan("triage", output_type=dict),))
+class TestAgentMarkerProblemsAreReportedTogether:
+    def test_two_distinct_problems_are_reported_together(self) -> None:
+        declared = declared_markers(UnknownAgentUseCase, MismatchedOutputUseCase)
+        plans = _by_name(_plan("triage", output_type=dict))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            verify_agent_markers(
-                (UnknownAgentUseCase, MismatchedOutputUseCase), compiler, registry, ai
-            )
+            declared.verify(plans)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {
@@ -169,16 +156,16 @@ def _kernel_runtime() -> KernelRuntime:
     """Build a real, minimal ``KernelRuntime`` — every collaborator genuine, none stubbed.
 
     ``SqlQueryService`` is registered the same way ``create_app`` always
-    registers it, before ``bind_agent_resolver`` ever runs: that
-    function resolves it unconditionally now, so an unregistered container
+    registers it, before ``AiWiring.bind_resolvers`` ever runs: that
+    method resolves it unconditionally, so an unregistered container
     here would fail every test in this class for a reason unrelated to what
     each one is pinning.
     """
-    container = LoomContainer()
+    container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     container.register_instance(SqlQueryService, NullSqlQueryService())
     compiler = UseCaseCompiler()
     factory = UseCaseFactory(container)
-    executor = RuntimeExecutor(compiler)
+    executor = RuntimeExecutor(compiler, resolvers=container.kinds)
     registry = UseCaseRegistry.build([])
     app = AppInvoker(factory=factory, executor=executor, registry=registry)
     return KernelRuntime(
@@ -194,9 +181,9 @@ def _kernel_runtime() -> KernelRuntime:
 def _fake_agent_runtime() -> Any:
     """An unentered ``AgentRuntime``: enough to close over, never called here.
 
-    ``bind_agent_resolver`` only reads ``ai.runtime is None`` and hands the
-    value on to ``agent_marker_resolver``, which stores it in a closure and
-    never calls any of its methods until the handle it builds actually runs.
+    ``AiWiring.bind_resolvers`` only reads ``runtime is None`` and hands the
+    value on to the marker resolvers, which store it and never call any of
+    its methods until the handle they build actually runs.
     So a real ``AgentRuntime`` never entered as a context manager is a
     faithful double for this seam — no fake class needed.
     """
@@ -205,73 +192,45 @@ def _fake_agent_runtime() -> Any:
     return object.__new__(AgentRuntime)
 
 
-class TestElResolverSeLigaSoloConRuntimeDeIa:
-    def test_sin_seccion_ai_el_executor_no_recibe_resolver(self) -> None:
+class TestResolversBindOnlyWithAnAiRuntime:
+    @pytest.mark.parametrize("kind", [AGENT, MCP], ids=["agent", "mcp"])
+    def test_without_an_ai_section_the_executor_receives_no_resolver(self, kind: Kind) -> None:
         result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=None)
 
-        bind_agent_resolver(result, ai)
+        AiWiring.ABSENT.bind_resolvers(result)
 
-        assert result.executor._agent_resolver is None  # noqa: SLF001 - white-box wiring test
+        assert not result.container.kinds.is_bound(kind)
 
-    def test_con_runtime_de_ia_el_resolver_queda_ligado(self) -> None:
+    def test_with_an_ai_runtime_both_resolvers_are_bound_once(self) -> None:
         result = _kernel_runtime()
         ai = AiWiring(config=None, runtime=_fake_agent_runtime())
 
-        bind_agent_resolver(result, ai)
+        ai.bind_resolvers(result)
 
-        assert result.executor._agent_resolver is not None  # noqa: SLF001
+        assert result.container.kinds.is_bound(AGENT)
+        assert result.container.kinds.is_bound(MCP)
+
+        class AnotherResolver:
+            def resolve(self, declaration: object, annotation: object) -> object:
+                return object()
+
+        another = AnotherResolver()
         with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_agent_resolver(lambda name, identity: object())
+            result.executor.bind_agent_resolver(another)
+        with pytest.raises(RuntimeError, match="more than once"):
+            result.executor.bind_mcp_resolver(another)
 
-    def test_resuelve_la_observabilidad_registrada_en_el_contenedor(self) -> None:
+    @pytest.mark.parametrize("registered", [True, False], ids=["registered", "unregistered"])
+    def test_the_handle_opens_spans_on_the_registered_observability_runtime(
+        self, registered: bool
+    ) -> None:
         result = _kernel_runtime()
         runtime = ObservabilityRuntime([])
-        result.container.register_instance(ObservabilityRuntime, runtime)
-        ai = AiWiring(config=None, runtime=_fake_agent_runtime())
+        if registered:
+            result.container.register_instance(ObservabilityRuntime, runtime)
 
-        bind_agent_resolver(result, ai)
+        AiWiring(config=None, runtime=_fake_agent_runtime()).bind_resolvers(result)
 
-        resolver = result.executor._agent_resolver  # noqa: SLF001
-        assert resolver is not None
-        handle = resolver("triage", Identity(subject="ada", mechanism="test"))
-        assert handle._observability is runtime  # noqa: SLF001
-
-    def test_sin_runtime_de_observabilidad_registrado_el_mango_no_abre_span(self) -> None:
-        result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=_fake_agent_runtime())
-
-        bind_agent_resolver(result, ai)
-
-        resolver = result.executor._agent_resolver  # noqa: SLF001
-        assert resolver is not None
-        handle = resolver("triage", Identity(subject="ada", mechanism="test"))
-        assert handle._observability is None  # noqa: SLF001
-
-
-class TestElResolverDeMcpSeLigaSoloConRuntimeDeIa:
-    """Mirrors ``TestElResolverSeLigaSoloConRuntimeDeIa`` for ``bind_mcp_resolver`` (S7).
-
-    ``bind_mcp_resolver`` is a second, differently-typed wiring call, never
-    exercised by any test above: deleting it entirely still passes every
-    ``Agent()`` test in this module and every start-up check, and leaves the
-    ``Mcp()`` marker dead in production (H4).
-    """
-
-    def test_sin_seccion_ai_el_executor_no_recibe_resolver_mcp(self) -> None:
-        result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=None)
-
-        bind_mcp_resolver(result, ai)
-
-        assert result.executor._mcp_resolver is None  # noqa: SLF001 - white-box wiring test
-
-    def test_con_runtime_de_ia_el_resolver_de_mcp_queda_ligado(self) -> None:
-        result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=_fake_agent_runtime())
-
-        bind_mcp_resolver(result, ai)
-
-        assert result.executor._mcp_resolver is not None  # noqa: SLF001
-        with pytest.raises(RuntimeError, match="more than once"):
-            result.executor.bind_mcp_resolver(lambda server, include, identity: object())
+        with ExecutionScope(Identity(subject="ada", mechanism="test")):
+            handle: Any = result.container.kinds.resolve(AGENT, Agent("triage"), AgentHandle)
+        assert handle._observability is (runtime if registered else None)  # noqa: SLF001

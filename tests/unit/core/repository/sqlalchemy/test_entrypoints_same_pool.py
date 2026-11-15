@@ -76,38 +76,37 @@ def _streaming_manager(database: dict[str, Any]) -> SessionManager:
     return build_session_manager(resolved.database, STREAMING_PROFILE, database=DEFAULT_STORE)
 
 
-def test_a_fully_declared_pool_is_identical_in_every_entry_point() -> None:
-    database = {"url": _POSTGRES, "pool": _FULL_POOL}
+class TestEntrypointsSamePool:
+    def test_a_fully_declared_pool_is_identical_in_every_entry_point(self) -> None:
+        database = {"url": _POSTGRES, "pool": _FULL_POOL}
 
-    settings = {
-        _pool_settings(_api_manager(database)),
-        _pool_settings(_worker_manager(database)),
-        _pool_settings(_streaming_manager(database)),
-    }
+        settings = {
+            _pool_settings(_api_manager(database)),
+            _pool_settings(_worker_manager(database)),
+            _pool_settings(_streaming_manager(database)),
+        }
 
-    assert settings == {(3, 1, 4, 60, False)}
+        assert settings == {(3, 1, 4, 60, False)}
 
+    def test_the_same_section_reads_identically_wherever_it_lives(self) -> None:
+        database = {"url": _POSTGRES, "pool": _FULL_POOL, "connect_args": {"command_timeout": 5}}
+        store = {"backend": "sqlalchemy", **database}
+        ctx = ConfigContext.from_dict({"stores": {"default": store, "warehouse": store}})
 
-def test_the_same_section_reads_identically_wherever_it_lives() -> None:
-    database = {"url": _POSTGRES, "pool": _FULL_POOL, "connect_args": {"command_timeout": 5}}
-    store = {"backend": "sqlalchemy", **database}
-    ctx = ConfigContext.from_dict({"stores": {"default": store, "warehouse": store}})
+        assert load_database_config(ctx, "default") == load_database_config(ctx, "warehouse")
 
-    assert load_database_config(ctx, "default") == load_database_config(ctx, "warehouse")
+    def test_without_a_pool_the_api_takes_the_server_profile(self) -> None:
+        assert _pool_settings(_api_manager({"url": _POSTGRES})) == (5, 5, 10, 1800, True)
 
+    def test_without_a_pool_the_worker_takes_the_worker_profile(self) -> None:
+        # SC-003: a prefork worker of 8 processes opens at most 8 x (2 + 0) = 16 connections.
+        assert _pool_settings(_worker_manager({"url": _POSTGRES})) == (2, 0, 30, 1800, True)
 
-def test_without_a_pool_the_api_takes_the_server_profile() -> None:
-    assert _pool_settings(_api_manager({"url": _POSTGRES})) == (5, 5, 10, 1800, True)
-
-
-def test_without_a_pool_the_worker_takes_the_worker_profile() -> None:
-    # SC-003: a prefork worker of 8 processes opens at most 8 x (2 + 0) = 16 connections.
-    assert _pool_settings(_worker_manager({"url": _POSTGRES})) == (2, 0, 30, 1800, True)
-
-
-@pytest.mark.parametrize(
-    ("build", "expected"),
-    [(_api_manager, (1, 5, 10, 1800, True)), (_worker_manager, (1, 0, 30, 1800, True))],
-)
-def test_one_declared_key_changes_only_that_key(build: Any, expected: tuple[Any, ...]) -> None:
-    assert _pool_settings(build({"url": _POSTGRES, "pool": {"size": 1}})) == expected
+    @pytest.mark.parametrize(
+        ("build", "expected"),
+        [(_api_manager, (1, 5, 10, 1800, True)), (_worker_manager, (1, 0, 30, 1800, True))],
+    )
+    def test_one_declared_key_changes_only_that_key(
+        self, build: Any, expected: tuple[Any, ...]
+    ) -> None:
+        assert _pool_settings(build({"url": _POSTGRES, "pool": {"size": 1}})) == expected

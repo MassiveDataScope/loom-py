@@ -60,13 +60,14 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_compiling_a_struct_type_does_not_import_pydantic() -> None:
-    """The msgspec path must never touch the optional pydantic dependency."""
-    result = _run_in_clean_interpreter(_SCRIPT)
-    assert result.returncode == 0, result.stderr
+class TestLoomTypeImportContainment:
+    def test_compiling_a_struct_type_does_not_import_pydantic(self) -> None:
+        """The msgspec path must never touch the optional pydantic dependency."""
+        result = _run_in_clean_interpreter(_SCRIPT)
+        assert result.returncode == 0, result.stderr
 
-    observed = json.loads(result.stdout.strip().splitlines()[-1])
+        observed = json.loads(result.stdout.strip().splitlines()[-1])
 
-    assert observed["name"] == "a"
-    assert observed["library"] == "msgspec"
-    assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"
+        assert observed["name"] == "a"
+        assert observed["library"] == "msgspec"
+        assert observed["pydantic"] == [], f"pydantic modules imported: {observed['pydantic']}"

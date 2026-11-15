@@ -18,9 +18,7 @@ class BoundaryValidationError(DomainError, ValueError):
     keeps its text. A repository raises it for a value its storage cannot
     hold, such as the SQLAlchemy repository for a ``time`` whose UTC offset,
     present or missing, its column cannot take. It is also a
-    :class:`ValueError`, so an ``except ValueError`` that used to catch
-    ``msgspec.ValidationError`` or ``pydantic.ValidationError`` keeps
-    catching it.
+    :class:`ValueError`.
 
     Args:
         message: One-line description of the failure.

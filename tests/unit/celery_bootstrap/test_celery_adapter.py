@@ -135,6 +135,18 @@ class TestRecipe:
 
         assert set(recipe.discovered.use_cases) == {_PingJob, _Lookup}
 
+    def test_the_callbacks_reach_the_recipe_as_graph_roots(self, tmp_path: Path) -> None:
+        class _AcmeAuditCallback:
+            def on_success(self, job_id: str, result: Any, **context: Any) -> None:
+                del job_id, result, context
+
+        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_AcmeAuditCallback])
+
+        recipe = adapter.recipe(_source(tmp_path, {}))
+
+        assert recipe.callbacks == (_AcmeAuditCallback,)
+        assert _AcmeAuditCallback not in recipe.discovered.use_cases
+
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
         metrics: Any = object()
 

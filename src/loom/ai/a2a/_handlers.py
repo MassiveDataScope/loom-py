@@ -27,8 +27,8 @@ from loom.ai._transport import (
     annotate_usage,
     failure_event,
     project_output,
-    projecting_final,
     with_heartbeats,
+    with_projected_output,
 )
 from loom.ai.a2a._binding import PublishedAgent
 from loom.ai.a2a._rpc import (
@@ -40,7 +40,7 @@ from loom.ai.a2a._rpc import (
     task_not_found_error,
     unsupported_error,
 )
-from loom.ai.a2a.events import A2AEventProjector
+from loom.ai.a2a.events import A2AEventProjector, TaskState
 from loom.ai.abc import CONVERSATION_ID_MAX_LENGTH, AgentResult
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
@@ -64,9 +64,6 @@ _OUTPUT_ARTIFACT_ID: Final[str] = "output"
 _SEND: Final[str] = "message/send"
 _STREAM: Final[str] = "message/stream"
 
-# Methods the card explicitly advertises as absent (R-006): no persisted task
-# state means no retrieval, no cancellation, no resubscription and no push
-# notification configuration. Each answers a named JSON-RPC error, never a 500.
 _UNSUPPORTED_METHODS: Final[tuple[str, ...]] = (
     "tasks/get",
     "tasks/list",
@@ -194,7 +191,7 @@ def _task(task_id: str, context_id: str, status: Mapping[str, object]) -> Mappin
 
 
 def _completed_task(task_id: str, context_id: str, output: object) -> Mapping[str, object]:
-    task = dict(_task(task_id, context_id, {"state": "completed"}))
+    task = dict(_task(task_id, context_id, {"state": TaskState.COMPLETED}))
     task["artifacts"] = [
         {"artifactId": _OUTPUT_ARTIFACT_ID, "parts": [{"kind": "data", "data": output}]}
     ]
@@ -266,16 +263,11 @@ def _make_send_handler(
             mechanism=call.identity.mechanism,
         )
         try:
-            # Opened rather than entered lexically for the reason the HTTP
-            # surface does it: what the run spent is only known once it ends,
-            # and both surfaces must answer the same query about the same span.
             with always_closed(span), span.as_current():
                 result = await _annotated_run(
                     runtime, span, name, prompt, call.identity, conversation_id=context_id
                 )
         except AgentRunError as exc:
-            # The failure text stays server-side: only the code and its fixed
-            # catalogue detail travel outward.
             _logger.warning("a2a run of agent %r failed: %s", name, exc)
             return error_response(call.request_id, internal_error(exc.code))
         result = project_output(result, runtime.output_type(name))
@@ -288,24 +280,36 @@ def _make_send_handler(
 def _run_frames(
     runtime: AgentRuntime, call: Call, prompt: str, *, task_id: str, context_id: str
 ) -> AsyncIterator[bytes]:
-    """Project one run onto A2A frames, terminal failure included."""
+    """Project one run onto A2A frames, heartbeats and terminal failure included.
+
+    The run is entered and left by the task consuming the frames; heartbeats
+    relay the run's events inside it.
+    """
+    projector = A2AEventProjector(
+        task_id=task_id, context_id=context_id, max_steps=call.agent.max_steps
+    )
+
+    async def _projected(events: AsyncIterator[Any]) -> AsyncIterator[bytes]:
+        async for event in events:
+            for projected in projector.project(event):
+                yield _sse_frame(call.request_id, projected)
 
     async def _frames() -> AsyncIterator[bytes]:
-        projector = A2AEventProjector(
-            task_id=task_id, context_id=context_id, max_steps=call.agent.max_steps
+        yield _sse_frame(
+            call.request_id, _task(task_id, context_id, {"state": TaskState.SUBMITTED})
         )
-        yield _sse_frame(call.request_id, _task(task_id, context_id, {"state": "submitted"}))
         try:
             async with runtime.run_stream(
                 call.agent.name, prompt, identity=call.identity, conversation_id=context_id
             ) as events:
-                projected_events = projecting_final(events, runtime.output_type(call.agent.name))
-                async for event in projected_events:
-                    for projected in projector.project(event):
-                        yield _sse_frame(call.request_id, projected)
+                projected_events = with_projected_output(
+                    events, runtime.output_type(call.agent.name)
+                )
+                async for frame in with_heartbeats(
+                    _projected(projected_events), heartbeat_ms=HEARTBEAT_MS
+                ):
+                    yield frame
         except Exception as exc:
-            # The status line is long gone, so this failure can only travel
-            # in-band, as the stream's terminal event (FR-032).
             _logger.warning("a2a stream failed after the first byte", exc_info=exc)
             for projected in projector.project(failure_event(exc)):
                 yield _sse_frame(call.request_id, projected)
@@ -340,8 +344,9 @@ def _make_stream_handler(
                     mechanism=call.identity.mechanism,
                 )
             ):
-                frames = _run_frames(runtime, call, prompt, task_id=task_id, context_id=context_id)
-                async for frame in with_heartbeats(frames, heartbeat_ms=HEARTBEAT_MS):
+                async for frame in _run_frames(
+                    runtime, call, prompt, task_id=task_id, context_id=context_id
+                ):
                     yield frame
 
         return StreamingResponse(_framed(), media_type=_MEDIA_TYPE_SSE)

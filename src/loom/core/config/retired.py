@@ -53,7 +53,7 @@ def reject_retired_sections(ctx: ConfigContext) -> None:
 
     ``database``, ``database.<name>``, ``persistence.backend``,
     ``persistence.mongo`` and ``persistence.dynamodb`` were replaced by the
-    ``stores.<name>`` sections (ADR 0008). Reading them next to ``stores``
+    ``stores.<name>`` sections. Reading them next to ``stores``
     would mix two contracts, so every load refuses them and names the
     replacement. ``persistence.cursors`` stays. The sections are read as
     written: no placeholder resolves.

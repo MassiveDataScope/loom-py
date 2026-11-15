@@ -77,61 +77,6 @@ class _HiddenUpstream(LoomError):
         return {"failed": _FAILED_QUERY}
 
 
-def test_a_query_failure_answers_502_with_exactly_its_public_fields() -> None:
-    """The real case: 502, the error's own text, and the failed query name."""
-    exc = HttpErrorMapper().to_http(QueryFailed())
-
-    assert exc.status_code == HTTPStatus.BAD_GATEWAY
-    assert _detail(exc) == {
-        "code": "bad_gateway",
-        "message": _QUERY_MESSAGE,
-        "failed": _FAILED_QUERY,
-        "trace_id": get_trace_id(),
-    }
-
-
-def test_a_5xx_keeps_the_fixed_message_when_public_message_is_off() -> None:
-    """Extra fields are public; the message is not, unless the error opts in."""
-    exc = HttpErrorMapper().to_http(_HiddenUpstream())
-
-    assert exc.status_code == HTTPStatus.BAD_GATEWAY
-    assert _detail(exc) == {
-        "code": "bad_gateway",
-        "message": _FIXED_500,
-        "failed": _FAILED_QUERY,
-        "trace_id": get_trace_id(),
-    }
-
-
-def test_a_5xx_shows_its_own_message_when_public_message_is_on() -> None:
-    error = _HiddenUpstream()
-    error.public_message = True
-
-    detail = _detail(HttpErrorMapper().to_http(error))
-
-    assert detail["message"] == _LEAKY
-
-
-def test_a_public_field_the_mapper_did_not_set_is_kept() -> None:
-    """``entity`` is loom's only when this response already carries it."""
-
-    class _NamesTheQuery(SystemError):
-        def __init__(self) -> None:
-            super().__init__("down")
-
-        def public_detail(self) -> Mapping[str, Any]:
-            return {"entity": "Query"}
-
-    detail = _detail(HttpErrorMapper().to_http(_NamesTheQuery()))
-
-    assert detail == {
-        "code": "system_error",
-        "message": _FIXED_500,
-        "trace_id": get_trace_id(),
-        "entity": "Query",
-    }
-
-
 class _OverridesMessage(LoomError):
     """A 5xx that tries to replace the message loom writes."""
 
@@ -180,89 +125,6 @@ def _assert_misdeclaration_logged(
         assert secret not in logged
 
 
-@pytest.mark.parametrize(
-    "error",
-    [_OverridesMessage(), _OverridesEntity("User", id=1)],
-    ids=["message", "entity"],
-)
-def test_a_public_detail_that_overrides_a_mapper_field_answers_500(
-    error: LoomError, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A colliding key is logged and dropped; the client gets the fixed 500."""
-    with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
-        exc = HttpErrorMapper().to_http(error)
-
-    _assert_internal_fallback(exc, error)
-    _assert_misdeclaration_logged(
-        caplog,
-        type(error).__name__,
-        "public_detail",
-        "leaked-field-value",
-        "leaked-message-host",
-    )
-
-
-def test_a_bare_status_int_is_accepted() -> None:
-    """``http_status = 502`` type-checks as ``int`` and is ``HTTPStatus.BAD_GATEWAY``."""
-
-    class _Declared(LoomError):
-        http_status = 502
-
-        def __init__(self) -> None:
-            super().__init__("no", code=ErrorCode.SYSTEM_ERROR)
-
-    exc = HttpErrorMapper().to_http(_Declared())
-
-    assert exc.status_code is HTTPStatus.BAD_GATEWAY
-    assert _detail(exc) == {
-        "code": ErrorCode.SYSTEM_ERROR,
-        "message": _FIXED_500,
-        "trace_id": get_trace_id(),
-    }
-
-
-def test_a_bare_401_is_the_unauthorized_status() -> None:
-    """Normalising matters: the challenge compares with ``is``, not equality."""
-
-    class _Declared(LoomError):
-        http_status = 401
-
-        def __init__(self) -> None:
-            super().__init__("sign in", code=ErrorCode.SYSTEM_ERROR)
-
-    exc = HttpErrorMapper().to_http(_Declared())
-
-    assert exc.status_code is HTTPStatus.UNAUTHORIZED
-    assert exc.headers == {"WWW-Authenticate": "Bearer"}
-    assert _detail(exc)["message"] == "sign in"
-
-
-@pytest.mark.parametrize("status", [400, 451, 511])
-def test_the_registered_4xx_and_5xx_bounds_are_accepted(status: int) -> None:
-    class _Declared(LoomError):
-        def __init__(self) -> None:
-            super().__init__("bound", code=ErrorCode.SYSTEM_ERROR)
-
-    error = _Declared()
-    error.http_status = status
-
-    assert HttpErrorMapper().to_http(error).status_code is HTTPStatus(status)
-
-
-def test_a_truthy_non_bool_public_message_keeps_the_fixed_5xx_message() -> None:
-    class _Declared(LoomError):
-        http_status = HTTPStatus.BAD_GATEWAY
-
-        def __init__(self) -> None:
-            super().__init__("secret-host", code=ErrorCode.SYSTEM_ERROR)
-
-    error = _Declared()
-    flag: Any = "no"
-    error.public_message = flag
-
-    assert _detail(HttpErrorMapper().to_http(error))["message"] == _FIXED_500
-
-
 class _RaisingDetail(LoomError):
     def __init__(self) -> None:
         super().__init__("secret-raise-host", code=ErrorCode.SYSTEM_ERROR)
@@ -278,115 +140,6 @@ class _NoneDetail(LoomError):
     def public_detail(self) -> Mapping[str, Any]:
         result: Any = None
         return result
-
-
-@pytest.mark.parametrize(
-    "error", [_RaisingDetail(), _NoneDetail()], ids=["raises", "not-a-mapping"]
-)
-def test_a_broken_public_detail_answers_the_internal_error(
-    error: LoomError, caplog: pytest.LogCaptureFixture
-) -> None:
-    with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
-        exc = HttpErrorMapper().to_http(error)
-
-    _assert_internal_fallback(exc, error)
-    _assert_misdeclaration_logged(
-        caplog, type(error).__name__, "public_detail", "secret-raise-value"
-    )
-
-
-@pytest.mark.parametrize(
-    "status",
-    [200, 308, 499, 600, 700, True, "502", 502.0],
-    ids=["200", "308", "499", "600", "700", "bool", "str", "float"],
-)
-def test_an_invalid_http_status_answers_the_internal_error(
-    status: object, caplog: pytest.LogCaptureFixture
-) -> None:
-    class _Declared(LoomError):
-        public_message = True
-
-        def __init__(self) -> None:
-            super().__init__("secret-status-host", code=ErrorCode.SYSTEM_ERROR)
-
-        def public_detail(self) -> Mapping[str, Any]:
-            return {"failed": "secret-status-field"}
-
-    error = _Declared()
-    declared: Any = status
-    error.http_status = declared
-    with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
-        exc = HttpErrorMapper().to_http(error)
-
-    _assert_internal_fallback(exc, error)
-    _assert_misdeclaration_logged(
-        caplog, type(error).__name__, "http_status", "secret-status-host", "secret-status-field"
-    )
-
-
-@pytest.mark.parametrize(
-    ("error", "status", "message", "extra", "headers"),
-    [
-        (
-            NotFound("User", id=1),
-            404,
-            "User with id=1 not found",
-            {"entity": "User", "id": 1},
-            None,
-        ),
-        (
-            RuleViolation("email", "invalid"),
-            422,
-            "invalid",
-            {"field": "email"},
-            None,
-        ),
-        (RateLimited(1), 429, "Too many requests.", {}, {"Retry-After": "1"}),
-        (SystemError("secret-host"), 500, _FIXED_500, {}, None),
-        (
-            SystemError("secret-host", code=ErrorCode.SERVICE_UNAVAILABLE),
-            503,
-            _FIXED_503,
-            {},
-            None,
-        ),
-        (
-            PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
-            500,
-            _FIXED_500,
-            {"committed": True},
-            None,
-        ),
-    ],
-    ids=["not-found", "rule", "rate-limited", "500", "503", "post-commit"],
-)
-def test_an_error_without_an_http_declaration_keeps_its_answer(
-    error: LoomError,
-    status: int,
-    message: str,
-    extra: dict[str, Any],
-    headers: dict[str, str] | None,
-) -> None:
-    exc = HttpErrorMapper().to_http(error)
-
-    assert (exc.status_code, exc.headers) == (status, headers)
-    assert _detail(exc) == {
-        "code": error.code,
-        "message": message,
-        "trace_id": get_trace_id(),
-        **extra,
-    }
-
-
-def test_an_instance_may_declare_the_status_and_the_public_message() -> None:
-    error = SystemError(_QUERY_MESSAGE, code=ErrorCode.SYSTEM_ERROR)
-    error.http_status = HTTPStatus.BAD_GATEWAY
-    error.public_message = True
-
-    exc = HttpErrorMapper().to_http(error)
-
-    assert exc.status_code == HTTPStatus.BAD_GATEWAY
-    assert _detail(exc)["message"] == _QUERY_MESSAGE
 
 
 _APP_SOURCE = '''\
@@ -457,36 +210,6 @@ def _write_project(
     path = directory / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(path), module
-
-
-def test_fastapi_and_lambda_answer_a_declared_error_the_same(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Both transports serve the use case through the same mapper."""
-    config, module = _write_project(tmp_path)
-    monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-    fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-    handler = create_app(config, adapter=LambdaAdapter(), environment="test")
-    assert isinstance(fastapi_app, FastAPI)
-    assert isinstance(handler, LambdaHTTPHandler)
-    expected = {
-        "detail": {
-            "trace_id": _TRACE,
-            "code": "bad_gateway",
-            "message": _QUERY_MESSAGE,
-            "failed": _FAILED_QUERY,
-        }
-    }
-    try:
-        with TestClient(fastapi_app) as fastapi_client, LambdaTestClient(handler) as lambda_client:
-            headers = {"x-request-id": _TRACE}
-            fastapi_reply = fastapi_client.get("/queries/tasar-venta", headers=headers)
-            lambda_reply = lambda_client.get("/queries/tasar-venta", headers=headers)
-        assert (fastapi_reply.status_code, fastapi_reply.json()) == (502, expected)
-        assert (lambda_reply.status_code, lambda_reply.json()) == (502, expected)
-    finally:
-        handler.close()
-        sys.modules.pop(module, None)
 
 
 _MISDECLARED_APP_SOURCE = '''\
@@ -574,41 +297,331 @@ _MISDECLARED = (
 )
 
 
-def test_fastapi_and_lambda_answer_a_misdeclared_error_as_json_500(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A bad declaration stays JSON, on both transports, and is logged once."""
-    config, module = _write_project(
-        tmp_path, source=_MISDECLARED_APP_SOURCE, slug="misdeclared_http"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-    fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-    handler = create_app(config, adapter=LambdaAdapter(), environment="test")
-    assert isinstance(fastapi_app, FastAPI)
-    assert isinstance(handler, LambdaHTTPHandler)
-    expected = {
-        "detail": {
-            "trace_id": _TRACE,
+class TestDeclaredPublicErrorBody:
+    def test_a_query_failure_answers_502_with_exactly_its_public_fields(
+        self,
+    ) -> None:
+        """The real case: 502, the error's own text, and the failed query name."""
+        exc = HttpErrorMapper().to_http(QueryFailed())
+
+        assert exc.status_code == HTTPStatus.BAD_GATEWAY
+        assert _detail(exc) == {
+            "code": "bad_gateway",
+            "message": _QUERY_MESSAGE,
+            "failed": _FAILED_QUERY,
+            "trace_id": get_trace_id(),
+        }
+
+    def test_a_5xx_keeps_the_fixed_message_when_public_message_is_off(
+        self,
+    ) -> None:
+        """Extra fields are public; the message is not, unless the error opts in."""
+        exc = HttpErrorMapper().to_http(_HiddenUpstream())
+
+        assert exc.status_code == HTTPStatus.BAD_GATEWAY
+        assert _detail(exc) == {
             "code": "bad_gateway",
             "message": _FIXED_500,
+            "failed": _FAILED_QUERY,
+            "trace_id": get_trace_id(),
         }
-    }
-    try:
-        with (
-            TestClient(fastapi_app) as fastapi_client,
-            LambdaTestClient(handler) as lambda_client,
-            caplog.at_level(logging.ERROR, logger="loom.rest.errors"),
-        ):
-            for client in (fastapi_client, lambda_client):
-                for path, leak, class_name, problem in _MISDECLARED:
-                    caplog.clear()
-                    reply = client.get(path, headers={"x-request-id": _TRACE})
-                    assert reply.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-                    assert reply.headers["content-type"].startswith("application/json")
-                    assert reply.json() == expected
-                    assert leak not in reply.text
-                    assert _LEAKY not in reply.text
-                    _assert_misdeclaration_logged(caplog, class_name, problem, leak, _LEAKY)
-    finally:
-        handler.close()
-        sys.modules.pop(module, None)
+
+    def test_a_5xx_shows_its_own_message_when_public_message_is_on(
+        self,
+    ) -> None:
+        error = _HiddenUpstream()
+        error.public_message = True
+
+        detail = _detail(HttpErrorMapper().to_http(error))
+
+        assert detail["message"] == _LEAKY
+
+    def test_a_public_field_the_mapper_did_not_set_is_kept(
+        self,
+    ) -> None:
+        """``entity`` is loom's only when this response already carries it."""
+
+        class _NamesTheQuery(SystemError):
+            def __init__(self) -> None:
+                super().__init__("down")
+
+            def public_detail(self) -> Mapping[str, Any]:
+                return {"entity": "Query"}
+
+        detail = _detail(HttpErrorMapper().to_http(_NamesTheQuery()))
+
+        assert detail == {
+            "code": "system_error",
+            "message": _FIXED_500,
+            "trace_id": get_trace_id(),
+            "entity": "Query",
+        }
+
+    def test_a_truthy_non_bool_public_message_keeps_the_fixed_5xx_message(
+        self,
+    ) -> None:
+        class _Declared(LoomError):
+            http_status = HTTPStatus.BAD_GATEWAY
+
+            def __init__(self) -> None:
+                super().__init__("secret-host", code=ErrorCode.SYSTEM_ERROR)
+
+        error = _Declared()
+        flag: Any = "no"
+        error.public_message = flag
+
+        assert _detail(HttpErrorMapper().to_http(error))["message"] == _FIXED_500
+
+
+class TestMisdeclaredHttpStatus:
+    @pytest.mark.parametrize(
+        "error",
+        [_OverridesMessage(), _OverridesEntity("User", id=1)],
+        ids=["message", "entity"],
+    )
+    def test_a_public_detail_that_overrides_a_mapper_field_answers_500(
+        self, error: LoomError, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A colliding key is logged and dropped; the client gets the fixed 500."""
+        with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
+            exc = HttpErrorMapper().to_http(error)
+
+        _assert_internal_fallback(exc, error)
+        _assert_misdeclaration_logged(
+            caplog,
+            type(error).__name__,
+            "public_detail",
+            "leaked-field-value",
+            "leaked-message-host",
+        )
+
+    @pytest.mark.parametrize(
+        "error", [_RaisingDetail(), _NoneDetail()], ids=["raises", "not-a-mapping"]
+    )
+    def test_a_broken_public_detail_answers_the_internal_error(
+        self, error: LoomError, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
+            exc = HttpErrorMapper().to_http(error)
+
+        _assert_internal_fallback(exc, error)
+        _assert_misdeclaration_logged(
+            caplog, type(error).__name__, "public_detail", "secret-raise-value"
+        )
+
+    @pytest.mark.parametrize(
+        "status",
+        [200, 308, 499, 600, 700, True, "502", 502.0],
+        ids=["200", "308", "499", "600", "700", "bool", "str", "float"],
+    )
+    def test_an_invalid_http_status_answers_the_internal_error(
+        self, status: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class _Declared(LoomError):
+            public_message = True
+
+            def __init__(self) -> None:
+                super().__init__("secret-status-host", code=ErrorCode.SYSTEM_ERROR)
+
+            def public_detail(self) -> Mapping[str, Any]:
+                return {"failed": "secret-status-field"}
+
+        error = _Declared()
+        declared: Any = status
+        error.http_status = declared
+        with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
+            exc = HttpErrorMapper().to_http(error)
+
+        _assert_internal_fallback(exc, error)
+        _assert_misdeclaration_logged(
+            caplog, type(error).__name__, "http_status", "secret-status-host", "secret-status-field"
+        )
+
+
+class TestDeclaredStatusAcceptance:
+    def test_a_bare_status_int_is_accepted(
+        self,
+    ) -> None:
+        """``http_status = 502`` type-checks as ``int`` and is ``HTTPStatus.BAD_GATEWAY``."""
+
+        class _Declared(LoomError):
+            http_status = 502
+
+            def __init__(self) -> None:
+                super().__init__("no", code=ErrorCode.SYSTEM_ERROR)
+
+        exc = HttpErrorMapper().to_http(_Declared())
+
+        assert exc.status_code is HTTPStatus.BAD_GATEWAY
+        assert _detail(exc) == {
+            "code": ErrorCode.SYSTEM_ERROR,
+            "message": _FIXED_500,
+            "trace_id": get_trace_id(),
+        }
+
+    def test_a_bare_401_is_the_unauthorized_status(
+        self,
+    ) -> None:
+        """Normalising matters: the challenge compares with ``is``, not equality."""
+
+        class _Declared(LoomError):
+            http_status = 401
+
+            def __init__(self) -> None:
+                super().__init__("sign in", code=ErrorCode.SYSTEM_ERROR)
+
+        exc = HttpErrorMapper().to_http(_Declared())
+
+        assert exc.status_code is HTTPStatus.UNAUTHORIZED
+        assert exc.headers == {"WWW-Authenticate": "Bearer"}
+        assert _detail(exc)["message"] == "sign in"
+
+    @pytest.mark.parametrize("status", [400, 451, 511])
+    def test_the_registered_4xx_and_5xx_bounds_are_accepted(self, status: int) -> None:
+        class _Declared(LoomError):
+            def __init__(self) -> None:
+                super().__init__("bound", code=ErrorCode.SYSTEM_ERROR)
+
+        error = _Declared()
+        error.http_status = status
+
+        assert HttpErrorMapper().to_http(error).status_code is HTTPStatus(status)
+
+    @pytest.mark.parametrize(
+        ("error", "status", "message", "extra", "headers"),
+        [
+            (
+                NotFound("User", id=1),
+                404,
+                "User with id=1 not found",
+                {"entity": "User", "id": 1},
+                None,
+            ),
+            (
+                RuleViolation("email", "invalid"),
+                422,
+                "invalid",
+                {"field": "email"},
+                None,
+            ),
+            (RateLimited(1), 429, "Too many requests.", {}, {"Retry-After": "1"}),
+            (SystemError("secret-host"), 500, _FIXED_500, {}, None),
+            (
+                SystemError("secret-host", code=ErrorCode.SERVICE_UNAVAILABLE),
+                503,
+                _FIXED_503,
+                {},
+                None,
+            ),
+            (
+                PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
+                500,
+                _FIXED_500,
+                {"committed": True},
+                None,
+            ),
+        ],
+        ids=["not-found", "rule", "rate-limited", "500", "503", "post-commit"],
+    )
+    def test_an_error_without_an_http_declaration_keeps_its_answer(
+        self,
+        error: LoomError,
+        status: int,
+        message: str,
+        extra: dict[str, Any],
+        headers: dict[str, str] | None,
+    ) -> None:
+        exc = HttpErrorMapper().to_http(error)
+
+        assert (exc.status_code, exc.headers) == (status, headers)
+        assert _detail(exc) == {
+            "code": error.code,
+            "message": message,
+            "trace_id": get_trace_id(),
+            **extra,
+        }
+
+    def test_an_instance_may_declare_the_status_and_the_public_message(
+        self,
+    ) -> None:
+        error = SystemError(_QUERY_MESSAGE, code=ErrorCode.SYSTEM_ERROR)
+        error.http_status = HTTPStatus.BAD_GATEWAY
+        error.public_message = True
+
+        exc = HttpErrorMapper().to_http(error)
+
+        assert exc.status_code == HTTPStatus.BAD_GATEWAY
+        assert _detail(exc)["message"] == _QUERY_MESSAGE
+
+
+class TestDeclaredStatusAcrossRuntimes:
+    def test_fastapi_and_lambda_answer_a_declared_error_the_same(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both transports serve the use case through the same mapper."""
+        config, module = _write_project(tmp_path)
+        monkeypatch.syspath_prepend(str(tmp_path.resolve()))
+        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
+        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        assert isinstance(fastapi_app, FastAPI)
+        assert isinstance(handler, LambdaHTTPHandler)
+        expected = {
+            "detail": {
+                "trace_id": _TRACE,
+                "code": "bad_gateway",
+                "message": _QUERY_MESSAGE,
+                "failed": _FAILED_QUERY,
+            }
+        }
+        try:
+            with (
+                TestClient(fastapi_app) as fastapi_client,
+                LambdaTestClient(handler) as lambda_client,
+            ):
+                headers = {"x-request-id": _TRACE}
+                fastapi_reply = fastapi_client.get("/queries/tasar-venta", headers=headers)
+                lambda_reply = lambda_client.get("/queries/tasar-venta", headers=headers)
+            assert (fastapi_reply.status_code, fastapi_reply.json()) == (502, expected)
+            assert (lambda_reply.status_code, lambda_reply.json()) == (502, expected)
+        finally:
+            handler.close()
+            sys.modules.pop(module, None)
+
+    def test_fastapi_and_lambda_answer_a_misdeclared_error_as_json_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bad declaration stays JSON, on both transports, and is logged once."""
+        config, module = _write_project(
+            tmp_path, source=_MISDECLARED_APP_SOURCE, slug="misdeclared_http"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path.resolve()))
+        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
+        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        assert isinstance(fastapi_app, FastAPI)
+        assert isinstance(handler, LambdaHTTPHandler)
+        expected = {
+            "detail": {
+                "trace_id": _TRACE,
+                "code": "bad_gateway",
+                "message": _FIXED_500,
+            }
+        }
+        try:
+            with (
+                TestClient(fastapi_app) as fastapi_client,
+                LambdaTestClient(handler) as lambda_client,
+                caplog.at_level(logging.ERROR, logger="loom.rest.errors"),
+            ):
+                for client in (fastapi_client, lambda_client):
+                    for path, leak, class_name, problem in _MISDECLARED:
+                        caplog.clear()
+                        reply = client.get(path, headers={"x-request-id": _TRACE})
+                        assert reply.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+                        assert reply.headers["content-type"].startswith("application/json")
+                        assert reply.json() == expected
+                        assert leak not in reply.text
+                        assert _LEAKY not in reply.text
+                        _assert_misdeclaration_logged(caplog, class_name, problem, leak, _LEAKY)
+        finally:
+            handler.close()
+            sys.modules.pop(module, None)

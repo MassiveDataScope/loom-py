@@ -100,7 +100,6 @@ class LoomStruct(msgspec.Struct):
         return f"{cls.__module__}.{cls.__qualname__}"
 
 
-# Typing only: tells type checkers that subclasses inherit ``frozen``.
 @dataclass_transform(frozen_default=True, field_specifiers=(msgspec.field,))
 class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMeta):
     """Base immutable struct for Loom value contracts.

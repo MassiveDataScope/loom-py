@@ -8,15 +8,17 @@ def _table(name: str, partition_by: str | None = None) -> ScopedTable:
     return ScopedTable(None, name, (), READ_WRITE, partition_by)
 
 
-def test_partitions_of_a_partitioned_scoped_table_stand_for_their_parent() -> None:
-    scoped = [_table("notes"), _table("events", "at")]
-    registered = {"notes": None, "events": None, "events_p202601": "events"}
+class TestRegisteredModelTables:
+    def test_partitions_of_a_partitioned_scoped_table_stand_for_their_parent(self) -> None:
+        scoped = [_table("notes"), _table("events", "at")]
+        registered = {"notes": None, "events": None, "events_p202601": "events"}
 
-    assert registered_model_tables(registered, scoped) == {"notes", "events"}
+        assert registered_model_tables(registered, scoped) == {"notes", "events"}
 
+    def test_a_partition_of_a_table_that_is_not_a_partitioned_scoped_table_counts_as_itself(
+        self,
+    ) -> None:
+        scoped = [_table("notes"), _table("events", "at")]
+        registered = {"notes_p1": "notes", "logs_p1": "logs", "stray": None}
 
-def test_a_partition_of_a_table_that_is_not_a_partitioned_scoped_table_counts_as_itself() -> None:
-    scoped = [_table("notes"), _table("events", "at")]
-    registered = {"notes_p1": "notes", "logs_p1": "logs", "stray": None}
-
-    assert registered_model_tables(registered, scoped) == {"notes_p1", "logs_p1", "stray"}
+        assert registered_model_tables(registered, scoped) == {"notes_p1", "logs_p1", "stray"}

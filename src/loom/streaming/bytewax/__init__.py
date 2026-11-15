@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import sys
 
-try:  # pragma: no cover - exercised in a clean interpreter
+try:  # pragma: no cover
     import bytewax as _bytewax
-except ImportError as exc:  # pragma: no cover - exercised in a clean interpreter
+except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "The bytewax runtime is missing. The 'streaming' extra "
         "(loom-kernel[streaming]) installs bytewax only on Python < 3.13, because "

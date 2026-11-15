@@ -62,52 +62,53 @@ def _run_validate(*globs: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_exits_zero_and_silent_on_stderr_when_corpus_is_valid() -> None:
-    result = _run_validate(CORPUS_GLOB)
-    assert (result.returncode, result.stderr.strip()) == (0, ""), (
-        result.returncode,
-        result.stdout,
-        result.stderr,
-    )
+class TestValidateCli:
+    def test_exits_zero_and_silent_on_stderr_when_corpus_is_valid(self) -> None:
+        result = _run_validate(CORPUS_GLOB)
+        assert (result.returncode, result.stderr.strip()) == (0, ""), (
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
 
+    def test_exits_nonzero_with_one_coded_line_per_issue_when_artifact_is_broken(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        artifact = tmp_path / "broken.agent.yaml"
+        artifact.write_text(BROKEN_ARTIFACT)
+        result = _run_validate(str(artifact))
+        assert result.returncode != 0
+        lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+        for code in ("OUTPUT_SCHEMA_INVALID", "POLICY_OUT_OF_RANGE"):
+            matching = [line for line in lines if code in line]
+            assert len(matching) == 1, (code, lines)
 
-def test_exits_nonzero_with_one_coded_line_per_issue_when_artifact_is_broken(
-    tmp_path: Path,
-) -> None:
-    artifact = tmp_path / "broken.agent.yaml"
-    artifact.write_text(BROKEN_ARTIFACT)
-    result = _run_validate(str(artifact))
-    assert result.returncode != 0
-    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
-    for code in ("OUTPUT_SCHEMA_INVALID", "POLICY_OUT_OF_RANGE"):
-        matching = [line for line in lines if code in line]
-        assert len(matching) == 1, (code, lines)
+    def test_exits_one_with_spec_malformed_when_native_tool_is_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """An unknown provider tool is a format error the validator catches offline (030/AC-3)."""
+        artifact = tmp_path / "unknown-native-tool.agent.yaml"
+        artifact.write_text(UNKNOWN_NATIVE_TOOL_ARTIFACT)
+        result = _run_validate(str(artifact))
+        assert result.returncode == 1
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        assert [line for line in lines if "SPEC_MALFORMED" in line] == lines
+        assert len(lines) == 1
 
+    def test_a_pattern_that_matches_nothing_fails(self, tmp_path: Path) -> None:
+        """Counting only issues makes an empty match look like a clean corpus.
 
-def test_exits_one_with_spec_malformed_when_native_tool_is_unknown(tmp_path: Path) -> None:
-    """An unknown provider tool is a format error the validator catches offline (030/AC-3)."""
-    artifact = tmp_path / "unknown-native-tool.agent.yaml"
-    artifact.write_text(UNKNOWN_NATIVE_TOOL_ARTIFACT)
-    result = _run_validate(str(artifact))
-    assert result.returncode == 1
-    lines = [line for line in result.stderr.splitlines() if line.strip()]
-    assert [line for line in lines if "SPEC_MALFORMED" in line] == lines
-    assert len(lines) == 1
-
-
-def test_un_patron_que_no_casa_nada_falla_en_vez_de_pasar(tmp_path: Path) -> None:
-    """Counting only issues makes an empty match look like a clean corpus.
-
-    That is not hypothetical: this project's own CI guarded the artifact
-    corpus with '*.yaml' after the corpus moved to one directory per agent,
-    so the step matched nothing, exited 0 and asserted nothing for as long as
-    it stood.
-    """
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "loom.ai.validate", str(tmp_path / "*.agent.yaml")],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 2
-    assert "no artifact matched" in result.stderr
+        That is not hypothetical: this project's own CI guarded the artifact
+        corpus with '*.yaml' after the corpus moved to one directory per agent,
+        so the step matched nothing, exited 0 and asserted nothing for as long as
+        it stood.
+        """
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "loom.ai.validate", str(tmp_path / "*.agent.yaml")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 2
+        assert "no artifact matched" in result.stderr

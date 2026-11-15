@@ -33,8 +33,6 @@ def model_settings(target: InferenceTarget) -> ModelSettings | None:
     """Vendor settings as the engine's own ``ModelSettings`` mapping."""
     if not target.options:
         return None
-    # ``ModelSettings`` is a total=False TypedDict; the values come from
-    # deployment configuration and cannot be named statically.
     return cast(ModelSettings, dict(target.options))
 
 

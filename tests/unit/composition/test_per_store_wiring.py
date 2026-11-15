@@ -43,7 +43,7 @@ class _Account(BaseModel):
     name: str = ColumnField(length=20)
 
 
-class _Entry(BaseModel):
+class AcmeLedgerStoreEntry(BaseModel):
     __tablename__ = "per_store_entries"
     __store__ = "ledger"
 
@@ -55,10 +55,10 @@ class _Named(Command, frozen=True):
     name: str
 
 
-class _RecordEntry(UseCase[_Entry, int]):
+class _RecordEntry(UseCase[AcmeLedgerStoreEntry, int]):
     """A use case whose primary store is ``ledger``, not ``default``."""
 
-    def __init__(self, entries: RepoFor[_Entry]) -> None:
+    def __init__(self, entries: RepoFor[AcmeLedgerStoreEntry]) -> None:
         self.entries = entries
 
     async def execute(self, cmd: _Named = Input()) -> int:
@@ -98,7 +98,7 @@ def _services(container: LoomContainer) -> None:
     )
 
 
-class _ViaLedgerService(UseCase[_Entry, bool]):
+class _ViaLedgerService(UseCase[AcmeLedgerStoreEntry, bool]):
     def __init__(self, service: _LedgerService) -> None:
         self.service = service
 
@@ -106,17 +106,12 @@ class _ViaLedgerService(UseCase[_Entry, bool]):
         return await self.service.joined()
 
 
-class _ViaDefaultService(UseCase[_Entry, bool]):
+class _ViaDefaultService(UseCase[AcmeLedgerStoreEntry, bool]):
     def __init__(self, service: _DefaultService) -> None:
         self.service = service
 
     async def execute(self) -> bool:
         return await self.service.joined()
-
-
-@pytest.fixture
-def databases(tmp_path: Path) -> tuple[Path, Path]:
-    return tmp_path / "default.db", tmp_path / "ledger.db"
 
 
 def _source(databases: tuple[Path, Path], second: str = _LEDGER) -> CompositionSource:
@@ -135,71 +130,14 @@ def _compose(
     databases: tuple[Path, Path], modules: tuple[Callable[[LoomContainer], None], ...] = ()
 ) -> Application:
     use_cases = (_RecordEntry, _ViaLedgerService, _ViaDefaultService)
-    adapter = Serving(_Account, _Entry, use_cases=use_cases)
+    adapter = Serving(_Account, AcmeLedgerStoreEntry, use_cases=use_cases)
     return compose_application(_source(databases), adapter, modules=(_services, *modules))
-
-
-@pytest.fixture
-def application(databases: tuple[Path, Path]) -> Application:
-    return _compose(databases)
 
 
 def _rows(database: Path) -> dict[str, int]:
     with sqlite3.connect(database) as connection:
         tables = [n for (n,) in connection.execute("SELECT name FROM sqlite_master")]
         return {t: connection.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in tables}
-
-
-async def test_a_model_of_another_store_is_written_through_that_stores_engine(
-    application: Application, databases: tuple[Path, Path]
-) -> None:
-    async with application.running():
-        await application.kernel.container.resolve_repo(_Entry).create(_Named(name="e"))
-        await application.kernel.container.resolve_repo(_Account).create(_Named(name="a"))
-
-    assert [_rows(database) for database in databases] == [
-        {"per_store_accounts": 1},
-        {"per_store_entries": 1},
-    ]
-
-
-def test_the_default_session_manager_is_unkeyed_and_the_others_are_keyed_by_store(
-    application: Application, databases: tuple[Path, Path]
-) -> None:
-    container = application.kernel.container
-
-    managers = [container.resolve(SessionManager), container.resolve((SessionManager, _LEDGER))]
-
-    assert [m.engine.url.database for m in managers] == [str(d) for d in databases]
-
-
-async def test_a_use_case_whose_primary_store_is_not_the_default_commits_there(
-    application: Application, databases: tuple[Path, Path]
-) -> None:
-    async with application.running():
-        await application.kernel.app.invoke(_RecordEntry, payload={"name": "e"})
-
-    assert [_rows(database) for database in databases] == [
-        {"per_store_accounts": 0},
-        {"per_store_entries": 1},
-    ]
-
-
-async def test_a_service_joins_the_primary_store_through_its_keyed_session_manager(
-    application: Application,
-) -> None:
-    async with application.running():
-        joined = await application.kernel.app.invoke(_ViaLedgerService)
-
-    assert joined is True
-
-
-async def test_a_service_on_the_default_session_manager_cannot_write_in_another_store(
-    application: Application,
-) -> None:
-    async with application.running():
-        with pytest.raises(UndeclaredStoreWrite, match="default"):
-            await application.kernel.app.invoke(_ViaDefaultService)
 
 
 class _RecordingBuilder:
@@ -211,55 +149,14 @@ class _RecordingBuilder:
         return object()
 
 
-@pytest.mark.parametrize(
-    ("key", "served"),
-    [
-        pytest.param(DefaultRepositoryBuilder, _Account, id="default-store"),
-        pytest.param((DefaultRepositoryBuilder, _LEDGER), _Entry, id="ledger-store"),
-    ],
-)
-def test_a_caller_builder_builds_the_repositories_of_its_store_only(
-    databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
-) -> None:
-    builder = _RecordingBuilder()
-
-    container = _compose(databases, (lambda c: c.register_instance(key, builder),)).kernel.container
-    for model in (_Account, _Entry):
-        container.resolve_repo(model)
-
-    assert builder.models == {served}
-
-
-async def test_two_stores_on_one_backend_keep_one_readiness_probe_each(
-    application: Application,
-) -> None:
-    async with application.running():
-        ready = {key: await probe() for key, probe in application.readiness_probes().items()}
-
-    assert ready == {"sqlalchemy": True, "ledger": True}
-
-
-class _Audit(BaseModel):
+class AcmeBackendNamedAudit(BaseModel):
     __tablename__ = "per_store_audit"
     __store__ = "sqlalchemy"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-def test_a_store_named_after_the_default_stores_backend_is_refused_before_any_is_built(
-    databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def build(*args: object) -> None:
-        raise AssertionError("a store was built")
-
-    monkeypatch.setattr(SQLAlchemyBackend, "build", build)
-    source, adapter = _source(databases, second="sqlalchemy"), Serving(_Audit)
-
-    with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):
-        compose_application(source, adapter)
-
-
-class _Entries(RestInterface[_Entry]):
+class _Entries(RestInterface[AcmeLedgerStoreEntry]):
     prefix = "/entries"
     auto = True
 
@@ -268,34 +165,14 @@ _SQLITE_LEDGER = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"
 
 
 def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> CompositionSource:
-    discovered = DiscoveryResult(models=(_Entry,), use_cases=(), interfaces=cast(Any, (_Entries,)))
+    discovered = DiscoveryResult(
+        models=(AcmeLedgerStoreEntry,), use_cases=(), interfaces=cast(Any, (_Entries,))
+    )
     monkeypatch.setattr("loom.composition.source.discover", lambda config: discovered)
     ctx = ConfigContext.from_dict(
         {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
     )
     return composition_source(ctx, app=AppConfig(name="ledger"))
-
-
-def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _rest_source({"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch)
-
-    application = compose_application(source, FastAPIAdapter())
-
-    assert {route.path for route in _Entries.routes} >= {"/", "/{id}"}
-    assert application.kernel.container.resolve_repo(_Entry) is not None
-
-
-def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
-    source = _rest_source(stores, monkeypatch)
-    adapter = FastAPIAdapter()
-
-    with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
-        compose_application(source, adapter)
 
 
 class _AuditRow(BaseModel):
@@ -354,42 +231,173 @@ def _compose_audit(tmp_path: Path, component: type[object]) -> Application:
     source = composition_source(ctx, app=AppConfig(name="audit"))
     jobs = (component,) if issubclass(component, Job) else ()
     use_cases = () if jobs else (component,)
-    return compose_application(source, Serving(_AuditRow, _Entry, use_cases=use_cases, jobs=jobs))
+    return compose_application(
+        source, Serving(_AuditRow, AcmeLedgerStoreEntry, use_cases=use_cases, jobs=jobs)
+    )
 
 
-async def test_a_job_without_a_main_model_writes_to_the_store_it_declares(tmp_path: Path) -> None:
-    application = _compose_audit(tmp_path, _RecordAudit)
-    kernel = application.kernel
+class TestPerStoreWiring:
+    @pytest.fixture
+    def databases(self, tmp_path: Path) -> tuple[Path, Path]:
+        return tmp_path / "default.db", tmp_path / "ledger.db"
 
-    async with application.running():
-        await kernel.executor.execute(kernel.factory.build(_RecordAudit))
+    @pytest.fixture
+    def application(self, databases: tuple[Path, Path]) -> Application:
+        return _compose(databases)
 
-    assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 1}
+    async def test_a_model_of_another_store_is_written_through_that_stores_engine(
+        self, application: Application, databases: tuple[Path, Path]
+    ) -> None:
+        async with application.running():
+            await application.kernel.container.resolve_repo(AcmeLedgerStoreEntry).create(
+                _Named(name="e")
+            )
+            await application.kernel.container.resolve_repo(_Account).create(_Named(name="a"))
 
+        assert [_rows(database) for database in databases] == [
+            {"per_store_accounts": 1},
+            {"per_store_entries": 1},
+        ]
 
-async def test_a_job_declaring_another_store_may_still_not_write_to_audit(tmp_path: Path) -> None:
-    application = _compose_audit(tmp_path, _RecordAuditUndeclared)
-    kernel = application.kernel
+    def test_the_default_session_manager_is_unkeyed_and_the_others_are_keyed_by_store(
+        self, application: Application, databases: tuple[Path, Path]
+    ) -> None:
+        container = application.kernel.container
 
-    async with application.running():
-        job = kernel.factory.build(_RecordAuditUndeclared)
-        with pytest.raises(UndeclaredStoreWrite, match="audit"):
-            await kernel.executor.execute(job)
+        managers = [container.resolve(SessionManager), container.resolve((SessionManager, _LEDGER))]
 
-    assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 0}
+        assert [m.engine.url.database for m in managers] == [str(d) for d in databases]
 
+    async def test_a_use_case_whose_primary_store_is_not_the_default_commits_there(
+        self, application: Application, databases: tuple[Path, Path]
+    ) -> None:
+        async with application.running():
+            await application.kernel.app.invoke(_RecordEntry, payload={"name": "e"})
 
-@pytest.mark.parametrize(
-    ("component", "error", "match"),
-    [
-        (_AuditUnstored, UncomposedWriteStore, "default"),
-        (_AuditMissing, ConfigError, r"__store__ of _AuditMissing needs stores\.missing"),
-        (_AuditBesideModel, BootstrapError, "declares __store__ but writes to the store"),
-    ],
-    ids=["no-store", "undeclared-store", "beside-a-main-model"],
-)
-def test_a_store_a_component_declares_is_checked_at_composition(
-    tmp_path: Path, component: type[object], error: type[Exception], match: str
-) -> None:
-    with pytest.raises(error, match=match):
-        _compose_audit(tmp_path, component)
+        assert [_rows(database) for database in databases] == [
+            {"per_store_accounts": 0},
+            {"per_store_entries": 1},
+        ]
+
+    async def test_a_service_joins_the_primary_store_through_its_keyed_session_manager(
+        self,
+        application: Application,
+    ) -> None:
+        async with application.running():
+            joined = await application.kernel.app.invoke(_ViaLedgerService)
+
+        assert joined is True
+
+    async def test_a_service_on_the_default_session_manager_cannot_write_in_another_store(
+        self,
+        application: Application,
+    ) -> None:
+        async with application.running():
+            with pytest.raises(UndeclaredStoreWrite, match="default"):
+                await application.kernel.app.invoke(_ViaDefaultService)
+
+    @pytest.mark.parametrize(
+        ("key", "served"),
+        [
+            pytest.param(DefaultRepositoryBuilder, _Account, id="default-store"),
+            pytest.param(
+                (DefaultRepositoryBuilder, _LEDGER), AcmeLedgerStoreEntry, id="ledger-store"
+            ),
+        ],
+    )
+    def test_a_caller_builder_builds_the_repositories_of_its_store_only(
+        self, databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
+    ) -> None:
+        builder = _RecordingBuilder()
+
+        container = _compose(
+            databases, (lambda c: c.register_instance(key, builder),)
+        ).kernel.container
+        for model in (_Account, AcmeLedgerStoreEntry):
+            container.resolve_repo(model)
+
+        assert builder.models == {served}
+
+    async def test_two_stores_on_one_backend_keep_one_readiness_probe_each(
+        self,
+        application: Application,
+    ) -> None:
+        async with application.running():
+            ready = {key: await probe() for key, probe in application.readiness_probes().items()}
+
+        assert ready == {"sqlalchemy": True, "ledger": True}
+
+    def test_a_store_named_after_the_default_stores_backend_is_refused_before_any_is_built(
+        self, databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def build(*args: object) -> None:
+            raise AssertionError("a store was built")
+
+        monkeypatch.setattr(SQLAlchemyBackend, "build", build)
+        source, adapter = _source(databases, second="sqlalchemy"), Serving(AcmeBackendNamedAudit)
+
+        with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):
+            compose_application(source, adapter)
+
+    def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = _rest_source(
+            {"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch
+        )
+
+        application = compose_application(source, FastAPIAdapter())
+
+        assert {route.path for route in _Entries.routes} >= {"/", "/{id}"}
+        assert application.kernel.container.resolve_repo(AcmeLedgerStoreEntry) is not None
+
+    def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
+        source = _rest_source(stores, monkeypatch)
+        adapter = FastAPIAdapter()
+
+        with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
+            compose_application(source, adapter)
+
+    async def test_a_job_without_a_main_model_writes_to_the_store_it_declares(
+        self, tmp_path: Path
+    ) -> None:
+        application = _compose_audit(tmp_path, _RecordAudit)
+        kernel = application.kernel
+
+        async with application.running():
+            await kernel.executor.execute(kernel.factory.build(_RecordAudit))
+
+        assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 1}
+
+    async def test_a_job_declaring_another_store_may_still_not_write_to_audit(
+        self, tmp_path: Path
+    ) -> None:
+        application = _compose_audit(tmp_path, _RecordAuditUndeclared)
+        kernel = application.kernel
+
+        async with application.running():
+            job = kernel.factory.build(_RecordAuditUndeclared)
+            with pytest.raises(UndeclaredStoreWrite, match="audit"):
+                await kernel.executor.execute(job)
+
+        assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 0}
+
+    @pytest.mark.parametrize(
+        ("component", "error", "match"),
+        [
+            (_AuditUnstored, UncomposedWriteStore, "default"),
+            (_AuditMissing, ConfigError, r"__store__ of _AuditMissing needs stores\.missing"),
+            (_AuditBesideModel, BootstrapError, "declares __store__ but writes to the store"),
+        ],
+        ids=["no-store", "undeclared-store", "beside-a-main-model"],
+    )
+    def test_a_store_a_component_declares_is_checked_at_composition(
+        self, tmp_path: Path, component: type[object], error: type[Exception], match: str
+    ) -> None:
+        with pytest.raises(error, match=match):
+            _compose_audit(tmp_path, component)

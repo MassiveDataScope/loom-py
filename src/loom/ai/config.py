@@ -27,29 +27,16 @@ from loom.ai.remote_auth import is_strategy_registered, registered_strategy_name
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
-# Conservative allowlist for a secret *reference*: a name, path, ARN or key id
-# the secrets resolver can look up.  It excludes whitespace, newlines, quotes,
-# braces (so JSON blobs and PEM blocks never pass) — anything outside the
-# pattern is rejected, fail-closed.
 _REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9_/.:@=+-]+$")
 
-# Known shapes of literal secret material that would otherwise satisfy the
-# reference pattern: AWS access key ids, OpenAI-style keys, GitHub tokens.
 _SECRET_MATERIAL_PREFIXES = ("AKIA", "sk-", "ghp_")
 
-# A URL carrying userinfo (``scheme://user:pass@host``) embeds a credential.
 _URL_USERINFO_RE = re.compile(r"://[^/]*@")
 
-# Accepted values of ``ai.mcp_servers.<name>.transport``: a remote endpoint
-# reached over HTTPS, or a subprocess of this worker spoken to over stdio.
 _MCP_TRANSPORTS: tuple[str, ...] = ("http", "stdio")
 
-# A valid environment variable name, as every POSIX shell and libc define it.
-# ``re.ASCII`` keeps ``\w`` restricted to ``[A-Za-z0-9_]`` — POSIX names are
-# ASCII-only, so the concise class must not admit Unicode word characters.
 _ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_]\w*$", re.ASCII)
 
-# Why ``headers_ref`` and ``auth`` are refused under ``transport: stdio``.
 _STDIO_CREDENTIALS_REASON = (
     "'headers_ref' and 'auth' do not apply to transport 'stdio': the server runs "
     "as a subprocess of this worker, in the same container, with the identity, "
@@ -57,25 +44,14 @@ _STDIO_CREDENTIALS_REASON = (
     "is no connection to authenticate"
 )
 
-# The one reserved key of an ``auth`` block: it names the strategy, every other
-# key is that strategy's own setting.
 _AUTH_KIND_KEY = "kind"
 
-# Accepted values of ``ai.remote_clients``: whether a remote client that will
-# not open aborts start-up (``required``) or is dropped with a warning
-# (``optional``).
 _REMOTE_CLIENTS_MODES: tuple[str, ...] = ("required", "optional")
 _TRANSPORT_FIELD: Final = "transport"
 
-# Bounds of a single remote call, mirroring ``policies.tool_timeout_ms``.
 _TIMEOUT_MS_MIN = 1
 _TIMEOUT_MS_MAX = 600000
 
-# Settings a provider requires directly in its ``InferenceTarget`` binding.
-# Providers absent from this map need nothing beyond ``provider``/``model``
-# at config time; their SDK-level settings are validated by the engine via
-# ``loom.ai.registry.require_provider_setting``.  ``gateway`` designates a
-# custom OpenAI-compatible gateway and therefore requires its ``endpoint``.
 _REQUIRED_SETTINGS_BY_PROVIDER: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "bedrock": ("region",),
@@ -100,7 +76,7 @@ def _has_reference_shape(value: str) -> bool:
 def _is_credentials_reference(value: str) -> bool:
     """Report whether ``value`` looks like a secret reference, not a secret.
 
-    Fail-closed heuristic (FR-018): the value must have the shape of a
+    Fail-closed heuristic: the value must have the shape of a
     reference and must not match known literal-secret prefixes.
     """
     return _has_reference_shape(value) and not value.startswith(_SECRET_MATERIAL_PREFIXES)
@@ -231,8 +207,6 @@ def _validate_model_binding(role: str, target: InferenceTarget) -> list[AgentCom
         )
     ref = target.credentials_ref
     if ref is not None and not _is_credentials_reference(ref):
-        # The rejected value is deliberately absent from the issue: the error
-        # message must not leak the very secret it rejects.
         issues.append(
             AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(
                 component=f"model role '{role}'", field="credentials_ref"
@@ -316,7 +290,7 @@ class A2AAgentConfig(LoomFrozenStruct, frozen=True, kw_only=True):
 
 
 class AgentEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
-    """Per-agent HTTP exposure opt-in (FR-029a, FR-045a).
+    """Per-agent HTTP exposure opt-in.
 
     An agent absent from ``ai.endpoints`` is never mounted; presence requires
     naming the authentication explicitly — there is no default.
@@ -325,21 +299,26 @@ class AgentEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         enabled: Whether to mount the agent's HTTP endpoints.
         auth: Named authentication the mount requires.  Mandatory.
         allow_anonymous: Whether an empty-subject identity is accepted for
-            this agent (FR-045a).
+            this agent.
     """
 
     enabled: bool
     auth: str
     allow_anonymous: bool = False
 
+    @property
+    def active(self) -> bool:
+        """Whether the opt-in is in force: ``enabled`` and a named ``auth``."""
+        return self.enabled and bool(self.auth.strip())
+
 
 class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
-    """A2A exposure settings (FR-041).
+    """A2A exposure settings.
 
     Attributes:
         base_url: Public URL the agent card advertises.
         expose: Agent names to publish.  Must be non-empty: empty means none,
-            never all (FR-041a).
+            never all.
 
     Raises:
         AgentCompilationError: With :data:`~loom.ai.errors.AgentErrorCode.A2A_EXPOSE_EMPTY`
@@ -352,13 +331,6 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     def __post_init__(self) -> None:
         if not self.expose:
             raise AgentCompilationError([AgentErrorCode.A2A_EXPOSE_EMPTY.issue()])
-        # base_url is published verbatim in the capability card, which is the
-        # one unauthenticated surface of the pillar: an http:// address would
-        # advertise a plaintext channel to every discovering client, and
-        # userinfo would publish a credential outright. Same rule the compiler
-        # already applies to the remote URLs it validates, applied where this
-        # one actually lives (FR-038). The check reads the address; the card
-        # and the error publish only the redacted form.
         address = self.base_url.reveal()
         remote = _RemoteUrl(address)
         if remote.fault is not None:
@@ -390,8 +362,8 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         skills_root: Filesystem root bare skill library names resolve against.
         mcp_servers: Named remote MCP servers artifacts refer to by name.
         a2a_agents: Named remote A2A agents artifacts refer to by name.
-        a2a: A2A exposure; absent means no card and no A2A endpoints (FR-041).
-        endpoints: Per-agent HTTP opt-in (FR-029a).
+        a2a: A2A exposure; absent means no card and no A2A endpoints.
+        endpoints: Per-agent HTTP opt-in.
         startup_timeout_ms: Total budget of start-up: opening every live
             client concurrently and validating the declared tool filters
             share one deadline, whatever the number of servers.
@@ -404,14 +376,14 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             that did open and whose tool listing times out still fails
             start-up, and no client becomes lazy — one that never opened is
             not reconnected later.
-        max_concurrent_runs: Per-worker run limit (FR-033a); below 1 the
+        max_concurrent_runs: Per-worker run limit; below 1 the
             config fails with ``MAX_CONCURRENT_RUNS_INVALID``.
         max_prompt_bytes: Enforced while reading the request body, against
-            the ``prompt`` field alone (FR-015).
+            the ``prompt`` field alone.
         max_state_bytes: Enforced while reading the request body, against the
             raw ``state`` bytes alone and before they are decoded — measuring
             the wire size is what keeps the check cheap. Joins
-            ``max_prompt_bytes`` in the body's own cap (FR-015); a caller's
+            ``max_prompt_bytes`` in the body's own cap; a caller's
             ``state`` over this limit is refused with a ``413`` naming
             ``state``, independently of the prompt's own cap.
         health_cache_ttl_ms: Refresh period of the health probe.
@@ -479,6 +451,39 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             raise AgentCompilationError(issues)
         _warn_unused_prices(self.prices, self.models)
 
+    def artifact_specs(self, manifest: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
+        """The one artifact source of the application: :attr:`specs` or the manifest ``AGENTS``.
+
+        Args:
+            manifest: Glob patterns of the manifest ``AGENTS`` attribute.
+            mcp_declared: Whether a root reaches an ``Mcp()`` declaration; then
+                no artifact at all is accepted.
+
+        Returns:
+            The glob patterns of whichever source declares artifacts.
+
+        Raises:
+            AgentCompilationError: When both sources declare artifacts, or
+                neither does and no ``Mcp()`` declaration is reached.
+        """
+        if self.specs and manifest:
+            raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
+        if not self.specs and not manifest and not mcp_declared:
+            raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
+        return self.specs or manifest
+
+    def active_endpoint(self, name: str) -> AgentEndpointConfig | None:
+        """Return the HTTP opt-in of agent *name* only when it is in force.
+
+        Args:
+            name: Agent name.
+
+        Returns:
+            The agent's :attr:`AgentEndpointConfig.active` stanza, or ``None``.
+        """
+        endpoint = self.endpoints.get(name)
+        return endpoint if endpoint is not None and endpoint.active else None
+
 
 def _warn_unused_prices(
     prices: Mapping[str, ModelPrice], models: Mapping[str, InferenceTarget]
@@ -517,8 +522,6 @@ def _validate_headers_ref(
     text = headers_ref.reveal() if isinstance(headers_ref, Secret) else headers_ref
     if _is_credentials_reference(text):
         return []
-    # The rejected value is deliberately absent: the message must not leak the
-    # very secret it rejects.
     return [AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(component=component, field="headers_ref")]
 
 
@@ -542,8 +545,6 @@ def _validate_auth(
     if headers_ref is not None:
         return [AgentErrorCode.MCP_AUTH_CONFLICT.issue(component=component)]
     issues = [
-        # The rejected value is deliberately absent from the issue, as for
-        # ``headers_ref``: the message must not leak what it rejects.
         AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(component=component, field=f"auth.{key}")
         for key, value in auth.items()
         if key != _AUTH_KIND_KEY
@@ -669,8 +670,6 @@ def _validate_mcp_env(
                 )
             )
         if not isinstance(value, str) or not _has_reference_shape(value):
-            # The rejected value is deliberately absent: a broken interpolation
-            # may still contain part of the secret it failed to resolve.
             issues.append(
                 AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(
                     component=component, field=f"env.{name}"

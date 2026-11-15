@@ -26,8 +26,9 @@ import pytest
 
 from loom.ai.abc import McpToolCallResult, McpToolInfo
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import _BoundAgentHandle
+from loom.ai.runtime._handle import _AgentHandle
 from loom.core.di import LoomContainer
+from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.sql.service import NullSqlQueryService
 from tests.integration.ai.conftest import (
@@ -81,54 +82,49 @@ class _UndeclaredThirdPartySession:
 
 
 @pytest.fixture
-def deps() -> StubDepsFactory:
-    """Per-invocation dependency factory carrying only the caller identity."""
-    return StubDepsFactory()
-
-
-@pytest.fixture
 def container() -> LoomContainer:
     """Empty application container; this test resolves nothing from it."""
     return LoomContainer()
 
 
-async def test_una_sesion_de_terceros_sin_declarar_sigue_serializada(
-    deps: StubDepsFactory, container: LoomContainer
-) -> None:
-    """A third-party session opened by the runtime still serialises its calls.
+class TestUndeclaredThirdPartySession:
+    async def test_an_undeclared_third_party_session_stays_serialized(
+        self, deps: StubDepsFactory, container: LoomContainer
+    ) -> None:
+        """A third-party session opened by the runtime still serialises its calls.
 
-    Skipping ``mcp_session_for`` at the wiring point (storing the just-opened
-    session verbatim in ``self._sessions``) would let these two calls
-    interleave; this is what pins that it does not happen.
-    """
-    capability = make_mcp_capability(_MCP_SERVER)
-    session = _UndeclaredThirdPartySession()
-    client = StubMcpClient(label=_MCP_SERVER, session=session, log=[])
-    runtime = AgentRuntime(
-        plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
-        config=make_ai_config(mcp_servers=make_mcp_servers(_MCP_SERVER)),
-        engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
-            engines={_AGENT_NAME: ScriptedEngine()}
-        ),
-        deps=deps,  # type: ignore[arg-type]
-        container=container,
-        mcp_client_factory=mcp_client_factory({_MCP_SERVER: client}),  # type: ignore[arg-type]
-    )
-    handle = _BoundAgentHandle(
-        name=_AGENT_NAME,
-        runtime=runtime,
-        identity=_AUTHENTICATED,
-        observability=None,
-        sql_query_service=NullSqlQueryService(),
-    )
+        Skipping ``mcp_session_for`` at the wiring point (storing the just-opened
+        session verbatim in ``self._sessions``) would let these two calls
+        interleave; this is what pins that it does not happen.
+        """
+        capability = make_mcp_capability(_MCP_SERVER)
+        session = _UndeclaredThirdPartySession()
+        client = StubMcpClient(label=_MCP_SERVER, session=session, log=[])
+        runtime = AgentRuntime(
+            plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
+            config=make_ai_config(mcp_servers=make_mcp_servers(_MCP_SERVER)),
+            engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
+                engines={_AGENT_NAME: ScriptedEngine()}
+            ),
+            deps=deps,  # type: ignore[arg-type]
+            container=container,
+            mcp_client_factory=mcp_client_factory({_MCP_SERVER: client}),  # type: ignore[arg-type]
+        )
+        handle = _AgentHandle(
+            name=_AGENT_NAME,
+            runtime=runtime,
+            observability=None,
+            sql_query_service=NullSqlQueryService(),
+        )
 
-    async with runtime:
-        mcp = handle.mcp(_MCP_SERVER)
-        first = asyncio.create_task(mcp.call_untyped("echo", {"token": "a"}))
-        while not session.started:
-            await asyncio.sleep(0)
-        second = asyncio.create_task(mcp.call_untyped("echo", {"token": "b"}))
-        results = await asyncio.gather(first, second)
+        async with runtime:
+            with ExecutionScope(_AUTHENTICATED):
+                mcp = handle.mcp(_MCP_SERVER)
+                first = asyncio.create_task(mcp.call_untyped("echo", {"token": "a"}))
+                while not session.started:
+                    await asyncio.sleep(0)
+                second = asyncio.create_task(mcp.call_untyped("echo", {"token": "b"}))
+                results = await asyncio.gather(first, second)
 
-    assert session.interleaved is False
-    assert {result["token"] for result in results} == {"a", "b"}
+        assert session.interleaved is False
+        assert {result["token"] for result in results} == {"a", "b"}

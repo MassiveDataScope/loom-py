@@ -29,7 +29,7 @@ class StrictModel(pydantic.BaseModel):
     name: str
 
 
-class LaxStruct(msgspec.Struct):
+class AcmeGatewayLaxStruct(msgspec.Struct):
     """Non-strict struct, the shape a cached index payload is read back as."""
 
     name: str
@@ -55,9 +55,9 @@ class TestGetValue:
         gateway = _gateway("typed-get-lax-struct", SERIALIZED_BACKEND)
         await gateway.set_value("k", {"name": "a"})
 
-        value = await gateway.get_value("k", type=LaxStruct)
+        value = await gateway.get_value("k", type=AcmeGatewayLaxStruct)
 
-        assert value == LaxStruct(name="a")
+        assert value == AcmeGatewayLaxStruct(name="a")
 
 
 class TestMultiGetValues:

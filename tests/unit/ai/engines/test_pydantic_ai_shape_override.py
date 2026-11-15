@@ -55,8 +55,8 @@ def _engine(model: Model) -> PydanticAIEngine:
     return engine
 
 
-class TestLaFormaPorCorridaOmiteLaComprobacionDeclarada:
-    async def test_la_forma_declarada_rechaza_un_payload_que_no_encaja(self) -> None:
+class TestAPerRunShapeSkipsTheDeclaredCheck:
+    async def test_the_declared_shape_rejects_a_payload_that_does_not_fit(self) -> None:
         """Control: unshaped, the declared STRICT_SCHEMA check does reject it."""
         engine = _engine(answering_model(_OFF_SCHEMA_PAYLOAD))
 
@@ -65,7 +65,7 @@ class TestLaFormaPorCorridaOmiteLaComprobacionDeclarada:
 
         assert excinfo.value.code is AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION
 
-    async def test_una_forma_por_corrida_deja_pasar_prosa_que_el_esquema_declarado_rechazaria(
+    async def test_a_per_run_shape_lets_through_prose_the_declared_schema_would_reject(
         self,
     ) -> None:
         """The override bypasses the declared check for this call only (run_text's shape).

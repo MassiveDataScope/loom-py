@@ -23,7 +23,7 @@ import pytest
 from loom.ai.abc import AgentEvent
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import agent_marker_resolver
+from loom.ai.runtime._handle import AgentMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -61,7 +61,7 @@ def _wired(
     """Wire a real executor to a real ``AgentRuntime`` through the marker resolver.
 
     Mirrors the composition a deployment's ``create_app`` performs between
-    ``resolve_ai`` and ``result.factory.verify()``: the executor is built
+    ``AiWiring.build`` and ``result.factory.verify()``: the executor is built
     first, and the agent resolver is bound to it once the AI runtime exists.
     """
     _, executor = compiler_and_executor
@@ -76,7 +76,7 @@ def _wired(
         container=container,
     )
     executor.bind_agent_resolver(
-        agent_marker_resolver(runtime, sql_query_service=NullSqlQueryService(), observability=None)
+        AgentMarkerResolver(runtime, sql_query_service=NullSqlQueryService(), observability=None)
     )
     return executor, runtime
 

@@ -55,6 +55,5 @@ def manifest(
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    # Sorted keys: the same configuration prints the same bytes, so CI can diff them.
     encoded = msgspec.json.encode(document, order="sorted")
     typer.echo(msgspec.json.format(encoded, indent=2).decode())

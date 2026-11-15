@@ -19,30 +19,97 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.composition import compose_application
+from loom.composition.application import Application
+from loom.composition.recipe import Recipe
+from loom.composition.source import AppConfig, CompositionSource
+from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.use_case.use_case import UseCase
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.environment import resolve_environment
+from loom.core.observability.config import ObservabilityConfig
+from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence import SERVER_PROFILE
+from loom.core.repository.registration import capability_keys
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
 
 
-class _NullConfig:
-    """Placeholder config used when no real config is needed in tests."""
+class _HarnessAdapter:
+    """Compose the use cases *routes* serve, with *overrides*, leniently; mount *routes*.
+
+    Discovers no model, so no store registers a repository: *overrides* bind
+    the fakes.
+
+    Args:
+        routes: The interfaces to serve; their routes' use cases are composed.
+        overrides: DI modules binding the fake repositories.
+        **fastapi_kwargs: Forwarded to the ``FastAPI`` constructor.
+    """
+
+    def __init__(
+        self,
+        routes: RouteSources,
+        *,
+        overrides: tuple[Callable[[LoomContainer], None], ...],
+        **fastapi_kwargs: Any,
+    ) -> None:
+        self._routes = routes
+        self._overrides = overrides
+        self._fastapi_kwargs = fastapi_kwargs
+
+    def source(self) -> CompositionSource:
+        """The ``test-harness`` application, its jobs inline, in the ``LOOM_ENV`` environment.
+
+        Raises:
+            ConfigError: When ``LOOM_ENV`` is not an environment.
+        """
+        app = AppConfig(name="test-harness", job_service="inline")
+        return CompositionSource(
+            config=ConfigContext.from_dict(
+                {"app": {"name": app.name, "job_service": app.job_service}}
+            ),
+            environment=resolve_environment(),
+            code_path=Path.cwd(),
+            config_root=Path.cwd(),
+            app=app,
+            observability=ObservabilityRuntime.noop(),
+            observability_config=ObservabilityConfig(),
+        )
+
+    def recipe(self, source: CompositionSource) -> Recipe:
+        """The routes' use cases over no model, leniently."""
+        del source
+        interfaces = (*self._routes.python, *self._routes.config)
+        use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
+        return Recipe(
+            profile=SERVER_PROFILE,
+            discovered=DiscoveryResult(models=(), use_cases=tuple(use_cases), interfaces=()),
+            overrides=self._overrides,
+            lenient=True,
+        )
+
+    def bind(self, application: Application) -> FastAPI:
+        """Mount the routes on *application*'s kernel."""
+        return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
 
 
 class HttpTestHarness:
     """Builds a FastAPI ``TestClient`` with injected fake repositories.
 
-    Combines :func:`~loom.core.bootstrap.bootstrap.bootstrap_app` and
-    :func:`~loom.rest.fastapi.app.create_fastapi_app` into a single
-    test-oriented entry point.
+    Composes the application through the same pipeline as
+    :func:`~loom.composition.create_app`, from an in-memory configuration and
+    leniently (see :class:`~loom.composition.Recipe`), then mounts the routes
+    with :func:`~loom.rest.fastapi.app.create_fastapi_app`.
 
     Repositories are keyed by **domain model type** (the ``TModel`` generic
     parameter of the use case) rather than by interface.  The harness derives
@@ -71,8 +138,11 @@ class HttpTestHarness:
         """Register a fake repository for a domain model type.
 
         The harness resolves the model from the use-case generic parameter
-        (``UseCase[Model, …]``) at bootstrap time and injects ``fake`` as its
-        repository.
+        (``UseCase[Model, …]``) when the application is composed and injects
+        ``fake`` as its repository. Like a store's repository, ``fake`` is
+        also bound under each capability its class implements: the standard
+        ones (``Readable[Model]``, …) and its own repository ``Protocol``
+        bases, so a use case injecting such a protocol receives it.
 
         Args:
             model: ``msgspec.Struct`` subclass used as the resolution key.
@@ -134,14 +204,10 @@ class HttpTestHarness:
                     method: err for (m, method), err in error_overrides.items() if m is model
                 }
                 effective = _ErrorProxy(fake, overrides) if overrides else fake
-                # Use an explicit per-model token to avoid DI key collisions
-                # when multiple models share the same fake repository type.
                 token = ("repo", model)
-                container.register(
-                    token,
-                    _make_provider(effective),
-                    scope=Scope.APPLICATION,
-                )
+                provider = _make_provider(effective)
+                for key in (token, *capability_keys(type(fake), model)):
+                    container.register(key, provider, scope=Scope.APPLICATION)
                 container.register_repo(model, token)
 
         return _module
@@ -157,7 +223,7 @@ class HttpTestHarness:
         """Build a ``TestClient`` from REST interface declarations.
 
         Extracts use cases from every interface's route declarations
-        (Python-declared and config-declared alike), bootstraps the
+        (Python-declared and config-declared alike), composes the
         application with the injected fake repositories, and returns a
         :class:`~fastapi.testclient.TestClient` ready for HTTP assertions.
 
@@ -187,18 +253,10 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        all_interfaces = (*interfaces, *config_interfaces)
-        use_cases: list[type[UseCase[Any, Any]]] = list(
-            dict.fromkeys(route.use_case for iface in all_interfaces for route in iface.routes)
-        )
-        result = bootstrap_app(
-            config=_NullConfig(),
-            use_cases=use_cases,
-            modules=[self._build_module()],
-        )
-        app = create_fastapi_app(
-            result,
+        adapter = _HarnessAdapter(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
+            overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
+        app = adapter.bind(compose_application(adapter.source(), adapter))
         return TestClient(app, raise_server_exceptions=False)

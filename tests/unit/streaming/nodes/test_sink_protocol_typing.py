@@ -75,33 +75,34 @@ _THIRD_PARTY_SINK = textwrap.dedent("""
 """)
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    ("snippet", "case"),
-    [(_BUILT_IN_SINKS, "built-in"), (_THIRD_PARTY_SINK, "third-party")],
-    ids=["built_in", "third_party"],
-)
-def test_un_sink_pasa_mypy_strict_dentro_de_un_process(
-    snippet: str, case: str, tmp_path: Path
-) -> None:
-    """Neither a built-in sink nor one written outside loom needs a cast."""
-    module = tmp_path / "snippet.py"
-    module.write_text(snippet, encoding="utf-8")
-
-    result = subprocess.run(  # noqa: S603
-        # Its own cache: the shared .mypy_cache may be mid-write by another run.
-        [
-            sys.executable,
-            "-m",
-            "mypy",
-            "--strict",
-            "--cache-dir",
-            str(tmp_path / ".mypy_cache"),
-            str(module),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+class TestSinkProtocolTyping:
+    @pytest.mark.slow
+    @pytest.mark.parametrize(
+        ("snippet", "case"),
+        [(_BUILT_IN_SINKS, "built-in"), (_THIRD_PARTY_SINK, "third-party")],
+        ids=["built_in", "third_party"],
     )
+    def test_a_sink_passes_mypy_strict_inside_a_process(
+        self, snippet: str, case: str, tmp_path: Path
+    ) -> None:
+        """Neither a built-in sink nor one written outside loom needs a cast."""
+        module = tmp_path / "snippet.py"
+        module.write_text(snippet, encoding="utf-8")
 
-    assert result.returncode == 0, f"{case} sink does not type-check:\n{result.stdout}"
+        result = subprocess.run(  # noqa: S603
+            # Its own cache: the shared .mypy_cache may be mid-write by another run.
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "--strict",
+                "--cache-dir",
+                str(tmp_path / ".mypy_cache"),
+                str(module),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, f"{case} sink does not type-check:\n{result.stdout}"

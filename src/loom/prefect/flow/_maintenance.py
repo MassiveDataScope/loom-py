@@ -109,7 +109,6 @@ def _maintenance_summary(report: Any, params: dict[str, Any]) -> str:
         refs = ", ".join(r.table_ref for r in failed)
         return f"{len(failed)}/{total} tables failed: {refs}{dry_run_tag}"
 
-    # Collect op names that ran across all tables
     op_names: list[str] = []
     seen: set[str] = set()
     for result in report.results:

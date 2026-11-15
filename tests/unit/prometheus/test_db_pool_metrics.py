@@ -42,112 +42,107 @@ def _sample(registry: CollectorRegistry, name: str) -> float | None:
     return registry.get_sample_value(name, _LABELS)
 
 
-async def test_gauges_reflect_the_pool_when_scraped(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    manager = _manager(tmp_path, registry, size=2)
-    try:
-        assert _sample(registry, "loom_db_pool_checked_out") == 0
-        async with manager.engine.connect():
-            assert _sample(registry, "loom_db_pool_checked_out") == 1
-            assert _sample(registry, "loom_db_pool_size") == 2
-            assert _sample(registry, "loom_db_pool_overflow") == 0
-    finally:
-        await manager.dispose()
-
-
-async def test_each_checkout_is_timed(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    manager = _manager(tmp_path, registry)
-    try:
-        for _ in range(3):
+class TestDbPoolMetrics:
+    async def test_gauges_reflect_the_pool_when_scraped(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        manager = _manager(tmp_path, registry, size=2)
+        try:
+            assert _sample(registry, "loom_db_pool_checked_out") == 0
             async with manager.engine.connect():
-                pass
-    finally:
-        await manager.dispose()
+                assert _sample(registry, "loom_db_pool_checked_out") == 1
+                assert _sample(registry, "loom_db_pool_size") == 2
+                assert _sample(registry, "loom_db_pool_overflow") == 0
+        finally:
+            await manager.dispose()
 
-    assert _sample(registry, "loom_db_pool_checkout_seconds_count") == 3
-
-
-async def test_a_checkout_that_runs_out_of_time_is_counted(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    manager = _manager(tmp_path, registry)
-    try:
-        async with manager.engine.connect():
-            with pytest.raises(PoolTimeoutError):
+    async def test_each_checkout_is_timed(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        manager = _manager(tmp_path, registry)
+        try:
+            for _ in range(3):
                 async with manager.engine.connect():
                     pass
-    finally:
+        finally:
+            await manager.dispose()
+
+        assert _sample(registry, "loom_db_pool_checkout_seconds_count") == 3
+
+    async def test_a_checkout_that_runs_out_of_time_is_counted(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        manager = _manager(tmp_path, registry)
+        try:
+            async with manager.engine.connect():
+                with pytest.raises(PoolTimeoutError):
+                    async with manager.engine.connect():
+                        pass
+        finally:
+            await manager.dispose()
+
+        assert _sample(registry, "loom_db_pool_checkout_timeouts_total") == 1
+
+    async def test_without_a_sink_the_pool_is_the_dialect_default(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        manager = _manager(tmp_path, None)
+        try:
+            assert type(manager.engine.sync_engine.pool) is AsyncAdaptedQueuePool
+        finally:
+            await manager.dispose()
+
+        assert not [m for m in registry.collect() if m.name.startswith("loom_db_pool")]
+
+    def test_several_sinks_can_share_one_registry(self) -> None:
+        registry = CollectorRegistry()
+
+        PrometheusPoolMetrics(registry, application="shop", entrypoint="server")
+        PrometheusPoolMetrics(registry, application="shop", entrypoint="worker")
+
+    async def test_a_collected_engine_stops_being_reported(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        manager = _manager(tmp_path, registry)
         await manager.dispose()
+        del manager
+        gc.collect()
 
-    assert _sample(registry, "loom_db_pool_checkout_timeouts_total") == 1
+        assert _sample(registry, "loom_db_pool_size") is None
 
+    def test_create_app_with_prometheus_enabled_reports_its_pool(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        config_path = write_project(
+            tmp_path,
+            observability={"prometheus": {"enabled": True}},
+            store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
+        )
 
-async def test_without_a_sink_the_pool_is_the_dialect_default(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    manager = _manager(tmp_path, None)
-    try:
-        assert type(manager.engine.sync_engine.pool) is AsyncAdaptedQueuePool
-    finally:
-        await manager.dispose()
+        create_app(config_path, metrics_registry=registry, environment=Environment.TEST)
 
-    assert not [m for m in registry.collect() if m.name.startswith("loom_db_pool")]
+        labels = {"application": "config-demo", "entrypoint": "server", "database": "default"}
+        assert registry.get_sample_value("loom_db_pool_size", labels) == 5
 
+    def test_create_app_without_prometheus_reports_no_pool(self, tmp_path: Path) -> None:
+        registry = CollectorRegistry()
+        config_path = write_project(
+            tmp_path,
+            store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
+        )
 
-def test_several_sinks_can_share_one_registry() -> None:
-    registry = CollectorRegistry()
+        create_app(config_path, metrics_registry=registry, environment=Environment.TEST)
 
-    PrometheusPoolMetrics(registry, application="shop", entrypoint="server")
-    PrometheusPoolMetrics(registry, application="shop", entrypoint="worker")
+        assert not [m for m in registry.collect() if m.name.startswith("loom_db_pool")]
 
-
-async def test_a_collected_engine_stops_being_reported(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    manager = _manager(tmp_path, registry)
-    await manager.dispose()
-    del manager
-    gc.collect()
-
-    assert _sample(registry, "loom_db_pool_size") is None
-
-
-def test_create_app_with_prometheus_enabled_reports_its_pool(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    config_path = write_project(
-        tmp_path,
-        observability={"prometheus": {"enabled": True}},
-        store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
-    )
-
-    create_app(config_path, metrics_registry=registry, environment=Environment.TEST)
-
-    labels = {"application": "config-demo", "entrypoint": "server", "database": "default"}
-    assert registry.get_sample_value("loom_db_pool_size", labels) == 5
-
-
-def test_create_app_without_prometheus_reports_no_pool(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    config_path = write_project(
-        tmp_path,
-        store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
-    )
-
-    create_app(config_path, metrics_registry=registry, environment=Environment.TEST)
-
-    assert not [m for m in registry.collect() if m.name.startswith("loom_db_pool")]
-
-
-async def test_a_rebuilt_engine_replaces_the_series_of_the_previous_one(tmp_path: Path) -> None:
-    registry = CollectorRegistry()
-    first = _manager(tmp_path, registry, size=1)
-    second = _manager(tmp_path, registry, size=3)
-    try:
-        sizes = [
-            sample.value
-            for metric in registry.collect()
-            if metric.name == "loom_db_pool_size"
-            for sample in metric.samples
-        ]
-        assert sizes == [3]
-    finally:
-        await first.dispose()
-        await second.dispose()
+    async def test_a_rebuilt_engine_replaces_the_series_of_the_previous_one(
+        self, tmp_path: Path
+    ) -> None:
+        registry = CollectorRegistry()
+        first = _manager(tmp_path, registry, size=1)
+        second = _manager(tmp_path, registry, size=3)
+        try:
+            sizes = [
+                sample.value
+                for metric in registry.collect()
+                if metric.name == "loom_db_pool_size"
+                for sample in metric.samples
+            ]
+            assert sizes == [3]
+        finally:
+            await first.dispose()
+            await second.dispose()

@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "AcmeInputInConstructor: payload: Input() declares an input of execute(), not a dependency",
+    "type": "loom.core.di.graph.DependencyGraphError"
+  },
+  "message": "Bootstrap failed: AcmeInputInConstructor: payload: Input() declares an input of execute(), not a dependency",
+  "type": "loom.core.bootstrap.bootstrap.BootstrapError",
+  "wrapped": true
+}

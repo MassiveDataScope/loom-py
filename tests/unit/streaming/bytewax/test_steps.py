@@ -23,36 +23,38 @@ from loom.streaming.nodes._step import (  # noqa: E402
     ExpandStep,
     RecordStep,
 )
-from tests.unit.streaming.bytewax.cases import Order, Result, build_message  # noqa: E402
+from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult, build_message  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
 
-class _RecordStep(RecordStep[Order, Result]):
-    def execute(self, message: Message[Order], **kwargs: object) -> Result:
+class _RecordStep(RecordStep[AcmeOrder, AcmeResult]):
+    def execute(self, message: Message[AcmeOrder], **kwargs: object) -> AcmeResult:
         del kwargs
-        return Result(value=message.payload.order_id.upper())
+        return AcmeResult(value=message.payload.order_id.upper())
 
 
-class _BatchStep(BatchStep[Order, Result]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
+class _BatchStep(BatchStep[AcmeOrder, AcmeResult]):
+    def execute(self, messages: list[Message[AcmeOrder]], **kwargs: object) -> list[AcmeResult]:
         del kwargs
-        return [Result(value=message.payload.order_id.upper()) for message in messages]
+        return [AcmeResult(value=message.payload.order_id.upper()) for message in messages]
 
 
-class _ExpandStep(ExpandStep[Order, Result]):
-    def execute(self, message: Message[Order], **kwargs: object) -> list[Result]:
+class _ExpandStep(ExpandStep[AcmeOrder, AcmeResult]):
+    def execute(self, message: Message[AcmeOrder], **kwargs: object) -> list[AcmeResult]:
         del kwargs
         return [
-            Result(value=message.payload.order_id.upper()),
-            Result(value=message.payload.order_id.lower()),
+            AcmeResult(value=message.payload.order_id.upper()),
+            AcmeResult(value=message.payload.order_id.lower()),
         ]
 
 
-class _BatchExpandStep(BatchExpandStep[Order, Result]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Result]]:
+class _BatchExpandStep(BatchExpandStep[AcmeOrder, AcmeResult]):
+    def execute(
+        self, messages: list[Message[AcmeOrder]], **kwargs: object
+    ) -> list[list[AcmeResult]]:
         del kwargs
-        return [[Result(value=message.payload.order_id.upper())] for message in messages]
+        return [[AcmeResult(value=message.payload.order_id.upper())] for message in messages]
 
 
 def _ctx() -> SimpleNamespace:
@@ -64,170 +66,186 @@ def _ctx() -> SimpleNamespace:
     )
 
 
-def test_apply_record_step_executes_and_splits(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded: dict[str, Any] = {}
+class TestApplyRecordStep:
+    def test_apply_record_step_executes_and_splits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        recorded: dict[str, Any] = {}
 
-    def _bw_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["step_id"] = step_id
-        recorded["stream"] = stream
-        result = fn(build_message(Order(order_id="ab")))
-        recorded["result"] = result
-        return result
+        def _bw_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["step_id"] = step_id
+            recorded["stream"] = stream
+            result = fn(build_message(AcmeOrder(order_id="ab")))
+            recorded["result"] = result
+            return result
 
-    monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
+        monkeypatch.setattr(_steps, "bw_map", _bw_map)
+        monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
 
-    result = _steps._apply_record_step("input-stream", _RecordStep(), 3, _ctx())
+        result = _steps._apply_record_step("input-stream", _RecordStep(), 3, _ctx())
 
-    assert recorded["step_id"] == "1_2_record_3__RecordStep"
-    assert recorded["stream"] == "input-stream"
-    assert isinstance(recorded["result"], Message)
-    assert recorded["result"].payload.value == "AB"
-    assert result.payload.value == "AB"
+        assert recorded["step_id"] == "1_2_record_3__RecordStep"
+        assert recorded["stream"] == "input-stream"
+        assert isinstance(recorded["result"], Message)
+        assert recorded["result"].payload.value == "AB"
+        assert result.payload.value == "AB"
 
+    def test_apply_record_step_emits_trace_id_from_message(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[LifecycleEvent] = []
 
-def test_apply_record_step_emits_trace_id_from_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[LifecycleEvent] = []
+        class _RecordingObserver:
+            def on_event(self, event: LifecycleEvent) -> None:
+                events.append(event)
 
-    class _RecordingObserver:
-        def on_event(self, event: LifecycleEvent) -> None:
-            events.append(event)
-
-    runtime = ObservabilityRuntime([_RecordingObserver()])
-    ctx = SimpleNamespace(
-        plan=SimpleNamespace(name="orders"),
-        current_path=(1, 2),
-        flow_runtime=runtime,
-        commit_tracker=None,
-    )
-
-    def _bw_map(step_id: str, stream: object, fn: Any) -> object:
-        del step_id, stream
-        return fn(
-            Message(
-                payload=Order(order_id="ab"),
-                meta=MessageMeta(
-                    message_id="test-1",
-                    trace_id="trace-step",
-                    correlation_id="corr-step",
-                ),
-            )
+        runtime = ObservabilityRuntime([_RecordingObserver()])
+        ctx = SimpleNamespace(
+            plan=SimpleNamespace(name="orders"),
+            current_path=(1, 2),
+            flow_runtime=runtime,
+            commit_tracker=None,
         )
 
-    monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
+        def _bw_map(step_id: str, stream: object, fn: Any) -> object:
+            del step_id, stream
+            return fn(
+                Message(
+                    payload=AcmeOrder(order_id="ab"),
+                    meta=MessageMeta(
+                        message_id="test-1",
+                        trace_id="trace-step",
+                        correlation_id="corr-step",
+                    ),
+                )
+            )
 
-    result = _steps._apply_record_step("input-stream", _RecordStep(), 3, ctx)
+        monkeypatch.setattr(_steps, "bw_map", _bw_map)
+        monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
 
-    assert result.payload.value == "AB"
-    assert len(events) >= 2, f"Expected >= 2 lifecycle events, got {len(events)}"
-    assert events[0].trace_id == "trace-step"
-    assert events[0].correlation_id == "corr-step"
-    assert events[1].trace_id == "trace-step"
-    assert events[1].correlation_id == "corr-step"
+        result = _steps._apply_record_step("input-stream", _RecordStep(), 3, ctx)
 
-
-def test_apply_batch_step_executes_and_splits(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded: dict[str, Any] = {}
-
-    def _bw_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["step_id"] = step_id
-        recorded["stream"] = stream
-        messages = [build_message(Order(order_id="ab")), build_message(Order(order_id="cd"))]
-        result = fn(messages)
-        recorded["result"] = result
-        return result
-
-    monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr(_steps, "_split_batch_node_result", lambda stream, *_: stream)
-
-    result = _steps._apply_batch_step("input-stream", _BatchStep(), 4, _ctx())
-
-    assert recorded["step_id"] == "1_2_batch_4__BatchStep"
-    assert recorded["stream"] == "input-stream"
-    assert [item.payload.value for item in recorded["result"]] == ["AB", "CD"]
-    assert [item.payload.value for item in result] == ["AB", "CD"]
+        assert result.payload.value == "AB"
+        assert len(events) >= 2, f"Expected >= 2 lifecycle events, got {len(events)}"
+        assert events[0].trace_id == "trace-step"
+        assert events[0].correlation_id == "corr-step"
+        assert events[1].trace_id == "trace-step"
+        assert events[1].correlation_id == "corr-step"
 
 
-def test_apply_expand_step_executes_and_flattens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded: dict[str, Any] = {}
+class TestApplyBatchStep:
+    def test_apply_batch_step_executes_and_splits(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        recorded: dict[str, Any] = {}
 
-    def _bw_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["step_id"] = step_id
-        recorded["stream"] = stream
-        result = fn(build_message(Order(order_id="Ab")))
-        recorded["mapped"] = result
-        return result
+        def _bw_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["step_id"] = step_id
+            recorded["stream"] = stream
+            messages = [
+                build_message(AcmeOrder(order_id="ab")),
+                build_message(AcmeOrder(order_id="cd")),
+            ]
+            result = fn(messages)
+            recorded["result"] = result
+            return result
 
-    def _flat_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["flat_step_id"] = step_id
-        recorded["flat_stream"] = stream
-        return fn(stream)
+        monkeypatch.setattr(_steps, "bw_map", _bw_map)
+        monkeypatch.setattr(_steps, "_split_batch_node_result", lambda stream, *_: stream)
 
-    monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr(_steps, "flat_map", _flat_map)
-    monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
+        result = _steps._apply_batch_step("input-stream", _BatchStep(), 4, _ctx())
 
-    result = _steps._apply_expand_step("input-stream", _ExpandStep(), 5, _ctx())
-
-    assert recorded["step_id"] == "1_2_expand_5__ExpandStep"
-    assert recorded["flat_step_id"] == "1_2_flatten_expand_5"
-    assert recorded["flat_stream"] == recorded["mapped"]
-    assert [item.payload.value for item in result] == ["AB", "ab"]
-
-
-def test_apply_batch_expand_step_executes_and_flattens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded: dict[str, Any] = {}
-
-    def _bw_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["step_id"] = step_id
-        recorded["stream"] = stream
-        messages = [build_message(Order(order_id="ab")), build_message(Order(order_id="cd"))]
-        result = fn(messages)
-        recorded["mapped"] = result
-        return result
-
-    def _flat_map(step_id: str, stream: object, fn: Any) -> object:
-        recorded["flat_step_id"] = step_id
-        recorded["flat_stream"] = stream
-        return fn(stream)
-
-    monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr(_steps, "flat_map", _flat_map)
-    monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
-
-    result = _steps._apply_batch_expand_step("input-stream", _BatchExpandStep(), 6, _ctx())
-
-    assert recorded["step_id"] == "1_2_batch_expand_6__BatchExpandStep"
-    assert recorded["flat_step_id"] == "1_2_flatten_batch_expand_6"
-    assert recorded["flat_stream"] == recorded["mapped"]
-    assert [item.payload.value for item in result] == ["AB", "CD"]
+        assert recorded["step_id"] == "1_2_batch_4__BatchStep"
+        assert recorded["stream"] == "input-stream"
+        assert [item.payload.value for item in recorded["result"]] == ["AB", "CD"]
+        assert [item.payload.value for item in result] == ["AB", "CD"]
 
 
-@pytest.mark.parametrize(
-    ("handler", "raw", "message"),
-    [
-        (_steps._apply_record_step, object(), "Unsupported record step object."),
-        (_steps._apply_batch_step, object(), "Unsupported batch step object."),
-        (_steps._apply_expand_step, object(), "Unsupported expand step object."),
-        (_steps._apply_batch_expand_step, object(), "Unsupported batch-expand step object."),
-    ],
-)
-def test_apply_step_rejects_unknown_shape(
-    handler: Callable[[object, object, int, Any], object],
-    raw: object,
-    message: str,
-) -> None:
-    ctx = _ctx()
-    with pytest.raises(UnsupportedNodeError, match=message):
-        handler("input-stream", raw, 1, ctx)
+class TestApplyExpandStep:
+    def test_apply_expand_step_executes_and_flattens(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        recorded: dict[str, Any] = {}
+
+        def _bw_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["step_id"] = step_id
+            recorded["stream"] = stream
+            result = fn(build_message(AcmeOrder(order_id="Ab")))
+            recorded["mapped"] = result
+            return result
+
+        def _flat_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["flat_step_id"] = step_id
+            recorded["flat_stream"] = stream
+            return fn(stream)
+
+        monkeypatch.setattr(_steps, "bw_map", _bw_map)
+        monkeypatch.setattr(_steps, "flat_map", _flat_map)
+        monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
+
+        result = _steps._apply_expand_step("input-stream", _ExpandStep(), 5, _ctx())
+
+        assert recorded["step_id"] == "1_2_expand_5__ExpandStep"
+        assert recorded["flat_step_id"] == "1_2_flatten_expand_5"
+        assert recorded["flat_stream"] == recorded["mapped"]
+        assert [item.payload.value for item in result] == ["AB", "ab"]
+
+
+class TestApplyBatchExpandStep:
+    def test_apply_batch_expand_step_executes_and_flattens(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        recorded: dict[str, Any] = {}
+
+        def _bw_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["step_id"] = step_id
+            recorded["stream"] = stream
+            messages = [
+                build_message(AcmeOrder(order_id="ab")),
+                build_message(AcmeOrder(order_id="cd")),
+            ]
+            result = fn(messages)
+            recorded["mapped"] = result
+            return result
+
+        def _flat_map(step_id: str, stream: object, fn: Any) -> object:
+            recorded["flat_step_id"] = step_id
+            recorded["flat_stream"] = stream
+            return fn(stream)
+
+        monkeypatch.setattr(_steps, "bw_map", _bw_map)
+        monkeypatch.setattr(_steps, "flat_map", _flat_map)
+        monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
+
+        result = _steps._apply_batch_expand_step("input-stream", _BatchExpandStep(), 6, _ctx())
+
+        assert recorded["step_id"] == "1_2_batch_expand_6__BatchExpandStep"
+        assert recorded["flat_step_id"] == "1_2_flatten_batch_expand_6"
+        assert recorded["flat_stream"] == recorded["mapped"]
+        assert [item.payload.value for item in result] == ["AB", "CD"]
+
+
+class TestApplyUnknownStep:
+    @pytest.mark.parametrize(
+        ("handler", "raw", "message"),
+        [
+            (_steps._apply_record_step, object(), "Unsupported record step object."),
+            (_steps._apply_batch_step, object(), "Unsupported batch step object."),
+            (_steps._apply_expand_step, object(), "Unsupported expand step object."),
+            (_steps._apply_batch_expand_step, object(), "Unsupported batch-expand step object."),
+        ],
+    )
+    def test_apply_step_rejects_unknown_shape(
+        self,
+        handler: Callable[[object, object, int, Any], object],
+        raw: object,
+        message: str,
+    ) -> None:
+        ctx = _ctx()
+        with pytest.raises(UnsupportedNodeError, match=message):
+            handler("input-stream", raw, 1, ctx)

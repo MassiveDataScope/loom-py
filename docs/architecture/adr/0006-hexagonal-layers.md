@@ -185,3 +185,38 @@ drifts from its contract.
   any other error handling exists.
 - The transport-neutral composition root, the Lambda adapters and a catalogue
   of named stores build on these types without adding new ones.
+
+## Framework coupling (amendment, spec 011)
+
+loom is a framework: its job is to provide the adapters, so it is not hexagonal
+everywhere. Three levels are judged separately.
+
+- **The application is strictly hexagonal.** Use cases declare only ports in
+  their constructor; adapters (MCP, agent, SQL, HTTP, jobs) declare their
+  markers in their own constructor, and loom resolves them per execution and
+  derives grants at startup by walking the graph. Application code depends on
+  no infrastructure.
+- **loom's own layers point inwards**, and `tests/unit/test_layers.py` enforces
+  it: `loom.core` imports no transport; `loom.composition` loads only the
+  transports an application selects, lazily; identity sits under execution,
+  which sits under the container, the engine and the use cases. Only
+  `loom.core.observability` may import OpenTelemetry below the identity layer.
+- **Accepted coupling.** These are decisions, not debt:
+  - msgspec is loom's model language (models, commands, configuration).
+    Abstracting it would add nothing.
+  - structlog and OpenTelemetry are cross-cutting, behind `loom.core.logger`
+    and `loom.core.observability`.
+  - contextvars and asyncio are the Python runtime.
+
+### Known debt
+
+- Infrastructure adapters live inside `loom.core`: `core/repository`
+  (SQLAlchemy, MongoDB, DynamoDB), `core/connections`, `core/backend` and
+  `locator.py` import their drivers. Strictly, `core` would hold only the ports.
+  Moving them out is planned with the persistence boundary (spec 015), with
+  re-exports so it is not breaking.
+- The logger does not fit AWS Lambda. Its redesign is the next spec (logging
+  standard, Lambda first).
+- The use-case compiler names `Agent()` and `Mcp()` for `execute()` markers;
+  execution kinds become generic with `Invoke[UC]` (deferred T13).
+

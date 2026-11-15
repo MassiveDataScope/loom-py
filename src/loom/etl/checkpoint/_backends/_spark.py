@@ -28,8 +28,6 @@ class _SparkCheckpointBackend:
 
     def __init__(self, spark: Any) -> None:
         self._spark = spark
-        # In-memory schema registry: key "base/name" -> StructType
-        # First write registers the schema; subsequent appends align to it.
         self._schemas: dict[str, Any] = {}
         self._schema_lock = threading.Lock()
 
@@ -67,28 +65,16 @@ class _SparkCheckpointBackend:
         frame = data
         schema_key = f"{base}/{name}"
 
-        # Lock protects only the schema registry (get/set), not I/O.
-        # Schema is determined from input frame and registered atomically
-        # before any concurrent writer can see "no schema" and race.
         with self._schema_lock:
             existing_schema = self._schemas.get(schema_key)
             if existing_schema is None:
-                # First write: register schema immediately so concurrent writers
-                # align to this schema rather than racing with their own.
                 self._schemas[schema_key] = frame.schema
 
-        # Align to existing schema (outside lock - read-only on registry)
         if append and existing_schema is not None:
             frame = _align_spark_to_existing(frame, existing_schema)
 
-        # Write without lock - I/O is independent
         _log.debug("checkpoint write parquet path=%s append=%s", path, append)
         frame.write.mode("append" if append else "overwrite").parquet(path)
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers — no state, only used by _SparkCheckpointBackend
-# ---------------------------------------------------------------------------
 
 
 def _is_spark_dataframe(obj: Any) -> bool:
@@ -123,8 +109,6 @@ def _probe_spark(spark: Any, path: str) -> Any | None:
 
 def _align_spark_to_existing(frame: Any, schema: Any) -> Any:
     """Cast/reorder *frame* to *schema* and drop extra columns."""
-    # Lazy import: keeps pyspark optional at module load — only required
-    # when the Spark backend actually runs.
     from pyspark.sql import functions as F  # noqa: PLC0415
 
     source_cols = set(frame.columns)
