@@ -101,14 +101,6 @@ class TestTrackShipmentOverHttp:
         assert _track(http_client, key_of(ANONYMOUS)).is_error
         assert seen.calls == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "src bug: AgentRunError(UNAUTHORIZED), raised by require_authenticated for an "
-            "anonymous caller, is not a LoomError, so the REST handler answers 500 "
-            "(loom/rest/fastapi/router_runtime.py _RouteHandler)"
-        ),
-    )
     def test_answers_an_anonymous_caller_401(self, http_client: httpx.Client) -> None:
         assert _track(http_client, key_of(ANONYMOUS)).status_code == 401
 

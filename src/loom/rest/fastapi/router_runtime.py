@@ -35,7 +35,7 @@ import typing
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import msgspec
 from fastapi import FastAPI, HTTPException
@@ -87,6 +87,19 @@ _UNSUPPORTED_QUERY_MESSAGE = (
 )
 _INVALID_PROFILE_MESSAGE = "Not a profile this route allows."
 _NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
+
+
+@runtime_checkable
+class _CallerRefusal(Protocol):
+    """A failure outside :class:`LoomError` that may stand for a denial of its caller.
+
+    :class:`~loom.ai.errors.AgentRunError` is one, matched by shape so a
+    route never imports the AI pillar.
+    """
+
+    def refusal_for(self, caller: Identity) -> LoomError | None:
+        """Return the core denial this failure stands for, or ``None``."""
+        ...
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -636,7 +649,8 @@ class _RouteHandler:
         """Serve one request.
 
         Raises:
-            HTTPException: For refusals, mapped loom errors included.
+            HTTPException: For refusals, mapped loom errors and caller
+                denials of an agent run included.
             BodyTooLarge: When the body exceeds the configured limit.
         """
         try:
@@ -647,7 +661,12 @@ class _RouteHandler:
             raise
         except LoomError as exc:
             raise _error_mapper.to_http(exc) from exc
-        except Exception:
+        except Exception as exc:
+            refusal = (
+                exc.refusal_for(current_identity()) if isinstance(exc, _CallerRefusal) else None
+            )
+            if refusal is not None:
+                raise _error_mapper.to_http(refusal) from exc
             trace_id = get_trace_id() or ""
             _logger.exception(
                 "Unhandled error in %s (route=%s trace_id=%s)",

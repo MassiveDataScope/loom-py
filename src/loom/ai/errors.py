@@ -859,6 +859,23 @@ class AgentRunError(Exception):
         self.interaction_id = interaction_id
         self.usage = usage
 
+    def refusal_for(self, caller: Identity) -> Unauthenticated | Forbidden | None:
+        """Return the core denial this failure stands for, as a transport answers it.
+
+        Args:
+            caller: The identity the failed run acted for.
+
+        Returns:
+            For ``UNAUTHORIZED``, ``Unauthenticated`` when *caller* is
+            anonymous and ``Forbidden`` otherwise, with generic client text;
+            ``None`` for any other code.
+        """
+        if self.code is not AgentRunErrorCode.UNAUTHORIZED:
+            return None
+        if caller.is_authenticated:
+            return Forbidden(DENIED_MESSAGE)
+        return Unauthenticated()
+
 
 _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProxyType(
     {

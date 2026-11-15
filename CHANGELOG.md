@@ -1412,6 +1412,11 @@
 
 ### rest
 
+- **rest:** an agent or MCP handle refusing its caller inside a use case
+  (`AgentRunError` with `UNAUTHORIZED`) answers `401` for an anonymous caller
+  and `403` for an authenticated one, with generic text. It used to answer
+  `500` and log an unhandled error. FastAPI and Lambda answer the same; every
+  other `AgentRunError` code is still a `500`.
 - **rest:** a `5xx` body no longer carries the error's message, which could
   name hosts, databases, stores or classes: it keeps `code`, `trace_id` and
   `committed`, with the fixed message `An unexpected error occurred` (`503`:
