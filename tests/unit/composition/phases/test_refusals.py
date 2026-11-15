@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -90,7 +89,7 @@ class _Refusal:
     refused: type[BaseException]
     paths: tuple[str, ...] = _COMPOSED
     prepare: Callable[[pytest.MonkeyPatch], None] | None = None
-    variants: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    variants: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def _without_celery_extra(monkeypatch: pytest.MonkeyPatch) -> None:

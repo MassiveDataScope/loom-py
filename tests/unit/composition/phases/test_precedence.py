@@ -18,7 +18,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 
@@ -64,7 +63,7 @@ class _Precedence:
     composition: paths.Composition
     winner: type[BaseException]
     on_path: Mapping[str, type[BaseException]] = field(default_factory=dict)
-    variants: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    variants: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 _SCENARIOS: dict[str, _Precedence] = {
