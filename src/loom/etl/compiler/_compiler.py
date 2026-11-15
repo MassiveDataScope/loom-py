@@ -63,8 +63,7 @@ from loom.etl.compiler._validators_config import (
 )
 from loom.etl.compiler._validators_step import StepCompilationContext, validate_step
 from loom.etl.declarative.target import AppendSpec
-from loom.etl.pipeline._pipeline import ETLPipeline
-from loom.etl.pipeline._process import ETLProcess
+from loom.etl.pipeline._pipeline import ETLPipeline, ETLProcess
 from loom.etl.pipeline._step import ETLStep
 from loom.etl.runtime.contracts import AgentBatchRunner, TableDiscovery
 

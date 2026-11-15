@@ -357,6 +357,11 @@
   `SparkStepRunner.seed_temp` and `SparkStepRunner.seed(..., schema=...)`
   raise `NotImplementedError`. Cache scenarios and frames, not runners: tests
   that mutate state need a function-scoped runner on their own `tmp_path`.
+- **etl:** `ExtraFieldsMode` (`IGNORE`, `WARN`, `CAPTURE`, `ERROR`) is
+  exported from `loom.etl.declarative.source`. `FromMongo.on_extra_fields` and
+  `FromDynamoDb.on_extra_fields` accept a member or its string value, as
+  before, and the specs they build carry the member; an unknown value raises
+  the same `ValueError`.
 
 ## 💥 Breaking
 
@@ -1334,6 +1339,14 @@
   run error's, `HOOK_FAILED` and `CONVERSATION_LOAD_FAILED` included; `code`
   and `interaction_id` stay, and the error is logged at `ERROR`.
 
+
+### use_case
+
+- **use_case:** `Rule` is a frozen value. `Rule.check`, `Rule.forbid` and
+  `Rule.require_present` keep their call shapes and return a `Rule`, and
+  `from_command`, `from_params` and `when_present` return a new one instead
+  of changing the rule they are called on. `require_present(...)` now also
+  accepts `from_params(...)`. Rules are evaluated as before.
 
 ### identity
 

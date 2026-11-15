@@ -283,7 +283,7 @@ def project_output(value: _WireResultT, output_type: LoomType) -> _WireResultT:
     return msgspec.structs.replace(value, output=output_type.to_builtins(value.output))
 
 
-async def projecting_final(
+async def with_projected_output(
     events: AsyncIterator[AgentEvent], output_type: LoomType
 ) -> AsyncIterator[AgentEvent]:
     """Relay *events*, projecting the terminal ``final`` event's ``output``.

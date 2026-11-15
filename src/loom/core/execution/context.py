@@ -88,7 +88,7 @@ class ExecutionContext:
     no ``REQUEST`` binding allocates nothing beyond this object. It holds
     what :meth:`store` and :func:`per_execution` keep, each value under its
     key, and, for each key :func:`per_execution` has built, the reentrant
-    lock it builds under, keyed ``(_BUILDING, key)`` with a private tag no
+    lock it builds under, keyed ``(_BUILD_LOCK_TAG, key)`` with a private tag no
     caller's key can equal. :func:`leave` closes it: the cache and every read
     of it are gone (:class:`ExecutionClosed`). It holds no identity: who the
     execution acts as is the acting identity :func:`enter` fixed with it.
@@ -146,14 +146,14 @@ class ExecutionContext:
         """The cache, allocated once even when threads sharing this execution race for it."""
         cache = self._cache
         if cache is None:
-            with _ALLOCATING:
+            with _CACHE_ALLOCATION_LOCK:
                 cache = self._cache
                 if cache is None:
                     cache = self._cache = {}
         return cache
 
 
-_ALLOCATING = threading.Lock()
+_CACHE_ALLOCATION_LOCK = threading.Lock()
 """Taken only to allocate an execution's cache, once per execution that stores anything."""
 
 
@@ -186,13 +186,13 @@ def _closed(read: str) -> ExecutionClosed:
     return ExecutionClosed(_ENDED_MESSAGE)
 
 
-_BUILDING = object()
-"""Tags the key of a per-execution build lock in the cache: ``(_BUILDING, key)``."""
+_BUILD_LOCK_TAG = object()
+"""Tags the key of a per-execution build lock in the cache: ``(_BUILD_LOCK_TAG, key)``."""
 
 _NO_EXECUTION = ExecutionContext()
 """The work of :class:`NoExecution` and of a closed context: no execution, and no caller, fixed."""
 _NO_EXECUTION_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
-_CLOSED_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
+_CLOSED_CONTEXT_ACTING = Acting.delegated(None, work=_NO_EXECUTION)
 """Installed after a token misuse: no execution, no caller, and never restored.
 
 A value of its own, not :data:`_NO_EXECUTION_ACTING`: no later ``leave`` or
@@ -252,7 +252,7 @@ def per_execution(key: Hashable, make: Callable[[], object]) -> Callable[[], obj
         with ExecutionScope(acme_identity):
             assert acme_session() is acme_session()
     """
-    building = (_BUILDING, key)
+    building = (_BUILD_LOCK_TAG, key)
 
     def value() -> object:
         context: Any = _acting_now().work
@@ -337,7 +337,7 @@ def leave(token: Token[Acting]) -> None:
     """
     context: Any = _acting_now().work
     if context is None or context._token is not token:
-        _acting.set(_CLOSED_ACTING)
+        _acting.set(_CLOSED_CONTEXT_ACTING)
         raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
     _acting.reset(token)
     context._token = None
@@ -465,6 +465,6 @@ class NoExecution:
         token = cast("Token[Acting]", self._token)
         self._token = None
         if _acting_now() is not _NO_EXECUTION_ACTING:
-            _acting.set(_CLOSED_ACTING)
+            _acting.set(_CLOSED_CONTEXT_ACTING)
             raise RuntimeError(_LEFT_OPEN_MESSAGE)
         _acting.reset(token)

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Any
 
 from loom.core.expr.nodes import AndExpr, ExprNode
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec
+from loom.etl.declarative.source._specs import DynamoDbSourceSpec, ExtraFieldsMode
 from loom.etl.schema._contract import SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 _TABLE_RE = re.compile(r"^[a-zA-Z0-9_.\-]{3,255}$")
-_EXTRA_FIELDS_MODES = frozenset({"ignore", "warn", "capture", "error"})
 
 
 class FromDynamoDb:
@@ -66,7 +65,7 @@ class FromDynamoDb:
         self._filter: ExprNode | None = None
         self._projection: tuple[str, ...] | None = None
         self._schema: tuple[ColumnSchema, ...] = ()
-        self._extra_fields_mode: Literal["ignore", "warn", "capture", "error"] = "ignore"
+        self._extra_fields_mode = ExtraFieldsMode.IGNORE
         self._batch_size: int = 1_000
         self._limit: int | None = None
         self._consistent_read: bool = False
@@ -111,14 +110,9 @@ class FromDynamoDb:
         """
         return self._clone(_schema=resolve_schema(schema))
 
-    def on_extra_fields(self, mode: Literal["ignore", "warn", "capture", "error"]) -> FromDynamoDb:
+    def on_extra_fields(self, mode: ExtraFieldsMode | str) -> FromDynamoDb:
         """Control how item attributes absent from the schema are handled."""
-        if mode not in _EXTRA_FIELDS_MODES:
-            raise ValueError(
-                f"on_extra_fields mode {mode!r} is not valid. "
-                f"Choose one of: {sorted(_EXTRA_FIELDS_MODES)}"
-            )
-        return self._clone(_extra_fields_mode=mode)
+        return self._clone(_extra_fields_mode=ExtraFieldsMode(mode))
 
     def batch_size(self, n: int) -> FromDynamoDb:
         """Override the DynamoDB scan page size (``Limit`` per page, 1–10 000)."""

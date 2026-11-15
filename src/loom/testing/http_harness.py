@@ -19,18 +19,88 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.composition import compose_application
+from loom.composition.application import Application
+from loom.composition.recipe import Recipe
+from loom.composition.source import AppConfig, CompositionSource
+from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.environment import resolve_environment
+from loom.core.observability.config import ObservabilityConfig
+from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence import SERVER_PROFILE
 from loom.core.repository.registration import capability_keys
 from loom.rest.compiler import RouteSources
+from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
-from loom.testing.harness import HarnessAdapter, harness_source
+
+
+class _HarnessAdapter:
+    """Compose the use cases *routes* serve, with *overrides*, leniently; mount *routes*.
+
+    Discovers no model, so no store registers a repository: *overrides* bind
+    the fakes.
+
+    Args:
+        routes: The interfaces to serve; their routes' use cases are composed.
+        overrides: DI modules binding the fake repositories.
+        **fastapi_kwargs: Forwarded to the ``FastAPI`` constructor.
+    """
+
+    def __init__(
+        self,
+        routes: RouteSources,
+        *,
+        overrides: tuple[Callable[[LoomContainer], None], ...],
+        **fastapi_kwargs: Any,
+    ) -> None:
+        self._routes = routes
+        self._overrides = overrides
+        self._fastapi_kwargs = fastapi_kwargs
+
+    def source(self) -> CompositionSource:
+        """The ``test-harness`` application, its jobs inline, in the ``LOOM_ENV`` environment.
+
+        Raises:
+            ConfigError: When ``LOOM_ENV`` is not an environment.
+        """
+        app = AppConfig(name="test-harness", job_service="inline")
+        return CompositionSource(
+            config=ConfigContext.from_dict(
+                {"app": {"name": app.name, "job_service": app.job_service}}
+            ),
+            environment=resolve_environment(),
+            code_path=Path.cwd(),
+            config_root=Path.cwd(),
+            app=app,
+            observability=ObservabilityRuntime.noop(),
+            observability_config=ObservabilityConfig(),
+        )
+
+    def recipe(self, source: CompositionSource) -> Recipe:
+        """The routes' use cases over no model, leniently."""
+        del source
+        interfaces = (*self._routes.python, *self._routes.config)
+        use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
+        return Recipe(
+            profile=SERVER_PROFILE,
+            discovered=DiscoveryResult(models=(), use_cases=tuple(use_cases), interfaces=()),
+            overrides=self._overrides,
+            lenient=True,
+        )
+
+    def bind(self, application: Application) -> FastAPI:
+        """Mount the routes on *application*'s kernel."""
+        return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
 
 
 class HttpTestHarness:
@@ -183,10 +253,10 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        adapter = HarnessAdapter(
+        adapter = _HarnessAdapter(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        app = adapter.bind(compose_application(harness_source(), adapter))
+        app = adapter.bind(compose_application(adapter.source(), adapter))
         return TestClient(app, raise_server_exceptions=False)

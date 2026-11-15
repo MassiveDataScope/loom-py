@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
-from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.abc import UnitOfWork, UowEvent
 from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
 
@@ -82,7 +82,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
 
         self._session_cm = self._session_manager.session()
         self._session = await self._session_cm.__aenter__()
-        _log.debug("UoWBegin")
+        _log.debug(UowEvent.BEGIN)
 
     @property
     def owner(self) -> SessionManager:
@@ -135,14 +135,14 @@ class SQLAlchemyUnitOfWork(EntersAlone):
                 await self._invalidate(self._session)
                 raise CommitUncertain(exc) from exc
             raise
-        _log.debug("UoWCommit")
+        _log.debug(UowEvent.COMMIT)
 
     @staticmethod
     async def _invalidate(session: AsyncSession) -> None:
         try:
             await session.invalidate()
         except Exception:
-            _log.exception("UoWInvalidateFailed")
+            _log.exception(UowEvent.INVALIDATE_FAILED)
 
     async def rollback(self) -> None:
         """Discard all pending changes.
@@ -155,7 +155,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         if self._session is None:
             raise RuntimeError("SQLAlchemyUnitOfWork.rollback() called before begin()")
         await self._session.rollback()
-        _log.debug("UoWRollback")
+        _log.debug(UowEvent.ROLLBACK)
 
     async def close(self) -> None:
         """Close the session, if any, under ``asyncio.shield``: a cancellation lets it finish."""

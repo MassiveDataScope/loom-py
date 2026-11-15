@@ -25,7 +25,20 @@ Usage::
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import ClassVar, Protocol, runtime_checkable
+
+
+class UowEvent(StrEnum):
+    """Log event names emitted by units of work and the commit coordinator."""
+
+    BEGIN = "UoWBegin"
+    COMMIT = "UoWCommit"
+    ROLLBACK = "UoWRollback"
+    INVALIDATE_FAILED = "UoWInvalidateFailed"
+    ROLLBACK_FAILED = "UoWRollbackFailed"
+    CLOSE_FAILED = "UoWCloseFailed"
+    INVOCATION_OUTCOME = "InvocationOutcome"
 
 
 @runtime_checkable

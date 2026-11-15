@@ -139,6 +139,13 @@ class TestPolarsWriterSchema:
         written_rows = result.filter(pl.col("id") == 1)
         assert written_rows["label"][0] is None
 
+    def test_writer_evolve_adds_a_new_column_to_the_table(self, tmp_path: Path) -> None:
+        seed_delta_table(tmp_path, "staging.out", pl.DataFrame({"id": [0]}))
+        writer = PolarsTargetWriter(tmp_path)
+        frame = pl.DataFrame({"id": [1], "label": ["x"]}).lazy()
+        writer.write(frame, _spec("staging.out", schema_mode=SchemaMode.EVOLVE), None)
+        assert read_delta_table(tmp_path, "staging.out").columns == ["id", "label"]
+
     def test_writer_reads_latest_schema_between_consecutive_writes(self, tmp_path: Path) -> None:
         writer = PolarsTargetWriter(tmp_path)
         ref = TableRef("staging.evolving")
@@ -349,20 +356,38 @@ class TestPolarsAppend:
 
 
 class TestPolarsWriteKwargs:
-    def test_write_kwargs_include_target_file_size(self) -> None:
+    def test_a_write_forwards_what_the_location_declares(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from loom.etl.backends.polars import _writer as polars_writer_module
+
+        seen: list[dict[str, object]] = []
+
+        def _fake_write_deltalake(_uri: str, _data: object, **kwargs: object) -> None:
+            seen.append(kwargs)
+
+        monkeypatch.setattr(polars_writer_module, "write_deltalake", _fake_write_deltalake)
+        monkeypatch.setattr(polars_writer_module, "read_delta_physical_schema", lambda *_a: None)
+        monkeypatch.setattr(polars_writer_module, "_log_write_commit", lambda *_a: None)
         loc = TableLocation(
-            uri="s3://lake/raw/orders",
+            uri=str(tmp_path / "orders"),
             storage_options={"AWS_REGION": "eu-west-1"},
             writer={"compression": "ZSTD"},
             target_file_size=268435456,
             delta_config={"delta.appendOnly": "true"},
             commit={"custom_metadata": {"pipeline": "motos"}},
         )
+        writer = PolarsTargetWriter(
+            MappingLocator(mapping={"raw.orders": loc}),
+            missing_table_policy=MissingTablePolicy.CREATE,
+        )
 
-        kwargs = PolarsTargetWriter._write_kwargs(loc)
+        writer.append(pl.DataFrame({"id": [1]}).lazy(), TableRef("raw.orders"), None)
 
+        (kwargs,) = seen
         assert kwargs["target_file_size"] == 268435456
         assert kwargs["storage_options"] == {"AWS_REGION": "eu-west-1"}
+        assert kwargs["configuration"] == {"delta.appendOnly": "true"}
         assert kwargs["writer_properties"] is not None
         assert kwargs["commit_properties"] is not None
 

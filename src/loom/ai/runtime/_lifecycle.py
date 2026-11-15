@@ -569,7 +569,7 @@ class AgentRuntime:
             AgentCompilationError: Aggregating every fatal start-up failure.
         """
         mcp, a2a = _remote_capabilities(self._plans.values())
-        mcp = _fold_use_case_mcp(mcp, self._use_case_mcp)
+        mcp = _merge_use_case_mcp(mcp, self._use_case_mcp)
         if not mcp and not a2a:
             return False
         opened: list[_OpenedClient] = []
@@ -1349,7 +1349,7 @@ def _remote_capabilities(
     return tuple(mcp.values()), tuple(a2a.values())
 
 
-def _fold_use_case_mcp(
+def _merge_use_case_mcp(
     mcp: tuple[CompiledMcpCapability, ...], use_case_mcp: Sequence[UseCaseMcpGrant]
 ) -> tuple[CompiledMcpCapability, ...]:
     """Fold each declaring use case's own server into the set the runtime opens.

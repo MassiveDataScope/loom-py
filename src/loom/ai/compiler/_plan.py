@@ -19,13 +19,14 @@ from JSON, which is why fields may hold arbitrary runtime handles.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import Any, ClassVar, Final
 
 import msgspec
 
 from loom.ai.abc import OutputCheck, StateShape
 from loom.ai.compiler._fingerprint import plan_fingerprint
-from loom.ai.declarative import PolicySpec
+from loom.ai.declarative import AgentSpecV1, PolicySpec
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
@@ -472,6 +473,56 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         keeps the fingerprint.
         """
         return plan_fingerprint(self)
+
+    @classmethod
+    def compiled(
+        cls,
+        spec: AgentSpecV1,
+        *,
+        instructions: tuple[CompiledInstruction, ...],
+        state: StateShape | None,
+        inference: InferenceTarget,
+        price: ModelPrice | None,
+        output: CompiledOutput,
+        output_check: OutputCheck | None,
+        capabilities: tuple[CompiledCapability, ...],
+        on_output: CompiledOutputHook | None,
+        conversation: CompiledConversation | None,
+        source_path: str | None,
+    ) -> AgentPlan:
+        """Return the plan of ``spec`` from its compiled parts.
+
+        Args:
+            spec: The artifact; supplies name, description, format version,
+                policies and metadata.
+            instructions: Compiled instruction blocks.
+            state: Compiled state shape.
+            inference: Resolved model binding.
+            price: Configured price of the bound model.
+            output: Compiled output contract.
+            output_check: Resolved output check.
+            capabilities: Compiled capabilities.
+            on_output: Compiled output hook.
+            conversation: Compiled conversation loader.
+            source_path: Artifact provenance.
+        """
+        return cls(
+            name=spec.name,
+            description=spec.description,
+            instructions=instructions,
+            state=state,
+            spec_version=spec.spec_version,
+            inference=inference,
+            price=price,
+            output=output,
+            output_check=output_check,
+            capabilities=capabilities,
+            policies=spec.policies,
+            on_output=on_output,
+            conversation=conversation,
+            metadata=MappingProxyType(dict(spec.metadata)),
+            source_path=source_path,
+        )
 
     name: str
     description: str

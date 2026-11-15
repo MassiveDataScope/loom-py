@@ -15,7 +15,7 @@ import polars as pl
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDb
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec
+from loom.etl.declarative.source._specs import DynamoDbSourceSpec, ExtraFieldsMode
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (
@@ -117,7 +117,7 @@ class DynamoDbSourceReader:
     ) -> dict[str, pl.DataType]:
         if declared_schema:
             schema = dict(declared_schema)
-            if spec.extra_fields_mode == "capture":
+            if spec.extra_fields_mode == ExtraFieldsMode.CAPTURE:
                 schema["_extra"] = pl.String()
             return schema
         return _infer_schema_from_sample(client, scan_kwargs, spec, batch_processor)
@@ -365,7 +365,7 @@ def _finalize_batch(
     frame: pl.DataFrame,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
-    extra_fields_mode: str,
+    extra_fields_mode: ExtraFieldsMode,
     schema_name: str,
     with_columns: list[str] | None,
     n_rows: int | None,

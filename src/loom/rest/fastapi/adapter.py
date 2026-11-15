@@ -74,7 +74,7 @@ from loom.rest.config import (
     validate_interfaces_config,
 )
 from loom.rest.cors import CorsConfig
-from loom.rest.fastapi._auto_ai import _bind_agent_surface
+from loom.rest.fastapi._auto_ai import _bind_agent_surfaces
 from loom.rest.fastapi._auto_auth import (
     _AuthWiring,
     _mount_authentication,
@@ -730,7 +730,7 @@ class FastAPIAdapter:
                 observability_runtime=application.observability,
             )
             _warn_sql_endpoints(sql.config, auth)
-        _bind_agent_surface(app, application.ai, auth, application.observability)
+        _bind_agent_surfaces(app, application.ai, auth, application.observability)
         setattr(
             app.state,
             INTROSPECTION_STATE_ATTR,

@@ -41,7 +41,7 @@ from loom.core._async import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -238,7 +238,7 @@ class _PhasedDriver:
         try:
             await self._uow.close()
         except Exception:
-            _log.exception("UoWCloseFailed", store=self._key)
+            _log.exception(UowEvent.CLOSE_FAILED, store=self._key)
 
     async def flush(self) -> None:
         await self._uow.flush()
@@ -635,9 +635,9 @@ class _Settlement:
             self._outcomes.setdefault(participant.key, _undone(participant, failure))
             budget = self._rollback_time_left()
             await self._attempt(
-                lambda: participant.rollback(failure, budget), participant, "UoWRollbackFailed"
+                lambda: participant.rollback(failure, budget), participant, UowEvent.ROLLBACK_FAILED
             )
-        await self._attempt(participant.close, participant, "UoWCloseFailed")
+        await self._attempt(participant.close, participant, UowEvent.CLOSE_FAILED)
 
     def _rollback_time_left(self) -> float:
         """Seconds left before the deadline every rollback shares, set by the first one."""
@@ -650,7 +650,7 @@ class _Settlement:
         self,
         step: Callable[[], Awaitable[None]],
         participant: Participant,
-        log_failure_as: str | None = None,
+        log_failure_as: UowEvent | None = None,
     ) -> BaseException | None:
         """Run one step and return what it raised.
 
@@ -682,6 +682,6 @@ def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Par
         for store in outcome.stores
     ]
     if outcome.succeeded:
-        _log.debug("InvocationOutcome", stores=stores)
+        _log.debug(UowEvent.INVOCATION_OUTCOME, stores=stores)
     else:
-        _log.warning("InvocationOutcome", stores=stores)
+        _log.warning(UowEvent.INVOCATION_OUTCOME, stores=stores)

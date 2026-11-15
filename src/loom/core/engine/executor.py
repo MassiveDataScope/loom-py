@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from loom.core.authz.elevation import ElevationSink
-from loom.core.engine.boundaries import Boundaries, detached
+from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
@@ -398,12 +398,12 @@ class RuntimeExecutor:
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level, out
         of that execution's scope and channel
-        (:func:`~loom.core.engine.boundaries.detached`), still acting as the
+        (:func:`~loom.core.engine.boundaries.outside_departed_execution`), still acting as the
         same caller within its delegation window.
         """
         scope = current_scope()
         if scope is not None and scope.closed:
-            with detached():
+            with outside_departed_execution():
                 return await self._execute(
                     use_case_type, build, target, inputs, identity, read_only
                 )

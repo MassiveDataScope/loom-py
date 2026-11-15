@@ -19,8 +19,7 @@ from loom.etl.compiler._filter import _map_pipeline_nodes, _map_process_nodes
 from loom.etl.compiler._plan import visit_pipeline_nodes, visit_process_nodes
 from loom.etl.declarative.source import FromTable
 from loom.etl.declarative.target import IntoTable
-from loom.etl.pipeline._pipeline import ETLPipeline
-from loom.etl.pipeline._process import ETLProcess
+from loom.etl.pipeline._pipeline import ETLPipeline, ETLProcess
 from loom.etl.pipeline._step import ETLStep
 from tests.unit.etl.doubles import (
     OrdersStagingAStep,

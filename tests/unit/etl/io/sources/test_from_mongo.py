@@ -6,7 +6,7 @@ import pytest
 
 from loom.core.expr.nodes import AndExpr, EqExpr, InExpr
 from loom.etl.declarative.expr import col
-from loom.etl.declarative.source import FromMongo, SourceRef
+from loom.etl.declarative.source import ExtraFieldsMode, FromMongo, SourceRef
 from loom.etl.declarative.source._specs import MongoSourceSpec, SourceKind
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 from tests.unit.etl.io.sources.doubles import OptionalStatusOrderDoc
@@ -118,15 +118,18 @@ class TestWithSchema:
 
 
 class TestOnExtraFields:
-    @pytest.mark.parametrize("mode", ["ignore", "warn", "capture", "error"])
-    def test_valid_modes(self, mode: str) -> None:
-        spec = FromMongo("orders").on_extra_fields(mode)._to_spec("orders")  # type: ignore[arg-type]
-        assert spec.extra_fields_mode == mode
+    @pytest.mark.parametrize("mode", [*ExtraFieldsMode, "ignore", "warn", "capture", "error"])
+    def test_a_mode_is_carried_as_its_member(self, mode: str) -> None:
+        spec = FromMongo("orders").on_extra_fields(mode)._to_spec("orders")
+        assert spec.extra_fields_mode is ExtraFieldsMode(mode)
+
+    def test_the_default_mode_is_ignore(self) -> None:
+        assert FromMongo("orders")._to_spec("orders").extra_fields_mode is ExtraFieldsMode.IGNORE
 
     def test_invalid_mode_raises(self) -> None:
         source = FromMongo("orders")
-        with pytest.raises(ValueError, match="not valid"):
-            source.on_extra_fields("bad")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=r"not valid\. Choose one of: \['capture', 'error'"):
+            source.on_extra_fields("bad")
 
 
 # ---------------------------------------------------------------------------

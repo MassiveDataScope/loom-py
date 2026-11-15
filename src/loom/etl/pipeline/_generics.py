@@ -1,7 +1,7 @@
 """Generic parameter extraction utility for ETL base classes.
 
-Internal module — consumed by :mod:`loom.etl.pipeline._step`,
-:mod:`loom.etl.pipeline._process`, and :mod:`loom.etl.pipeline._pipeline`.
+Internal module — consumed by :mod:`loom.etl.pipeline._step` and
+:mod:`loom.etl.pipeline._pipeline`.
 """
 
 from __future__ import annotations

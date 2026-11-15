@@ -78,6 +78,10 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
         """
         return self.auth == _IDENTITY_BOUND_AUTH
 
+    def mount_path(self, name: str) -> str:
+        """Return where the endpoint of connection ``name`` is mounted."""
+        return self.path or f"/sql/{name}"
+
 
 class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
     """Named SQL connection: the ClickHouse connection plus role policy and limits.

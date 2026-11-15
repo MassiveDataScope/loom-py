@@ -22,7 +22,7 @@ that owns the scope as that store's outcome allows (or on the outermost
 execution's channel when there is no scope).
 
 A task that outlived the execution it was started in finds that
-execution's scope and channel still set; :func:`detached` hides both from
+execution's scope and channel still set; :func:`outside_departed_execution` hides both from
 the execution it starts.
 """
 
@@ -67,7 +67,11 @@ class OpensScope:
     read_only: ClassVar[bool] = False
 
     async def run(
-        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+        self,
+        plan: ExecutionPlan,
+        started: StartedExecution,
+        channel: _PostCommitChannels,
+        work: Work,
     ) -> Any:
         """Open an invocation scope, run *work* in it, end it, raise what it ended with.
 
@@ -112,7 +116,11 @@ class JoinsScope:
     owns_transaction: ClassVar[bool] = False
 
     async def run(
-        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+        self,
+        plan: ExecutionPlan,
+        started: StartedExecution,
+        channel: _PostCommitChannels,
+        work: Work,
     ) -> Any:
         """Run *work* under the frame, as the identity that opened the scope.
 
@@ -136,7 +144,11 @@ class WithoutUnitOfWork:
     read_only: ClassVar[bool] = False
 
     async def run(
-        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+        self,
+        plan: ExecutionPlan,
+        started: StartedExecution,
+        channel: _PostCommitChannels,
+        work: Work,
     ) -> Any:
         """Run *work* as is."""
         return await work()
@@ -156,7 +168,11 @@ class ReadsOnItsOwn:
     read_only: ClassVar[bool] = True
 
     async def run(
-        self, plan: ExecutionPlan, started: StartedExecution, channel: _Channel, work: Work
+        self,
+        plan: ExecutionPlan,
+        started: StartedExecution,
+        channel: _PostCommitChannels,
+        work: Work,
     ) -> Any:
         """Run *work* under a read-only frame of an invocation of its own."""
         with unscoped() if self.hides_scope else nullcontext():
@@ -213,7 +229,7 @@ class Boundaries:
         Raises:
             NestedElevation: Inside an execution that elevated a scope.
         """
-        channel = _Channel(boundary.owns_transaction or active_channel() is None)
+        channel = _PostCommitChannels(boundary.owns_transaction or active_channel() is None)
         try:
             elevated = elevated_scopes()
             if elevated:
@@ -238,7 +254,7 @@ class Boundaries:
 
 
 @contextmanager
-def detached() -> Iterator[None]:
+def outside_departed_execution() -> Iterator[None]:
     """Hide the invocation scope and post-commit channel a departed execution left in this task.
 
     For the one execution a task that outlived its execution starts: it
@@ -252,7 +268,7 @@ def detached() -> Iterator[None]:
         reset_channel(channel_token)
 
 
-class _Channel:
+class _PostCommitChannels:
     """The post-commit channel one execution opened, if any, and the one its outcome settled.
 
     ``settled`` is set once the coordinator has ended the invocation scope

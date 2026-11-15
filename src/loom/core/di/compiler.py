@@ -115,7 +115,7 @@ class SupplierCompiler:
             plan: Callable[[], Any] | None = self._plans.get(cls)
             if plan is None:
                 node = ClassNode(cls)
-                plan = self._plans[cls] = self._maker(DependencyPath(node), node, cls)
+                plan = self._plans[cls] = self._constructor_call(DependencyPath(node), node, cls)
             return plan
 
     def _compile(self, path: DependencyPath, key: object) -> Supplier:
@@ -132,7 +132,7 @@ class SupplierCompiler:
             raise DependencyGraphError(binding.refused)
         self._open.add(key)
         try:
-            make = self._maker(path, KeyNode(key), binding.provider)
+            make = self._constructor_call(path, KeyNode(key), binding.provider)
         finally:
             self._open.discard(key)
         supplier = self._served[key] = self._scoped(key, binding, make)
@@ -163,14 +163,16 @@ class SupplierCompiler:
 
         return singleton
 
-    def _maker(self, path: DependencyPath, node: Node, provider: Callable[..., Any]) -> Supplier:
+    def _constructor_call(
+        self, path: DependencyPath, node: Node, provider: Callable[..., Any]
+    ) -> Supplier:
         """*node*'s *provider*, given its constructor's arguments when it has any."""
         arguments = tuple(
             (name, argument)
             for name, dependency in self._graph.constructor(node)
             if (argument := self._argument(path, name, dependency)) is not None
         )
-        return _calling(provider, arguments) if arguments else provider
+        return _call_with_arguments(provider, arguments) if arguments else provider
 
     def _argument(self, path: DependencyPath, name: str, dependency: Dependency) -> Supplier | None:
         """The supplier of one parameter; ``None`` when Python supplies its default."""
@@ -186,12 +188,12 @@ class SupplierCompiler:
                     )
                 return self._compile(path.to(Edge(KeyNode(key), name)), key)
             case ExecutionBinding():
-                return self._resolving(dependency, f"{path}: {name}")
+                return self._resolve_per_build(dependency, f"{path}: {name}")
             case RefusedDependency(reason):
                 raise DependencyGraphError(f"{path}: {name}: {reason}")
         return None
 
-    def _resolving(self, binding: ExecutionBinding, where: str) -> Supplier:
+    def _resolve_per_build(self, binding: ExecutionBinding, where: str) -> Supplier:
         """The supplier resolving *binding* through its kind's resolver on each build.
 
         Args:
@@ -215,7 +217,7 @@ class SupplierCompiler:
         return resolve
 
 
-def _calling(
+def _call_with_arguments(
     provider: Callable[..., object], arguments: tuple[tuple[str, Supplier], ...]
 ) -> Supplier:
     def build() -> object:

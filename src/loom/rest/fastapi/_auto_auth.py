@@ -28,13 +28,63 @@ class _AuthWiring:
             application configures none.
         exclude_paths: Paths served without authentication.
         jwt_config: JWT settings when the built-in mechanism is the one in use.
-            Kept so the JWT-specific startup gates stay where the JWT contract
-            is known, instead of leaking into the agnostic layers.
     """
 
     authenticator: Authenticator | None
     exclude_paths: tuple[str, ...]
     jwt_config: JwtAuthConfig | None
+
+    def require_authenticator(self, subject: str) -> Authenticator:
+        """Return the mechanism that verifies the callers of ``subject``.
+
+        Args:
+            subject: What is being gated, formatted for the message, for
+                example ``"SQL connection 'analytics'"``.
+
+        Raises:
+            ConfigError: When the application configures no authentication.
+        """
+        if self.authenticator is not None:
+            return self.authenticator
+        raise ConfigError(
+            f"{subject}: the endpoint requires a verified caller but the "
+            "application configures no authentication. Add the 'app.rest.auth.jwt' section "
+            "or pass create_app(authenticator=...)."
+        )
+
+    def require_jwt_audience(self, subject: str) -> None:
+        """Refuse a JWT verifier without a validated ``aud`` for ``subject``.
+
+        Args:
+            subject: What is being gated, formatted for the message, for
+                example ``"SQL connection 'analytics'"`` or ``"Agent 'analyst'"``.
+
+        Raises:
+            ConfigError: When the JWT mechanism is in use and sets no audience.
+        """
+        if self.jwt_config is None or self.jwt_config.audience is not None:
+            return
+        raise ConfigError(
+            f"{subject}: the endpoint requires a verified caller but "
+            "'app.rest.auth.jwt.audience' is not set. Without a validated 'aud' any "
+            "token signed by the same key — including tokens minted for another "
+            "service — would be accepted as that verified caller, with whatever "
+            "claims it carries."
+        )
+
+    def refuse_excluded(self, subject: str, path: str) -> None:
+        """Refuse serving ``path`` while it is excluded from authentication.
+
+        Raises:
+            ConfigError: When ``path`` is one of the excluded paths.
+        """
+        if path not in self.exclude_paths:
+            return
+        raise ConfigError(
+            f"{subject}: the endpoint path {path!r} is listed in the "
+            "authentication 'exclude_paths', which would serve it without "
+            "authentication. Remove it from the exclusion list."
+        )
 
 
 def _resolve_authentication(
@@ -111,25 +161,6 @@ def _effective_exclusions(
     if configured != DEFAULT_EXCLUDE_PATHS:
         return tuple(dict.fromkeys(configured))
     return documentation_paths
-
-
-def _require_jwt_audience(subject: str, jwt_cfg: JwtAuthConfig) -> None:
-    """Binding an endpoint to a token is void without a validated ``aud``.
-
-    Args:
-        subject: What is being gated, already formatted for the message — for
-            example ``"SQL connection 'analytics'"`` or ``"Agent 'analyst'"``.
-        jwt_cfg: JWT settings of the application.
-    """
-    if jwt_cfg.audience is not None:
-        return
-    raise ConfigError(
-        f"{subject}: the endpoint requires a verified caller but "
-        "'app.rest.auth.jwt.audience' is not set. Without a validated 'aud' any "
-        "token signed by the same key — including tokens minted for another "
-        "service — would be accepted as that verified caller, with whatever "
-        "claims it carries."
-    )
 
 
 def _mount_authentication(app: Starlette, auth: _AuthWiring) -> None:

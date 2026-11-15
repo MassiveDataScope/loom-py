@@ -316,7 +316,7 @@ def _mount_endpoint(
     endpoint = connection.sql_endpoint
     bound_mechanism = _connection_mechanism(connection, mechanism)
     _require_identity_binding(name, connection, bound_mechanism)
-    path = endpoint.path or f"/sql/{name}"
+    path = endpoint.mount_path(name)
     app.add_api_route(
         path,
         _make_sql_handler(

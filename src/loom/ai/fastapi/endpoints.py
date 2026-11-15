@@ -37,9 +37,9 @@ from loom.ai._transport import (
     always_closed,
     annotate_usage,
     project_output,
-    projecting_final,
     read_body_capped,
     require_caller,
+    with_projected_output,
 )
 from loom.ai.abc import (
     CONVERSATION_ID_MAX_LENGTH,
@@ -409,7 +409,7 @@ def _stream_frames(
                     conversation_id=body.conversation_id,
                     state=state,
                 ) as events:
-                    projected_events = projecting_final(events, runtime.output_type(name))
+                    projected_events = with_projected_output(events, runtime.output_type(name))
                     async for frame in stream_sse(
                         _annotating_usage(projected_events, span),
                         heartbeat_ms=HEARTBEAT_MS,

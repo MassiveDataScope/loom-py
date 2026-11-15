@@ -145,10 +145,10 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         _IDENTITY_CONTEXT,
         "loom.composition.phases",
     ),
-    "_window": (_IDENTITY_CONTEXT,),
+    "_max_delegation_seconds": (_IDENTITY_CONTEXT,),
     "_acting": (_IDENTITY_CONTEXT, _EXECUTION),
     "_NO_EXECUTION_ACTING": (_EXECUTION,),
-    "_CLOSED_ACTING": (_EXECUTION,),
+    "_CLOSED_CONTEXT_ACTING": (_EXECUTION,),
 }
 
 

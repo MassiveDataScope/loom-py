@@ -25,7 +25,8 @@ def window(monkeypatch: pytest.MonkeyPatch) -> float:
     gives the previous value back, even when the test composes an
     application that sets its own.
     """
-    monkeypatch.setattr(identity_context, "_window", identity_context._window)  # pyright: ignore[reportPrivateUsage]
+    previous = identity_context._max_delegation_seconds  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(identity_context, "_max_delegation_seconds", previous)
     configure_delegation(60.0)
     return 60.0
 

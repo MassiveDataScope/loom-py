@@ -27,8 +27,8 @@ from loom.ai._transport import (
     annotate_usage,
     failure_event,
     project_output,
-    projecting_final,
     with_heartbeats,
+    with_projected_output,
 )
 from loom.ai.a2a._binding import PublishedAgent
 from loom.ai.a2a._rpc import (
@@ -302,7 +302,9 @@ def _run_frames(
             async with runtime.run_stream(
                 call.agent.name, prompt, identity=call.identity, conversation_id=context_id
             ) as events:
-                projected_events = projecting_final(events, runtime.output_type(call.agent.name))
+                projected_events = with_projected_output(
+                    events, runtime.output_type(call.agent.name)
+                )
                 async for frame in with_heartbeats(
                     _projected(projected_events), heartbeat_ms=HEARTBEAT_MS
                 ):

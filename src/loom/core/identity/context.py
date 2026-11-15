@@ -87,7 +87,7 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         """
         if caller is None:
             return cls(ANONYMOUS, None, math.inf, work)
-        window_end = time.time() + _window
+        window_end = time.time() + _max_delegation_seconds
         deadline = window_end if until is None else min(until, window_end)
         return cls(caller, caller, deadline, work)
 
@@ -185,7 +185,7 @@ DEFAULT_MAX_DELEGATION_SECONDS = 3600.0
 
 _NO_ONE = Acting(ANONYMOUS, None, math.inf, None)
 _acting: ContextVar[Acting] = ContextVar("loom_acting_identity", default=_NO_ONE)
-_window = DEFAULT_MAX_DELEGATION_SECONDS
+_max_delegation_seconds = DEFAULT_MAX_DELEGATION_SECONDS
 
 
 def configure_delegation(seconds: float) -> None:
@@ -197,9 +197,9 @@ def configure_delegation(seconds: float) -> None:
     Raises:
         ConfigError: When *seconds* is not a finite number above zero.
     """
-    global _window
+    global _max_delegation_seconds
     try:
-        _window = msgspec.convert(seconds, PositiveSeconds)
+        _max_delegation_seconds = msgspec.convert(seconds, PositiveSeconds)
     except msgspec.ValidationError as error:
         raise ConfigError(
             f"identity.max_delegation_seconds must be a finite number above zero, got {seconds}"

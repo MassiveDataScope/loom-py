@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import polars as pl
 
+from loom.etl.declarative.source._specs import ExtraFieldsMode
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
@@ -585,7 +586,7 @@ def align_to_schema(
 def apply_declared_schema(
     df: pl.DataFrame,
     declared: dict[str, pl.DataType],
-    mode: str,
+    mode: ExtraFieldsMode,
     schema_name: str,
     source_label: str = "MongoSourceReader",
 ) -> pl.DataFrame:
@@ -594,12 +595,12 @@ def apply_declared_schema(
     Args:
         df:           Batch frame to reshape.
         declared:     User-declared schema (column → dtype).
-        mode:         Extra-fields mode: ignore / warn / capture / error.
+        mode:         How undeclared fields are handled.
         schema_name:  Collection or table name used in messages.
         source_label: Reader name used as prefix in emitted messages.
 
     Raises:
-        ValueError: When *mode* is ``"error"`` and undeclared fields are present.
+        ValueError: When *mode* is :attr:`ExtraFieldsMode.ERROR` and undeclared fields are present.
     """
     missing = [
         pl.lit(None, dtype=dtype).alias(name)
@@ -611,13 +612,13 @@ def apply_declared_schema(
 
     extra_cols = [c for c in df.columns if c not in declared]
     if extra_cols:
-        if mode == "error":
+        if mode == ExtraFieldsMode.ERROR:
             raise ValueError(
                 f"{source_label}: documents contain fields not declared in "
                 f"{schema_name}: {extra_cols}. "
                 "Use on_extra_fields('ignore'), ('warn'), or ('capture') to suppress."
             )
-        if mode == "warn":
+        if mode == ExtraFieldsMode.WARN:
             _log.warning(
                 "%s: dropping %d undeclared field(s) from %s: %s",
                 source_label,
@@ -625,7 +626,7 @@ def apply_declared_schema(
                 schema_name,
                 extra_cols,
             )
-        if mode == "capture":
+        if mode == ExtraFieldsMode.CAPTURE:
             extra_struct = pl.struct([df[c] for c in extra_cols])
             extra_series = extra_struct.map_elements(_safe_dumps, return_dtype=pl.String).alias(
                 "_extra"
@@ -634,10 +635,10 @@ def apply_declared_schema(
         else:
             df = df.drop(extra_cols)
 
-    if mode == "capture" and "_extra" not in df.columns:
+    if mode == ExtraFieldsMode.CAPTURE and "_extra" not in df.columns:
         df = df.with_columns(pl.lit(None, pl.String()).alias("_extra"))
 
-    output_cols = list(declared.keys()) + (["_extra"] if mode == "capture" else [])
+    output_cols = list(declared.keys()) + (["_extra"] if mode == ExtraFieldsMode.CAPTURE else [])
     return df if df.columns == output_cols else df.select(output_cols)
 
 

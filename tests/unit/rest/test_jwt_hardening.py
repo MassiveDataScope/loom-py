@@ -11,20 +11,25 @@ import base64
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jwt as pyjwt
 import pytest
+from fastapi import FastAPI
 
+from loom.ai.config import A2AConfig, AgentEndpointConfig, AiConfig
+from loom.composition import AiWiring
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
-from loom.core.model.redaction import Secret
+from loom.core.model.redaction import Dsn, Secret
+from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
 from loom.rest.auth.config import JwtIssuerConfig, JwtPublicKey
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
-from loom.rest.fastapi._auto_auth import _require_deployed_jwt_claims
+from loom.rest.fastapi._auto_ai import _bind_agent_surfaces
+from loom.rest.fastapi._auto_auth import _AuthWiring, _require_deployed_jwt_claims
 from loom.rest.fastapi.auto import create_app
 from loom.testing import jwt_test_auth
 from tests.unit.rest._fixture_app import write_project
@@ -818,3 +823,37 @@ class TestUnexpectedBackendError:
             assert await authenticator.authenticate(_credentials(token)) is None
         assert all(r.exc_info is None for r in caplog.records)
         assert "backend detail" not in caplog.text
+
+
+class TestAgentSurfaceAudience:
+    """An agent whose callers are verified by a JWT needs a validated ``aud``."""
+
+    @pytest.mark.parametrize(
+        "ai_config",
+        [
+            AiConfig(
+                engine="fake",
+                specs=(),
+                models={},
+                endpoints={"analyst": AgentEndpointConfig(enabled=True, auth="jwt")},
+            ),
+            AiConfig(
+                engine="fake",
+                specs=(),
+                models={},
+                a2a=A2AConfig(base_url=Dsn("https://agents.acme.test"), expose=("analyst",)),
+            ),
+        ],
+        ids=["http", "a2a"],
+    )
+    def test_a_verified_agent_without_audience_is_refused(
+        self, tmp_path: Path, ai_config: AiConfig
+    ) -> None:
+        jwt_config = JwtAuthConfig(secret_path=_secret_file(tmp_path, 32), algorithms=("HS256",))
+        auth = _AuthWiring(
+            authenticator=JwtAuthenticator(jwt_config), exclude_paths=(), jwt_config=jwt_config
+        )
+        wiring = AiWiring(config=ai_config, runtime=cast(Any, object()))
+
+        with pytest.raises(ConfigError, match=r"Agent 'analyst'.*audience"):
+            _bind_agent_surfaces(FastAPI(), wiring, auth, ObservabilityRuntime.noop())

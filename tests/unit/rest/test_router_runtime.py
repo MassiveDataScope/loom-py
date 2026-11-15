@@ -912,6 +912,26 @@ class TestBindInterfacesOpenApi:
         operation = schema["paths"]["/ping/"]["get"]
         assert "Pings" in operation.get("tags", [])
 
+    def test_the_operation_is_named_after_the_use_case(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        schema = TestClient(_make_app(*_compile_routes(IFace))).get("/openapi.json").json()
+
+        assert schema["paths"]["/ping/"]["get"]["operationId"] == "handle_AcmePingUseCase_ping__get"
+
+    def test_every_route_endpoint_is_a_coroutine_function(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        app = _make_app(*_compile_routes(IFace))
+        endpoints = [r.endpoint for r in app.routes if getattr(r, "path", "") == "/ping/"]
+
+        assert endpoints
+        assert all(asyncio.iscoroutinefunction(endpoint) for endpoint in endpoints)
+
     def test_bind_interfaces_uses_use_case_docstring_for_route_docs(
         self,
     ) -> None:

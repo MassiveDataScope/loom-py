@@ -58,8 +58,8 @@ class TestTheKindsRegistry:
         kinds = ExecutionKinds()
         kinds.refuse(AcmeMarker, "AcmeMarker is no dependency")
 
-        assert kinds.refusal(AcmeMarker()) == "AcmeMarker is no dependency"
-        assert kinds.refusal(None) is None
+        assert kinds.refusal_for(AcmeMarker()) == "AcmeMarker is no dependency"
+        assert kinds.refusal_for(None) is None
         assert kinds.kind_for(AcmeMarker(), Any) is None
 
     def test_declaring_again_is_idempotent_and_a_conflict_is_refused(self) -> None:
@@ -105,7 +105,7 @@ class TestTheKindsRegistry:
         kinds = ExecutionKinds()
         declare_use_case_kinds(kinds)
 
-        assert "input of execute" in (kinds.refusal(marker) or "")
+        assert "input of execute" in (kinds.refusal_for(marker) or "")
         assert kinds.kind_for(marker, Any) is None
 
     def test_use_case_kinds_declare_the_caller_as_not_singleton_safe(self) -> None:

@@ -131,7 +131,7 @@ class SignatureReader:
         kind = self.kinds.kind_for(default, annotation)
         if kind is not None:
             return ExecutionBinding(name, kind, default, annotation)
-        reason = self.kinds.refusal(default)
+        reason = self.kinds.refusal_for(default)
         if reason is not None:
             return RefusedDependency(reason)
         if default is not inspect.Parameter.empty:

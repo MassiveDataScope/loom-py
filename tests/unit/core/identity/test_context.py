@@ -274,12 +274,12 @@ class TestConfigureDelegation:
         with pytest.raises(ConfigError, match="identity.max_delegation_seconds"):
             configure_delegation(seconds)
 
-        assert identity_context._window == 60.0  # pyright: ignore[reportPrivateUsage]
+        assert identity_context._max_delegation_seconds == 60.0  # pyright: ignore[reportPrivateUsage]
 
     def test_accepts_a_fraction_of_a_second(self) -> None:
         configure_delegation(1.5)
 
-        assert identity_context._window == 1.5  # pyright: ignore[reportPrivateUsage]
+        assert identity_context._max_delegation_seconds == 1.5  # pyright: ignore[reportPrivateUsage]
 
 
 class TestCapturedDelegation:

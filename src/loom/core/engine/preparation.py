@@ -40,7 +40,7 @@ class ExecutionInputs:
 
 
 @dataclass(slots=True)
-class _Call:
+class _ExecuteArguments:
     """The arguments of one ``execute()`` call, as the steps build them."""
 
     inputs: ExecutionInputs
@@ -50,13 +50,13 @@ class _Call:
     fields_set: frozenset[str] = frozenset()
 
 
-Bind: TypeAlias = Callable[[_Call], None]
-FetchOne: TypeAlias = Callable[[Any, ExecutionPlan, _Call], Awaitable[Any]]
+Bind: TypeAlias = Callable[[_ExecuteArguments], None]
+FetchOne: TypeAlias = Callable[[Any, ExecutionPlan, _ExecuteArguments], Awaitable[Any]]
 Fetch: TypeAlias = tuple[FetchOne, LoadStep | ExistsStep, str]
 
 
 @dataclass(slots=True, frozen=True)
-class _Steps:
+class _PlanSteps:
     """One plan's steps by phase, in order: what binds, what fetches, what checks.
 
     ``bind`` and ``check`` are each one step — the phase's only step, or all
@@ -80,14 +80,14 @@ class ArgumentBinder:
             loads and existence checks the caller passed no dependency for.
     """
 
-    __slots__ = ("_kinds", "_repo_resolver", "_tables")
+    __slots__ = ("_kinds", "_repo_resolver", "_steps_by_use_case")
 
     def __init__(
         self, kinds: ExecutionKinds, repo_resolver: Callable[[type[Any]], Any] | None
     ) -> None:
         self._kinds = kinds
         self._repo_resolver = repo_resolver
-        self._tables: dict[type[Any], _Steps] = {}
+        self._steps_by_use_case: dict[type[Any], _PlanSteps] = {}
 
     async def call(
         self,
@@ -98,10 +98,10 @@ class ArgumentBinder:
         started: StartedExecution,
     ) -> Any:
         """Run *plan*'s steps over *inputs*, then call *compilable*'s ``execute()`` with them."""
-        steps = self._tables.get(plan.use_case_type)
+        steps = self._steps_by_use_case.get(plan.use_case_type)
         if steps is None or steps.plan is not plan:
-            steps = self._tables[plan.use_case_type] = self._compile(plan)
-        call = _Call(inputs, identity, started)
+            steps = self._steps_by_use_case[plan.use_case_type] = self._compile(plan)
+        call = _ExecuteArguments(inputs, identity, started)
         if steps.bind is not None:
             steps.bind(call)
         if steps.fetches:
@@ -117,7 +117,7 @@ class ArgumentBinder:
             return await execute(**call.bound)
         return execute(**call.bound)
 
-    def _compile(self, plan: ExecutionPlan) -> _Steps:
+    def _compile(self, plan: ExecutionPlan) -> _PlanSteps:
         binds = (
             _query(plan),
             _params(plan),
@@ -133,11 +133,11 @@ class ArgumentBinder:
             ),
         )
         checks = (_computes(plan), _rules(plan))
-        return _Steps(
+        return _PlanSteps(
             plan,
-            _phase(binds),
+            _combined(binds),
             fetches,
-            _phase(checks),
+            _combined(checks),
         )
 
     def _executions(self, plan: ExecutionPlan) -> Bind | None:
@@ -158,7 +158,7 @@ class ArgumentBinder:
         resolve_kind = self._kinds.resolve
         use_case = plan.use_case_type.__qualname__
 
-        def resolve(call: _Call) -> None:
+        def resolve(call: _ExecuteArguments) -> None:
             if call.identity is None:
                 first = bindings[0]
                 raise MissingCaller(use_case, first.name, first.kind.spelling)
@@ -177,7 +177,7 @@ class ArgumentBinder:
 
         return resolve
 
-    async def _load(self, step: LoadStep, plan: ExecutionPlan, call: _Call) -> Any:
+    async def _load(self, step: LoadStep, plan: ExecutionPlan, call: _ExecuteArguments) -> Any:
         overrides = call.inputs.load_overrides
         if overrides and step.entity_type in overrides:
             return overrides[step.entity_type]
@@ -189,7 +189,7 @@ class ArgumentBinder:
         entity = await step.fetch(repo, value)
         return step.on_missing.answer(step.entity_type, value) if entity is None else entity
 
-    async def _exist(self, step: ExistsStep, plan: ExecutionPlan, call: _Call) -> bool:
+    async def _exist(self, step: ExistsStep, plan: ExecutionPlan, call: _ExecuteArguments) -> bool:
         dependencies = call.inputs.dependencies
         repo = None if dependencies is None else dependencies.get(step.entity_type)
         if repo is None:
@@ -218,7 +218,7 @@ class ArgumentBinder:
         raise RuntimeError(f"No repository registered for entity type '{entity_type.__name__}'")
 
 
-def _phase(steps: tuple[Bind | None, ...]) -> Bind | None:
+def _combined(steps: tuple[Bind | None, ...]) -> Bind | None:
     """The declared steps of one phase as one step: none, the only one, or all in order."""
     match tuple(step for step in steps if step is not None):
         case ():
@@ -227,7 +227,7 @@ def _phase(steps: tuple[Bind | None, ...]) -> Bind | None:
             return only
         case present:
 
-            def run(call: _Call) -> None:
+            def run(call: _ExecuteArguments) -> None:
                 for step in present:
                     step(call)
 
@@ -240,7 +240,7 @@ def _query(plan: ExecutionPlan) -> Bind | None:
     if binding is None:
         return None
 
-    def check(call: _Call) -> None:
+    def check(call: _ExecuteArguments) -> None:
         params = call.inputs.params
         if not params or binding.name not in params:
             return
@@ -260,7 +260,7 @@ def _params(plan: ExecutionPlan) -> Bind | None:
         return None
     use_case = plan.use_case_type.__qualname__
 
-    def bind(call: _Call) -> None:
+    def bind(call: _ExecuteArguments) -> None:
         params = call.inputs.params or {}
         for binding in bindings:
             if binding.name not in params:
@@ -280,7 +280,7 @@ def _caller(plan: ExecutionPlan) -> Bind | None:
     if binding is None:
         return None
 
-    def bind(call: _Call) -> None:
+    def bind(call: _ExecuteArguments) -> None:
         if call.identity is None:
             raise MissingCaller(plan.use_case_type.__qualname__, binding.name, CALLER.spelling)
         call.bound[binding.name] = call.identity
@@ -294,7 +294,7 @@ def _command(plan: ExecutionPlan) -> Bind | None:
         return None
     use_case = plan.use_case_type.__qualname__
 
-    def bind(call: _Call) -> None:
+    def bind(call: _ExecuteArguments) -> None:
         payload = call.inputs.payload
         if payload is None:
             raise ValueError(f"{use_case}: payload is required for a UseCase with Input()")
@@ -315,7 +315,7 @@ def _computes(plan: ExecutionPlan) -> Bind | None:
         for step in plan.compute_steps
     )
 
-    def apply(call: _Call) -> None:
+    def apply(call: _ExecuteArguments) -> None:
         command = call.bound[binding.name]
         for fn, accepts_context, label in computes:
             if accepts_context:
@@ -337,7 +337,7 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
         for step in plan.rule_steps
     )
 
-    def check(call: _Call) -> None:
+    def check(call: _ExecuteArguments) -> None:
         command = call.bound[binding.name]
         violations: list[RuleViolation] = []
         for fn, accepts_context, label, step_label in rules:

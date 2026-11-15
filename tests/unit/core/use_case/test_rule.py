@@ -248,3 +248,55 @@ class TestRuleDsl:
             rule(cmd, fields_set)
 
         assert exc_info.value.field == "email"
+
+    def test_require_present_reports_its_field_and_message(self) -> None:
+        rule = Rule.require_present(
+            F(AcmeRuledPatch).email, field="contact", message="contact needed"
+        ).when_present(F(AcmeRuledPatch).name)
+        cmd, fields_set = AcmeRuledPatch.from_payload({"name": "Alice"})
+
+        with pytest.raises(RuleViolation) as exc_info:
+            rule(cmd, fields_set)
+
+        assert (exc_info.value.field, exc_info.value.message) == ("contact", "contact needed")
+
+    def test_require_present_skips_when_its_predicate_is_absent(self) -> None:
+        rule = Rule.require_present(F(AcmeRuledPatch).email).when_present(F(AcmeRuledPatch).name)
+        cmd, fields_set = AcmeRuledPatch.from_payload({})
+
+        rule(cmd, fields_set)
+
+
+class TestRuleValue:
+    """Every builder answers a ``Rule`` value; chaining returns a new one."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: Rule.check(F(AcmeRuledUser).email, via=email_format_error_or_none),
+            lambda: Rule.forbid(is_disposable, message="no").from_params("user_id"),
+            lambda: Rule.require_present(F(AcmeRuledUser).email),
+        ],
+        ids=["check", "forbid", "require_present"],
+    )
+    def test_builders_answer_a_rule(self, build: Any) -> None:
+        assert isinstance(build(), Rule)
+
+    def test_a_presence_rule_accepts_runtime_parameters(self) -> None:
+        rule = Rule.require_present(F(AcmeRuledPatch).email).from_params("user_id")
+        cmd, fields_set = AcmeRuledPatch.from_payload({"name": "Alice"})
+
+        with pytest.raises(RuleViolation):
+            rule(cmd, fields_set, {"user_id": 7})
+
+    def test_equal_declarations_are_equal_rules(self) -> None:
+        first = Rule.check(F(AcmeRuledUser).email, via=email_format_error_or_none)
+        second = Rule.check(F(AcmeRuledUser).email, via=email_format_error_or_none)
+
+        assert first == second
+        assert first.when_present(F(AcmeRuledUser).name) != first
+
+    def test_the_package_exports_the_same_rule(self) -> None:
+        from loom.core.use_case import Rule as Exported
+
+        assert Exported is Rule

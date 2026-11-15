@@ -311,7 +311,7 @@ class DependencyGraph:
         """
         edges = self._edges.get(node)
         if edges is None:
-            edges = self._edges[node] = tuple(self._derive(node))
+            edges = self._edges[node] = tuple(self._edges_of(node))
         return edges
 
     def constructor(self, node: Node) -> Constructor:
@@ -423,7 +423,7 @@ class DependencyGraph:
             roots=roots, reachable=frozenset(reachable), warnings=warnings, graph=self
         )
 
-    def _derive(self, node: Node) -> Iterator[Edge]:
+    def _edges_of(self, node: Node) -> Iterator[Edge]:
         for name, dependency in self.constructor(node):
             match dependency:
                 case KeyDependency(key):

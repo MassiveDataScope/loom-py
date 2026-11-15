@@ -24,7 +24,7 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow import coordinator as coordinator_module
-from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.abc import UnitOfWork, UowEvent
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
     Committed,
@@ -753,3 +753,22 @@ class TestOutcomeLog:
             await coordinator.finish(scope, None)
 
         assert not [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
+
+
+class TestUowEvent:
+    """Units of work and the coordinator log under their published event names."""
+
+    @pytest.mark.parametrize(
+        ("event", "name"),
+        [
+            (UowEvent.BEGIN, "UoWBegin"),
+            (UowEvent.COMMIT, "UoWCommit"),
+            (UowEvent.ROLLBACK, "UoWRollback"),
+            (UowEvent.INVALIDATE_FAILED, "UoWInvalidateFailed"),
+            (UowEvent.ROLLBACK_FAILED, "UoWRollbackFailed"),
+            (UowEvent.CLOSE_FAILED, "UoWCloseFailed"),
+            (UowEvent.INVOCATION_OUTCOME, "InvocationOutcome"),
+        ],
+    )
+    def test_each_event_keeps_its_name(self, event: UowEvent, name: str) -> None:
+        assert str(event) == name

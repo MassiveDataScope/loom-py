@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -44,16 +44,6 @@ from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults
 
 _MiddlewareClass = Any
-
-
-def _resolve_executor(result: BootstrapResult) -> RuntimeExecutor:
-    """Return the application-scoped RuntimeExecutor registered at bootstrap."""
-    if not result.container.is_registered(RuntimeExecutor):
-        raise RuntimeError(
-            "RuntimeExecutor is not registered in the container. "
-            "Use create_kernel(...) to build BootstrapResult."
-        )
-    return cast(RuntimeExecutor, result.container.resolve(RuntimeExecutor))
 
 
 def _require_route_sources(routes: object) -> RouteSources:
@@ -103,7 +93,12 @@ def compile_api(
         InterfaceCompilationError: If any interface fails structural validation.
     """
     resolved_routes = _require_route_sources(routes)
-    executor = _resolve_executor(result)
+    executor = result.container.resolve_or_none(RuntimeExecutor)
+    if executor is None:
+        raise RuntimeError(
+            "RuntimeExecutor is not registered in the container. "
+            "Use create_kernel(...) to build BootstrapResult."
+        )
     compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
         resolved_routes
     )

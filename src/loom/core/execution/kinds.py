@@ -132,7 +132,7 @@ class ExecutionKinds:
             return kind
         return self._by_origin.get(get_origin(annotation))
 
-    def refusal(self, default: object) -> str | None:
+    def refusal_for(self, default: object) -> str | None:
         """Return why a parameter with this default is refused, or ``None``."""
         return self._refused.get(type(default))
 

@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from loom.core.expr.nodes import AndExpr, ExprNode
-from loom.etl.declarative.source._specs import MongoSourceSpec
+from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.schema._contract import SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 _COLLECTION_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
-_EXTRA_FIELDS_MODES = frozenset({"ignore", "warn", "capture", "error"})
 
 
 @dataclass(frozen=True)
@@ -90,7 +89,7 @@ class FromMongo:
         self._filter: ExprNode | None = None
         self._projection: tuple[str, ...] | None = None
         self._schema: tuple[ColumnSchema, ...] = ()
-        self._extra_fields_mode: Literal["ignore", "warn", "capture", "error"] = "ignore"
+        self._extra_fields_mode = ExtraFieldsMode.IGNORE
         self._normalize_extended_json: bool = False
         self._batch_size: int = 2_000
         self._limit: int | None = None
@@ -146,14 +145,9 @@ class FromMongo:
         """
         return self._clone(_normalize_extended_json=enabled)
 
-    def on_extra_fields(self, mode: Literal["ignore", "warn", "capture", "error"]) -> FromMongo:
+    def on_extra_fields(self, mode: ExtraFieldsMode | str) -> FromMongo:
         """Control how document fields absent from the schema are handled."""
-        if mode not in _EXTRA_FIELDS_MODES:
-            raise ValueError(
-                f"on_extra_fields mode {mode!r} is not valid. "
-                f"Choose one of: {sorted(_EXTRA_FIELDS_MODES)}"
-            )
-        return self._clone(_extra_fields_mode=mode)
+        return self._clone(_extra_fields_mode=ExtraFieldsMode(mode))
 
     def batch_size(self, n: int) -> FromMongo:
         """Override the pymongo cursor batch size (1–50 000)."""
