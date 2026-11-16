@@ -75,9 +75,7 @@
   `StoreRuntime.cursor_codec` is required, a cursor page is refused when the
   query starts (`CursorCodec.require_enabled()`), not only when a next page
   needs a token,
-  `StoreCapabilities.pages_with_cursors` and
-  `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
-  `StoreCatalog.with_default` is removed with them. **Migration:** an
+  and `StoreCapabilities.pages_with_cursors` is removed (nothing reads it). **Migration:** an
   application that pages by cursor keeps its `stores.settings.cursors`
   section; one that does not can delete it (and its unused keys); a custom
   backend's `capabilities()` drops the `pages_with_cursors` argument; code
@@ -1627,7 +1625,7 @@
   and starts again when it reopens.
 - **stores:** wiring API. `RuntimeExecutor(uow_factory=)` and
   `create_kernel(uow_factory=)` become `coordinator=` (`OrderedCommits`);
-  `Recipe.backend` becomes `Recipe.default_store_backend`, and
+  `Recipe.default_backend` becomes `Recipe.default_store_backend`, and
   `Project.resolve_store_backend(key, *, default=)` takes the store;
   `Application.persistence` and `require_single_store` are removed. `store`
   is required by `StoreCatalog.served_by`, `StoreRuntime`, `SessionManager`,

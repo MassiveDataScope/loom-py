@@ -703,6 +703,14 @@ class TestCursorPagination:
             position, model=f"{Article.__module__}.Article", query=self._query(), scope=""
         )
 
+    async def test_a_disabled_codec_refuses_a_cursor_page_with_no_next_page(
+        self, collection: FakeCollection
+    ) -> None:
+        repo = RepositoryMongo(Article, collection, cursor_codec=CursorCodec.disabled())
+
+        with pytest.raises(UnsupportedQuery, match="cursor pagination is not enabled"):
+            await repo.list_with_query(self._query())
+
     async def test_walk_through_duplicate_sort_values(self, collection: FakeCollection) -> None:
         repo = _articles(collection)
         # Insertion order deliberately disagrees with key order among equal views.

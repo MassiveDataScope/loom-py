@@ -67,8 +67,13 @@ class TestDefaultMode:
 class TestSection:
     @pytest.mark.parametrize(
         "section",
-        [{"signing": "sigend"}, {"singing": "ephemeral"}, {"keys": {"k1": {}}}],
-        ids=["unknown-mode", "unknown-field", "sourceless-key"],
+        [
+            {"signing": "sigend"},
+            {"signing": "disabled"},
+            {"singing": "ephemeral"},
+            {"keys": {"k1": {}}},
+        ],
+        ids=["unknown-mode", "disabled-mode", "unknown-field", "sourceless-key"],
     )
     def test_an_invalid_section_fails_startup(self, section: dict[str, object]) -> None:
         ctx = ConfigContext.from_dict({"stores": {"settings": {"cursors": section}}})
