@@ -11,12 +11,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from loom.core.config.errors import ConfigError
-from loom.core.stores.sql.abc import (
+from loom.core.stores.sql.abc.contracts import SqlExecutionOptions, SqlExecutor, SqlQueryResult
+from loom.core.stores.sql.abc.errors import (
     RoleNotAllowedError,
     RoleRequiredError,
-    SqlExecutionOptions,
-    SqlExecutor,
-    SqlQueryResult,
     UnknownConnectionError,
 )
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig

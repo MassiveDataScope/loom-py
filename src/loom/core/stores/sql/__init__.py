@@ -10,15 +10,17 @@ Work done on behalf of a caller uses :class:`CallerBoundSql` instead, which
 derives the roles from the verified identity rather than from an argument.
 """
 
-from loom.core.stores.sql.abc import (
-    RoleNotAllowedError,
-    RoleRequiredError,
-    RolesNotBoundError,
+from loom.core.stores.sql.abc.contracts import (
     SqlColumn,
-    SqlExecutionError,
     SqlExecutionOptions,
     SqlExecutor,
     SqlQueryResult,
+)
+from loom.core.stores.sql.abc.errors import (
+    RoleNotAllowedError,
+    RoleRequiredError,
+    RolesNotBoundError,
+    SqlExecutionError,
     UnknownConnectionError,
 )
 from loom.core.stores.sql.caller_bound import CallerBoundSql
