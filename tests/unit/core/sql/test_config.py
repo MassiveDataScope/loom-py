@@ -8,7 +8,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
-from loom.core.sql.config import SqlConfig, SqlEndpointConfig
+from loom.core.stores.sql.config import SqlConfig, SqlEndpointConfig
 
 
 def _minimal(**overrides: Any) -> dict[str, Any]:

@@ -12,9 +12,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from loom.core.sql.abc import SqlColumn, SqlQueryResult
-from loom.core.sql.config import SqlEndpointConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlColumn, SqlQueryResult
+from loom.core.stores.sql.config import SqlEndpointConfig
+from loom.core.stores.sql.service import SqlQueryService
 from loom.rest.fastapi.sql import bind_sql_endpoints
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,

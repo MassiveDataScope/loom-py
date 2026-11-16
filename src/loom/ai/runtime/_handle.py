@@ -43,7 +43,7 @@ from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.service import SqlQueryService
 
 _K = TypeVar("_K", bound=Hashable)
 _H = TypeVar("_H")

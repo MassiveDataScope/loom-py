@@ -6,8 +6,8 @@ import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError
 
 from loom.core.config.errors import ConfigError
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConnectionConfig
+from loom.stores.clickhouse import ClickHouseConnectionRegistry
 from tests.unit.core.sql._fakes import (
     FakeClickHouseClient,
     RecordingClientFactory,

@@ -17,8 +17,8 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
-from loom.core.sql import CallerBoundSql, SqlQueryResult, SqlQueryService
-from loom.core.sql.abc import RolesNotBoundError
+from loom.core.stores.sql import CallerBoundSql, SqlQueryResult, SqlQueryService
+from loom.core.stores.sql.abc import RolesNotBoundError
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config

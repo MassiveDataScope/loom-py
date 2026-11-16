@@ -20,8 +20,8 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.service import SqlQueryService
 from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case import Caller, UseCase
 from loom.core.use_case.factory import main_repository
 from tests.integration.ai.conftest import RecordingDepsFactory, RecordingObserver

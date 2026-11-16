@@ -221,3 +221,45 @@ class TestIdentityWriters:
         assert "set_identity" not in _read_names(
             ast.parse("reset_identity(t)\nfrom x import reset_identity")
         )
+
+
+class TestCoreNamesNoStoreIsland:
+    @staticmethod
+    def _islands(tree: ast.AST) -> list[str]:
+        """Every string literal passed as the island of an ``import_optional`` call in *tree*."""
+        islands: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            callee = node.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", None)
+            island = node.args[0]
+            if name == "import_optional" and isinstance(island, ast.Constant):
+                islands.append(str(island.value))
+        return islands
+
+    def test_no_core_module_loads_a_store_adapter_by_name(self) -> None:
+        offenders = []
+        for path in sorted((_SRC / "loom" / "core").rglob("*.py")):
+            module, _ = _module_of(path)
+            offenders.extend(
+                f"{module} loads {island}"
+                for island in self._islands(parsed(path))
+                if _within(island, "loom.stores")
+            )
+
+        assert offenders == []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'import_optional("loom.stores.clickhouse", extra="clickhouse")',
+            'optional.import_optional("loom.stores.mongo", extra="mongo")',
+        ],
+        ids=["plain-call", "qualified-call"],
+    )
+    def test_the_check_sees_the_island_literal(self, source: str) -> None:
+        assert self._islands(ast.parse(source))[0].startswith("loom.stores.")
+
+    def test_the_check_ignores_a_computed_island(self) -> None:
+        assert self._islands(ast.parse('import_optional(name, extra="x")')) == []

@@ -9,10 +9,10 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.sql.config import reject_retired_sql_keys
 from loom.core.stores.catalog import StoreKey, load_catalog
 from loom.core.stores.database import DatabaseConfig
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.core.stores.sql.config import reject_retired_sql_keys
 from loom.etl.storage._config import normalise_storage_section
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from loom.streaming.mongo._config import load_mongo_config
@@ -88,7 +88,7 @@ class TestRetiredConnectionKeys:
 
     def test_the_sql_registry_refuses_a_retired_key_before_decoding(self) -> None:
         pytest.importorskip("clickhouse_connect")
-        from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
+        from loom.stores.clickhouse import ClickHouseConnectionRegistry
 
         raw = {"connections": {"a": {"backend": "clickhouse", "url": "http://h", "pool_size": 2}}}
 

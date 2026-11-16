@@ -1,4 +1,8 @@
-"""Every module of ``loom.core.stores`` imports first in a fresh interpreter."""
+"""Every module of ``loom.core.stores`` imports first in a fresh interpreter.
+
+The facade rule covers the repository and unit-of-work packages; the SQL port
+imports its own ``abc`` leaf package.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,11 @@ def _dotted(path: Path) -> str:
 
 
 _MODULES = sorted(_dotted(path) for path in _STORES.rglob("*.py"))
-_FACADES = frozenset(_dotted(path) for path in _STORES.rglob("__init__.py"))
+_FACADES = frozenset(
+    _dotted(path)
+    for path in _STORES.rglob("__init__.py")
+    if "sql" not in path.relative_to(_STORES).parts
+)
 
 
 class TestStoresImportOrder:

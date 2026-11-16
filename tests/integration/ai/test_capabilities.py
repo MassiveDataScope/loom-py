@@ -73,9 +73,9 @@ from loom.core.errors import Forbidden
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.model.redaction import Dsn
-from loom.core.sql.abc import SqlColumn, SqlQueryResult
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlColumn, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case import Caller
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
 from loom.core.use_case.markers import Input

@@ -17,7 +17,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import SqlConfig, SqlQueryService
+from loom.core.stores.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.registry import UseCaseRegistry

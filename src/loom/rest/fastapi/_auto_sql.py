@@ -6,8 +6,8 @@ import warnings
 
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
-from loom.core.sql import SqlConfig
-from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
+from loom.core.stores.sql import SqlConfig
+from loom.core.stores.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
 from loom.rest.fastapi._auto_auth import _AuthWiring
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism

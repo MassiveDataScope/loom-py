@@ -73,7 +73,7 @@ from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)

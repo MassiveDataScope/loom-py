@@ -78,8 +78,8 @@ from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.sql.abc import SqlQueryResult
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlQueryResult
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)

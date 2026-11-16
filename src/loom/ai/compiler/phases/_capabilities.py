@@ -50,7 +50,7 @@ from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentEr
 from loom.ai.inference import InferenceTarget
 from loom.core.engine.compilable import Compilable
 from loom.core.model.redaction import Secret
-from loom.core.sql.config import SqlConfig, roles_need_identity_binding
+from loom.core.stores.sql.config import SqlConfig, roles_need_identity_binding
 from loom.core.symbols import import_symbol
 from loom.core.use_case.registry import UseCaseRegistry
 

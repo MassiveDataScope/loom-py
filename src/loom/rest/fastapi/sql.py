@@ -37,9 +37,9 @@ from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
-from loom.core.sql.roles import resolve_query_roles
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
+from loom.core.stores.sql.roles import resolve_query_roles
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator

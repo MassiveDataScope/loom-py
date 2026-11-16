@@ -36,9 +36,9 @@ from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.stores.sql.abc.contracts import SqlColumn, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
 from loom.core.use_case import Agent, UseCase
 from tests.integration.ai.conftest import (
     MARKER_AGENT_NAME,

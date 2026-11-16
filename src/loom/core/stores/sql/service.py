@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from loom.core.config.errors import ConfigError
-from loom.core.sql.abc import (
+from loom.core.stores.sql.abc import (
     RoleNotAllowedError,
     RoleRequiredError,
     SqlExecutionOptions,
@@ -19,7 +19,7 @@ from loom.core.sql.abc import (
     SqlQueryResult,
     UnknownConnectionError,
 )
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 
 
 class SqlQueryService:
@@ -33,7 +33,7 @@ class SqlQueryService:
     writing the call chooses them, bounded only by the connection allowlist.
     That is correct for system work with no caller — a scheduled job, a
     migration, a health probe. Work done on behalf of a caller uses
-    :class:`~loom.core.sql.caller_bound.CallerBoundSql`, which derives the
+    :class:`~loom.core.stores.sql.caller_bound.CallerBoundSql`, which derives the
     roles from the verified identity and accepts no ``roles`` argument.
 
     Args:
@@ -76,7 +76,7 @@ class SqlQueryService:
                 Empty or ``None`` falls back to the connection ``default_role``.
                 They are not checked against any caller: when the query is run
                 on behalf of one, use
-                :class:`~loom.core.sql.caller_bound.CallerBoundSql`.
+                :class:`~loom.core.stores.sql.caller_bound.CallerBoundSql`.
             connection: Name of the configured connection to use.
             parameters: Values bound server-side by the backend.
             limit: Requested row limit; clamped to the connection ``max_limit``

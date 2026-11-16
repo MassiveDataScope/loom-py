@@ -14,10 +14,10 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import RolesNotBoundError, UnknownConnectionError
-from loom.core.sql.caller_bound import CallerBoundSql
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
+from loom.core.stores.sql.caller_bound import CallerBoundSql
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 

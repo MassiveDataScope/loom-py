@@ -16,7 +16,7 @@ import pytest
 from loom.ai.compiler import AgentCompiler
 from loom.ai.config import AiConfig
 from loom.ai.declarative import load_specs
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.unit.ai.phases.conftest import ALL_KINDS, admits_every_native_tool
 

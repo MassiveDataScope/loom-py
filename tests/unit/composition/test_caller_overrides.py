@@ -26,9 +26,9 @@ from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.job import Job
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.stores.catalog import StoreCatalog, StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder
+from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter

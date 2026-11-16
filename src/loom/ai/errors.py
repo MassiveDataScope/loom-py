@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Final, TypeAlias
 from loom.core.errors import Forbidden, Unauthenticated
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.execution import live_execution_identity
-from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
+from loom.core.stores.sql.abc import RoleNotAllowedError, RolesNotBoundError
 
 if TYPE_CHECKING:
     from loom.ai.abc import AgentUsage

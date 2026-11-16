@@ -1,13 +1,13 @@
 """Caller-bound SQL execution: the roles come from the verified identity.
 
-:class:`~loom.core.sql.service.SqlQueryService` takes the roles as an argument,
+:class:`~loom.core.stores.sql.service.SqlQueryService` takes the roles as an argument,
 so the code that writes the call chooses them. That is the right shape for
 system work with no caller, and the wrong one for work done *on behalf of* a
 caller: within the connection allowlist, a use case could then query with roles
 its caller does not hold.
 
 This module gives that second case its own collaborator. It resolves the
-effective roles through :func:`~loom.core.sql.roles.resolve_query_roles`, the
+effective roles through :func:`~loom.core.stores.sql.roles.resolve_query_roles`, the
 same function the agent capability and the REST endpoint use, and exposes no
 way to pass roles in.
 
@@ -33,10 +33,10 @@ from typing import Any
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import RolesNotBoundError, SqlQueryResult
-from loom.core.sql.config import SqlConfig
-from loom.core.sql.roles import resolve_query_roles
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import RolesNotBoundError, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig
+from loom.core.stores.sql.roles import resolve_query_roles
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.tracing import get_trace_id
 
 
@@ -60,8 +60,8 @@ class CallerBoundSql:
 
     A connection with an empty ``allowed_roles`` cannot be queried this way: its
     only role is the shared ``default_role``, which is not derived from anyone,
-    so :class:`~loom.core.sql.abc.errors.RolesNotBoundError` is raised. Use
-    :class:`~loom.core.sql.service.SqlQueryService` for that unbound work.
+    so :class:`~loom.core.stores.sql.abc.errors.RolesNotBoundError` is raised. Use
+    :class:`~loom.core.stores.sql.service.SqlQueryService` for that unbound work.
 
     Each accepted query opens one span labelled with the effective roles, the
     caller subject and the authentication mechanism. Those labels match what
@@ -79,7 +79,7 @@ class CallerBoundSql:
     Example::
 
         from loom.core.identity import Identity
-        from loom.core.sql import CallerBoundSql, SqlQueryResult
+        from loom.core.stores.sql import CallerBoundSql, SqlQueryResult
         from loom.core.use_case.markers import Caller
         from loom.core.use_case.use_case import UseCase
 

@@ -15,9 +15,9 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.sql.config import SqlConnectionConfig
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.database import load_database_config
+from loom.core.stores.sql.config import SqlConnectionConfig
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,

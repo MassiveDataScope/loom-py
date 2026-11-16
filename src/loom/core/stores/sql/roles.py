@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from typing import NoReturn
 
 from loom.core.identity import Identity
-from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
+from loom.core.stores.sql.abc import RoleNotAllowedError, RolesNotBoundError
 
 _logger = logging.getLogger(__name__)
 

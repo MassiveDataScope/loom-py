@@ -70,7 +70,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
     "clickhouse_connect": frozenset(
         {
             "core/connections/clickhouse/client.py",
-            "core/sql/clickhouse/_client.py",  # error types, multi-role transport
+            "stores/clickhouse/_client.py",  # error types, multi-role transport
         }
     ),
     "pymongo": frozenset(

@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from loom.core.sql.abc import SqlExecutionOptions
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
+from loom.core.stores.sql.abc import SqlExecutionOptions
+from loom.stores.clickhouse import ClickHouseConnectionRegistry
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     RecordingClientFactory,

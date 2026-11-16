@@ -24,8 +24,8 @@ from fastapi import FastAPI
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.rest.auth import AuthenticationMiddleware, RequestCredentials
 from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.sql import bind_sql_endpoints

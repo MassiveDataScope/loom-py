@@ -28,7 +28,7 @@ from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent
 from tests.integration.ai.conftest import make_ai_config, make_plan
 from tests.integration.ai.test_capabilities import (

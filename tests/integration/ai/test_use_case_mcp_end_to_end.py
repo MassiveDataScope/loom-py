@@ -42,7 +42,7 @@ from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Mcp, UseCase
 from loom.rest.fastapi.auto import create_app
 from loom.testing.runner import McpHandleDouble, UseCaseTest

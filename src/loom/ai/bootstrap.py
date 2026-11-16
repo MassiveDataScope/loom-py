@@ -26,7 +26,7 @@ from loom.ai.registry import (
 from loom.ai.runtime import AgentRuntime, UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
 __all__ = ["build_agent_runtime"]

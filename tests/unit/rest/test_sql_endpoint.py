@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import SqlExecutionError
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlExecutionError
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
+from loom.core.stores.sql.service import SqlQueryService
 from loom.rest.fastapi.sql import bind_sql_endpoints
 from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
 from tests.unit.core.sql._fakes import (

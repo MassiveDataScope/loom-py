@@ -26,8 +26,8 @@ from loom.core.identity import Identity
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import SqlQueryResult
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlQueryResult
+from loom.core.stores.sql.service import SqlQueryService
 
 _T = TypeVar("_T")
 

@@ -1,4 +1,4 @@
-"""ClickHouse implementation of the :class:`~loom.core.sql.abc.SqlExecutor` port."""
+"""ClickHouse implementation of the :class:`~loom.core.stores.sql.abc.SqlExecutor` port."""
 
 from __future__ import annotations
 
@@ -7,20 +7,20 @@ from collections.abc import Mapping
 from typing import Any
 
 from loom.core.errors import SystemError
-from loom.core.sql.abc import (
+from loom.core.stores.sql.abc import (
     SqlColumn,
     SqlExecutionError,
     SqlExecutionOptions,
     SqlQueryResult,
 )
-from loom.core.sql.clickhouse._client import (
+from loom.core.stores.sql.config import SqlConnectionConfig
+from loom.stores.clickhouse._client import (
     AsyncClickHouseClient,
     ClickHouseQueryResult,
     DatabaseError,
     OperationalError,
     sanitize_backend_error,
 )
-from loom.core.sql.config import SqlConnectionConfig
 
 
 class ClickHouseSqlExecutor:

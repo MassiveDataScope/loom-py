@@ -12,9 +12,9 @@ from loom.ai.abc import AgentEvent, Conversation, FinalEvent, HealthStatus
 from loom.ai.compiler import CompiledSqlCapability
 from loom.core.execution import execution_identity
 from loom.core.identity import Identity
-from loom.core.sql.abc import SqlColumn, SqlQueryResult
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlColumn, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import SqlQueryService
 from tests.integration.ai.conftest import DEFAULT_USAGE, make_sql_capability
 
 AGENT = "acme-triage"

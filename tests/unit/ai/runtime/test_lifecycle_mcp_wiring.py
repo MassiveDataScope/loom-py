@@ -30,7 +30,7 @@ from loom.ai.runtime._handle import _AgentHandle
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     ScriptedEngine,

@@ -24,7 +24,7 @@ from loom.ai.compiler.phases._state import compile_state
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, DecodedSpec
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
 _UNNAMED_SOURCE = "<in-memory spec>"

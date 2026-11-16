@@ -25,9 +25,9 @@ from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.stores import WORKER_PROFILE
 from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.composition import composition_source

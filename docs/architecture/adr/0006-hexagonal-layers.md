@@ -38,7 +38,7 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Domain and application | `loom.core.model`, `use_case`, `engine`, `command`, `projection`, `identity`, `authz` | no infrastructure, no SDK |
 | Ports | `loom.core.stores.backend`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
 | Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.stores.database`, `loom.core.stores.profile` | validated data; no SDK |
-| Outbound adapters (islands) | `loom.stores.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
+| Outbound adapters (islands) | `loom.stores.{sqlalchemy,dynamodb,mongo}`, `loom.stores.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
 | Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
 | Inbound adapters | `loom.rest.fastapi`, `loom.celery` (the worker), the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
 

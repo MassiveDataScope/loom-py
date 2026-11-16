@@ -21,8 +21,9 @@ import msgspec
 from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
 from loom.core.connections.clickhouse.client import async_client_options
-from loom.core.sql.abc import UnknownConnectionError
-from loom.core.sql.clickhouse._client import (
+from loom.core.stores.sql.abc import UnknownConnectionError
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
+from loom.stores.clickhouse._client import (
     AsyncClickHouseClient,
     ClickHouseClientFactory,
     DatabaseError,
@@ -31,8 +32,7 @@ from loom.core.sql.clickhouse._client import (
     sanitize_backend_error,
     supports_repeated_query_params,
 )
-from loom.core.sql.clickhouse.executor import ClickHouseSqlExecutor
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
+from loom.stores.clickhouse.executor import ClickHouseSqlExecutor
 
 _logger = logging.getLogger(__name__)
 

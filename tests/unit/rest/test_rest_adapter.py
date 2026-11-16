@@ -34,10 +34,10 @@ from loom.core.errors import (
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
-from loom.core.sql import SqlExecutionError
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository.query import CursorResult, PageResult
 from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.sql import SqlExecutionError
 from loom.core.stores.uow.coordinator import Committed, InvocationOutcome
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter

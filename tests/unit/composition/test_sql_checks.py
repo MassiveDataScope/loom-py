@@ -16,8 +16,8 @@ from loom.composition import Application, CompositionSource, Recipe, compose_app
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.sql.clickhouse import registry as clickhouse_registry
 from loom.core.stores.profile import WORKER_PROFILE
+from loom.stores.clickhouse import registry as clickhouse_registry
 from tests.helpers.composition import composition_source
 from tests.unit.core.sql._fakes import (
     DEFAULT_ROLES,

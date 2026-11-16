@@ -48,7 +48,7 @@ from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Mcp
 from tests.unit.ai.engines.mcp.server import InProcessServer, serving
 

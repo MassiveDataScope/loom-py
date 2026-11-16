@@ -19,9 +19,9 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime._grants import McpGrantView, SqlGrantView
 from loom.core.execution import ExecutionRequired, ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc.contracts import SqlColumn, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import SqlQueryService
 from tests.integration.ai.conftest import make_mcp_capability, make_sql_capability
 
 _AGENT = "triage"

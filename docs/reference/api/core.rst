@@ -99,7 +99,7 @@ SQL
 .. autosummary::
    :toctree: generated
 
-   loom.core.sql
-   loom.core.sql.abc
-   loom.core.sql.config
-   loom.core.sql.clickhouse
+   loom.core.stores.sql
+   loom.core.stores.sql.abc
+   loom.core.stores.sql.config
+   loom.stores.clickhouse

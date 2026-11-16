@@ -64,7 +64,7 @@ from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model import msgspec_type
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConnectionConfig
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 

@@ -203,7 +203,7 @@ the catalogue and `__init__` re-exports every class.
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
-The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
+The `core/stores/sql/abc/errors.py` module stays, for SQL subsystem errors.
 Compile and startup errors do not move.
 
 **R4. One mapper per transport.**
@@ -261,7 +261,7 @@ the mapper is what reads the declaration.
 
 **R5. Core never imports `http`, `fastapi` or `starlette`.** Core errors say
 what happened; the transport decides the status. The status numbers in the
-`core/sql/abc/errors.py:3-7` docstring are removed.
+`core/stores/sql/abc/errors.py:3-7` docstring are removed.
 
 ### Tests
 

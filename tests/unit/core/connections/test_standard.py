@@ -13,8 +13,8 @@ import pytest
 import loom.core.connections.aws
 import loom.core.connections.clickhouse
 import loom.core.connections.mongo
-import loom.core.sql.config
 import loom.core.stores.database
+import loom.core.stores.sql.config
 import loom.etl.storage._config
 import loom.stores.dynamodb.backend
 import loom.stores.mongo.backend
@@ -29,7 +29,7 @@ _DEFINING_MODULES = (
     loom.core.stores.database,
     loom.stores.dynamodb.backend,
     loom.stores.mongo.backend,
-    loom.core.sql.config,
+    loom.core.stores.sql.config,
     loom.etl.storage._config,
     loom.streaming.mongo._config,
 )

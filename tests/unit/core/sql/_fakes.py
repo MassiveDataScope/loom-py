@@ -1,6 +1,6 @@
 """Typed fakes and builders shared by the SQL subsystem unit tests.
 
-The contracts consumed here (``loom.core.sql.abc``, ``loom.core.sql.config``)
+The contracts consumed here (``loom.core.stores.sql.abc``, ``loom.core.stores.sql.config``)
 are the ones defined in ``specs/sql_api_clickhouse_spec.md`` §3. This module
 implements no production code: only test doubles that capture whatever the
 real code hands them.
@@ -16,8 +16,8 @@ from typing import Any
 from clickhouse_connect.driver.exceptions import DatabaseError
 
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
-from loom.core.sql.abc import SqlColumn, SqlExecutionOptions, SqlQueryResult
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.abc import SqlColumn, SqlExecutionOptions, SqlQueryResult
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 
 DEFAULT_URL = "http://clickhouse.test:8123"
 DEFAULT_ROLES: tuple[str, ...] = ("role_viz_reader", "role_viz_sales")

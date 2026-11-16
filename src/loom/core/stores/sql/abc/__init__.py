@@ -1,12 +1,12 @@
 """Abstraction layer of the SQL subsystem: port, options, envelopes and errors."""
 
-from loom.core.sql.abc.contracts import (
+from loom.core.stores.sql.abc.contracts import (
     SqlColumn,
     SqlExecutionOptions,
     SqlExecutor,
     SqlQueryResult,
 )
-from loom.core.sql.abc.errors import (
+from loom.core.stores.sql.abc.errors import (
     RoleNotAllowedError,
     RoleRequiredError,
     RolesNotBoundError,

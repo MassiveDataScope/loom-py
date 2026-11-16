@@ -11,8 +11,8 @@ from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
 
 from loom.core.errors import RuleViolation
 from loom.core.errors import SystemError as LoomSystemError
-from loom.core.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
+from loom.core.stores.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
+from loom.stores.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
 from tests.helpers.extras import CLICKHOUSE_ISLAND
 from tests.unit.core.sql._fakes import (
     FakeClickHouseClient,
@@ -53,10 +53,10 @@ class TestClickHouseExecutor:
         """Without the extra, loading the SQL backend fails naming 'loom-kernel[clickhouse]'."""
         _hide_modules(monkeypatch, "clickhouse_connect")
         for name in list(sys.modules):
-            if name.startswith(("loom.core.sql.clickhouse", CLICKHOUSE_ISLAND)):
+            if name.startswith(("loom.stores.clickhouse", CLICKHOUSE_ISLAND)):
                 monkeypatch.delitem(sys.modules, name)
         with pytest.raises(ImportError, match=r"loom-kernel\[clickhouse\]"):
-            importlib.import_module("loom.core.sql.clickhouse")
+            importlib.import_module("loom.stores.clickhouse")
 
     async def test_parameters_travel_server_side_without_interpolation(self) -> None:
         """The SQL reaches the driver untouched and parameters travel apart (native binding)."""

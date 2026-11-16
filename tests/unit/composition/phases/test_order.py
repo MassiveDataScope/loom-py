@@ -24,10 +24,10 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.job.service import JobService
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import SqlQueryService
 from loom.core.stores.catalog import StoreCatalog
 from loom.core.stores.repository.capabilities import Creatable
 from loom.core.stores.repository.registry import RepositoryToken
+from loom.core.stores.sql import SqlQueryService
 from loom.core.use_case.factory import UseCaseFactory
 from tests.unit.composition.phases import paths
 from tests.unit.composition.phases.components import (

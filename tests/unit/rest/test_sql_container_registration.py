@@ -9,8 +9,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import CallerBoundSql, NullSqlQueryService, SqlQueryService
-from loom.core.sql.abc import RolesNotBoundError
+from loom.core.stores.sql import CallerBoundSql, NullSqlQueryService, SqlQueryService
+from loom.core.stores.sql.abc import RolesNotBoundError
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 

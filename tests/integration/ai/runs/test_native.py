@@ -16,7 +16,7 @@ from loom.core.execution import (
     current_execution,
     execution_identity,
 )
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent
 
 from .doubles import AGENT, ALICE, BOB, AcmeNativeAccess, AcmeNativeEngine

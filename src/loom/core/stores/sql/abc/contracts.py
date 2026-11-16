@@ -1,6 +1,6 @@
 """Backend-agnostic SQL execution contracts.
 
-These types form the port between :class:`~loom.core.sql.service.SqlQueryService`
+These types form the port between :class:`~loom.core.stores.sql.service.SqlQueryService`
 and concrete SQL backends. They carry no infrastructure imports: each executor
 translates :class:`SqlExecutionOptions` to its native mechanism and returns the
 standard :class:`SqlQueryResult` envelope.
