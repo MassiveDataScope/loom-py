@@ -289,7 +289,7 @@ jobs:
       - name: Quality report (strict gate)
         id: quality
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/python/quality-report@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/python/quality-report@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           src-dir: src
           test-dir: tests
@@ -301,7 +301,7 @@ jobs:
 
       - name: Publish PR quality comment
         if: ${{ always() && steps.quality.outputs.report-file != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- loom-quality-report -->"
@@ -309,7 +309,7 @@ jobs:
 
       - name: Compute candidate prerelease version
         id: version
-        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           branch: ${{ github.head_ref }}
           prerelease: "true"
@@ -346,7 +346,7 @@ jobs:
       - name: Generate changelog preview
         id: changelog
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           mode: "pr"
           branch: ${{ github.event.pull_request.head.sha }}
@@ -357,7 +357,7 @@ jobs:
 
       - name: Publish PR changelog comment
         if: ${{ steps.changelog.outcome == 'success' && steps.changelog.outputs.output_path != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- changelog-preview -->,<!-- branch-source:${{ github.head_ref }} -->"
@@ -401,7 +401,7 @@ jobs:
 
       - name: SonarQube scan
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != '' }}
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         with:
           args: >
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
