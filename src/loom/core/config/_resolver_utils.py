@@ -9,17 +9,16 @@ import re
 from collections.abc import Callable, Hashable
 from typing import Any, cast
 
-from loom.core.config.aws import decode_aws
+from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, aws_island
+from loom.core.connections.aws import AwsClientConfig, AwsService
 from loom.core.plugins.optional import MissingExtraError
 
-_AWS_EXTRA = "config-ssm"
 _CLIENT = ("client",)
 
 
-def aws_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
+def aws_client(service: AwsService, region: str | None, *, resolver: str, root: Any) -> Any:
     """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 
     The resolvers are the ones resolving the placeholders, so they read
@@ -40,13 +39,6 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
         ConfigError: When boto3 is not installed, naming the extra, or
             ``aws:`` is invalid or holds a placeholder.
     """
-    try:
-        island = aws_island(extra=_AWS_EXTRA)
-    except MissingExtraError as exc:
-        raise ConfigError(
-            f"boto3 is required for {resolver}. "
-            "Install it with: pip install loom-kernel[config-ssm]"
-        ) from exc
     written = None
     if root is not None:
         from omegaconf import OmegaConf
@@ -60,9 +52,16 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
                 f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
                 "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
             )
-    overrides = {} if region is None else {"region": region}
-    config = decode_aws(written, {}, ConfigKey.AWS, AwsClientConfig, **overrides)
-    return island.build_aws_client(service, config)
+    overrides: dict[str, Any] = {} if region is None else {"region": region}
+    ctx = ConfigContext.from_dict({ConfigKey.AWS: written})
+    config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, **overrides)
+    try:
+        return config.client(service)
+    except MissingExtraError as exc:
+        raise ConfigError(
+            f"boto3 is required for {resolver}. "
+            f"Install it with: pip install loom-kernel[{service.extra}]"
+        ) from exc
 
 
 def resolve_cached(

@@ -16,6 +16,7 @@ from loom.prefect.notify import (
     build_notifiers,
 )
 from loom.prefect.notify import _sns as sns_module
+from tests.helpers.extras import patched_aws_clients
 
 _TOPIC = "arn:aws:sns:eu-west-1:123456789012:etl-failures"
 
@@ -208,16 +209,15 @@ class TestSnsNotifier:
             "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
         )
 
-    def test_default_client_uses_the_topic_region(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        factory = MagicMock()
-        monkeypatch.setattr(sns_module, "build_aws_client", factory)
-        SnsNotifier(topic_arn=_TOPIC)
-        factory.assert_called_once_with("sns", AwsClientConfig(region="eu-west-1"))
+    def test_default_client_uses_the_topic_region(self) -> None:
+        with patched_aws_clients() as clients:
+            SnsNotifier(topic_arn=_TOPIC)
+        clients.assert_called_once_with("sns", region_name="eu-west-1")
 
 
 class TestBuildSnsNotifier:
     def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sns_module, "build_aws_client", MagicMock())
+        monkeypatch.setattr(AwsClientConfig, "client", MagicMock())
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

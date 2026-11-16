@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError, SsmResolver, load_config
-from loom.core.config.aws import inherit_aws
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
@@ -45,8 +44,9 @@ def _ssm(tmp_path: Path, yaml: str, resolver: SsmResolver) -> AwsClientFactory:
     return clients
 
 
-def _inherit(aws: object) -> dict[str, Any]:
-    return inherit_aws(aws, {"read_timeout": 3}, "storage.dynamodb", AwsClientConfig)
+def _inherit(aws: dict[str, Any] | None) -> dict[str, Any]:
+    ctx = ConfigContext.from_dict({} if aws is None else {"aws": aws})
+    return AwsClientConfig.inherit(ctx, {"read_timeout": 3}, "storage.dynamodb")
 
 
 class TestAwsSection:

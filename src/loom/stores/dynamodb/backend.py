@@ -11,9 +11,7 @@ from typing import Any, ClassVar, ParamSpec, TypeVar
 
 from loom.core._async import run_in_executor
 from loom.core.config import ConfigContext
-from loom.core.config.aws import decode_aws, written_aws
-from loom.core.connections.aws import AwsClientConfig
-from loom.core.connections.aws.client import build_aws_client
+from loom.core.connections.aws import AwsClientConfig, AwsService
 from loom.core.model import BaseModel
 from loom.core.stores.backend import PersistenceWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
@@ -94,9 +92,10 @@ class DynamoDBBackend:
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         del ctx
-        aws = written_aws(spec.config)
-        dynamo_cfg = decode_aws(aws, spec.settings(), spec.path, DynamoDBRepositoryConfig)
-        client = build_aws_client("dynamodb", dynamo_cfg)
+        dynamo_cfg = DynamoDBRepositoryConfig.from_config(
+            spec.config, spec.path, own=spec.settings()
+        )
+        client = dynamo_cfg.client(AwsService.DYNAMODB)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),

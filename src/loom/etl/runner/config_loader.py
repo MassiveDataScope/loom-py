@@ -15,9 +15,9 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
-from loom.core.config.aws import inherit_aws, written_aws
 from loom.core.config.convert import convert_config
 from loom.core.config.overrides import load_application_config
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.etl._uri import is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
@@ -132,7 +132,7 @@ def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservability
     raw = ctx.section(ConfigKey.STORAGE, dict)
     dynamodb = raw.get("dynamodb")
     if isinstance(dynamodb, Mapping):
-        raw["dynamodb"] = inherit_aws(written_aws(ctx), dynamodb, "storage.dynamodb")
+        raw["dynamodb"] = AwsClientConfig.inherit(ctx, dynamodb, "storage.dynamodb")
     storage_config = _convert_storage(normalise_storage_section(raw))
     obs_config = ctx.section_or_default(
         ConfigKey.OBSERVABILITY,

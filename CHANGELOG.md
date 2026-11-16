@@ -16,6 +16,19 @@
   callables emitted `DeprecationWarning`. Now: they raise `TypeError`.
   **Migration:** wrap the resolver in an object implementing `resolve` and
   read the execution identity when the returned handle is called.
+- **aws:** AWS clients are built from `AwsClientConfig`, and `loom.core.config.aws`
+  is removed. Before: `decode_aws(written_aws(ctx), own, path, Target)` decoded
+  a product section and `build_aws_client("dynamodb", config)` (or
+  `aws_island(extra=...).build_aws_client`) built the client. Now:
+  `Target.from_config(ctx, path, own=section, **over)` decodes it,
+  `config.client(AwsService.DYNAMODB)` builds the client, and
+  `AwsClientConfig.inherit(ctx, own, path)` returns the merged mapping;
+  `AwsService` (`DYNAMODB`, `SQS`, `SNS`, `SSM`, `SECRETS_MANAGER`) names the
+  services and its `extra` property names the loom extra that brings boto3.
+  `written_aws`, `inherit_aws` and `decode_aws` no longer exist and nothing is
+  re-exported. **Migration:** replace those calls with the methods above;
+  `loom.core.connections.aws.client.build_aws_client` stays the island's
+  builder but only `AwsClientConfig.client` calls it.
 
 ### security
 

@@ -10,7 +10,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
-from loom.core.connections.aws.client import build_aws_client
+from loom.core.connections.aws import AwsService
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
@@ -112,7 +112,7 @@ class TestDynamoClientConfig:
             strict=True,
         )
         repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
-            build_aws_client("dynamodb", cfg), "products", Product
+            cfg.client(AwsService.DYNAMODB), "products", Product
         )
 
         started = time.perf_counter()

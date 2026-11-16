@@ -8,6 +8,7 @@ import pytest
 
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
@@ -19,7 +20,7 @@ from .conftest import FakeClient
 def _wiring(
     monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, table: str
 ) -> PersistenceWiring:
-    monkeypatch.setattr(backend_module, "build_aws_client", lambda _service, _cfg: fake_client)
+    monkeypatch.setattr(AwsClientConfig, "client", lambda _self, _service: fake_client)
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
