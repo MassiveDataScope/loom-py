@@ -143,6 +143,22 @@ class TestLoadInstalled:
         with pytest.raises(ModuleNotFoundError, match="loom.gone"):
             DeployCheckRegistry().load_installed()
 
+    def test_a_load_that_raises_leaves_later_registrations_in_the_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registry = DeployCheckRegistry()
+
+        def breaks() -> None:
+            raise RuntimeError("broken package")
+
+        self._install(monkeypatch, _Entry(breaks))
+        with pytest.raises(RuntimeError, match="broken package"):
+            registry.load_installed()
+
+        registry.register(_ERROR_ID)(lambda config: None)
+
+        assert [check_id for check_id, _ in registry.items()] == [_ERROR_ID]
+
     def test_registrations_outside_a_load_go_straight_to_the_registry(self) -> None:
         registry = DeployCheckRegistry()
 
