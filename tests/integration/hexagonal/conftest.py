@@ -31,7 +31,7 @@ from loom.core.use_case.kinds import AGENT, MCP
 from loom.rest.auth import RequestCredentials
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.helpers.composition import Serving, composition_project
+from tests.helpers.composition import Serving, WithOverrides, composition_project
 from tests.integration.hexagonal.adapters import gateway_root
 from tests.integration.hexagonal.shipping import TrackShipment, TrackShipmentJob
 
@@ -174,14 +174,18 @@ class Stubs:
 class Stubbed:
     """*transport*'s own adapter, composing in testing mode with the stub resolvers bound."""
 
-    def __init__(self, transport: Adapter[Any], stubs: Stubs) -> None:
+    def __init__(self, transport: Adapter[Any], stubs: Stubs, root: Module) -> None:
         self._transport = transport
         self._stubs = stubs
+        self._root = root
 
     def recipe(self, project: Project) -> Recipe:
         recipe = self._transport.recipe(project)
         return dataclasses.replace(
-            recipe, agents=False, lenient=True, overrides=(*recipe.overrides, self._stubs.bind)
+            recipe,
+            agents=False,
+            lenient=True,
+            overrides=(*recipe.overrides, self._root, self._stubs.bind),
         )
 
     def bind(self, application: Application) -> Any:
@@ -196,7 +200,7 @@ def acme_config() -> dict[str, Any]:
         "app": {
             "name": "acme-shipping",
             "job_service": "inline",
-            "discovery": {"mode": "modules", "modules": {"include": [SHIPPING]}},
+            "packages": [SHIPPING],
             "rest": {
                 "docs_url": None,
                 "redoc_url": None,
@@ -263,8 +267,8 @@ def compose(project: Project, stubs: Stubs) -> Iterator[Compose]:
         adapter = TRANSPORTS[transport]()
         if isinstance(adapter, LambdaAdapter):
             opened.append(adapter)
-        stubbed = Stubbed(adapter, stubs)
-        application = project.compose(stubbed, modules=(root,))
+        stubbed = Stubbed(adapter, stubs, root)
+        application = project.compose(stubbed)
         return application, stubbed.bind(application)
 
     yield build
@@ -277,6 +281,6 @@ def compose_strictly(project: Project) -> Callable[..., Application]:
     """Compose acme shipping on *transport* with *root* as production does, with no stub."""
 
     def build(transport: str, root: Module = gateway_root) -> Application:
-        return project.compose(TRANSPORTS[transport](), modules=(root,))
+        return project.compose(WithOverrides(TRANSPORTS[transport](), root))
 
     return build

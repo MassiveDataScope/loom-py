@@ -1,10 +1,5 @@
 {
   "bindings": {
-    "('repo', AcmeRecord)": {
-      "provider": "HttpTestHarness._build_module.<locals>._make_provider.<locals>._provider",
-      "resolved": "InMemoryRepository",
-      "scope": "APPLICATION"
-    },
     "AppConfig": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AppConfig",
@@ -50,6 +45,15 @@
       "resolved": "function",
       "scope": "APPLICATION"
     },
+    "RepositorySourceToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "ReplaceableSource",
+      "scope": "APPLICATION"
+    },
+    "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
+    },
     "RuntimeExecutor": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "RuntimeExecutor",
@@ -77,6 +81,6 @@
     }
   },
   "repo_bindings": {
-    "AcmeRecord": "('repo', AcmeRecord)"
+    "AcmeRecord": "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)"
   }
 }

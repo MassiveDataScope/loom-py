@@ -105,7 +105,7 @@ _SCENARIOS: dict[str, _Precedence] = {
     # A caller module's ReservedBindingError (create_kernel) before configure_job_service's
     # JobBackendError.
     "reserved-binding-and-job-backend": _Precedence(
-        paths.Composition(modules=(binds_sql_service,), config=_UNKNOWN_BACKEND),
+        paths.Composition(overrides=(binds_sql_service,), config=_UNKNOWN_BACKEND),
         ReservedBindingError,
     ),
     # plan's DeployCheckError before build_stores's ConfigError (the cursor codec).
@@ -182,7 +182,7 @@ class TestRefusalPrecedence:
     ) -> None:
         refusal = REFUSALS[family]
         composition = replace(
-            refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
+            refusal.composition, overrides=(*refusal.composition.overrides, binds_unbuildable)
         )
         caught = {
             path: paths.refusal(paths.COMPOSED, path, composition, tmp_path, refusal.prepare)

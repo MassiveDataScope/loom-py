@@ -103,7 +103,7 @@ the event. Startup and `loom check --deploy` refuse a job that is not
 discovered, that declares no `Input()` command or that requires another
 parameter, a `job` or `identity` given by a placeholder, two functions
 consuming the same queue, and a `config.overridable` entry reaching
-`lambda.functions.*.trigger`, `lambda.handler` or `app.discovery`.
+`lambda.functions.*.trigger`, `lambda.handler` or `app.packages`.
 
 The job runs as the declared `identity`, with
 `mechanism: lambda:<function>:<source>`, and never as anything the event
@@ -156,8 +156,8 @@ The design and its sources are recorded in ADR 0007
 |---|---|---|
 | `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `adapter=` may be omitted when `app.entry` is set |
 | `Project.load(*config_paths, ...)` | the `Project`: configuration, environment and code, not yet composed | tests, scripts, a host that holds its configuration in memory |
-| `project.compose(adapter, modules=...)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
-| `project.serve(adapter, modules=...)` | what the adapter's `bind` returns | `create_app` without the shortcut |
+| `project.compose(adapter)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
+| `project.serve(adapter)` | what the adapter's `bind` returns | `create_app` without the shortcut |
 
 `create_app` and `Project.load` take the same loading arguments: the YAML
 `config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
@@ -246,7 +246,7 @@ class ScriptAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=project.discover(),              # app.discovery
+            discovered=project.discover(),              # app.packages
             default_store_backend="sqlalchemy",               # without stores.default
             skip_checks=frozenset({REST_CHECKS}),
         )

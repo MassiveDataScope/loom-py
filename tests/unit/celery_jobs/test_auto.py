@@ -28,7 +28,6 @@ class TestCreateApp:
             environment=None,
             jobs=[_DummyJob],
             callbacks=(),
-            modules=(),
             metrics=None,
             resolvers=(),
         )
@@ -45,7 +44,6 @@ class TestCreateApp:
             environment=None,
             jobs=(),
             callbacks=(),
-            modules=(),
             metrics=None,
             resolvers=(),
         )
@@ -53,7 +51,6 @@ class TestCreateApp:
     def test_create_app_passes_optional_arguments(self) -> None:
         expected = MagicMock()
         result = SimpleNamespace(celery_app=expected)
-        module = MagicMock()
         callback: type[Any] = type("Callback", (), {})
         metrics = MagicMock()
 
@@ -63,7 +60,6 @@ class TestCreateApp:
                 "worker.yaml",
                 jobs=[_DummyJob],
                 callbacks=[callback],
-                modules=[module],
                 metrics=metrics,
             )
 
@@ -75,7 +71,6 @@ class TestCreateApp:
             environment=None,
             jobs=[_DummyJob],
             callbacks=[callback],
-            modules=[module],
             metrics=metrics,
             resolvers=(),
         )

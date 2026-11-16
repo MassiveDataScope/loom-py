@@ -104,13 +104,13 @@ _NEEDS_SERVICE = paths.Composition(
 
 REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
     "reserved-binding": _Refusal(
-        paths.Composition(modules=(binds_sql_service,)), ReservedBindingError
+        paths.Composition(overrides=(binds_sql_service,)), ReservedBindingError
     ),
     "failing-module": _Refusal(
-        paths.Composition(modules=(raises_at_registration,)), RuntimeError, _EVERY
+        paths.Composition(overrides=(raises_at_registration,)), RuntimeError, _EVERY
     ),
     "failing-application-provider": _Refusal(
-        paths.Composition(modules=(binds_unbuildable,)), ResolutionError, _EVERY
+        paths.Composition(overrides=(binds_unbuildable,)), ResolutionError, _EVERY
     ),
     "use-case-compilation": _Refusal(
         paths.Composition(use_cases=(AcmePing, AcmeUncompilable)), CompilationError, _EVERY
@@ -181,17 +181,17 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
     ),
     "unbound-dependency": _Refusal(_NEEDS_SERVICE, ResolutionError),
     "dependency-cycle": _Refusal(
-        paths.Composition(use_cases=(AcmePing, AcmeNeedsCycle), modules=(binds_cycle,)),
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsCycle), overrides=(binds_cycle,)),
         DependencyGraphError,
     ),
     "captive-dependency": _Refusal(
-        paths.Composition(use_cases=(AcmePing, AcmeNeedsLedger), modules=(binds_captive,)),
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsLedger), overrides=(binds_captive,)),
         DependencyGraphError,
         _ANALYSED,
     ),
     "caller-in-singleton": _Refusal(
         paths.Composition(
-            use_cases=(AcmePing, AcmeNeedsCallerCache), modules=(binds_caller_cache,)
+            use_cases=(AcmePing, AcmeNeedsCallerCache), overrides=(binds_caller_cache,)
         ),
         DependencyGraphError,
         _ANALYSED,
@@ -293,10 +293,9 @@ class TestStartupRefusals:
 
         config_path = Path(fixture_project("pipeline_modules_job"))
         config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        module = config["app"]["discovery"]["interfaces"]["modules"][0]
-        with (config_path.parent / f"{module}.py").open("a", encoding="utf-8") as written:
+        package = config["app"]["packages"][0]
+        with (config_path.parent / package / "__init__.py").open("a", encoding="utf-8") as written:
             written.write(_UNCOMPILABLE_JOB)
-        config["app"]["discovery"] = {"mode": "modules", "modules": {"include": [module]}}
         config["app"]["job_service"] = "inline"
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 

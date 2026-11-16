@@ -47,15 +47,14 @@ from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E4
 from loom.testing import LambdaTestClient  # noqa: E402
 from tests.integration.ai.freeze import measure, probe  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
+from tests.integration.ai.freeze.t06_app.shared import AGENT, RAISED  # noqa: E402
 
 # The T06 function and its fixtures: importing the fixtures registers them here.
 from tests.integration.ai.freeze.test_lambda import (  # noqa: E402
-    _AGENT,
     _ERAS,
     _HANDSHAKE,
     _PATHS,
     _POST_CONNECTS,
-    _RAISED,
     _TOKEN_KIND,
     _TRIGGERS,
     FetchedToken,
@@ -253,7 +252,7 @@ class TestRowExpiredSessionSafeRetry:
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches - fetched == 0
         assert (built.evictions(), built.rebuilds()) == (0, 1)
-        assert _RAISED == []
+        assert RAISED == []
 
 
 class TestRowMidCallFailure:
@@ -272,7 +271,7 @@ class TestRowMidCallFailure:
 
         assert built.methods() == ["tools/call"]
         assert built.runs()["book"] == 1
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         fetched = FetchedToken.fetches
 
         assert built.by(path)
@@ -331,7 +330,7 @@ def _function_with_a_spare_server(
     config["ai"]["mcp_servers"]["spare"] = spare_server
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     agents = tmp_path / "agents"
-    spec = yaml.safe_load((agents / f"{_AGENT}.yaml").read_text(encoding="utf-8"))
+    spec = yaml.safe_load((agents / f"{AGENT}.yaml").read_text(encoding="utf-8"))
     grant = {"kind": "mcp", "server": "spare", "include": ["echo"]}
     spec |= {"name": "idle", "capabilities": [grant]}
     (agents / "idle.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")

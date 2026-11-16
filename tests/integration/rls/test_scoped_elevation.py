@@ -25,17 +25,20 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.composition import Project
-from loom.core.authz import Decision, Grant, Scope
-from loom.core.authz.elevation import ElevationSink, elevated_scopes
+from loom.core.authz.elevation import ElevationSink
 from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.stores.elevation import ScopedElevationSink
-from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
-from loom.core.use_case.use_case import UseCase
+from loom.core.use_case.invoker import AppInvoker
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema, elevate
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
+from tests.integration.rls.apps.scoped_elevation import (
+    FLAGS,
+    ElevateFromGatherChild,
+    WriteAndNest,
+)
 from tests.integration.rls.conftest import (
     FLAG,
     U1,
@@ -47,57 +50,7 @@ from tests.integration.rls.conftest import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("notes_wiring")]
 
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
-_INSERT = f"INSERT INTO notes (owner_id, editor, body) VALUES ('{U1}', 'ana', 'outer')"
 _SEEDED = "a,b,z"
-_flags: list[str] = []
-"""The flag each elevating execution saw, kept even when its invocation fails."""
-
-
-def _session(session_manager: SessionManager) -> AsyncSession:
-    session = session_manager.active_session
-    assert session is not None
-    return session
-
-
-class EditBobElevated(UseCase[notes.Note, None]):
-    def __init__(self, session_manager: SessionManager) -> None:
-        self._session_manager = session_manager
-
-    async def execute(self) -> None:
-        await elevate("editor", DECISION, at=Scope.of(U1))
-        session = _session(self._session_manager)
-        _flags.append((await session.execute(text(FLAG))).scalar_one())
-        await session.execute(text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'"))
-
-
-class WriteAndNest(UseCase[notes.Note, None]):
-    """Write, run :class:`EditBobElevated` nested, maybe catching its error, write again."""
-
-    def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
-        self._session_manager = session_manager
-        self._app = app
-
-    async def execute(self, catch: bool, timeout_s: float | None) -> None:
-        await _session(self._session_manager).execute(text(_INSERT))
-        try:
-            async with asyncio.timeout(timeout_s):
-                await self._app.invoke(EditBobElevated)
-        except Exception:
-            if not catch:
-                raise
-        await _session(self._session_manager).execute(text(_INSERT))
-
-
-class ElevateFromGatherChild(UseCase[notes.Note, tuple[object, frozenset[str], str]]):
-    def __init__(self, session_manager: SessionManager) -> None:
-        self._session_manager = session_manager
-
-    async def execute(self) -> tuple[object, frozenset[str], str]:
-        elevation = elevate("editor", DECISION, at=Scope.of(U1))
-        (refused,) = await asyncio.gather(elevation, return_exceptions=True)
-        flag = (await _session(self._session_manager).execute(text(FLAG))).scalar_one()
-        return refused, elevated_scopes(), flag
 
 
 @dataclass(frozen=True)
@@ -123,12 +76,12 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
     document: dict[str, Any] = yaml.safe_load((tmp_path / f"{schema}.yaml").read_text())
-    document["app"]["discovery"]["modules"]["include"].append(__name__)
+    document["app"]["packages"].append("tests.integration.rls.apps.scoped_elevation")
     document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
     document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     (tmp_path / "app.yaml").write_text(yaml.safe_dump(document))
     built = Project.load(str(tmp_path / "app.yaml"), environment="test").compose(FastAPIAdapter())
-    _flags.clear()
+    FLAGS.clear()
     identity = set_identity(Identity(subject=U1))
     try:
         async with built.running():
@@ -182,7 +135,7 @@ class TestScopedElevation:
         with pytest.raises(RuntimeError, match=raised):
             await composed.app.invoke(WriteAndNest, params={"catch": catch, "timeout_s": None})
 
-        assert _flags == ["on"]
+        assert FLAGS == ["on"]
         assert await composed.outcome() == (_SEEDED, "")
 
     async def test_a_timeout_once_the_flag_was_sent_commits_nothing_even_when_caught(

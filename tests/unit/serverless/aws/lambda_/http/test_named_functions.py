@@ -71,7 +71,7 @@ def serve() -> Iterator[Callable[..., Any]]:
 
 
 def _module_of(config: dict[str, Any]) -> str:
-    return str(config["app"]["discovery"]["interfaces"]["modules"][0])
+    return str(config["app"]["packages"][0])
 
 
 def _yaml_catalog(config: dict[str, Any], _root: Path) -> None:
@@ -102,23 +102,27 @@ def _disable(method: str, route: str) -> Edit:
 
 
 def _manifest_discovery(config: dict[str, Any], root: Path) -> None:
-    root.joinpath("lambda_manifest.py").write_text(
+    package = root / "lambda_manifest"
+    package.mkdir()
+    package.joinpath("__init__.py").write_text(
         f"from {_module_of(config)} import Item, ItemInterface\n"
         "MODELS = [Item]\nINTERFACES = [ItemInterface]\nJOBS = []\n",
         encoding="utf-8",
     )
-    config["app"]["discovery"] = {"mode": "manifest", "manifest": {"module": "lambda_manifest"}}
+    config["app"]["packages"].append("lambda_manifest")
 
 
 def _second_item_interface(config: dict[str, Any], root: Path) -> None:
-    root.joinpath("other_contract.py").write_text(
+    package = root / "other_contract"
+    package.mkdir()
+    package.joinpath("__init__.py").write_text(
         "from loom.rest.model import RestInterface\n"
         "class ItemInterface(RestInterface[object]):\n"
         "    prefix = '/other'\n"
         "    routes = ()\n",
         encoding="utf-8",
     )
-    config["app"]["discovery"]["interfaces"]["modules"].append("other_contract")
+    config["app"]["packages"].append("other_contract")
 
 
 _ITEM_ONLY = {"public_api": _http("ItemInterface")}

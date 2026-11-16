@@ -36,13 +36,12 @@ Typical YAML layout (stores optional for pure in-memory jobs)::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
-from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
 from loom.composition import Project
 from loom.core.config import ConfigResolver
@@ -84,7 +83,6 @@ def bootstrap_worker(
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
     callbacks: Sequence[type[Any]] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
     metrics: MetricsAdapter | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
@@ -114,14 +112,13 @@ def bootstrap_worker(
             *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``.
         jobs: Concrete ``Job`` subclasses to compile/register.  When
-            omitted, jobs are discovered from ``app.discovery`` using
-            mode ``modules`` or ``manifest``.
+            omitted, jobs are discovered from ``app.packages``.
         use_cases: Additional ``UseCase`` subclasses to compile alongside
             ``jobs``.  Required when callbacks invoke
             :class:`~loom.core.use_case.invoker.ApplicationInvoker`
             (e.g. ``app.entity(Product).get(...)``), so that the
             corresponding use-case keys are registered in the worker
-            process.  Ignored when jobs are discovered via ``app.discovery``
+            process.  Ignored when jobs are discovered via ``app.packages``
             (discovery already includes all compiled use-cases).
         interfaces: ``RestInterface`` subclasses whose route use-cases
             should be compiled in the worker.  Equivalent to passing the
@@ -130,12 +127,6 @@ def bootstrap_worker(
             AutoCRUD-generated use-cases that are not importable by name.
         callbacks: Concrete ``JobCallback`` subclasses to register as
             Celery callback (success / error) tasks.
-        modules: Callables that receive the container and register
-            infrastructure bindings (repositories, services, etc.).
-            Executed in declaration order before compilation.  A module
-            binding a framework-owned key fails with
-            :class:`~loom.composition.errors.ReservedBindingError`; see
-            :func:`loom.composition.create_app`.
         metrics: Optional metrics adapter forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
@@ -152,7 +143,7 @@ def bootstrap_worker(
             configuration section is missing or fails validation.
         DeployCheckError: When a deploy check of level error fails in
             production or staging.
-        RuntimeError: If no ``app.discovery`` config is provided and no
+        RuntimeError: If no ``app.packages`` config is provided and no
             ``jobs`` are declared.
         AgentCompilationError: When a compiled use case declares an
             ``Agent()`` or ``Mcp()`` marker.
@@ -183,7 +174,7 @@ def bootstrap_worker(
         callbacks=callbacks,
         metrics=metrics,
     )
-    application = project.compose(adapter, modules=modules)
+    application = project.compose(adapter)
     celery_app = adapter.bind(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,
@@ -192,4 +183,4 @@ def bootstrap_worker(
     )
 
 
-__all__ = ["WorkerBootstrapResult", "WorkerManifest", "bootstrap_worker"]
+__all__ = ["WorkerBootstrapResult", "bootstrap_worker"]

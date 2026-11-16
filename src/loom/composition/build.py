@@ -11,7 +11,6 @@ from loom.core.environment import Environment
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Adapter
-    from loom.core.di.container import LoomContainer
 
 T = TypeVar("T")
 
@@ -24,7 +23,6 @@ def create_app(
     environment: Environment | str | None = None,
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> T: ...
 
 
@@ -36,7 +34,6 @@ def create_app(
     environment: Environment | str | None = None,
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> object: ...
 
 
@@ -47,7 +44,6 @@ def create_app(
     environment: Environment | str | None = None,
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> object:
     """Compose an application from configuration and mount *adapter*'s transport on it.
 
@@ -62,10 +58,6 @@ def create_app(
         code_path: Overrides ``app.code_path``, relative to the first config file.
         resolvers: Resolvers for ``${name:key}`` placeholders, ahead of the
             built-in ``secrets`` and ``ssm``.
-        modules: DI modules run before repositories are registered. They may
-            bind ``JobService`` and repositories, which the framework then
-            leaves alone, but none of the keys it owns (see
-            :class:`~loom.composition.errors.ReservedBindingError`).
 
     Returns:
         What *adapter* binds: an ASGI app, a Celery app, a handler.
@@ -74,7 +66,7 @@ def create_app(
         ConfigError: When the configuration is incomplete or invalid.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
-        ReservedBindingError: When a module binds a framework-owned key.
+        ReservedBindingError: When an installer binds a framework-owned key.
     """
     project = Project.load(
         *config_paths,
@@ -84,9 +76,7 @@ def create_app(
         resolvers=resolvers,
         caller="create_app",
     )
-    return project.serve(
-        adapter if adapter is not None else _adapter_from_entry(project), modules=modules
-    )
+    return project.serve(adapter if adapter is not None else _adapter_from_entry(project))
 
 
 def _fastapi() -> Adapter[object]:

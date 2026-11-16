@@ -55,10 +55,7 @@ _APP_CONFIG = """\
 app:
   name: bench
   code_path: "."
-  discovery:
-    mode: modules
-    modules:
-      include: [bench_app]
+  packages: [bench_app]
 stores:
   default:
     backend: sqlalchemy
@@ -133,7 +130,8 @@ def _run_child(source: str, *args: str, cwd: Path) -> dict[str, Any]:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="loom-bench-") as tmp:
         project = Path(tmp)
-        (project / "bench_app.py").write_text(_APP_MODULE, encoding="utf-8")
+        (project / "bench_app").mkdir()
+        (project / "bench_app" / "__init__.py").write_text(_APP_MODULE, encoding="utf-8")
         config = project / "app.yaml"
         config.write_text(_APP_CONFIG.format(db_path=project / "bench.db"), encoding="utf-8")
 

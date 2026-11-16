@@ -93,7 +93,7 @@ _PROTECTED: Final = (
     ("sqs", "queues"),
     ("lambda", "functions", "*", "trigger"),
     ("lambda", "handler"),
-    ("app", "discovery"),
+    ("app", "packages"),
 )
 """Keys no ``config.overridable`` entry may open, with everything below them; ``*`` is any level.
 
@@ -102,7 +102,7 @@ the environment any other way. ``stores.settings.cursors`` decides whether, and 
 which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
 and jobs go, a Lambda function's ``trigger`` what invokes it, which job runs
 and as whom, ``lambda.handler`` the code every function runs and
-``app.discovery`` the code it loads: no per-deploy variable may change them."""
+``app.packages`` the code it loads: no per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",
@@ -340,7 +340,7 @@ def _refuse_protected(entry: str) -> None:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
             "first level, checks, config, stores.settings.cursors, aws, sqs.queues, "
-            "lambda.functions.*.trigger, lambda.handler or app.discovery"
+            "lambda.functions.*.trigger, lambda.handler or app.packages"
         )
 
 

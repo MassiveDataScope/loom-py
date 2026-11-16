@@ -7,7 +7,6 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.discovery.worker import WorkerComponents, resolve_worker_components
-from loom.core.discovery.worker import WorkerManifest as WorkerManifest
 from loom.core.engine.compilable import Compilable
 from loom.core.job.job import Job
 from loom.core.logger import get_logger

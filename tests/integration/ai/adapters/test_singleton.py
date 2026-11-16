@@ -8,6 +8,7 @@ from loom.core.di.scope import Scope
 from loom.core.identity import Identity
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
+from tests.helpers.composition import WithOverrides
 from tests.integration.ai.adapters.doubles import (
     AcmeAdvice,
     AcmeAnalystAdvice,
@@ -35,7 +36,7 @@ class TestASingletonAdapterHoldingHandles:
     ) -> None:
         del engines
         application = project.compose(
-            LambdaAdapter(use_cases=(AcmeMarket,)), modules=(_singletons,)
+            WithOverrides(LambdaAdapter(use_cases=(AcmeMarket,)), _singletons)
         )
         container, runtime = application.kernel.container, application.ai.runtime
         quotes = container.resolve(AcmeQuotes)

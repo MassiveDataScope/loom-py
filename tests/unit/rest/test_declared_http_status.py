@@ -194,15 +194,14 @@ def _write_project(
     directory: Path, *, source: str = _APP_SOURCE, slug: str = "declared_http"
 ) -> tuple[str, str]:
     module = f"loom_{slug}_{_NON_IDENTIFIER.sub('_', directory.name)}"
-    (directory / f"{module}.py").write_text(source, encoding="utf-8")
+    package = directory / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "declared-http",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

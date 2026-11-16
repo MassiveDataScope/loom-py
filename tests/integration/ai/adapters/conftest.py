@@ -22,7 +22,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores import SERVER_PROFILE
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_project
+from tests.helpers.composition import WithOverrides, composition_project
 from tests.integration.ai.adapters.doubles import (
     AGENT,
     SERVER,
@@ -154,8 +154,11 @@ def compose(project: Project, engines: CountingEngineProvider) -> Compose:
     ) -> Application:
         cases = use_cases or (AcmeMarket,)
         return project.compose(
-            host or LambdaAdapter(use_cases=cases),
-            modules=(binding(AcmeQuotes, quotes), binding(AcmeAdvice, advice)),
+            WithOverrides(
+                host or LambdaAdapter(use_cases=cases),
+                binding(AcmeQuotes, quotes),
+                binding(AcmeAdvice, advice),
+            )
         )
 
     return build

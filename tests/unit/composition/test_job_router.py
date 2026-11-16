@@ -181,10 +181,9 @@ class TestApiJobSettings:
         # Its own module name: an earlier test may have imported the default one.
         config_path = Path(fixture_project("job_config_api"))
         config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        module = config["app"]["discovery"]["interfaces"]["modules"][0]
-        with (config_path.parent / f"{module}.py").open("a", encoding="utf-8") as source:
+        package = config["app"]["packages"][0]
+        with (config_path.parent / package / "__init__.py").open("a", encoding="utf-8") as source:
             source.write(_REPORT_JOB)
-        config["app"]["discovery"] = {"mode": "modules", "modules": {"include": [module]}}
         config["app"]["job_service"] = "inline"
         config["jobs"] = {"ReportJob": {"queue": "reports", "countdown": 5, "priority": 3}}
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")

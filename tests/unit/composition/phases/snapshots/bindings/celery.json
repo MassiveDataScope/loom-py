@@ -55,10 +55,14 @@
       "resolved": "function",
       "scope": "APPLICATION"
     },
-    "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
+    "RepositorySourceToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "resolved": "ReplaceableSource",
       "scope": "APPLICATION"
+    },
+    "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "RuntimeExecutor": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
@@ -91,39 +95,32 @@
       "scope": "APPLICATION"
     },
     "loom.core.stores.repository.capabilities.BulkCreatable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Countable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Creatable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Deletable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Listable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Readable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     },
     "loom.core.stores.repository.capabilities.Updatable[tests.unit.composition.phases.components.AcmeRecord]": {
-      "provider": "_build_repository_provider.<locals>._provider",
-      "resolved": "RepositorySQLAlchemy",
-      "scope": "APPLICATION"
+      "provider": "register_repository_binding.<locals>.<lambda>",
+      "scope": "REQUEST"
     }
   },
   "executors": {

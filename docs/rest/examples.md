@@ -568,16 +568,7 @@ In `config/api.yaml`:
 app:
   name: dummy_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.user.model
-        - app.user.interface
-        - app.product.model
-        - app.product.jobs
-        - app.product.use_cases
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: Dummy Store API
@@ -600,32 +591,18 @@ observability:
       path: /metrics
 ```
 
-### Manifest mode (explicit registry)
+### Package discovery
 
-Larger projects list every component explicitly in a manifest module:
-
-```python
-# app/manifest.py
-from app.product.model import Product
-from app.product.jobs import SendRestockEmailJob, BuildProductSummaryJob
-from app.product.use_cases import DispatchRestockEmailUseCase, ListLowStockProductsUseCase
-from app.product.interface import ProductRestInterface
-
-MODELS = [Product, ...]
-USE_CASES = [DispatchRestockEmailUseCase, ListLowStockProductsUseCase, ...]
-JOBS = [SendRestockEmailJob, BuildProductSummaryJob]
-INTERFACES = [ProductRestInterface, ...]
-```
-
-In `config/api.yaml`:
+List each application package in `config/api.yaml`:
 
 ```yaml
 app:
-  discovery:
-    mode: manifest
-    manifest:
-      module: app.manifest
+  packages: [acme]
 ```
+
+The scanner imports every subpackage and discovers models, use cases, jobs,
+REST interfaces, and installers declared there. Re-exported classes are
+collected from their defining module once.
 
 ### Entry point
 
@@ -658,5 +635,5 @@ All examples above map directly to files in
 | `product/jobs.py` | `SendRestockEmailJob`, `BuildProductSummaryJob`, `SyncProductToErpJob` |
 | `product/callbacks.py` | `RestockEmailSuccessCallback` + `RestockEmailFailureCallback` |
 | `product/interface.py` | Mixed auto-CRUD + custom routes |
-| `manifest.py` | Full manifest for all models, use cases, jobs, interfaces |
+| `acme/` | Package containing models, use cases, jobs, interfaces, and installers |
 | `main.py` | `create_app()` bootstrap |

@@ -410,12 +410,6 @@ class LookUpKnowledgeUseCase(UseCase[object, str]):
         return "ok"
 '''
 
-_NO_AI_MANIFEST_SOURCE = """\
-from {app_module} import LookUpKnowledgeUseCase
-
-USE_CASES = [LookUpKnowledgeUseCase]
-"""
-
 
 class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
     """T501 item 6 (the ``create_app`` half): no unit test drives this —
@@ -423,18 +417,14 @@ class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
 
     def test_create_app_aborts_naming_the_use_case_and_the_parameter(self, tmp_path: Path) -> None:
         app_module = "loom_noai_mcp_fixture_app"
-        manifest_module = "loom_noai_mcp_fixture_manifest"
-        sys.modules.pop(manifest_module, None)
         sys.modules.pop(app_module, None)
-        (tmp_path / f"{app_module}.py").write_text(_NO_AI_APP_SOURCE, encoding="utf-8")
-        (tmp_path / f"{manifest_module}.py").write_text(
-            _NO_AI_MANIFEST_SOURCE.format(app_module=app_module), encoding="utf-8"
-        )
+        (tmp_path / app_module).mkdir()
+        (tmp_path / app_module / "__init__.py").write_text(_NO_AI_APP_SOURCE, encoding="utf-8")
         config: dict[str, Any] = {
             "app": {
                 "name": "noai-mcp-demo",
                 "code_path": str(tmp_path),
-                "discovery": {"mode": "manifest", "manifest": {"module": manifest_module}},
+                "packages": [app_module],
             },
             "stores": {
                 "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
@@ -451,7 +441,6 @@ class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
             with pytest.raises(AgentCompilationError) as failure:
                 create_app(str(config_path))
         finally:
-            sys.modules.pop(manifest_module, None)
             sys.modules.pop(app_module, None)
 
         codes = {issue.code for issue in failure.value.issues}

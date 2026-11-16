@@ -134,21 +134,23 @@ class TestUnboundMcpAdapter:
         self,
     ) -> None:
         """No MCP resolver is ever bound without agents: the AI phase refuses first (T11)."""
-        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
+        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), overrides=(_binds_crm,))
         project = _project()
 
         with pytest.raises(AgentCompilationError) as caught:
-            project.compose(adapter, modules=(_binds_crm,))
+            project.compose(adapter)
 
         assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
         assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
 
     def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
-        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
+        adapter = Serving(
+            AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True, overrides=(_binds_crm,)
+        )
         project = _project()
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-            application = project.compose(adapter, modules=(_binds_crm,))
+            application = project.compose(adapter)
 
         with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
             application.kernel.container.resolve(AcmeCrmPort)

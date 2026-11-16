@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -17,11 +16,14 @@ from loom.composition import AppConfig, Application, CompositionStateError, Proj
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from loom.core.model import BaseModel
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import LAMBDA_PROFILE
@@ -70,13 +72,12 @@ def _add_broken_resource(application: Application) -> None:
 
 
 def _manifest_project(project: Project, module: str, **sections: Any) -> Project:
-    """*project*, discovering from the manifest *module*, with extra top-level *sections*."""
-    discovery = {"mode": "manifest", "manifest": {"module": module}}
+    """Return a project configured to scan *module*."""
     return composition_project(
         ConfigContext.from_dict(
-            with_worker({"app": {"name": "lambda-sqs", "discovery": discovery}, **sections})
+            with_worker({"app": {"name": "lambda-sqs", "packages": [module]}, **sections})
         ),
-        app=project.app,
+        app=AppConfig(name="lambda-sqs", entry=WORKER, packages=[module]),
         code_path=project.code_path,
         config_root=project.config_root,
     )
@@ -601,8 +602,12 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         adapter = LambdaAdapter(jobs=[probe[0]])
+        from tests.helpers.composition import WithOverrides
+
         application = project.compose(
-            adapter, modules=(lambda container: container.register(JobService, _OtherJobService),)
+            WithOverrides(
+                adapter, lambda container: container.register(JobService, _OtherJobService)
+            )
         )
         adapter.bind(application)
         try:
@@ -621,14 +626,19 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        manifest = ModuleType("tests.unit.serverless.aws.lambda_._warning_manifest")
-        manifest.MODELS = [type("DiscoveredModel", (), {})]  # type: ignore[attr-defined]
-        manifest.CALLBACKS = [type("DiscoveredCallback", (), {})]  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
-        configured = _manifest_project(project, manifest.__name__)
+        class DiscoveredModel(BaseModel):
+            __tablename__ = "discovered_models"
+
+        monkeypatch.setattr(
+            PackageScanner,
+            "discover",
+            lambda self, **kwargs: DiscoveryResult(
+                models=(DiscoveredModel,), use_cases=(), interfaces=()
+            ),
+        )
+        configured = _manifest_project(project, "acme_jobs")
         LambdaAdapter(jobs=[probe[0]]).recipe(configured)
         assert any("ignores AutoCRUD" in message for message in caplog.messages)
-        assert any("ignores discovered job callbacks" in message for message in caplog.messages)
 
     def test_committed_failure_logs_final_outcome(
         self,

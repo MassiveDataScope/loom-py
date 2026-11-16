@@ -2,12 +2,12 @@
 
 ``CompositionErrorCode``
     Catalogue of the start-up failures the composition reports about the
-    caller's DI modules. Each member carries the template of its issue, and
+    installers and overrides. Each member carries the template of its issue, and
     ``CompositionErrorCode.X.issue(...)`` builds it.
 
 ``ReservedBindingError``
-    A caller's DI module bound a key the framework owns. The composition
-    raises it right after the caller's modules run, before any repository or
+    An installer or override bound a key the framework owns. The composition
+    raises it right after they run, before any repository or
     framework service is registered.
 
 ``JobBackendError``

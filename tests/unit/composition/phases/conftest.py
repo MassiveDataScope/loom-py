@@ -36,7 +36,12 @@ def overridden(project: Project) -> Callable[..., Application]:
     """Compose ``AcmeRecord``, ``AcmePing`` and ``AcmeJob`` over SQLite with these overrides."""
 
     def compose(*overrides: Module, modules: Sequence[Module] = ()) -> Application:
-        adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,), overrides=overrides)
-        return project.compose(adapter, modules=modules)
+        adapter = Serving(
+            AcmeRecord,
+            use_cases=(AcmePing,),
+            jobs=(AcmeJob,),
+            overrides=(*modules, *overrides),
+        )
+        return project.compose(adapter)
 
     return compose

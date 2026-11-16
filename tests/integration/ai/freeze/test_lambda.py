@@ -16,12 +16,9 @@ is loom's, unmodified.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import os
-import sys
-import threading
 import time
 import urllib.request
 from collections import Counter
@@ -29,7 +26,6 @@ from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Literal
 
 import pytest
@@ -58,23 +54,28 @@ from pydantic_ai.models.function import (  # noqa: E402
 )
 
 from loom.ai import registry, remote_auth  # noqa: E402
-from loom.ai.abc import AgentHandle, McpHandle  # noqa: E402
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.engines.pydantic_ai._transport import EvictableTransport  # noqa: E402
-from loom.ai.errors import AgentRunError, AgentRunErrorCode  # noqa: E402
+from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
-from loom.core.command import Command  # noqa: E402
 from loom.core.identity import Identity  # noqa: E402
 from loom.core.identity.wire import encode_identity  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
-from loom.core.use_case import Agent, Input, Mcp, UseCase  # noqa: E402
-from loom.rest.model import RestInterface, RestRoute  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
 from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
+from tests.integration.ai.freeze.t06_app.clerk_jobs import AskClerkJob  # noqa: E402
+from tests.integration.ai.freeze.t06_app.shared import (  # noqa: E402
+    AGENT,
+    GAP_TAKEN,
+    RAISED,
+    SERVER,
+    TOOLS,
+)
+from tests.integration.ai.freeze.t06_app.tool_jobs import CallToolJob, CallTwiceJob  # noqa: E402
 
 # Not marked 'integration': that marker means a real external service, and this needs
 # only loopback sockets, so it runs in the fast lane, which installs 'mcp-tests'.
@@ -87,10 +88,13 @@ pytestmark = [
 Trigger = Literal["http", "jobs"]
 Path_ = Literal["marker", "agent"]
 
-_SERVER = "orders"
-_AGENT = "clerk"
-_TOOLS = ("echo", "book", "slow")
-_MANIFEST = "loom_t06_lambda_manifest"
+_APP = "tests.integration.ai.freeze.t06_app"
+_PACKAGES: dict[tuple[Trigger, bool], list[str]] = {
+    ("http", False): [f"{_APP}.tools"],
+    ("http", True): [f"{_APP}.tools", f"{_APP}.clerk"],
+    ("jobs", False): [f"{_APP}.tool_jobs"],
+    ("jobs", True): [f"{_APP}.tool_jobs", f"{_APP}.clerk_jobs"],
+}
 _TOKEN_KIND = "t06-fetched-token"
 _HANDSHAKE = ("server/discover", "initialize", "notifications/initialized", "tools/list")
 _SECRET = "t06-lambda-suite-secret-of-at-least-32-bytes"
@@ -105,11 +109,6 @@ _BEARER = {
 }
 _CALLER = encode_identity(Identity(subject="tester"))
 _SETTLE_S = 5.0
-_GAP_TAKEN = threading.Event()
-"""Set by a test once it moved the wall clock while a ``slow`` call is in flight."""
-_RAISED: list[AgentRunErrorCode] = []
-"""The code of every ``AgentRunError`` a use case or job saw, noted before it propagated."""
-
 _POST_CONNECTS: dict[str, Callable[[int], int]] = {
     "modern": lambda posts: 0,
     "legacy": lambda posts: posts,
@@ -131,104 +130,6 @@ _PATHS = pytest.mark.parametrize("path", ["marker", "agent"])
 # ---------------------------------------------------------------------------
 # The application: each marker, from a use case (http) and from a job (SQS)
 # ---------------------------------------------------------------------------
-
-
-class Say(Command, frozen=True):
-    """Which tool to call, and with what."""
-
-    tool: str = "echo"
-    text: str = "marker"
-
-
-def _noted(error: AgentRunError) -> AgentRunError:
-    _RAISED.append(error.code)
-    return error
-
-
-class CallTool(UseCase[object, dict[str, Any]]):
-    """Calls one tool through an ``Mcp()`` marker: no agent, no model."""
-
-    async def execute(
-        self, cmd: Say = Input(), orders: McpHandle = Mcp(_SERVER, include=_TOOLS)
-    ) -> dict[str, Any]:
-        try:
-            return dict(await orders.call_untyped(cmd.tool, {"text": cmd.text}))
-        except AgentRunError as error:
-            raise _noted(error) from None
-
-
-class CallTwice(UseCase[object, int]):
-    """Calls ``echo`` twice at once through an ``Mcp()`` marker."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> int:
-        calls = (orders.call_untyped("echo", {"text": str(n)}) for n in range(2))
-        return len(await asyncio.gather(*calls))
-
-
-class EchoDuringSlow(UseCase[object, int]):
-    """Calls ``echo`` while a ``slow`` call is in flight, once the test moved the clock."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> int:
-        slow = asyncio.ensure_future(orders.call_untyped("slow", {"text": "slow"}))
-        while not _GAP_TAKEN.is_set():
-            await asyncio.sleep(0.01)
-        await orders.call_untyped("echo", {"text": "during"})
-        await slow
-        return 2
-
-
-class AskClerk(UseCase[object, str]):
-    """Runs the agent, whose model calls the tool the prompt names."""
-
-    async def execute(self, cmd: Say = Input(), clerk: AgentHandle = Agent(_AGENT)) -> str:
-        try:
-            await clerk.run(cmd.tool)
-        except AgentRunError as error:
-            raise _noted(error) from None
-        return cmd.tool
-
-
-class ToolsInterface(RestInterface[object]):
-    prefix = "/mcp"
-    routes = (
-        RestRoute(use_case=CallTool, method="POST", path="/call"),
-        RestRoute(use_case=CallTwice, method="POST", path="/twice"),
-        RestRoute(use_case=EchoDuringSlow, method="POST", path="/inflight"),
-    )
-
-
-class ClerkInterface(RestInterface[object]):
-    prefix = "/mcp"
-    routes = (RestRoute(use_case=AskClerk, method="POST", path="/ask"),)
-
-
-class CallToolJob(Job[None]):
-    """The ``Mcp()`` marker, from a job of an SQS batch."""
-
-    async def execute(
-        self, tool: str, text: str, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)
-    ) -> None:
-        try:
-            await orders.call_untyped(tool, {"text": text})
-        except AgentRunError as error:
-            raise _noted(error) from None
-
-
-class CallTwiceJob(Job[None]):
-    """Two ``echo`` calls at once, from a job of an SQS batch."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> None:
-        await asyncio.gather(*(orders.call_untyped("echo", {"text": str(n)}) for n in range(2)))
-
-
-class AskClerkJob(Job[None]):
-    """The agent, from a job of an SQS batch."""
-
-    async def execute(self, tool: str, clerk: AgentHandle = Agent(_AGENT)) -> None:
-        try:
-            await clerk.run(tool)
-        except AgentRunError as error:
-            raise _noted(error) from None
 
 
 # ---------------------------------------------------------------------------
@@ -471,22 +372,15 @@ class _World:
 
 def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) -> str:
     """Write the function's configuration and its agent; return the configuration's path."""
-    manifest = ModuleType(_MANIFEST)
-    if trigger == "http":
-        manifest.USE_CASES = [CallTool, CallTwice, EchoDuringSlow, *([AskClerk] if agents else [])]  # type: ignore[attr-defined]
-        manifest.INTERFACES = [ToolsInterface, *([ClerkInterface] if agents else [])]  # type: ignore[attr-defined]
-    else:
-        manifest.JOBS = [CallToolJob, CallTwiceJob, *([AskClerkJob] if agents else [])]  # type: ignore[attr-defined]
     if agents:
-        manifest.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
         _write_agent(tmp_path / "agents")
-    sys.modules[_MANIFEST] = manifest
     server = {"url": url, "timeout_ms": 5000, "auth": {"kind": _TOKEN_KIND}}
     config: dict[str, Any] = {
         "app": {
             "name": "t06",
             "code_path": str(tmp_path),
-            "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST}},
+            "packages": _PACKAGES[(trigger, agents)],
+            "agents": ["agents/*.yaml"] if agents else [],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
@@ -495,7 +389,7 @@ def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) 
         "ai": {
             "engine": "pydantic-ai",
             "models": {"default": {"provider": "fake", "model": "fake-model"}},
-            "mcp_servers": {_SERVER: server},
+            "mcp_servers": {SERVER: server},
         },
     }
     if trigger == "http":
@@ -514,7 +408,7 @@ def _write_agent(directory: Path) -> None:
     directory.mkdir()
     spec = {
         "spec_version": 1,
-        "name": _AGENT,
+        "name": AGENT,
         "description": "Calls the order server's tools.",
         "instructions": "Call the tool you are asked for.",
         "output": {
@@ -526,9 +420,9 @@ def _write_agent(directory: Path) -> None:
                 "properties": {"answer": {"type": "string"}},
             },
         },
-        "capabilities": [{"kind": "mcp", "server": _SERVER, "include": list(_TOOLS)}],
+        "capabilities": [{"kind": "mcp", "server": SERVER, "include": list(TOOLS)}],
     }
-    (directory / f"{_AGENT}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
+    (directory / f"{AGENT}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -542,11 +436,11 @@ def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """One credential, one manifest and one list of raised codes per test."""
+    """One credential and one list of raised codes per test."""
     remote_auth._STRATEGIES._by_endpoint.clear()
     FetchedToken.fetches = 0
-    _RAISED.clear()
-    _GAP_TAKEN.clear()
+    RAISED.clear()
+    GAP_TAKEN.clear()
     monkeypatch.setattr(
         entrypoints_module,
         "entry_points",
@@ -554,7 +448,6 @@ def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     )
     yield
     remote_auth._STRATEGIES._by_endpoint.clear()
-    sys.modules.pop(_MANIFEST, None)
 
 
 def _counted(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[EvictableTransport]]:
@@ -696,7 +589,7 @@ class TestAThawWithTheSessionStillValid:
         assert built.runs()["echo"] == 1
         assert built.connects() == 1
         assert FetchedToken.fetches == 1
-        assert _RAISED == []
+        assert RAISED == []
 
     @_TRIGGERS
     def test_two_concurrent_calls_evict_once(self, world: World, trigger: Trigger) -> None:
@@ -711,7 +604,7 @@ class TestAThawWithTheSessionStillValid:
         assert built.rebuilds() == 0
         assert built.methods() == ["tools/call", "tools/call"]
         assert built.runs()["echo"] == 2
-        assert _RAISED == []
+        assert RAISED == []
 
     def test_a_call_in_flight_across_the_gap_is_not_cut(self, world: World) -> None:
         """A call made after the gap while another is in flight drops nothing; both answer."""
@@ -722,20 +615,20 @@ class TestAThawWithTheSessionStillValid:
             try:
                 assert built.server.started.wait(_SETTLE_S)
                 built.freeze(6.0)
-                _GAP_TAKEN.set()
+                GAP_TAKEN.set()
                 deadline = time.monotonic() + _SETTLE_S
                 while built.runs()["echo"] < 1:
                     assert time.monotonic() < deadline, "the call after the gap never ran"
                     time.sleep(0.01)
             finally:
                 # Whatever failed above, let the worker finish so the executor can exit.
-                _GAP_TAKEN.set()
+                GAP_TAKEN.set()
                 built.server.release.set()
             assert served.result(_SETTLE_S)
 
         assert built.evictions() == 0
         assert built.runs() == Counter({"slow": 1, "echo": 1})
-        assert (built.rebuilds(), _RAISED) == (0, [])
+        assert (built.rebuilds(), RAISED) == (0, [])
 
     def test_the_legacy_event_stream_cut_by_the_eviction_reopens_off_the_call_path(
         self, world: World
@@ -778,7 +671,7 @@ class TestAThawWithTheSessionStillValid:
             assert (built.runs()["echo"], built.rebuilds()) == (1, 0)
             return
         assert not served
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         assert built.runs()["echo"] == 0
         assert built.call()
         assert built.rebuilds() == 1
@@ -809,7 +702,7 @@ class TestAFreezeWhereTheServerForgotTheSession:
         ]
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches == 1
-        assert _RAISED == []
+        assert RAISED == []
 
 
 class TestACallCutMidResponse:
@@ -824,7 +717,7 @@ class TestACallCutMidResponse:
 
         assert not built.by(path, "book")
 
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         assert built.runs()["book"] == 1
         assert built.methods() == ["tools/call"]
         if path == "agent":
@@ -835,7 +728,7 @@ class TestACallCutMidResponse:
 
         assert built.runs() == {"book": 1, "echo": 1}
         assert built.rebuilds() == 1
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
 
 
 class TestTwoConcurrentCallsAfterAnExpiry:
@@ -850,4 +743,4 @@ class TestTwoConcurrentCallsAfterAnExpiry:
         assert built.count("initialize") == 1
         assert built.count("tools/call") == 4  # two answered 404, two served
         assert built.runs()["echo"] == 2
-        assert _RAISED == []
+        assert RAISED == []

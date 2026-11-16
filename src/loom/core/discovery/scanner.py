@@ -1,52 +1,95 @@
-"""Discovery engine that scans explicitly declared modules."""
+"""Recursive package discovery for application components."""
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+import sys
+from collections.abc import Sequence
+from types import ModuleType
+from typing import TypeVar
+
+from loom.core.config import ConfigError
 from loom.core.discovery._utils import (
     _append_unique,
     collect_from_modules,
     collect_use_cases_from_interfaces,
-    import_modules,
 )
-from loom.core.discovery.base import AGENTS_ONLY_HINT, DiscoveryResult
-from loom.core.use_case.use_case import UseCase
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.model import BaseModel
+from loom.core.stores.catalog import store_of
+
+ClassT = TypeVar("ClassT", bound=type)
 
 
-class ModulesDiscoveryEngine:
-    """Discover models, use cases and interfaces from module paths."""
+class PackageScanner:
+    """Discover application classes in configured packages and their subpackages."""
 
-    def __init__(self, module_paths: list[str]) -> None:
-        self._module_paths = module_paths
+    def __init__(self, packages: Sequence[str]) -> None:
+        self._packages = packages
 
-    def discover(self) -> DiscoveryResult:
-        """Scan modules and supplement use cases found in auto interfaces.
+    def discover(self, *, agents: Sequence[str] = ()) -> DiscoveryResult:
+        """Return the classes declared inside the configured packages.
 
-        Jobs the modules declare are collected too.
+        Args:
+            agents: The ``app.agents`` artifact paths or globs, carried into the result.
 
         Returns:
-            :class:`~loom.core.discovery.base.DiscoveryResult` with all
-            discovered models, use cases, and interfaces.
+            The discovered classes, each group ordered by module then qualified name.
 
         Raises:
-            ValueError: When no module paths are provided. The message points
-                at ``app.discovery.mode: manifest`` with ``AGENTS`` for an
-                application whose only content is agents.
+            ConfigError: When a package cannot be imported or is not a package, or when one
+                store serves the same table from two models.
         """
-        if not self._module_paths:
-            raise ValueError(
-                f"modules discovery requires at least one module path. {AGENTS_ONLY_HINT}"
-            )
-
-        modules = import_modules(self._module_paths)
-        models, use_cases, interfaces, jobs = collect_from_modules(modules)
-
-        seen_ucs: set[type[UseCase[object, object]]] = set(use_cases)
-        for uc in collect_use_cases_from_interfaces(interfaces):
-            _append_unique(use_cases, seen_ucs, uc)
-
+        models, use_cases, interfaces, jobs, installers = collect_from_modules(self._modules())
+        self._refuse_duplicate_tables(models)
+        seen = set(use_cases)
+        for use_case in collect_use_cases_from_interfaces(interfaces):
+            _append_unique(use_cases, seen, use_case)
         return DiscoveryResult(
-            models=tuple(models),
-            use_cases=tuple(use_cases),
-            interfaces=tuple(interfaces),
-            jobs=tuple(jobs),
+            models=self._ordered(models),
+            use_cases=self._ordered(use_cases),
+            interfaces=self._ordered(interfaces),
+            jobs=self._ordered(jobs),
+            installers=self._ordered(installers),
+            agent_specs=tuple(agents),
         )
+
+    def _modules(self) -> list[ModuleType]:
+        modules: dict[str, ModuleType] = {}
+        for package_name in self._packages:
+            package = self._import(package_name)
+            if not hasattr(package, "__path__"):
+                raise ConfigError(f"app.packages entry {package_name!r} is not a package")
+            modules[package.__name__] = package
+            for found in pkgutil.walk_packages(
+                package.__path__, f"{package.__name__}.", onerror=self._raise_import_error
+            ):
+                modules[found.name] = self._import(found.name)
+        return [modules[name] for name in sorted(modules)]
+
+    def _refuse_duplicate_tables(self, models: Sequence[type[BaseModel]]) -> None:
+        by_table: dict[tuple[str, str], type[BaseModel]] = {}
+        for model in models:
+            store, table = store_of(model), vars(model)["__tablename__"]
+            previous = by_table.setdefault((store, table), model)
+            if previous is not model:
+                raise ConfigError(
+                    f"Store {store!r} serves table {table!r} twice: "
+                    f"{previous.__module__}.{previous.__qualname__} and "
+                    f"{model.__module__}.{model.__qualname__}"
+                )
+
+    @staticmethod
+    def _ordered(classes: Sequence[ClassT]) -> tuple[ClassT, ...]:
+        return tuple(sorted(classes, key=lambda cls: (cls.__module__, cls.__qualname__)))
+
+    def _import(self, module_name: str) -> ModuleType:
+        try:
+            return importlib.import_module(module_name)
+        except Exception as exc:
+            raise ConfigError(f"Cannot import app.packages module {module_name!r}: {exc}") from exc
+
+    def _raise_import_error(self, module_name: str) -> None:
+        cause = sys.exc_info()[1]
+        raise ConfigError(f"Cannot import app.packages module {module_name!r}: {cause}") from cause

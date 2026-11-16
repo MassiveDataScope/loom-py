@@ -2,14 +2,5 @@ includes:
   - conf.yaml
 
 app:
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - tests.integration.fake_repo.product.model
-        - tests.integration.fake_repo.product.category.model
-        - tests.integration.fake_repo.product.review.model
-        - tests.integration.fake_repo.product.relations
-        - tests.integration.fake_repo.product.repository
-        - tests.integration.fake_repo.product.use_cases
-        - tests.integration.fake_repo.product.interface
+  packages:
+    - tests.integration.fake_repo.product

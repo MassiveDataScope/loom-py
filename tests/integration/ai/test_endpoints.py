@@ -1715,15 +1715,13 @@ def test_does_not_import_loom_ai_when_the_config_has_no_ai_section(tmp_path: Pat
     interpreter so modules imported by unrelated suites inside the pytest
     process cannot mask the leak.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     config = {
         "app": {
             "name": "ai-containment-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

@@ -350,7 +350,7 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     Attributes:
         engine: Entry-point name in group ``loom.ai.engines``.
         specs: Glob patterns of agent artifacts, relative to the app root.
-            Mutually exclusive with the manifest ``AGENTS`` attribute: exactly
+            Mutually exclusive with ``app.agents``: exactly
             one of the two declares the artifacts of an application, and
             declaring both is a compilation error.
         models: Model-role bindings; must contain every role an agent declares.
@@ -451,11 +451,11 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             raise AgentCompilationError(issues)
         _warn_unused_prices(self.prices, self.models)
 
-    def artifact_specs(self, manifest: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
-        """The one artifact source of the application: :attr:`specs` or the manifest ``AGENTS``.
+    def artifact_specs(self, agents: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
+        """Return artifact patterns from ``ai.specs`` or ``app.agents``.
 
         Args:
-            manifest: Glob patterns of the manifest ``AGENTS`` attribute.
+            agents: Glob patterns from ``app.agents``.
             mcp_declared: Whether a root reaches an ``Mcp()`` declaration; then
                 no artifact at all is accepted.
 
@@ -466,11 +466,11 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             AgentCompilationError: When both sources declare artifacts, or
                 neither does and no ``Mcp()`` declaration is reached.
         """
-        if self.specs and manifest:
+        if self.specs and agents:
             raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
-        if not self.specs and not manifest and not mcp_declared:
+        if not self.specs and not agents and not mcp_declared:
             raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
-        return self.specs or manifest
+        return self.specs or agents
 
     def active_endpoint(self, name: str) -> AgentEndpointConfig | None:
         """Return the HTTP opt-in of agent *name* only when it is in force.

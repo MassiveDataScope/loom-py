@@ -10,9 +10,9 @@ container. Nothing registers after :func:`register`.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Collection
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from loom.composition._ai import AiWiring, MarkerDeclarations
 from loom.composition._jobs import configure_job_service
@@ -27,8 +27,9 @@ from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey
-from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
+from loom.core.engine.compilable import Compilable
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
@@ -200,17 +201,16 @@ def register(
     recipe: Recipe,
     stores: Stores,
     *,
-    modules: Sequence[Callable[[LoomContainer], None]],
     logger: LoggerPort,
 ) -> tuple[KernelRuntime, SqlWiring, tuple[Resource, ...]]:
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
     The order: the seed keys (the application's ``AppConfig``,
     ``Environment``, ``ObservabilityRuntime`` and ``StoreCatalog``); the
-    caller's modules; the recipe's overrides; each store's repositories and the
+    discovered installers; the recipe's overrides; each store's repositories and the
     ``RepositoryCatalog`` over them; the cache module; the framework's keys,
     among them the kernel, whose construction compiles the discovered use
-    cases; the job service; the SQL collaborators. The caller's modules and
+    cases; the job service; the SQL collaborators. The installers and
     the overrides run first, so the framework's defaults leave what they bound
     alone; either one binding a key the framework owns fails right after it
     runs. The container is validated when the application is sealed.
@@ -219,7 +219,6 @@ def register(
         project: What the application composes from.
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
-        modules: The caller's DI modules.
         logger: Where the container and the compilation log.
 
     Returns:
@@ -261,10 +260,11 @@ def register(
         ObservabilityRuntime: observability,
         StoreCatalog: catalog,
     }
+    installers = tuple(installer().install for installer in recipe.discovered.installers)
     with seeded_container(
         KernelRecipe.container(),
         seeds,
-        modules=(*modules, *recipe.overrides),
+        modules=(*installers, *recipe.overrides),
         logger=logger,
         reserved=reserved_keys(catalog.specs),
         error=ReservedBindingError.for_key,
@@ -321,7 +321,7 @@ def wire_ai(
         The wiring, :attr:`AiWiring.ABSENT` when no runtime is built.
 
     Raises:
-        ConfigError: When the manifest declares ``AGENTS`` and there is no
+        ConfigError: When ``app.agents`` is set and there is no
             ``ai:`` section.
         AgentCompilationError: When a declaration cannot be satisfied.
     """
@@ -337,7 +337,7 @@ def wire_ai(
         kernel=kernel,
         sql_cfg=sql.config,
         code_path=project.code_path,
-        manifest_agent_specs=recipe.discovered.agent_specs,
+        agent_specs=recipe.discovered.agent_specs,
         declared=declared,
         names=(
             None
@@ -394,7 +394,7 @@ def seal(
     use_cases = frozenset(discovered.use_cases)
     reads: list[ModelRead] = []
     for component in (*discovered.use_cases, *discovered.jobs):
-        compiled = kernel.compiler.compile(component)
+        compiled = kernel.compiler.compile(cast(type[Compilable], component))
         compiled.refuse_unservable(catalog, factories)
         if component in use_cases:
             reads.extend(compiled.model_reads())

@@ -44,7 +44,9 @@ _ROWS = [
 
 def _config(tmp_path: Path) -> str:
     module = f"loom_temporal_sort_{tmp_path.name.replace('-', '_')}"
-    (tmp_path / f"{module}.py").write_text(_APP, encoding="utf-8")
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(_APP, encoding="utf-8")
     config = tmp_path / "app.yaml"
     config.write_text(
         yaml.safe_dump(
@@ -52,10 +54,7 @@ def _config(tmp_path: Path) -> str:
                 "app": {
                     "name": "temporal-sort",
                     "code_path": ".",
-                    "discovery": {
-                        "mode": "interfaces",
-                        "interfaces": {"modules": [module], "warn_recommended": False},
-                    },
+                    "packages": [module],
                 },
                 "stores": {
                     "default": {

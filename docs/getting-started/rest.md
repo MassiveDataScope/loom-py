@@ -46,12 +46,7 @@ In `config/api.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.product.model
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: My Store API
@@ -333,14 +328,7 @@ In `config/api.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.user.model
-        - app.user.interface
-        - app.product.model
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: My Store API
@@ -374,23 +362,15 @@ from loom.rest.fastapi.auto import create_app
 app = create_app("config/api.yaml")
 ```
 
-For larger projects, use `mode: manifest` and a manifest module:
-
-```python
-# app/manifest.py
-from app.user.model import User
-from app.user.interface import UserRestInterface
-
-MODELS = [User, ...]
-INTERFACES = [UserRestInterface, ...]
-```
+For larger projects, list the packages that contain application components:
 
 ```yaml
-discovery:
-  mode: manifest
-  manifest:
-    module: app.manifest
+app:
+  packages: [acme]
 ```
+
+The scanner includes subpackages and discovers models, use cases, jobs, REST
+interfaces, and installers declared in their own modules.
 
 ### Choose the store backend
 
@@ -516,52 +496,35 @@ calling the factory more than once is safe. `load_config` registers no
 defaults, and resolvers passed to it explicitly replace an earlier registration
 of the same name.
 
-### Binding your own ports (`modules=`)
+### Binding your own ports with an installer
 
-`create_app` registers repositories for you, and verifies at startup that every
-dependency a use case's constructor declares is bound. A port no repository
-provides — a clock, an identity verifier, a bridge implementing one bounded
-context's port on top of another — is bound by a module: a callable that
-receives the container.
+`create_app` verifies constructor dependencies at startup. Put an `Installer`
+in a package listed under `app.packages` to register an application port:
 
 ```python
 from datetime import UTC, datetime
 from typing import Protocol
-
+from loom.core.di import Installer
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.rest.fastapi.auto import create_app
 
-
 class Clock(Protocol):
     def now(self) -> datetime: ...
-
 
 class SystemClock:
     def now(self) -> datetime:
         return datetime.now(UTC)
 
+class ClockInstaller(Installer):
+    def install(self, container: LoomContainer) -> None:
+        container.register(Clock, SystemClock, scope=Scope.APPLICATION)
 
-def clock_module(container: LoomContainer) -> None:
-    container.register(Clock, SystemClock, scope=Scope.APPLICATION)
-
-
-app = create_app("config/api.yaml", modules=[clock_module])
+app = create_app("config/api.yaml")
 ```
 
-Modules run in the order given, before repositories are registered and before
-use cases are verified — the same semantics as the Celery `create_app`. A use
-case injecting `Clock` without the module still aborts startup with a
-`ResolutionError` naming the use case and the missing binding.
-
-Modules run before `create_app` registers its own services. A module's
-`JobService` is kept, and repositories are replaced through `repository_for`
-or a custom `DefaultRepositoryBuilder`. The framework-owned keys
-(`SessionManager`, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`,
-`ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`)
-are reserved: a module that binds one stops startup with a typed error naming
-the key. See
-[Caller bindings and framework defaults](composition.md#caller-bindings-and-framework-defaults).
+Installers run in module and qualname order before verification. A missing
+binding fails startup with a `ResolutionError` naming the use case and port.
 
 ---
 

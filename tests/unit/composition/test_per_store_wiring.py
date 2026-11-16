@@ -131,8 +131,13 @@ def _compose(
     databases: tuple[Path, Path], modules: tuple[Callable[[LoomContainer], None], ...] = ()
 ) -> Application:
     use_cases = (_RecordEntry, _ViaLedgerService, _ViaDefaultService)
-    adapter = Serving(_Account, AcmeLedgerStoreEntry, use_cases=use_cases)
-    return _project(databases).compose(adapter, modules=(_services, *modules))
+    adapter = Serving(
+        _Account,
+        AcmeLedgerStoreEntry,
+        use_cases=use_cases,
+        overrides=(_services, *modules),
+    )
+    return _project(databases).compose(adapter)
 
 
 def _rows(database: Path) -> dict[str, int]:
@@ -169,7 +174,9 @@ def _rest_project(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Pr
     discovered = DiscoveryResult(
         models=(AcmeLedgerStoreEntry,), use_cases=(), interfaces=cast(Any, (_Entries,))
     )
-    monkeypatch.setattr("loom.composition.project.discover", lambda config: discovered)
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover", lambda self, agents=None: discovered
+    )
     ctx = ConfigContext.from_dict(
         {
             "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},

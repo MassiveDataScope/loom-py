@@ -54,7 +54,6 @@ SENTINEL = "AGENTS_ONLY_APP_OK"
 _ENGINE_NAME = "agentsonly-fake"
 _AGENT = "minimal-agent"
 _GROUP = "loom.ai.engines"
-_MANIFEST_MODULE = "agentsonly.manifest"
 
 _AGENT_SPEC: dict[str, Any] = {
     "spec_version": 1,
@@ -131,7 +130,6 @@ def _write_project(root: Path) -> str:
     package = root / "agentsonly"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "manifest.py").write_text('AGENTS = ["agents/*.yaml"]\n', encoding="utf-8")
     agents = root / "agents"
     agents.mkdir()
     (agents / f"{_AGENT}.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")
@@ -139,10 +137,8 @@ def _write_project(root: Path) -> str:
         "app": {
             "name": "agentsonly-demo",
             "code_path": str(root),
-            "discovery": {
-                "mode": "manifest",
-                "manifest": {"module": _MANIFEST_MODULE},
-            },
+            "packages": ["agentsonly"],
+            "agents": ["agents/*.yaml"],
         },
         "stores": {"default": {"backend": "none"}},
         "ai": {

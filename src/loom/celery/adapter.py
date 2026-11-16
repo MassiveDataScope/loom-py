@@ -302,7 +302,7 @@ class CeleryAdapter:
 
     Args:
         jobs: ``Job`` subclasses to register as tasks; when empty, they are
-            discovered from ``app.discovery`` (``modules`` or ``manifest``).
+            discovered from ``app.packages``.
         use_cases: Use cases to compile alongside the jobs, so a callback or
             a job can invoke them.
         interfaces: ``RestInterface`` subclasses whose route use cases are
@@ -334,7 +334,7 @@ class CeleryAdapter:
         Raises:
             ConfigError: When ``celery`` or ``stores`` is misdeclared, or no
                 backend is registered under the name the worker resolves.
-            RuntimeError: When no job is passed and no ``app.discovery`` is
+            RuntimeError: When no job is passed and no ``app.packages`` is
                 configured.
             CompositionStateError: When this instance already composed an
                 application.

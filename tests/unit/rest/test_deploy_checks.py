@@ -428,7 +428,9 @@ class TestUnknownConfigurationKeys:
 class TestUseCaseReceivesTheResolvedEnvironment:
     def test_a_use_case_injects_the_resolved_environment(self, tmp_path: Path) -> None:
         module = "loom_environment_fixture_app"
-        (tmp_path / f"{module}.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
+        package = tmp_path / module
+        package.mkdir()
+        (package / "__init__.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
         config = tmp_path / "app.yaml"
         config.write_text(
             yaml.safe_dump(
@@ -436,10 +438,7 @@ class TestUseCaseReceivesTheResolvedEnvironment:
                     "app": {
                         "name": "environment-demo",
                         "code_path": ".",
-                        "discovery": {
-                            "mode": "interfaces",
-                            "interfaces": {"modules": [module], "warn_recommended": False},
-                        },
+                        "packages": [module],
                     },
                     "stores": {
                         "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

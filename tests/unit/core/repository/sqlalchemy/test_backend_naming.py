@@ -31,7 +31,7 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
     config = {
         "app": {
             "name": "rosters",
-            "discovery": {"mode": "modules", "modules": {"include": [rosters.__name__]}},
+            "packages": [rosters.__name__],
         },
         "stores": {
             "default": {

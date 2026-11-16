@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.bootstrap import bootstrap_worker
-from loom.core.di.container import LoomContainer
 
 if TYPE_CHECKING:
     from loom.core.config import ConfigResolver
@@ -23,7 +22,6 @@ def create_app(
     environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
     callbacks: Sequence[type[Any]] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
     metrics: MetricsAdapter | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> Celery:
@@ -39,11 +37,8 @@ def create_app(
         environment: Environment of the worker; overrides ``LOOM_ENV``, which
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
-            Optional when ``app.discovery`` (modules/manifest) is configured.
+            Optional when ``app.packages`` is configured.
         callbacks: Optional callback classes for success/failure hooks.
-        modules: Optional DI registration modules; a module binding a
-            framework-owned key fails with
-            :class:`~loom.composition.errors.ReservedBindingError`.
         metrics: Optional metrics adapter.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
@@ -58,7 +53,6 @@ def create_app(
         environment=environment,
         jobs=jobs,
         callbacks=callbacks,
-        modules=modules,
         metrics=metrics,
         resolvers=resolvers,
     )

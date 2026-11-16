@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -23,7 +23,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.overrides import load_application_config
-from loom.core.discovery.config import DiscoveryConfig, discover
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
@@ -34,7 +34,6 @@ from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Adapter
-    from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.stores import StoreBackend
 
@@ -49,7 +48,8 @@ class AppConfig(msgspec.Struct, kw_only=True):
     entry: str | None = None
     job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
-    discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
+    packages: list[str] = msgspec.field(default_factory=list)
+    agents: list[str] = msgspec.field(default_factory=list)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -140,6 +140,8 @@ class Project:
                 f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
                 "it labels the API, the worker and their metrics"
             )
+        if ctx.has("app.discovery"):
+            raise ConfigError("app.discovery is removed; declare app.packages and app.agents")
         app_cfg = ctx.section(ConfigKey.APP, AppConfig)
         config_root = Path(paths[0]).resolve().parent
         return cls(
@@ -210,8 +212,12 @@ class Project:
         )
 
     def discover(self) -> DiscoveryResult:
-        """Discover the use cases, models, interfaces and agents ``app.discovery`` names."""
-        return discover(self.app.discovery)
+        """Discover the components declared in ``app.packages`` and ``app.agents``."""
+        return self._discovered
+
+    @functools.cached_property
+    def _discovered(self) -> DiscoveryResult:
+        return PackageScanner(self.app.packages).discover(agents=self.app.agents)
 
     @functools.cached_property
     def catalog(self) -> StoreCatalog:
@@ -236,8 +242,6 @@ class Project:
     def compose(
         self,
         adapter: Adapter[object],
-        *,
-        modules: Sequence[Callable[[LoomContainer], None]] = (),
     ) -> Application:
         """Compose the application *adapter* asks for, without mounting a transport.
 
@@ -248,29 +252,29 @@ class Project:
 
         Args:
             adapter: Whose recipe to compose.
-            modules: DI modules run before repositories are registered; see
-                :func:`~loom.composition.create_app`.
 
         Returns:
             The composed, closed application.
 
         Raises:
-            ConfigError: When a model belongs to a store the catalog does not
-                serve, or the store section is invalid, or a job backend cannot be built.
+            ConfigError: When a package in ``app.packages`` cannot be scanned,
+                a model belongs to a store the catalog does not serve, or the
+                store section is invalid, or a job backend cannot be built.
             JoinedAutocommitStore: When a use case declares ``Joined`` on a store
                 that cannot roll back.
             UncomposedWriteStore: When a use case or job writes to a store with
                 no unit of work.
             DeployCheckError: When a deploy check of level error fails in a
                 deployed environment.
-            ReservedBindingError: When a module binds a framework-owned key.
+            ReservedBindingError: When an installer binds a framework-owned key.
         """
         logger = get_logger(__name__)
         clock = phases.PhaseClock()
+        clock.lap("scan", self.discover())
         recipe = clock.lap("plan", phases.plan(self, adapter))
         stores = clock.lap("build_stores", phases.build_stores(self, recipe))
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, modules=modules, logger=logger)
+            "register", phases.register(self, recipe, stores, logger=logger)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -306,7 +310,7 @@ class Project:
             jobs=len(discovered.jobs),
             backends=stores.store_backends,
             keys=len(kernel.container.bindings()),
-            modules=len(modules),
+            installers=len(discovered.installers),
             overrides=len(recipe.overrides),
             agents=len(ai.plans),
             mcp_servers=len(ai.mcp_servers),
@@ -318,14 +322,11 @@ class Project:
     def serve(
         self,
         adapter: Adapter[T],
-        *,
-        modules: Sequence[Callable[[LoomContainer], None]] = (),
     ) -> T:
         """Compose the application *adapter* asks for and mount its transport on it.
 
         Args:
             adapter: The transport, and how it wants the application composed.
-            modules: See :meth:`compose`.
 
         Returns:
             What *adapter* binds: an ASGI app, a Celery app, a handler.
@@ -335,4 +336,4 @@ class Project:
             DeployCheckError: As :meth:`compose`.
             ReservedBindingError: As :meth:`compose`.
         """
-        return adapter.bind(self.compose(adapter, modules=modules))
+        return adapter.bind(self.compose(adapter))

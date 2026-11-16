@@ -60,7 +60,7 @@ class Recipe:
         callbacks: Job callback classes the entry point builds; the
             dependency graph's roots with the use cases and jobs, never
             compiled.
-        overrides: DI modules run right after the caller's modules, under the
+        overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Set by the testing harness; no
             production entry point sets them.

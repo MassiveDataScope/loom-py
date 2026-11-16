@@ -310,7 +310,7 @@ are dropped before that check.
 
 The models a use case or job reads are checked too: its main repository, and
 every model its plan loads through `LoadById`, `Load` or `Exists`. A model no
-repository serves — left out of `MODELS` or of `app.discovery` — raises
+repository serves — left out of `app.packages` — raises
 `UnservedModelError` (`loom.core.use_case.errors`), a `ResolutionError`
 carrying the typed issue (`UNSERVED_MODEL`, the component, the parameter) and
 the model.
@@ -322,7 +322,7 @@ model, resolved when it runs: `catalog[AcmeOrder]` by model, or
 `catalog.for_table("acme_orders")` by `__tablename__`. A table name served by
 one store resolves on its own; one served by two stores raises `ValueError`
 naming both, and `store=` picks the store. An unknown table, or a model no
-store serves, raises `KeyError`. The catalog returns the repository the
+store serves, raises `KeyError`. `for_table` sees only models a store serves. The catalog returns the repository the
 container serves, so a test override is what comes back, and the index of
 table names is built once at composition.
 

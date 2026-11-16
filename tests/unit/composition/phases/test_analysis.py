@@ -112,8 +112,10 @@ class TestRegistrationAnalysis:
         self, project: Project, analyses: list[GraphAnalysis]
     ) -> None:
         application = project.compose(
-            _WithCallbacks(AcmeAuditCallback),
-            modules=(_binds(AcmeCallbackTrail, AcmeCallbackTrail),),
+            _WithCallbacks(
+                AcmeAuditCallback,
+                overrides=(_binds(AcmeCallbackTrail, AcmeCallbackTrail),),
+            ),
         )
 
         (analysis,) = analyses
@@ -171,10 +173,12 @@ class TestRegistrationAnalysis:
         self,
         project: Project,
     ) -> None:
-        adapter = Serving(AcmeRecord, use_cases=(AcmeNeedsCycle,), lenient=True)
+        adapter = Serving(
+            AcmeRecord, use_cases=(AcmeNeedsCycle,), lenient=True, overrides=(binds_cycle,)
+        )
 
         with pytest.raises(BootstrapError, match="dependency cycle") as caught:
-            project.compose(adapter, modules=(binds_cycle,))
+            project.compose(adapter)
 
         assert isinstance(caught.value.__cause__, DependencyGraphError)
 
@@ -182,11 +186,11 @@ class TestRegistrationAnalysis:
         self,
         project: Project,
     ) -> None:
-        adapter = _WithCallbacks(AcmeAuditNames)
         modules = (_binds(AcmeNamedTrail, AcmeNamedTrail),)
+        adapter = _WithCallbacks(AcmeAuditNames, overrides=modules)
 
         with pytest.raises(BootstrapError, match="AcmeNamedTrail: names: tuple") as caught:
-            project.compose(adapter, modules=modules)
+            project.compose(adapter)
 
         assert isinstance(caught.value.__cause__, DependencyGraphError)
 
@@ -194,11 +198,11 @@ class TestRegistrationAnalysis:
         self,
         project: Project,
     ) -> None:
-        adapter = _WithCallbacks(AcmeAuditNames, lenient=True)
         modules = (_binds(AcmeNamedTrail, AcmeNamedTrail),)
+        adapter = _WithCallbacks(AcmeAuditNames, lenient=True, overrides=modules)
 
         with pytest.warns(DependencyUnresolvable, match="AcmeNamedTrail -> names"):
-            project.compose(adapter, modules=modules)
+            project.compose(adapter)
 
     def test_a_use_case_reaches_its_main_repository_and_capability(
         self, project: Project, analyses: list[GraphAnalysis]

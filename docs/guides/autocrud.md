@@ -118,12 +118,7 @@ In `config/api.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.product.model
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: My Store API

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import sys
-import types
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +12,7 @@ import pytest
 import loom.celery._discovery as discovery
 import loom.celery.adapter as adapter
 import loom.celery.bootstrap as boot
-from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
+from loom.celery.bootstrap import WorkerBootstrapResult
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
@@ -125,6 +123,7 @@ class TestBootstrapWorkerTaskRegistration:
         extra_cfg: dict[str, Any] | None = None,
         *,
         jobs: tuple[type[Job[Any]], ...] | None = (_SyncJob,),
+        callbacks: tuple[type[Any], ...] = (),
     ) -> WorkerBootstrapResult:
         """Write a minimal YAML config and call bootstrap_worker."""
         import yaml  # type: ignore[import-untyped]
@@ -142,7 +141,21 @@ class TestBootstrapWorkerTaskRegistration:
         }
         if extra_cfg:
             cfg.update(extra_cfg)
-        cfg["app"] = {"name": "worker", **cfg.get("app", {})}
+        cfg["app"] = {"name": "worker", "code_path": ".", **cfg.get("app", {})}
+        packages = cfg["app"].get("packages", [])
+        if packages:
+            package = tmp_path / packages[0]
+            package.mkdir()
+            (package / "__init__.py").write_text(
+                "from loom.core.job.job import Job\n"
+                "from loom.core.model import BaseModel, ColumnField\n"
+                "class _SyncJob(Job[int]):\n"
+                "    def execute(self, value: int = 0) -> int: return value * 2\n"
+                "class _DiscoveredModel(BaseModel):\n"
+                "    __tablename__ = 'discovered_model_bootstrap_test'\n"
+                "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
+                "    name: str = ColumnField(length=120)\n"
+            )
 
         config_path = tmp_path / "worker.yaml"
         config_path.write_text(yaml.dump(cfg))
@@ -152,6 +165,8 @@ class TestBootstrapWorkerTaskRegistration:
         kwargs: dict[str, Any] = {}
         if jobs is not None:
             kwargs["jobs"] = list(jobs)
+        if callbacks:
+            kwargs["callbacks"] = list(callbacks)
         return bootstrap_worker(str(config_path), **kwargs)
 
     def test_task_registered_with_correct_name(self, tmp_path: Any) -> None:
@@ -231,15 +246,8 @@ class TestBootstrapWorkerTaskRegistration:
         mock_signals.assert_called_once()
 
     def test_discovers_jobs_from_modules_when_jobs_not_passed(self, tmp_path: Any) -> None:
-        cfg = {
-            "app": {
-                "discovery": {
-                    "mode": "modules",
-                    "modules": {"include": ["tests.unit.celery_bootstrap.test_bootstrap"]},
-                }
-            }
-        }
-        result = self._run(tmp_path, extra_cfg=cfg)
+        cfg = {"app": {"packages": ["acme_worker_fixture"]}}
+        result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
         expected = f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}"
         assert expected in result.celery_app.tasks
 
@@ -247,53 +255,27 @@ class TestBootstrapWorkerTaskRegistration:
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A worker whose first job is still to come starts, with a warning."""
-        module_name = "tests.unit.celery_bootstrap._manifest_without_jobs_for_test"
-        module = types.ModuleType(module_name)
-        cast(Any, module).MODELS = [_DiscoveredModel]
-        cast(Any, module).JOBS = []
-        sys.modules[module_name] = module
-
-        cfg = {"app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}}}
-        try:
-            with caplog.at_level(logging.WARNING, logger="loom.celery.bootstrap"):
-                result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
-        finally:
-            sys.modules.pop(module_name, None)
+        with caplog.at_level(logging.WARNING, logger="loom.core.discovery.worker"):
+            result = self._run(tmp_path, jobs=None)
 
         assert result.celery_app is not None
         assert "no Job classes discovered" in caplog.text
 
-    def test_discovers_jobs_from_manifest_when_jobs_not_passed(self, tmp_path: Any) -> None:
-        module_name = "tests.unit.celery_bootstrap._manifest_jobs_for_test"
-        module = types.ModuleType(module_name)
-        module_any = cast(Any, module)
-        module_any.MANIFEST = WorkerManifest(jobs=[_SyncJob])
-        sys.modules[module_name] = module
-
-        cfg = {"app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}}}
-        try:
-            result = self._run(tmp_path, extra_cfg=cfg)
-        finally:
-            sys.modules.pop(module_name, None)
+    def test_discovers_jobs_from_package_when_jobs_not_passed(self, tmp_path: Any) -> None:
+        result = self._run(
+            tmp_path, extra_cfg={"app": {"packages": ["acme_worker_fixture"]}}, jobs=None
+        )
 
         expected = f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}"
         assert expected in result.celery_app.tasks
 
-    def test_discovers_jobs_from_manifest_lists_when_manifest_struct_missing(
-        self, tmp_path: Any
-    ) -> None:
-        module_name = "tests.unit.celery_bootstrap._manifest_lists_for_test"
-        module = types.ModuleType(module_name)
-        module_any = cast(Any, module)
-        module_any.JOBS = [_SyncJob]
-        module_any.CALLBACKS = [_ObservedCallback]
-        sys.modules[module_name] = module
-
-        cfg = {"app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}}}
-        try:
-            result = self._run(tmp_path, extra_cfg=cfg)
-        finally:
-            sys.modules.pop(module_name, None)
+    def test_explicit_callbacks_run_with_package_jobs(self, tmp_path: Any) -> None:
+        result = self._run(
+            tmp_path,
+            extra_cfg={"app": {"packages": ["acme_worker_fixture"]}},
+            jobs=None,
+            callbacks=(_ObservedCallback,),
+        )
 
         assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" in result.celery_app.tasks
         assert f"{TASK_CALLBACK_PREFIX}.{_ObservedCallback.__qualname__}" in result.celery_app.tasks
@@ -307,13 +289,8 @@ class TestBootstrapWorkerTaskRegistration:
         from loom.stores.sqlalchemy.schema import reset_registry
         from loom.stores.sqlalchemy.session_manager import SessionManager
 
-        module_name = "tests.unit.celery_bootstrap._manifest_naming_for_test"
-        module = types.ModuleType(module_name)
-        cast(Any, module).MODELS = [_DiscoveredModel]
-        cast(Any, module).JOBS = [_SyncJob]
-        sys.modules[module_name] = module
         cfg = {
-            "app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}},
+            "app": {"packages": ["acme_worker_fixture"]},
             "stores": {
                 "default": {
                     "backend": "sqlalchemy",
@@ -329,19 +306,11 @@ class TestBootstrapWorkerTaskRegistration:
             table = metadata.tables[_DiscoveredModel.__tablename__]
             assert table.primary_key.name == f"pk_{_DiscoveredModel.__tablename__}"
         finally:
-            sys.modules.pop(module_name, None)
             reset_registry(naming_convention=None)
 
     def test_discovers_callbacks_from_modules_when_jobs_not_passed(self, tmp_path: Any) -> None:
-        cfg = {
-            "app": {
-                "discovery": {
-                    "mode": "modules",
-                    "modules": {"include": ["tests.unit.celery_bootstrap.test_bootstrap"]},
-                }
-            }
-        }
-        result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
+        cfg = {"app": {"packages": ["acme_worker_fixture"]}}
+        result = self._run(tmp_path, extra_cfg=cfg, jobs=None, callbacks=(_ObservedCallback,))
         assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" in result.celery_app.tasks
         assert f"{TASK_CALLBACK_PREFIX}.{_ObservedCallback.__qualname__}" in result.celery_app.tasks
         assert (
@@ -350,14 +319,7 @@ class TestBootstrapWorkerTaskRegistration:
         )
 
     def test_modules_discovery_includes_autocrud_use_cases_for_models(self, tmp_path: Any) -> None:
-        cfg = {
-            "app": {
-                "discovery": {
-                    "mode": "modules",
-                    "modules": {"include": ["tests.unit.celery_bootstrap.test_bootstrap"]},
-                }
-            }
-        }
+        cfg = {"app": {"packages": ["acme_worker_fixture"]}}
         result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
         registry = result.container.resolve(UseCaseRegistry)
         expected_keys = {
@@ -374,14 +336,7 @@ class TestBootstrapWorkerTaskRegistration:
         assert len(use_cases) == 5
 
     def test_registers_repo_mapping_for_discovered_models(self, tmp_path: Any) -> None:
-        cfg = {
-            "app": {
-                "discovery": {
-                    "mode": "modules",
-                    "modules": {"include": ["tests.unit.celery_bootstrap.test_bootstrap"]},
-                }
-            }
-        }
+        cfg = {"app": {"packages": ["acme_worker_fixture"]}}
         result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
         mapped_names = {model.__name__ for model in result.container._repo_bindings}
         assert "_DiscoveredModel" in mapped_names

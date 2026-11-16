@@ -418,7 +418,7 @@ class TestConfigOverridableAllowlist:
             "lambda.functions.*.*.via",
             "lambda.*.*.trigger.queue",
             "lambda.handler",
-            "app.discovery.modules.include",
+            "app.packages",
             "app.*",
         ],
     )

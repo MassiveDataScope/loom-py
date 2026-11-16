@@ -2,6 +2,44 @@
 
 ## 💥 Breaking
 
+- **discovery:** the `app.discovery` block is removed, with its modes
+  `interfaces`, `modules` and `manifest` and every key under them
+  (`interfaces.modules`, `interfaces.warn_recommended`, `modules.include`,
+  `modules.exclude`, `manifest.module`); a configuration that still has
+  `app.discovery` is refused at load. The manifest module attributes `MODELS`,
+  `USE_CASES`, `INTERFACES`, `REPOSITORIES`, `JOBS` and `AGENTS` are gone.
+  Removed paths, none re-exported: `loom.core.discovery.config`
+  (`DiscoveryConfig`, `decode_discovery`, `discover`), `loom.core.discovery.interfaces`,
+  `loom.core.discovery.manifest`, `loom.core.discovery.worker_manifest`
+  (`WorkerManifestAttr`), `loom.core.contracts.manifest` (`AppManifestAttr`),
+  `loom.celery.bootstrap.WorkerManifest`, `DiscoveryEngine` and its three
+  engines. `loom.core.discovery.modules.ModulesDiscoveryEngine` is now
+  `loom.core.discovery.scanner.PackageScanner`. **Migration:** declare
+  `app.packages: [acme]`; every model, use case, job, REST interface and
+  `Installer` defined in those packages and their subpackages is found, in
+  module then qualified-name order. An entry must be a package (a directory
+  with `__init__.py`), not a single module. Replace a manifest `AGENTS` list
+  with `app.agents: [globs]`.
+- **composition:** the `modules=` parameter is removed from `Project.compose`,
+  `Project.serve`, `loom.composition.create_app`, `loom.rest.fastapi.auto.create_app`,
+  `loom.celery.auto.create_app`, `loom.celery.bootstrap.bootstrap_worker` and
+  `LambdaTestClient`. **Migration:** subclass `loom.core.di.Installer`,
+  implement `install(self, container)` and define it in an `app.packages`
+  package; installers run in module then qualified-name order, before the
+  framework registers its own bindings. Substitutions in tests use
+  `loom.testing.Override` (see Added).
+- **composition:** the composition now scans `app.packages` before the adapter
+  plans, so an unimportable package is refused before a configuration the
+  adapter would refuse (for instance a Lambda function serving an SQL
+  endpoint).
+- **stores:** a model's repository has one source, `RepositoryToken(Model)`;
+  `RepoFor[Model]` and every other capability key resolve through it. Binding
+  a double to a capability key alone is refused with a `ConfigError` naming
+  `Override.repository`. `RepositoryCatalog.for_table` only sees models a
+  store serves.
+- **composition:** `ComposedEvent` logs a `scan` phase in `phase_ms` and an
+  `installers` count in place of `modules`.
+
 - **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
   `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
   **Migration:** import them from the new path; nothing is re-exported.
@@ -706,6 +744,12 @@
 
 ### composition
 
+- **composition:** `app.packages` recursively scans models, use cases, jobs,
+  REST interfaces and `Installer` classes, skipping abstract classes, classes
+  imported from elsewhere and models without their own `__tablename__`; two
+  models serving one table in a store, or a module that fails to import, are a
+  `ConfigError` naming the modules. `app.agents` lists agent artifact globs
+  for applications with or without Python components.
 - **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
   loads the configuration as written, resolving no placeholder and requiring
   no `app.name`, runs the registered deploy checks and returns a
@@ -863,6 +907,12 @@
 
 ### testing
 
+- **testing:** `loom.testing.Override.repository(Model, double)` and
+  `Override.instance(Key, value)`; `HttpTestHarness(overrides=[...])` and
+  `LambdaTestClient(..., overrides=[...])` compose once, and
+  `with harness.overriding(Override.repository(Model, double)):` swaps the
+  model's single source and restores it on exit, with no recomposition.
+
 - **testing:** Lambda functions are tested in process, without AWS:
   `LambdaTestClient`, an `httpx.Client` like FastAPI's `TestClient`, sends API
   Gateway HTTP API or REST events to the real handler;
@@ -877,6 +927,10 @@
   the harness; an adapter marker with no double fails closed.
 
 ### stores
+
+- **stores:** `RepositoryCatalog.from_repositories({Model: repository})`
+  builds the model, table and store indexes of a composed catalog, with the
+  same `for_table` errors, for unit tests with no composed application.
 
 - **stores:** `RepositoryCatalog` (`loom.core.stores.repository`) looks up a
   repository at run time and is registered by the composition, with its key

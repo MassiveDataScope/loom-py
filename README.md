@@ -321,14 +321,7 @@ In `config/api.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.user.model
-        - app.user.interface
-        - app.product.model
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: My Store API
@@ -376,23 +369,15 @@ Run it with `LOOM_ENV=development`: an unset `LOOM_ENV` means production, where
 the deploy checks refuse an API that authenticates nobody (`loom.rest.E001`).
 See [Environments and deploy checks](docs/getting-started/environments.md).
 
-For larger projects, use `mode: manifest` and a manifest module:
-
-```python
-# app/manifest.py
-from app.user.model import User
-from app.user.interface import UserRestInterface
-
-MODELS = [User, ...]
-INTERFACES = [UserRestInterface, ...]
-```
+For larger projects, list the packages that contain application components:
 
 ```yaml
-discovery:
-  mode: manifest
-  manifest:
-    module: app.manifest
+app:
+  packages: [acme]
 ```
+
+The scanner includes subpackages and discovers models, use cases, jobs, REST
+interfaces, and installers declared in their own modules.
 
 ### 10. Rules + Computes (advanced)
 

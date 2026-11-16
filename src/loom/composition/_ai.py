@@ -116,7 +116,7 @@ class AiWiring:
         kernel: KernelRuntime,
         sql_cfg: SqlConfig | None,
         code_path: pathlib.Path,
-        manifest_agent_specs: tuple[str, ...],
+        agent_specs: tuple[str, ...],
         declared: MarkerDeclarations,
         names: Collection[str] | None = None,
     ) -> AiWiring:
@@ -132,7 +132,7 @@ class AiWiring:
             kernel: The kernel the runtime serves.
             sql_cfg: The ``sql`` section, or ``None``.
             code_path: Root the artifact globs are relative to.
-            manifest_agent_specs: Glob patterns of the manifest ``AGENTS`` attribute.
+            agent_specs: Glob patterns from ``app.agents``.
             declared: Every ``Agent()`` and ``Mcp()`` declaration reached.
             names: The agents to compile, those an ``Agent()`` declaration
                 names; ``None`` compiles every declared artifact. An agent left
@@ -142,18 +142,18 @@ class AiWiring:
             The wiring; :attr:`ABSENT` without the section.
 
         Raises:
-            ConfigError: When the manifest declares ``AGENTS`` and there is no
+            ConfigError: When ``app.agents`` declares artifacts and there is no
                 ``ai:`` section.
             AgentCompilationError: When an ``Mcp()`` declaration names an
                 unknown server, the artifact sources conflict or are missing,
                 or an artifact does not compile.
         """
         if not ctx.has(ConfigKey.AI):
-            if manifest_agent_specs:
+            if agent_specs:
                 raise ConfigError(
-                    "The manifest declares AGENTS but the configuration has no 'ai:' section: "
+                    "app.agents declares artifacts but the configuration has no 'ai:' section: "
                     "agent artifacts need an engine and its model bindings to compile. Add the "
-                    "'ai:' section, or remove AGENTS from the manifest."
+                    "'ai:' section, or remove app.agents."
                 )
             declared.mcp_grants({})
             return cls.ABSENT
@@ -168,7 +168,7 @@ class AiWiring:
             ai_cfg,
             root=code_path,
             names=names,
-            specs=ai_cfg.artifact_specs(manifest_agent_specs, mcp_declared=bool(declared.mcp)),
+            specs=ai_cfg.artifact_specs(agent_specs, mcp_declared=bool(declared.mcp)),
             engine_provider=provider,
             registry=kernel.registry,
             container=kernel.container,

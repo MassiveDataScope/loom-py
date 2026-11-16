@@ -34,7 +34,12 @@ from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.stores.mongo.uow import MongoSessions
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import ProjectFactory, composition_project, uow_factory
+from tests.helpers.composition import (
+    ProjectFactory,
+    WithOverrides,
+    composition_project,
+    uow_factory,
+)
 
 
 class _OverrideJob(Job[int]):
@@ -75,7 +80,7 @@ def _worker(tmp_path: Path, module: Callable[[LoomContainer], None]) -> Applicat
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return project.compose(CeleryAdapter(jobs=[_OverrideJob]), modules=[module])
+    return project.compose(WithOverrides(CeleryAdapter(jobs=[_OverrideJob]), module))
 
 
 def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:
@@ -94,7 +99,7 @@ class TestCallerOverrides:
         adapter = FastAPIAdapter()
         module = _module(key)
         with pytest.raises(ReservedBindingError) as caught:
-            Project.load(project, environment="test").compose(adapter, modules=[module])
+            Project.load(project, environment="test").compose(WithOverrides(adapter, module))
 
         _assert_reserved(caught.value, key)
 

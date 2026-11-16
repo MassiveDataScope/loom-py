@@ -35,7 +35,7 @@ from loom.core.discovery._utils import (
     collect_use_cases_from_interfaces,
     infer_model_from_use_case,
 )
-from loom.core.discovery.base import AGENTS_ONLY_HINT, DiscoveryResult
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
     AppIntrospection,
@@ -183,8 +183,8 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
         if model is not None and model not in known:
             raise RuntimeError(
                 f"{interface.__name__} generates CRUD routes over "
-                f"{model.__name__}, which discovery did not find. Add it to MODELS in "
-                "your manifest module, or include its module in app.discovery, so its "
+                f"{model.__name__}, which discovery did not find. Add its package to "
+                "app.packages so its "
                 "repository is registered."
             )
 
@@ -289,7 +289,8 @@ def _discover_components(project: Project) -> DiscoveryResult:
     discovered = project.discover()
     if not discovered.use_cases and not discovered.interfaces and not discovered.agent_specs:
         raise RuntimeError(
-            f"Nothing discovered: no UseCase, no RestInterface and no agents. {AGENTS_ONLY_HINT}"
+            "Nothing discovered: no UseCase, no RestInterface and no agents. "
+            "Set app.packages or app.agents."
         )
     return discovered
 

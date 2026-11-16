@@ -126,7 +126,9 @@ def _ops(interface: type[RestInterface[Any]]) -> set[CrudOp]:
 def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
     def _install(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> None:
         result = _discovery(*interfaces, models=models)
-        monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: result)
+        monkeypatch.setattr(
+            "loom.composition.project.PackageScanner.discover", lambda self, agents=None: result
+        )
 
     return _install
 

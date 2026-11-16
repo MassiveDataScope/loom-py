@@ -19,6 +19,8 @@ from celery.signals import worker_init, worker_shutdown
 from loom.celery.bootstrap import bootstrap_worker
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.core.command import Command
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository.query import CursorResult, PaginationMode, QuerySpec
@@ -80,7 +82,19 @@ _isolated_signals = isolated_signals(worker_init, worker_shutdown)
 
 
 @pytest.fixture(autouse=True)
-def _reset_registry() -> Iterator[None]:
+def _reset_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    discovered = DiscoveryResult(
+        models=(_Order,),
+        use_cases=(_CountOrders, _PageThroughOrders),
+        interfaces=(),
+        jobs=(_LoadOrderJob, _PageThroughOrdersJob),
+    )
+    empty = DiscoveryResult(models=(), use_cases=(), interfaces=())
+    monkeypatch.setattr(
+        PackageScanner,
+        "discover",
+        lambda self, agents=None: discovered if self._packages else empty,
+    )
     yield
     reset_registry()
 
@@ -102,7 +116,7 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
         },
     }
     if discover:
-        document["app"]["discovery"] = {"mode": "modules", "modules": {"include": [__name__]}}
+        document["app"]["packages"] = ["acme_worker_models"]
     path = tmp_path / "worker.yaml"
     path.write_text(yaml.safe_dump(document))
     return str(path)
@@ -118,7 +132,7 @@ class TestWorkerModels:
         assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
         assert (issue.component, issue.field) == ("_LoadOrderJob", "order")
         assert caught.value.model is _Order
-        assert "app.discovery" in issue.message
+        assert "app.packages" in issue.message
 
     def test_a_main_repository_over_an_undeclared_model_fails_the_start_up(
         self, tmp_path: Path

@@ -40,7 +40,7 @@ parameter with a default that is not a marker is left to Python.
 :pyobject: EmailInvoiceNotifier
 ```
 
-A module binds the port to the adapter, and the adapter's own dependencies:
+An installer binds the port to the adapter, and the adapter's own dependencies:
 
 ```{literalinclude} ../../tests/docs/examples/invoicing.py
 :language: python
@@ -54,7 +54,7 @@ works like a class: `container.register(Gateway, gateway)` resolves the
 function's required parameters from the container.
 
 A composed application takes its modules through
-`create_app(..., modules=[...])` or `Project.compose(adapter, modules=...)`. A
+a discovered `Installer` in `app.packages`. A
 standalone kernel takes them through `create_kernel`:
 
 ```{literalinclude} ../../tests/docs/examples/invoicing.py
@@ -181,12 +181,12 @@ A composed application's container is sealed once it has started:
 `register`, `register_default`, `register_instance` and `register_repo` on it
 raise `loom.core.di.ContainerSealed`, and so do declaring an execution kind on
 `container.kinds` and binding a resolver (`bind_agent_resolver`,
-`bind_mcp_resolver`). Bind every key in a module, and every resolver before the
+`bind_mcp_resolver`). Bind every key in an installer, and every resolver before the
 seal. The container `create_kernel` returns stays unsealed.
 
 ## The composition pipeline
 
-`Project.compose(adapter, modules=...)` runs these phases in
+`Project.compose(adapter)` runs these phases in
 order; `create_app` loads the project (`Project.load`) and calls
 `Project.serve`. Nothing registers after `register`.
 
@@ -360,7 +360,7 @@ Known debt:
 | Change | Before | After |
 |---|---|---|
 | REST adapter builds the use case | `LoomRestAdapter(executor)`; `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p, dependencies={User: users}))` | `LoomRestAdapter(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, AdapterRequest(params=p))`, with `users` bound in the container. `AdapterRequest.dependencies` is removed. |
-| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: `create_app(..., modules=[...])` or `Project.compose(adapter, modules=...)`. A sealed container raises `ContainerSealed`. |
+| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: a discovered `Installer` in `app.packages`. A sealed container raises `ContainerSealed`. |
 | Kernel keys | A module binding `UseCaseFactory`, `RuntimeExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |
 | Long background work | Ran as the request's caller indefinitely | Runs as the caller for at most `identity.max_delegation_seconds`; switch to a system identity with `executor.run(UseCase, identity=...)`. |

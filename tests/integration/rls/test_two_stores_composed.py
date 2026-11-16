@@ -37,7 +37,7 @@ from loom.core.use_case.invoker import ApplicationInvoker
 from loom.stores.sqlalchemy.rls import elevate
 from loom.stores.sqlalchemy.rls.verify import verify
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import Serving, composition_project
+from tests.helpers.composition import Serving, WithOverrides, composition_project
 from tests.integration.agnosticism import memos, notes
 from tests.integration.rls.conftest import (
     AUDIT,
@@ -250,7 +250,7 @@ class TwoStores:
         )
         project = composition_project(ctx, app=AppConfig(name="two_stores_composed"))
         adapter = Serving(notes.Note, memos.Memo, use_cases=_USE_CASES)
-        return project.compose(adapter, modules=(_sessions_module,))
+        return project.compose(WithOverrides(adapter, _sessions_module))
 
     async def rows(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Every note body on A and memo body on B, read through the bypass users."""

@@ -812,7 +812,7 @@ call fails](#when-a-call-fails) applies unchanged.
 
 - **Only the agents a use case can reach.** A Lambda function serves no agent
   endpoint, so it builds only the agents named by the `Agent()` markers of the
-  use cases it compiles, including agents a manifest declares under `AGENTS`.
+  use cases it compiles, including agents listed in `app.agents`.
   Any other agent is not compiled, and Init sends no request to the servers
   that only it uses. An `Agent("missing")` marker still fails start-up. An
   `a2a` capability names a remote agent, so it adds no local one.
@@ -912,7 +912,7 @@ A credential is fetched once at Init and not again while it is valid.
 
 The deployed measurement is separate and does not gate a release. The probe
 application
-([`tests/integration/ai/freeze/probe.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/probe.py))
+([`tests/integration/ai/freeze/probe/__init__.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/probe/__init__.py))
 is deployed unchanged, at 1024 MB, against the real MCP gateway. The harness
 ([`tests/integration/ai/freeze/measure.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/measure.py))
 invokes it and reports p50, p95 and p99 for:

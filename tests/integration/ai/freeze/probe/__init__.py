@@ -169,11 +169,6 @@ class ProbeInterface(RestInterface[object]):
     )
 
 
-USE_CASES = [ProbeMarker, ProbeAgent]
-INTERFACES = [ProbeInterface]
-AGENTS = ["agents/*.yaml"]
-
-
 # ---------------------------------------------------------------------------
 # The scripted model and the patches
 # ---------------------------------------------------------------------------
@@ -267,7 +262,8 @@ def project(directory: Path, url: str, *, auth: Mapping[str, Any] | None = None)
         "app": {
             "name": "a3-probe",
             "code_path": str(directory),
-            "discovery": {"mode": "manifest", "manifest": {"module": __name__}},
+            "packages": [__name__],
+            "agents": ["agents/*.yaml"],
             "rest": {
                 "auth": {
                     "jwt": {

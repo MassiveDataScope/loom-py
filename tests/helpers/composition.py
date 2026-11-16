@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -87,6 +88,23 @@ class Serving:
 
     def bind(self, application: Application) -> Application:
         return application
+
+
+class WithOverrides:
+    """Apply registration callbacks to an adapter's recipe in a composition test."""
+
+    def __init__(self, adapter: Any, *overrides: Callable[[LoomContainer], None]) -> None:
+        self._adapter = adapter
+        self._overrides = overrides
+
+    def recipe(self, project: Project) -> Recipe:
+        """Return the wrapped adapter's recipe with registrations."""
+        recipe = self._adapter.recipe(project)
+        return replace(recipe, overrides=(*recipe.overrides, *self._overrides))
+
+    def bind(self, application: Application) -> Any:
+        """Bind the wrapped adapter."""
+        return self._adapter.bind(application)
 
 
 def coordinator_of(executor: RuntimeExecutor) -> Any:

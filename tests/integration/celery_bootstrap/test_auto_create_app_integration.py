@@ -6,7 +6,8 @@ from typing import Any, cast
 
 import pytest
 
-from loom.celery.auto import create_app
+from loom.celery.adapter import CeleryAdapter
+from loom.composition import Project
 from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -25,6 +26,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from tests.helpers.composition import WithOverrides
 
 
 class _Record(BaseModel):
@@ -356,8 +358,7 @@ class TestAutoCreateAppIntegration:
     ) -> None:
         config_path, _db_path, module, callback_sink = celery_files
 
-        celery_app = create_app(
-            config_path,
+        adapter = CeleryAdapter(
             jobs=[
                 _CreateRecordViaUseCaseJob,
                 _GetRecordViaLoadByIdJob,
@@ -368,9 +369,10 @@ class TestAutoCreateAppIntegration:
                 _AlwaysFailJob,
                 _DispatchChildJobOrchestratorJob,
             ],
-            modules=[module],
             callbacks=[_RecordSuccessCallback, _RecordFailureCallback],
         )
+        project = Project.load(config_path, code_path=None, caller="test")
+        celery_app = adapter.bind(project.compose(WithOverrides(adapter, module)))
 
         create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
         get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]

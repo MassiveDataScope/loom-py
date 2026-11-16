@@ -108,15 +108,14 @@ def _write_project(
     custom_auth: bool = False,
 ) -> str:
     """Write the fixture app module plus a YAML config; return the config path."""
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    package = tmp_path / _APP_MODULE
+    package.mkdir()
+    (package / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "sqlgate-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

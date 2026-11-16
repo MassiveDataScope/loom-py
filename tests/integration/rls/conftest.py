@@ -273,7 +273,7 @@ def application_for(
     config = {
         "app": {
             "name": name,
-            "discovery": {"mode": "modules", "modules": {"include": [product.__name__]}},
+            "packages": [product.__name__],
         },
         "stores": {
             store: {

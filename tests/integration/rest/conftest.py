@@ -109,12 +109,14 @@ def write_project(
     module = module_name(tmp_path)
     table_prefix = _NON_IDENTIFIER.sub("_", tmp_path.name)
     source = _APP_SOURCE.format(table_prefix=table_prefix) + extra_source
-    (tmp_path / f"{module}.py").write_text(source, encoding="utf-8")
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "yaml-rest-demo",
             "code_path": ".",
-            "discovery": {"mode": "modules", "modules": {"include": [module]}},
+            "packages": [module],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

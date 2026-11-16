@@ -26,15 +26,12 @@ from loom.composition import Project
 from loom.core.environment import Environment
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import encode_identity
-from loom.core.job.job import Job
-from loom.core.use_case.invoker import ApplicationInvoker
-from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
-from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.agnosticism import notes
+from tests.integration.rls.apps.worker_rls import ListNoteBodies, ListNoteBodiesJob
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 
 pytestmark = pytest.mark.integration
@@ -43,30 +40,6 @@ U1 = "11111111-1111-1111-1111-111111111111"
 U2 = "22222222-2222-2222-2222-222222222222"
 
 _isolated_signals = isolated_signals(worker_init, worker_shutdown)
-
-
-class ListNoteBodies(UseCase[notes.Note, list[str]]):
-    """Read every note the caller's scope lets through."""
-
-    def __init__(self, session_manager: SessionManager) -> None:
-        self._session_manager = session_manager
-
-    async def execute(self) -> list[str]:
-        session = self._session_manager.active_session
-        if session is None:
-            raise RuntimeError("no unit-of-work session")
-        rows = await session.execute(text("SELECT body FROM notes ORDER BY body"))
-        return [str(body) for body in rows.scalars()]
-
-
-class ListNoteBodiesJob(Job[list[str]]):
-    """Run :class:`ListNoteBodies` as the caller the task carries."""
-
-    def __init__(self, app: ApplicationInvoker) -> None:
-        self._app = app
-
-    async def execute(self) -> list[str]:
-        return list(await self._app.invoke(ListNoteBodies))
 
 
 @pytest.fixture(autouse=True)
@@ -92,9 +65,9 @@ async def _seed(bypass_url: str) -> None:
 
 
 def _config(tmp_path: Path) -> str:
-    """The product's configuration, discovering this module and serving both entry points."""
+    """The product's configuration, scanning the job package and serving both entry points."""
     document: dict[str, Any] = yaml.safe_load((tmp_path / f"{notes.SCHEMA}.yaml").read_text())
-    document["app"]["discovery"]["modules"]["include"].append(__name__)
+    document["app"]["packages"].append("tests.integration.rls.apps.worker_rls")
     document["celery"] = {
         "broker_url": "memory://",
         "result_backend": "cache+memory://",

@@ -24,7 +24,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.job.service import InlineJobService, JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory
+from tests.helpers.composition import ProjectFactory, WithOverrides
 from tests.helpers.jobs import BROKER, JobsAdapter, job_project
 from tests.unit.composition.doubles import AcmePingJob
 
@@ -74,7 +74,7 @@ class TestRegisteredJobService:
 
     def test_caller_service_has_no_celery_resource(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY).compose(
-            CeleryAdapter(jobs=[AcmePingJob]), modules=[_own_job_service]
+            WithOverrides(CeleryAdapter(jobs=[AcmePingJob]), _own_job_service)
         )
 
         assert all(resource.kind != ResourceKind.CELERY for resource in application.resources)
@@ -89,7 +89,7 @@ class TestRegisteredJobService:
         fixture_project: ProjectFactory,
     ) -> None:
         application = Project.load(fixture_project(), environment="test").compose(
-            FastAPIAdapter(), modules=[_own_job_service]
+            WithOverrides(FastAPIAdapter(), _own_job_service)
         )
 
         assert isinstance(application.kernel.container.resolve(JobService), _OwnJobService)
@@ -98,7 +98,9 @@ class TestRegisteredJobService:
         # A celery section would otherwise register the Celery service.
         project = job_project(tmp_path, _CELERY)
 
-        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]), modules=[_own_job_service])
+        application = project.compose(
+            WithOverrides(CeleryAdapter(jobs=[AcmePingJob]), _own_job_service)
+        )
 
         assert isinstance(application.kernel.container.resolve(JobService), _OwnJobService)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import sys
 import typing
@@ -10,6 +9,7 @@ from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
 
+from loom.core.di.installer import Installer
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
@@ -28,11 +28,13 @@ class _DiscoveryCollector:
     use_cases: list[type[UseCase[object, object]]] = field(default_factory=list)
     interfaces: list[type[RestInterface[object]]] = field(default_factory=list)
     jobs: list[type[Job[Any]]] = field(default_factory=list)
+    installers: list[type[Installer]] = field(default_factory=list)
 
     _seen_models: set[type[BaseModel]] = field(default_factory=set)
     _seen_use_cases: set[type[UseCase[object, object]]] = field(default_factory=set)
     _seen_interfaces: set[type[RestInterface[object]]] = field(default_factory=set)
     _seen_jobs: set[type[Job[Any]]] = field(default_factory=set)
+    _seen_installers: set[type[Installer]] = field(default_factory=set)
 
     def append_model(self, value: type[Any]) -> None:
         _append_unique(self.models, self._seen_models, typing.cast(type[BaseModel], value))
@@ -54,9 +56,8 @@ class _DiscoveryCollector:
     def append_job(self, value: type[Any]) -> None:
         _append_unique(self.jobs, self._seen_jobs, typing.cast(type[Job[Any]], value))
 
-
-def import_modules(module_paths: list[str]) -> list[ModuleType]:
-    return [importlib.import_module(path) for path in module_paths]
+    def append_installer(self, value: type[Any]) -> None:
+        _append_unique(self.installers, self._seen_installers, typing.cast(type[Installer], value))
 
 
 def _append_unique(items: list[ItemT], seen: set[ItemT], value: ItemT) -> None:
@@ -71,7 +72,7 @@ def _is_local_class(cls: type[Any], module_name: str) -> bool:
 
 
 def _as_model(cls: type[Any]) -> type[BaseModel] | None:
-    if issubclass(cls, BaseModel) and cls is not BaseModel:
+    if issubclass(cls, BaseModel) and cls is not BaseModel and "__tablename__" in vars(cls):
         return cls
     return None
 
@@ -102,6 +103,12 @@ def _as_job(cls: type[Any]) -> type[Job[Any]] | None:
     return None
 
 
+def _as_installer(cls: type[Any]) -> type[Installer] | None:
+    if issubclass(cls, Installer) and cls is not Installer:
+        return cls
+    return None
+
+
 def _append_discovered_class(
     cls: type[Any],
     collector: _DiscoveryCollector,
@@ -114,6 +121,7 @@ def _append_discovered_class(
         (_as_use_case, collector.append_use_case),
         (_as_interface, collector.append_interface),
         (_as_job, collector.append_job),
+        (_as_installer, collector.append_installer),
     )
     for resolver, append in appenders:
         discovered = resolver(cls)
@@ -130,17 +138,24 @@ def collect_from_modules(
     list[type[UseCase[object, object]]],
     list[type[RestInterface[object]]],
     list[type[Job[Any]]],
+    list[type[Installer]],
 ]:
     collector = _DiscoveryCollector()
 
     for module in modules:
         module_name = module.__name__
         for _, cls in inspect.getmembers(module, inspect.isclass):
-            if not _is_local_class(cls, module_name):
+            if not _is_local_class(cls, module_name) or inspect.isabstract(cls):
                 continue
             _append_discovered_class(cls, collector)
 
-    return collector.models, collector.use_cases, collector.interfaces, collector.jobs
+    return (
+        collector.models,
+        collector.use_cases,
+        collector.interfaces,
+        collector.jobs,
+        collector.installers,
+    )
 
 
 def collect_use_cases_from_interfaces(

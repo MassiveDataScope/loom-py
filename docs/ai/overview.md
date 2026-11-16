@@ -167,24 +167,15 @@ no history travels on the wire in either direction. See
 
 ## An application that is only agents
 
-An application does not need a model, a use case or a REST interface to run an
-agent. Its manifest module declares `AGENTS` and nothing else, discovery runs in
-`manifest` mode, and persistence is switched off:
-
-```python
-# myapp/manifest.py
-AGENTS = ["agents/*.yaml"]          # globs resolve against app.code_path
-```
+An application does not need a model, use case, or REST interface to run
+agents. List their artifact globs under `app.agents`:
 
 In `config/api.yaml`:
 
 ```yaml
 app:
   name: incident-triage
-  discovery:
-    mode: manifest
-    manifest:
-      module: myapp.manifest
+  agents: ["agents/*.yaml"]
 
 stores:
   default:
@@ -227,10 +218,8 @@ What `stores.default.backend: none` means:
   the queue, so a job dispatched from a use case is dropped without an error.
   An agents-only application that needs background jobs keeps a real backend.
 
-Only `manifest` discovery can describe this application: the `interfaces` and
-`modules` engines require at least one module path, and their errors — like the
-`RuntimeError` raised when discovery finds no use case, no interface and no
-agent — say so by naming `app.discovery.mode: manifest` and `AGENTS`.
+An agents-only application sets `app.agents` and may leave `app.packages`
+empty. Globs resolve against `app.code_path`.
 
 The API never infers `none` from the absence of models: without a
 `stores.default` section it selects `sqlalchemy` and stops startup naming the

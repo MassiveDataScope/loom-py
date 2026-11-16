@@ -8,10 +8,9 @@ function cannot keep.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType, TracebackType
+from types import TracebackType
 from typing import Any
 
 import pytest
@@ -21,6 +20,8 @@ from loom.ai import registry
 from loom.ai.runtime import AgentRuntime
 from loom.composition import AppConfig, Project, create_app
 from loom.core.config import ConfigContext
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError
@@ -68,19 +69,20 @@ _HTTP_AI: dict[str, Any] = {
 _MISSING_MANIFEST = "tests.unit.serverless.aws.lambda_.ai._no_such_manifest"
 _UNDISCOVERABLE_APP = {
     "name": "lambda-ai",
-    "discovery": {"mode": "interfaces", "interfaces": {"modules": ["no_such_ai_module"]}},
+    "packages": ["no_such_ai_package"],
 }
 
 ProbeFixture = tuple[type[Job[None]], Probe]
 
 
 def _jobs_project(tmp_path: Path, manifest: str, ai: dict[str, Any]) -> Project:
-    """A ``jobs`` function discovering from *manifest*, with the ``ai`` section *ai*."""
-    discovery = {"mode": "manifest", "manifest": {"module": manifest}}
-    document = with_worker({"app": {"name": "lambda-ai", "discovery": discovery}, "ai": ai})
+    """Return a jobs project with configured packages and agents."""
+    document = with_worker(
+        {"app": {"name": "lambda-ai", "packages": [manifest], "agents": [_AGENTS_GLOB]}, "ai": ai}
+    )
     return composition_project(
         ConfigContext.from_dict(document),
-        app=AppConfig(name="lambda-ai", entry=WORKER),
+        app=AppConfig(name="lambda-ai", entry=WORKER, packages=[manifest], agents=[_AGENTS_GLOB]),
         code_path=tmp_path,
         config_root=tmp_path,
     )
@@ -99,13 +101,16 @@ def _write_agent(code_path: Path) -> None:
 
 @pytest.fixture
 def jobs_manifest(probe: ProbeFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
-    """A manifest declaring the probe job and the agents under ``agents/``; its module name."""
-    manifest = ModuleType("tests.unit.serverless.aws.lambda_.ai._agents_manifest")
-    manifest.JOBS = [probe[0]]  # type: ignore[attr-defined]
-    manifest.AGENTS = [_AGENTS_GLOB]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
+    """Supply the probe job and an agent artifact to package discovery."""
+    monkeypatch.setattr(
+        PackageScanner,
+        "discover",
+        lambda self, **kwargs: DiscoveryResult(
+            models=(), use_cases=(), interfaces=(), jobs=(probe[0],), agent_specs=(_AGENTS_GLOB,)
+        ),
+    )
     _write_agent(tmp_path)
-    return manifest.__name__
+    return "acme_jobs"
 
 
 @pytest.fixture

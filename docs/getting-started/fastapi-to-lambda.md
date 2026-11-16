@@ -56,7 +56,7 @@ and requires identical replies. Some features have no Lambda equivalent:
 | Health, OpenAPI and docs routes | Not served. With no `exclude_paths`, no route is public, so a route at `/health` needs a token |
 | `observability.prometheus.enabled` | Refused at startup |
 | SQL endpoints (`app.rest.sql`) | Refused at startup |
-| Agents (an `ai` section, manifest `AGENTS`) | Hosted for the use cases: only the agents an `Agent()` marker names are built, and no agent HTTP or A2A endpoint is served. See [Agents and MCP on Lambda](#agents-and-mcp-on-lambda) |
+| Agents (an `ai` section, `app.agents`) | Hosted for the use cases: only the agents an `Agent()` marker names are built, and no agent HTTP or A2A endpoint is served. See [Agents and MCP on Lambda](#agents-and-mcp-on-lambda) |
 | MCP servers over `transport: stdio` | Refused at startup |
 | CORS (`app.rest.cors`) | Applied by the application, as on FastAPI. Do not configure it in API Gateway as well |
 

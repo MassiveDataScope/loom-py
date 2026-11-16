@@ -589,28 +589,15 @@ jobs:
 (rest-worker-bootstrap)=
 ## Worker bootstrap
 
-### Option 1: Discovery from YAML (recommended)
+### Package discovery
 
-Declare `app.discovery` in `worker.yaml` and let the framework discover jobs,
-use cases, and interfaces automatically. This is the most production-friendly option:
-
-In `config/worker.yaml`:
+Declare application packages in `config/worker.yaml`. The worker recursively
+scans their modules for jobs, use cases, and models:
 
 ```yaml
-includes:
-  - celery.yaml
-
 app:
-  name: billing-worker
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.product.model
-        - app.product.jobs
-        - app.product.use_cases
-        - app.product.interface
-        - app.product.callbacks
+  name: acme-worker
+  packages: [acme]
 
 stores:
   settings:
@@ -621,72 +608,20 @@ stores:
     url: ${oc.env:DATABASE_URL}
 ```
 
-| Key | Meaning |
-| --- | --- |
-| `celery.yaml` | broker settings |
-| `name` | required: names the worker and its metrics |
-| `signing` | `signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys |
-
 ```python
-# src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
-from app.runtime_config import worker_config_paths
 
-result = bootstrap_worker(*worker_config_paths())
+result = bootstrap_worker("config/worker.yaml")
 celery_app = result.celery_app
 ```
 
-Discovery automatically includes all use cases — callbacks can call
-`ApplicationInvoker.entity(...)` without any extra configuration.
-
-### Option 2: Manifest (explicit, deterministic)
-
-Define a manifest module that lists all jobs and callbacks explicitly.
-Ideal for production when you want full control over what is registered:
-
-```python
-# app/manifest.py
-from app.product.jobs import SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob
-from app.product.callbacks import RestockEmailSuccessCallback, RestockEmailFailureCallback
-from app.product.use_cases import DispatchRestockEmailUseCase, BuildProductSummaryUseCase
-from app.product.model import Product
-
-MODELS = [Product]
-JOBS = [SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob]
-CALLBACKS = [RestockEmailSuccessCallback, RestockEmailFailureCallback]
-USE_CASES = [DispatchRestockEmailUseCase, BuildProductSummaryUseCase]
-```
-
-In `config/worker.yaml`:
-
-```yaml
-includes:
-  - celery.yaml
-
-app:
-  name: billing-worker
-  discovery:
-    mode: manifest
-    manifest:
-      module: app.manifest
-
-stores:
-  settings:
-    cursors:
-      signing: ephemeral
-  default:
-    backend: sqlalchemy
-    url: ${oc.env:DATABASE_URL}
-```
-
-`name` is required: it names the worker and its metrics.
-
-`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
+The scanner sorts classes by defining module and qualname. Pass job callbacks
+explicitly to `bootstrap_worker` when the worker needs them.
 
 ### Option 3: Explicit jobs in code
 
 For simple workers or micro-services with a single job, pass jobs directly.
-If `app.discovery` is also present in the YAML (e.g. inherited from a shared
+If `app.packages` is also present in the YAML (e.g. inherited from a shared
 `base.yaml`), use cases discovered there are automatically added to the registry —
 callbacks can use `ApplicationInvoker` without any extra parameter:
 
@@ -697,14 +632,14 @@ from app.product.jobs import SendRestockEmailJob
 from app.product.callbacks import RestockEmailSuccessCallback
 
 result = bootstrap_worker(
-    "config/worker.yaml",   # includes base.yaml → app.discovery auto-supplements registry
+    "config/worker.yaml",   # includes base.yaml → app.packages supplements registry
     jobs=[SendRestockEmailJob],
     callbacks=[RestockEmailSuccessCallback],
 )
 celery_app = result.celery_app
 ```
 
-If `app.discovery` is **not** in the YAML and callbacks need `ApplicationInvoker`,
+If `app.packages` is **not** in the YAML and callbacks need `ApplicationInvoker`,
 pass the interfaces whose routes the callbacks interact with:
 
 ```python
@@ -801,7 +736,7 @@ The three ways to ensure this are described in {ref}`rest-worker-bootstrap`:
 3. Pass `use_cases=` — declare use cases explicitly
 
 When using the `jobs=` explicit bootstrap **and** `worker.yaml` inherits
-`app.discovery` from a base config, the framework supplements the registry
+`app.packages` from a base config, the framework supplements the registry
 automatically from the discovery config — no code change needed.
 
 ---

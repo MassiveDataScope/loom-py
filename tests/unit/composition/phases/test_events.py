@@ -10,7 +10,7 @@ from loom.composition import Application, project
 from loom.core.di.container import LoomContainer
 from tests.helpers.loggers import RecordingLogger
 
-_PHASES = ("plan", "build_stores", "register", "analysed", "wire_ai", "seal")
+_PHASES = ("scan", "plan", "build_stores", "register", "analysed", "wire_ai", "seal")
 
 
 def _acme_module(container: LoomContainer) -> None:
@@ -41,8 +41,8 @@ class TestComposedEvent:
             "use_cases": 1,
             "jobs": 1,
             "backends": {"default": "sqlalchemy"},
-            "modules": 1,
-            "overrides": 0,
+            "installers": 0,
+            "overrides": 1,
             "agents": 0,
             "mcp_servers": 0,
         }

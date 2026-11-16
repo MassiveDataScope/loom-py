@@ -88,8 +88,12 @@ class TestLenientHarness:
     ) -> None:
         with pytest.raises(BootstrapError) as caught:
             ledger_project.compose(
-                Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
-                modules=(binds_unbuildable,),
+                Serving(
+                    AcmeRecord,
+                    use_cases=(AcmePing,),
+                    lenient=True,
+                    overrides=(binds_unbuildable,),
+                ),
             )
 
         assert isinstance(caught.value.__cause__, ResolutionError)

@@ -25,7 +25,6 @@ import yaml
 from loom.rest.fastapi.auto import create_app
 
 SENTINEL = "NO_MARKER_APP_OK"
-_MANIFEST_MODULE = "nomarker.manifest"
 
 _USE_CASE_SOURCE = '''
 from loom.core.use_case import UseCase
@@ -38,12 +37,6 @@ class PingUseCase(UseCase[object, str]):
         return "pong"
 '''
 
-_MANIFEST_SOURCE = """
-from nomarker.use_cases import PingUseCase
-
-USE_CASES = [PingUseCase]
-"""
-
 
 def _write_project(root: Path) -> str:
     """Write the ``nomarker`` package and its YAML config; no ``ai:`` section at all."""
@@ -51,15 +44,11 @@ def _write_project(root: Path) -> str:
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "use_cases.py").write_text(_USE_CASE_SOURCE, encoding="utf-8")
-    (package / "manifest.py").write_text(_MANIFEST_SOURCE, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "nomarker-demo",
             "code_path": str(root),
-            "discovery": {
-                "mode": "manifest",
-                "manifest": {"module": _MANIFEST_MODULE},
-            },
+            "packages": ["nomarker"],
         },
         "stores": {"default": {"backend": "none"}},
         # Deliberately no 'ai:' section: this is exactly the absent-section

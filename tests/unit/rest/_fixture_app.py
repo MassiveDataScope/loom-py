@@ -158,15 +158,14 @@ def write_project(
     source = _APP_SOURCE.format(prefix=prefix, route_path=route_path, id_field=id_field)
     if with_cached_model:
         source += _CACHED_MODEL_SOURCE.format(cached_prefix=CACHED_RECORDS_PREFIX)
-    (tmp_path / f"{module}.py").write_text(source, encoding="utf-8")
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "config-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
     }
     config["stores"] = {"settings": {"cursors": {"signing": "ephemeral"}, **(settings or {})}}

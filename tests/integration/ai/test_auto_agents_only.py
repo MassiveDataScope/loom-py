@@ -1,6 +1,6 @@
 """An agents-only application serves a use case with no persistence (AC4).
 
-Drives the real :func:`loom.rest.fastapi.auto.create_app` over a manifest that
+Drives the real :func:`loom.rest.fastapi.auto.create_app` over a package that
 declares one keyed use case and one agent — no models, no interfaces, no
 ``stores`` section but ``stores.default.backend: none``. The engine provider is
 defined here and does what a real engine does with a ``usecase`` grant: it
@@ -15,9 +15,7 @@ neither can prove this path.
 
 from __future__ import annotations
 
-import sys
 import time
-import types
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,13 +39,12 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
 from loom.core.plugins import entrypoints as entrypoints_module
-from loom.core.use_case.keys import use_case_key
-from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.composition import coordinator_of
+from tests.integration.ai._agents_only_pkg import PINGS, PingUseCase
 from tests.integration.ai._entrypoints import fake_entry_points
 
-_MANIFEST_MODULE = "tests.integration.ai._agents_only_manifest"
+_PACKAGE = "tests.integration.ai._agents_only_pkg"
 _ENGINE_NAME = "agentsonly-inprocess-fake"
 _AGENT = "ping-agent"
 _GROUP = "loom.ai.engines"
@@ -70,19 +67,6 @@ _AGENT_SPEC: dict[str, Any] = {
     },
     "capabilities": [{"kind": "usecase", "keys": ["ping"]}],
 }
-
-# Module-level side-effect log the use case appends to; reset per test.
-PINGS: list[str] = []
-
-
-@use_case_key("ping")
-class PingUseCase(UseCase[Any, str]):
-    """Model-less use case recording one side effect per execution."""
-
-    async def execute(self, **kwargs: Any) -> str:
-        del kwargs
-        PINGS.append("pong")
-        return "pong"
 
 
 class _PingEngine:
@@ -180,15 +164,6 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def manifest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Register the agents-only manifest module: use cases and agents, nothing else."""
-    module = types.ModuleType(_MANIFEST_MODULE)
-    module.USE_CASES = [PingUseCase]  # type: ignore[attr-defined]
-    module.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, _MANIFEST_MODULE, module)
-
-
-@pytest.fixture
 def executed(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
     """Spy on ``RuntimeExecutor.run`` and collect the use-case types it built and ran."""
     seen: list[type[Any]] = []
@@ -218,10 +193,8 @@ def _write_project(tmp_path: Path) -> str:
         "app": {
             "name": "agentsonly-inprocess-demo",
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "manifest",
-                "manifest": {"module": _MANIFEST_MODULE},
-            },
+            "packages": [_PACKAGE],
+            "agents": ["agents/*.yaml"],
             "rest": {
                 "auth": {
                     "jwt": {
@@ -254,9 +227,9 @@ def _bearer() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.usefixtures("fake_engine", "manifest")
+@pytest.mark.usefixtures("fake_engine")
 class TestAgentsOnlyApp:
-    """AC4: a manifest with use cases and agents alone serves them without persistence."""
+    """AC4: a package of use cases and agents alone serves them without persistence."""
 
     def test_the_agent_runs_the_use_case_through_the_executor_without_a_uow(
         self, tmp_path: Path, executed: list[type[Any]]

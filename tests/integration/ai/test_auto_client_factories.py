@@ -80,7 +80,8 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _write_project(tmp_path: Path, *, specs: dict[str, dict[str, Any]]) -> str:
     """Write the fixture app, one artifact per spec and the YAML config."""
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     for name, spec in specs.items():
         agent_dir = tmp_path / "ai" / "agents" / name
         agent_dir.mkdir(parents=True)
@@ -89,10 +90,7 @@ def _write_project(tmp_path: Path, *, specs: dict[str, dict[str, Any]]) -> str:
         "app": {
             "name": "ai-factories-demo",
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},

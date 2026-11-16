@@ -76,7 +76,9 @@ def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
 
 @pytest.fixture
 def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: _agents_only())
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover", lambda self, agents=None: _agents_only()
+    )
     monkeypatch.setattr(AiWiring, "build", classmethod(lambda cls, *args, **kwargs: cls.ABSENT))
 
 
@@ -277,15 +279,18 @@ class TestDiscoverComponents:
     def test_discover_components_rejects_empty_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: _no_models())
+        monkeypatch.setattr(
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: _no_models(),
+        )
         project = composition_project(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
         with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
             _discover_components(project)
 
         message = str(exc_info.value)
-        assert "discovery.mode: manifest" in message
-        assert "AGENTS" in message
+        assert "app.packages" in message
+        assert "app.agents" in message
 
 
 class TestBuildBootstrapModelRules:
@@ -328,8 +333,8 @@ class TestBuildBootstrapModelRules:
             auto = True
 
         monkeypatch.setattr(
-            "loom.composition.project.discover",
-            lambda _cfg: DiscoveryResult(
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: DiscoveryResult(
                 models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
             ),
         )
@@ -340,7 +345,7 @@ class TestBuildBootstrapModelRules:
             _build_bootstrap(app_config, ctx)
 
         assert "PersistenceNoneRecord" in str(exc_info.value)
-        assert "app.discovery" in str(exc_info.value)
+        assert "app.packages" in str(exc_info.value)
 
     def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
         self,
@@ -358,8 +363,8 @@ class TestBuildBootstrapModelRules:
             routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
 
         monkeypatch.setattr(
-            "loom.composition.project.discover",
-            lambda _cfg: DiscoveryResult(
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: DiscoveryResult(
                 models=(),
                 use_cases=(),
                 interfaces=_interfaces(HandWrittenInterface),

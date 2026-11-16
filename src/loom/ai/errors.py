@@ -614,7 +614,7 @@ class AgentErrorCode(IssueCode):
     AGENT_SPECS_CONFLICT = (
         "AGENT_SPECS_CONFLICT",
         Template(
-            "agent artifacts are declared both by the manifest 'AGENTS' attribute and by the "
+            "agent artifacts are declared both by 'app.agents' and by the "
             "'ai.specs' config key; declare them in exactly one of the two",
             component="ai",
             field=_FIELD_AI_SPECS,
@@ -624,7 +624,7 @@ class AgentErrorCode(IssueCode):
         "AGENT_SPECS_MISSING",
         Template(
             "the 'ai:' section is configured but declares no agent artifact; set 'ai.specs' "
-            "or the manifest 'AGENTS' attribute",
+            "or 'app.agents'",
             component="ai",
             field=_FIELD_AI_SPECS,
         ),

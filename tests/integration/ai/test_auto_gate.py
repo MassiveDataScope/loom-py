@@ -117,7 +117,8 @@ def _write_project(
     which is the layout ``ai.specs`` globs and where a skill library sits next
     to the artifact that grants it.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     secret_path = tmp_path / "hs.key"
     secret_path.write_text("integration-test-secret-of-32-bytes!", encoding="utf-8")
     agent_dir = tmp_path / "ai" / "agents" / _AGENT
@@ -127,10 +128,7 @@ def _write_project(
         "app": {
             "name": "aigate-demo",
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
             "rest": {"auth": {"jwt": {**jwt_section, "secret_path": str(secret_path)}}},
         },
         "stores": {

@@ -27,9 +27,9 @@ import sys
 sys.modules["fastapi"] = None
 
 import loom.stores.sqlalchemy.alembic
-from loom.core.discovery import ModulesDiscoveryEngine
+from loom.core.discovery import PackageScanner
 
-result = ModulesDiscoveryEngine(["app_models"]).discover()
+result = PackageScanner(["app_models"]).discover()
 
 assert [model.__name__ for model in result.models] == ["Kind"], result
 assert result.interfaces == (), result
@@ -38,8 +38,10 @@ assert "loom.rest" not in sys.modules, sorted(m for m in sys.modules if m.starts
 
 
 class TestLocatorImportContainment:
-    def test_the_locator_and_modules_discovery_work_without_fastapi(self, tmp_path: Path) -> None:
-        (tmp_path / "app_models.py").write_text(_APP_MODELS, encoding="utf-8")
+    def test_the_locator_and_package_scan_work_without_fastapi(self, tmp_path: Path) -> None:
+        package = tmp_path / "app_models"
+        package.mkdir()
+        (package / "__init__.py").write_text(_APP_MODELS, encoding="utf-8")
 
         result = subprocess.run(
             [sys.executable, "-c", _WITHOUT_FASTAPI],

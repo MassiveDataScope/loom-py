@@ -122,10 +122,7 @@ In `config/base.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include: [app.product.model, app.product.interface]
+  packages: [app]
 stores:
   default:
     backend: sqlalchemy
@@ -270,7 +267,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
   that can match a key inside `checks`, `config`, `stores.settings.cursors`,
-  `aws`, `sqs.queues`, `app.discovery`, `lambda.handler` or a Lambda
+  `aws`, `sqs.queues`, `app.packages`, `lambda.handler` or a Lambda
   function's `trigger`
   (`stores.settings.*.signing` and `lambda.functions.*.trigger.job` included)
   stops startup naming the entry; the entries

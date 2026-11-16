@@ -159,10 +159,10 @@ class TestStartupErrors:
 
     def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
-        recipe = phases.plan(project, adapter)
+        recipe = replace(phases.plan(project, adapter), overrides=(binds_unbuildable,))
         stores = phases.build_stores(project, recipe)
         kernel, _sql, _jobs = phases.register(
-            project, recipe, stores, modules=(binds_unbuildable,), logger=get_logger("tests.acme")
+            project, recipe, stores, logger=get_logger("tests.acme")
         )
         analysis = recipe.analysed(kernel.factory.graph)
 

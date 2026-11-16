@@ -8,11 +8,9 @@ fake repository; the standalone ones take the use cases and modules directly.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -22,6 +20,7 @@ from loom.composition.recipe import Adapter
 from loom.core.bootstrap import bootstrap_app, create_kernel
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.testing.in_memory import InMemoryRepository
 from tests.helpers.composition import composition_project
@@ -33,7 +32,6 @@ from tests.unit.composition.phases.components import (
     AcmeRecord,
 )
 
-MANIFEST = "acme_pipeline_manifest"
 SQLITE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}
 _WORKER = "worker"
 _EVENTS = "events"
@@ -60,7 +58,7 @@ class Composition:
     use_cases: tuple[type[Any], ...] = (AcmePing,)
     jobs: tuple[type[Any], ...] = (AcmeJob,)
     interfaces: tuple[type[Any], ...] = (AcmeInterface,)
-    modules: tuple[Module, ...] = ()
+    overrides: tuple[Module, ...] = ()
     config: Mapping[str, Any] = field(default_factory=dict)
     environment: Environment = Environment.TEST
 
@@ -150,7 +148,7 @@ def standalone_kernel(
     kernel = create_kernel(
         config=AppConfig(name="acme"),
         use_cases=composition.use_cases,
-        modules=composition.modules,
+        modules=composition.overrides,
         environment=composition.environment,
     )
     return kernel.container
@@ -163,7 +161,7 @@ def standalone_bootstrap(
     result = bootstrap_app(
         config=AppConfig(name="acme"),
         use_cases=composition.use_cases,
-        modules=composition.modules,
+        modules=composition.overrides,
         environment=composition.environment,
     )
     return result.container
@@ -177,17 +175,21 @@ def _composed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> LoomContainer:
-    manifest = ModuleType(MANIFEST)
-    manifest.MODELS = list(composition.models)  # type: ignore[attr-defined]
-    manifest.USE_CASES = list(composition.use_cases)  # type: ignore[attr-defined]
-    manifest.JOBS = list(composition.jobs)  # type: ignore[attr-defined]
-    manifest.INTERFACES = list(composition.interfaces)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, MANIFEST, manifest)
+    discovered = DiscoveryResult(
+        models=composition.models,
+        use_cases=composition.use_cases,
+        jobs=composition.jobs,
+        interfaces=composition.interfaces,
+    )
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover",
+        lambda self, agents=None: discovered,
+    )
     app = {
         "name": "acme",
         "entry": entry,
         "job_service": "inline",
-        "discovery": {"mode": "manifest", "manifest": {"module": MANIFEST}},
+        "packages": ["acme"],
     }
     base = {
         "app": app,
@@ -200,8 +202,26 @@ def _composed(
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    application = project.compose(cast(Adapter[object], adapter), modules=composition.modules)
+    application = project.compose(
+        _OverridesAdapter(cast(Adapter[object], adapter), composition.overrides)
+    )
     return application.kernel.container
+
+
+class _OverridesAdapter:
+    def __init__(self, adapter: Adapter[object], overrides: tuple[Module, ...]) -> None:
+        self._adapter = adapter
+        self._overrides = overrides
+
+    def recipe(self, project: Project) -> Any:
+        recipe = self._adapter.recipe(project)
+        return replace(
+            recipe,
+            overrides=(*recipe.overrides, *self._overrides),
+        )
+
+    def bind(self, application: Application) -> object:
+        return self._adapter.bind(application)
 
 
 def _merged(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:

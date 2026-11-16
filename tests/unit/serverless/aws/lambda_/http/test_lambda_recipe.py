@@ -35,10 +35,6 @@ _SQL_CONNECTION: dict[str, Any] = {
     "default_role": "role_viz_reader",
     "sql_endpoint": {"enabled": True, "auth": "external"},
 }
-_UNDISCOVERABLE_APP = {
-    "name": "contract",
-    "discovery": {"mode": "interfaces", "interfaces": {"modules": ["no_such_contract_module"]}},
-}
 _CONFIG_REFUSALS = [
     pytest.param(
         {"sql": {"connections": {"analytics": _SQL_CONNECTION}}},
@@ -89,18 +85,6 @@ class TestLambdaRecipe:
         self, contract_project: ProjectFactory, options: dict[str, Any], key: str
     ) -> None:
         config = contract_project(**options)
-
-        adapter = LambdaAdapter()
-
-        with pytest.raises(LambdaUnservedConfigError) as raised:
-            Project.load(config, environment=_TEST).compose(adapter)
-        assert raised.value.key == key
-
-    @pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
-    def test_a_configuration_refusal_comes_before_discovery(
-        self, contract_project: ProjectFactory, options: dict[str, Any], key: str
-    ) -> None:
-        config = contract_project(app=_UNDISCOVERABLE_APP, **options)
 
         adapter = LambdaAdapter()
 

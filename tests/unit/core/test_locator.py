@@ -24,7 +24,7 @@ def _config(module: str, **schema: object) -> dict[str, object]:
     return {
         "app": {
             "name": "fixture",
-            "discovery": {"mode": "modules", "modules": {"include": [module]}},
+            "packages": [module],
         },
         "stores": {
             "default": {
@@ -250,7 +250,7 @@ class TestLocatorConfigPath:
             '    __tablename__ = "gadgets"\n'
             "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
         )
-        config = _config("relcodepath_models.models", mode="create_all")
+        config = _config("relcodepath_models", mode="create_all")
         app_section = config["app"]
         assert isinstance(app_section, dict)
         app_section["code_path"] = "src"

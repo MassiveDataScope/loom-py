@@ -15,14 +15,14 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, get_args
+from typing import get_args
 
 import msgspec
 from sqlalchemy import MetaData
 
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.overrides import load_application_config
-from loom.core.discovery.config import DISCOVERY_MODES, decode_discovery, discover
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import (
     config_source_paths,
     resolve_config_dir,
@@ -67,7 +67,7 @@ _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
-    discovery: dict[str, Any] = msgspec.field(default_factory=dict)
+    packages: list[str] = msgspec.field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +142,7 @@ def load_store_schema(
     spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose="the application's schema")
     database = spec.decode(DatabaseConfig)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
-    stores = catalog.models_by_store(_discover(app.discovery))
+    stores = catalog.models_by_store(PackageScanner(app.packages).discover().models)
     models = stores.get(store, ())
     skipped = sorted(key for key, held in stores.items() if held and key != store)
     if skipped:
@@ -174,14 +174,6 @@ def _compiled_metadata(models: Sequence[type], schema: SchemaConfig, path: str) 
         metadata.info[SCHEMA_KEY] = _schema_name(schema.name, path)
     compile_all(*models, metadata=metadata)
     return metadata
-
-
-def _discover(section: Mapping[str, Any]) -> tuple[type, ...]:
-    """Discover the models ``app.discovery`` names; its unknown keys are ignored."""
-    discovery = decode_discovery(section, strict=False)
-    if discovery.mode not in DISCOVERY_MODES:
-        raise ConfigError(f"app.discovery.mode {discovery.mode!r} is not supported")
-    return discover(discovery).models
 
 
 def _schema_name(name: str, path: str) -> str:

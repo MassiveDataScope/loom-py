@@ -91,7 +91,7 @@ def _config(package: str) -> dict[str, Any]:
     return {
         "app": {
             "name": "shop",
-            "discovery": {"mode": "modules", "modules": {"include": [f"{package}.api"]}},
+            "packages": [package],
             "rest": {
                 "docs_url": None,
                 "redoc_url": None,
@@ -413,11 +413,6 @@ class TestDeployManifest:
                 (),
                 "matches no route declared by a Python interface",
             ),
-            (
-                _set("app.discovery.mode", "interfaces"),
-                _WORKER_ONLY,
-                "'interfaces' is not one a worker scans",
-            ),
             (lambda config: config, ("--function", "billing"), "declares no function 'billing'"),
         ],
         ids=[
@@ -437,7 +432,6 @@ class TestDeployManifest:
             "wildcard-secret",
             "wildcard-parameter",
             "unmatched-disabled-route",
-            "non-worker-discovery",
             "unknown-function",
         ],
     )

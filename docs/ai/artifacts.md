@@ -43,7 +43,7 @@ ai:
   specs: ["ai/agents/*/agent.yaml"]
 ```
 
-or declare them on the application manifest's `AGENTS` attribute instead. The
+or declare them in `app.agents` instead. The
 two are **mutually exclusive**: declaring both is a compilation error, because
 an application must have exactly one answer to "which agents do I run".
 
