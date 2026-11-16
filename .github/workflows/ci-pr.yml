@@ -79,7 +79,7 @@ jobs:
           if [ "${PYTHON_VERSION}" = "${PRIMARY_PYTHON}" ]; then
             coverage_args=(--cov --cov-report=)
           fi
-          uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" --with "pytest-xdist==3.6.1" \
+          uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
             pytest -m "not integration and not slow" \
             --ignore=tests/unit/etl/backends/test_spark \
             -n 4 "${coverage_args[@]}" \

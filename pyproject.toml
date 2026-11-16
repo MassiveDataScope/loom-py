@@ -282,6 +282,7 @@ dev = [
     "delta-spark>=3.2,<4.0; python_version < '3.13'",
     "chispa>=0.10,<1.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.6.1,<4",
     "findspark>=2.0.1",
     "confluent-kafka>=2.6,<3.0",
     "bytewax>=0.21; python_version < '3.13'",
