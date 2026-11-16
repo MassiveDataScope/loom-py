@@ -841,7 +841,23 @@ shutil.copy(ENV_TEMPLATE_PATH, "alembic/data/env.py")
 
 The environment loads the application from `config.attributes["application"]` or, when
 that is absent, from the default config directory (`LOOM_CONFIG_DIR`, else `./config`). It refuses offline mode, because the guard needs a
-live connection. Generate and apply structural revisions with the migrator URL:
+live connection.
+
+An application that writes its own `env.py` gets one store's metadata from the same
+package scan composition uses, with one import and one call:
+
+```python
+from loom.stores.sqlalchemy.alembic import load_store_schema
+
+target_metadata = load_store_schema(store="default").metadata
+```
+
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` takes an optional configuration
+file or directory, else the default config directory, and holds the models of the store
+named: those `app.packages` scans and the store serves. A store that is not declared
+with the SQLAlchemy backend is a `ConfigError` naming its section.
+
+Generate and apply structural revisions with the migrator URL:
 
 ```python
 from alembic import command

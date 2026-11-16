@@ -985,7 +985,8 @@
 - **stores:** `load_store_schema(path, store="audit")` loads one store's models
   and schema section, so `create_schema` and `verify` prepare and check a
   second Postgres store. `StoreSchema.path` is derived
-  from the new `StoreSchema.store` and is no longer a constructor argument. Migrations still cover `default` only and log
+  from the new `StoreSchema.store` and is no longer a constructor argument. A consumer
+  `env.py` takes one store's metadata with `load_store_schema(store="audit").metadata`. Migrations still cover `default` only and log
   `StoresNotLoaded` naming the stores they leave out.
 - **stores:** `stores.settings.rollback_timeout` (seconds, default 30) bounds the
   rollbacks of one invocation together.

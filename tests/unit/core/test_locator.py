@@ -400,3 +400,41 @@ class TestStoreSections:
         assert application.database.url == url
         assert len(left_out) == 1
         assert repr(skipped) in left_out[0]
+
+
+@pytest.fixture
+def three_stores_dir(tmp_path: Path) -> Path:
+    config = _config(TWO_STORES_MODULE)
+    config["stores"] = {
+        **config["stores"],
+        "audit": {"backend": "sqlalchemy", "url": AUDIT_URL},
+        "ledger": {"backend": "sqlalchemy", "url": AUDIT_URL},
+    }
+    _write(tmp_path, "base.yaml", config)
+    return tmp_path
+
+
+class TestStoreSchemaMetadata:
+    @pytest.mark.parametrize(
+        ("store", "tables"),
+        [("default", {"widgets"}), ("audit", {"gadgets"}), ("ledger", set())],
+    )
+    def test_holds_the_tables_of_the_asked_store_and_only_those(
+        self, three_stores_dir: Path, store: str, tables: set[str]
+    ) -> None:
+        path = str(three_stores_dir / "base.yaml")
+
+        metadata = load_store_schema(path, store=StoreKey(store)).metadata
+
+        assert set(metadata.tables) == tables
+
+    def test_an_undeclared_store_names_the_missing_section(self, three_stores_dir: Path) -> None:
+        with pytest.raises(ConfigError, match=r"stores\.missing"):
+            load_store_schema(str(three_stores_dir / "base.yaml"), store=StoreKey("missing"))
+
+    def test_reads_the_default_config_directory_without_a_path(
+        self, three_stores_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOOM_CONFIG_DIR", str(three_stores_dir))
+
+        assert set(load_store_schema().metadata.tables) == {"widgets"}
