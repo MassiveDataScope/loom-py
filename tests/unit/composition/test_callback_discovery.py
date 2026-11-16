@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -17,8 +16,9 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.rest.compiler import RouteSources
 from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_._jobs import jobs_recipe
 from loom.testing.http_harness import _HarnessAdapter
-from tests.helpers import acme_callbacks, acme_unbound_callbacks
+from tests.helpers import acme_callbacks, acme_installers, acme_unbound_callbacks
 from tests.helpers.composition import composition_project
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
 
@@ -46,35 +46,58 @@ def _project(tmp_path: Path, *modules: str, job_service: str = "celery") -> Proj
     )
 
 
-DERIVING_ADAPTERS = pytest.mark.parametrize(
-    "adapter",
+RECIPES = pytest.mark.parametrize(
+    "recipe_of",
     [
-        pytest.param(lambda: CeleryAdapter(jobs=[_AcmeJob]), id="celery"),
-        pytest.param(lambda: LambdaAdapter(jobs=[_AcmeJob]), id="lambda-jobs"),
-        pytest.param(lambda: _HarnessAdapter(RouteSources(), overrides=()), id="http-harness"),
+        pytest.param(lambda project: CeleryAdapter(jobs=[_AcmeJob]).recipe(project), id="celery"),
+        pytest.param(
+            lambda project: jobs_recipe(project, [_AcmeJob], [], None)[0], id="lambda-jobs"
+        ),
+        pytest.param(
+            lambda project: _HarnessAdapter(RouteSources(), overrides=()).recipe(project),
+            id="http-harness",
+        ),
     ],
 )
 
 
-class TestRecipeKeepsTheScannedCallbacks:
-    @DERIVING_ADAPTERS
-    def test_the_recipe_holds_what_the_project_scan_found(
-        self, tmp_path: Path, adapter: Callable[[], Any]
+class TestRecipeKeepsTheScan:
+    @RECIPES
+    def test_the_recipe_holds_the_callbacks_the_project_scan_found(
+        self, tmp_path: Path, recipe_of: Callable[[Project], Recipe]
     ) -> None:
         project = _project(tmp_path, acme_callbacks.MODULE)
-        derived: Recipe = _recipe_of(adapter(), project)
+
+        derived = recipe_of(project)
 
         assert derived.discovered.callbacks == project.discovered.callbacks
         assert acme_callbacks.AcmePingCallback in derived.discovered.callbacks
 
+    @RECIPES
+    def test_the_recipe_holds_the_installers_the_project_scan_found(
+        self, tmp_path: Path, recipe_of: Callable[[Project], Recipe]
+    ) -> None:
+        project = _project(tmp_path, acme_installers.MODULE)
 
-def _recipe_of(adapter: Any, project: Project) -> Recipe:
-    if isinstance(adapter, LambdaAdapter):
-        from loom.serverless.aws.lambda_._jobs import jobs_recipe
+        derived = recipe_of(project)
 
-        return jobs_recipe(project, [_AcmeJob], [], None)[0]
-    recipe: Recipe = adapter.recipe(project)
-    return recipe
+        assert derived.discovered.installers == project.discovered.installers
+        assert acme_installers.AcmeInstaller in derived.discovered.installers
+
+
+class TestJobServiceFromContext:
+    def test_a_recording_service_selected_by_app_job_service_refuses_an_undiscovered_callback(
+        self, tmp_path: Path
+    ) -> None:
+        project = _project(
+            tmp_path, acme_callbacks.MODULE, job_service="loom.testing.jobs:RecordingJobService"
+        )
+        adapter = CeleryAdapter(jobs=[_AcmeJob])
+        service = project.compose(adapter).kernel.container.resolve(JobService)
+
+        service.dispatch(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
+        with pytest.raises(ValueError, match="_AcmeOtherCallback was not discovered"):
+            service.dispatch(_AcmeJob, on_success=_AcmeOtherCallback)
 
 
 class TestLambdaJobCallbacks:

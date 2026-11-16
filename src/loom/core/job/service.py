@@ -14,7 +14,13 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks, JobCallback, notify
+from loom.core.job.callback import (
+    ANY_CALLBACKS,
+    CallbackOutcome,
+    DispatchableCallbacks,
+    JobCallback,
+    notify,
+)
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
@@ -150,8 +156,8 @@ class JobService(Protocol):
             A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
 
         Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            ValueError: When a callback is attached that the scan did not find,
+                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         ...
 
@@ -212,9 +218,9 @@ class InlineJobService:
         executor: RuntimeExecutor,
         *,
         settings: JobSettings | None = None,
-        callbacks: DispatchableCallbacks | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
     ) -> None:
-        self._callbacks = callbacks or DispatchableCallbacks()
+        self._callbacks = callbacks
         self._factory = factory
         self._executor = executor
         self._settings = settings or JobSettings()

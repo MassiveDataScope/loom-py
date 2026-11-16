@@ -46,7 +46,7 @@ class JobBackendContext:
     metrics: MetricsAdapter | None
     observability: ObservabilityRuntime | None
     jobs: tuple[type[Job[Any]], ...] = ()
-    callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks)
+    callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)
     settings: JobSettings = field(default_factory=JobSettings)
 
 

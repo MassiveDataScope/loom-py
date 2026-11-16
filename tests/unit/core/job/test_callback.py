@@ -132,7 +132,7 @@ class TestUndiscoveredCallbacks:
             jobs.dispatch(_AcmeJob, **{hook: _AcmeUndiscoveredCallback})
 
     def test_a_hand_built_service_accepts_any_class(self) -> None:
-        DispatchableCallbacks().refuse({}, _AcmeUndiscoveredCallback)
+        DispatchableCallbacks.any().refuse({}, _AcmeUndiscoveredCallback)
 
     def test_a_dispatch_with_no_callback_is_never_refused(self) -> None:
         _DISCOVERED.refuse({"job_id": 1}, None, None)

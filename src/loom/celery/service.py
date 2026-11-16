@@ -37,7 +37,7 @@ from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.identity import captured_delegation
-from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks
+from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
@@ -185,10 +185,10 @@ class CeleryJobService:
         observability_runtime: ObservabilityRuntime | None = None,
         *,
         settings: JobSettings | None = None,
-        callbacks: DispatchableCallbacks | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
     ) -> None:
         self._app = celery_app
-        self._callbacks = callbacks or DispatchableCallbacks()
+        self._callbacks = callbacks
         self._settings = settings or JobSettings()
         self._metrics = NoMetrics() if metrics is None else metrics
         self._factory = factory

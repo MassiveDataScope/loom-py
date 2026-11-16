@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +19,8 @@ class JobCallback:
     hook, or hooks, to run: the scan finds the class, and the dispatcher
     names it in ``dispatch(Job, on_success=..., on_failure=...)``.  Each hook
     may be plain ``def`` or ``async def``.  An abstract intermediate class
-    inherits ``JobCallback`` and ``ABC`` and is not collected.
+    inherits ``JobCallback`` and ``ABC``; it is not collected when it declares
+    an abstract method.
 
     Subclasses are instantiated by the factory, so constructor dependencies
     are injected via DI like any other service.
@@ -81,11 +82,16 @@ class DispatchableCallbacks:
     """The callbacks a dispatch may attach, and the payload it may carry with one.
 
     Args:
-        discovered: The callback classes the scan found; ``None`` accepts any class.
+        discovered: The callback classes the scan found.
     """
 
-    def __init__(self, discovered: Collection[type[JobCallback]] | None = None) -> None:
-        self._discovered = None if discovered is None else frozenset(discovered)
+    def __init__(self, discovered: Collection[type[JobCallback]]) -> None:
+        self._discovered = frozenset(discovered)
+
+    @classmethod
+    def any(cls) -> DispatchableCallbacks:
+        """The callbacks of a service built by hand: any class may be attached."""
+        return ANY_CALLBACKS
 
     def refuse(
         self, payload: Mapping[str, object], *callback_types: type[JobCallback] | None
@@ -106,18 +112,33 @@ class DispatchableCallbacks:
         attached = [callback_type for callback_type in callback_types if callback_type is not None]
         if not attached:
             return
-        for callback_type in attached:
-            if self._discovered is not None and callback_type not in self._discovered:
-                raise ValueError(
-                    f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was "
-                    "not discovered: inherit from JobCallback in a package listed in app.packages"
-                )
+        self._refuse_undiscovered(attached)
         reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
         if reserved:
             raise ValueError(
                 f"A job payload with a callback cannot hold {', '.join(reserved)}: "
                 "the callback hooks receive these arguments"
             )
+
+    def _refuse_undiscovered(self, attached: Sequence[type[JobCallback]]) -> None:
+        for callback_type in attached:
+            if callback_type not in self._discovered:
+                raise ValueError(
+                    f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was "
+                    "not discovered: inherit from JobCallback in a package listed in app.packages"
+                )
+
+
+class _AnyCallbacks(DispatchableCallbacks):
+    def __init__(self) -> None:
+        super().__init__(())
+
+    def _refuse_undiscovered(self, attached: Sequence[type[JobCallback]]) -> None:
+        return None
+
+
+ANY_CALLBACKS = _AnyCallbacks()
+"""The callbacks of a service built by hand: any class may be attached."""
 
 
 async def notify(

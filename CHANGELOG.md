@@ -21,22 +21,22 @@
   which is scanned on its own; a package is walked recursively, and a
   directory inside it that holds `.py` files but no `__init__.py` is refused
   with a `ConfigError` naming it. Replace a manifest `AGENTS` list with
-  `app.agents: [globs]`. A worker manifest's `CALLBACKS` is removed:
-  inherit from `JobCallback` in a package listed in `app.packages` (see **jobs**
-  below).
+  `app.agents: [globs]`.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
   manifest's `CALLBACKS` are removed. The package scan finds every concrete
   `JobCallback` subclass defined in `app.packages` as it finds a `Job`; an
-  abstract intermediate inherits `JobCallback` and `ABC`. Discovered callbacks
+  abstract intermediate inherits `JobCallback` and `ABC` and is skipped when it
+  declares an abstract method. Discovered callbacks
   are dependency-graph roots in every adapter, like jobs, so one injecting an
   unbound service is refused at start-up. `loom.celery` registers a success and
   a failure task for each; the `callbacks=` parameter is removed from
   `CeleryAdapter`, `loom.celery.bootstrap.bootstrap_worker` and
-  `loom.celery.auto.create_app`. The inline and Celery job services built by
-  the composition refuse, with a `ValueError`, a dispatch naming a callback
-  class the scan did not find; a service built by hand accepts any class.
+  `loom.celery.auto.create_app`. Every job service the composition builds
+  (inline, Celery, recording, and custom backends using `context.callbacks`)
+  refuses, with a `ValueError`, a dispatch naming a callback class the scan did
+  not find; a service built by hand accepts any class.
   **Migration:** inherit from `JobCallback` in a package listed in
   `app.packages` and drop `callbacks=`; replace `NullJobCallback()` with
   `JobCallback()`; a class that only implemented the hooks is neither found nor
@@ -50,6 +50,9 @@
   installers run in module then qualified-name order, before the framework
   registers its own bindings. Substitutions in tests use
   `loom.testing.Override` (see Features, testing).
+- **composition:** every adapter derives its recipe from the project's scan, so
+  the `Installer` classes and agents found in `app.packages` run in every entry
+  point, Celery and Lambda jobs workers included (they were dropped there).
 - **composition:** the composition now scans `app.packages` before the adapter
   plans, so an unimportable package is refused before a configuration the
   adapter would refuse (for instance a Lambda function serving an SQL

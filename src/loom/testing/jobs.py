@@ -49,8 +49,9 @@ class RecordingJobService:
     after the execution commits, never when it rolls back. Outside an
     execution it is recorded by
     :func:`~loom.core.job.context.flush_pending_dispatches`. :meth:`run`
-    executes in process, as ``InlineJobService`` does; callbacks are accepted
-    and never invoked.
+    executes in process, as ``InlineJobService`` does; callbacks are never
+    invoked, and one the scan did not find is refused as the other services do
+    when built from a context.
 
     Args:
         context: Given when ``app.job_service`` selects this class; needed by
@@ -64,7 +65,7 @@ class RecordingJobService:
     def __init__(self, context: JobBackendContext | None = None) -> None:
         self.dispatched: list[DispatchedJob] = []
         self._settings = JobSettings() if context is None else context.settings
-        self._callbacks = DispatchableCallbacks() if context is None else context.callbacks
+        self._callbacks = DispatchableCallbacks.any() if context is None else context.callbacks
         self._inline = (
             None
             if context is None

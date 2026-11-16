@@ -85,7 +85,8 @@ models without their own `__tablename__` are skipped.
   `find_packages` would skip it.
 - A job callback must be defined in a listed package: Celery registers a task
   for each one found, and a dispatch naming another class is refused with a
-  `ValueError` by the inline and Celery job services.
+  `ValueError` by every job service the composition builds (inline, Celery,
+  recording, and custom backends using `context.callbacks`).
 
 ## Event triggers
 
