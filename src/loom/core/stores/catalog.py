@@ -9,8 +9,7 @@ hands its connection to the streaming and ETL sinks that name it. A model
 declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`.
 
 ``stores.settings`` is no store: it holds the settings every store shares, one
-member of :class:`StoreSetting` per key. A store's own ``settings`` mapping may
-not name any of them.
+member of :class:`StoreSetting` per key. A store takes no ``settings`` of its own.
 
 Loading the catalog resolves nothing but each ``backend``: a deploy check or
 CI can load it without the secrets the connections name. A store resolves
@@ -80,7 +79,7 @@ _KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)
 class StoreSetting(StrEnum):
     """A key of ``stores.settings``: a setting every store shares.
 
-    Each one is global: a store's own ``settings`` mapping may not name it.
+    Each one is global: no store overrides it.
     """
 
     CURSORS = "cursors"
@@ -114,26 +113,6 @@ class StoreSetting(StrEnum):
                     f"the keys are {', '.join(sorted(known))}"
                 )
 
-    @classmethod
-    def refuse_in_store(cls, own: Mapping[Any, Any], path: str) -> None:
-        """Fail when the ``settings`` of the store at *path* names a shared setting or another key.
-
-        Args:
-            own: The store's ``settings`` mapping as written.
-            path: Dotted path of the store's section.
-
-        Raises:
-            ConfigError: Naming the key, and the ``stores.settings`` key that holds it.
-        """
-        known = {setting.value: setting for setting in cls}
-        for name in own:
-            if name in known:
-                raise ConfigError(
-                    f"{path}.{SETTINGS_KEY}.{name} is global: set it once under "
-                    f"{known[name].path}, no store overrides it"
-                )
-            raise ConfigError(f"{path}.{SETTINGS_KEY}.{name} is not a setting a store may override")
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StoreCapabilities:
@@ -143,19 +122,13 @@ class StoreCapabilities:
     """Whether the store can serve model repositories."""
     transactional: bool
     """Whether its unit of work can roll back."""
-    pages_with_cursors: bool
-    """Whether its repositories page with cursors."""
 
 
-MODELS_ONLY: Final = StoreCapabilities(
-    serves_models=True, transactional=False, pages_with_cursors=False
-)
-"""A store that serves models, without rollback or cursor paging; the
-conservative default of a backend that does not describe itself."""
+MODELS_ONLY: Final = StoreCapabilities(serves_models=True, transactional=False)
+"""A store that serves models, without rollback; the conservative default
+of a backend that does not describe itself."""
 
-NO_CAPABILITIES: Final = StoreCapabilities(
-    serves_models=False, transactional=False, pages_with_cursors=False
-)
+NO_CAPABILITIES: Final = StoreCapabilities(serves_models=False, transactional=False)
 """A store that supports none of them: ``none``, or a connection-only kind."""
 
 
@@ -202,14 +175,13 @@ class StoreSpec:
 
     @functools.cached_property
     def _resolved(self) -> dict[str, Any]:
-        """The section without ``backend`` and ``settings``, resolved on first read and kept."""
+        """The section without ``backend``, resolved on first read and kept."""
         resolved = self.config.section(self.path, dict)
         resolved.pop(BACKEND_KEY, None)
-        resolved.pop(SETTINGS_KEY, None)
         return resolved
 
     def section(self) -> dict[str, Any]:
-        """Return a copy of the resolved section without ``backend`` and ``settings``.
+        """Return a copy of the resolved section without ``backend``.
 
         It is what the backend decodes.
 
@@ -241,34 +213,6 @@ class StoreCatalog:
     """
 
     specs: Mapping[StoreKey, StoreSpec]
-
-    @property
-    def pages_with_cursors(self) -> bool:
-        """Whether any declared store pages with cursors."""
-        return any(spec.capabilities.pages_with_cursors for spec in self.specs.values())
-
-    def with_default(self, backend: str) -> StoreCatalog:
-        """Return the catalog with :data:`DEFAULT_STORE`, served by *backend* when undeclared.
-
-        Args:
-            backend: Backend of the default store when the catalog does not
-                declare it, read as a section holding only ``backend``.
-
-        Returns:
-            This catalog when it declares the default store; otherwise a copy
-            that also holds the default store, first.
-
-        Raises:
-            ConfigError: When *backend* is neither a registered persistence
-                backend nor a connection-only kind, or is connection-only.
-        """
-        if DEFAULT_STORE in self.specs:
-            return self
-        section = ConfigContext.from_dict(
-            {ConfigKey.STORES: {DEFAULT_STORE: {BACKEND_KEY: backend}}}
-        )
-        default = _spec(section, DEFAULT_STORE, registered_names(BACKEND_ENTRY_POINT_GROUP))
-        return StoreCatalog(specs=MappingProxyType({DEFAULT_STORE: default, **self.specs}))
 
     def require(self, key: str, *, backend: str | None = None, purpose: str) -> StoreSpec:
         """Return the store *key*, which *purpose* needs, served by *backend* when given.
@@ -382,7 +326,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
             backend, or one that is neither a registered persistence backend
             nor a connection-only kind, :data:`DEFAULT_STORE` is
             connection-only, ``stores.settings`` holds a key that is no store
-            setting, or a store's own ``settings`` names any key.
+            setting, or a store declares its own ``settings``.
     """
     reject_retired_sections(ctx)
     written = ctx.raw(ConfigKey.STORES)
@@ -444,11 +388,11 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
             default store is connection-only.
     """
     path = _path(key)
-    own = ctx.raw(f"{path}.{SETTINGS_KEY}")
-    if own is not None:
-        if not isinstance(own, Mapping):
-            raise ConfigError(f"{path}.{SETTINGS_KEY} must be a mapping")
-        StoreSetting.refuse_in_store(own, path)
+    if ctx.has(f"{path}.{SETTINGS_KEY}"):
+        raise ConfigError(
+            f"{path}.{SETTINGS_KEY} is not supported: a store takes no settings of its own, "
+            f"the shared ones live under {ConfigKey.STORES_SETTINGS}"
+        )
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
         raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's persistence backend")

@@ -140,19 +140,19 @@ the configuration file of the environment that needs it.
 Both opt-outs log a WARNING at startup. Strict decoding applies in all three
 modes: it is correctness, not security.
 
-There is no environment logic in the codec. With `signing` absent the mode is
-`signed` in every environment, so a backend that serves repositories
-(`sqlalchemy`, `mongo`) and a Celery worker that registers repositories fail
-at startup without a key, with a `ConfigError` that names the
-`stores.settings.cursors.signing: ephemeral` opt-out for `development.yaml`.
+There is no environment logic in the codec. Configuring `stores.settings.cursors`
+turns cursor paging on; without the section no codec is built and a cursor page
+fails clearly. With the section and `signing` absent the mode is `signed` in
+every environment, so startup fails without a key, with a `ConfigError` that
+names the `stores.settings.cursors.signing: ephemeral` opt-out for
+`development.yaml`.
 
 A deploy check, `loom.cursors.E001`, registered with `@deploy_check` from
-the deploy-check registry of ADR 0005, refuses a deployment that serves
-repositories without signing its cursors with a configured key. It lives in
-`loom.core.stores.repository.checks`, which `loom.core.stores.repository` imports,
-and `loom check --deploy` imports that package. It applies when the
-configuration has a `database` section (SQLAlchemy, and the Celery worker)
-or a `persistence.mongo` section, and finds:
+the deploy-check registry of ADR 0005, refuses a deployment that configures
+`stores.settings.cursors` without signing its cursors with a configured key. It
+lives in `loom.core.stores.repository.checks`, which `loom.core.stores.repository`
+imports, and `loom check --deploy` imports that package. It checks nothing when
+the section is absent, and finds:
 
 - `stores.settings.cursors.signing` set to anything but the literal `signed`
   (absent means `signed`): `ephemeral` and `unsigned` are for development

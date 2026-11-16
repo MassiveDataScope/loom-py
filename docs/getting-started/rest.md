@@ -421,10 +421,10 @@ stores:
     backend: none
 ```
 
-A backend that serves repositories (`sqlalchemy`, `mongo`) signs its
-pagination cursors and fails at startup without a signing key, in every
-environment. The samples on this page are development configurations and opt
-out with `stores.settings.cursors.signing: ephemeral`, which logs a WARNING;
+Cursor pagination is off until `stores.settings.cursors` is configured; the
+section then needs a signing key in every environment. The samples on this page
+are development configurations and opt in with
+`stores.settings.cursors.signing: ephemeral`, which logs a WARNING;
 `production.yaml` configures keys instead. Keys, rotation and the opt-outs are
 described in
 [Cursor tokens](../rest/stores.md#cursor-tokens).

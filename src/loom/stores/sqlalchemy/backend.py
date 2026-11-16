@@ -103,9 +103,9 @@ class SQLAlchemyBackend:
     repository_type: ClassVar[type[Any] | None] = RepositorySQLAlchemy
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
-        """Describe SQLAlchemy: models, rollback and cursor paging, whatever *spec* says."""
+        """Describe SQLAlchemy: models and rollback, whatever *spec* says."""
         del spec
-        return StoreCapabilities(serves_models=True, transactional=True, pages_with_cursors=True)
+        return StoreCapabilities(serves_models=True, transactional=True)
 
     def build(
         self,

@@ -117,6 +117,7 @@ def _config(package: str) -> dict[str, Any]:
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "${ ssm : '/shop/db-url' }"},
             "reports": {"backend": "none"},
+            "settings": {"cursors": {"signing": "unsigned"}},
         },
         "sqs": {"queues": {"jobs": _QUEUE_URL, "alerts": _ALERTS_URL}},
         "checks": {"silenced": ["loom.cursors.E001"]},

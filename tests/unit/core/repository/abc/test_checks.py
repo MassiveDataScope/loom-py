@@ -64,5 +64,6 @@ class TestCursorSigningChecks:
     ) -> None:
         assert _found(_with_cursors(backend, cursors))
 
-    def test_a_configuration_serving_no_repositories_is_not_judged(self) -> None:
-        assert not _found({"stores": {"settings": {"cursors": {"signing": "unsigned"}}}})
+    @pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
+    def test_a_store_without_cursor_settings_is_not_judged(self, backend: dict[str, Any]) -> None:
+        assert not _found(backend)

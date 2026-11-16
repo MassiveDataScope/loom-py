@@ -246,15 +246,16 @@ class CursorCodec:
             )
 
     @classmethod
-    def from_context(cls, ctx: ConfigContext) -> CursorCodec:
+    def from_context(cls, ctx: ConfigContext) -> CursorCodec | None:
         """Build the codec of the ``stores.settings.cursors`` section of ``ctx``.
 
         Args:
             ctx: Application configuration; the section may be absent.
 
         Returns:
-            The codec, built as :meth:`from_config` builds it. An opt-out
-            built from a configuration that lists
+            The codec, built as :meth:`from_config` builds it, or ``None``
+            when the section is absent: configuring it turns cursor paging
+            on. An opt-out built from a configuration that lists
             :data:`CURSOR_SIGNING_CHECK` under ``checks.silenced`` may be
             registered in a deployed environment.
 
@@ -262,10 +263,25 @@ class CursorCodec:
             ConfigError: As :meth:`from_config`, or when the section, or the
                 ``checks`` section, is invalid.
         """
-        codec = cls.from_config(
-            ctx.section_or_default(CURSORS_SECTION, CursorConfig, CursorConfig())
-        )
+        config = ctx.section_optional(CURSORS_SECTION, CursorConfig)
+        if config is None:
+            return None
+        codec = cls.from_config(config)
         codec._opt_out_silenced = CURSOR_SIGNING_CHECK in silenced_checks(ctx)
+        return codec
+
+    @staticmethod
+    def required(codec: CursorCodec | None) -> CursorCodec:
+        """Return *codec*, which a cursor page needs.
+
+        Raises:
+            UnsupportedQuery: When *codec* is ``None``, because no key is
+                configured under ``stores.settings.cursors``.
+        """
+        if codec is None:
+            raise UnsupportedQuery(
+                f"cursor pagination is not enabled: configure keys under {CURSORS_SECTION}"
+            )
         return codec
 
     @property

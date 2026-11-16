@@ -11,7 +11,6 @@ from loom.core.model import BaseModel, ColumnField, Integer
 from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreCatalog,
-    StoreSetting,
     load_catalog,
     store_of,
 )
@@ -55,27 +54,16 @@ class TestSharedSettings:
         with pytest.raises(ConfigError, match=r"stores\.settings must map"):
             _load({"default": _STORE, "settings": 5})
 
-    @pytest.mark.parametrize("setting", list(StoreSetting), ids=lambda setting: setting.value)
-    def test_a_store_cannot_override_a_shared_setting(self, setting: StoreSetting) -> None:
+    @pytest.mark.parametrize(
+        "own",
+        [{}, {"rollback_timeout": 2}, {"cursors": {}}, {"pool": {}}],
+        ids=["empty", "rollback-timeout", "cursors", "other"],
+    )
+    def test_a_store_takes_no_settings_of_its_own(self, own: dict[str, Any]) -> None:
         with pytest.raises(
-            ConfigError, match=rf"stores\.default\.settings\.{setting.value} is global"
+            ConfigError, match=r"stores\.default\.settings is not supported.*stores\.settings"
         ):
-            _load({"default": {**_STORE, "settings": {setting.value: {}}}})
-
-    def test_a_store_override_points_at_the_shared_key(self) -> None:
-        with pytest.raises(
-            ConfigError, match=r"set it once under stores\.settings\.rollback_timeout"
-        ):
-            _load({"default": {**_STORE, "settings": {"rollback_timeout": 2}}})
-
-    def test_a_store_cannot_name_another_key_in_its_settings(self) -> None:
-        with pytest.raises(ConfigError, match=r"stores\.default\.settings\.pool is not a setting"):
-            _load({"default": {**_STORE, "settings": {"pool": {}}}})
-
-    def test_a_store_section_hands_its_backend_neither_backend_nor_settings(self) -> None:
-        catalog = _load({"default": {**_STORE, "settings": {}}})
-
-        assert catalog.specs[DEFAULT_STORE].section() == {"url": "sqlite+aiosqlite:///:memory:"}
+            _load({"default": {**_STORE, "settings": own}})
 
 
 class TestRetiredPersistenceSection:

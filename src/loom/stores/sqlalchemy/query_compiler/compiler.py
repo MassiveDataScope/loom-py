@@ -41,7 +41,8 @@ class QuerySpecCompiler:
         model: Model the query reads: its qualified name is reported in query
             errors, and its module and qualified name are bound into cursor
             tokens. A string is used as both.
-        cursor_codec: Codec that issues and verifies cursor tokens.
+        cursor_codec: Codec that issues and verifies cursor tokens; ``None``
+            when cursor paging is not enabled, which refuses a cursor page.
         scope: Caller scope cursor tokens are bound to; ``""`` deliberately
             binds them to no scope.
         columns: Annotation of each column a cursor may sort by, by name,
@@ -71,7 +72,7 @@ class QuerySpecCompiler:
         *,
         backend: str,
         model: type[Any] | str,
-        cursor_codec: CursorCodec,
+        cursor_codec: CursorCodec | None,
         scope: str,
         columns: Mapping[str, Any],
     ) -> None:
@@ -171,7 +172,7 @@ class QuerySpecCompiler:
             stmt = stmt.where(clause)
 
         if query.cursor is not None:
-            cursor = self._cursor_codec.decode(
+            cursor = CursorCodec.required(self._cursor_codec).decode(
                 query.cursor,
                 backend=self._backend,
                 model=self._model,
@@ -200,7 +201,7 @@ class QuerySpecCompiler:
         )
         if position is None:
             return page_items, None, has_next
-        token = self._cursor_codec.encode(
+        token = CursorCodec.required(self._cursor_codec).encode(
             position, model=self._model, query=query, scope=self._scope
         )
         return page_items, token, has_next

@@ -115,7 +115,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]
         session_manager: SessionManager,
         model: type,
         *,
-        cursor_codec: CursorCodec,
+        cursor_codec: CursorCodec | None,
     ) -> None:
         self.session_manager = session_manager
         self.model = model

@@ -17,7 +17,7 @@ from loom.core.di.graph import (
     GraphAnalysis,
     refuse_unmapped_repository,
 )
-from loom.core.stores.catalog import NONE_BACKEND, StoreCatalog
+from loom.core.stores.catalog import NONE_BACKEND
 from loom.core.stores.repository import CursorCodec
 
 if TYPE_CHECKING:
@@ -115,24 +115,20 @@ class Recipe:
             warnings.warn(warning, stacklevel=2)
         return analysis
 
-    def cursor_codec(self, ctx: ConfigContext, catalog: StoreCatalog) -> CursorCodec | None:
-        """The one cursor codec every store shares; ``None`` when no store pages with cursors.
+    def cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
+        """The one cursor codec every store shares.
 
         Args:
             ctx: The configuration holding ``stores.settings.cursors``.
-            catalog: The stores the application builds.
 
         Returns:
-            The codec, or ``None`` for a connection-only recipe or when no
-            store of *catalog* pages with cursors.
+            The codec, or ``None`` for a connection-only recipe or when
+            ``stores.settings.cursors`` is not configured.
 
         Raises:
-            ConfigError: When a store pages with cursors and
-                ``stores.settings.cursors`` is invalid.
+            ConfigError: When ``stores.settings.cursors`` is invalid.
         """
-        if self.connection_only or not catalog.pages_with_cursors:
-            return None
-        return CursorCodec.from_context(ctx)
+        return None if self.connection_only else CursorCodec.from_context(ctx)
 
 
 class Adapter(Protocol[T_co]):

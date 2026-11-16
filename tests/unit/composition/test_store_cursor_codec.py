@@ -1,7 +1,7 @@
-"""The composition builds its one cursor codec only when a store it builds pages with cursors.
+"""The composition builds its one cursor codec only when ``stores.settings.cursors`` is configured.
 
-A ``signed`` codec (the default) needs keys; an application whose stores
-page with no cursor (``none``) composes without them.
+A ``signed`` codec (the default) needs keys; an application with no cursor
+settings composes without them and issues no cursor.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores import SERVER_PROFILE, StoreRuntime
-from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.none import NoneBackend
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
@@ -61,48 +60,34 @@ class TestStoreCursorCodec:
 
     @pytest.mark.parametrize(
         "raw",
-        [{}, {"stores": {"default": {"backend": "none"}}}],
-        ids=["no-stores", "declared-none"],
+        [{}, {"stores": _SQLITE}, {"stores": {"default": {"backend": "none"}}}],
+        ids=["no-stores", "sqlalchemy-without-keys", "declared-none"],
     )
-    def test_stores_paging_with_no_cursor_need_no_signing_key(
+    def test_without_cursor_settings_no_codec_is_built(
         self, raw: dict[str, Any], runtimes: list[StoreRuntime]
     ) -> None:
         _build(raw)
 
         assert [runtime.cursor_codec for runtime in runtimes] == [None]
 
-    def test_a_store_paging_with_cursors_shares_one_codec(
-        self, runtimes: list[StoreRuntime]
-    ) -> None:
-        _build(
-            {
-                "stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
-            }
-        )
+    def test_configured_cursor_settings_share_one_codec(self, runtimes: list[StoreRuntime]) -> None:
+        _build({"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}})
 
         assert [type(runtime.cursor_codec) for runtime in runtimes] == [CursorCodec]
 
-    def test_a_store_paging_with_cursors_still_needs_a_signing_key(self) -> None:
-        with pytest.raises(ConfigError, match="cursor signing needs a key"):
-            _build(
-                {
-                    "stores": {**_SQLITE, "settings": {"cursors": {"signing": "signed"}}},
-                }
-            )
+    def test_cursor_settings_without_a_signing_key_fail_naming_the_section(self) -> None:
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.current_key_id"):
+            _build({"stores": {**_SQLITE, "settings": {"cursors": {"signing": "signed"}}}})
 
-    def test_an_implicit_default_store_paging_with_cursors_builds_the_codec(self) -> None:
+    def test_an_absent_section_builds_no_codec(self) -> None:
+        assert _recipe().cursor_codec(ConfigContext.from_dict({})) is None
+
+    def test_a_configured_section_builds_the_codec(self) -> None:
         ctx = ConfigContext.from_dict(
             {"stores": {"settings": {"cursors": {"signing": "ephemeral"}}}}
         )
 
-        codec = _recipe().cursor_codec(ctx, load_catalog(ctx).with_default("sqlalchemy"))
-
-        assert isinstance(codec, CursorCodec)
-
-    def test_an_implicit_default_store_paging_with_no_cursor_builds_no_codec(self) -> None:
-        ctx = ConfigContext.from_dict({})
-
-        assert _recipe().cursor_codec(ctx, load_catalog(ctx).with_default("none")) is None
+        assert isinstance(_recipe().cursor_codec(ctx), CursorCodec)
 
     def test_a_connection_only_composition_builds_no_codec(
         self, runtimes: list[StoreRuntime]
@@ -110,30 +95,3 @@ class TestStoreCursorCodec:
         _build({"stores": _SQLITE}, connection_only=True)
 
         assert [runtime.cursor_codec for runtime in runtimes] == [None]
-
-
-class TestStoreCatalogCursors:
-    @pytest.mark.parametrize(
-        ("backend", "pages"), [("none", False), ("sqlalchemy", True)], ids=["none", "sqlalchemy"]
-    )
-    def test_the_catalog_pages_with_cursors_when_a_store_does(
-        self, backend: str, pages: bool
-    ) -> None:
-        ctx = ConfigContext.from_dict({"stores": {"default": {"backend": backend}}})
-
-        assert load_catalog(ctx).pages_with_cursors is pages
-
-    def test_a_declared_default_store_keeps_the_catalog(self) -> None:
-        catalog = load_catalog(ConfigContext.from_dict({"stores": _SQLITE}))
-
-        assert catalog.with_default("none").specs is catalog.specs
-
-    def test_an_undeclared_default_store_joins_with_the_given_backend(self) -> None:
-        raw = {"stores": {"ledger": {"backend": "none"}}}
-        catalog = load_catalog(ConfigContext.from_dict(raw))
-
-        specs = catalog.with_default("sqlalchemy").specs
-
-        assert list(specs) == [DEFAULT_STORE, StoreKey("ledger")]
-        assert specs[DEFAULT_STORE].backend == "sqlalchemy"
-        assert specs[DEFAULT_STORE].capabilities.pages_with_cursors

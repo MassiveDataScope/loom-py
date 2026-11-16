@@ -416,7 +416,7 @@ check fails startup, a `W` check logs a warning.
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
-| `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
+| `loom.cursors.E001` | `stores.settings.cursors` is configured and pagination cursors are not signed with a configured key (without that section no cursor is issued and nothing is checked): `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
 `loom.rest` checks. A runner built from a whole configuration (a file, a

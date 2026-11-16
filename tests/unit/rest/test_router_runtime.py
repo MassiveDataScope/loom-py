@@ -1250,13 +1250,12 @@ class TestCreateFastApiApp:
     def test_create_fastapi_app_accepts_defaults(
         self,
     ) -> None:
-        from loom.rest.model import PaginationMode
-
         class IFace(RestInterface[str]):
             prefix = "/ping"
             routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
         result = _bootstrap(AcmePingUseCase)
+        result.container.register_instance(CursorCodec, CursorCodec(signing="ephemeral"))
         defaults = RestApiDefaults(pagination_mode=PaginationMode.CURSOR)
         app = create_fastapi_app(
             result,
@@ -1264,6 +1263,36 @@ class TestCreateFastApiApp:
             observability_runtime=ObservabilityRuntime.noop(),
             defaults=defaults,
         )
+        assert isinstance(app, FastAPI)
+
+    def test_a_cursor_route_without_a_cursor_key_fails_at_start_up_naming_it(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        defaults = RestApiDefaults(pagination_mode=PaginationMode.CURSOR)
+
+        with pytest.raises(
+            InterfaceCompilationError, match=r"IFace.*GET.*stores\.settings\.cursors"
+        ):
+            create_fastapi_app(
+                _bootstrap(AcmePingUseCase),
+                routes=RouteSources(python=[IFace]),
+                observability_runtime=ObservabilityRuntime.noop(),
+                defaults=defaults,
+            )
+
+    def test_an_offset_route_without_a_cursor_key_compiles(self) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/ping"
+            routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
+
+        app = create_fastapi_app(
+            _bootstrap(AcmePingUseCase),
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+        )
+
         assert isinstance(app, FastAPI)
 
     def test_create_fastapi_app_exists_marker_uses_registered_repository(

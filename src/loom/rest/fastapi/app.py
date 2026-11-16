@@ -37,8 +37,16 @@ from fastapi import FastAPI
 from loom.core.bootstrap.bootstrap import BootstrapResult
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.cursor import CURSORS_SECTION
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.use_case.factory import UseCaseFactory
-from loom.rest.compiler import CompiledRoute, RestInterfaceCompiler, RouteSources
+from loom.rest.compiler import (
+    CompiledRoute,
+    InterfaceCompilationError,
+    RestInterfaceCompiler,
+    RouteSources,
+)
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults
@@ -90,7 +98,9 @@ def compile_api(
     Raises:
         TypeError: If *routes* is not a ``RouteSources``.
         RuntimeError: If no ``RuntimeExecutor`` is registered.
-        InterfaceCompilationError: If any interface fails structural validation.
+        InterfaceCompilationError: If any interface fails structural validation,
+            or a route declares ``pagination: cursor`` while no cursor key is
+            configured under ``stores.settings.cursors``.
     """
     resolved_routes = _require_route_sources(routes)
     executor = result.container.resolve_or_none(RuntimeExecutor)
@@ -102,6 +112,14 @@ def compile_api(
     compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
         resolved_routes
     )
+    if not result.container.is_registered(CursorCodec):
+        for route in compiled:
+            if route.effective_pagination_mode is PaginationMode.CURSOR:
+                raise InterfaceCompilationError(
+                    f"{route.interface_name}: route ({route.route.method.upper()}, "
+                    f"{route.route.path!r}) declares pagination: cursor, but no cursor key is "
+                    f"configured: set keys under {CURSORS_SECTION}"
+                )
     return CompiledApi(routes=tuple(compiled), factory=result.factory, executor=executor)
 
 

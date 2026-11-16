@@ -35,10 +35,9 @@
   a reserved name holding the settings every store shares (`cursors`,
   `rollback_timeout`); a store named `settings`, a `settings` key that holds
   `backend`, an unknown key under `stores.settings` and any `persistence` key
-  (empty or not) raise `ConfigError` naming the replacement. A store's own
-  `settings` mapping may not name `cursors` or `rollback_timeout`: both are
-  global. `StoreSpec.settings()` is renamed `StoreSpec.section()` and also
-  strips `settings`. `ConfigKey.PERSISTENCE` and `ConfigKey.PERSISTENCE_CURSORS`
+  (empty or not) raise `ConfigError` naming the replacement. A store takes no
+  `settings` of its own: `cursors` and `rollback_timeout` are global.
+  `StoreSpec.settings()` is renamed `StoreSpec.section()`. `ConfigKey.PERSISTENCE` and `ConfigKey.PERSISTENCE_CURSORS`
   are removed and `ConfigKey.STORES_SETTINGS` is added.
   `LOOM__PERSISTENCE__CURSORS__*` is now `LOOM__STORES__SETTINGS__CURSORS__*`,
   protected from `config.overridable` as before, and
@@ -54,6 +53,27 @@
   | `LOOM__PERSISTENCE__CURSORS__*` | `LOOM__STORES__SETTINGS__CURSORS__*` (still refused outside development and test) |
   | `spec.settings()` | `spec.section()` |
   | (new) `stores.settings` | reserved; a store named `settings` is a `ConfigError` |
+- **stores:** cursor paging is on only when `stores.settings.cursors` is
+  configured, and a store takes no `settings` of its own. Before: a
+  `sqlalchemy` or `mongo` store forced a signing key (`signed` by default), so
+  an application that never pages by cursor needed unused keys or a permanent
+  `loom.cursors.E001`; `stores.<name>.settings` accepted an empty mapping. Now:
+  without `stores.settings.cursors` no `CursorCodec` is built or registered, the
+  application starts and `loom.cursors.E001` checks nothing; a route that
+  declares `pagination: cursor` fails at start-up naming the route and the
+  missing section (`InterfaceCompilationError`); a request for cursor mode on a
+  route that allows the override answers `400 unsupported_query`; a repository
+  call with `PaginationMode.CURSOR` raises `UnsupportedQuery`. Offset paging is
+  unchanged. Configuring the section without a key still fails at start-up.
+  `stores.<name>.settings` is a `ConfigError` pointing to `stores.settings`.
+  `CursorCodec.from_context` and `Recipe.cursor_codec(ctx)` return `None`
+  without the section, the repositories, compiler and registration modules
+  accept `cursor_codec=None`, `StoreCapabilities.pages_with_cursors` and
+  `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
+  `StoreCatalog.with_default` is removed with them. **Migration:** an
+  application that pages by cursor keeps its `stores.settings.cursors`
+  section; one that does not can delete it (and its unused keys); a custom
+  backend's `capabilities()` drops the `pages_with_cursors` argument.
 
 ### security
 

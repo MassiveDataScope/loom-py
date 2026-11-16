@@ -1,12 +1,12 @@
 """Deploy check of pagination cursors: tokens a deployed application cannot trust.
 
-``loom.cursors.E001``: a process that serves repositories (a ``stores.<name>``
-section whose backend pages with cursors) does not sign its
-cursors with a configured key. ``signing: unsigned`` lets any client forge a
-position, and ``signing: ephemeral`` signs with a key no other instance or
-restart shares. A ``signed`` section without a ``current_key_id`` naming one
-of its ``keys`` fails at startup anyway; the check reports it in
-``loom check --deploy`` too.
+``loom.cursors.E001``: a configuration that turns cursor paging on, with a
+``stores.settings.cursors`` section, does not sign its cursors with a
+configured key. ``signing: unsigned`` lets any client forge a position, and
+``signing: ephemeral`` signs with a key no other instance or restart shares. A
+``signed`` section without a ``current_key_id`` naming one of its ``keys``
+fails at startup anyway; the check reports it in ``loom check --deploy`` too.
+Without the section no cursor is issued and nothing is checked.
 
 The check reads the keys as written and resolves no placeholder, so it runs
 in CI without the keys themselves: ``signing`` must be absent or the literal
@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
-from loom.core.stores.catalog import load_catalog
 from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CURSORS_SECTION, CursorConfig
 
 if TYPE_CHECKING:
@@ -35,9 +34,9 @@ _HINT = (
 
 @deploy_check(CURSOR_SIGNING_CHECK)
 def _cursors_signed(config: ConfigContext) -> Finding | None:
-    if not _serves_repositories(config):
+    written = config.raw(_SECTION)
+    if written is None:
         return None
-    written = config.raw(_SECTION, {})
     cursors = written if isinstance(written, dict) else {}
     signing = cursors.get("signing", _SIGNED)
     if signing != _SIGNED:
@@ -54,11 +53,6 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
         message=f"{_SECTION} names no signing key: current_key_id must name an entry of keys.",
         hint=_HINT,
     )
-
-
-def _serves_repositories(config: ConfigContext) -> bool:
-    """Whether any configured store pages with cursors."""
-    return load_catalog(config).pages_with_cursors
 
 
 __all__: list[str] = []

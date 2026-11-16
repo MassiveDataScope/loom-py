@@ -52,10 +52,10 @@ stores:
 | Key | Default | Meaning |
 |---|---|---|
 | `rollback_timeout` | `30` | Seconds the rollbacks of one invocation may take together, across every store it enlisted. A finite number above zero. |
-| `cursors` | signed | The signing of pagination cursors; see [Cursor tokens](#cursor-tokens). |
+| `cursors` | absent | Turns cursor paging on and sets its signing; see [Cursor tokens](#cursor-tokens). |
 
-A store's own `settings` mapping may not name either key: startup fails with a
-`ConfigError` naming the key and `stores.settings`. `LOOM__STORES__SETTINGS__*`
+A store takes no `settings` of its own: a `stores.<name>.settings` key fails
+startup with a `ConfigError` pointing to `stores.settings`. `LOOM__STORES__SETTINGS__*`
 variables are refused in production and staging unless a `config.overridable`
 entry spells `stores.settings` out; a `stores.*` entry never opens it.
 
@@ -107,8 +107,8 @@ a backend that ignores it builds as usual.
 ### Store capabilities
 
 Every backend must declare `capabilities(self, spec: StoreSpec) -> StoreCapabilities`,
-returning `serves_models`, `transactional` (its unit of work can roll back)
-and `pages_with_cursors`, all keyword-only. The catalog asks it the first
+returning `serves_models` and `transactional` (its unit of work can roll
+back), both keyword-only. The catalog asks it the first
 time something reads `spec.capabilities`, once per store, so loading the
 catalog resolves no secret. When a capability depends on a setting, read only
 that key, as `mongo` does with `transactions`; decoding the whole section
@@ -336,10 +336,21 @@ row-level-security scope values of the caller (see
 [Postgres row-level security](postgres-rls.md)); without them, and on Mongo,
 the scope is `""`, which binds the token to no tenant on purpose.
 
-Every backend issues and verifies tokens through one `CursorCodec`, built at
-startup from the `stores.settings.cursors` section and registered in DI. The code
-default is `signed` in every environment; each opt-out is written in the file
-of the environment that needs it:
+Configuring `stores.settings.cursors` turns cursor paging on; there is no
+other flag. Every backend then issues and verifies tokens through one
+`CursorCodec`, built at startup from that section and registered in DI. Without
+the section no codec is built and no key is required. A cursor page then
+fails clearly:
+
+- a route that declares `pagination: cursor` (on the route, the interface or
+  `RestApiDefaults`) fails at startup, naming the route and the missing section;
+- a request for cursor mode (`?pagination=cursor` or a `cursor` parameter) on a
+  route that allows the override answers `400 unsupported_query`;
+- a repository call with `PaginationMode.CURSOR` raises `UnsupportedQuery`.
+
+Offset paging is unaffected. Once the section is configured, its mode is
+`signed` unless an environment says otherwise; each opt-out is written in the
+file of the environment that needs it:
 
 In `production.yaml`:
 
@@ -388,8 +399,8 @@ To rotate, add the new key, make it `current_key_id`, and drop the old id once
 the tokens it signed no longer matter: tokens are short-lived page pointers,
 so one deployment cycle is usually enough.
 
-Without a key, startup fails in every environment with a `ConfigError` naming
-the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
+A section without a key fails startup in every environment with a `ConfigError`
+naming the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
 
 - `signing: ephemeral` signs with a random key generated per process. Tokens
   do not survive a restart and another instance refuses them. For
@@ -398,9 +409,10 @@ the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
   hand. For `test.yaml` and debugging only.
 
 Production uses `signed`. In production and staging the deploy check
-`loom.cursors.E001` fails startup, and `loom check --deploy` fails, when a
-store whose backend is `sqlalchemy` or `mongo` is declared and `signing` is anything but
-`signed` or `current_key_id` names no entry of `keys` (see
+`loom.cursors.E001` fails startup, and `loom check --deploy` fails, when
+`stores.settings.cursors` is configured and `signing` is anything but
+`signed` or `current_key_id` names no entry of `keys`; it checks nothing
+when the section is absent (see
 [Environments](../getting-started/environments.md#deploy-checks)).
 `stores.settings.cursors` cannot be set from a `LOOM__*` variable in those
 environments: it is not on the override allowlist, and no `config.overridable`

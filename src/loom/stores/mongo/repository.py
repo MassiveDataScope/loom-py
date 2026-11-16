@@ -216,7 +216,7 @@ class RepositoryMongo(
         id_policy: IdPolicy | None = None,
         session_provider: SessionProvider = _no_session,
         *,
-        cursor_codec: CursorCodec,
+        cursor_codec: CursorCodec | None,
     ) -> None:
         self._model = model
         self._cursor_codec = cursor_codec
@@ -557,7 +557,7 @@ class RepositoryMongo(
 
     def _decode(self, token: str, query: QuerySpec) -> Cursor:
         """Verify and decode the token and put its keys in storage form."""
-        cursor = self._cursor_codec.decode(
+        cursor = CursorCodec.required(self._cursor_codec).decode(
             token,
             backend=self.backend_name,
             model=self._model,
@@ -588,7 +588,9 @@ class RepositoryMongo(
             keys=tuple(getattr(item, spec.field) for spec in query.sort),
             tie_breaker=getattr(item, self._id_attr),
         )
-        return self._cursor_codec.encode(position, model=self._model, query=query, scope="")
+        return CursorCodec.required(self._cursor_codec).encode(
+            position, model=self._model, query=query, scope=""
+        )
 
     def _key(self, obj_id: object) -> MongoFilter:
         return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}
