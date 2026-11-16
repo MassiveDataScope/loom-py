@@ -21,14 +21,14 @@
   a product section and `build_aws_client("dynamodb", config)` (or
   `aws_island(extra=...).build_aws_client`) built the client. Now:
   `Target.from_config(ctx, path, own=section, **over)` decodes it,
-  `config.client(AwsService.DYNAMODB)` builds the client, and
+  `config.build_client(AwsService.DYNAMODB)` builds the client, and
   `AwsClientConfig.inherit(ctx, own, path)` returns the merged mapping;
   `AwsService` (`DYNAMODB`, `SQS`, `SNS`, `SSM`, `SECRETS_MANAGER`) names the
   services and its `extra` property names the loom extra that brings boto3.
   `written_aws`, `inherit_aws` and `decode_aws` no longer exist and nothing is
   re-exported. **Migration:** replace those calls with the methods above;
   `loom.core.connections.aws.client.build_aws_client` stays the island's
-  builder but only `AwsClientConfig.client` calls it.
+  builder but only `AwsClientConfig.build_client` calls it.
 - **stores:** the `persistence:` YAML section is removed and `stores.settings`
   replaces it. Before: `persistence.cursors` and `persistence.rollback_timeout`
   configured cursor signing and the rollback budget. Now: `stores.settings` is
@@ -58,8 +58,9 @@
   `sqlalchemy` or `mongo` store forced a signing key (`signed` by default), so
   an application that never pages by cursor needed unused keys or a permanent
   `loom.cursors.E001`; `stores.<name>.settings` accepted an empty mapping. Now:
-  without `stores.settings.cursors` no `CursorCodec` is built or registered, the
-  application starts and `loom.cursors.E001` checks nothing; a route that
+  without `stores.settings.cursors` the composition builds and registers
+  `CursorCodec.disabled()`, the application starts and `loom.cursors.E001`
+  checks nothing; a route that
   declares `pagination: cursor` fails at start-up naming the route and the
   missing section (`InterfaceCompilationError`); a request for cursor mode on a
   route that allows the override answers `400 unsupported_query`; a repository
@@ -68,9 +69,10 @@
   `stores.<name>.settings` is a `ConfigError` pointing to `stores.settings`.
   `CursorCodec.from_context` and `Recipe.build_cursor_codec(ctx)` return
   `CursorCodec.disabled()` without the section (its `encode` and `decode`
-  raise `UnsupportedQuery`, and `is_enabled` is `False`), the repositories,
-  compiler and registration modules always take and register a codec,
-  `StoreRuntime.cursor_codec` is required, `CursorCodec.required` is removed,
+  raise `UnsupportedQuery`, and `is_enabled` is `False`), where
+  `Recipe.cursor_codec(ctx)` returned `None`; the repositories, compiler and
+  registration modules always take and register a codec,
+  `StoreRuntime.cursor_codec` is required,
   `StoreCapabilities.pages_with_cursors` and
   `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
   `StoreCatalog.with_default` is removed with them. **Migration:** an
@@ -252,7 +254,7 @@
   **Migration:** move a `register*` made after start-up
   (`application.kernel.container.register(Port, Impl)`,
   `worker.container.register(...)`) into a module passed to the application
-  (`create_app(..., modules=[...])`, `compose_application(...,
+  (`create_app(..., modules=[...])`, `Project.compose(...,
   modules=...)`); to reconfigure, build a new container (in tests, a new
   application).
 - **di:** sealing a container freezes its execution kinds. Before: a resolver
@@ -345,7 +347,7 @@
   - Delegation window: work a request causes acts as its caller for at most
     `identity.max_delegation_seconds` (default 3600) from the request's
     start. The composition reads it with `ConfigContext.positive_seconds`
-    (new; `persistence.rollback_timeout` is read the same way, both checked
+    (new; `stores.settings.rollback_timeout` is read the same way, both checked
     against `loom.core.model.types.PositiveSeconds`): a value that is not a
     finite number above zero is a `ConfigError`. It sets it for the process
     with `loom.core.identity.configure_delegation(seconds)`, which refuses
@@ -624,19 +626,13 @@
 
   | Before | After |
   |---|---|
-  | `loom.stores.sqlalchemy.alembic.Application` | `StoreSchema` |
-  | `loom.stores.sqlalchemy.alembic.load_application` | `load_store_schema` |
-  | `StoreSchema.guarded` | `StoreSchema.is_guarded` |
-  | `StoreSchema.active_audited` | `StoreSchema.recording_audit_tables` |
+  | `loom.core.locator.Application.guarded` | `StoreSchema.is_guarded` |
+  | `loom.core.locator.Application.active_audited` | `StoreSchema.recording_audit_tables` |
   | `StoreCapabilities.serves_models` | `StoreCapabilities.can_serve_models` |
   | `StoreCapabilities.transactional` | `StoreCapabilities.is_transactional` |
-  | `RecordLayout.of(type)` | `RecordLayout.from_struct(type)` |
-  | `RecordLayout.values(row)` | `RecordLayout.to_values(row)` |
+  | `Participant.transactional` | `Participant.is_transactional` |
   | `ScopedElevationSink.of(wirings)` | `ScopedElevationSink.from_wirings(wirings)` |
-  | `CompositionSource.store_backend(key, default=)` | `Project.resolve_store_backend(key, default=)` |
   | `Recipe.cursor_codec(ctx)` | `Recipe.build_cursor_codec(ctx)` |
-  | `AwsClientConfig.client(service)` | `AwsClientConfig.build_client(service)` |
-  | `StoreSetting.refuse_unknown(shared)` | `StoreSetting.check_section(shared)` |
 
 - **composition:** the composition is composed and served through `Project`.
   Before: `CompositionSource.load(...)` loaded the configuration and
@@ -837,7 +833,7 @@
 
 - **stores:** `create_many(data, *, on_conflict=OnConflict.ERROR)` on the
   SQLAlchemy, Mongo and DynamoDB repositories (`OnConflict` from
-  `loom.core.repository.abc`). `OnConflict.IGNORE` skips the rows whose primary
+  `loom.core.stores.repository`). `OnConflict.IGNORE` skips the rows whose primary
   key already exists and returns only the inserted ones, in input order; any
   other constraint violation still raises `Conflict`. SQLAlchemy splits every
   batch by the dialect's `insertmanyvalues_max_parameters`, one statement per
@@ -864,18 +860,18 @@
   store with `__store__ = "<store>"`, as a model does; without it the primary
   store stays `default`. A store it names that is not declared fails
   composition, and so does `__store__` beside a main model.
-- **stores:** `load_application(path, store="audit")` loads one store's models
+- **stores:** `load_store_schema(path, store="audit")` loads one store's models
   and schema section, so `create_schema` and `verify` prepare and check a
-  second Postgres store. `Application.path` (`loom.core.locator`) is derived
-  from the new `Application.store` and is no longer a constructor argument. Migrations still cover `default` only and log
+  second Postgres store. `StoreSchema.path` is derived
+  from the new `StoreSchema.store` and is no longer a constructor argument. Migrations still cover `default` only and log
   `StoresNotLoaded` naming the stores they leave out.
-- **stores:** `persistence.rollback_timeout` (seconds, default 30) bounds the
+- **stores:** `stores.settings.rollback_timeout` (seconds, default 30) bounds the
   rollbacks of one invocation together.
 - **stores:** the errors a caller catches have public import paths:
   `StoresNotCommitted`, `ScopeOwnershipError`, `UnitOfWorkInsideScope`,
-  `UndeclaredStoreWrite` and `NestedElevation` from `loom.core.uow`,
-  `ForeignSessionError` from `loom.core.errors`, and `ReadOnlyElevation` from
-  `loom.core.repository.sqlalchemy.rls`, next to `elevate`.
+  `UndeclaredStoreWrite`, `NestedElevation` and `ForeignSessionError` from
+  `loom.core.errors`, and `ReadOnlyElevation` from
+  `loom.stores.sqlalchemy.rls`, next to `elevate`.
 - **stores:** `async with session_manager.operation_session(write=...)`
   gives raw SQL the session its operation runs in, as a repository's: the
   invocation's when the store is enlisted, else a transaction of its own.
@@ -969,11 +965,8 @@
 
 ### composition
 
-- **composition:** `Recipe.cursor_codec` takes the `StoreCatalog` the
-  application builds, and returns `None` when no store of it pages with
-  cursors.
-- **composition:** a composed application (`create_app`, `build_application`,
-  `compose_application`, the Celery worker and every Lambda entry) builds one
+- **composition:** a composed application (`create_app`, `Project.compose`,
+  the Celery worker and every Lambda entry) builds one
   `RuntimeExecutor`, not a throwaway one first. An `APPLICATION` provider that
   resolves `RuntimeExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
   `ObservabilityRuntime` or `StoreCatalog` while start-up validates the
@@ -989,8 +982,8 @@
   its `[BOOT] Registering module` line for every module it runs: the
   caller's, the overrides, each store's repository module and the cache
   module. It no longer logs the validation and completion lines.
-- **composition (new API):** `CompositionSource.load(*config_paths, ...)`
-  loads a source as `load_source` does; `load_source` stays. `AiWiring.ABSENT`
+- **composition (new API):** `Project.load(*config_paths, ...)` loads the
+  project. `AiWiring.ABSENT`
   is the wiring of an application without agents, `AiWiring.hosted(config,
   runtime)` the wiring of a built runtime, `AiWiring.build(...)` builds the
   runtime the `ai:` section configures, `AiWiring.bind_resolvers(kernel)`
@@ -1081,7 +1074,7 @@
   reached binding that does not compile fails the seal or its first resolve.
   `UseCaseFactory.graph` is that same graph. `create_kernel` and the
   composition build their container reading through
-  `loom.core.repository.registration.classify_key` and
+  `loom.core.stores.repository.registration.classify_key` and
   `loom.core.use_case.factory.main_repository`, which gives a use case built
   through `UseCase.__init__` its main repository, with the execution kinds
   declared by `loom.core.use_case.kinds.declare_kinds` before any module
@@ -1312,8 +1305,8 @@
   `load_application_config` or `add_code_path`. A test that patched them there
   patches the module that calls them instead:
   `loom.composition.phases.configure_job_service`,
-  `loom.composition.source.load_application_config` and
-  `loom.composition.source.add_code_path`. The manifest-agents check has no
+  `loom.composition.project.load_application_config` and
+  `loom.composition.project.add_code_path`. The manifest-agents check has no
   patch target any more: it runs inside the AI wiring and raises
   `ConfigError`.
 - **testing:** `HttpTestHarness.build_app` composes its application through
@@ -1343,7 +1336,7 @@
   first composition in a process now reads them once and every later one
   not at all (4 → 1 → 0; with one store, 2 → 1 → 0). A group with no entry
   point is cached too. A distribution installed after the first lookup of its
-  group (persistence backends, AI engines, ...) is no longer seen until the
+  group (store backends, AI engines, ...) is no longer seen until the
   process restarts; a long-lived process that installs a plugin later calls
   `list_entry_points.cache_clear()` first.
 
@@ -1566,7 +1559,7 @@
   `InvocationScope.mutations` while an outermost `@transactional` collects
   them.
 - **stores:** the unit-of-work log events are the members of
-  `loom.core.uow.abc.UowEvent` (`UoWBegin`, `UoWCommit`, `UoWRollback`, ...,
+  `loom.core.stores.uow.abc.UowEvent` (`UoWBegin`, `UoWCommit`, `UoWRollback`, ...,
   `InvocationOutcome`); the logged strings do not change.
 - **stores:** `clear_pending_dispatches()` drops the job dispatches and
   publishes of every store of the running invocation, and never a cache
@@ -1591,7 +1584,7 @@
   write in an open invocation with no execution running raises
   `UndeclaredStoreWrite`.
   SQLAlchemy flushes before it commits, a rollback interrupted by a second
-  cancellation is still awaited (bounded by `persistence.rollback_timeout`),
+  cancellation is still awaited (bounded by `stores.settings.rollback_timeout`),
   and Mongo never aborts after an attempted commit. The post-commit actions
   queued inside, a nested use case's job dispatches and cache invalidations
   included, run once the store has ended and by its outcome, as in an
@@ -1624,16 +1617,16 @@
   and starts again when it reopens.
 - **stores:** wiring API. `RuntimeExecutor(uow_factory=)` and
   `create_kernel(uow_factory=)` become `coordinator=` (`OrderedCommits`);
-  `Recipe.backend` becomes `Recipe.default_backend`, and
-  `CompositionSource.backend(key, *, default=)` takes the store;
+  `Recipe.backend` becomes `Recipe.default_store_backend`, and
+  `Project.resolve_store_backend(key, *, default=)` takes the store;
   `Application.persistence` and `require_single_store` are removed. `store`
-  is required by `StoreCatalog.served_by`, `BackendRuntime`, `SessionManager`,
+  is required by `StoreCatalog.served_by`, `StoreRuntime`, `SessionManager`,
   `build_session_manager`, `MongoSessions`, `MongoUnitOfWork` and
   `MongoUnitOfWorkFactory.transactional`;
   `build_repository_registration_module` takes `default_builder=` and
   `store=`. `StoreCatalog.models_by_store` always includes `default`. Binding
   `MongoSessions` unkeyed, or a session manager keyed by store, is refused.
-  An invalid `stores` section fails in `compose_application`.
+  An invalid `stores` section fails in `Project.compose`.
   `_ROLLBACK_TIMEOUT_S` is now `ROLLBACK_TIMEOUT_S`.
 - **stores:** `create` and `create_many` on SQLAlchemy, Mongo and DynamoDB
   store every field of the command, including the ones left at their default
@@ -1659,7 +1652,7 @@
   `SQLAlchemyStoreElevation`; a hand-built kernel registers
   `ScopedElevationSink({store: SQLAlchemyStoreElevation(session_manager)})`.
   `validate_elevations(product, Mapping[StoreKey, ScopedTables])` runs in the
-  composition, and a backend plugin may expose `PersistenceWiring.elevation`.
+  composition, and a backend plugin may expose `StoreWiring.elevation`.
   A scope that is elevable or listed in `AuthzProduct.elevations` and
   declared by two stores fails at startup
   (`ELEVABLE_SCOPE_IN_SEVERAL_STORES`).
@@ -1716,18 +1709,6 @@
 - **etl:** `StepRunnerProto` requires `seed(..., *, schema=None)`,
   `seed_temp` and `run`. `ETLScenario.apply` still calls `seed(ref, data,
   columns)` positionally when no schema is declared.
-
-## 🐛 Fixes
-
-### stores
-
-- **stores:** an application builds its cursor codec only when a store it
-  builds pages with cursors (the capability `loom.cursors.E001` reads).
-  Before: any discovered model made the composition build it, so with every
-  store on `none` and the default `signed` signing it failed with
-  `ConfigError: cursor signing needs a key`. Now: such an application
-  composes without `persistence.cursors` keys; a SQLAlchemy or Mongo store
-  still needs them.
 
 # 🚀 Releases 2.1.3 to 9.0.0
 
