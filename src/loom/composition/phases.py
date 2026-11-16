@@ -33,6 +33,7 @@ from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort
+from loom.core.model import BaseModel
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import StoreRuntime, StoreWiring
 from loom.core.stores.catalog import (
@@ -43,6 +44,7 @@ from loom.core.stores.catalog import (
     StoreSetting,
 )
 from loom.core.stores.elevation import ScopedElevationSink
+from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.factory import ModelRead
@@ -89,11 +91,13 @@ class Stores:
     Args:
         job_settings: Each discovered job's settings.
         store_backends: The name of the backend each store's wiring was built by.
+        models: The models each store serves.
         wirings: Each store's wiring, its models prepared.
     """
 
     job_settings: JobSettings
     store_backends: dict[StoreKey, str]
+    models: dict[StoreKey, tuple[type[BaseModel], ...]]
     wirings: dict[StoreKey, StoreWiring]
 
     @property
@@ -186,6 +190,7 @@ def build_stores(project: Project, recipe: Recipe) -> Stores:
     return Stores(
         job_settings=job_settings,
         store_backends={key: backends[key].name for key in stores},
+        models=stores,
         wirings=wirings,
     )
 
@@ -202,13 +207,13 @@ def register(
 
     The order: the seed keys (the application's ``AppConfig``,
     ``Environment``, ``ObservabilityRuntime`` and ``StoreCatalog``); the
-    caller's modules; the recipe's overrides; each store's repositories; the
-    cache module; the framework's keys, among them the kernel, whose
-    construction compiles the discovered use cases; the job service; the SQL
-    collaborators. The caller's modules and the overrides run first, so the
-    framework's defaults leave what they bound alone; either one binding a
-    key the framework owns fails right after it runs. The container is
-    validated when the application is sealed.
+    caller's modules; the recipe's overrides; each store's repositories and the
+    ``RepositoryCatalog`` over them; the cache module; the framework's keys,
+    among them the kernel, whose construction compiles the discovered use
+    cases; the job service; the SQL collaborators. The caller's modules and
+    the overrides run first, so the framework's defaults leave what they bound
+    alone; either one binding a key the framework owns fails right after it
+    runs. The container is validated when the application is sealed.
 
     Args:
         project: What the application composes from.
@@ -266,6 +271,7 @@ def register(
     ) as container:
         for wiring in stores.wirings.values():
             wiring.repo_registration_module(container)
+        container.register_instance(RepositoryCatalog, RepositoryCatalog(container, stores.models))
         cache(container)
         if sink is not None:
             container.register_instance(ElevationSink, sink)

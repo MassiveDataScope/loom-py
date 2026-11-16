@@ -19,6 +19,7 @@ from loom.core.di.scope import Scope
 from loom.core.logger import get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.sql import SqlQueryService
 from tests.unit.composition.phases.components import binds_sql_service
 
@@ -35,6 +36,10 @@ def _leaves_everything(container: LoomContainer) -> None:
 
 def _binds_observability(container: LoomContainer) -> None:
     container.register(ObservabilityRuntime, ObservabilityRuntime.noop, scope=Scope.APPLICATION)
+
+
+def _binds_repository_catalog(container: LoomContainer) -> None:
+    container.register(RepositoryCatalog, object, scope=Scope.APPLICATION)
 
 
 def _run(module: Module, container: LoomContainer) -> None:
@@ -63,6 +68,10 @@ class TestReservedBindings:
         assert str(caught.value) == str(
             ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
         )
+
+    def test_a_module_binding_the_repository_catalog_is_refused(self) -> None:
+        with pytest.raises(ReservedBindingError, match="RepositoryCatalog"):
+            _run(_binds_repository_catalog, LoomContainer())
 
     def test_a_module_replacing_a_reserved_key_is_refused(self) -> None:
         container = _sql_bound()

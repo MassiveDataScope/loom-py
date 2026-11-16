@@ -10,6 +10,7 @@ from loom.core.bootstrap.kernel import KERNEL_KEYS
 from loom.core.di.container import BindingKey
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
+from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 
 _RESERVED: tuple[BindingKey, ...] = (
@@ -17,6 +18,7 @@ _RESERVED: tuple[BindingKey, ...] = (
     CallerBoundSql,
     ObservabilityRuntime,
     StoreCatalog,
+    RepositoryCatalog,
     ElevationSink,
     *KERNEL_KEYS,
 )

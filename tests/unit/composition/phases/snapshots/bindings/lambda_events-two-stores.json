@@ -55,6 +55,11 @@
       "resolved": "ObservabilityRuntime",
       "scope": "APPLICATION"
     },
+    "RepositoryCatalog": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "RepositoryCatalog",
+      "scope": "APPLICATION"
+    },
     "RepositoryDecorator": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "function",

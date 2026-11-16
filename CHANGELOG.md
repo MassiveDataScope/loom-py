@@ -691,6 +691,16 @@
 
 ## ✨ Features
 
+### stores
+
+- **stores:** `RepositoryCatalog` (`loom.core.stores.repository`) is registered
+  by the composition, and its key is reserved. `catalog[Model]` returns the
+  repository bound for the model, an override included, and `KeyError` when no
+  store serves it; `catalog.for_table(table, store=None)` returns the one of a
+  `__tablename__`, raising `ValueError` naming the stores when two serve it
+  and `KeyError` when none does. For a model chosen at run time; otherwise
+  inject the repository.
+
 ### composition
 
 - **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`

@@ -315,6 +315,42 @@ repository serves — left out of `MODELS` or of `app.discovery` — raises
 carrying the typed issue (`UNSERVED_MODEL`, the component, the parameter) and
 the model.
 
+## Looking a repository up at run time
+
+`RepositoryCatalog` gives a component the repository bound for any served
+model, resolved when it runs: `catalog[AcmeOrder]` by model, or
+`catalog.for_table("acme_orders")` by `__tablename__`. A table name served by
+one store resolves on its own; one served by two stores raises `ValueError`
+naming both, and `store=` picks the store. An unknown table, or a model no
+store serves, raises `KeyError`. The catalog returns the repository the
+container serves, so a test override is what comes back, and the index of
+table names is built once at composition.
+
+```python
+from typing import Any, cast
+
+from loom.core.job.job import Job
+from loom.core.stores.repository import BulkCreatable, OnConflict, RepositoryCatalog
+from loom.core.use_case import Input
+
+
+class AcmeWriteRows(Job[int]):
+    __store__ = "ledger"
+
+    def __init__(self, catalog: RepositoryCatalog) -> None:
+        self.catalog = catalog
+
+    async def execute(self, rows: AcmeRows = Input()) -> int:
+        repository = cast(BulkCreatable[Any], self.catalog.for_table(rows.table))
+        inserted = await repository.create_many(rows.items, on_conflict=OnConflict.IGNORE)
+        return len(inserted)
+```
+
+Use the catalog only when the model is chosen at run time, as `rows.table`
+is here. When the model is known where the component is written, inject the
+repository (`RepoFor[AcmeOrder]`): the catalog hides which repositories a
+component needs, and an injected one is checked at start-up.
+
 ## Cursor tokens
 
 Keyset pagination has one token contract for every backend
