@@ -10,6 +10,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -564,6 +565,104 @@ class TestHungRollback:
         assert budgets == [pytest.approx(0.1), pytest.approx(0.0, abs=0.05)]
         assert outcome.stores == (RolledBack(S0, error), RolledBack(S1, error))
         assert ledger.calls_of(S0)[-1] == "close"
+
+
+class _FakeClock:
+    """The running loop's clock, advanced by the test and counting its readings."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.readings = 0
+
+    def time(self) -> float:
+        self.readings += 1
+        return self.now
+
+    def get_running_loop(self) -> _FakeClock:
+        return self
+
+
+_ROLLBACK_SECONDS = 4.0
+
+
+class TestRollbackBudget:
+    """One budget, ``rollback_timeout`` seconds from the first rollback, serves every store."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            coordinator_module, "asyncio", SimpleNamespace(get_running_loop=clock.get_running_loop)
+        )
+        return clock
+
+    @pytest.fixture
+    def budgets(self, monkeypatch: pytest.MonkeyPatch, clock: _FakeClock) -> list[float]:
+        """The budget each rollback is given; each one takes ``_ROLLBACK_SECONDS`` of fake time."""
+        given: list[float] = []
+
+        async def _spending(step: Coroutine[Any, Any, None], *, timeout: float) -> None:
+            given.append(timeout)
+            clock.now += _ROLLBACK_SECONDS
+            await step
+
+        monkeypatch.setattr(coordinator_module, "run_to_completion", _spending)
+        return given
+
+    @pytest.mark.parametrize(
+        ("keys", "timeout", "expected"),
+        [
+            ((S0,), 10.0, [10.0]),
+            ((S0, S1), 10.0, [10.0, 6.0]),
+            ((S0, S1, S2), 10.0, [10.0, 6.0, 2.0]),
+            ((S0, S1, S2), 5.0, [5.0, 1.0, 0.0]),
+        ],
+        ids=["one-store", "two-stores", "three-stores", "exhausted-budget-is-zero"],
+    )
+    async def test_every_enlisted_store_rolls_back_within_the_one_budget(
+        self,
+        budgets: list[float],
+        keys: tuple[StoreKey, ...],
+        timeout: float,
+        expected: list[float],
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(
+            *(PhasedStore(key, ledger) for key in keys), rollback_timeout=timeout
+        )
+        scope = Scope()
+        await _enlist_all(coordinator, scope, *keys)
+
+        await coordinator.finish(scope, Boom("business"))
+
+        assert budgets == expected
+
+    @pytest.mark.parametrize("keys", [(S0,), (S0, S1), (S0, S1, S2)], ids=["1", "2", "3"])
+    async def test_a_failed_invocation_reads_the_clock_once_per_rollback(
+        self, clock: _FakeClock, budgets: list[float], keys: tuple[StoreKey, ...]
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(*(PhasedStore(key, ledger) for key in keys))
+        scope = Scope()
+        await _enlist_all(coordinator, scope, *keys)
+
+        await coordinator.finish(scope, Boom("business"))
+
+        assert clock.readings == len(keys)
+        assert len(budgets) == len(keys)
+
+    async def test_a_successful_invocation_never_reads_the_clock(
+        self, clock: _FakeClock, budgets: list[float]
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(*(PhasedStore(key, ledger) for key in (S0, S1)))
+        scope = Scope()
+        await _enlist_all(coordinator, scope, S0, S1)
+
+        await coordinator.finish(scope, None)
+
+        assert clock.readings == 0
+        assert budgets == []
 
 
 async def _finish_within_a_second(

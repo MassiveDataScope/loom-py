@@ -456,7 +456,8 @@ class OrderedCommits:
     Args:
         factories: Unit-of-work factory of every store that may be enlisted.
         rollback_timeout: Seconds the phased rollbacks of one invocation
-            may take together (:data:`ROLLBACK_TIMEOUT_S`).
+            may take together, whatever the number of enlisted stores
+            (:data:`ROLLBACK_TIMEOUT_S`).
 
     Example::
 
