@@ -261,7 +261,7 @@ def _serving_repository_type(model: type[Any], backend: StoreBackend) -> type[An
         return backend.repository_type
     except AttributeError as exc:
         raise ConfigError(
-            f"persistence backend {type(backend).__name__} does not declare repository_type"
+            f"store backend {type(backend).__name__} does not declare repository_type"
         ) from exc
 
 

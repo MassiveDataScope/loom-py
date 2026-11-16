@@ -86,7 +86,7 @@ class PoolMetricsSink(Protocol):
 
 @dataclass(frozen=True)
 class StoreRuntime:
-    """What the host hands a persistence backend besides its configuration.
+    """What the host hands a store backend besides its configuration.
 
     Args:
         profile: Defaults of the entry point building the backend.

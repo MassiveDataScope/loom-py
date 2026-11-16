@@ -1,4 +1,4 @@
-"""Persistence backend plugin contract.
+"""Store backend plugin contract.
 
 A backend is resolved by name from the ``loom.stores.backends`` entry
 point group and asked once, at bootstrap, for everything the host needs to
@@ -46,7 +46,7 @@ async def no_startup_checks() -> None:
 
 @dataclass(frozen=True)
 class StoreWiring:
-    """Everything a host needs from a persistence backend, resolved once at bootstrap.
+    """Everything a host needs from a store backend, resolved once at bootstrap.
 
     Args:
         uow_factory: Unit-of-work factory bound to the backend; ``None`` when
@@ -79,7 +79,7 @@ class StoreWiring:
 
 
 class StoreBackend(Protocol):
-    """Factory a persistence backend exposes through its entry point.
+    """Factory a store backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
     registry instantiates it. Each backend serves the store the host names

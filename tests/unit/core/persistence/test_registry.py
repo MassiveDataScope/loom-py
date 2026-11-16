@@ -1,4 +1,4 @@
-"""Persistence backend registry: resolution by name and the ``none`` backend."""
+"""Store backend registry: resolution by name and the ``none`` backend."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ class TestResolveBackend:
     ) -> None:
         _install(monkeypatch, ())
 
-        with pytest.raises(ConfigError, match="No persistence backends are registered"):
+        with pytest.raises(ConfigError, match="No store backends are registered"):
             resolve_store_backend("missing")
 
     def test_injected_entry_point_resolves_to_an_instance_of_its_class(

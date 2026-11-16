@@ -392,7 +392,7 @@ discovery:
     module: app.manifest
 ```
 
-### Choose the persistence backend
+### Choose the store backend
 
 Backends are plugins resolved by name from the `loom.stores.backends`
 entry point group. `stores.default.backend` selects it, and the rest of

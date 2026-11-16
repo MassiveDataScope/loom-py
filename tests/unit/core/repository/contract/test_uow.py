@@ -43,7 +43,7 @@ class TestContractCommit:
     async def test_unit_of_work_declares_transactional_as_the_case_does(
         self, case: BackendCase, repository: Any
     ) -> None:
-        assert type(case.unit_of_work(repository)).transactional is case.transactions
+        assert type(case.unit_of_work(repository)).is_transactional is case.transactions
 
     async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
         self, case: BackendCase, repository: Any

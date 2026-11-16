@@ -67,7 +67,7 @@ class _RecordingSession:
 class _PhasedUnitOfWork:
     """A phased unit of work of ``owner`` whose session is ``session``."""
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
     phased: ClassVar[bool] = True
 
     def __init__(self, owner: SessionManager, session: _RecordingSession) -> None:

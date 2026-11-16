@@ -23,7 +23,7 @@ from loom.core.use_case.use_case import UseCase
 def _make_uow_factory() -> tuple[MagicMock, MagicMock]:
     """Return (factory_mock, uow_mock) with async begin/commit/rollback."""
     uow = MagicMock(spec=UnitOfWork)
-    type(uow).transactional = True  # a class attribute, as the protocol declares it
+    type(uow).is_transactional = True  # a class attribute, as the protocol declares it
     uow.begin = AsyncMock()
     uow.commit = AsyncMock()
     uow.rollback = AsyncMock()

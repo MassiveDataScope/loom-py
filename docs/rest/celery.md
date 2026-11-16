@@ -1,7 +1,7 @@
 # Celery worker
 
 `loom-kernel` bootstraps Celery workers from the same config, discovery and
-composition used by the REST API: the worker gets the same persistence backends,
+composition used by the REST API: the worker gets the same store backends,
 row-level security and startup checks. Jobs are first-class citizens — they
 support `Input()`, `LoadById()`, `Rule`, and full DI injection just like use cases.
 
@@ -264,7 +264,7 @@ exception the failed action raised, carrying whether anything committed.
   committed; the fix belongs to whatever the post-commit action talks to
   (the broker, the cache), not to re-running the job.
 - **`committed=False`** — the job owned no unit of work (declared
-  `read_only`, or the worker runs without a persistence backend). Nothing
+  `read_only`, or the worker runs without a store backend). Nothing
   was written, so the task is retried like any other failure.
 
 See [Execution lifecycle](use-case-dsl.md#execution-lifecycle) for how the

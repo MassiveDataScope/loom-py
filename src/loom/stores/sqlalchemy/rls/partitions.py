@@ -57,7 +57,7 @@ _SCHEMA_LOCK: Final = text(SCHEMA_LOCK)
 
 async def ensure_range_partitions(
     target: str | AsyncConnection,
-    application: StoreSchema,
+    schema: StoreSchema,
     model: type | str,
     start: dt.date,
     end: dt.date,
@@ -81,10 +81,10 @@ async def ensure_range_partitions(
             inside it, or the guard predates partition support.
         ValueError: When ``interval`` is unknown or a partition name is too long.
     """
-    scoped = _partitioned(application, model)
+    scoped = _partitioned(schema, model)
     partitions = range_partitions(scoped.name, start, end, interval)
-    async with _guarded(target, application, lock_timeout) as (connection, schema):
-        calls = create_partition_calls(schema, scoped.name, partitions)
+    async with _guarded(target, schema, lock_timeout) as (connection, schema_name):
+        calls = create_partition_calls(schema_name, scoped.name, partitions)
         changed: list[str] = []
         for name, parameters in calls:
             if (await connection.execute(_CREATE_RANGE_PARTITION, parameters)).scalar():
@@ -94,7 +94,7 @@ async def ensure_range_partitions(
 
 async def detach_range_partitions(
     target: str | AsyncConnection,
-    application: StoreSchema,
+    schema: StoreSchema,
     model: type | str,
     start: dt.date,
     end: dt.date,
@@ -117,10 +117,10 @@ async def detach_range_partitions(
         ConfigError: As :func:`ensure_range_partitions`.
         ValueError: As :func:`ensure_range_partitions`.
     """
-    scoped = _partitioned(application, model)
+    scoped = _partitioned(schema, model)
     names = [p.name for p in range_partitions(scoped.name, start, end, interval)]
-    async with _guarded(target, application, lock_timeout) as (connection, schema):
-        calls = detach_partition_calls(schema, scoped.name, names, drop=drop)
+    async with _guarded(target, schema, lock_timeout) as (connection, schema_name):
+        calls = detach_partition_calls(schema_name, scoped.name, names, drop=drop)
         changed: list[str] = []
         for name, parameters in calls:
             if (await connection.execute(_DETACH_PARTITION, parameters)).scalar():
@@ -128,9 +128,9 @@ async def detach_range_partitions(
         return tuple(changed)
 
 
-def _partitioned(application: StoreSchema, model: type | str) -> ScopedTable:
+def _partitioned(schema: StoreSchema, model: type | str) -> ScopedTable:
     name = model if isinstance(model, str) else get_table_name(model)
-    scoped = next((t for t in application.scoped.values() if t.name == name), None)
+    scoped = next((t for t in schema.scoped.values() if t.name == name), None)
     if scoped is None or scoped.partition_by is None:
         raise ConfigError(f"{name!r} is not a range-partitioned scoped table of this application")
     return scoped
@@ -138,9 +138,9 @@ def _partitioned(application: StoreSchema, model: type | str) -> ScopedTable:
 
 @asynccontextmanager
 async def _guarded(
-    target: str | AsyncConnection, application: StoreSchema, lock_timeout: str
+    target: str | AsyncConnection, schema: StoreSchema, lock_timeout: str
 ) -> AsyncIterator[tuple[AsyncConnection, str]]:
-    bootstrap = application.require_bootstrap("partitions")
+    bootstrap = schema.require_bootstrap("partitions")
     try:
         validate_timeout(lock_timeout)
     except ValueError as exc:

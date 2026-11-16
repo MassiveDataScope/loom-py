@@ -2,7 +2,7 @@
 
 The worker runs the same recipe as every other entry point
 (:func:`loom.composition.create_app`), so it gains what the API already had:
-any persistence backend, row-level security bound in
+any store backend, row-level security bound in
 ``prepare_models``, the cache gateways closed on the way out, and
 ``JobService`` and ``SqlQueryService`` in its container.  What stays specific
 to the worker is its discovery, its pool profile, and when the Celery

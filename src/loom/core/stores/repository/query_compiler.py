@@ -1,6 +1,6 @@
 """Backend-neutral contract for compiling :class:`QuerySpec` parts.
 
-Each persistence backend compiles :class:`~loom.core.stores.repository.query.FilterGroup`
+Each store backend compiles :class:`~loom.core.stores.repository.query.FilterGroup`
 and :class:`~loom.core.stores.repository.query.SortSpec` into its own native
 expression types; the protocol fixes the entry points and the error contract
 so repositories can be written against a compiler instead of a backend.

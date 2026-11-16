@@ -1,4 +1,4 @@
-"""Resolution of persistence backends from the ``loom.stores.backends`` group."""
+"""Resolution of store backends from the ``loom.stores.backends`` group."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from loom.core.stores.backend import StoreBackend
 
 BACKEND_ENTRY_POINT_GROUP = "loom.stores.backends"
-"""Entry point group persistence backends register under."""
+"""Entry point group store backends register under."""
 
 
 def resolve_store_backend(name: str) -> StoreBackend:
-    """Resolve the persistence backend registered under ``name``.
+    """Resolve the store backend registered under ``name``.
 
     Args:
         name: ``stores.<name>.backend`` value naming the backend.
@@ -38,7 +38,7 @@ def resolve_store_backend(name: str) -> StoreBackend:
         raise ConfigError(_describe_unknown_backend(name, exc.available)) from exc
     except ImportError as exc:
         raise ConfigError(
-            f"Persistence backend {name!r} could not be imported ({exc}). Install the "
+            f"Store backend {name!r} could not be imported ({exc}). Install the "
             f"distribution providing it (built-in backends: `pip install 'loom-kernel[{name}]'`)."
         ) from exc
     backend_cls = cast("type[StoreBackend]", target)
@@ -48,9 +48,9 @@ def resolve_store_backend(name: str) -> StoreBackend:
 def _describe_unknown_backend(name: str, available: tuple[str, ...]) -> str:
     """Return the message naming an unknown backend *name* and the *available* ones."""
     if not available:
-        return f"Unknown persistence backend {name!r}. No persistence backends are registered."
+        return f"Unknown store backend {name!r}. No store backends are registered."
     registered = ", ".join(available)
-    return f"Unknown persistence backend {name!r}. Registered backends: {registered}."
+    return f"Unknown store backend {name!r}. Registered backends: {registered}."
 
 
 __all__ = [

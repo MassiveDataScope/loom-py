@@ -38,7 +38,7 @@ RepositoryBuilder = Callable[[RepositoryBuildContext], Any]
 class DefaultRepositoryBuilder(Protocol):
     """Global fallback strategy for building repositories.
 
-    Implement this protocol to swap the default persistence backend for all
+    Implement this protocol to swap the default store backend for all
     models that have no explicit ``repository_for`` registration.  The
     implementation receives infrastructure dependencies via its constructor
     (injected by the DI module), not via the context.

@@ -83,7 +83,7 @@ async def apply_bootstrap(
     """Install or upgrade the guard of ``config.schema`` and configure it, in one transaction.
 
     *path* is the dotted path of the store section *config* was read from
-    (``application.path``), which a refused name or timeout names.
+    (``StoreSchema.path``), which a refused name or timeout names.
 
     Raises:
         ConfigError: When a name or the lock timeout is invalid, the server

@@ -95,7 +95,7 @@ class _CommitFails(SQLAlchemyUnitOfWork):
 class _Autocommit:
     """A protocol-only unit of work of a store without transactions."""
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
     async def begin(self) -> None: ...
     async def commit(self) -> None: ...

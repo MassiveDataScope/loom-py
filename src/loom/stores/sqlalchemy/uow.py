@@ -61,7 +61,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         # committed
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
     phased: ClassVar[bool] = True
 
     def __init__(self, session_manager: SessionManager) -> None:

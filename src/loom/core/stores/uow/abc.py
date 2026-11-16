@@ -11,7 +11,7 @@ persistence technology.
 Usage::
 
     class SQLAlchemyUoW:
-        transactional: ClassVar[bool] = True
+        is_transactional: ClassVar[bool] = True
 
         async def begin(self) -> None: ...
         async def commit(self) -> None: ...
@@ -61,7 +61,7 @@ class UnitOfWork(Protocol):
         # commit was called on exit
     """
 
-    transactional: ClassVar[bool]
+    is_transactional: ClassVar[bool]
     """Whether ``commit`` and ``rollback`` are real.
 
     ``True`` when writes made inside the unit of work become visible only

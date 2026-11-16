@@ -357,7 +357,7 @@ request or task:
 - `ResolutionError` — any other constructor dependency of a use case that is
   not bound.
 - `ConfigError` — an incomplete or invalid configuration, an unknown
-  persistence backend, or a backend whose extra is not installed (the message
+  store backend, or a backend whose extra is not installed (the message
   names `loom-kernel[<backend>]`).
 - `ReservedBindingError` (`loom.composition`, code
   `CompositionErrorCode.RESERVED_BINDING`): one of your `modules` registered a

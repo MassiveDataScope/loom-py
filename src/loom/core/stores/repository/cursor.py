@@ -187,7 +187,7 @@ class CursorCodec:
     """Issues and verifies cursor tokens bound to the query that produced them.
 
     Build it once at startup, from configuration with :meth:`from_config`,
-    and share it: the persistence backends register it in DI, so a service
+    and share it: the store backends register it in DI, so a service
     paginating by hand resolves the same codec the repositories use.
 
     Args:

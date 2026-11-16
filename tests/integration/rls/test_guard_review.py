@@ -133,22 +133,22 @@ async def _installed(
     return database, application
 
 
-async def _startup_checks(url: str, application: StoreSchema) -> set[str]:
-    bootstrap = application.bootstrap
+async def _startup_checks(url: str, schema: StoreSchema) -> set[str]:
+    bootstrap = schema.bootstrap
     assert bootstrap is not None
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             problems = await integrity.startup_problems(
-                connection, bootstrap.names.guard, application.scoped
+                connection, bootstrap.names.guard, schema.scoped
             )
     finally:
         await engine.dispose()
     return {problem.check for problem in problems}
 
 
-async def _verify_checks(url: str, application: StoreSchema) -> set[str]:
-    report = await verify(url, application)
+async def _verify_checks(url: str, schema: StoreSchema) -> set[str]:
+    report = await verify(url, schema)
     return {finding.check for finding in report.findings}
 
 

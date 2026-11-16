@@ -77,7 +77,7 @@ TERMINAL_CALLS = frozenset({"close", "exit-commit", "exit-rollback"})
 class _RecordingStore:
     """Shared behaviour: record calls, stage writes, apply the fault."""
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         self.key = key
@@ -86,7 +86,7 @@ class _RecordingStore:
         self.staged: list[str] = []
 
     def write(self, row: str) -> None:
-        if self.transactional:
+        if self.is_transactional:
             self.staged.append(row)
         else:
             self.ledger.persisted[self.key].append(row)
@@ -160,7 +160,7 @@ class PhasedStore(_RecordingStore):
 class NonTransactionalStore(PhasedStore):
     """A loom-owned unit of work whose writes autocommit (no-op commit and rollback)."""
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
 
 class ThirdPartyStore(_RecordingStore):
@@ -201,7 +201,7 @@ class AutocommitStore(ThirdPartyStore):
     phase and its participant has no owner.
     """
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
 
 StoreFactory = Callable[[StoreKey, Ledger, Fault | None], _RecordingStore]

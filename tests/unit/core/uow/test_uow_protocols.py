@@ -17,7 +17,7 @@ from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 class FakeUoW:
     """Minimal UnitOfWork implementation for protocol verification."""
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     async def begin(self) -> None: ...
     async def commit(self) -> None: ...
@@ -55,7 +55,7 @@ class TestUnitOfWorkProtocols:
         mock.rollback = AsyncMock()
         mock.__aenter__ = AsyncMock(return_value=mock)
         mock.__aexit__ = AsyncMock(return_value=None)
-        mock.transactional = True
+        mock.is_transactional = True
         assert isinstance(mock, UnitOfWork)
 
     def test_factory_create_returns_uow(self) -> None:
@@ -75,7 +75,7 @@ class TestUnitOfWorkProtocols:
         rolled_back = False
 
         class TrackingUoW:
-            transactional: ClassVar[bool] = True
+            is_transactional: ClassVar[bool] = True
 
             async def begin(self) -> None: ...
 
@@ -108,7 +108,7 @@ class TestUnitOfWorkProtocols:
         rolled_back = False
 
         class TrackingUoW:
-            transactional: ClassVar[bool] = True
+            is_transactional: ClassVar[bool] = True
 
             async def begin(self) -> None: ...
             async def commit(self) -> None: ...

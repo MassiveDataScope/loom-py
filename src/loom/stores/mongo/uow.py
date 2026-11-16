@@ -96,7 +96,7 @@ class NoOpMongoUnitOfWork:
     Holds no session, so the store's repositories always run without one.
     """
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
     async def begin(self) -> None:
         """No-op: no session is opened."""
@@ -137,7 +137,7 @@ class MongoUnitOfWork(EntersAlone):
         # committed
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
     phased: ClassVar[bool] = True
 
     def __init__(self, client: AsyncMongoClient[Any], store: StoreKey) -> None:

@@ -28,7 +28,7 @@ row-level-security schema tooling takes the store to work on
 (`load_store_schema(path, store="audit")`, then `create_schema` and `verify`).
 A streaming sink
 names any store with `store: <name>`. A `clickhouse` store is
-connection-only: it is no persistence backend, serves no model, never joins a
+connection-only: it is no store backend, serves no model, never joins a
 unit of work, and only hands its connection to the sinks that name it (a
 model whose `__store__` points at it fails at startup). Without a
 `stores.default` section the API fails at startup, as it did without `database`, and the Celery worker runs

@@ -72,7 +72,9 @@
   raise `UnsupportedQuery`, and `is_enabled` is `False`), where
   `Recipe.cursor_codec(ctx)` returned `None`; the repositories, compiler and
   registration modules always take and register a codec,
-  `StoreRuntime.cursor_codec` is required,
+  `StoreRuntime.cursor_codec` is required, a cursor page is refused when the
+  query starts (`CursorCodec.require_enabled()`), not only when a next page
+  needs a token,
   `StoreCapabilities.pages_with_cursors` and
   `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
   `StoreCatalog.with_default` is removed with them. **Migration:** an
@@ -631,8 +633,16 @@
   | `StoreCapabilities.serves_models` | `StoreCapabilities.can_serve_models` |
   | `StoreCapabilities.transactional` | `StoreCapabilities.is_transactional` |
   | `Participant.transactional` | `Participant.is_transactional` |
+  | `UnitOfWork.transactional` (the `ClassVar` of every unit of work) | `UnitOfWork.is_transactional` |
   | `ScopedElevationSink.of(wirings)` | `ScopedElevationSink.from_wirings(wirings)` |
   | `Recipe.cursor_codec(ctx)` | `Recipe.build_cursor_codec(ctx)` |
+
+  The `application` parameter of `verify`, `check`, `create_schema`,
+  `ensure_range_partitions`, `detach_range_partitions`, `rls_session_settings` and
+  `scope_protection_hook`, which takes a `StoreSchema`, is now `schema`;
+  pass it positionally, or rename the keyword. The messages that said
+  "persistence backend" (for example `Unknown persistence backend 'x'`) say
+  "store backend".
 
 - **composition:** the composition is composed and served through `Project`.
   Before: `CompositionSource.load(...)` loaded the configuration and

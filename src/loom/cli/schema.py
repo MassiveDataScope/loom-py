@@ -163,9 +163,9 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     from loom.stores.sqlalchemy.rls import verify
 
     try:
-        application = load_store_schema(str(config))
+        schema = load_store_schema(str(config))
         url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
-        report = asyncio.run(verify(url, application))
+        report = asyncio.run(verify(url, schema))
     except ConfigError as exc:
         _fail(exc)
     _print_report(report)

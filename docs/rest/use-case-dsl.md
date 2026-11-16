@@ -1089,9 +1089,9 @@ pipeline stage alone; `commit_ms` measures the unit-of-work exit (`None`
 when no unit of work was opened). A post-commit failure raises no new event
 kind — it surfaces only as `PostCommitError`, after `EXEC_DONE`.
 
-### The `transactional` declaration
+### The `is_transactional` declaration
 
-Every unit-of-work adapter declares `transactional: ClassVar[bool]`: `True`
+Every unit-of-work adapter declares `is_transactional: ClassVar[bool]`: `True`
 when `commit` / `rollback` are real (SQLAlchemy, Mongo with
 `transactions: true`), `False` for adapters whose writes autocommit
 (DynamoDB, Mongo with `transactions: false`). The protocol is
@@ -1146,9 +1146,9 @@ methods stay on the protocol. Closing is the context manager's job
   invalidations stay, since their writes may still commit.
 - **`UnitOfWork` is a runtime-checkable protocol with a data member**:
   `isinstance(x, UnitOfWork)` is `False` for an adapter that does not
-  declare `transactional`, and `issubclass(X, UnitOfWork)` raises
+  declare `is_transactional`, and `issubclass(X, UnitOfWork)` raises
   `TypeError` — Python cannot check a data member on a class. Third-party
-  adapters must declare `transactional: ClassVar[bool]`; code that used
+  adapters must declare `is_transactional: ClassVar[bool]`; code that used
   `issubclass` must switch to `isinstance` on an instance.
 - **`error_kind="commit"` means the commit itself failed**: the outcome is
   undetermined — the driver may have committed before the failure surfaced.

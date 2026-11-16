@@ -1,4 +1,4 @@
-"""The ``dynamodb`` persistence backend."""
+"""The ``dynamodb`` store backend."""
 
 from __future__ import annotations
 

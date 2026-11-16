@@ -80,7 +80,7 @@ class TestClickHouseStoreReaders:
             _catalog({"events": {"backend": "kafka"}})
 
         message = str(error.value)
-        assert "Unknown persistence backend 'kafka'. Registered backends:" in message
+        assert "Unknown store backend 'kafka'. Registered backends:" in message
         assert "Connection-only stores: clickhouse." in message
 
     def test_a_model_of_a_named_clickhouse_store_fails_at_composition(self) -> None:

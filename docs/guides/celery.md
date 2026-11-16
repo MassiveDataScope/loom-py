@@ -1,7 +1,7 @@
 # Celery worker
 
 `loom-kernel` bootstraps Celery workers from the same config, discovery and
-composition used by the REST API: the worker gets the same persistence backends,
+composition used by the REST API: the worker gets the same store backends,
 row-level security and startup checks. Jobs are first-class citizens — they
 support `Input()`, `LoadById()`, `Rule`, and full DI injection just like use cases.
 

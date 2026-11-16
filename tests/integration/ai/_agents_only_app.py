@@ -115,7 +115,7 @@ class _FakeEntryPoint:
 class _FakeEntryPoints:
     """Fakes ``_GROUP`` only; every other group hits the real registrations.
 
-    ``create_app`` also resolves the persistence backend (``stores.default.backend:
+    ``create_app`` also resolves the store backend (``stores.default.backend:
     none``) through the same loader, so a fake that blinds every group would
     make that lookup fail too.
     """

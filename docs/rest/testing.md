@@ -197,4 +197,4 @@ only the image shows: packaging, the handler path, the runtime. For the AWS
 APIs themselves, loom's own integration tests run against LocalStack:
 `docker compose -f docker-compose.local.yaml up -d localstack`, then set
 `LOOM_AWS_IT_URL=http://localhost:4566` (see
-[persistence backends](stores.md)).
+[store backends](stores.md)).

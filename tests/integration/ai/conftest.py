@@ -303,7 +303,7 @@ class FakeUow:
         log: Shared sequence receiving ``begin``/``commit``/``rollback``.
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(self, log: list[str]) -> None:
         self._log = log

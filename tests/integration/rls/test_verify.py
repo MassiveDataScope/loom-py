@@ -61,8 +61,8 @@ async def products(
     return built
 
 
-async def _checks(url: str, application: StoreSchema) -> set[str]:
-    report = await verify(url, application)
+async def _checks(url: str, schema: StoreSchema) -> set[str]:
+    report = await verify(url, schema)
     return {finding.check for finding in report.findings}
 
 

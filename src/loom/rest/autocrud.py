@@ -445,7 +445,7 @@ def _supported_ops(model: type[Any]) -> tuple[CrudOp, ...]:
 
     Delegates to :func:`supported_crud_ops` for the class an explicit
     ``repository_for`` registration names.  Without a registration the model
-    is served by the default repository the persistence backend builds later,
+    is served by the default repository the store backend builds later,
     so every operation is mounted.  A model with a composite primary key gets
     no ``/{id}`` operation, since one path segment cannot carry its key.
 

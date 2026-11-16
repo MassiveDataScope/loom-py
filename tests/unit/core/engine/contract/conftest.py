@@ -5,7 +5,7 @@ SQLAlchemy unit of work over an in-memory sqlite ``SessionManager`` wrapped
 by a counting one, the Mongo unit of work over the in-memory fake client
 (transactional and no-op) and the DynamoDB no-op unit of work.  A scenario
 that needs a real commit or rollback skips by the adapter's declared
-``transactional`` ClassVar, read from a created unit of work.
+``is_transactional`` ClassVar, read from a created unit of work.
 """
 
 from __future__ import annotations
@@ -222,7 +222,7 @@ _CONTEXT_MANAGER = frozenset({"enter", "exit"})
 class LifecycleProbe:
     """Wraps a real unit of work and records how the executor's coordinator drives it.
 
-    ``transactional`` and ``phased`` are the wrapped adapter's values,
+    ``is_transactional`` and ``phased`` are the wrapped adapter's values,
     forwarded by :func:`probe_class_for`, so the coordinator drives the probe
     exactly as it drives the adapter: phase by phase when the adapter is
     phased (ADR 0008, which supersedes FR-001 "the executor never calls
@@ -231,7 +231,7 @@ class LifecycleProbe:
     whether it committed or rolled back, whichever protocol it used.
     """
 
-    transactional: ClassVar[bool]
+    is_transactional: ClassVar[bool]
     phased: ClassVar[bool]
 
     def __init__(self, inner: UnitOfWork, log: Log) -> None:
@@ -302,9 +302,9 @@ class LifecycleProbe:
 
 
 def probe_class_for(adapter: type[UnitOfWork]) -> type[LifecycleProbe]:
-    """Return a probe class declaring the same ``transactional`` and ``phased`` as ``adapter``."""
+    """Return a probe class declaring the ``is_transactional`` and ``phased`` of ``adapter``."""
     markers = {
-        "transactional": adapter.transactional,
+        "is_transactional": adapter.is_transactional,
         "phased": getattr(adapter, "phased", False) is True,
     }
     return type(f"{adapter.__name__}Probe", (LifecycleProbe,), markers)
@@ -355,7 +355,7 @@ class LifecycleCase:
     Args:
         name: Adapter name, used in test ids and skip reasons.
         factory: Recording factory the executor is built with.
-        transactional: The ``transactional`` ClassVar of a created unit of work.
+        transactional: The ``is_transactional`` ClassVar of a created unit of work.
         phased: Whether the coordinator drives it phase by phase.
         probe: Observation of the adapter's session.
         failures: Failure injection; ``None`` when the adapter has no driver seam.
@@ -384,7 +384,7 @@ def _transactional_case(
     return LifecycleCase(
         name=name,
         factory=RecordingFactory(factory, log),
-        transactional=type(factory.create()).transactional,
+        transactional=type(factory.create()).is_transactional,
         phased=True,
         probe=seams,
         failures=seams,
@@ -397,7 +397,7 @@ def _no_op_case(name: str, factory: UnitOfWorkFactory, log: Log) -> LifecycleCas
     return LifecycleCase(
         name=name,
         factory=RecordingFactory(factory, log),
-        transactional=type(factory.create()).transactional,
+        transactional=type(factory.create()).is_transactional,
         phased=False,
         probe=NoSessionProbe(),
         failures=None,
@@ -442,7 +442,7 @@ CASE_IDS = ("sqlalchemy", "mongo-transactional", "mongo-noop", "dynamodb")
 
 
 def require_transactional(case: LifecycleCase) -> FailureSeams:
-    """Skip unless the adapter declares ``transactional``; return its failure seams."""
+    """Skip unless the adapter declares ``is_transactional``; return its failure seams."""
     if not case.transactional:
         pytest.skip(f"{case.name} declares transactional=False: nothing to commit or roll back")
     assert case.failures is not None, f"{case.name} declares transactional but has no seam"

@@ -84,7 +84,7 @@ class StubUnitOfWork:
         begin_raises: Exception ``begin`` raises, if any.
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(
         self,

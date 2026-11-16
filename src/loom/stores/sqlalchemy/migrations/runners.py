@@ -100,7 +100,7 @@ def alembic_config(script_location: str, url: str) -> Config:
 
 def run_migrations(
     connection: Connection,
-    application: StoreSchema,
+    schema: StoreSchema,
     *,
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
@@ -112,17 +112,17 @@ def run_migrations(
     """
     from alembic import context
 
-    bootstrap = _require_bootstrap(application)
-    schema, owner, names = bootstrap.schema, bootstrap.roles.owner, bootstrap.names
+    bootstrap = _require_bootstrap(schema)
+    schema_name, owner, names = bootstrap.schema, bootstrap.roles.owner, bootstrap.names
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
-    require_landing(connection, owner, schema)
-    minimum = required_guard_revision(bool(application.audited))
+    require_landing(connection, owner, schema_name)
+    minimum = required_guard_revision(bool(schema.audited))
     require_guard_revision_sync(connection, names.guard, minimum=minimum)
     if read_only:
         connection.commit()
     else:
-        lock_schema(connection, schema, lock_timeout)
+        lock_schema(connection, schema_name, lock_timeout)
     try:
         if not read_only:
             connection.execute(_GUARD_FIRST, _guard(names.guard))
@@ -131,31 +131,31 @@ def run_migrations(
         _install_timeouts(connection, lock_timeout, statement_timeout)
         context.configure(
             connection=connection,
-            target_metadata=application.metadata,
+            target_metadata=schema.metadata,
             transaction_per_migration=True,
             compare_type=True,
             version_table=names.version_table,
-            version_table_schema=schema,
+            version_table_schema=schema_name,
             include_object=include_object_for(names),
-            process_revision_directives=scope_protection_hook(application),
+            process_revision_directives=scope_protection_hook(schema),
             on_version_apply=_close_revision(
-                names.guard, schema, application.recording_audit_tables, read_only=read_only
+                names.guard, schema_name, schema.recording_audit_tables, read_only=read_only
             ),
             loom_guard=names.guard,
         )
         context.run_migrations()
         if not read_only:
-            _reconcile_audit(connection, application, schema, names.guard)
+            _reconcile_audit(connection, schema, schema_name, names.guard)
     finally:
         if not read_only:
-            _unlock(connection, schema)
+            _unlock(connection, schema_name)
 
 
 def _reconcile_audit(
-    connection: Connection, application: StoreSchema, schema: str, guard: str
+    connection: Connection, schema: StoreSchema, schema_name: str, guard: str
 ) -> None:
     connection.commit()
-    _reconcile_present(connection, schema, guard, application.recording_audit_tables)
+    _reconcile_present(connection, schema_name, guard, schema.recording_audit_tables)
     connection.execute(_ASSERT_SCHEMA)
     connection.commit()
 
@@ -175,7 +175,7 @@ def _reconcile_present(
 
 def run_data_migrations(
     connection: Connection,
-    application: StoreSchema,
+    schema: StoreSchema,
     *,
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
@@ -187,27 +187,27 @@ def run_data_migrations(
     """
     from alembic import context
 
-    bootstrap = _require_bootstrap(application)
-    schema, names = bootstrap.schema, bootstrap.names
+    bootstrap = _require_bootstrap(schema)
+    schema_name, names = bootstrap.schema, bootstrap.names
     _reject_revisions(context.config, data_tree=True)
-    _require_bypass(connection, application)
-    lock_schema(connection, schema, lock_timeout)
+    _require_bypass(connection, schema)
+    lock_schema(connection, schema_name, lock_timeout)
     try:
-        _require_structural_head(connection, context.config, schema, names)
+        _require_structural_head(connection, context.config, schema_name, names)
         connection.commit()
         _install_timeouts(connection, lock_timeout, statement_timeout)
         context.configure(
             connection=connection,
             transaction_per_migration=True,
             version_table=names.data_version_table,
-            version_table_schema=schema,
+            version_table_schema=schema_name,
         )
         context.run_migrations()
     finally:
-        _unlock(connection, schema)
+        _unlock(connection, schema_name)
 
 
-def check(config: Config, application: StoreSchema) -> None:
+def check(config: Config, schema: StoreSchema) -> None:
     """Fail when the models, the database or the guard registry disagree.
 
     Tables and columns are compared by Alembic's autogenerate; the registry is
@@ -229,7 +229,7 @@ def check(config: Config, application: StoreSchema) -> None:
         if _sqlstate(exc) != GUARD_SQLSTATE:
             raise
         raise ConfigError(f"guard assertion failed: {exc.orig}") from exc
-    asyncio.run(_registry_drift(config, application))
+    asyncio.run(_registry_drift(config, schema))
 
 
 def _sqlstate(exc: DBAPIError) -> str | None:
@@ -237,8 +237,8 @@ def _sqlstate(exc: DBAPIError) -> str | None:
     return getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
 
 
-async def _registry_drift(config: Config, application: StoreSchema) -> None:
-    bootstrap = _require_bootstrap(application)
+async def _registry_drift(config: Config, schema: StoreSchema) -> None:
+    bootstrap = _require_bootstrap(schema)
     url = str(config.get_main_option("sqlalchemy.url")).replace("%%", "%")
     engine = create_async_engine(url, poolclass=NullPool)
     try:
@@ -250,9 +250,9 @@ async def _registry_drift(config: Config, application: StoreSchema) -> None:
             partitions = {str(row.relname): str(row.parent) for row in parents}
     finally:
         await engine.dispose()
-    expected = {table.name for table in application.scoped.values()}
+    expected = {table.name for table in schema.scoped.values()}
     registered = registered_model_tables(
-        {name: partitions.get(name) for name in names}, application.scoped.values()
+        {name: partitions.get(name) for name in names}, schema.scoped.values()
     )
     if registered != expected:
         missing = sorted(expected - registered)
@@ -262,12 +262,12 @@ async def _registry_drift(config: Config, application: StoreSchema) -> None:
         )
 
 
-def _require_bootstrap(application: StoreSchema) -> BootstrapConfig:
-    bootstrap = application.require_bootstrap("migrations")
+def _require_bootstrap(schema: StoreSchema) -> BootstrapConfig:
+    bootstrap = schema.require_bootstrap("migrations")
     try:
         return bootstrap.validated()
     except ValueError as exc:
-        raise ConfigError(f"{application.path}.schema: {exc}") from exc
+        raise ConfigError(f"{schema.path}.schema: {exc}") from exc
 
 
 def _reject_revisions(config: Config, *, data_tree: bool) -> None:
@@ -302,9 +302,9 @@ def require_landing(connection: Connection, owner: str, schema: str) -> None:
         )
 
 
-def _require_bypass(connection: Connection, application: StoreSchema) -> None:
+def _require_bypass(connection: Connection, schema: StoreSchema) -> None:
     user, bypass = connection.execute(_BYPASS_SELF).one()
-    users = application.bootstrap.database_users if application.bootstrap else {}
+    users = schema.bootstrap.database_users if schema.bootstrap else {}
     declared = users.get(str(user))
     if not bypass or declared is None or declared.access != "bypass":
         raise ConfigError(

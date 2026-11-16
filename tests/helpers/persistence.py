@@ -1,4 +1,4 @@
-"""Build a persistence backend the way the composition root does."""
+"""Build a store backend the way the composition root does."""
 
 from __future__ import annotations
 

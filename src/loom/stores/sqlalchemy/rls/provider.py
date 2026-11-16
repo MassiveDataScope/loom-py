@@ -53,17 +53,15 @@ def elevation_setting(scope: str) -> str:
 
 
 def rls_session_settings(
-    application: StoreSchema, product: SessionSettings | None = None
+    schema: StoreSchema, product: SessionSettings | None = None
 ) -> Callable[[], Mapping[str, str]]:
-    """Build the provider for ``application``; the product's settings are merged in.
+    """Build the provider for ``schema``; the product's settings are merged in.
 
     Raises:
         ConfigError: When a scope binding is missing, malformed or unregistered.
         ValueError: At call time, when the product emits a key under ``loom.``.
     """
-    return scoped_session_settings(
-        application.scope_sources, application.scoped, product, path=application.path
-    )
+    return scoped_session_settings(schema.scope_sources, schema.scoped, product, path=schema.path)
 
 
 def scoped_session_settings(

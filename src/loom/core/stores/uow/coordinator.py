@@ -339,7 +339,7 @@ class Participant:
 
     def __init__(self, key: StoreKey, uow: UnitOfWork) -> None:
         self.key = key
-        self.is_transactional = type(uow).transactional
+        self.is_transactional = type(uow).is_transactional
         self.first_write: int | None = None
         self.wrote = False
         self.poisoned: BaseException | None = None

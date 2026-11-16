@@ -1,4 +1,4 @@
-"""The ``sqlalchemy`` persistence backend."""
+"""The ``sqlalchemy`` store backend."""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ def startup_checks(
     if has_session_settings:
         raise ConfigError(
             "the schema is never created with the application's session settings; "
-            f"use {path}.schema.mode: external and create_schema(migrator_url, application)"
+            f"use {path}.schema.mode: external and create_schema(migrator_url, schema)"
         )
     unprotected = check_dialect(dialect, scoped, allow_unprotected=allow, path=path)
     if dialect == POSTGRES_DIALECT:
@@ -294,7 +294,7 @@ def _refuse_unprotected(names: Sequence[str], path: str) -> None:
         return
     raise ConfigError(
         f"create_all cannot protect scoped tables {', '.join(names)}; run "
-        f"create_schema(migrator_url, application) and set {path}.schema.mode: external"
+        f"create_schema(migrator_url, schema) and set {path}.schema.mode: external"
     )
 
 

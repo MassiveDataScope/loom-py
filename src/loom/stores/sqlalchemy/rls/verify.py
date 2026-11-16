@@ -118,9 +118,9 @@ class Report:
     expired_audit_partitions: tuple[str, ...] = ()
 
 
-async def verify(url: str, application: StoreSchema) -> Report:
+async def verify(url: str, schema: StoreSchema) -> Report:
     """Compare the database with the application's declaration."""
-    bootstrap = application.bootstrap
+    bootstrap = schema.bootstrap
     if bootstrap is None:
         return Report(ok=True, findings=())
     guard = {"guard": bootstrap.names.guard}
@@ -130,22 +130,20 @@ async def verify(url: str, application: StoreSchema) -> Report:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
             audit = await audit_state(connection, bootstrap.schema, bootstrap.names.guard)
-            findings += audit_findings(audit, application.recording_audit_tables)
-            if audit.relations or application.audited:
+            findings += audit_findings(audit, schema.recording_audit_tables)
+            if audit.relations or schema.audited:
                 findings += await audit_shape_findings(connection, bootstrap.schema)
-            findings += await _registry(connection, application.scoped)
-            findings += await _protection(connection, application.scoped, bootstrap)
+            findings += await _registry(connection, schema.scoped)
+            findings += await _protection(connection, schema.scoped, bootstrap)
             findings += await _assertion(connection)
             await connection.execute(_GUARD_FIRST, guard)
             acl, sequences = await _acl(connection, bootstrap.schema)
-            findings += _group_privileges(acl, application.scoped, bootstrap)
-            findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
+            findings += _group_privileges(acl, schema.scoped, bootstrap)
+            findings += await _sequence_usage(connection, acl, schema.scoped, bootstrap)
             findings += audit_privilege_findings(acl, audit, bootstrap)
             findings += _bypass_privileges(acl, sequences, bootstrap, audit.relations)
-            findings += _global_privileges(acl, application, bootstrap)
-            findings += await _global_parent_findings(
-                connection, acl, application.scoped, bootstrap
-            )
+            findings += _global_privileges(acl, schema, bootstrap)
+            findings += await _global_parent_findings(connection, acl, schema.scoped, bootstrap)
             findings += await _memberships(connection, bootstrap)
     finally:
         await engine.dispose()
@@ -327,12 +325,10 @@ def _bypass_expectation(
     return "bypass.privileges", {p.value for p in READ_WRITE}, operator.le
 
 
-def _global_privileges(
-    acl: Acl, application: StoreSchema, bootstrap: BootstrapConfig
-) -> list[Finding]:
+def _global_privileges(acl: Acl, schema: StoreSchema, bootstrap: BootstrapConfig) -> list[Finding]:
     groups = {"readers": bootstrap.names.readers, "writers": bootstrap.names.writers}
     findings: list[Finding] = []
-    for model in application.models:
+    for model in schema.models:
         if is_row_scoped(model):
             continue
         table = get_table_name(model)

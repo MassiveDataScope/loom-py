@@ -43,7 +43,7 @@ _MISSING_EVENT_TRIGGERS: Final = text(MISSING_EVENT_TRIGGERS)
 
 
 async def create_schema(
-    migrator_url: str, application: StoreSchema, *, lock_timeout: str = "5s"
+    migrator_url: str, schema: StoreSchema, *, lock_timeout: str = "5s"
 ) -> None:
     """Run ``create_all`` on the application's metadata through the migrator.
 
@@ -64,47 +64,47 @@ async def create_schema(
         validate_timeout(lock_timeout)
     except ValueError as exc:
         raise ConfigError(f"create_schema: {exc}") from exc
-    manager = SessionManager(migrator_url, store=application.store)
+    manager = SessionManager(migrator_url, store=schema.store)
     try:
         check_dialect(
             manager.engine.dialect.name,
-            application.scoped,
-            allow_unprotected=application.database.schema.allow_unprotected_dialect,
-            path=application.path,
+            schema.scoped,
+            allow_unprotected=schema.database.schema.allow_unprotected_dialect,
+            path=schema.path,
         )
-        bootstrap = application.bootstrap if application.is_guarded else None
+        bootstrap = schema.bootstrap if schema.is_guarded else None
         async with manager.engine.begin() as connection:
             if bootstrap is None:
-                await connection.run_sync(application.metadata.create_all)
+                await connection.run_sync(schema.metadata.create_all)
             else:
-                await _create_protected(connection, application, bootstrap, lock_timeout)
+                await _create_protected(connection, schema, bootstrap, lock_timeout)
     finally:
         await manager.dispose()
 
 
 async def _create_protected(
     connection: AsyncConnection,
-    application: StoreSchema,
+    schema: StoreSchema,
     bootstrap: BootstrapConfig,
     lock_timeout: str,
 ) -> None:
-    schema, guard = bootstrap.schema, bootstrap.names.guard
+    schema_name, guard = bootstrap.schema, bootstrap.names.guard
     await connection.execute(_LOCK_TIMEOUT, {"lock": lock_timeout})
-    await connection.execute(_SCHEMA_LOCK, {"schema": schema})
-    await _require_guard(connection, schema, guard)
-    minimum = required_guard_revision(bool(application.audited))
+    await connection.execute(_SCHEMA_LOCK, {"schema": schema_name})
+    await _require_guard(connection, schema_name, guard)
+    minimum = required_guard_revision(bool(schema.audited))
     await require_guard_revision(connection, guard, minimum=minimum)
-    path = {"schema": schema, "guard": guard}
+    path = {"schema": schema_name, "guard": guard}
     info = (await connection.get_raw_connection()).info
     info[GUARD_PATH] = path
     try:
-        await connection.run_sync(application.metadata.create_all)
+        await connection.run_sync(schema.metadata.create_all)
     finally:
         info.pop(GUARD_PATH, None)
     await connection.execute(_GUARD_FIRST, path)
     await connection.run_sync(
         lambda sync: reconcile_audited(
-            sync, schema=schema, guard=guard, declared=application.recording_audit_tables
+            sync, schema=schema_name, guard=guard, declared=schema.recording_audit_tables
         )
     )
     await connection.execute(_ASSERT_SCHEMA)

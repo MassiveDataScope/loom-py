@@ -3,7 +3,7 @@
 Each ``stores.<name>`` section declares one store: its ``backend``, one of the
 names registered in the ``loom.stores.backends`` entry-point group, and
 the connection that backend reads. A connection-only store
-(:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no persistence backend:
+(:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no store backend:
 it serves no model and no repository, never joins a unit of work, and only
 hands its connection to the streaming and ETL sinks that name it. A model
 declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`.
@@ -143,7 +143,7 @@ class StoreSpec:
 
     Args:
         key: The store's name.
-        backend: Name of the persistence backend serving it, or of a
+        backend: Name of the store backend serving it, or of a
             connection-only kind (:data:`CONNECTION_ONLY_BACKENDS`).
         config: The whole configuration, against which the section's
             interpolations resolve.
@@ -168,7 +168,7 @@ class StoreSpec:
         backend = resolve_store_backend(self.backend)
         if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
-                f"persistence backend {self.backend!r} ({type(backend).__qualname__}) serving "
+                f"store backend {self.backend!r} ({type(backend).__qualname__}) serving "
                 f"{self.path} does not implement the required method 'capabilities'"
             )
         return backend.capabilities(self)
@@ -328,7 +328,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
         ConfigError: When the configuration declares a retired persistence
             key (``database``, ``persistence``, ...), ``stores`` or
             one of its entries is not a mapping, a key is not a store key, a store declares no
-            backend, or one that is neither a registered persistence backend
+            backend, or one that is neither a registered store backend
             nor a connection-only kind, :data:`DEFAULT_STORE` is
             connection-only, ``stores.settings`` holds a key that is no store
             setting, or a store declares its own ``settings``.
@@ -393,19 +393,19 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
         )
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
-        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's persistence backend")
+        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's store backend")
     connection_only = backend in CONNECTION_ONLY_BACKENDS
     if not connection_only and backend not in registered:
         kinds = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
         raise ConfigError(
-            f"{path}.{BACKEND_KEY}: Unknown persistence backend {backend!r}. "
+            f"{path}.{BACKEND_KEY}: Unknown store backend {backend!r}. "
             f"Registered backends: {', '.join(registered)}. "
             f"Connection-only stores: {kinds}."
         )
     if connection_only and key == DEFAULT_STORE:
         raise ConfigError(
             f"{path}.{BACKEND_KEY} is {backend!r}, a connection-only store that "
-            "serves no model; declare the application's persistence backend there"
+            "serves no model; declare the application's store backend there"
         )
     return StoreSpec(key=key, backend=backend, config=ctx)
 

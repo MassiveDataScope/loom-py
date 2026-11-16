@@ -1,4 +1,7 @@
-"""Store ports: the backend contract, its registry, the catalog and the ``none`` backend.
+"""Store ports: backends, their registry, database configuration and runtime profiles.
+
+The ``none`` backend is exported here too. The store catalog and its specs
+live in ``loom.core.stores.catalog``.
 
 This package imports no concrete backend; SQLAlchemy, DynamoDB and the rest
 live under ``loom.stores`` and are reached only through their entry

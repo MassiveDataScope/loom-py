@@ -82,8 +82,8 @@ def _script(
     )
 
 
-def _rewrite(application: StoreSchema, script: ops.MigrationScript) -> ops.MigrationScript:
-    hook = scope_protection_hook(application)
+def _rewrite(schema: StoreSchema, script: ops.MigrationScript) -> ops.MigrationScript:
+    hook = scope_protection_hook(schema)
     hook(None, ("head",), [script])
     return script
 

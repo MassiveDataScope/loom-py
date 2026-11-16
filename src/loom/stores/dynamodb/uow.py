@@ -25,7 +25,7 @@ class DynamoUnitOfWork:
     item write on its own.
     """
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
     async def begin(self) -> None:
         """No-op: DynamoDB opens no shared transaction."""

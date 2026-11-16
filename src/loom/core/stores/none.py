@@ -1,4 +1,4 @@
-"""The ``none`` persistence backend: no persistence at all."""
+"""The ``none`` store backend: no persistence at all."""
 
 from __future__ import annotations
 

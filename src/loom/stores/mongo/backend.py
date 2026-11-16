@@ -1,4 +1,4 @@
-"""The ``mongo`` persistence backend.
+"""The ``mongo`` store backend.
 
 ``pymongo`` is imported at module level: the persistence registry turns an
 ``ImportError`` at entry-point load into a ``ConfigError`` naming the

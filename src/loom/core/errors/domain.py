@@ -121,7 +121,7 @@ class UnsupportedQuery(DomainError):
 
     Args:
         reason: What cannot be done with the given arguments.
-        backend: Name of the persistence backend, when known where it is raised.
+        backend: Name of the store backend, when known where it is raised.
         model: Qualified name of the model being queried, when known.
     """
 

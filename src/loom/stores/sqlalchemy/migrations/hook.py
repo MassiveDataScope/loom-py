@@ -39,9 +39,9 @@ _Seal = Callable[[str], ops.MigrateOperation]
 _COLUMN_OPS = (ops.AlterColumnOp, ops.DropColumnOp)
 
 
-def scope_protection_hook(application: StoreSchema) -> RevisionHook:
-    """Return the ``process_revision_directives`` callable for ``application``."""
-    rewriter = _Rewriter(application)
+def scope_protection_hook(schema: StoreSchema) -> RevisionHook:
+    """Return the ``process_revision_directives`` callable for ``schema``."""
+    rewriter = _Rewriter(schema)
 
     def hook(_context: Any, _revision: Any, directives: Sequence[ops.MigrationScript]) -> None:
         for script in directives:
@@ -56,13 +56,13 @@ def scope_protection_hook(application: StoreSchema) -> RevisionHook:
 
 
 class _Rewriter:
-    def __init__(self, application: StoreSchema) -> None:
+    def __init__(self, schema: StoreSchema) -> None:
         self._scoped: Mapping[str, ScopedTable] = {
-            table.name: table for table in application.scoped.values()
+            table.name: table for table in schema.scoped.values()
         }
         self._privileges: dict[str, Mapping[str, frozenset[Privilege]]] = {
             get_table_name(model): declared_privileges(model)
-            for model in application.models
+            for model in schema.models
             if not is_row_scoped(model) and declared_privileges(model)
         }
 

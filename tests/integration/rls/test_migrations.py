@@ -133,10 +133,10 @@ async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) ->
 class Trees:
     """One structural and one data script location sharing loom's environment."""
 
-    def __init__(self, root: Path, application: StoreSchema) -> None:
+    def __init__(self, root: Path, schema: StoreSchema) -> None:
         self.structural = root / "alembic"
         self.data = self.structural / "data"
-        self.application = application
+        self.application = schema
         env_source = ENV_TEMPLATE_PATH.read_text()
         for location in (self.structural, self.data):
             (location / "versions").mkdir(parents=True)

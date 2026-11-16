@@ -440,14 +440,14 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.stores.sqlalchemy import SessionManager
 from loom.stores.sqlalchemy.rls import install_pool_reset, rls_session_settings
 
-application = load_store_schema()
+schema = load_store_schema()
 sessions = SessionManager(
-    APP_URL, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    APP_URL, session_settings=rls_session_settings(schema), store=DEFAULT_STORE
 )
 install_pool_reset(sessions.engine)
 ```
 
-`rls_session_settings(application, product=None)` validates the bindings when it is
+`rls_session_settings(schema, product=None)` validates the bindings when it is
 called. A product provider passed as `product=` may add its own keys; a key under
 `loom.scope.`, in any letter case, raises `ValueError`. The automatic wiring merges no
 product provider.
@@ -1144,7 +1144,7 @@ migrator's URL or an open connection of the migrator:
 from loom.stores.sqlalchemy.rls import ensure_range_partitions
 
 created = await ensure_range_partitions(
-    MIGRATOR_URL, application, NoteEvent, date(2026, 1, 1), date(2026, 7, 1), interval="month"
+    MIGRATOR_URL, schema, NoteEvent, date(2026, 1, 1), date(2026, 7, 1), interval="month"
 )
 # ("note_events_p202601", ..., "note_events_p202606"); () when they all exist
 ```
@@ -1165,7 +1165,7 @@ Retention detaches, and with `drop=True` drops, the partitions covering a period
 from loom.stores.sqlalchemy.rls import detach_range_partitions
 
 await detach_range_partitions(
-    MIGRATOR_URL, application, NoteEvent, date(2025, 1, 1), date(2025, 2, 1), drop=True
+    MIGRATOR_URL, schema, NoteEvent, date(2025, 1, 1), date(2025, 2, 1), drop=True
 )
 ```
 
@@ -1310,7 +1310,7 @@ The assertion forbids excess at every DDL; `verify` also requires presence. Poli
 from a thread without a running loop.
 
 ```python
-report = await verify(MIGRATOR_URL, application)
+report = await verify(MIGRATOR_URL, schema)
 for finding in report.findings:
     print(finding.table, finding.check, finding.expected, finding.actual)
 ```
