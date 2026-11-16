@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.service import CeleryJobService
-from loom.core import _async
+from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -292,7 +292,7 @@ class TestPostCommitPublish:
         await hang.started.wait()
         await _cancelled(task)
 
-        for shielded in list(_async._held):  # what closing the loop does
+        for shielded in list(concurrency._held):  # what closing the loop does
             shielded.cancel()
         await never_ran.wait()
 

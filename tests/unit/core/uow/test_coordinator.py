@@ -18,7 +18,7 @@ import anyio
 import pytest
 from sqlalchemy.engine import make_url
 
-from loom.core._async import run_to_completion
+from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey

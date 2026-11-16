@@ -37,7 +37,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
 
-from loom.core._async import run_to_completion
+from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.logger import get_logger
 from loom.core.stores.catalog import StoreKey

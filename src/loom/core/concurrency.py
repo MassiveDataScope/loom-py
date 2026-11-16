@@ -1,4 +1,4 @@
-"""Running a step to completion, and blocking work on an executor (public API)."""
+"""Running a step to completion, and blocking work on an executor."""
 
 from __future__ import annotations
 

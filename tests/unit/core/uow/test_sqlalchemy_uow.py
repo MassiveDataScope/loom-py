@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, OperationalError
 
-from loom.core._async import run_to_completion
+from loom.core.concurrency import run_to_completion
 from loom.core.errors import StoresNotCommitted
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory

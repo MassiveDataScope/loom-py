@@ -29,7 +29,7 @@ from loom.ai.errors import (
     AgentRunError,
     AgentRunErrorCode,
 )
-from loom.core._async import discard_outcome
+from loom.core.concurrency import discard_outcome
 from loom.core.identity import Identity
 from loom.core.use_case.invoker import ApplicationInvoker
 

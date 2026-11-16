@@ -24,7 +24,7 @@ from typing import Any, ClassVar, Generic, cast
 
 import msgspec
 
-from loom.core._async import run_in_executor
+from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict, UnsupportedQuery

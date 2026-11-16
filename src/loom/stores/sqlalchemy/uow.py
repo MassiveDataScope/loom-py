@@ -31,7 +31,7 @@ from typing import Any, ClassVar
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core._async import held_task
+from loom.core.concurrency import held_task
 from loom.core.logger import get_logger
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone

@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping
 from contextvars import ContextVar, Token
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
-from loom.core._async import held_task
+from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
 from loom.core.logger import get_logger

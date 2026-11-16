@@ -66,7 +66,7 @@ Async helpers
 .. autosummary::
    :toctree: generated
 
-   loom.core._async
+   loom.core.concurrency
 
 Logging
 -------

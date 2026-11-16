@@ -30,7 +30,7 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
-from loom.core._async import held_task
+from loom.core.concurrency import held_task
 from loom.core.logger import get_logger
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent

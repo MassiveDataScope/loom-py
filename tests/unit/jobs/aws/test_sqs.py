@@ -13,7 +13,7 @@ from typing import Any, cast
 import pytest
 
 from loom.composition import JobBackendError
-from loom.core import _async
+from loom.core import concurrency
 from loom.core.config import ConfigError
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -182,7 +182,7 @@ async def _kill_the_shield(drain: asyncio.Task[None]) -> list[asyncio.Task[None]
     with pytest.raises(asyncio.CancelledError):
         await drain
     loop = asyncio.get_running_loop()
-    shielded = [task for task in _async._held if task.get_loop() is loop]
+    shielded = [task for task in concurrency._held if task.get_loop() is loop]
     for task in shielded:
         task.cancel()
     return shielded
@@ -565,7 +565,7 @@ class TestSqsDispatch:
         await _kill_the_shield(drain)
         await asyncio.sleep(0.1)
 
-        assert (_async._held != set(), _NEVER_RAN in caplog.text) == (True, False)
+        assert (concurrency._held != set(), _NEVER_RAN in caplog.text) == (True, False)
         client.hold.set()
         await _until_logged(caplog, _NEVER_RAN)
 

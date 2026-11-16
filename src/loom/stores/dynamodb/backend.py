@@ -9,7 +9,7 @@ from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, ParamSpec, TypeVar
 
-from loom.core._async import run_in_executor
+from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig, AwsService
 from loom.core.model import BaseModel

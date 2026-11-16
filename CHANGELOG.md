@@ -569,7 +569,7 @@
   | `loom.core.locator.{add_code_path,DEFAULT_CODE_PATH}` | unchanged |
   | `loom.core.repository.dynamodb` and every module below it (`backend`, `repository`, `uow`, `registry`) | `loom.stores.dynamodb` and the same module below it |
   | `loom.core.repository.mongo` and every module below it (`backend`, `repository`, `uow`, `ids`, `query_compiler`, `values`, `registry`) | `loom.stores.mongo` and the same module below it |
-  | `loom.core.repository.dynamodb.repository.run_in_executor` | `loom.core._async.run_in_executor` |
+  | `loom.core.repository.dynamodb.repository.run_in_executor` | `loom.core.concurrency.run_in_executor` |
   | `loom.core.repository` (the leftover adapter package) | removed |
   | `loom.core.sql` and `loom.core.sql.{abc,caller_bound,config,roles,service}` | `loom.core.stores.sql` and `loom.core.stores.sql.{same name}` |
   | `loom.core.sql.clickhouse` and every module below it (`executor`, `registry`) | `loom.stores.clickhouse` and the same module below it |
@@ -594,7 +594,7 @@
   `loom.stores.backends` now target
   `loom.stores.dynamodb.backend:DynamoDBBackend` and
   `loom.stores.mongo.backend:MongoBackend`. `run_in_executor` is public API
-  at `loom.core._async`. `loom.core.repository` is gone.
+  at `loom.core.concurrency`. `loom.core.repository` is gone.
   **Migration:** update the imports in the table above.
 - **stores:** the backend contract carries the store vocabulary, and the entry
   point group moves with it. A third-party backend package must re-register

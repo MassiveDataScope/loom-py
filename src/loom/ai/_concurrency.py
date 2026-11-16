@@ -16,7 +16,7 @@ import logging
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
-from loom.core._async import discard_outcome
+from loom.core.concurrency import discard_outcome
 
 _logger = logging.getLogger(__name__)
 

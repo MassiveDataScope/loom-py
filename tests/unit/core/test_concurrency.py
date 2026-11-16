@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core._async import run_in_executor, run_to_completion
+from loom.core.concurrency import run_in_executor, run_to_completion
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
