@@ -6,7 +6,9 @@ from collections.abc import Sequence
 from typing import Any
 
 import msgspec
+import pytest
 
+from loom.core.config import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
@@ -19,6 +21,7 @@ from loom.core.stores.repository import (
     Listable,
     OnConflict,
     Readable,
+    RepositoryCatalog,
     Updatable,
 )
 from loom.core.stores.repository.registration import (
@@ -34,6 +37,7 @@ from loom.core.stores.repository.registry import (
 )
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.testing.overrides import Override
 
 
 class AcmeRegistrationWidget(BaseModel):
@@ -115,6 +119,42 @@ class TestDefaultKeys:
         assert container.is_registered(RepositoryToken(AcmeRegistrationWidget))
         assert not container.is_registered(Readable[AcmeRegistrationWidget])
         assert not container.is_registered(Creatable[AcmeRegistrationWidget])
+
+    def test_capability_key_only_binding_is_refused(self) -> None:
+        container = LoomContainer()
+        container.register_instance(Creatable[AcmeRegistrationWidget], object())
+
+        with pytest.raises(ConfigError, match="Override.repository"):
+            build_repository_registration_module(
+                models=(AcmeRegistrationWidget,),
+                build_registered_repository=_unused_builder,
+                default_repository_type=_BulkWidgetRepository,
+                default_builder=_default_builder,
+                store=DEFAULT_STORE,
+            )(container)
+
+    def test_capability_resolves_through_repository_token(self) -> None:
+        container = _container(_BulkWidgetRepository)
+        double = object()
+        container.register_instance(RepositoryToken(AcmeRegistrationWidget), double)
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is double
+        assert container.resolve(BulkCreatable[AcmeRegistrationWidget]) is double
+        assert container.resolve_repo(AcmeRegistrationWidget) is double
+
+    def test_override_reaches_capability_and_both_catalog_lookups(self) -> None:
+        container = _container(_BulkWidgetRepository)
+        catalog = RepositoryCatalog(container, {DEFAULT_STORE: (AcmeRegistrationWidget,)})
+        original = catalog[AcmeRegistrationWidget]
+        double = object()
+
+        with Override.repository(AcmeRegistrationWidget, double).applied(container):
+            assert container.resolve(Creatable[AcmeRegistrationWidget]) is double
+            assert catalog[AcmeRegistrationWidget] is double
+            assert catalog.for_table("registration_widgets_fixture") is double
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is original
+        assert catalog[AcmeRegistrationWidget] is original
 
 
 class _Wrapped:

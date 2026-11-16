@@ -16,13 +16,15 @@ Usage::
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from typing import Any, cast
 
 import httpx
 
 from loom.composition import Application, Project
 from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
+from loom.testing.overrides import Override, OverrideAdapter
 from loom.testing.serverless import EventFormat, LambdaEvent
 
 HttpHandler = Callable[[dict[str, Any], Any], dict[str, Any]]
@@ -56,6 +58,7 @@ class LambdaTestClient(httpx.Client):
         *,
         function: str | None = None,
         event_format: EventFormat = "v2",
+        overrides: Sequence[Override] = (),
         **options: Any,
     ) -> None:
         self.application: Application | None = None
@@ -63,14 +66,23 @@ class LambdaTestClient(httpx.Client):
         if app is None or isinstance(app, str):
             paths = () if app is None else (app,)
             adapter = LambdaAdapter(function=function)
-            modules = options.pop("modules", ())
-            self.application = Project.load(*paths, **options).compose(adapter, modules=modules)
+            self.application = Project.load(*paths, **options).compose(
+                OverrideAdapter(adapter, tuple(overrides))
+            )
             owned = adapter.bind(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options:
             raise TypeError("function and create_app options need a configuration path")
         transport = _LambdaTransport(app, event_format, owned)
         super().__init__(transport=transport, base_url="http://testserver")
+
+    @contextmanager
+    def overriding(self, *overrides: Override) -> Any:
+        """Apply substitutions for the duration of a test block."""
+        if self.application is None:
+            raise RuntimeError("A composed application is required for overrides")
+        with Override.applying(self.application.kernel.container, overrides):
+            yield self
 
 
 class _LambdaTransport(httpx.BaseTransport):

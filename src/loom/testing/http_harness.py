@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -30,17 +31,16 @@ from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import resolve_environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import SERVER_PROFILE
-from loom.core.stores.repository.registration import capability_keys
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
+from loom.testing.overrides import Override
 
 
 class _HarnessAdapter:
@@ -129,9 +129,19 @@ class HttpTestHarness:
         assert resp.status_code == 404
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, overrides: Sequence[Override] = ()) -> None:
         self._repos: dict[type[Any], Any] = {}
         self._error_overrides: dict[tuple[type[Any], str], Exception] = {}
+        self._overrides = tuple(overrides)
+        self.application: Application | None = None
+
+    @contextmanager
+    def overriding(self, *overrides: Override) -> Any:
+        """Apply substitutions for the duration of a test block."""
+        if self.application is None:
+            raise RuntimeError("Build the harness application before overriding dependencies")
+        with Override.applying(self.application.kernel.container, overrides):
+            yield self
 
     def inject_repo(self, model: type[Any], fake: Any) -> None:
         """Register a fake repository for a domain model type.
@@ -191,23 +201,15 @@ class HttpTestHarness:
         repos = dict(self._repos)
         error_overrides = dict(self._error_overrides)
 
-        def _make_provider(instance: Any) -> Callable[[], Any]:
-            def _provider() -> Any:
-                return instance
-
-            return _provider
-
         def _module(container: LoomContainer) -> None:
+            for override in self._overrides:
+                override.install(container)
             for model, fake in repos.items():
                 overrides = {
                     method: err for (m, method), err in error_overrides.items() if m is model
                 }
                 effective = _ErrorProxy(fake, overrides) if overrides else fake
-                token = ("repo", model)
-                provider = _make_provider(effective)
-                for key in (token, *capability_keys(type(fake), model)):
-                    container.register(key, provider, scope=Scope.APPLICATION)
-                container.register_repo(model, token)
+                Override.repository(model, effective).install(container)
 
         return _module
 
@@ -257,5 +259,6 @@ class HttpTestHarness:
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        app = adapter.project().serve(adapter)
+        self.application = adapter.project().compose(adapter)
+        app = adapter.bind(self.application)
         return TestClient(app, raise_server_exceptions=False)

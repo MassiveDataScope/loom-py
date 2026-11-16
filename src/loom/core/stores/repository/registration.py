@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, get_origin
 
+from loom.core.config import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
@@ -22,8 +23,10 @@ from loom.core.stores.repository.capabilities import (
 )
 from loom.core.stores.repository.registry import (
     DefaultRepositoryBuilder,
+    ReplaceableSource,
     RepositoryBuildContext,
     RepositoryRegistration,
+    RepositorySourceToken,
     RepositoryToken,
     get_repository_registration,
 )
@@ -192,7 +195,7 @@ def _registered_repository_spec(
     registration: RepositoryRegistration,
 ) -> _RepositoryBindingSpec:
     keys = capability_keys(registration.repository_type, registration.model)
-    binding_key = keys[0] if keys else registration.repository_type
+    binding_key = RepositoryToken(registration.model)
     return _RepositoryBindingSpec(
         registration=registration,
         capability_keys=keys,
@@ -255,7 +258,7 @@ def _build_repository_provider(
     return _provider
 
 
-def _register_repository_binding(
+def register_repository_binding(
     *,
     container: LoomContainer,
     model: type[LoomStruct],
@@ -263,10 +266,42 @@ def _register_repository_binding(
     binding_key: object,
     provider: Callable[[], Any],
 ) -> None:
-    container.register_default(binding_key, provider, scope=Scope.APPLICATION)
+    """Bind a model's one repository source and every key that resolves through it.
+
+    Args:
+        container: The container being filled.
+        model: The model the repository serves.
+        capability_keys: The capability keys the repository answers.
+        binding_key: The key the model's repository resolves under.
+        provider: Builds the repository.
+
+    Raises:
+        ConfigError: When a capability key is already bound on its own, with no
+            repository source to resolve it through.
+    """
+    source_key = RepositorySourceToken(model)
+    has_repository_override = container.is_registered(source_key)
+    for key in capability_keys:
+        if container.is_registered(key) and not has_repository_override:
+            raise ConfigError(
+                f"Repository capability {key!r} is bound independently; "
+                "use Override.repository(Model, double) in loom.testing"
+            )
+    container.register_default(
+        source_key, lambda: ReplaceableSource(provider), scope=Scope.APPLICATION
+    )
+    container.register_default(
+        binding_key,
+        lambda: container.resolve(source_key).get(),
+        scope=Scope.REQUEST,
+    )
     container.register_repo(model, binding_key)
     for key in capability_keys:
-        container.register_default(key, provider, scope=Scope.APPLICATION)
+        container.register_default(
+            key,
+            lambda: container.resolve(binding_key),
+            scope=Scope.REQUEST,
+        )
 
 
 def build_repository_registration_module(
@@ -310,7 +345,7 @@ def build_repository_registration_module(
                 build_registered_repository=build_registered_repository,
                 builder_key=builder,
             )
-            _register_repository_binding(
+            register_repository_binding(
                 container=container,
                 model=model,
                 capability_keys=spec.capability_keys,

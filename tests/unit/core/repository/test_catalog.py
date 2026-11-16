@@ -10,6 +10,7 @@ from loom.core.model.introspection import get_table_name
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.repository.registry import RepositoryToken
+from loom.testing.overrides import Override
 from tests.unit.core.repository.conftest import (
     LEDGER,
     AcmeInvoice,
@@ -36,6 +37,18 @@ class TestRepositoryCatalogLookup:
         container.register_instance(RepositoryToken(AcmeOrder), double)
 
         assert catalog[AcmeOrder] is double
+
+    def test_temporary_repository_override_reaches_catalog_and_restores(
+        self, catalog: RepositoryCatalog, container: LoomContainer
+    ) -> None:
+        original = catalog[AcmeOrder]
+        double = object()
+
+        with Override.repository(AcmeOrder, double).applied(container):
+            assert catalog[AcmeOrder] is double
+            assert catalog.for_table("catalog_orders", store=LEDGER) is double
+
+        assert catalog[AcmeOrder] is original
 
     def test_an_unserved_model_names_itself(self, catalog: RepositoryCatalog) -> None:
         with pytest.raises(KeyError, match="AcmeUnserved"):
@@ -116,3 +129,19 @@ class TestRepositoryCatalogIndex:
     ) -> None:
         with pytest.raises(ValueError, match="ledger.*catalog_orders.*AcmeOrder.*AcmeOrderCopy"):
             RepositoryCatalog(container, {LEDGER: (AcmeOrder, AcmeOrderCopy)})
+
+
+class TestFromRepositories:
+    def test_indexes_models_by_their_declared_store_and_table(self) -> None:
+        class AcmeLedgerRecord(BaseModel):
+            __tablename__ = "ledger_records"
+            __store__ = "ledger"
+            id: int
+
+        repository = object()
+        catalog = RepositoryCatalog.from_repositories({AcmeLedgerRecord: repository})
+
+        assert catalog[AcmeLedgerRecord] is repository
+        assert catalog.for_table("ledger_records", store=LEDGER) is repository
+        with pytest.raises(KeyError, match="ledger_records"):
+            catalog.for_table("ledger_records", store=DEFAULT_STORE)

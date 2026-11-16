@@ -5,6 +5,7 @@ from loom.testing.agents import ContractScenario, FakeAgentEngine, agent_engine_
 from loom.testing.golden import GoldenHarness, serialize_plan
 from loom.testing.in_memory import InMemoryRepository
 from loom.testing.jobs import DispatchedJob, RecordingJobService
+from loom.testing.overrides import Override
 from loom.testing.runner import (
     AgentHandleDouble,
     McpHandleDouble,
@@ -35,6 +36,7 @@ __all__ = [
     "LambdaEvent",
     "LambdaTestClient",
     "McpHandleDouble",
+    "Override",
     "RecordingJobService",
     "RepositoryIntegrationHarness",
     "ScenarioDict",

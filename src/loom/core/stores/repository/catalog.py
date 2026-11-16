@@ -8,8 +8,9 @@ from typing import Any, TypeVar, cast
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
-from loom.core.stores.catalog import StoreKey
+from loom.core.stores.catalog import StoreKey, store_of
 from loom.core.stores.repository.capabilities import RepoFor
+from loom.core.stores.repository.registry import RepositoryToken
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -44,6 +45,22 @@ class RepositoryCatalog:
                     )
                 by_store[store] = model
 
+    @classmethod
+    def from_repositories(cls, repositories: Mapping[type[BaseModel], Any]) -> RepositoryCatalog:
+        """Build a catalog from model repository pairs.
+
+        Raises:
+            ValueError: When one store contains duplicate table names.
+        """
+        container = LoomContainer()
+        models: dict[StoreKey, list[type[BaseModel]]] = {}
+        for model, repository in repositories.items():
+            key = RepositoryToken(model)
+            container.register_instance(key, repository)
+            container.register_repo(model, key)
+            models.setdefault(store_of(model), []).append(model)
+        return cls(container, models)
+
     def __getitem__(self, model: type[ModelT]) -> RepoFor[ModelT]:
         """Return the repository bound for *model*.
 
@@ -62,7 +79,7 @@ class RepositoryCatalog:
         return cast(RepoFor[ModelT], self._container.resolve_repo(model))
 
     def for_table(self, table: str, *, store: StoreKey | None = None) -> RepoFor[Any]:
-        """Return the repository of the model stored in *table*.
+        """Return the repository for *table* among models a store serves.
 
         Args:
             table: The ``__tablename__`` of a served model.
