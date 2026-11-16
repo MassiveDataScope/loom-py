@@ -11,7 +11,7 @@ from loom.core.plugins.entrypoints import (
 )
 
 if TYPE_CHECKING:
-    from loom.core.persistence.abc import PersistenceBackend
+    from loom.core.stores.backend import PersistenceBackend
 
 BACKEND_ENTRY_POINT_GROUP = "loom.persistence.backends"
 """Entry point group persistence backends register under."""

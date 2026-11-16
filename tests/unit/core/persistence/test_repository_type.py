@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from loom.core.persistence.none import NoneBackend
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.stores.none import NoneBackend
 
 
 class TestRepositoryType:

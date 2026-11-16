@@ -21,8 +21,8 @@ from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.stores import SERVER_PROFILE
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 from tests.unit.rest._fixture_app import write_project
 

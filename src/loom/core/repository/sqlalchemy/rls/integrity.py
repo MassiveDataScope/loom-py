@@ -19,7 +19,6 @@ from typing import Any, Final, Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from loom.core.backend.scoped_ddl import MISSING_EVENT_TRIGGERS
 from loom.core.config import ConfigError
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
@@ -34,6 +33,7 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     GuardRevision,
     catalog_digest,
 )
+from loom.core.repository.sqlalchemy.scoped_ddl import MISSING_EVENT_TRIGGERS
 
 FUNCTIONS: Final = "functions"
 AUDIT_SHAPE: Final = (

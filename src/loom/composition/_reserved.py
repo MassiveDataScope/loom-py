@@ -9,8 +9,8 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.kernel import KERNEL_KEYS
 from loom.core.di.container import BindingKey
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
 from loom.core.sql import CallerBoundSql, SqlQueryService
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
 
 _RESERVED: tuple[BindingKey, ...] = (
     SqlQueryService,

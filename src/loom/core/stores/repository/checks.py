@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
 from loom.core.config.keys import ConfigKey
-from loom.core.persistence.stores import load_catalog
+from loom.core.stores.catalog import load_catalog
 from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CursorConfig
 
 if TYPE_CHECKING:

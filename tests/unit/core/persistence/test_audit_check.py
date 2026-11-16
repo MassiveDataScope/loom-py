@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from loom.core.checks import DEPLOY_CHECKS
 from loom.core.config import ConfigContext
-from loom.core.persistence.audit_checks import AUDIT_DISABLED_CHECK
+from loom.core.stores.audit_checks import AUDIT_DISABLED_CHECK
 
 
 def _run(stores: dict[str, object]) -> object:

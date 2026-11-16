@@ -26,12 +26,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import LOCK_TIMEOUT, SCHEMA_LOCK, validate_timeout
 from loom.core.config import ConfigError
-from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.repository.sqlalchemy.rls.config import POSTGRES_SCRAM_ITERATIONS, BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.guard_manifest import pending_revisions, preflight_sql
 from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
+from loom.core.repository.sqlalchemy.scoped_ddl import LOCK_TIMEOUT, SCHEMA_LOCK, validate_timeout
+from loom.core.stores.catalog import DEFAULT_STORE_PATH
 
 MIN_SERVER_VERSION_NUM: Final = 140000
 

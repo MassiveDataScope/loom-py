@@ -8,15 +8,12 @@ from alembic.autogenerate import render_python_code
 from alembic.operations import ops
 from sqlalchemy import Column, Integer, MetaData, Table, Text
 
-from loom.core.backend.scoped_ddl import SCHEMA_KEY
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.locator import Application
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import Integer as LoomInteger
 from loom.core.model.types import String
 from loom.core.model.types import Text as LoomText
-from loom.core.persistence.database import DatabaseConfig, SchemaConfig
 from loom.core.repository.sqlalchemy.migrations.hook import (
     scope_protection_hook,
 )
@@ -33,6 +30,9 @@ from loom.core.repository.sqlalchemy.rls import (
     DatabaseUser,
     SchemaNames,
 )
+from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
+from loom.core.repository.sqlalchemy.scoped_ddl import SCHEMA_KEY
+from loom.core.stores.database import DatabaseConfig, SchemaConfig
 
 SCHEMA = "s1"
 

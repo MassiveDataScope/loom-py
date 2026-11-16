@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core._async import run_to_completion
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE
 from tests.unit.core.conftest import make_session
 from tests.unit.core.uow.conftest import make_session_manager
 

@@ -31,7 +31,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id

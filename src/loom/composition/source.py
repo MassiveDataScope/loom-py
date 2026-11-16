@@ -23,12 +23,12 @@ from loom.core.environment import Environment, resolve_environment, select_confi
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import resolve_backend
-from loom.core.persistence.stores import StoreCatalog, StoreKey, load_catalog
+from loom.core.stores import resolve_backend
+from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.persistence import PersistenceBackend
+    from loom.core.stores import PersistenceBackend
 
 
 class AppConfig(msgspec.Struct, kw_only=True):

@@ -11,7 +11,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, OrderedCommits, ParticipantScope
 from loom.core.use_case.use_case import UseCase
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory

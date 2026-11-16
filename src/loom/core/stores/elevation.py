@@ -17,11 +17,11 @@ from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.model.scoped import ScopedTables, declared_scopes
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope
 
 if TYPE_CHECKING:
-    from loom.core.persistence.abc import PersistenceWiring
+    from loom.core.stores.backend import PersistenceWiring
 
 
 @unique

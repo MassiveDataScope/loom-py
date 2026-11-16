@@ -10,7 +10,7 @@ import pytest
 import loom.core.plugins.entrypoints as entrypoints_module
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreCapabilities,
     StoreKey,

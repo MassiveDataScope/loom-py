@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.core.config import ConfigContext
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
+from loom.core.stores.database import DatabaseConfig, PoolConfig
 from loom.streaming import (
     Backend,
     Fork,

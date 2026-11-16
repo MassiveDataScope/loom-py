@@ -24,7 +24,7 @@ from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
-from loom.core.persistence.stores import StoreKey, store_of
+from loom.core.stores.catalog import StoreKey, store_of
 from loom.core.stores.repository.capabilities import (
     BulkCreatable,
     Countable,

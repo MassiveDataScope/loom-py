@@ -49,7 +49,7 @@ _FREE_DICT = frozenset(
 )
 _EXTRA_MODULES = (
     "loom.ai.inference",
-    "loom.core.persistence.database",
+    "loom.core.stores.database",
     "loom.core.stores.repository.cursor",
     "loom.streaming.nodes._table.common",
 )

@@ -15,11 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 
 if TYPE_CHECKING:
-    from loom.core.persistence.stores import StoreCatalog
-    from loom.core.stores.repository import CursorCodec
+    from loom.core.stores.catalog import StoreCatalog
+    from loom.core.stores.repository.cursor import CursorCodec
 
 
 @dataclass(frozen=True)

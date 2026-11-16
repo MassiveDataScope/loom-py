@@ -8,7 +8,6 @@ never names anything itself.
 from __future__ import annotations
 
 from loom.core.authz.elevation import ReadOnlyElevation
-from loom.core.persistence.elevation import validate_elevations
 from loom.core.repository.sqlalchemy.rls.bootstrap import (
     MIN_SERVER_VERSION_NUM,
     apply_bootstrap,
@@ -29,6 +28,7 @@ from loom.core.repository.sqlalchemy.rls.schema import create_schema
 from loom.core.repository.sqlalchemy.rls.sources import register_scope_source
 from loom.core.repository.sqlalchemy.rls.verify import Report, verify
 from loom.core.schema_names import SchemaNames
+from loom.core.stores.elevation import validate_elevations
 
 __all__ = [
     "MIN_SERVER_VERSION_NUM",

@@ -21,8 +21,8 @@ from loom.core.connections import (
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
+from loom.core.stores.database import DatabaseConfig
 
 
 def _parameters(function: Any) -> set[str]:

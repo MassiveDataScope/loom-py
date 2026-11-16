@@ -4,7 +4,7 @@ The API, the Celery worker and the streaming sinks read the same section shape
 — at ``stores.<name>`` for a store whose backend is ``sqlalchemy``, or inline
 in a sink — and build their engine through the same constructor. The pool
 keys live under ``stores.<name>.pool``; each key left out takes the default
-of the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
+of the entry point's :class:`~loom.core.stores.profile.RuntimeProfile`.
 
 The section follows the connection standard of :mod:`loom.core.connections`:
 ``url``, ``connect_timeout`` and ``read_timeout`` in seconds, ``pool.size``
@@ -25,8 +25,8 @@ from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
-from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import SQLALCHEMY_BACKEND, load_catalog
+from loom.core.stores.catalog import SQLALCHEMY_BACKEND, load_catalog
+from loom.core.stores.profile import PoolDefaults, RuntimeProfile
 
 EXTERNAL: Final = "external"
 
@@ -245,7 +245,7 @@ def load_database_config(ctx: ConfigContext, store: str) -> DatabaseConfig:
     """Read and decode the relational section of the store *store* of *ctx*.
 
     For a caller outside a composition; a composition decodes the store of
-    its own catalog with :meth:`~loom.core.persistence.stores.StoreSpec.decode`.
+    its own catalog with :meth:`~loom.core.stores.catalog.StoreSpec.decode`.
 
     Args:
         ctx: The application configuration.

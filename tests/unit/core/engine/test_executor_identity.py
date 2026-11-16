@@ -23,7 +23,7 @@ from loom.core.identity import (
 )
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import invocation
 from loom.core.use_case.factory import UseCaseFactory

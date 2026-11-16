@@ -12,10 +12,10 @@ import pytest
 from sqlalchemy import MetaData
 from sqlalchemy.dialects import postgresql
 
-from loom.core.backend.sqlalchemy import compile_model, get_compiled, sa_table_for
 from loom.core.model import BaseModel, ColumnField, LoomStruct, Numeric, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
+from loom.core.repository.sqlalchemy.schema import compile_model, get_compiled, sa_table_for
 
 
 class AcmeTableShade(StrEnum):

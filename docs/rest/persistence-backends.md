@@ -103,7 +103,7 @@ import msgspec
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
-from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.stores import BackendRuntime, PersistenceWiring
 from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -898,7 +898,7 @@ class Measurement(BaseModel):
   the worker and streaming sinks; the old keys stop startup naming the new
   one. `SessionManager.from_config` and `loom.streaming.SqlAlchemyDatabaseConfig`
   are replaced by `build_session_manager(DatabaseConfig, profile)` and
-  `loom.core.persistence.DatabaseConfig`.
+  `loom.core.stores.DatabaseConfig`.
 - Pool defaults now come from the entry point. The worker opens at most two
   connections per process (it allowed thirty); the API keeps five plus five
   and recycles connections every 1800 s. Declare `database.pool` to keep

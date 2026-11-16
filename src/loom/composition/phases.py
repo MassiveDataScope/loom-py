@@ -36,14 +36,14 @@ from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegat
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.elevation import ScopedElevationSink
-from loom.core.persistence.stores import (
+from loom.core.stores import BackendRuntime, PersistenceWiring
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     DEFAULT_STORE_PATH,
     StoreCatalog,
     StoreKey,
 )
+from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.factory import ModelRead

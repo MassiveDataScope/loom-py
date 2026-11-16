@@ -28,9 +28,9 @@ import pytest
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.registration import capabilities_of
 from tests.unit.core.repository.contract import conftest as contract

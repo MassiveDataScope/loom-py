@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Final
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from loom.core.backend.scoped_ddl import (
+from loom.core.config import ConfigError
+from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
+from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
+from loom.core.repository.sqlalchemy.scoped_ddl import (
     ASSERT_SCHEMA,
     GUARD_FIRST,
     GUARD_PATH,
@@ -17,11 +22,6 @@ from loom.core.backend.scoped_ddl import (
     check_dialect,
     validate_timeout,
 )
-from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls.audit import reconcile_audited
-from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
-from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 if TYPE_CHECKING:

@@ -22,12 +22,12 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence import NoneBackend, PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.persistence.stores import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores import NoneBackend, PersistenceWiring
+from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
+from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app

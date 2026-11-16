@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled, reset_registry
 from loom.core.model import (
     BaseModel,
     Cardinality,
@@ -16,6 +15,7 @@ from loom.core.model import (
     ProjectionField,
     RelationField,
 )
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled, reset_registry
 
 
 class _CustomerOut(LoomStruct):

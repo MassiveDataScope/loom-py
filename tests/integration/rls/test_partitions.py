@@ -17,9 +17,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend import scoped_ddl
 from loom.core.config import ConfigError
 from loom.core.locator import Application
+from loom.core.repository.sqlalchemy import scoped_ddl
 from loom.core.repository.sqlalchemy.rls import (
     create_schema,
     detach_range_partitions,

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.rls import (
     create_schema,
     install_pool_reset,
@@ -20,6 +19,7 @@ from loom.core.repository.sqlalchemy.rls import (
 )
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 

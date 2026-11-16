@@ -78,8 +78,8 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
-from loom.core.persistence import WORKER_PROFILE
 from loom.core.runner import shutdown_runner
+from loom.core.stores import WORKER_PROFILE
 
 if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter

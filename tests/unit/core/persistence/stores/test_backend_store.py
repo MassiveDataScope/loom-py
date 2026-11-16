@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.persistence import resolve_backend
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.persistence.stores import StoreKey, load_catalog
+from loom.core.stores import resolve_backend
+from loom.core.stores.catalog import StoreKey, load_catalog
+from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
 
 
 class TestBackendStoreLookup:

@@ -47,7 +47,7 @@ Those phrases differ by interpreter: 413 gives `request_entity_too_large` on
 `unprocessable_content`.
 
 **Subsystem errors outside their concept.** The `QueryCompiler` protocol says
-compilers raise `UnsupportedQuery` (`core/repository/abc/query_compiler.py:37`,
+compilers raise `UnsupportedQuery` (`core/stores/repository/query_compiler.py:37`,
 `:53`). The SQLAlchemy compiler raises `FilterPathError` and `UnsafeFilterError`
 as `ValueError` (`core/repository/sqlalchemy/query_compiler/errors.py:6`, `:22`),
 and the router answers them with 500 (`rest/fastapi/router_runtime.py:486-499`;
@@ -192,7 +192,7 @@ the catalogue and `__init__` re-exports every class.
 
 | Class | From | To | Why |
 |---|---|---|---|
-| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
+| `UnsupportedQuery` | `core/stores/repository/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
 | `BoundaryValidationError` | `core/model/_loom_type.py` | `core/errors` | Mapped by REST and AI |
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |

@@ -11,8 +11,8 @@ from sqlalchemy import text
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 

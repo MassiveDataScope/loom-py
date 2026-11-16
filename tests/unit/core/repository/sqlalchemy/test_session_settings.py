@@ -10,9 +10,6 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import (
     SessionManager,
     build_session_manager,
@@ -23,6 +20,9 @@ from loom.core.repository.sqlalchemy.session_settings import (
     install_session_settings,
     settings_statement,
 )
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
 
 
 def _sqlite_session_class(provider: SessionSettings) -> tuple[Engine, type[Session]]:

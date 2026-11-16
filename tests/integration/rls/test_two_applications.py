@@ -23,10 +23,10 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.rls import register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.composition import composition_source
 
 pytestmark = pytest.mark.integration

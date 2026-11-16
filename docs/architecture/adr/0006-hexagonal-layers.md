@@ -36,8 +36,8 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Layer | Packages | Rule |
 |---|---|---|
 | Domain and application | `loom.core.model`, `use_case`, `engine`, `command`, `projection`, `identity`, `authz` | no infrastructure, no SDK |
-| Ports | `loom.core.persistence.abc`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
-| Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.persistence.database`, `loom.core.persistence.profile` | validated data; no SDK |
+| Ports | `loom.core.stores.backend`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
+| Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.stores.database`, `loom.core.stores.profile` | validated data; no SDK |
 | Outbound adapters (islands) | `loom.core.stores.repository.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
 | Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
 | Inbound adapters | `loom.rest.fastapi`, `loom.celery` (the worker), the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
@@ -62,16 +62,15 @@ loom/core/connections/
   <engine>/config.py  the connection type(s), the pool type, client_options()
   <engine>/loader.py  the <Engine>Island Protocol and its typed loader
   <engine>/client.py  the island: imports the SDK at its top, builds the client
-  relational.py       names DatabaseConfig (defined in loom.core.persistence.database)
 ```
 
-The relational type stays with the persistence layer and is not re-exported by
-the package: a reader of a connection type (the config resolvers among them)
-would otherwise load the persistence layer.
+The relational type, `DatabaseConfig`, lives in `loom.core.stores.database` and
+is not re-exported by the package: a reader of a connection type (the config
+resolvers among them) would otherwise load the store ports.
 
 | Engine | Type | Contexts |
 |---|---|---|
-| Relational | `DatabaseConfig` (defined in `loom.core.persistence.database`, named by `loom.core.connections.relational`) | `database` for the API, the worker, streaming, migrations and the row-level-security tooling |
+| Relational | `DatabaseConfig` (`loom.core.stores.database`) | `database` for the API, the worker, streaming, migrations and the row-level-security tooling |
 | AWS | `AwsClientConfig` | `persistence.dynamodb` (+ `table`), `storage.dynamodb`, the `secrets`/`ssm` resolvers, the SNS notifier |
 | MongoDB | `MongoConnection` | `persistence.mongo` (+ repository keys), `storage.mongo`, `mongo.source(s)` (+ change-stream keys) |
 | ClickHouse | `ClickHouseConnection` | `sql.connections.<name>` (+ roles and limits), `storage.clickhouse`, `database.<name>` of a streaming sink |

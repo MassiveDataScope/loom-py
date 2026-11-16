@@ -10,8 +10,8 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
-from loom.core.persistence import PersistenceWiring
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
+from loom.core.stores import PersistenceWiring
 from loom.core.stores.repository import Creatable, Deletable, Readable
 from tests.helpers.persistence import build_backend
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique

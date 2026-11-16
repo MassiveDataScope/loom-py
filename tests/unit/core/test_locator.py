@@ -10,8 +10,8 @@ from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
-from loom.core.persistence.stores import StoreKey
 from loom.core.repository.sqlalchemy.rls import SchemaNames
+from loom.core.stores.catalog import StoreKey
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"

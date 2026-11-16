@@ -17,7 +17,7 @@ from loom.composition import (
     load_source,
 )
 from loom.core.config.errors import ConfigError
-from loom.core.persistence import LAMBDA_PROFILE
+from loom.core.stores import LAMBDA_PROFILE
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError

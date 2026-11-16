@@ -25,7 +25,7 @@ _SIGNATURES: dict[frozenset[str], str] = {
     frozenset({"url", "password", "executor_threads"}): (
         "core/connections/clickhouse/config.py:ClickHouseConnection"
     ),
-    frozenset({"url", "connect_args"}): "core/persistence/database.py:DatabaseConfig",
+    frozenset({"url", "connect_args"}): "core/stores/database.py:DatabaseConfig",
 }
 
 _DRIVER_MODULES = frozenset({"boto3", "clickhouse_connect", "pymongo"})

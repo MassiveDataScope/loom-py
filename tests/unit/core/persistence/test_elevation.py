@@ -14,14 +14,14 @@ from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.persistence.elevation import (
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.elevation import (
     ElevableScopeInSeveralStores,
     ElevationErrorCode,
     ScopedElevationSink,
     ScopedTables,
     validate_elevations,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from tests.helpers.elevation import MANAGE, Product
 from tests.helpers.issue_catalogue import IssueCall, check_renders, issue_calls
 

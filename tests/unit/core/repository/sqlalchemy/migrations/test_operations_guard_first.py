@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import DBAPIError
 
-from loom.core.backend.scoped_ddl import APP_FIRST, GUARD_FIRST, OPEN_HATCH, PROTECT
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.migrations.operations import (
     GUARD_OPTION,
@@ -14,6 +13,7 @@ from loom.core.repository.sqlalchemy.migrations.operations import (
     ProtectScopedTableOp,
     run_guard_operation,
 )
+from loom.core.repository.sqlalchemy.scoped_ddl import APP_FIRST, GUARD_FIRST, OPEN_HATCH, PROTECT
 
 
 class _Bind:

@@ -14,7 +14,7 @@ from loom.core.engine.post_commit import (
     drain_after_failure,
     reset_channel,
 )
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import (

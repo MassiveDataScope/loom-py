@@ -29,7 +29,7 @@ isolates tenants:
 from collections.abc import Mapping
 from contextvars import ContextVar
 
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import SessionManager
 
 current_tenant: ContextVar[str | None] = ContextVar("current_tenant", default=None)
@@ -418,7 +418,7 @@ standard SQLAlchemy backend:
 
 The composition then validates the registered product's `elevations` against every such
 store with {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`, and registers
-one {class}`~loom.core.persistence.elevation.ScopedElevationSink` over them as the
+one {class}`~loom.core.stores.elevation.ScopedElevationSink` over them as the
 `ElevationSink`, which the kernel hands to the executor.
 
 A kernel built by hand registers an `ElevationSink` through one of its `modules`, for
@@ -436,7 +436,7 @@ provider for programmatic use, for a session manager a script builds itself:
 
 ```python
 from loom.core.locator import load_application
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import SessionManager
 from loom.core.repository.sqlalchemy.rls import install_pool_reset, rls_session_settings
 

@@ -13,10 +13,10 @@ import pytest
 from sqlalchemy import text
 
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import build_session_manager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
 
 _READ_TIMEOUT = 1
 _SLEEP_SECONDS = 4

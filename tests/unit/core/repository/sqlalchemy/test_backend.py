@@ -9,9 +9,9 @@ import pytest
 import loom.core.repository.sqlalchemy.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.stores import PersistenceWiring
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec
 from tests.helpers.persistence import build_backend
 

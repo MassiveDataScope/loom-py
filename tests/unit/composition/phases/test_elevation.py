@@ -10,7 +10,7 @@ from loom.composition import Application
 from loom.core.authz.elevation import ElevationSink
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.persistence.elevation import ScopedElevationSink
+from loom.core.stores.elevation import ScopedElevationSink
 from tests.unit.core.authz._elevation_doubles import FakeSink, elevations_through
 
 

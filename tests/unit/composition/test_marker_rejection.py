@@ -18,7 +18,7 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.composition import Application, CompositionSource, Recipe, build_application
 from loom.composition._ai import MarkerDeclarations
-from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.ai import declared_markers

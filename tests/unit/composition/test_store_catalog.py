@@ -12,12 +12,12 @@ from typing import Any
 
 import pytest
 
-import loom.core.persistence.stores as stores_module
 import loom.core.repository.mongo.backend as mongo_backend_module
+import loom.core.stores.catalog as stores_module
 from loom.celery.adapter import CeleryAdapter
 from loom.composition import AppConfig, build_application, compose_application
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreSpec
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreSpec
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory, composition_source
 from tests.helpers.persistence import record_catalogs

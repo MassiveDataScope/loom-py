@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 from alembic.operations import ops
 
-from loom.core.backend.scoped_ddl import privilege_names, scope_documents
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
@@ -30,6 +29,7 @@ from loom.core.repository.sqlalchemy.migrations.operations import (
     ProtectScopedTableOp,
     UnprotectScopedTableOp,
 )
+from loom.core.repository.sqlalchemy.scoped_ddl import privilege_names, scope_documents
 
 if TYPE_CHECKING:
     from loom.core.locator import Application

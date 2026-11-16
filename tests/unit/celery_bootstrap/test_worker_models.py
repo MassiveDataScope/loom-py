@@ -18,10 +18,10 @@ from celery.signals import worker_init, worker_shutdown
 
 from loom.celery.bootstrap import bootstrap_worker
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.core.backend.sqlalchemy import reset_registry
 from loom.core.command import Command
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.sqlalchemy.schema import reset_registry
 from loom.core.stores.repository.query import CursorResult, PaginationMode, QuerySpec
 from loom.core.use_case.errors import UnservedModelError, UseCaseErrorCode
 from loom.core.use_case.invoker import ApplicationInvoker

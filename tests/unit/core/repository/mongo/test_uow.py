@@ -12,9 +12,9 @@ from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 
 import loom.core.repository.mongo.uow as uow_module
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.coordinator import (
     InvocationOutcome,

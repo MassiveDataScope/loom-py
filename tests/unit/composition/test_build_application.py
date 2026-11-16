@@ -23,14 +23,14 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import (
+from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.stores import PersistenceWiring
+from loom.core.stores.profile import (
     SERVER_PROFILE,
     BackendRuntime,
     PoolDefaults,
     RuntimeProfile,
 )
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.composition import ProjectFactory, coordinator_of
 

@@ -24,8 +24,8 @@ from loom.core.cache.decorators import cache_query, cached
 from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
     FilterParams,
     PageParams,

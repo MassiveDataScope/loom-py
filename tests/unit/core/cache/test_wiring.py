@@ -34,7 +34,7 @@ from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model.redaction import RedactedMap
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
     RepositoryBuildContext,
     RepositoryDecorator,

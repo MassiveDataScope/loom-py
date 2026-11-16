@@ -14,14 +14,14 @@ import pytest
 import loom.core.plugins.entrypoints as entrypoints_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.persistence import (
+from loom.core.plugins.entrypoints import DuplicateEntryPointError
+from loom.core.stores import (
     NoneBackend,
     PersistenceBackend,
     PersistenceWiring,
     resolve_backend,
 )
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.plugins.entrypoints import DuplicateEntryPointError
+from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
 from tests.helpers.persistence import build_backend
 
 _GROUP = "loom.persistence.backends"
@@ -151,7 +151,7 @@ class TestPersistencePackageImport:
             "import sys\n"
             "sys.modules['sqlalchemy'] = None\n"
             "sys.modules['boto3'] = None\n"
-            "import loom.core.persistence\n"
+            "import loom.core.stores\n"
             "adapters = ('loom.core.repository', 'loom.stores')\n"
             "leaked = sorted(m for m in sys.modules if m.startswith(adapters))\n"
             "assert not leaked, leaked\n"

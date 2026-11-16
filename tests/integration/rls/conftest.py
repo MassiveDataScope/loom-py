@@ -27,9 +27,9 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.locator import Application, load_application
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
 from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_of
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
 URI_ENV_VAR_B = "LOOM_PG_IT_URI_B"

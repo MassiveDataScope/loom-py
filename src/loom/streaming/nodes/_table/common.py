@@ -51,7 +51,7 @@ Config example (streaming.sinks.<name>)::
 SQLAlchemy example::
 
     from loom.core.config import ConfigContext
-    from loom.core.persistence import STREAMING_PROFILE, load_database_config
+    from loom.core.stores import STREAMING_PROFILE, load_database_config
     from loom.core.repository.sqlalchemy import build_session_manager
     from loom.streaming.nodes._table import SqlAlchemySinkConfig
 
@@ -101,8 +101,8 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
 

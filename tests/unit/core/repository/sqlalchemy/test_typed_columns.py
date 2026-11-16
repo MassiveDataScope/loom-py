@@ -13,16 +13,16 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import and_, bindparam, func, select, text
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import BoundaryValidationError
 from loom.core.model import JSON, BaseModel, ColumnField, ColumnType, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.query import (
     FilterGroup,

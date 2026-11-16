@@ -32,7 +32,7 @@ from pymongo.errors import PyMongoError
 
 from loom.core._async import held_task
 from loom.core.logger import get_logger
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone
 from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore

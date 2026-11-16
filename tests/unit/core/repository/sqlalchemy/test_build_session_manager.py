@@ -9,18 +9,18 @@ import pytest
 from sqlalchemy.pool import NullPool
 
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
-from loom.core.persistence.profile import (
-    SERVER_PROFILE,
-    WORKER_PROFILE,
-    PoolDefaults,
-    RuntimeProfile,
-)
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import session_manager as session_manager_module
 from loom.core.repository.sqlalchemy.session_manager import (
     SessionManager,
     build_session_manager,
+)
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, PoolConfig
+from loom.core.stores.profile import (
+    SERVER_PROFILE,
+    WORKER_PROFILE,
+    PoolDefaults,
+    RuntimeProfile,
 )
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"

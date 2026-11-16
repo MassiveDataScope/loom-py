@@ -29,7 +29,6 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable, registered_model_tables
@@ -47,6 +46,7 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
     guard_problems,
     table_problems,
 )
+from loom.core.repository.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 
 if TYPE_CHECKING:
     from loom.core.locator import Application

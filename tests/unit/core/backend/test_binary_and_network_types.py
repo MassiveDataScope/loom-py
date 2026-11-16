@@ -11,10 +11,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Bytes, ColumnField, Postgres, get_column_fields
 from loom.core.model.types import Integer
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.core.stores.repository import CursorCodec
 
 

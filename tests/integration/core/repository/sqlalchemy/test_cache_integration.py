@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.cache import (
     CacheBackend,
     CacheConfig,
@@ -20,6 +19,7 @@ from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.stores.repository import CursorCodec, PageParams, Repository

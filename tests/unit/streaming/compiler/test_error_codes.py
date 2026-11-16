@@ -9,7 +9,7 @@ from typing import Any, ClassVar, cast
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming import (
     Backend,
     BatchExpandStep,

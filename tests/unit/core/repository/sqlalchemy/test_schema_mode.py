@@ -8,23 +8,23 @@ import pytest
 from sqlalchemy import MetaData
 
 from loom.core.authz.elevation import ElevationSink
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
-from loom.core.persistence.database import DatabaseConfig, SchemaConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
     check_time_zone_columns,
     startup_checks,
 )
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, SchemaConfig
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.elevation import sink_for
 from tests.helpers.persistence import build_backend
 

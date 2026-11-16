@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import (
     Cursor,

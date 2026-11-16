@@ -9,7 +9,7 @@ from typing import Any, Literal, get_args, get_origin
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.model.redaction import RedactedMap
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,

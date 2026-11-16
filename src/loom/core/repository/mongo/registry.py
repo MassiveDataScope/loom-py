@@ -16,13 +16,13 @@ from typing import Any, Protocol
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
-from loom.core.persistence.stores import StoreKey
 from loom.core.repository.mongo.ids import IdPolicy
 from loom.core.repository.mongo.repository import (
     MongoCollection,
     RepositoryMongo,
     SessionProvider,
 )
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import (
     CursorCodec,
     RepositoryBuildContext,

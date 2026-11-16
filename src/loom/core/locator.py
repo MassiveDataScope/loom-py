@@ -33,19 +33,19 @@ from loom.core.environment import (
 from loom.core.logger import get_logger
 from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import ScopedTables, declared_scopes
-from loom.core.persistence.database import (
-    DatabaseConfig,
-    SchemaConfig,
-    SchemaUser,
-    require_schema_key,
-)
-from loom.core.persistence.stores import (
+from loom.core.schema_names import SchemaNames, schema_identifier
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     SQLALCHEMY_BACKEND,
     StoreKey,
     load_catalog,
 )
-from loom.core.schema_names import SchemaNames, schema_identifier
+from loom.core.stores.database import (
+    DatabaseConfig,
+    SchemaConfig,
+    SchemaUser,
+    require_schema_key,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
@@ -130,7 +130,7 @@ def load_application(
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
     """
-    from loom.core.backend.sqlalchemy import audited_tables, scoped_tables
+    from loom.core.repository.sqlalchemy.schema import audited_tables, scoped_tables
 
     path = _resolve_path(config_path)
     environment = resolve_environment()
@@ -168,8 +168,8 @@ def _compiled_metadata(models: Sequence[type], schema: SchemaConfig, path: str) 
     """A metadata holding *models* compiled under the store's naming convention and schema."""
     from sqlalchemy import MetaData
 
-    from loom.core.backend.scoped_ddl import SCHEMA_KEY
-    from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention
+    from loom.core.repository.sqlalchemy.schema import compile_all, configured_naming_convention
+    from loom.core.repository.sqlalchemy.scoped_ddl import SCHEMA_KEY
 
     metadata = MetaData(
         naming_convention=configured_naming_convention(schema.naming_convention, path=path)

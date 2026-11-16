@@ -8,13 +8,13 @@ from typing import Any
 
 from loom.core.config import ConfigContext, reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
-from loom.core.persistence.database import DatabaseConfig, decode_database_config
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     CLICKHOUSE_BACKEND,
     SQLALCHEMY_BACKEND,
     StoreCatalog,
     StoreSpec,
 )
+from loom.core.stores.database import DatabaseConfig, decode_database_config
 from loom.streaming.nodes._table.common import (
     SQLALCHEMY_INLINE_DATABASE_KEYS,
     ClickHouseSinkConfig,

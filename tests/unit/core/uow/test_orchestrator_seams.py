@@ -10,7 +10,7 @@ import pytest
 
 import loom.core.stores.uow
 from loom.core.bootstrap import create_kernel
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import (
     Committed,

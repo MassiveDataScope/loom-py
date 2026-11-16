@@ -487,6 +487,14 @@
   | `loom.core.repository.abc.{checks,cursor,query,query_compiler,repository,session_scope}` | `loom.core.stores.repository.{same name}` |
   | `loom.core.repository.{mutation,record,registration,registry}` | `loom.core.stores.repository.{same name}` |
   | `loom.core.uow` and `loom.core.uow.{abc,alone,coordinator,scope}` | `loom.core.stores.uow` and `loom.core.stores.uow.{same name}` |
+  | `loom.core.persistence` | `loom.core.stores` |
+  | `loom.core.persistence.abc` | `loom.core.stores.backend` |
+  | `loom.core.persistence.stores` | `loom.core.stores.catalog` |
+  | `loom.core.persistence.{audit_checks,database,elevation,none,profile,registry}` | `loom.core.stores.{same name}` |
+  | `loom.core.connections.relational` | `loom.core.stores.database` |
+  | `loom.core.backend.sqlalchemy` | `loom.stores.sqlalchemy.schema` |
+  | `loom.core.backend.{core_model,scoped_ddl}` | `loom.stores.sqlalchemy.{same name}` |
+  | `loom.core.backend` and `loom.core.backend.protocol` (`PersistenceBackend` protocol) | removed |
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
   always passes it to the repository it wraps. Before: a custom repository

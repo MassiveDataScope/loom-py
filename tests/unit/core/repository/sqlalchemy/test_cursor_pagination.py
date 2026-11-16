@@ -7,14 +7,14 @@ from uuid import UUID
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import BoundaryValidationError, UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BaseModel, ColumnField, DateTime, String
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
     Cursor,
     CursorCodec,

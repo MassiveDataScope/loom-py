@@ -8,13 +8,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import QueuePool
 
-from loom.core.backend.sqlalchemy import get_compiled
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.repository.sqlalchemy.schema import get_compiled
+from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.persistence import build_backend
 
 

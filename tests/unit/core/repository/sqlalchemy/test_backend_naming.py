@@ -10,12 +10,12 @@ import pytest
 import yaml
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import get_metadata, reset_registry
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import load_application
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.repository.sqlalchemy.schema import get_metadata, reset_registry
+from loom.core.stores import PersistenceWiring
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import rosters
 

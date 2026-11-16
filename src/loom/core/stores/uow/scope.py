@@ -45,7 +45,7 @@ from loom.core.errors import (
     UnitOfWorkInsideScope,
 )
 from loom.core.identity import ANONYMOUS, Identity, current_identity
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.coordinator import (
     Committed,
     Coordinator,

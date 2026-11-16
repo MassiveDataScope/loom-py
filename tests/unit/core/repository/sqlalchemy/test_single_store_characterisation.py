@@ -27,20 +27,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.composition import Application, CompositionSource, Recipe, build_application
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.post_commit import active_channel
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
 from loom.core.repository.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
 )
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec, PageParams, RepoFor
 from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase

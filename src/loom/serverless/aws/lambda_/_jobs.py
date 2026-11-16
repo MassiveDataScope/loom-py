@@ -18,7 +18,7 @@ from loom.core.job.run import run_job
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
-from loom.core.persistence import LAMBDA_PROFILE
+from loom.core.stores import LAMBDA_PROFILE
 
 if TYPE_CHECKING:
     from loom.composition import Application, CompositionSource

@@ -9,7 +9,7 @@ from loom.core.errors.base import SystemError
 from loom.core.errors.codes import ErrorCode
 
 if TYPE_CHECKING:
-    from loom.core.persistence.stores import StoreKey
+    from loom.core.stores.catalog import StoreKey
     from loom.core.stores.uow.coordinator import InvocationOutcome
 
 

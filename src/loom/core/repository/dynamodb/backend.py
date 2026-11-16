@@ -14,14 +14,14 @@ from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
-from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB, run_in_executor
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
+from loom.core.stores.profile import BackendRuntime
 
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 

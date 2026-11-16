@@ -44,8 +44,6 @@ from sqlalchemy.orm import registry as sa_registry
 from sqlalchemy.sql.naming import conv
 from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
-from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
-from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
 from loom.core.config import ConfigError
 from loom.core.model.audited import AuditedTable, AuditedTables, audited_table, is_audited
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
@@ -73,6 +71,8 @@ from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
+from loom.core.repository.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
+from loom.core.repository.sqlalchemy.scoped_ddl import SCHEMA_KEY, register_listeners
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 
 _SA_TYPE_MAP: dict[str, type] = {
@@ -888,7 +888,7 @@ def get_compiled(struct_cls: type, *, metadata: MetaData | None = None) -> type 
 
 
 def get_compiled_core(struct_cls: type, *, metadata: MetaData | None = None) -> CoreModel | None:
-    """Look up the compiled :class:`~loom.core.backend.core_model.CoreModel` for a Struct model.
+    """Look up the compiled :class:`CoreModel` of a Struct model.
 
     Returns ``None`` if the model has not been compiled via :func:`compile_all`.
 

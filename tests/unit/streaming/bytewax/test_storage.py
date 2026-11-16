@@ -14,7 +14,7 @@ require_bytewax()
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
-from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
+from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
 from loom.streaming.nodes._table import Backend, IntoTable  # noqa: E402

@@ -22,10 +22,6 @@ from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.types import NonNegativeInt, PositiveInt
-from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.database import PoolConfig
-from loom.core.persistence.profile import BackendRuntime, PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.repository.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -35,6 +31,10 @@ from loom.core.repository.mongo.ids import (
 from loom.core.repository.mongo.registry import build_mongo_repository_registration_module
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
+from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, store_binding
+from loom.core.stores.database import PoolConfig
+from loom.core.stores.profile import BackendRuntime, PoolDefaults, RuntimeProfile
 from loom.core.stores.repository import CursorCodec
 
 _logger = logging.getLogger(__name__)

@@ -18,8 +18,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.logger import get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.sql import SqlQueryService
+from loom.core.stores.catalog import DEFAULT_STORE
 from tests.unit.composition.phases.components import binds_sql_service
 
 Module = Callable[[LoomContainer], None]

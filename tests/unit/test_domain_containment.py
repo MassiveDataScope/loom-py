@@ -34,7 +34,7 @@ _FILES = (
     "core/model/privilege.py",
     "core/model/scoped.py",
     "core/model/introspection.py",
-    "core/backend/scoped_ddl.py",
+    "core/repository/sqlalchemy/scoped_ddl.py",
     "core/authz/elevation.py",
     "core/authz/product.py",
     "core/locator.py",

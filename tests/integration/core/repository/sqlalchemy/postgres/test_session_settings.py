@@ -11,9 +11,9 @@ from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
+from loom.core.stores.catalog import DEFAULT_STORE
 
 from .conftest import ROWS_TABLE, TENANT_SETTING
 

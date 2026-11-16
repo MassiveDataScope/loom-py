@@ -100,7 +100,7 @@ def _load_check_packages() -> None:
     """Import the packages registering loom's checks; the REST ones need the rest extra."""
     importlib.import_module("loom.core.logger")
     importlib.import_module("loom.core.stores.repository")
-    importlib.import_module("loom.core.persistence.audit_checks")
+    importlib.import_module("loom.core.stores.audit_checks")
     if importlib.util.find_spec("fastapi") is not None:
         importlib.import_module("loom.rest")
 

@@ -17,7 +17,7 @@ from loom.core.di.graph import (
     GraphAnalysis,
     refuse_unmapped_repository,
 )
-from loom.core.persistence.stores import NONE_BACKEND, StoreCatalog
+from loom.core.stores.catalog import NONE_BACKEND, StoreCatalog
 from loom.core.stores.repository import CursorCodec
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.engine.metrics import MetricsAdapter
-    from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
+    from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 
 T_co = TypeVar("T_co", covariant=True)
 
@@ -56,7 +56,7 @@ class Recipe:
             serves a scrape.
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
-            :class:`~loom.core.persistence.BackendRuntime`).
+            :class:`~loom.core.stores.BackendRuntime`).
         callbacks: Job callback classes the entry point builds; the
             dependency graph's roots with the use cases and jobs, never
             compiled.

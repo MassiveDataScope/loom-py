@@ -29,8 +29,8 @@ from starlette.routing import Route
 from loom.composition import Application, CompositionSource, LoopHost, Recipe
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.sql import SqlConfig
+from loom.core.stores import LAMBDA_PROFILE
 from loom.rest.auth import Authenticator
 from loom.rest.compiler import CompiledRoute
 from loom.rest.fastapi._errors import register_error_handlers

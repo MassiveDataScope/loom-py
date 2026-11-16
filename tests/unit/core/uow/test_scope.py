@@ -28,7 +28,7 @@ from loom.core.errors import (
     UnitOfWorkInsideScope,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.alone import single_store
 from loom.core.stores.uow.coordinator import (

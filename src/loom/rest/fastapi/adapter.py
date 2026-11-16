@@ -42,12 +42,12 @@ from loom.core.introspection import (
     ContributorRef,
 )
 from loom.core.observability.config import PrometheusObservabilityConfig
-from loom.core.persistence import (
+from loom.core.stores import (
     SERVER_PROFILE,
     PersistenceBackend,
     PoolMetricsSink,
 )
-from loom.core.persistence.stores import SQLALCHEMY_BACKEND, StoreKey, store_of
+from loom.core.stores.catalog import SQLALCHEMY_BACKEND, StoreKey, store_of
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
 from loom.prometheus.db_pool import PrometheusPoolMetrics

@@ -13,31 +13,10 @@ from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.pool import QueuePool
 
-from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import (
-    audited_tables,
-    compile_all,
-    configured_naming_convention,
-    scoped_tables,
-)
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
-from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
-from loom.core.persistence.database import (
-    EXTERNAL,
-    DatabaseConfig,
-    SchemaConfig,
-    require_schema_key,
-)
-from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import (
-    SQLALCHEMY_BACKEND,
-    StoreCapabilities,
-    StoreKey,
-    StoreSpec,
-)
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -51,8 +30,29 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
     startup_problems,
 )
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
+from loom.core.repository.sqlalchemy.schema import (
+    audited_tables,
+    compile_all,
+    configured_naming_convention,
+    scoped_tables,
+)
+from loom.core.repository.sqlalchemy.scoped_ddl import POSTGRES_DIALECT, check_dialect
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores.backend import PersistenceWiring, no_model_preparation
+from loom.core.stores.catalog import (
+    SQLALCHEMY_BACKEND,
+    StoreCapabilities,
+    StoreKey,
+    StoreSpec,
+)
+from loom.core.stores.database import (
+    EXTERNAL,
+    DatabaseConfig,
+    SchemaConfig,
+    require_schema_key,
+)
+from loom.core.stores.profile import BackendRuntime
 from loom.core.stores.repository import CursorCodec
 
 _logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class SQLAlchemyBackend:
             The SQLAlchemy wiring.
 
         With ``runtime.connection_only`` no repository is served; see
-        :class:`~loom.core.persistence.BackendRuntime`.
+        :class:`~loom.core.stores.BackendRuntime`.
 
         Raises:
             ConfigError: When the store's section is missing, names another

@@ -18,7 +18,11 @@ from alembic.operations import MigrateOperation, Operations
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from loom.core.backend.scoped_ddl import (
+from loom.core.config import ConfigError
+from loom.core.model.partition import Interval, as_date, range_partitions, validate_interval
+from loom.core.repository.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
+from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
+from loom.core.repository.sqlalchemy.scoped_ddl import (
     APP_FIRST,
     CREATE_RANGE_PARTITION,
     DETACH_PARTITION,
@@ -32,10 +36,6 @@ from loom.core.backend.scoped_ddl import (
     detach_partition_calls,
     table_parameters,
 )
-from loom.core.config import ConfigError
-from loom.core.model.partition import Interval, as_date, range_partitions, validate_interval
-from loom.core.repository.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
-from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
 
 _IMPORT = "import loom.core.repository.sqlalchemy.migrations.operations"
 _OPEN_HATCH: Final = text(OPEN_HATCH)

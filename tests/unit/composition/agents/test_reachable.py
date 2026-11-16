@@ -24,7 +24,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.composition import Application, CompositionSource, Recipe, compose_application
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.ai import CountingEngineProvider

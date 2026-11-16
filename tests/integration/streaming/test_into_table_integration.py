@@ -28,7 +28,7 @@ from sqlalchemy import Row, create_engine, event, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()

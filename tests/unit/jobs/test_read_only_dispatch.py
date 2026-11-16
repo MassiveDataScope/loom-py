@@ -13,7 +13,7 @@ from loom.celery.service import CeleryJobService
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
 from tests.helpers.jobs import EmailJob, SQSClient, sqs_service

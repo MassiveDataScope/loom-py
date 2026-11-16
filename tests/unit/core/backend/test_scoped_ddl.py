@@ -6,7 +6,12 @@ from typing import Any
 import pytest
 from sqlalchemy import MetaData, Table, create_engine
 
-from loom.core.backend.scoped_ddl import (
+from loom.core.config import ConfigError
+from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
+from loom.core.model.scoped import ScopeColumn, ScopedTable
+from loom.core.model.types import Integer, String, Text
+from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
+from loom.core.repository.sqlalchemy.scoped_ddl import (
     APP_FIRST,
     ASSERT_SCHEMA,
     GRANT_TABLE,
@@ -24,11 +29,6 @@ from loom.core.backend.scoped_ddl import (
     scope_documents,
     table_parameters,
 )
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
-from loom.core.config import ConfigError
-from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
-from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.model.types import Integer, String, Text
 
 
 class AcmeScopedNote(BaseModel, RowScoped):

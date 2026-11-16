@@ -11,7 +11,6 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.backend.sqlalchemy import get_compiled, get_compiled_core
 from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
@@ -25,6 +24,7 @@ from loom.core.model.introspection import (
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
+from loom.core.repository.sqlalchemy.schema import get_compiled, get_compiled_core
 from loom.core.repository.sqlalchemy.transactional import record_mutation
 from loom.core.repository.sqlalchemy.values import (
     check_time_offsets,

@@ -9,11 +9,11 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import StoreKey, load_catalog
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.sql.config import reject_retired_sql_keys
+from loom.core.stores.catalog import StoreKey, load_catalog
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.storage._config import normalise_storage_section
 from loom.streaming.mongo._config import load_mongo_config
 from tests.helpers.persistence import build_backend

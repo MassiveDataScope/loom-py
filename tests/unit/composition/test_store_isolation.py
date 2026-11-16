@@ -24,8 +24,8 @@ from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import PageParams
 from tests.helpers.composition import composition_source, uow_factory
 

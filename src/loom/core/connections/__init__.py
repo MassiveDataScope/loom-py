@@ -8,10 +8,10 @@ the engine is configured. Each engine has a package of its own
 loader of its island and, in ``client``, the island that builds the driver
 client. Importing this package or an engine package loads no driver.
 
-The relational type is not re-exported here: it lives with the persistence
-layer (:mod:`loom.core.connections.relational` names it), and importing it
-from this package would make every reader of a connection type, the config
-resolvers among them, load the persistence layer.
+The relational type is not re-exported here: it lives in
+:mod:`loom.core.stores.database`, and importing it from this package would
+make every reader of a connection type, the config resolvers among them, load
+the store ports.
 """
 
 from __future__ import annotations

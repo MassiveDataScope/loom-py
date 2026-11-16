@@ -20,7 +20,7 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
-from loom.core.persistence.database import DatabaseConfig  # noqa: E402
+from loom.core.stores.database import DatabaseConfig  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
 
 _SRC = Path(__file__).resolve().parents[4] / "src"

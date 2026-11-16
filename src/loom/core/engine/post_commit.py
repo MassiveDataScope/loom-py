@@ -23,7 +23,7 @@ from loom.core._async import held_task
 from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
 from loom.core.logger import get_logger
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
 PostCommitAction = Callable[[], Awaitable[None] | None]

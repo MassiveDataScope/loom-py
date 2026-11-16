@@ -238,7 +238,7 @@ A complete adapter, for a script that runs use cases with no transport:
 from loom.composition import Application, CompositionSource, Recipe, create_app
 from loom.core.checks import REST_CHECKS
 from loom.core.identity import Identity
-from loom.core.persistence import WORKER_PROFILE
+from loom.core.stores import WORKER_PROFILE
 
 
 class ScriptAdapter:
@@ -364,7 +364,7 @@ request or task:
   [Caller bindings and framework defaults](#caller-bindings-and-framework-defaults)).
   It is an entry of the `IssueCode` catalogue and carries a `CompileIssue`
   naming the binding.
-- `ElevableScopeInSeveralStores` (`loom.core.persistence.elevation`, code
+- `ElevableScopeInSeveralStores` (`loom.core.stores.elevation`, code
   `ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`): a scope that is
   elevable, or named in `AuthzProduct.elevations`, is declared by two or more
   stores, so an elevation could not reach exactly one of them. It is a

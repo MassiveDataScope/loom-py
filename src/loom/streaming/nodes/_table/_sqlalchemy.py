@@ -11,7 +11,7 @@ from uuid import uuid4
 from sqlalchemy import insert as _sa_insert
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.backend.sqlalchemy import sa_table_for
+from loom.core.repository.sqlalchemy.schema import sa_table_for
 from loom.core.repository.sqlalchemy.values import to_column_row
 from loom.streaming.nodes._table.common import (
     SqlAlchemySinkConfig,

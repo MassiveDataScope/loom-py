@@ -27,13 +27,6 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import (
-    ASSERT_SCHEMA,
-    GUARD_FIRST,
-    LANDING,
-    LOCK_TIMEOUT,
-    validate_timeout,
-)
 from loom.core.config import ConfigError
 from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import registered_model_tables
@@ -42,6 +35,13 @@ from loom.core.repository.sqlalchemy.rls.audit import present_audited, reconcile
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.guard_manifest import required_guard_revision
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
+from loom.core.repository.sqlalchemy.scoped_ddl import (
+    ASSERT_SCHEMA,
+    GUARD_FIRST,
+    LANDING,
+    LOCK_TIMEOUT,
+    validate_timeout,
+)
 from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:

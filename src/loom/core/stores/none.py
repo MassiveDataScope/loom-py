@@ -8,14 +8,14 @@ from typing import Any, ClassVar
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import (
+from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.catalog import (
     NO_CAPABILITIES,
     NONE_BACKEND,
     StoreCapabilities,
     StoreSpec,
 )
+from loom.core.stores.profile import BackendRuntime
 
 
 class NoneBackend:

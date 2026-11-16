@@ -14,8 +14,8 @@ import pytest
 
 from loom.core.config.convert import convert_config
 from loom.core.connections import ConnectionPool
-from loom.core.persistence.database import PoolConfig
 from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.database import PoolConfig
 from tests.helpers.version_limited_extras import require_bytewax
 
 _SQL_REQUIRED = {"backend": "clickhouse", "url": "http://localhost:8123"}

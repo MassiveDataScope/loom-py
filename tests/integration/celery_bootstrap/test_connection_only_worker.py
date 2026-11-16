@@ -25,11 +25,11 @@ from sqlalchemy.pool import NullPool
 
 from loom.celery.adapter import CeleryAdapter
 from loom.composition import AppConfig, compose_application
-from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
+from loom.core.repository.sqlalchemy.schema import compile_all, reset_registry
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from tests.helpers.composition import composition_source
 

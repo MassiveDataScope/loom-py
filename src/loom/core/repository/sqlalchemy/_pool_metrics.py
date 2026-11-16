@@ -1,6 +1,6 @@
 """Checkout timing for a connection pool, built only when pool metrics are enabled.
 
-Without a :class:`~loom.core.persistence.profile.PoolMetricsSink` the engine
+Without a :class:`~loom.core.stores.profile.PoolMetricsSink` the engine
 keeps its dialect's own pool class untouched, so disabled metrics cost nothing
 per checkout.
 """
@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.pool import Pool
 
-from loom.core.persistence.profile import PoolMetricsSink
+from loom.core.stores.profile import PoolMetricsSink
 
 
 def instrumented_pool_class(base: type[Pool], sink: PoolMetricsSink, database: str) -> type[Pool]:

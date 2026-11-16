@@ -7,9 +7,9 @@ from typing import Any
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
-from loom.core.persistence.stores import store_binding
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import store_binding
 from loom.core.stores.repository import (
     CursorCodec,
     RepositoryBuildContext,

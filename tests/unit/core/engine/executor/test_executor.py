@@ -19,7 +19,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.execution import ExecutionContext, current_execution
 from loom.core.identity import ANONYMOUS
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase

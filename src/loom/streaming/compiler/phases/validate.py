@@ -14,7 +14,7 @@ import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import ConfigKey
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.graph._flow import StreamFlow

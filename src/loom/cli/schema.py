@@ -20,8 +20,8 @@ from loom.core.environment import (
     loom_variable,
 )
 from loom.core.locator import load_application
-from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
+from loom.core.stores.catalog import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection

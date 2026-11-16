@@ -392,7 +392,7 @@ When #371 rebases on this branch it must also:
 
 - rename the cursor key example variables, which carry the `LOOM_` prefix
   in `docs/rest/persistence-backends.md` and
-  `src/loom/core/repository/abc/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
+  `src/loom/core/stores/repository/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
   names belong to `loom.core.environment`, and the containment test fails on
   a `LOOM_*` name loom does not own;
 - route the `os.environ` default of the cursor key sources (`environ=` in

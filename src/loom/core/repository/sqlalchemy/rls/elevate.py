@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.core.authz import Decision, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, in_execution_frame
 from loom.core.authz.product import load_authz_product
-from loom.core.backend.sqlalchemy import scoped_tables
 from loom.core.config import ConfigError
-from loom.core.persistence.elevation import ScopedTables
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
+from loom.core.repository.sqlalchemy.schema import scoped_tables
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
+from loom.core.stores.elevation import ScopedTables
 
 _SET_SETTINGS: Final = text(SET_SETTINGS)
 
@@ -24,7 +24,7 @@ _SET_SETTINGS: Final = text(SET_SETTINGS)
 class SQLAlchemyStoreElevation:
     """Sets and clears elevation flags on the transaction of its store's participant.
 
-    The :class:`~loom.core.persistence.elevation.StoreElevation` of a
+    The :class:`~loom.core.stores.elevation.StoreElevation` of a
     SQLAlchemy store. It reads only the session its own store's participant
     holds, through :attr:`SessionManager.active_session`, so a flag never
     reaches another store's session; the statement it returns may be awaited

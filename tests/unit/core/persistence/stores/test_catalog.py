@@ -6,7 +6,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, Integer
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreKey,
     load_catalog,

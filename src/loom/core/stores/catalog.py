@@ -32,12 +32,12 @@ from loom.core.config import (
 from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionSettings
 from loom.core.model import BaseModel
-from loom.core.persistence.registry import (
+from loom.core.plugins.entrypoints import registered_names
+from loom.core.stores.registry import (
     BACKEND_ENTRY_POINT_GROUP,
     resolve_backend,
     unknown_backend_message,
 )
-from loom.core.plugins.entrypoints import registered_names
 
 T = TypeVar("T")
 

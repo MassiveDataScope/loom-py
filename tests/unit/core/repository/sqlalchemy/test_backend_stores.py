@@ -15,10 +15,10 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.stores import PersistenceWiring
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
+from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.stores.repository import CursorCodec
 
 _AUDIT = StoreKey("audit")

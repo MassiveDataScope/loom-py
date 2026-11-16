@@ -36,7 +36,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import resolve_environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import SERVER_PROFILE
+from loom.core.stores import SERVER_PROFILE
 from loom.core.stores.repository.registration import capability_keys
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app

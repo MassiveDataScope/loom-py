@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Self, cast
 
 from loom.core.execution import ExecutionBinding
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
 from loom.core.stores.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode

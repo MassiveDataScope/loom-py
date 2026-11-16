@@ -52,7 +52,7 @@ infrastructure (DB, cache, transport) without breaking business logic.
 | --- | --- |
 | `src/loom/core/use_case` | `UseCase` definition, rules (`Rule`), and compute steps (`Compute`). |
 | `src/loom/core/engine` | Compilation and runtime execution of a use-case plan. |
-| `src/loom/core/repository/abc` | Repository contracts, pagination, and typed query spec. |
+| `src/loom/core/stores/repository` | Repository contracts, pagination, and typed query spec. |
 | `src/loom/core/repository/sqlalchemy` | Concrete async SQLAlchemy repository implementation. |
 | `src/loom/core/model` | Base model, fields, relations, and entity introspection. |
 | `src/loom/core/cache` | Decorators and cached repository with dependency invalidation. |

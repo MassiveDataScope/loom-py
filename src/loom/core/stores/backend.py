@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.persistence.profile import BackendRuntime
+from loom.core.stores.profile import BackendRuntime
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 
 if TYPE_CHECKING:
-    from loom.core.persistence.elevation import StoreElevation
-    from loom.core.persistence.stores import StoreCapabilities, StoreSpec
+    from loom.core.stores.catalog import StoreCapabilities, StoreSpec
+    from loom.core.stores.elevation import StoreElevation
 
 
 def no_model_preparation(models: Sequence[type[BaseModel]]) -> None:
@@ -66,7 +66,7 @@ class PersistenceWiring:
         elevation: How the store's open transaction gets elevation flags;
             ``None`` when its sessions carry none. The composition hands
             every store's to one
-            :class:`~loom.core.persistence.elevation.ScopedElevationSink`.
+            :class:`~loom.core.stores.elevation.ScopedElevationSink`.
     """
 
     uow_factory: UnitOfWorkFactory | None

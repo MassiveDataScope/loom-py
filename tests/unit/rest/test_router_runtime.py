@@ -18,7 +18,6 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic.alias_generators import to_camel
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.bootstrap.bootstrap import BootstrapResult, bootstrap_app
 from loom.core.command import Command, Internal
 from loom.core.di.container import LoomContainer
@@ -31,6 +30,7 @@ from loom.core.observability.event import LifecycleEvent as ObservabilityLifecyc
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.query import (
     PageParams,

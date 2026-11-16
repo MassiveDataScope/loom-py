@@ -8,7 +8,7 @@ File and line references in Context are against loom-kernel 2.21.0.
 
 ## Context
 
-`loom/core/repository/abc/cursor.py` issued keyset-pagination tokens as the
+`loom/core/stores/repository/cursor.py` issued keyset-pagination tokens as the
 base64url form of a msgspec JSON record `{"b": backend, "k": keys, "id":
 tie_breaker}` (`encode_cursor`, `decode_cursor`). Two defects followed.
 

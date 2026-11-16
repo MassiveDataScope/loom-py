@@ -31,7 +31,7 @@ from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import JobService
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase

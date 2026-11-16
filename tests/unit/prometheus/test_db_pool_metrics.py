@@ -12,10 +12,10 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from loom.core.environment import Environment
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, PoolConfig
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.prometheus.db_pool import PrometheusPoolMetrics
 from loom.rest.fastapi.auto import create_app
 from tests.unit.rest._fixture_app import write_project

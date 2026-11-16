@@ -33,7 +33,7 @@ from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
-from loom.core.persistence.stores import store_of
+from loom.core.stores.catalog import store_of
 from loom.core.stores.repository import (
     BulkCreatable,
     Creatable,

@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.testing import RepositoryIntegrationHarness, build_repository_harness
 from tests.integration.fake_repo.product.category.model import Category

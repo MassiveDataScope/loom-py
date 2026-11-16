@@ -17,12 +17,12 @@ import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence import PersistenceWiring, resolve_backend
-from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
-from loom.core.persistence.stores import StoreKey
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
+from loom.core.stores import PersistenceWiring, resolve_backend
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
@@ -41,7 +41,7 @@ sys.modules["pymongo"] = None
 sys.modules["bson"] = None
 
 from loom.core.config import ConfigError
-from loom.core.persistence import resolve_backend
+from loom.core.stores import resolve_backend
 
 try:
     resolve_backend("mongo")

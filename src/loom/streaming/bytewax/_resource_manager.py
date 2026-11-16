@@ -8,8 +8,8 @@ from typing import Any, Protocol, cast, runtime_checkable
 import msgspec
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import STREAMING_PROFILE, RuntimeProfile
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import STREAMING_PROFILE, RuntimeProfile
 from loom.streaming.bytewax._operators import ResourceLifecycle, lifecycle_for
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.nodes._with import With, WithAsync

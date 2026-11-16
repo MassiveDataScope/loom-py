@@ -23,7 +23,7 @@ from loom.core.execution import (
 from loom.core.identity import Identity, current_caller, current_identity
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import RepoFor
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.abc import UnitOfWork

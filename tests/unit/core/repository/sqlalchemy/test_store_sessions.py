@@ -19,17 +19,17 @@ from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import QueuePool
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import ForeignSessionError, ScopeOwnershipError, UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.elevation import ScopedElevationSink
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.repository import CursorCodec, PageParams
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation

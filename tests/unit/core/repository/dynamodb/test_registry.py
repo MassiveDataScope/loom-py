@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 
 from loom.core.di.container import LoomContainer
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.dynamodb.registry import (
     DynamoDBDefaultRepositoryBuilder,
     build_dynamodb_repository_registration_module,
 )
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import Creatable, DefaultRepositoryBuilder, Readable
 
 from .conftest import FakeClient, Product, ProductCreate

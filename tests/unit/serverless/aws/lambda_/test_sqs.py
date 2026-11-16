@@ -30,7 +30,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import LAMBDA_PROFILE
+from loom.core.stores import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import (
     LambdaAdapter,

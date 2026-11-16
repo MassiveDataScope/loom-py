@@ -21,9 +21,9 @@ from pymongo import AsyncMongoClient
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import UnitOfWorkInsideScope
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import invocation

@@ -16,18 +16,18 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
-from loom.core.backend.sqlalchemy import get_metadata
 from loom.core.identity import Acting
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
-from loom.core.persistence.stores import StoreKey
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
+from loom.core.repository.sqlalchemy.schema import get_metadata
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
     install_session_settings,
 )
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 from loom.core.stores.uow.scope import current_handle
 from loom.core.tracing import get_trace_id
 
@@ -80,8 +80,9 @@ class SessionManager:
                 the manager behaves exactly as it does without this option.
             metadata: The metadata the models of this manager's store are
                 compiled into, where its repositories look them up; ``None``
-                takes the shared metadata :func:`~loom.core.backend.sqlalchemy.compile_all`
-                fills by default.
+                takes the shared metadata that
+                :func:`~loom.core.repository.sqlalchemy.schema.compile_all` fills
+                by default.
             store: Key of the store this manager serves, which errors name.
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
 

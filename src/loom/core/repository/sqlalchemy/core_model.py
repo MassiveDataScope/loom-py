@@ -1,8 +1,8 @@
 """Core read artifact compiled from a ``BaseModel`` declaration.
 
 :class:`CoreModel` is the read-only counterpart of the ORM-compiled SA class.
-It is created automatically by :func:`~loom.core.backend.sqlalchemy.compile_all`
-and retrieved via :func:`~loom.core.backend.sqlalchemy.get_compiled_core`.
+It is created automatically by :func:`~loom.core.repository.sqlalchemy.schema.compile_all`
+and retrieved via :func:`~loom.core.repository.sqlalchemy.schema.get_compiled_core`.
 
 Usage example::
 
@@ -109,7 +109,7 @@ class _CoreEntityAdapter:
 class CoreModel:
     """Compiled Core read artifact for a Struct model.
 
-    Created by :func:`~loom.core.backend.sqlalchemy.compile_all`.
+    Created by :func:`~loom.core.repository.sqlalchemy.schema.compile_all`.
     Column expressions are set as instance attributes at compile time::
 
         ProductCore.id    # SA Column expression usable in WHERE clauses

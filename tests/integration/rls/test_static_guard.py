@@ -20,11 +20,11 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import Application
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.rls import create_schema, verify
 from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for

@@ -13,8 +13,8 @@ from omegaconf import DictConfig, OmegaConf
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.stores import load_catalog
+from loom.core.stores.catalog import load_catalog
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming import Backend, FromTopic, IntoTable, Process, Router, StreamFlow, msg
 from loom.streaming.compiler import CompilationError, StreamingErrorCode, compile_flow
 from loom.streaming.nodes._table import ClickHouseSinkConfig

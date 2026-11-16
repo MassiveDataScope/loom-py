@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
-from loom.core.persistence import (
+from loom.core.stores import (
     SERVER_PROFILE,
     BackendRuntime,
     PersistenceBackend,
@@ -17,7 +17,7 @@ from loom.core.persistence import (
     PoolMetricsSink,
     RuntimeProfile,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
 
 
 def build_backend(

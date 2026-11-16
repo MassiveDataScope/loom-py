@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.migrations import alembic_config
 from loom.core.repository.sqlalchemy.migrations.runners import (
@@ -16,6 +15,7 @@ from loom.core.repository.sqlalchemy.migrations.runners import (
     validate_timeout,
 )
 from loom.core.repository.sqlalchemy.rls import SchemaNames
+from loom.core.repository.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
 
 URL = "postgresql+asyncpg://migrator:secret@localhost/app"
 

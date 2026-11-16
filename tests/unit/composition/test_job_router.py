@@ -66,7 +66,7 @@ import sys
 
 from loom.composition import Recipe, build_application
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.persistence.profile import WORKER_PROFILE
+from loom.core.stores.profile import WORKER_PROFILE
 
 
 class Bare:

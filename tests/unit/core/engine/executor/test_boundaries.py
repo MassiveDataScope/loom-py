@@ -30,7 +30,7 @@ from loom.core.errors import (
     UndeclaredStoreWrite,
 )
 from loom.core.job.context import add_pending_dispatch
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import RepoFor
 from loom.core.stores.uow.coordinator import (
     Committed,

@@ -13,7 +13,6 @@ from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 from sqlalchemy.engine import Dialect
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all
 from loom.core.model import (
     BaseModel,
     ColumnField,
@@ -23,6 +22,7 @@ from loom.core.model import (
     String,
     get_column_fields,
 )
+from loom.core.repository.sqlalchemy.schema import compile_all
 
 
 class Reading(BaseModel):

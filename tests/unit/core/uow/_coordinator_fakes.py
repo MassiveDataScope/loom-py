@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from loom.core.persistence.stores import StoreKey
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import (
     CommitUncertain,

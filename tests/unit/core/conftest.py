@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 
 if TYPE_CHECKING:
     from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -91,7 +91,7 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
 
     Every manager the factory opened is disposed when the test ends.
     """
-    from loom.core.backend.sqlalchemy import compile_all, get_compiled
+    from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
     from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
     managers: list[SessionManager] = []

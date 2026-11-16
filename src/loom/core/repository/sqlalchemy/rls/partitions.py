@@ -21,7 +21,14 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import (
+from loom.core.config import ConfigError
+from loom.core.model.introspection import get_table_name
+from loom.core.model.partition import Interval, range_partitions
+from loom.core.model.scoped import ScopedTable
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
+from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
+from loom.core.repository.sqlalchemy.scoped_ddl import (
     APP_FIRST,
     ASSERT_SCHEMA,
     CREATE_RANGE_PARTITION,
@@ -34,13 +41,6 @@ from loom.core.backend.scoped_ddl import (
     detach_partition_calls,
     validate_timeout,
 )
-from loom.core.config import ConfigError
-from loom.core.model.introspection import get_table_name
-from loom.core.model.partition import Interval, range_partitions
-from loom.core.model.scoped import ScopedTable
-from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
-from loom.core.repository.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
-from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
 
 if TYPE_CHECKING:
     from loom.core.locator import Application

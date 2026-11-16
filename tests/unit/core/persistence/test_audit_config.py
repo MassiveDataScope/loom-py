@@ -5,7 +5,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from loom.core.persistence.database import AuditSchemaConfig, SchemaConfig
+from loom.core.stores.database import AuditSchemaConfig, SchemaConfig
 
 
 class TestAuditConfig:

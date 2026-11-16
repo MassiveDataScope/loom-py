@@ -23,9 +23,9 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model import BaseModel
-from loom.core.persistence import NoneBackend, PersistenceWiring
-from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import NO_CAPABILITIES, StoreCapabilities, StoreSpec
+from loom.core.stores import NoneBackend, PersistenceWiring
+from loom.core.stores.catalog import NO_CAPABILITIES, StoreCapabilities, StoreSpec
+from loom.core.stores.profile import BackendRuntime
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module

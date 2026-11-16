@@ -44,8 +44,8 @@ from loom.core.model.introspection import (
 )
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
-from loom.core.persistence.stores import store_of
 from loom.core.projection.loaders import resolve_model_reference
+from loom.core.stores.catalog import store_of
 from loom.core.stores.repository import (
     FilterParams,
     MutationEvent,

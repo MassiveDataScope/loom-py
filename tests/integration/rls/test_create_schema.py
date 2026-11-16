@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import text
 
 from loom.core.config import ConfigError
-from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.rls import create_schema
+from loom.core.stores.profile import SERVER_PROFILE
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for, execute, scalar

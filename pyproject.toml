@@ -207,7 +207,7 @@ spark = "loom.etl.backends.spark.provider:SparkProvider"
 sqlalchemy = "loom.core.repository.sqlalchemy.backend:SQLAlchemyBackend"
 dynamodb = "loom.core.repository.dynamodb.backend:DynamoDBBackend"
 mongo = "loom.core.repository.mongo.backend:MongoBackend"
-none = "loom.core.persistence.none:NoneBackend"
+none = "loom.core.stores.none:NoneBackend"
 
 [build-system]
 requires = [
@@ -439,7 +439,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "loom.core.backend.scoped_ddl",
+    "loom.core.repository.sqlalchemy.scoped_ddl",
 ]
 disallow_untyped_calls = false
 

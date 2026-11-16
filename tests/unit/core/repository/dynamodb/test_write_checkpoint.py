@@ -11,9 +11,9 @@ from botocore.exceptions import ClientError
 
 from loom.core.errors import Conflict, ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
 from loom.core.model import BaseModel, Field, Integer, String
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import OnConflict
 from loom.core.stores.uow.coordinator import NonTransactional, OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation, invocation_error

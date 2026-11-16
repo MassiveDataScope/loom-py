@@ -15,7 +15,6 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.dependency import GenerationalDependencyResolver
 from loom.core.cache.repository import CachedRepository
@@ -31,10 +30,11 @@ from loom.core.job.context import (
     clear_pending_dispatches,
 )
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec, RepoFor
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import CommitUncertain, OrderedCommits

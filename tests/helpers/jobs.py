@@ -10,7 +10,7 @@ from loom.composition import AppConfig, Application, CompositionSource, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
-from loom.core.persistence.profile import WORKER_PROFILE
+from loom.core.stores.profile import WORKER_PROFILE
 from loom.jobs.aws.sqs import SQSConfig, SQSJobService
 from tests.helpers.composition import composition_source
 

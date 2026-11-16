@@ -7,7 +7,8 @@ import sys
 
 import pytest
 
-from loom.core.persistence.profile import (
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog
+from loom.core.stores.profile import (
     SERVER_PROFILE,
     STREAMING_PROFILE,
     WORKER_PROFILE,
@@ -15,7 +16,6 @@ from loom.core.persistence.profile import (
     PoolDefaults,
     RuntimeProfile,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog
 
 
 class TestServerProfile:
@@ -70,8 +70,8 @@ class TestServerProfile:
     def test_the_profile_module_imports_without_sqlalchemy(self) -> None:
         script = (
             "import sys\n"
-            "import loom.core.persistence.profile\n"
-            "import loom.core.persistence.database\n"
+            "import loom.core.stores.profile\n"
+            "import loom.core.stores.database\n"
             "leaked = sorted(m for m in sys.modules if 'sqlalchemy' in m)\n"
             "assert not leaked, leaked\n"
         )

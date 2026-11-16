@@ -368,7 +368,7 @@ lives:
   transaction that begins while the frame holds the scope, and `''` otherwise;
 - elevating after a read in the same unit of work also flags the open transaction of the
   store that declares the scope, and no other store's, through the executor's elevation
-  sink, {class}`~loom.core.persistence.elevation.ScopedElevationSink`. The composition
+  sink, {class}`~loom.core.stores.elevation.ScopedElevationSink`. The composition
   registers it once, over every store whose wiring exposes an elevation
   ({class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
   mode on Postgres); a kernel built by hand registers an `ElevationSink` through one of its

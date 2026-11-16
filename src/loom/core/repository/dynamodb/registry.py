@@ -7,8 +7,8 @@ from typing import Any
 
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.persistence.stores import StoreKey
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import (
     RepositoryBuildContext,
 )

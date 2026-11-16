@@ -21,7 +21,7 @@ from loom.core.logger import log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.database import DatabaseConfig
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax._operators import ResourceLifecycle
 from loom.streaming.compiler._plan import CompiledPlan
