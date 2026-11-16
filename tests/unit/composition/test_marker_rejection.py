@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition import Application, Project, Recipe
 from loom.composition._ai import MarkerDeclarations
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent, Mcp
@@ -54,7 +54,7 @@ class AcmeAgentAndServer(UseCase[object, object]):
 class _WithoutAgents:
     """An entry point hosting no agents, compiling a use case that declares one."""
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         discovered = source.discover()
         return Recipe(
             profile=SERVER_PROFILE,
@@ -130,4 +130,4 @@ class TestMarkerRejection:
         adapter = _WithoutAgents()
 
         with pytest.raises(AgentCompilationError, match="AcmeNotifyIncident"):
-            build_application(project, adapter=adapter, environment="test")
+            Project.load(project, environment="test").compose(adapter)

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
@@ -110,7 +110,7 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
             config_root=tmp_path,
         )
         adapter = LambdaAdapter(jobs=[ImportInvoice, ImportObject], **options)
-        application = compose_application(source, adapter)
+        application = source.compose(adapter)
         if observer is not None:
             application.observability = ObservabilityRuntime([observer])
         adapters.append(adapter)

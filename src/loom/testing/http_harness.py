@@ -25,10 +25,9 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from loom.composition import compose_application
 from loom.composition.application import Application
+from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Recipe
-from loom.composition.source import AppConfig, CompositionSource
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -67,14 +66,14 @@ class _HarnessAdapter:
         self._overrides = overrides
         self._fastapi_kwargs = fastapi_kwargs
 
-    def source(self) -> CompositionSource:
+    def source(self) -> Project:
         """The ``test-harness`` application, its jobs inline, in the ``LOOM_ENV`` environment.
 
         Raises:
             ConfigError: When ``LOOM_ENV`` is not an environment.
         """
         app = AppConfig(name="test-harness", job_service="inline")
-        return CompositionSource(
+        return Project(
             config=ConfigContext.from_dict(
                 {"app": {"name": app.name, "job_service": app.job_service}}
             ),
@@ -86,7 +85,7 @@ class _HarnessAdapter:
             observability_config=ObservabilityConfig(),
         )
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         """The routes' use cases over no model, leniently."""
         del source
         interfaces = (*self._routes.python, *self._routes.config)
@@ -258,5 +257,5 @@ class HttpTestHarness:
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        app = adapter.bind(compose_application(adapter.source(), adapter))
+        app = adapter.source().serve(adapter)
         return TestClient(app, raise_server_exceptions=False)

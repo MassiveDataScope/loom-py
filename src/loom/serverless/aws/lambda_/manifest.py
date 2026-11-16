@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import msgspec
 
-from loom.composition.source import AppConfig, CompositionSource
+from loom.composition.project import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
@@ -97,7 +97,7 @@ def build_manifest(
     for queue, url in queues.items():
         _literal(f"sqs.queues.{queue}", url)
     app = convert_section(ctx.raw(ConfigKey.APP), ConfigKey.APP, AppConfig)
-    source = CompositionSource(
+    source = Project(
         config=ctx,
         environment=environment,
         code_path=code_path,
@@ -129,7 +129,7 @@ def _literal(key: str, value: str | None) -> str:
 
 
 def _function(
-    source: CompositionSource,
+    source: Project,
     document: dict[str, Any],
     functions: Mapping[str, LambdaFunction],
     name: str,
@@ -206,7 +206,7 @@ def _direct_event(trigger: EventTrigger) -> dict[str, Any]:
 
 
 def _http_event(
-    source: CompositionSource, functions: Mapping[str, LambdaFunction], name: str
+    source: Project, functions: Mapping[str, LambdaFunction], name: str
 ) -> dict[str, Any]:
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
     from loom.rest.compiler import InterfaceCompilationError, published_routes

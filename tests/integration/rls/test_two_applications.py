@@ -12,13 +12,7 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import text
 
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
@@ -44,7 +38,7 @@ class _Ticket(BaseModel, RowScoped):
 class _Tickets:
     """Composes the ticket model on the SQLAlchemy backend."""
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         del source
         return Recipe(
             profile=SERVER_PROFILE,
@@ -76,7 +70,7 @@ def _compose(url: str, name: str) -> Application:
             },
         }
     )
-    return compose_application(composition_source(ctx, app=AppConfig(name=name)), _Tickets())
+    return composition_source(ctx, app=AppConfig(name=name)).compose(_Tickets())
 
 
 async def _desk(application: Application) -> str:

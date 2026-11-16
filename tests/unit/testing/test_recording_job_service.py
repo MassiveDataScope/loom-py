@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from loom.composition import compose_application
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import ANONYMOUS, Identity
@@ -73,7 +72,7 @@ def composed(tmp_path: Path) -> tuple[RecordingJobService, type[Job[str]]]:
 
     config = {"jobs": {"MovedJob": {"queue": "bulk"}}}
     source = job_source(tmp_path, config, "loom.testing:RecordingJobService")
-    application = compose_application(source, JobsAdapter(MovedJob))
+    application = source.compose(JobsAdapter(MovedJob))
     service = application.kernel.container.resolve(JobService)
     assert isinstance(service, RecordingJobService)
     return service, MovedJob

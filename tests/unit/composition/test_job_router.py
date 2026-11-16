@@ -17,12 +17,7 @@ import pytest
 import yaml
 
 from loom.celery.service import CeleryJobService
-from loom.composition import (
-    JobBackendContext,
-    JobBackendError,
-    build_application,
-    compose_application,
-)
+from loom.composition import JobBackendContext, JobBackendError, Project
 from loom.core.job.service import InlineJobService, JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory
@@ -41,7 +36,7 @@ class _ContextBackend(InlineJobService):
 
 
 def _service(tmp_path: Path, config: dict[str, Any], job_service: str) -> JobService:
-    application = compose_application(job_source(tmp_path, config, job_service), JobsAdapter())
+    application = job_source(tmp_path, config, job_service).compose(JobsAdapter())
     return application.kernel.container.resolve(JobService)
 
 
@@ -64,7 +59,7 @@ _NO_CELERY_SCRIPT = """
 import json
 import sys
 
-from loom.composition import Recipe, build_application
+from loom.composition import Project, Recipe
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores.profile import WORKER_PROFILE
 
@@ -80,7 +75,7 @@ class Bare:
         return application
 
 
-build_application(sys.argv[1], adapter=Bare(), environment="test")
+Project.load(sys.argv[1], environment="test").compose(Bare())
 print(json.dumps(sorted(
     name for name in sys.modules
     if name == "celery" or name.startswith(("celery.", "loom.celery"))
@@ -138,7 +133,7 @@ class TestJobBackends:
     def test_a_module_class_backend_receives_the_backend_context(self, tmp_path: Path) -> None:
         source = job_source(tmp_path, {}, f"{__name__}:_ContextBackend")
 
-        application = compose_application(source, JobsAdapter())
+        application = source.compose(JobsAdapter())
 
         service = application.kernel.container.resolve(JobService)
         assert isinstance(service, _ContextBackend)
@@ -152,7 +147,7 @@ class TestJobBackends:
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match="'rabbit' names no job backend"):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     @pytest.mark.parametrize(
         ("config", "job_service"),
@@ -171,14 +166,14 @@ class TestJobBackends:
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match=r"loom\[celery\] extra is not installed"):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     def test_celery_queues_without_its_default_queue_stops_startup(self, tmp_path: Path) -> None:
         source = job_source(tmp_path, {"celery": {**BROKER, "queues": ["emails"]}}, "inline")
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match="the celery section is invalid"):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
 
 class TestApiJobSettings:
@@ -194,9 +189,7 @@ class TestApiJobSettings:
         config["jobs"] = {"ReportJob": {"queue": "reports", "countdown": 5, "priority": 3}}
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
-        application = build_application(
-            str(config_path), adapter=FastAPIAdapter(), environment="test"
-        )
+        application = Project.load(str(config_path), environment="test").compose(FastAPIAdapter())
 
         (job,) = application.discovered.jobs
         options = application.job_settings.of(job)

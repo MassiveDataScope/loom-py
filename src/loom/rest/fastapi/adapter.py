@@ -22,8 +22,8 @@ from loom.composition import (
     AiWiring,
     Application,
     CompositionErrorCode,
-    CompositionSource,
     CompositionStateError,
+    Project,
     Recipe,
 )
 from loom.core.config import (
@@ -189,9 +189,7 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
             )
 
 
-def _gate_autocrud_capabilities(
-    discovered: DiscoveryResult, source: CompositionSource
-) -> DiscoveryResult:
+def _gate_autocrud_capabilities(discovered: DiscoveryResult, source: Project) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
     The repository is the explicit ``repository_for`` class when there is one,
@@ -281,7 +279,7 @@ def _reject_unsupported_include(
         )
 
 
-def _discover_components(source: CompositionSource) -> DiscoveryResult:
+def _discover_components(source: Project) -> DiscoveryResult:
     """Run discovery and reject a result with nothing to serve.
 
     Use cases, REST interfaces and manifest agents are each optional on their
@@ -530,7 +528,7 @@ def _interfaces_by_name(
 
 
 def served_routes(
-    source: CompositionSource,
+    source: Project,
     select_interfaces: InterfaceSelector | None = None,
 ) -> tuple[DiscoveryResult, RouteSources]:
     """Validate REST config, discover routes, and narrow to *select_interfaces*.
@@ -581,7 +579,7 @@ class RestDeclaration:
 
 
 def compose_rest(
-    source: CompositionSource,
+    source: Project,
     *,
     authenticator: Authenticator | None = None,
     metrics_registry: CollectorRegistry | None = None,
@@ -665,7 +663,7 @@ class FastAPIAdapter:
         self._authenticator = authenticator
         self._declared: RestDeclaration | None = None
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
 
         Raises:

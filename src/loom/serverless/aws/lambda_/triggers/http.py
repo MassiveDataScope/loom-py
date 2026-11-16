@@ -26,7 +26,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.composition import Application, CompositionSource, LoopHost, Recipe
+from loom.composition import Application, LoopHost, Project, Recipe
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import LAMBDA_PROFILE
@@ -50,7 +50,7 @@ _PATH_LOCATION = "path"
 
 
 def compose_http(
-    source: CompositionSource, function: str | None, authenticator: Authenticator | None
+    source: Project, function: str | None, authenticator: Authenticator | None
 ) -> tuple[Recipe, Callable[[Application], LambdaHTTPHandler]]:
     """The FastAPI recipe with the Lambda pool profile, and how to bind its application.
 

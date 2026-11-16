@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import JobBackendError, compose_application
+from loom.composition import JobBackendError
 from loom.core import _async
 from loom.core.config import ConfigError
 from loom.core.engine.compiler import UseCaseCompiler
@@ -110,7 +110,7 @@ def _compose(
     tmp_path: Path, config: dict[str, Any], client: SQSClient, *jobs: type[Job[Any]]
 ) -> JobService:
     with patched_aws_clients(client):
-        application = compose_application(job_source(tmp_path, config, "sqs"), JobsAdapter(*jobs))
+        application = job_source(tmp_path, config, "sqs").compose(JobsAdapter(*jobs))
     return application.kernel.container.resolve(JobService)
 
 
@@ -246,7 +246,7 @@ class TestSqsDispatch:
         config = {"aws": {"region": "eu-west-1"}, "sqs": {**sqs, "queues": {"emails": _URL}}}
         source = job_source(tmp_path, config, "sqs")
         with patched_aws_clients() as clients:
-            compose_application(source, JobsAdapter(EmailJob))
+            source.compose(JobsAdapter(EmailJob))
 
         assert clients.calls == [("sqs", region)]
 
@@ -263,7 +263,7 @@ class TestSqsDispatch:
         source = job_source(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(job)
         with patched_aws_clients(), pytest.raises(SQSQueueConfigError, match=message):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     async def test_the_jobs_section_gives_the_queue_the_delay_and_the_priority(
         self, tmp_path: Path, client: SQSClient
@@ -281,7 +281,7 @@ class TestSqsDispatch:
         config = {**_CONFIG, "celery": {**BROKER, "queues": ["default", "reports"]}}
         source = job_source(tmp_path, config, "sqs")
         with patched_aws_clients():
-            application = compose_application(source, JobsAdapter(EmailJob, ReportJob))
+            application = source.compose(JobsAdapter(EmailJob, ReportJob))
 
         assert isinstance(application.kernel.container.resolve(JobService), JobRouter)
 
@@ -292,7 +292,7 @@ class TestSqsDispatch:
         source = job_source(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(EmailJob)
         with pytest.raises(JobBackendError, match=r"loom\[sqs\] extra is not installed"):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     @pytest.mark.parametrize(
         ("job", "options", "code"),
@@ -466,7 +466,7 @@ class TestSqsDispatch:
         source = job_source(tmp_path, _sqs_config(**knobs), "sqs")
         adapter = JobsAdapter(EmailJob)
         with patched_aws_clients(), pytest.raises(ConfigError, match=next(iter(knobs))):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     async def test_an_entry_sqs_refuses_once_is_sent_again(
         self, service: JobService, client: SQSClient

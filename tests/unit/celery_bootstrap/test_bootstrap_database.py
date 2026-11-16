@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("celery")
 
 from loom.celery.adapter import CeleryAdapter  # noqa: E402
-from loom.composition import AppConfig, compose_application  # noqa: E402
+from loom.composition import AppConfig  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.stores.uow.abc import UnitOfWorkFactory  # noqa: E402
@@ -31,7 +31,7 @@ def _resolve_uow_factory(config: dict[str, Any]) -> UnitOfWorkFactory | None:
         ),
         app=AppConfig(name="worker"),
     )
-    return uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
+    return uow_factory(source.compose(CeleryAdapter(jobs=[_PingJob])))
 
 
 def _pool(config: dict[str, Any]) -> Any:

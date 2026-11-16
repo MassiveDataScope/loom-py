@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, compose_application
+from loom.composition import AppConfig, Application, Project
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
 from loom.core.errors import PostCommitError, StoresNotCommitted
@@ -70,7 +70,7 @@ def loops(probe: tuple[type[Job[None]], Probe]) -> list[asyncio.AbstractEventLoo
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> CompositionSource:
+def source(tmp_path: Path) -> Project:
     return composition_source(
         ConfigContext.from_dict(with_worker({"app": {"name": "lambda-sqs"}})),
         app=AppConfig(name="lambda-sqs", entry=WORKER),
@@ -81,10 +81,10 @@ def source(tmp_path: Path) -> CompositionSource:
 
 @pytest.fixture
 def built(
-    source: CompositionSource, probe: tuple[type[Job[None]], Probe]
+    source: Project, probe: tuple[type[Job[None]], Probe]
 ) -> tuple[LambdaAdapter, Application, list[str]]:
     adapter = LambdaAdapter(jobs=[probe[0]])
-    application = compose_application(source, adapter)
+    application = source.compose(adapter)
     lifecycle: list[str] = []
 
     @asynccontextmanager

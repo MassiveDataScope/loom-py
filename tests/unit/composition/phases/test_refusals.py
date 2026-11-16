@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import JobBackendError, build_application
+from loom.composition import JobBackendError, Project
 from loom.composition.errors import ReservedBindingError
 from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
@@ -301,7 +301,7 @@ class TestStartupRefusals:
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
         with pytest.raises(CompilationError) as caught:
-            build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
+            Project.load(str(config_path), environment="test").compose(FastAPIAdapter())
 
         recorded = describe_refusal(caught.value, tmp_path=tmp_path)
         matches_snapshot("refusals/job-compilation.http", recorded)

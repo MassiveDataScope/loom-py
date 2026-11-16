@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.composition import CompositionSource, compose_application
+from loom.composition import Project
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.identity import Identity
@@ -29,16 +29,12 @@ def _singletons(container: LoomContainer) -> None:
 class TestASingletonAdapterHoldingHandles:
     async def test_is_built_at_seal_and_serves_each_execution(
         self,
-        source: CompositionSource,
+        source: Project,
         engines: CountingEngineProvider,
         session: RecordingMcpSession,
     ) -> None:
         del engines
-        application = compose_application(
-            source,
-            LambdaAdapter(use_cases=(AcmeMarket,)),  # type: ignore[arg-type]
-            modules=(_singletons,),
-        )
+        application = source.compose(LambdaAdapter(use_cases=(AcmeMarket,)), modules=(_singletons,))
         container, runtime = application.kernel.container, application.ai.runtime
         quotes = container.resolve(AcmeQuotes)
         assert runtime is not None

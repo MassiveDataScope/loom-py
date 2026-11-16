@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from botocore.client import BaseClient  # type: ignore[import-untyped]
 
-from loom.composition import Application, build_application
+from loom.composition import Application, Project
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -136,11 +136,8 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
 
 @pytest.fixture
 def producer(config_path: Path, tmp_path: Path) -> Application:
-    return build_application(
-        str(config_path),
-        adapter=JobsAdapter(WelcomeJob, OrderJob),
-        environment="test",
-        code_path=str(tmp_path),
+    return Project.load(str(config_path), environment="test", code_path=str(tmp_path)).compose(
+        JobsAdapter(WelcomeJob, OrderJob)
     )
 
 
@@ -233,9 +230,9 @@ class TestSqsJobs:
             message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
         )
         adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
-        consumer = build_application(
-            str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)
-        )
+        consumer = Project.load(
+            str(config_path), environment="test", code_path=str(tmp_path)
+        ).compose(adapter)
         handler = adapter.bind(consumer)
         try:
             result = handler(event, None)

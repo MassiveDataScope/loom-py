@@ -11,10 +11,9 @@ from loom.composition import (
     Adapter,
     CompositionErrorCode,
     CompositionStateError,
+    Project,
     Recipe,
-    build_application,
     create_app,
-    load_source,
 )
 from loom.core.config.errors import ConfigError
 from loom.core.stores import LAMBDA_PROFILE
@@ -59,7 +58,7 @@ ProjectFactory = Callable[..., str]
 
 @pytest.fixture
 def recipe(contract_project: ProjectFactory) -> Recipe:
-    source = load_source(
+    source = Project.load(
         contract_project(),
         config_dir=None,
         environment=_TEST,
@@ -94,7 +93,7 @@ class TestLambdaRecipe:
         adapter = LambdaAdapter()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
-            build_application(config, adapter=adapter, environment=_TEST)
+            Project.load(config, environment=_TEST).compose(adapter)
         assert raised.value.key == key
 
     @pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
@@ -106,7 +105,7 @@ class TestLambdaRecipe:
         adapter = LambdaAdapter()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
-            build_application(config, adapter=adapter, environment=_TEST)
+            Project.load(config, environment=_TEST).compose(adapter)
         assert raised.value.key == key
 
     def test_an_sql_connection_without_an_endpoint_composes_with_its_sql(
@@ -116,7 +115,7 @@ class TestLambdaRecipe:
         connection = dict(_SQL_CONNECTION, sql_endpoint={"enabled": False})
         config = contract_project(sql={"connections": {"analytics": connection}})
 
-        application = build_application(config, adapter=LambdaAdapter(), environment=_TEST)
+        application = Project.load(config, environment=_TEST).compose(LambdaAdapter())
 
         assert application.sql.config is not None
 
@@ -161,9 +160,9 @@ class TestLambdaRecipe:
         self, contract_project: ProjectFactory
     ) -> None:
         adapter = LambdaAdapter()
-        build_application(contract_project(), adapter=adapter, environment=_TEST)
+        Project.load(contract_project(), environment=_TEST).compose(adapter)
         second = contract_project()
 
         with pytest.raises(CompositionStateError, match="one adapter instance") as raised:
-            build_application(second, adapter=adapter, environment=_TEST)
+            Project.load(second, environment=_TEST).compose(adapter)
         assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED

@@ -21,7 +21,7 @@ import yaml
 from loom.ai import registry
 from loom.ai.abc import AgentHandle, McpToolCallResult, McpToolInfo
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import Application, CompositionSource, Recipe, compose_application
+from loom.composition import Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores.profile import SERVER_PROFILE
@@ -90,7 +90,7 @@ class AcmeAgentEntryPoint:
         self._use_case = use_case
         self._agent_endpoints = agent_endpoints
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         del source
         return Recipe(
             profile=SERVER_PROFILE,
@@ -146,9 +146,7 @@ def _compose(
     source = composition_source(
         ConfigContext.from_dict(document), code_path=tmp_path, config_root=tmp_path
     )
-    return compose_application(
-        source, AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints)
-    )
+    return source.compose(AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints))
 
 
 def _init(application: Application) -> None:

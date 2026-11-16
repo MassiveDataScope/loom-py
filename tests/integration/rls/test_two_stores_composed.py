@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application
 from loom.core.authz import Scope
 from loom.core.command import Command
 from loom.core.config import ConfigContext
@@ -250,7 +250,7 @@ class TwoStores:
         )
         source = composition_source(ctx, app=AppConfig(name="two_stores_composed"))
         adapter = Serving(notes.Note, memos.Memo, use_cases=_USE_CASES)
-        return compose_application(source, adapter, modules=(_sessions_module,))
+        return source.compose(adapter, modules=(_sessions_module,))
 
     async def rows(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Every note body on A and memo body on B, read through the bypass users."""

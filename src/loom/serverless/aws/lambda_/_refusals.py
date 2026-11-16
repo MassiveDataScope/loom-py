@@ -11,7 +11,7 @@ from loom.core.logger import get_logger
 
 if TYPE_CHECKING:
     from loom.ai.config import AiConfig
-    from loom.composition import CompositionSource
+    from loom.composition import Project
 
 COMPONENT = "LambdaAdapter"
 """The adapter refusals and composition errors name."""
@@ -35,7 +35,7 @@ class LambdaUnservedConfigError(ConfigError):
         self.key = key
 
 
-def refuse_unserved_config(source: CompositionSource) -> None:
+def refuse_unserved_config(source: Project) -> None:
     """Refuse, from the configuration alone, what no Lambda function serves.
 
     Runs before discovery: a metrics scrape and an MCP server spoken to over

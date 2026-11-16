@@ -120,7 +120,7 @@ class TestRequestObservabilityStack:
             captured["runtime"] = observability_runtime
             return FastAPI()
 
-        monkeypatch.setattr("loom.composition.source.load_application_config", _fake_load)
+        monkeypatch.setattr("loom.composition.project.load_application_config", _fake_load)
         monkeypatch.setattr(ObservabilityRuntime, "from_config", classmethod(_fake_from_config))
         # The config names no interface module. An empty result lets recipe()
         # continue so create_app still mounts the middlewares under test.
@@ -136,7 +136,7 @@ class TestRequestObservabilityStack:
             "loom.rest.fastapi.adapter.create_fastapi_app", _fake_create_fastapi_app
         )
         monkeypatch.setattr(
-            "loom.composition.source.add_code_path",
+            "loom.composition.project.add_code_path",
             lambda code_path, config_dir: Path(code_path),
         )
 

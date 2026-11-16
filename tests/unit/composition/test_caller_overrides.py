@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, Application, build_application, compose_application
+from loom.composition import AppConfig, Application, Project
 from loom.composition.errors import CompositionErrorCode, ReservedBindingError
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import BootstrapError
@@ -75,7 +75,7 @@ def _worker(tmp_path: Path, module: Callable[[LoomContainer], None]) -> Applicat
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, CeleryAdapter(jobs=[_OverrideJob]), modules=[module])
+    return source.compose(CeleryAdapter(jobs=[_OverrideJob]), modules=[module])
 
 
 def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:
@@ -94,7 +94,7 @@ class TestCallerOverrides:
         adapter = FastAPIAdapter()
         module = _module(key)
         with pytest.raises(ReservedBindingError) as caught:
-            build_application(project, adapter=adapter, environment="test", modules=[module])
+            Project.load(project, environment="test").compose(adapter, modules=[module])
 
         _assert_reserved(caught.value, key)
 
@@ -131,9 +131,7 @@ class TestCallerOverrides:
         self,
         fixture_project: ProjectFactory,
     ) -> None:
-        application = build_application(
-            fixture_project(), adapter=FastAPIAdapter(), environment="test"
-        )
+        application = Project.load(fixture_project(), environment="test").compose(FastAPIAdapter())
         container = application.kernel.container
 
         manager = container.resolve(SessionManager)

@@ -35,7 +35,7 @@ from loom.celery.constants import (
 )
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
-from loom.composition import AppConfig, Application, ApplicationHost, compose_application
+from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from tests.helpers.celery import WorkerDouble, isolated_signals
@@ -243,7 +243,7 @@ class TestFailedChildOpen:
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        application = compose_application(source, adapter)
+        application = source.compose(adapter)
 
         @asynccontextmanager
         async def _failing(*, check: bool = True) -> AsyncIterator[Application]:

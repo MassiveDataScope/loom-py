@@ -13,13 +13,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    CompositionStateError,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, CompositionStateError, Project
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
@@ -59,7 +53,7 @@ def whole_batch_handler(
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[probe[0]])
-    yield adapter.bind(compose_application(source, adapter))
+    yield adapter.bind(source.compose(adapter))
     adapter.close()
 
 
@@ -75,7 +69,7 @@ def _add_broken_resource(application: Application) -> None:
     )
 
 
-def _manifest_source(source: CompositionSource, module: str, **sections: Any) -> CompositionSource:
+def _manifest_source(source: Project, module: str, **sections: Any) -> Project:
     """*source*, discovering from the manifest *module*, with extra top-level *sections*."""
     discovery = {"mode": "manifest", "manifest": {"module": module}}
     return composition_source(
@@ -207,7 +201,7 @@ class TestSqsHandler:
 import sys
 from pathlib import Path
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from loom.composition import AppConfig, CompositionSource
+from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig
@@ -216,7 +210,7 @@ from loom.core.job.job import Job
 class Probe(Job[None]):
     def execute(self) -> None:
         pass
-source = CompositionSource(
+source = Project(
     config=ConfigContext.from_dict(
         {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
     ),
@@ -249,7 +243,7 @@ print([name for name in loaded if name in sys.modules])
         with pytest.raises(CompositionStateError, match="call recipe first"):
             adapter.bind(None)  # type: ignore[arg-type]
 
-    def test_recipe_uses_lambda_profile_and_skips_rest(self, source: CompositionSource) -> None:
+    def test_recipe_uses_lambda_profile_and_skips_rest(self, source: Project) -> None:
         class LocalJob(Job[None]):
             def execute(self) -> None:
                 return None
@@ -374,7 +368,7 @@ print([name for name in loaded if name in sys.modules])
     def test_adapter_already_composed(
         self,
         built: tuple[LambdaAdapter, Application, list[str]],
-        source: CompositionSource,
+        source: Project,
         action: str,
     ) -> None:
         adapter, application, _ = built
@@ -403,7 +397,7 @@ print([name for name in loaded if name in sys.modules])
         adapter.close()
         assert lifecycle == ["open", "close"]
 
-    def test_duplicate_qualname_is_configuration_error(self, source: CompositionSource) -> None:
+    def test_duplicate_qualname_is_configuration_error(self, source: Project) -> None:
         def make_job() -> type[Job[None]]:
             class Duplicate(Job[None]):
                 def execute(self) -> None:
@@ -528,7 +522,7 @@ print([name for name in loaded if name in sys.modules])
     )
     def test_a_record_runs_under_the_applications_job_timeout(
         self,
-        source: CompositionSource,
+        source: Project,
         record: RecordFactory,
         jobs: dict[str, Any],
         failed: list[Any],
@@ -552,7 +546,7 @@ print([name for name in loaded if name in sys.modules])
             config_root=source.config_root,
         )
         adapter = LambdaAdapter(jobs=[SlowJob])
-        handler = adapter.bind(compose_application(configured, adapter))
+        handler = adapter.bind(configured.compose(adapter))
         try:
             result = handler(
                 {"Records": [record("slow", "a", job_name=SlowJob.__qualname__)]}, Context()
@@ -602,15 +596,13 @@ print([name for name in loaded if name in sys.modules])
 
     def test_bind_warns_for_non_inline_service(
         self,
-        source: CompositionSource,
+        source: Project,
         probe: tuple[type[Job[None]], Probe],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         adapter = LambdaAdapter(jobs=[probe[0]])
-        application = compose_application(
-            source,
-            adapter,
-            modules=(lambda container: container.register(JobService, _OtherJobService),),
+        application = source.compose(
+            adapter, modules=(lambda container: container.register(JobService, _OtherJobService),)
         )
         adapter.bind(application)
         try:
@@ -624,7 +616,7 @@ print([name for name in loaded if name in sys.modules])
 
     def test_recipe_warns_for_ignored_discovered_components(
         self,
-        source: CompositionSource,
+        source: Project,
         probe: tuple[type[Job[None]], Probe],
         caplog: pytest.LogCaptureFixture,
         monkeypatch: pytest.MonkeyPatch,
@@ -662,7 +654,7 @@ print([name for name in loaded if name in sys.modules])
         ids=["metrics"],
     )
     def test_what_lambda_does_not_serve_is_refused_before_discovery(
-        self, source: CompositionSource, sections: dict[str, Any], key: str
+        self, source: Project, sections: dict[str, Any], key: str
     ) -> None:
         undiscoverable = _manifest_source(
             source, "tests.unit.serverless.aws.lambda_._no_such_manifest", **sections

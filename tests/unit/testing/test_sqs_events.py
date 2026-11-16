@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig
 from loom.core.config import ConfigContext
 from loom.core.identity import Identity, current_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
@@ -54,7 +54,7 @@ def handler(tmp_path: Path) -> Iterator[LambdaHandler]:
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    yield adapter.bind(compose_application(source, adapter))
+    yield adapter.bind(source.compose(adapter))
     adapter.close()
 
 

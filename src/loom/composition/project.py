@@ -1,15 +1,19 @@
-"""What the composition has resolved before an adapter declares its recipe."""
+"""The project an application composes from: its configuration, environment and code."""
 
 from __future__ import annotations
 
 import functools
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import msgspec
 
+from loom.composition import phases
+from loom.composition.application import Application
+from loom.composition.resources import Resource, ResourceKind, closing
+from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
     ConfigContext,
     ConfigError,
@@ -21,14 +25,20 @@ from loom.core.config.overrides import load_application_config
 from loom.core.discovery.config import DiscoveryConfig, discover
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
+from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
+    from loom.composition.recipe import Adapter
+    from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.stores import StoreBackend
+
+
+T = TypeVar("T")
 
 
 class AppConfig(msgspec.Struct, kw_only=True):
@@ -42,8 +52,8 @@ class AppConfig(msgspec.Struct, kw_only=True):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CompositionSource:
-    """The configuration, environment and code an adapter composes from.
+class Project:
+    """What an application declares: configuration, environment and code, not yet composed.
 
     Args:
         config: Loaded configuration, overrides applied.
@@ -73,8 +83,8 @@ class CompositionSource:
         environment: Environment | str | None = None,
         code_path: str | None = None,
         resolvers: Sequence[ConfigResolver] = (),
-        caller: str = "load_source",
-    ) -> CompositionSource:
+        caller: str = "Project.load",
+    ) -> Project:
         """Load the configuration, environment and code an application composes from.
 
         Args:
@@ -87,7 +97,7 @@ class CompositionSource:
                 points pass their name; callers leave the default.
 
         Returns:
-            The loaded source.
+            The loaded project.
 
         Raises:
             ConfigError: When the configuration is incomplete or invalid.
@@ -145,3 +155,107 @@ class CompositionSource:
         """
         spec = self.catalog.specs.get(key)
         return resolve_store_backend(default if spec is None else spec.backend)
+
+    def compose(
+        self,
+        adapter: Adapter[object],
+        *,
+        modules: Sequence[Callable[[LoomContainer], None]] = (),
+    ) -> Application:
+        """Compose the application *adapter* asks for, without mounting a transport.
+
+        Opens nothing: building a backend creates its engine or client, not a
+        connection. :meth:`Application.check` and :meth:`Application.running`
+        are what reach the outside. Logs one ``loom.composition.composed`` info
+        event with the milliseconds of each phase.
+
+        Args:
+            adapter: Whose recipe to compose.
+            modules: DI modules run before repositories are registered; see
+                :func:`~loom.composition.create_app`.
+
+        Returns:
+            The composed, closed application.
+
+        Raises:
+            ConfigError: When a model belongs to a store the catalog does not
+                serve, or the store section is invalid, or a job backend cannot be built.
+            JoinedAutocommitStore: When a use case declares ``Joined`` on a store
+                that cannot roll back.
+            UncomposedWriteStore: When a use case or job writes to a store with
+                no unit of work.
+            DeployCheckError: When a deploy check of level error fails in a
+                deployed environment.
+            ReservedBindingError: When a module binds a framework-owned key.
+        """
+        logger = get_logger(__name__)
+        clock = phases.PhaseClock()
+        recipe = clock.lap("plan", phases.plan(self, adapter))
+        stores = clock.lap("build_stores", phases.build_stores(self, recipe))
+        kernel, sql, job_resources = clock.lap(
+            "register", phases.register(self, recipe, stores, modules=modules, logger=logger)
+        )
+        analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
+        ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
+        phases.seal(kernel, analysis, recipe, catalog=self.catalog, factories=stores.factories)
+        clock.lap("seal", None)
+        gateways = kernel.container.resolve_or_none(CacheGateways)
+        cache = () if gateways is None else gateways.named()
+        discovered = recipe.discovered
+        application = Application(
+            kernel=kernel,
+            config=self.config,
+            environment=self.environment,
+            code_path=self.code_path,
+            discovered=discovered,
+            observability=self.observability,
+            sql=sql,
+            ai=ai,
+            job_settings=stores.job_settings,
+            resources=(
+                *job_resources,
+                *(
+                    Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
+                    for name, gateway in cache
+                ),
+                *(resource for resource in (sql.resource, ai.resource) if resource is not None),
+                *stores.resources,
+            ),
+        )
+        logger.info(
+            "loom.composition.composed",
+            adapter=type(adapter).__qualname__,
+            use_cases=len(discovered.use_cases),
+            jobs=len(discovered.jobs),
+            backends=stores.store_backends,
+            keys=len(kernel.container.bindings()),
+            modules=len(modules),
+            overrides=len(recipe.overrides),
+            agents=len(ai.plans),
+            mcp_servers=len(ai.mcp_servers),
+            phase_ms=clock.ms,
+            duration_ms=clock.total_ms,
+        )
+        return application
+
+    def serve(
+        self,
+        adapter: Adapter[T],
+        *,
+        modules: Sequence[Callable[[LoomContainer], None]] = (),
+    ) -> T:
+        """Compose the application *adapter* asks for and mount its transport on it.
+
+        Args:
+            adapter: The transport, and how it wants the application composed.
+            modules: See :meth:`compose`.
+
+        Returns:
+            What *adapter* binds: an ASGI app, a Celery app, a handler.
+
+        Raises:
+            ConfigError: As :meth:`compose`.
+            DeployCheckError: As :meth:`compose`.
+            ReservedBindingError: As :meth:`compose`.
+        """
+        return adapter.bind(self.compose(adapter, modules=modules))

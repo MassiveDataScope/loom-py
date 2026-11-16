@@ -11,7 +11,7 @@ from loom.composition._ai import AiWiring
 from loom.composition._jobs import JobBackendContext
 from loom.composition._sql import SqlWiring
 from loom.composition.application import Application
-from loom.composition.build import build_application, compose_application, create_app, load_source
+from loom.composition.build import create_app
 from loom.composition.errors import (
     ApplicationAlreadyOpenError,
     CompositionErrorCode,
@@ -20,8 +20,8 @@ from loom.composition.errors import (
     ReservedBindingError,
 )
 from loom.composition.host import ApplicationHost, LoopHost
+from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Adapter, Recipe
-from loom.composition.source import AppConfig, CompositionSource
 
 __all__ = [
     "Adapter",
@@ -31,16 +31,13 @@ __all__ = [
     "ApplicationAlreadyOpenError",
     "ApplicationHost",
     "CompositionErrorCode",
-    "CompositionSource",
     "CompositionStateError",
     "JobBackendContext",
     "JobBackendError",
     "LoopHost",
+    "Project",
     "Recipe",
     "ReservedBindingError",
     "SqlWiring",
-    "build_application",
-    "compose_application",
     "create_app",
-    "load_source",
 ]

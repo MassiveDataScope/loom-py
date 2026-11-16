@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from celery import Celery
 
-from loom.composition import Application, compose_application
+from loom.composition import Application
 from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
@@ -44,7 +44,7 @@ def _compose(
     directory = tmp_path / name
     directory.mkdir()
     source = job_source(directory, config, job_service)
-    return compose_application(source, JobsAdapter(_ReportJob))
+    return source.compose(JobsAdapter(_ReportJob))
 
 
 async def _sent(application: Application) -> dict[str, Any] | None:
@@ -119,4 +119,4 @@ class TestJobSettings:
         adapter = JobsAdapter(_ReportJob)
 
         with pytest.raises(ConfigError, match="_ReportJob"):
-            compose_application(source, adapter)
+            source.compose(adapter)

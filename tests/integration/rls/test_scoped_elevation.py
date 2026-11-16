@@ -1,6 +1,6 @@
 """The composition's one elevation sink against real Postgres (US7 PR 5).
 
-Through ``build_application`` on a pool of one connection, so the next
+Through ``Project.compose`` on a pool of one connection, so the next
 checkout is the connection that held the flag. Flags set and cleared by a
 nested execution are pinned in ``test_elevation.py``; here:
 
@@ -24,7 +24,7 @@ import yaml
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import build_application
+from loom.composition import Project
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import ElevationSink, elevated_scopes
 from loom.core.errors import ScopeOwnershipError
@@ -127,9 +127,7 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
     document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
     document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     (tmp_path / "app.yaml").write_text(yaml.safe_dump(document))
-    built = build_application(
-        str(tmp_path / "app.yaml"), adapter=FastAPIAdapter(), environment="test"
-    )
+    built = Project.load(str(tmp_path / "app.yaml"), environment="test").compose(FastAPIAdapter())
     _flags.clear()
     identity = set_identity(Identity(subject=U1))
     try:

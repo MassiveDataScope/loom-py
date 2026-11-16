@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
@@ -36,14 +36,14 @@ def composition_source(
     app: AppConfig | None = None,
     code_path: Path | None = None,
     config_root: Path | None = None,
-) -> CompositionSource:
-    """What ``build_application`` would have resolved from files holding *ctx*.
+) -> Project:
+    """What ``Project.load`` would have resolved from files holding *ctx*.
 
     Without *app*, the ``app`` section of *ctx* is decoded, as its
     ``observability`` section always is; the paths default to the working
     directory.
     """
-    return CompositionSource(
+    return Project(
         config=ctx,
         environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
@@ -76,7 +76,7 @@ class Serving:
         self.overrides = overrides
         self.lenient = lenient
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         del source
         return Recipe(
             profile=SERVER_PROFILE,

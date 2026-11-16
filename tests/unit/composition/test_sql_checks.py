@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.composition import Application, CompositionSource, Recipe, compose_application
+from loom.composition import Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
@@ -28,7 +28,7 @@ from tests.unit.core.sql._fakes import (
 
 
 class AcmeProbeAdapter:
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
@@ -52,7 +52,7 @@ def _application(tmp_path: Path) -> Application:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, AcmeProbeAdapter())
+    return source.compose(AcmeProbeAdapter())
 
 
 def _factory(

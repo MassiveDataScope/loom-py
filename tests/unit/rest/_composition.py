@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from loom.composition import compose_application
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
@@ -58,8 +57,6 @@ def build_bootstrap(
     The application config comes from *ctx*'s ``app`` section, as it does in
     ``create_app``; the first argument is accepted for the callers' sake.
     """
-    application = compose_application(
-        composition_source(ctx, environment=environment), FastAPIAdapter()
-    )
+    application = composition_source(ctx, environment=environment).compose(FastAPIAdapter())
     discovered = application.discovered
     return application.kernel, uow_factory(application), discovered, discovered.interfaces

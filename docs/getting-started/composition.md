@@ -152,19 +152,20 @@ The design and its sources are recorded in ADR 0007
 
 ## Entry points
 
-| Function | Returns | Use it for |
+| Call | Returns | Use it for |
 |---|---|---|
 | `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `adapter=` may be omitted when `app.entry` is set |
-| `build_application(*config_paths, adapter=..., ...)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
-| `compose_application(source, adapter, modules=...)` | the composed, closed `Application` | a host that already holds a loaded `CompositionSource` |
+| `Project.load(*config_paths, ...)` | the `Project`: configuration, environment and code, not yet composed | tests, scripts, a host that holds its configuration in memory |
+| `project.compose(adapter, modules=...)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
+| `project.serve(adapter, modules=...)` | what the adapter's `bind` returns | `create_app` without the shortcut |
 
-`create_app` and `build_application` take the same arguments: the YAML
-`config_paths` or `config_dir`, `environment`, `code_path`, `resolvers` and
-`modules`, exactly as the REST `create_app` documented in
-[Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml).
-`build_application` still needs `adapter=`: the adapter's recipe decides what
-is composed (pool profile, discovery, backend), even though no transport is
-mounted.
+`create_app` and `Project.load` take the same loading arguments: the YAML
+`config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
+exactly as the REST `create_app` documented in
+[Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml);
+`create_app` also takes `modules`, which `compose` and `serve` take too.
+`compose` needs the adapter: its recipe decides what is composed (pool
+profile, discovery, backend), even though no transport is mounted.
 
 The transport-specific factories stay, with the same signatures, as
 shortcuts over the composition:
@@ -235,14 +236,14 @@ A complete adapter, for a script that runs use cases with no transport:
 
 ```python
 # app/script.py
-from loom.composition import Application, CompositionSource, Recipe, create_app
+from loom.composition import Application, Project, Recipe, create_app
 from loom.core.checks import REST_CHECKS
 from loom.core.identity import Identity
 from loom.core.stores import WORKER_PROFILE
 
 
 class ScriptAdapter:
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=source.discover(),               # app.discovery

@@ -36,10 +36,10 @@ process.
 ### One composition root, in `loom.composition`
 
 `loom.composition.create_app(*config_paths, adapter=..., ...)` is the only
-place that composes an application. `build_application` takes the same
-arguments and returns the composed, closed `Application` without mounting a
-transport; `compose_application(source, adapter, modules=...)` does the same
-from an already loaded `CompositionSource`. The steps run in a fixed order:
+place that composes an application in one call. `Project.load(...)` loads
+the configuration, and `project.compose(adapter, modules=...)` returns the
+composed, closed `Application` without mounting a transport;
+`project.serve(adapter, modules=...)` mounts the adapter's transport on it. The steps run in a fixed order:
 configuration and environment, observability, code path, the adapter's
 recipe (discovery runs here), deploy checks, backend `build` and
 `prepare_models`, kernel (caller modules, then repositories, then cache),

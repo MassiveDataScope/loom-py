@@ -6,7 +6,8 @@ from typing import Any, Protocol, cast
 
 import pytest
 
-from loom.composition import Application
+from loom.composition import Application, Project
+from loom.composition.recipe import Adapter
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.model import LoomStruct
@@ -14,7 +15,6 @@ from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
-from loom.testing import http_harness
 from loom.testing.http_harness import HttpTestHarness
 from loom.testing.in_memory import InMemoryRepository
 
@@ -375,13 +375,13 @@ class TestCapabilityKeys:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         composed: list[Application] = []
-        compose = http_harness.compose_application
+        compose = Project.compose
 
-        def captured(*args: Any, **kwargs: Any) -> Application:
-            composed.append(compose(*args, **kwargs))
+        def captured(self: Project, adapter: Adapter[object], **kwargs: Any) -> Application:
+            composed.append(compose(self, adapter, **kwargs))
             return composed[-1]
 
-        monkeypatch.setattr(http_harness, "compose_application", captured)
+        monkeypatch.setattr(Project, "compose", captured)
         fake = AcmeItemFake()
         harness = HttpTestHarness()
         harness.inject_repo(AcmeItem, fake)

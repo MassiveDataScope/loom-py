@@ -20,7 +20,7 @@ import pytest
 
 from loom.composition import Application, phases
 from loom.composition.errors import ReservedBindingError
-from loom.composition.source import CompositionSource
+from loom.composition.project import Project
 from loom.core.bootstrap import BootstrapError
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
@@ -157,7 +157,7 @@ class TestStartupErrors:
         assert type(caught.value) is BootstrapError
         assert isinstance(caught.value.__cause__, RuntimeError)
 
-    def test_seal_validates_the_container_it_seals(self, source: CompositionSource) -> None:
+    def test_seal_validates_the_container_it_seals(self, source: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
         recipe = phases.plan(source, adapter)
         stores = phases.build_stores(source, recipe)

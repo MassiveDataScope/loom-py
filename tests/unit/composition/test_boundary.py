@@ -53,7 +53,7 @@ from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
 
-from loom.composition import Recipe, build_application
+from loom.composition import Project, Recipe
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores.profile import WORKER_PROFILE
 
@@ -70,7 +70,7 @@ class Bare:
 
 
 async def main():
-    application = build_application(sys.argv[2], adapter=Bare(), environment="test")
+    application = Project.load(sys.argv[2], environment="test").compose(Bare())
     async with application.running():
         pass
 

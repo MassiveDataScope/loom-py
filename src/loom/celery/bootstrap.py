@@ -3,7 +3,7 @@
 :func:`bootstrap_worker` is the shortcut that starts a Loom Celery worker: it
 loads the configuration, composes the application with
 :class:`~loom.celery.adapter.CeleryAdapter` through the same recipe the API
-runs (:func:`loom.composition.compose_application`), and returns the Celery
+runs (:meth:`loom.composition.Project.compose`), and returns the Celery
 app with every job and callback task registered.
 
 Fork-safety design
@@ -44,7 +44,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import CompositionSource, compose_application
+from loom.composition import Project
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
@@ -167,7 +167,7 @@ def bootstrap_worker(
         )
         result.celery_app.start()
     """
-    source = CompositionSource.load(
+    project = Project.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,
@@ -182,7 +182,7 @@ def bootstrap_worker(
         callbacks=callbacks,
         metrics=metrics,
     )
-    application = compose_application(source, adapter, modules=modules)
+    application = project.compose(adapter, modules=modules)
     celery_app = adapter.bind(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,

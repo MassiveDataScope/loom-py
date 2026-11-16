@@ -52,7 +52,7 @@ from loom.serverless.aws.lambda_.triggers import (
 from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 
 if TYPE_CHECKING:
-    from loom.composition import Application, CompositionSource
+    from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
@@ -124,7 +124,7 @@ class LambdaAdapter:
         self._bind: _Bind | None = None
         self._handler: LambdaHandler | None = None
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         """Compose what the function's trigger serves, with the Lambda pool profile.
 
         Raises:
@@ -176,7 +176,7 @@ class LambdaAdapter:
         if self._handler is not None:
             self._handler.close()
 
-    def _compose_http(self, source: CompositionSource, name: str | None) -> tuple[Recipe, _Bind]:
+    def _compose_http(self, source: Project, name: str | None) -> tuple[Recipe, _Bind]:
         if self._jobs or self._use_cases or self._metrics is not None:
             raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
         from loom.serverless.aws.lambda_.triggers.http import compose_http
@@ -184,7 +184,7 @@ class LambdaAdapter:
         return compose_http(source, name, self._authenticator)
 
     def _compose_jobs(
-        self, source: CompositionSource, name: str, trigger: JobsTrigger | EventTrigger
+        self, source: Project, name: str, trigger: JobsTrigger | EventTrigger
     ) -> tuple[Recipe, _Bind]:
         if self._authenticator is not None:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")

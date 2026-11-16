@@ -12,13 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.composition.resources import ResourceKind
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
@@ -61,7 +55,7 @@ class _Models:
     def __init__(self, *models: type[BaseModel]) -> None:
         self.models = models
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         del source
         return Recipe(
             profile=SERVER_PROFILE,
@@ -83,7 +77,7 @@ def _compose(database: Path, *models: type[BaseModel]) -> Application:
         }
     )
     source = composition_source(ctx, app=AppConfig(name=database.stem))
-    return compose_application(source, _Models(*models))
+    return source.compose(_Models(*models))
 
 
 def _tables(database: Path) -> set[str]:

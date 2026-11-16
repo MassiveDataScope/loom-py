@@ -9,7 +9,7 @@
 - H3: an inline job run or dispatched by an execution bound to identity X
   runs as X, not as the ambient (anonymous) identity.
 
-The use cases run through the real composition (``build_application``) against
+The use cases run through the real composition (``Project.compose``) against
 real Postgres with ``schema.mode: external``.
 """
 
@@ -25,7 +25,7 @@ import pytest
 import yaml
 from sqlalchemy import CursorResult, text
 
-from loom.composition import build_application
+from loom.composition import Project
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
@@ -229,9 +229,7 @@ async def app(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterato
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
-    composed = build_application(
-        _config(tmp_path, schema), adapter=FastAPIAdapter(), environment="test"
-    )
+    composed = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIAdapter())
     async with composed.running():
         yield cast(AppInvoker, composed.kernel.app)
 

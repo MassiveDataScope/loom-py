@@ -22,7 +22,7 @@ from loom.core.stores.repository import CursorCodec
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
-    from loom.composition.source import CompositionSource
+    from loom.composition.project import Project
     from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
@@ -144,7 +144,7 @@ class Adapter(Protocol[T_co]):
     an object that owns closing it.
     """
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         """Declare how to compose the application from *source*."""
         ...
 

@@ -54,7 +54,7 @@ works like a class: `container.register(Gateway, gateway)` resolves the
 function's required parameters from the container.
 
 A composed application takes its modules through
-`create_app(..., modules=[...])` or `compose_application(..., modules=...)`. A
+`create_app(..., modules=[...])` or `Project.compose(adapter, modules=...)`. A
 standalone kernel takes them through `create_kernel`:
 
 ```{literalinclude} ../../tests/docs/examples/invoicing.py
@@ -186,9 +186,9 @@ seal. The container `create_kernel` returns stays unsealed.
 
 ## The composition pipeline
 
-`compose_application(source, adapter, modules=...)` runs these phases in
-order; `create_app` and `build_application` load the source
-(`CompositionSource.load`) and call it. Nothing registers after `register`.
+`Project.compose(adapter, modules=...)` runs these phases in
+order; `create_app` loads the project (`Project.load`) and calls
+`Project.serve`. Nothing registers after `register`.
 
 1. `plan`: the adapter returns its `Recipe`; failing deploy checks stop
    start-up in a deployed environment.
@@ -360,7 +360,7 @@ Known debt:
 | Change | Before | After |
 |---|---|---|
 | REST adapter builds the use case | `LoomRestAdapter(executor)`; `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p, dependencies={User: users}))` | `LoomRestAdapter(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, AdapterRequest(params=p))`, with `users` bound in the container. `AdapterRequest.dependencies` is removed. |
-| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: `create_app(..., modules=[...])` or `compose_application(..., modules=...)`. A sealed container raises `ContainerSealed`. |
+| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: `create_app(..., modules=[...])` or `Project.compose(adapter, modules=...)`. A sealed container raises `ContainerSealed`. |
 | Kernel keys | A module binding `UseCaseFactory`, `RuntimeExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |
 | Long background work | Ran as the request's caller indefinitely | Runs as the caller for at most `identity.max_delegation_seconds`; switch to a system identity with `executor.run(UseCase, identity=...)`. |
@@ -371,7 +371,7 @@ Known debt:
 | `Scope.REQUEST` | A new instance per `resolve` | One instance per execution, shared by its tasks; a nested execution gets its own. |
 | Re-registering a key | Built instances kept | The key's built instance is dropped and every binding is recompiled at its next resolve. |
 | Deprecated bootstrap | `bootstrap_app(...)`; `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`. Both old forms emit `DeprecationWarning`. |
-| Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.source.load_application_config`, `loom.composition.source.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
+| Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.project.load_application_config`, `loom.composition.project.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
 | Runtime events | `RuntimeEvent(status="success")` | `RuntimeEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
 | Compute and rule steps | Telling `ComputeStep` from `RuleStep` by type | Both are `CommandStep`; read the plan field holding them (`compute_steps`, `rule_steps`). |
 | Execution logs | `[EXEC] <use case>` start line; `[STEP]` lines; `[RULE]` warnings | One terminal `[DONE]` or `[FAIL]` line per execution; `steps` and `broken_rules` fields on it. |

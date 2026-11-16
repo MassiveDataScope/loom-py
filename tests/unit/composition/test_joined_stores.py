@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -82,8 +82,8 @@ def _compose(
         config_root=tmp_path,
     )
     if issubclass(component, Job):
-        return compose_application(source, Serving(AcmeJoinedInvoice, jobs=(component,)))
-    return compose_application(source, Serving(AcmeJoinedInvoice, use_cases=(component,)))
+        return source.compose(Serving(AcmeJoinedInvoice, jobs=(component,)))
+    return source.compose(Serving(AcmeJoinedInvoice, use_cases=(component,)))
 
 
 class TestJoinedStores:

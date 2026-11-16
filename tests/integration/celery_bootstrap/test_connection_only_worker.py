@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -105,7 +105,7 @@ def _worker(tmp_path: Path, url: str) -> Any:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, CeleryAdapter(jobs=[_RawSqlJob]))
+    return source.compose(CeleryAdapter(jobs=[_RawSqlJob]))
 
 
 async def _connections(database: str, name: str) -> int:

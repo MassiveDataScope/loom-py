@@ -15,8 +15,7 @@ from typing import Any
 import pytest
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import compose_application
-from loom.composition.source import CompositionSource
+from loom.composition import Project
 from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigContext
@@ -60,38 +59,35 @@ _SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
 
 class TestLenientHarness:
     @pytest.fixture
-    def ledger_source(self) -> CompositionSource:
+    def ledger_source(self) -> Project:
         """``acme`` over SQLite, beside a ``ledger`` store with no unit of work; jobs inline."""
         return composition_source(ConfigContext.from_dict(_LEDGER))
 
     @pytest.mark.parametrize("check", list(_SKIPPED))
     def test_a_strict_recipe_refuses_what_a_lenient_one_skips(
-        self, check: str, ledger_source: CompositionSource
+        self, check: str, ledger_source: Project
     ) -> None:
         components, refused = _SKIPPED[check]
 
         with pytest.raises(refused):
-            compose_application(ledger_source, Serving(AcmeRecord, **components))
+            ledger_source.compose(Serving(AcmeRecord, **components))
 
     @pytest.mark.parametrize("check", list(_SKIPPED))
-    def test_a_lenient_recipe_skips_the_check(
-        self, check: str, ledger_source: CompositionSource
-    ) -> None:
+    def test_a_lenient_recipe_skips_the_check(self, check: str, ledger_source: Project) -> None:
         components, _ = _SKIPPED[check]
 
         adapter = Serving(AcmeRecord, **components, lenient=True)
 
-        kernel = compose_application(ledger_source, adapter).kernel
+        kernel = ledger_source.compose(adapter).kernel
 
         assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
 
     def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
         self,
-        ledger_source: CompositionSource,
+        ledger_source: Project,
     ) -> None:
         with pytest.raises(BootstrapError) as caught:
-            compose_application(
-                ledger_source,
+            ledger_source.compose(
                 Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
                 modules=(binds_unbuildable,),
             )
@@ -104,7 +100,7 @@ class TestLenientHarness:
         )
 
         with pytest.raises(DeployCheckError):
-            compose_application(production, Serving())
+            production.compose(Serving())
 
     @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.TEST])
     def test_a_lenient_recipe_runs_no_deploy_check(
@@ -115,6 +111,6 @@ class TestLenientHarness:
         )
 
         with caplog.at_level(logging.DEBUG, logger="loom.core.checks"):
-            compose_application(source, Serving(lenient=True))
+            source.compose(Serving(lenient=True))
 
         assert [r for r in caplog.records if r.name == "loom.core.checks"] == []

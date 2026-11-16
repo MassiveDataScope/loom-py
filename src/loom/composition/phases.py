@@ -1,4 +1,4 @@
-"""The ordered phases that compose an application, and :func:`compose_application` running them.
+"""The ordered phases that :meth:`~loom.composition.project.Project.compose` runs.
 
 The order: :func:`plan` takes the adapter's recipe; :func:`build_stores` builds
 every store before any registration; :func:`register` fills the container and
@@ -12,21 +12,19 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from loom.composition._ai import AiWiring, MarkerDeclarations
 from loom.composition._jobs import configure_job_service
 from loom.composition._reserved import reserved_keys
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
-from loom.composition.application import Application
 from loom.composition.errors import ReservedBindingError
 from loom.composition.recipe import Adapter, Recipe
-from loom.composition.resources import Resource, ResourceKind, closing
-from loom.composition.source import CompositionSource
+from loom.composition.resources import Resource, ResourceKind
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import BootstrapError, KernelRuntime
 from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
-from loom.core.cache.wiring import CacheGateways, cache_module_for
+from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.di.container import LoomContainer, ResolutionError
@@ -34,7 +32,7 @@ from loom.core.di.graph import GraphAnalysis
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LoggerPort
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores import StoreRuntime, StoreWiring
 from loom.core.stores.catalog import (
@@ -49,6 +47,9 @@ from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.factory import ModelRead
 from loom.core.use_case.kinds import AGENT, MCP
+
+if TYPE_CHECKING:
+    from loom.composition.project import Project
 
 T = TypeVar("T")
 
@@ -116,91 +117,7 @@ class Stores:
         )
 
 
-def compose_application(
-    source: CompositionSource,
-    adapter: Adapter[object],
-    *,
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
-) -> Application:
-    """Compose the application *adapter* asks for from an already loaded *source*.
-
-    :func:`~loom.composition.build_application` loads the source from files; a
-    test or a host that holds its configuration in memory calls this directly.
-    Logs one ``loom.composition.composed`` info event with the milliseconds of
-    each phase.
-
-    Args:
-        source: Configuration, environment and code of the application.
-        adapter: Whose recipe to compose.
-        modules: DI modules run before repositories are registered; see
-            :func:`~loom.composition.create_app`.
-
-    Returns:
-        The composed, closed application.
-
-    Raises:
-        ConfigError: When a model belongs to a store the catalog does not
-            serve, or the store section is invalid, or a job backend cannot be built.
-        JoinedAutocommitStore: When a use case declares ``Joined`` on a store
-            that cannot roll back.
-        UncomposedWriteStore: When a use case or job writes to a store with
-            no unit of work.
-        DeployCheckError: When a deploy check of level error fails in a
-            deployed environment.
-        ReservedBindingError: When a module binds a framework-owned key.
-    """
-    logger = get_logger(__name__)
-    clock = PhaseClock()
-    recipe = clock.lap("plan", plan(source, adapter))
-    stores = clock.lap("build_stores", build_stores(source, recipe))
-    kernel, sql, job_resources = clock.lap(
-        "register", register(source, recipe, stores, modules=modules, logger=logger)
-    )
-    analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
-    ai = clock.lap("wire_ai", wire_ai(source, recipe, kernel, analysis, sql))
-    seal(kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories)
-    clock.lap("seal", None)
-    gateways = kernel.container.resolve_or_none(CacheGateways)
-    cache = () if gateways is None else gateways.named()
-    discovered = recipe.discovered
-    application = Application(
-        kernel=kernel,
-        config=source.config,
-        environment=source.environment,
-        code_path=source.code_path,
-        discovered=discovered,
-        observability=source.observability,
-        sql=sql,
-        ai=ai,
-        job_settings=stores.job_settings,
-        resources=(
-            *job_resources,
-            *(
-                Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
-                for name, gateway in cache
-            ),
-            *(resource for resource in (sql.resource, ai.resource) if resource is not None),
-            *stores.resources,
-        ),
-    )
-    logger.info(
-        "loom.composition.composed",
-        adapter=type(adapter).__qualname__,
-        use_cases=len(discovered.use_cases),
-        jobs=len(discovered.jobs),
-        backends=stores.store_backends,
-        keys=len(kernel.container.bindings()),
-        modules=len(modules),
-        overrides=len(recipe.overrides),
-        agents=len(ai.plans),
-        mcp_servers=len(ai.mcp_servers),
-        phase_ms=clock.ms,
-        duration_ms=clock.total_ms,
-    )
-    return application
-
-
-def plan(source: CompositionSource, adapter: Adapter[object]) -> Recipe:
+def plan(source: Project, adapter: Adapter[object]) -> Recipe:
     """Ask *adapter* for its recipe, then refuse a failing deploy check.
 
     A lenient recipe runs no deploy check.
@@ -222,7 +139,7 @@ def plan(source: CompositionSource, adapter: Adapter[object]) -> Recipe:
     return recipe
 
 
-def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
+def build_stores(source: Project, recipe: Recipe) -> Stores:
     """Read each job's settings, then build and prepare every store the discovered models use.
 
     The stores share one cursor codec, built only when
@@ -274,7 +191,7 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
 
 
 def register(
-    source: CompositionSource,
+    source: Project,
     recipe: Recipe,
     stores: Stores,
     *,
@@ -372,7 +289,7 @@ def register(
 
 
 def wire_ai(
-    source: CompositionSource,
+    source: Project,
     recipe: Recipe,
     kernel: KernelRuntime,
     analysis: GraphAnalysis,

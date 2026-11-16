@@ -10,14 +10,7 @@ from typing import Any, assert_type
 
 import pytest
 
-from loom.composition import (
-    Application,
-    CompositionSource,
-    Recipe,
-    build_application,
-    create_app,
-    load_source,
-)
+from loom.composition import Application, Project, Recipe, create_app
 from loom.composition.resources import ResourceKind
 from loom.core.authz.elevation import ElevationSink
 from loom.core.command import Command
@@ -38,7 +31,7 @@ from tests.helpers.composition import ProjectFactory, coordinator_of
 class AcmeTransportFreeAdapter:
     """No transport at all: what a script or a test composes."""
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=source.discover(),
@@ -79,7 +72,7 @@ class _Handler:
 
 # The adapter under test: a profile of its own, one extra use case, its own result type.
 class _TinyAdapter:
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         discovered = source.discover()
         return Recipe(
             profile=_TINY,
@@ -107,8 +100,8 @@ class TestTransportFreeComposition:
         self,
         fixture_project: ProjectFactory,
     ) -> None:
-        application = build_application(
-            fixture_project(), adapter=AcmeTransportFreeAdapter(), environment="test"
+        application = Project.load(fixture_project(), environment="test").compose(
+            AcmeTransportFreeAdapter()
         )
         (record,) = application.discovered.models
         (ping,) = application.discovered.use_cases
@@ -125,6 +118,17 @@ class TestTransportFreeComposition:
         assert found.name == "first"
         assert answer == "pong"
 
+    def test_serve_mounts_the_adapter_transport_on_the_composed_application(
+        self, fixture_project: ProjectFactory
+    ) -> None:
+        project = Project.load(fixture_project(), environment="test")
+
+        handler = project.serve(_TinyAdapter())
+
+        assert_type(handler, _Handler)
+        assert isinstance(handler.application, Application)
+        assert not handler.application.is_open
+
     def test_the_adapter_under_test_stays_under_thirty_lines(self) -> None:
         source = Path(__file__).read_text(encoding="utf-8")
         start = source.index("class _TinyAdapter:")
@@ -137,8 +141,8 @@ class TestTransportFreeComposition:
         self,
         fixture_project: ProjectFactory,
     ) -> None:
-        application = build_application(
-            fixture_project(), adapter=AcmeTransportFreeAdapter(), environment="test"
+        application = Project.load(fixture_project(), environment="test").compose(
+            AcmeTransportFreeAdapter()
         )
 
         assert application.kernel.container.resolve_or_none(ElevationSink) is None
@@ -149,9 +153,7 @@ class TestTransportFreeComposition:
     ) -> None:
         project = fixture_project(settings={"rollback_timeout": 5})
 
-        application = build_application(
-            project, adapter=AcmeTransportFreeAdapter(), environment="test"
-        )
+        application = Project.load(project, environment="test").compose(AcmeTransportFreeAdapter())
 
         assert coordinator_of(application.kernel.executor)._rollback_timeout == 5.0  # noqa: SLF001
 
@@ -167,7 +169,7 @@ class TestTransportFreeComposition:
         with pytest.raises(
             ConfigError, match="stores.settings.rollback_timeout must be a finite number above zero"
         ):
-            build_application(project, adapter=adapter, environment="test")
+            Project.load(project, environment="test").compose(adapter)
 
     @pytest.fixture
     def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
@@ -189,7 +191,7 @@ class TestTransportFreeComposition:
 
 
 class TestLoadSource:
-    def test_load_source_requires_app_name_with_or_without_app_section(
+    def test_project_load_requires_app_name_with_or_without_app_section(
         self, tmp_path: Path
     ) -> None:
         config = tmp_path / "config.yaml"
@@ -203,17 +205,17 @@ class TestLoadSource:
 
         config.write_text("celery: {}\n", encoding="utf-8")
         with pytest.raises(ConfigError, match="app.name is required"):
-            load_source(str(config), **options)
+            Project.load(str(config), **options)
 
         config.write_text("app:\n  code_path: .\n", encoding="utf-8")
         with pytest.raises(ConfigError, match="app.name is required"):
-            load_source(str(config), **options)
+            Project.load(str(config), **options)
 
-    def test_load_source_needs_only_the_config_paths(self, tmp_path: Path) -> None:
+    def test_project_load_needs_only_the_config_paths(self, tmp_path: Path) -> None:
         config = tmp_path / "config.yaml"
         config.write_text("app:\n  name: acme\n", encoding="utf-8")
 
-        source = load_source(str(config))
+        source = Project.load(str(config))
 
         assert source.app.name == "acme"
 
@@ -227,14 +229,12 @@ class TestLoadSource:
                 "create_app",
             ),
             (
-                lambda *p, config_dir: build_application(
-                    *p, adapter=AcmeTransportFreeAdapter(), config_dir=config_dir
-                ),
-                "build_application",
+                lambda *p, config_dir: Project.load(*p, config_dir=config_dir),
+                "Project.load",
             ),
             (_bootstrap_worker, "bootstrap_worker"),
         ],
-        ids=["create_app", "build_application", "bootstrap_worker"],
+        ids=["create_app", "project_load", "bootstrap_worker"],
     )
     def test_each_entry_point_names_itself_when_paths_conflict(
         self, tmp_path: Path, entry: Any, name: str

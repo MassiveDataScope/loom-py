@@ -63,8 +63,8 @@ from loom.composition import (
     Application,
     ApplicationHost,
     CompositionErrorCode,
-    CompositionSource,
     CompositionStateError,
+    Project,
     Recipe,
 )
 from loom.core.async_bridge import build_backend_options
@@ -328,7 +328,7 @@ class CeleryAdapter:
         self._metrics = metrics
         self._declared: _Declared | None = None
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         """Decode ``celery`` and discover the worker's components; the composition applies ``jobs``.
 
         Raises:

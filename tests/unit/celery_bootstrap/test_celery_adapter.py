@@ -15,11 +15,10 @@ from loom.composition import (
     AppConfig,
     Application,
     CompositionErrorCode,
-    CompositionSource,
     CompositionStateError,
+    Project,
     Recipe,
 )
-from loom.composition import compose_application as compose
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
@@ -63,7 +62,7 @@ class _KnowledgeUseCase(UseCase[object, object]):
         return gateway
 
 
-def _source(tmp_path: Path, config: dict[str, Any]) -> CompositionSource:
+def _source(tmp_path: Path, config: dict[str, Any]) -> Project:
     return composition_source(
         ConfigContext.from_dict({"celery": _CELERY, **config}),
         app=AppConfig(name="worker"),
@@ -73,10 +72,10 @@ def _source(tmp_path: Path, config: dict[str, Any]) -> CompositionSource:
 
 
 def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter) -> Application:
-    return compose(_source(tmp_path, config), adapter)
+    return _source(tmp_path, config).compose(adapter)
 
 
-def _default_backend(source: CompositionSource, recipe: Recipe) -> str:
+def _default_backend(source: Project, recipe: Recipe) -> str:
     """The backend the composition builds the default store of *recipe* with."""
     return source.resolve_store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
 
@@ -115,7 +114,7 @@ class TestBackendRule:
         assert _default_backend(source, recipe) == "sqlalchemy"
         adapter = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(ConfigError, match="url"):
-            compose(source, adapter)
+            source.compose(adapter)
 
 
 class TestRecipe:

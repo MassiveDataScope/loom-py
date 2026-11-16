@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
@@ -32,7 +32,7 @@ class JobsAdapter:
     def __init__(self, *jobs: type[Job[Any]]) -> None:
         self._jobs = jobs
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
@@ -45,9 +45,7 @@ class JobsAdapter:
         return application
 
 
-def job_source(
-    tmp_path: Path, config: dict[str, Any], job_service: str | None = None
-) -> CompositionSource:
+def job_source(tmp_path: Path, config: dict[str, Any], job_service: str | None = None) -> Project:
     return composition_source(
         ConfigContext.from_dict(config),
         app=AppConfig(name="jobs", job_service=job_service),

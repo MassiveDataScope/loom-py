@@ -8,8 +8,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import compose_application
-from loom.composition.source import CompositionSource
+from loom.composition import Project
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.errors import ContainerSealed, DependencyWarning
@@ -119,7 +118,7 @@ def _binds_crm(container: LoomContainer) -> None:
     container.register(AcmeCrmPort, AcmeMcpCrm, scope=Scope.APPLICATION)
 
 
-def _source() -> CompositionSource:
+def _source() -> Project:
     return composition_source(
         ConfigContext.from_dict(
             {
@@ -139,7 +138,7 @@ class TestUnboundMcpAdapter:
         source = _source()
 
         with pytest.raises(AgentCompilationError) as caught:
-            compose_application(source, adapter, modules=(_binds_crm,))
+            source.compose(adapter, modules=(_binds_crm,))
 
         assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
         assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
@@ -149,7 +148,7 @@ class TestUnboundMcpAdapter:
         source = _source()
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-            application = compose_application(source, adapter, modules=(_binds_crm,))
+            application = source.compose(adapter, modules=(_binds_crm,))
 
         with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
             application.kernel.container.resolve(AcmeCrmPort)
@@ -157,7 +156,7 @@ class TestUnboundMcpAdapter:
     def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)
 
-        application = compose_application(_source(), adapter)
+        application = _source().compose(adapter)
 
         assert application.kernel.compiler.get_plan(AcmeMcpUser) is not None
 

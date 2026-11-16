@@ -6,8 +6,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from loom.composition import Application, compose_application
-from loom.composition.source import CompositionSource
+from loom.composition import Application, Project
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from tests.helpers.composition import Serving, composition_source, executors, fixture_project
@@ -20,7 +19,7 @@ Module = Callable[[LoomContainer], None]
 
 
 @pytest.fixture
-def source() -> CompositionSource:
+def source() -> Project:
     """An in-memory source: the ``acme`` application over SQLite, jobs inline."""
     return composition_source(
         ConfigContext.from_dict(
@@ -33,11 +32,11 @@ def source() -> CompositionSource:
 
 
 @pytest.fixture
-def overridden(source: CompositionSource) -> Callable[..., Application]:
+def overridden(source: Project) -> Callable[..., Application]:
     """Compose ``AcmeRecord``, ``AcmePing`` and ``AcmeJob`` over SQLite with these overrides."""
 
     def compose(*overrides: Module, modules: Sequence[Module] = ()) -> Application:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,), overrides=overrides)
-        return compose_application(source, adapter, modules=modules)
+        return source.compose(adapter, modules=modules)
 
     return compose

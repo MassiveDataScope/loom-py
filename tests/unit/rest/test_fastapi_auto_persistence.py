@@ -76,7 +76,7 @@ def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
 
 @pytest.fixture
 def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _agents_only())
+    monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: _agents_only())
     monkeypatch.setattr(AiWiring, "build", classmethod(lambda cls, *args, **kwargs: cls.ABSENT))
 
 
@@ -277,7 +277,7 @@ class TestDiscoverComponents:
     def test_discover_components_rejects_empty_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _no_models())
+        monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: _no_models())
         source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
         with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
@@ -328,7 +328,7 @@ class TestBuildBootstrapModelRules:
             auto = True
 
         monkeypatch.setattr(
-            "loom.composition.source.discover",
+            "loom.composition.project.discover",
             lambda _cfg: DiscoveryResult(
                 models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
             ),
@@ -358,7 +358,7 @@ class TestBuildBootstrapModelRules:
             routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
 
         monkeypatch.setattr(
-            "loom.composition.source.discover",
+            "loom.composition.project.discover",
             lambda _cfg: DiscoveryResult(
                 models=(),
                 use_cases=(),

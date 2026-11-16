@@ -605,7 +605,7 @@
   | `BackendRuntime` | `StoreRuntime` |
   | `resolve_backend` | `resolve_store_backend` |
   | `unknown_backend_message` | private |
-  | `CompositionSource.backend()` | `CompositionSource.resolve_store_backend()` |
+  | `CompositionSource.backend()` | `Project.resolve_store_backend()` |
   | `loom.composition.phases.Stores.backends` | `Stores.store_backends` |
   | `Recipe.default_backend` | `Recipe.default_store_backend` |
   | entry point group `loom.persistence.backends` | `loom.stores.backends` |
@@ -633,10 +633,46 @@
   | `RecordLayout.of(type)` | `RecordLayout.from_struct(type)` |
   | `RecordLayout.values(row)` | `RecordLayout.to_values(row)` |
   | `ScopedElevationSink.of(wirings)` | `ScopedElevationSink.from_wirings(wirings)` |
-  | `CompositionSource.store_backend(key, default=)` | `CompositionSource.resolve_store_backend(key, default=)` |
+  | `CompositionSource.store_backend(key, default=)` | `Project.resolve_store_backend(key, default=)` |
   | `Recipe.cursor_codec(ctx)` | `Recipe.build_cursor_codec(ctx)` |
   | `AwsClientConfig.client(service)` | `AwsClientConfig.build_client(service)` |
   | `StoreSetting.refuse_unknown(shared)` | `StoreSetting.check_section(shared)` |
+
+- **composition:** the composition is composed and served through `Project`.
+  Before: `CompositionSource.load(...)` loaded the configuration and
+  `build_application(...)`, `compose_application(source, adapter, modules=)`
+  and `load_source(...)` composed it. Now: `Project.load(...)` loads it,
+  `project.compose(adapter, modules=)` returns the `Application` and
+  `project.serve(adapter, modules=)` mounts the adapter's transport on it;
+  `create_app` stays the only shortcut. `build_application`, `load_source`
+  and `compose_application` no longer exist and nothing is re-exported; the
+  module `loom.composition.source` is now `loom.composition.project`. The
+  `caller` that names an entry point in a path error defaults to
+  `Project.load`.
+
+  | Before | After |
+  |---|---|
+  | `loom.composition.CompositionSource` | `loom.composition.Project` |
+  | `loom.composition.source.CompositionSource` | `loom.composition.project.Project` |
+  | `loom.composition.source.AppConfig` | `loom.composition.project.AppConfig` |
+  | `build_application(*paths, adapter=a, **load)` | `Project.load(*paths, **load).compose(a)` |
+  | `compose_application(source, a, modules=m)` | `source.compose(a, modules=m)` |
+  | `load_source(*paths, **load)` | `Project.load(*paths, **load)` |
+
+  **Migration:**
+
+  ```python
+  # before
+  application = build_application("config/base.yaml", adapter=adapter, environment="test")
+  source = load_source("config/base.yaml")
+  application = compose_application(source, adapter, modules=[install_acme])
+
+  # after
+  application = Project.load("config/base.yaml", environment="test").compose(adapter)
+  source = Project.load("config/base.yaml")
+  application = source.compose(adapter, modules=[install_acme])
+  ```
+
 
 ## ✨ Features
 

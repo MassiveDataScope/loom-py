@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import Application, build_application
+from loom.composition import Application, Project
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.loops import RecordedLoops
@@ -72,7 +72,7 @@ def opened_on(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.AbstractEventLoop
 def unreachable(contract_project: ProjectFactory) -> tuple[LambdaAdapter, Application]:
     """A composed application whose database is unreachable when it opens."""
     adapter = LambdaAdapter()
-    application = build_application(contract_project(), adapter=adapter, environment="test")
+    application = Project.load(contract_project(), environment="test").compose(adapter)
 
     async def refuse() -> None:
         raise ConnectionError("database unreachable")
@@ -121,7 +121,7 @@ class TestLambdaHandler:
         self, contract_project: ProjectFactory
     ) -> None:
         adapter = LambdaAdapter()
-        application = build_application(contract_project(), adapter=adapter, environment="test")
+        application = Project.load(contract_project(), environment="test").compose(adapter)
         checks = CountedChecks()
         checks.wrap(application)
         handler = adapter.bind(application)

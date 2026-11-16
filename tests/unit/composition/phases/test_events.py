@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
-from loom.composition import Application, phases
+from loom.composition import Application, project
 from loom.core.di.container import LoomContainer
 from tests.helpers.loggers import RecordingLogger
 
@@ -22,7 +22,7 @@ class TestComposedEvent:
         self, overridden: Callable[..., Application], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         logger = RecordingLogger()
-        monkeypatch.setattr(phases, "get_logger", lambda name: logger)
+        monkeypatch.setattr(project, "get_logger", lambda name: logger)
 
         overridden(modules=(_acme_module,))
 

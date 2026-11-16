@@ -17,7 +17,7 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application, Project
 from loom.composition.recipe import Adapter
 from loom.core.bootstrap import bootstrap_app, create_kernel
 from loom.core.config import ConfigContext
@@ -128,12 +128,14 @@ def harness(
 
     applications: list[Application] = []
 
-    def captured(*args: Any, **kwargs: Any) -> Application:
-        application = compose_application(*args, **kwargs)
+    compose = Project.compose
+
+    def captured(self: Project, adapter: Adapter[object], **kwargs: Any) -> Application:
+        application = compose(self, adapter, **kwargs)
         applications.append(application)
         return application
 
-    monkeypatch.setattr(http_harness, "compose_application", captured)
+    monkeypatch.setattr(Project, "compose", captured)
     built = http_harness.HttpTestHarness()
     built.inject_repo(AcmeRecord, InMemoryRepository(AcmeRecord))
     built.build_app(interfaces=list(composition.interfaces))
@@ -198,9 +200,7 @@ def _composed(
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    application = compose_application(
-        source, cast(Adapter[object], adapter), modules=composition.modules
-    )
+    application = source.compose(cast(Adapter[object], adapter), modules=composition.modules)
     return application.kernel.container
 
 
@@ -222,7 +222,7 @@ COMPOSED: dict[str, StartupPath] = {
     "lambda_events": lambda_events,
     "celery": celery,
 }
-"""The paths through ``compose_application``, by name."""
+"""The paths through ``Project.compose``, by name."""
 
 STANDALONE: dict[str, StartupPath] = {
     "create_kernel": standalone_kernel,
@@ -231,7 +231,7 @@ STANDALONE: dict[str, StartupPath] = {
 """The paths calling the kernel directly, by name."""
 
 UNCOMPOSED: dict[str, StartupPath] = {"harness": harness, **STANDALONE}
-"""The paths that do not go through ``compose_application``, by name."""
+"""The paths that do not go through ``Project.compose``, by name."""
 
 HTTP = ("fastapi", "lambda_http")
 """The paths serving HTTP, where some refusals read differently: see each variant."""

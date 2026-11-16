@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition import Application, Project, Recipe
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
 from loom.core.command import Command
@@ -81,7 +81,7 @@ class _SingleStoreAdapter:
         self._build_use_cases = build_use_cases
         self.use_cases: tuple[type, ...] = ()
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         discovered = source.discover()
         model = _config_record(discovered)
         self.use_cases = self._build_use_cases(model)
@@ -119,7 +119,7 @@ def _compose(
     config_path: str, build_use_cases: _UseCases
 ) -> tuple[Application, tuple[type, ...], type[BaseModel]]:
     adapter = _SingleStoreAdapter(build_use_cases)
-    application = build_application(config_path, adapter=adapter, environment="test")
+    application = Project.load(config_path, environment="test").compose(adapter)
     assert isinstance(uow_factory(application), SQLAlchemyUnitOfWorkFactory)
     return application, adapter.use_cases, _config_record(application.discovered)
 

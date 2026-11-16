@@ -48,7 +48,7 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
     from loom.celery.adapter import CeleryAdapter
-    from loom.composition import AppConfig, compose_application
+    from loom.composition import AppConfig
     from loom.core.job.job import Job
 
     class _PingJob(Job[int]):
@@ -62,7 +62,7 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
         ),
         app=AppConfig(name="worker"),
     )
-    factory: Any = uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
+    factory: Any = uow_factory(source.compose(CeleryAdapter(jobs=[_PingJob])))
     return factory._session_manager
 
 

@@ -15,13 +15,7 @@ import pytest
 import yaml
 
 from loom.ai import registry
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
@@ -73,7 +67,7 @@ class AgentlessHost:
     def __init__(self, use_cases: tuple[type, ...], callbacks: tuple[type, ...] = ()) -> None:
         self.use_cases, self.callbacks = use_cases, callbacks
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, source: Project) -> Recipe:
         del source
         discovered = DiscoveryResult(models=(), use_cases=self.use_cases, interfaces=(), jobs=())
         return Recipe(
@@ -110,7 +104,7 @@ def engines(
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> CompositionSource:
+def source(tmp_path: Path) -> Project:
     """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts."""
     agents = tmp_path / "agents"
     agents.mkdir()
@@ -144,7 +138,7 @@ def binding(port: type, adapter: object) -> Callable[[LoomContainer], None]:
 
 
 @pytest.fixture
-def compose(source: CompositionSource, engines: CountingEngineProvider) -> Compose:
+def compose(source: Project, engines: CountingEngineProvider) -> Compose:
     """Compose the Lambda function ``worker`` (or *host*) over *use_cases* with the ports bound.
 
     ``quotes`` and ``advice`` default to the adapters declaring ``Mcp('pricing')``
@@ -159,9 +153,8 @@ def compose(source: CompositionSource, engines: CountingEngineProvider) -> Compo
         host: object | None = None,
     ) -> Application:
         cases = use_cases or (AcmeMarket,)
-        return compose_application(
-            source,
-            host or LambdaAdapter(use_cases=cases),  # type: ignore[arg-type]
+        return source.compose(
+            host or LambdaAdapter(use_cases=cases),
             modules=(binding(AcmeQuotes, quotes), binding(AcmeAdvice, advice)),
         )
 

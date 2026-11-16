@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
-from loom.composition.application import Application
-from loom.composition.phases import compose_application
-from loom.composition.source import CompositionSource
+from loom.composition.project import Project
 from loom.core.config import ConfigError, ConfigResolver
 from loom.core.environment import Environment
 
@@ -77,7 +75,7 @@ def create_app(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    source = CompositionSource.load(
+    project = Project.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,
@@ -85,9 +83,9 @@ def create_app(
         resolvers=resolvers,
         caller="create_app",
     )
-    resolved = adapter if adapter is not None else _adapter_from_entry(source)
-    application = compose_application(source, resolved, modules=modules)
-    return resolved.bind(application)
+    return project.serve(
+        adapter if adapter is not None else _adapter_from_entry(project), modules=modules
+    )
 
 
 def _fastapi() -> Adapter[object]:
@@ -108,72 +106,9 @@ _BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
 }
 
 
-def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
-    entry = source.app.entry
+def _adapter_from_entry(project: Project) -> Adapter[object]:
+    entry = project.app.entry
     if entry is None:
         raise ConfigError("create_app needs adapter= or app.entry")
     builtin = _BUILTIN_ENTRIES.get(entry)
     return builtin() if builtin is not None else _lambda(entry)
-
-
-def build_application(
-    *config_paths: str,
-    adapter: Adapter[object],
-    config_dir: str | None = None,
-    environment: Environment | str | None = None,
-    code_path: str | None = None,
-    resolvers: Sequence[ConfigResolver] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
-) -> Application:
-    """Compose the application *adapter* asks for, without mounting a transport.
-
-    Opens nothing: building a backend creates its engine or client, not a
-    connection. :meth:`Application.check` and :meth:`Application.running`
-    are what reach the outside.
-
-    Args:
-        *config_paths: See :func:`create_app`.
-        adapter: Whose recipe to compose.
-        config_dir: See :func:`create_app`.
-        environment: See :func:`create_app`.
-        code_path: See :func:`create_app`.
-        resolvers: See :func:`create_app`.
-        modules: See :func:`create_app`.
-
-    Returns:
-        The composed, closed application.
-
-    Raises:
-        ConfigError: When the configuration is incomplete or invalid.
-        DeployCheckError: When a deploy check of level error fails in a
-            deployed environment.
-        ReservedBindingError: When a module binds a framework-owned key.
-    """
-    source = CompositionSource.load(
-        *config_paths,
-        config_dir=config_dir,
-        environment=environment,
-        code_path=code_path,
-        resolvers=resolvers,
-        caller="build_application",
-    )
-    return compose_application(source, adapter, modules=modules)
-
-
-def load_source(
-    *config_paths: str,
-    config_dir: str | None = None,
-    environment: Environment | str | None = None,
-    code_path: str | None = None,
-    resolvers: Sequence[ConfigResolver] = (),
-    caller: str = "load_source",
-) -> CompositionSource:
-    """Load the source an application composes from; see :meth:`CompositionSource.load`."""
-    return CompositionSource.load(
-        *config_paths,
-        config_dir=config_dir,
-        environment=environment,
-        code_path=code_path,
-        resolvers=resolvers,
-        caller=caller,
-    )

@@ -22,7 +22,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.celery.bootstrap import bootstrap_worker
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.composition import build_application
+from loom.composition import Project
 from loom.core.environment import Environment
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import encode_identity
@@ -107,7 +107,7 @@ def _config(tmp_path: Path) -> str:
 
 
 async def _through_the_api(config: str, subject: str) -> list[str]:
-    application = build_application(config, adapter=FastAPIAdapter(), environment="test")
+    application = Project.load(config, environment="test").compose(FastAPIAdapter())
     token = set_identity(Identity(subject=subject))
     try:
         async with application.running():

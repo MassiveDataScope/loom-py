@@ -21,7 +21,7 @@ from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
 
 if TYPE_CHECKING:
-    from loom.composition import Application, CompositionSource
+    from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
@@ -35,7 +35,7 @@ Read = Callable[[Any], Sequence[tuple[JobEnvelope, str | None]]]
 
 
 def jobs_recipe(
-    source: CompositionSource,
+    source: Project,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
     metrics: MetricsAdapter | None,

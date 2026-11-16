@@ -1,6 +1,6 @@
 """Every entry point refuses, at composition, a use case that reads a model nothing serves.
 
-``compose_application`` hands ``factory.verify`` the models the compiled plans
+``Project.compose`` hands ``factory.verify`` the models the compiled plans
 read through markers, so the API and the worker raise the same typed
 :class:`~loom.core.use_case.errors.UnservedModelError` before serving.
 """
@@ -12,11 +12,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import (
-    AppConfig,
-    CompositionSource,
-    compose_application,
-)
+from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case import Exists, LoadById, UnservedModelError, UseCase, UseCaseErrorCode
@@ -47,7 +43,7 @@ class _InvoiceExists(UseCase[object, bool]):
         return known
 
 
-def _source(tmp_path: Path) -> CompositionSource:
+def _source(tmp_path: Path) -> Project:
     return composition_source(
         ConfigContext.from_dict(
             {
@@ -73,7 +69,7 @@ class TestUnservedModel:
         source = _source(tmp_path)
         adapter = Serving(use_cases=(use_case,))
         with pytest.raises(UnservedModelError) as caught:
-            compose_application(source, adapter)
+            source.compose(adapter)
 
         issue = caught.value.issue
         assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
@@ -81,8 +77,8 @@ class TestUnservedModel:
         assert caught.value.model is AcmeUnreadInvoice
 
     def test_a_discovered_model_composes(self, tmp_path: Path) -> None:
-        application = compose_application(
-            _source(tmp_path), Serving(AcmeUnreadInvoice, use_cases=(_ReadInvoice, _InvoiceExists))
+        application = _source(tmp_path).compose(
+            Serving(AcmeUnreadInvoice, use_cases=(_ReadInvoice, _InvoiceExists))
         )
 
         assert application.kernel.container.has_repo_mapping(AcmeUnreadInvoice)

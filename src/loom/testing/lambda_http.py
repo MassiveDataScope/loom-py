@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import httpx
 
-from loom.composition import Application, build_application
+from loom.composition import Application, Project
 from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
 from loom.testing.serverless import EventFormat, LambdaEvent
 
@@ -61,7 +61,8 @@ class LambdaTestClient(httpx.Client):
         owned: LambdaHandler | None = None
         if isinstance(app, str):
             adapter = LambdaAdapter(function=function)
-            self.application = build_application(app, adapter=adapter, **options)
+            modules = options.pop("modules", ())
+            self.application = Project.load(app, **options).compose(adapter, modules=modules)
             owned = adapter.bind(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options:
