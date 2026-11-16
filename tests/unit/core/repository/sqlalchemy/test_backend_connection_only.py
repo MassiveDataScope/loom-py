@@ -56,7 +56,7 @@ class _CallerScoped(BaseModel, RowScoped):
 
 
 def _wiring(database: dict[str, Any]) -> StoreWiring:
-    # No persistence.cursors at all: a codec built here would fail.
+    # No stores.settings.cursors at all: a codec built here would fail.
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy", **database}}})
     return build_backend(SQLAlchemyBackend(), ctx, (), WORKER_PROFILE, connection_only=True)
 

@@ -26,6 +26,32 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 
 _SDKS = ("boto3", "botocore", "clickhouse_connect", "pymongo")
 
+_CORE_DRIVERS = ("sqlalchemy", *_SDKS, "motor")
+
+_CORE_CLIENT_ISLANDS = frozenset(
+    {
+        "loom.core.connections.aws.client",
+        "loom.core.connections.mongo.client",
+        "loom.core.connections.clickhouse.client",
+    }
+)
+
+_CORE_WEIGHT_SCRIPT = """
+import importlib
+import json
+import sys
+
+drivers = tuple(sys.argv[1].split(","))
+first_loaded = {}
+for name in sys.argv[2:]:
+    importlib.import_module(name)
+    for loaded in sys.modules:
+        root = loaded.split(".")[0]
+        if root in drivers:
+            first_loaded.setdefault(root, name)
+print(json.dumps(first_loaded))
+"""
+
 _SCRIPT = """
 import json
 import sys
@@ -83,6 +109,38 @@ _ISLANDS: dict[str, frozenset[str]] = {
         }
     ),
 }
+
+
+def _core_module_names() -> list[str]:
+    core = _SRC / "loom" / "core"
+    names = []
+    for path in sorted(core.rglob("*.py")):
+        parts = list(path.relative_to(_SRC).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        names.append(".".join(parts))
+    return [name for name in names if name not in _CORE_CLIENT_ISLANDS]
+
+
+class TestCoreImportWeight:
+    def test_importing_every_core_module_loads_no_driver(self) -> None:
+        """Each driver maps to the first ``loom.core`` module that loaded it."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                _CORE_WEIGHT_SCRIPT,
+                ",".join(_CORE_DRIVERS),
+                *_core_module_names(),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == {}
 
 
 class TestConnectionsContainment:

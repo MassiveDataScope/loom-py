@@ -339,7 +339,7 @@ class TestFastapiAppIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, position: dict[str, object]
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 't.sqlite'}")
-        monkeypatch.setenv("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned")
+        monkeypatch.setenv("LOOM__STORES__SETTINGS__CURSORS__SIGNING", "unsigned")
         app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
 
         with TestClient(app, raise_server_exceptions=False) as client:
