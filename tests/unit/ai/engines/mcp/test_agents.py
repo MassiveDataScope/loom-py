@@ -560,7 +560,7 @@ _SERVER = "orders"
 
 @asynccontextmanager
 async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
-    """A runtime whose agent and use case are both granted the in-process server."""
+    """A runtime on the default start-up budget whose agent and use case share the server."""
     from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
     from tests.integration.ai.conftest import make_mcp_capability, make_mcp_servers, make_plan
 
@@ -568,7 +568,7 @@ async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
     grant = make_mcp_capability(_SERVER)
     runtime = AgentRuntime(
         plans=[make_plan("agent", capabilities=[grant])],
-        config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER)),
+        config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER), startup_timeout_ms=10000),
         engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=StubDepsFactory(),
         container=LoomContainer(),
