@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from typing import Any
 
@@ -85,10 +86,19 @@ class TestRegistry:
 
 
 @dataclass(frozen=True)
+class _Dist:
+    """A distribution declaring *requires*."""
+
+    requires: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _Entry:
-    """An entry point whose load runs *action*."""
+    """An entry point whose load runs *action*, from a distribution with *dist* extras."""
 
     action: Callable[[], None]
+    extras: tuple[str, ...] = ()
+    dist: _Dist | None = None
 
     def load(self) -> None:
         self.action()
@@ -96,11 +106,18 @@ class _Entry:
 
 class TestLoadInstalled:
     @staticmethod
-    def _install(monkeypatch: pytest.MonkeyPatch, *entries: _Entry) -> None:
+    def _install(
+        monkeypatch: pytest.MonkeyPatch, *entries: _Entry, missing: tuple[str, ...] = ()
+    ) -> None:
+        def version(distribution: str) -> str:
+            if distribution in missing:
+                raise PackageNotFoundError(distribution)
+            return "1.0"
+
         monkeypatch.setattr(checks_module, "list_entry_points", lambda group: entries)
+        monkeypatch.setattr(checks_module, "version", version)
 
     def test_every_entry_of_the_group_is_loaded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        registry = DeployCheckRegistry()
         loaded: list[str] = []
         self._install(
             monkeypatch,
@@ -108,46 +125,57 @@ class TestLoadInstalled:
             _Entry(lambda: loaded.append("second")),
         )
 
-        registry.load_installed()
+        DeployCheckRegistry().load_installed()
 
         assert loaded == ["first", "second"]
 
-    def test_an_entry_missing_a_third_party_module_is_left_out_with_its_checks(
+    @pytest.mark.parametrize(
+        ("missing", "is_loaded"),
+        [((), True), (("acme-web",), False)],
+        ids=["extra-installed", "extra-missing"],
+    )
+    def test_an_entry_is_loaded_only_when_its_extra_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch, missing: tuple[str, ...], is_loaded: bool
+    ) -> None:
+        loaded: list[str] = []
+        dist = _Dist(("acme-web>=1; extra == 'web'", "acme-db; extra == 'db'"))
+        entry = _Entry(lambda: loaded.append("web"), extras=("web",), dist=dist)
+        self._install(monkeypatch, entry, missing=(*missing, "acme-db"))
+
+        DeployCheckRegistry().load_installed()
+
+        assert loaded == (["web"] if is_loaded else [])
+
+    def test_a_requirement_with_a_further_condition_is_not_required(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        registry = DeployCheckRegistry()
         loaded: list[str] = []
+        dist = _Dist(("acme-fast; (sys_platform != 'win32') and extra == 'web'",))
+        entry = _Entry(lambda: loaded.append("web"), extras=("web",), dist=dist)
+        self._install(monkeypatch, entry, missing=("acme-fast",))
 
-        def registers_then_fails() -> None:
-            registry.register(_ERROR_ID)(lambda config: None)
-            raise ModuleNotFoundError("No module named 'acme_extra'", name="acme_extra")
+        DeployCheckRegistry().load_installed()
 
-        self._install(
-            monkeypatch,
-            _Entry(registers_then_fails),
-            _Entry(lambda: loaded.append("after")),
-        )
+        assert loaded == ["web"]
 
-        registry.load_installed()
-
-        assert registry.items() == ()
-        assert loaded == ["after"]
-
-    def test_an_entry_missing_a_module_of_loom_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        registry = DeployCheckRegistry()
-
+    def test_a_module_missing_after_the_extras_pass_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         def fails() -> None:
-            raise ModuleNotFoundError("No module named 'loom.gone'", name="loom.gone")
+            raise ModuleNotFoundError("No module named 'acme_extra'", name="acme_extra")
 
         self._install(monkeypatch, _Entry(fails))
 
-        with pytest.raises(ModuleNotFoundError, match="loom.gone"):
-            registry.load_installed()
+        with pytest.raises(ModuleNotFoundError, match="acme_extra"):
+            DeployCheckRegistry().load_installed()
 
     def test_loom_registers_its_own_check_packages(self) -> None:
-        names = {entry.name for entry in list_entry_points(DEPLOY_CHECKS_GROUP)}
+        entries = {
+            entry.name: list(entry.extras) for entry in list_entry_points(DEPLOY_CHECKS_GROUP)
+        }
 
-        assert {"logger", "repository", "audit", "rest"} <= names
+        assert {"logger", "repository", "audit", "rest"} <= set(entries)
+        assert entries["rest"] == ["rest"]
 
 
 class TestRunDeployChecks:

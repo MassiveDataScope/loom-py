@@ -58,9 +58,19 @@ def _project(tmp_path: Path) -> Path:
 
 
 def _run_cli(*args: str, blocked: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    """Run ``loom`` in a clean interpreter, with *blocked* modules made unimportable."""
+    """Run ``loom`` in a clean interpreter with *blocked* packages uninstalled.
+
+    A blocked package cannot be imported and its distribution is not found.
+    """
     script = (
         "import sys\n"
+        "import importlib.metadata as metadata\n"
+        "version = metadata.version\n"
+        "def hidden_version(name):\n"
+        f"    if name in {blocked!r}:\n"
+        "        raise metadata.PackageNotFoundError(name)\n"
+        "    return version(name)\n"
+        "metadata.version = hidden_version\n"
         f"for name in {blocked!r}:\n"
         "    sys.modules[name] = None\n"
         f"sys.argv = ['loom', *{args!r}]\n"

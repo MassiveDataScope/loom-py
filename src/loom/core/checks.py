@@ -36,6 +36,7 @@ import re
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.metadata import EntryPoint, PackageNotFoundError, version
 from typing import TYPE_CHECKING, Final
 
 import msgspec
@@ -57,6 +58,10 @@ _INTERPOLATION: Final = "${"
 
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
+
+_EXTRA_REQUIREMENT: Final = re.compile(
+    r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)[^;]*;\s*extra\s*==\s*['\"](?P<extra>[^'\"]+)['\"]\s*"
+)
 
 DEPLOY_CHECKS_GROUP: Final = "loom.deploy_checks"
 """Entry-point group naming the packages whose import registers deploy checks."""
@@ -139,27 +144,55 @@ class DeployCheckRegistry:
         return _register
 
     def load_installed(self) -> None:
-        """Import every package registered under the ``loom.deploy_checks`` entry-point group.
+        """Import every installed package of the ``loom.deploy_checks`` entry-point group.
 
-        An entry whose package needs a module that is not installed, as
-        ``loom.rest`` needs fastapi without the ``rest`` extra, is left out,
-        and so are the checks it registered before failing.
+        Called as ``DEPLOY_CHECKS.load_installed()``: the packages register
+        their checks into :data:`DEPLOY_CHECKS`, whatever registry this is. An
+        entry whose extras are not installed, as ``loom.rest [rest]`` without
+        the ``rest`` extra, is not imported.
 
         Raises:
-            ModuleNotFoundError: When a module of loom itself is missing.
+            ModuleNotFoundError: When an imported package needs a module that is
+                missing.
         """
         for entry in list_entry_points(DEPLOY_CHECKS_GROUP):
-            registered = dict(self._checks)
-            try:
+            if _CheckPackage(entry).has_its_extras():
                 entry.load()
-            except ModuleNotFoundError as exc:
-                if (exc.name or "").partition(".")[0] == "loom":
-                    raise
-                self._checks = registered
 
     def items(self) -> tuple[tuple[str, DeployCheck], ...]:
         """Return the registered ids with their checks, in registration order."""
         return tuple(self._checks.items())
+
+
+@dataclass(frozen=True)
+class _CheckPackage:
+    """A package of the ``loom.deploy_checks`` group, and the extras its entry declares."""
+
+    entry: EntryPoint
+
+    def has_its_extras(self) -> bool:
+        """Whether every requirement guarded by one of the entry's extras is installed.
+
+        Only a requirement whose marker is exactly ``extra == "<name>"`` counts;
+        one with a further condition, such as a platform, is left out.
+        """
+        dist = self.entry.dist
+        if dist is None:
+            return True
+        guarded = (_EXTRA_REQUIREMENT.fullmatch(requirement) for requirement in dist.requires or ())
+        return all(
+            self._is_installed(match["name"])
+            for match in guarded
+            if match is not None and match["extra"] in self.entry.extras
+        )
+
+    @staticmethod
+    def _is_installed(distribution: str) -> bool:
+        try:
+            version(distribution)
+        except PackageNotFoundError:
+            return False
+        return True
 
 
 DEPLOY_CHECKS: Final = DeployCheckRegistry()
