@@ -25,6 +25,7 @@ import typer
 
 from loom.composition.project import CheckedProject, Project
 from loom.core.config.errors import ConfigError
+from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
 
 def check(
@@ -48,10 +49,11 @@ def check(
         raise typer.Exit(2)
     try:
         checked = check_config(config, env, tuple(skip or ()))
+        print_report(checked, err=False)
+        check_triggers(checked.config)
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    print_report(checked, err=False)
     if checked.report.errors:
         raise typer.Exit(1)
 

@@ -209,6 +209,14 @@ dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
 mongo = "loom.stores.mongo.backend:MongoBackend"
 none = "loom.core.stores.none:NoneBackend"
 
+# Packages whose import registers deploy checks; `Project.check` loads them.
+# A package shipping checks registers under the same group.
+[project.entry-points."loom.deploy_checks"]
+logger = "loom.core.logger"
+repository = "loom.core.stores.repository"
+audit = "loom.core.stores.audit_checks"
+rest = "loom.rest.checks"
+
 [build-system]
 requires = [
     "hatchling>=1.24.0",

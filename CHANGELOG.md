@@ -2,6 +2,9 @@
 
 ## 💥 Breaking
 
+- **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
+  `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
+  **Migration:** import them from the new path; nothing is re-exported.
 - **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
   Before: a use case with a missing binding, a dependency cycle or a main
   model with no repository failed at its first invocation. Now: it fails at
@@ -685,9 +688,15 @@
 
 - **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
   loads the configuration as written, resolving no placeholder and requiring
-  no `app.name`, runs every deploy check and returns a `CheckedProject`
-  (`config`, `environment`, `report`, `skipped`, `config_root`, `code_path`).
-  `loom check --deploy` and `loom deploy manifest` run through it.
+  no `app.name`, runs the registered deploy checks and returns a
+  `CheckedProject` (`config`, `environment`, `report`, `skipped`,
+  `config_root`, `code_path`). `loom check --deploy` and `loom deploy manifest`
+  run through it; the CLI also refuses misdeclared lambda triggers, which no
+  `--skip` leaves out.
+- **core:** the entry-point group `loom.deploy_checks` names the packages whose
+  import registers deploy checks (`DeployCheckRegistry.load_installed()`); a
+  package shipping checks registers there, and an entry missing a third-party
+  module is left out. loom registers `logger`, `repository`, `audit` and `rest`.
 
 ### ai
 

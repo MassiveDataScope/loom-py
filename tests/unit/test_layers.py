@@ -36,7 +36,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # No transport but the JobService adapter, the ones app.entry selects and lambda checks, lazily.
+    # No transport but the JobService adapter, and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
         (
@@ -44,7 +44,6 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.celery.config",
             "loom.rest.fastapi.adapter",
             "loom.serverless.aws.lambda_.handler",
-            "loom.serverless.aws.lambda_.checks",
         ),
     ),
     # The acting identity sits under everything that acts: it reads no execution (spec 011, T09a).
@@ -131,6 +130,51 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "loom",
         "loom.composition",
     }
+
+
+_NAMED_TRANSPORTS = ("loom.rest", "loom.serverless")
+
+
+def _imported_by_name(tree: ast.AST) -> list[str]:
+    """The string literals *tree* passes to ``importlib.import_module`` or ``import_module``."""
+    names = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        function = node.func
+        called = (
+            function.attr if isinstance(function, ast.Attribute) else getattr(function, "id", "")
+        )
+        argument = node.args[0]
+        if (
+            called == "import_module"
+            and isinstance(argument, ast.Constant)
+            and isinstance(argument.value, str)
+        ):
+            names.append(argument.value)
+    return names
+
+
+def test_the_composition_names_no_transport_in_an_import_by_name() -> None:
+    offenders = [
+        f"{path.relative_to(_SRC)} imports {name} by name"
+        for path in sorted((_SRC / "loom" / "composition").rglob("*.py"))
+        for name in _imported_by_name(parsed(path))
+        if any(_within(name, transport) for transport in _NAMED_TRANSPORTS)
+    ]
+
+    assert offenders == []
+
+
+def test_the_import_by_name_check_sees_both_call_forms() -> None:
+    sample = ast.parse(
+        "import importlib\n"
+        "importlib.import_module('loom.rest')\n"
+        "import_module('loom.serverless.x')\n"
+        "importlib.import_module(name)\n"
+    )
+
+    assert _imported_by_name(sample) == ["loom.rest", "loom.serverless.x"]
 
 
 # Who may write the acting identity (spec 011, T09a): transports install it,

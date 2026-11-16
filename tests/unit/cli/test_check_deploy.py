@@ -179,6 +179,19 @@ class TestCheckDeploy:
         assert "loom.logger.W001" in result.stdout
         assert "loom.rest" not in result.stdout
 
+    @pytest.mark.parametrize("options", [(), ("--skip", "loom")], ids=["plain", "skipping-loom"])
+    def test_an_event_trigger_naming_no_job_fails_whatever_is_skipped(
+        self, tmp_path: Path, options: tuple[str, ...]
+    ) -> None:
+        trigger = {"source": "eventbridge", "job": "Missing", "identity": {"subject": "svc:x"}}
+        document = {"app": _SAFE_APP, "lambda": {"functions": {"events": {"trigger": trigger}}}}
+        config = _write(tmp_path / "app.yaml", document)
+
+        result = runner.invoke(app, ["check", "--deploy", *options, str(config)])
+
+        assert result.exit_code == 1
+        assert "'Missing', which is no discovered Job" in result.output
+
     def test_the_application_check_modules_run_from_its_code_path(self, tmp_path: Path) -> None:
         check = write_failing_check_module(tmp_path / "src")
         area, key = check.trigger.split(".")

@@ -32,7 +32,6 @@ from loom.serverless.aws.lambda_._refusals import (
     check_resolved_ai,
     refuse_unserved_config,
 )
-from loom.serverless.aws.lambda_.checks import trigger_job
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     HttpTrigger,
@@ -40,6 +39,7 @@ from loom.serverless.aws.lambda_.functions import (
     served_trigger,
     source_of,
 )
+from loom.serverless.aws.lambda_.trigger_jobs import trigger_job
 from loom.serverless.aws.lambda_.triggers import (
     Decoded,
     Decoder,

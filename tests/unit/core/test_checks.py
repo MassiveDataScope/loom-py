@@ -8,12 +8,16 @@ accepted on purpose, and the startup log says which ones they are.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from loom.core import checks as checks_module
 from loom.core.checks import (
+    DEPLOY_CHECKS_GROUP,
     CheckLevel,
     DeployCheckError,
     DeployCheckRegistry,
@@ -24,6 +28,7 @@ from loom.core.checks import (
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from loom.core.plugins.entrypoints import list_entry_points
 from tests.helpers.deploy_checks import write_failing_check_module
 
 _ERROR_ID = "loom.sample.E001"
@@ -77,6 +82,72 @@ class TestRegistry:
         report = run_deploy_checks(_config(), registry=registry)
 
         assert [r.id for r in report.results] == ["billing.invoices.W001"]
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """An entry point whose load runs *action*."""
+
+    action: Callable[[], None]
+
+    def load(self) -> None:
+        self.action()
+
+
+class TestLoadInstalled:
+    @staticmethod
+    def _install(monkeypatch: pytest.MonkeyPatch, *entries: _Entry) -> None:
+        monkeypatch.setattr(checks_module, "list_entry_points", lambda group: entries)
+
+    def test_every_entry_of_the_group_is_loaded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry = DeployCheckRegistry()
+        loaded: list[str] = []
+        self._install(
+            monkeypatch,
+            _Entry(lambda: loaded.append("first")),
+            _Entry(lambda: loaded.append("second")),
+        )
+
+        registry.load_installed()
+
+        assert loaded == ["first", "second"]
+
+    def test_an_entry_missing_a_third_party_module_is_left_out_with_its_checks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registry = DeployCheckRegistry()
+        loaded: list[str] = []
+
+        def registers_then_fails() -> None:
+            registry.register(_ERROR_ID)(lambda config: None)
+            raise ModuleNotFoundError("No module named 'acme_extra'", name="acme_extra")
+
+        self._install(
+            monkeypatch,
+            _Entry(registers_then_fails),
+            _Entry(lambda: loaded.append("after")),
+        )
+
+        registry.load_installed()
+
+        assert registry.items() == ()
+        assert loaded == ["after"]
+
+    def test_an_entry_missing_a_module_of_loom_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry = DeployCheckRegistry()
+
+        def fails() -> None:
+            raise ModuleNotFoundError("No module named 'loom.gone'", name="loom.gone")
+
+        self._install(monkeypatch, _Entry(fails))
+
+        with pytest.raises(ModuleNotFoundError, match="loom.gone"):
+            registry.load_installed()
+
+    def test_loom_registers_its_own_check_packages(self) -> None:
+        names = {entry.name for entry in list_entry_points(DEPLOY_CHECKS_GROUP)}
+
+        assert {"logger", "repository", "audit", "rest"} <= names
 
 
 class TestRunDeployChecks:

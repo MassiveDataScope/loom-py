@@ -450,6 +450,15 @@ class TestDeployManifest:
         assert result.stdout == ""
         assert message in result.stderr
 
+    def test_no_skip_hides_an_event_trigger_naming_no_job(self, project: Project) -> None:
+        missing = _set("lambda.functions.invoices_in.trigger.job", "MissingJob")
+
+        result = _manifest(project(missing), "--skip", "loom")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "'MissingJob', which is no discovered Job" in result.stderr
+
     @pytest.mark.parametrize(
         ("written", "named"),
         [

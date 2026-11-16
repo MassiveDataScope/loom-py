@@ -10,7 +10,6 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.use_case import Input
 from loom.serverless.aws.lambda_ import S3Object
-from loom.serverless.aws.lambda_.checks import trigger_job
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     JobsTrigger,
@@ -18,6 +17,7 @@ from loom.serverless.aws.lambda_.functions import (
     TriggerIdentity,
     declared_lambda,
 )
+from loom.serverless.aws.lambda_.trigger_jobs import trigger_job
 
 pytestmark = pytest.mark.timeout(5)
 

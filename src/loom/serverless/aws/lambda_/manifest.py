@@ -34,6 +34,7 @@ from loom.serverless.aws.lambda_.functions import (
     source_of,
 )
 from loom.serverless.aws.lambda_.interfaces import http_function
+from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
 if TYPE_CHECKING:
     from loom.core.environment import Environment
@@ -84,9 +85,11 @@ def build_manifest(
     Raises:
         ConfigError: When ``lambda.handler`` is missing or malformed, no
             function is declared, a function or a placeholder cannot be
-            named, a section the functions read is misdeclared, or an HTTP
-            function would not compose at startup.
+            named, a section the functions read is misdeclared, an event
+            trigger names a job startup would refuse, or an HTTP function
+            would not compose at startup.
     """
+    check_triggers(ctx)
     declared = declared_lambda(ctx)
     handler = _literal("lambda.handler", declared.handler)
     if not _HANDLER.fullmatch(handler):

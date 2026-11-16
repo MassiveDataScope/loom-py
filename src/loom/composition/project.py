@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import functools
-import importlib
-import importlib.util
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +14,7 @@ from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.cache.wiring import CacheGateways
-from loom.core.checks import DeployReport, run_deploy_checks
+from loom.core.checks import DEPLOY_CHECKS, DeployReport, run_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigError,
@@ -169,8 +167,8 @@ class Project:
         Composes nothing, connects to nothing, builds no observability, requires
         no ``app.name`` and resolves no placeholder; loom's checks read keys as
         written. ``app.code_path`` joins ``sys.path`` and ``checks.modules``
-        import from it. The packages registering loom's own checks are
-        imported, the REST ones when the ``rest`` extra is installed.
+        import from it. The check packages installed under the
+        ``loom.deploy_checks`` entry-point group are loaded first.
 
         Args:
             *config_paths: See :func:`~loom.composition.create_app`.
@@ -184,15 +182,9 @@ class Project:
 
         Raises:
             ConfigError: When the configuration does not load, ``app.code_path``
-                is not a literal path, ``lambda`` is one startup would refuse,
-                or the ``checks`` section is invalid.
+                is not a literal path, or the ``checks`` section is invalid.
         """
-        from loom.serverless.aws.lambda_.checks import check_triggers
-
-        importlib.import_module("loom.core.stores.repository")
-        importlib.import_module("loom.core.stores.audit_checks")
-        if importlib.util.find_spec("fastapi") is not None:
-            importlib.import_module("loom.rest")
+        DEPLOY_CHECKS.load_installed()
         resolved_environment = resolve_environment(environment)
         paths = select_config_paths(
             config_paths, config_dir, resolved_environment, caller="loom check"
@@ -208,7 +200,6 @@ class Project:
                 "non-string value cannot name the directory its check modules import from"
             )
         code_path = add_code_path(raw_code_path, config_root)
-        check_triggers(ctx)
         return CheckedProject(
             config=ctx,
             environment=resolved_environment,

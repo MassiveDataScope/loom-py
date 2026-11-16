@@ -16,7 +16,9 @@ A check registers when the module defining it is imported. loom's own checks
 live in packages the entry points import anyway (``loom.core.logger``,
 ``loom.core.stores.repository`` and ``loom.rest``); an application lists the
 modules holding its checks under ``checks.modules``, which every run imports
-first, so the same checks run at startup and in ``loom check --deploy``.
+first, so the same checks run at startup and in ``loom check --deploy``. A
+package that ships checks registers under the ``loom.deploy_checks``
+entry-point group, which :meth:`DeployCheckRegistry.load_installed` imports.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
 checks only in production and staging. ``loom check --deploy`` calls
@@ -40,6 +42,7 @@ import msgspec
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.plugins.entrypoints import list_entry_points
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -54,6 +57,9 @@ _INTERPOLATION: Final = "${"
 
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
+
+DEPLOY_CHECKS_GROUP: Final = "loom.deploy_checks"
+"""Entry-point group naming the packages whose import registers deploy checks."""
 
 MODULES_KEY: Final = "checks.modules"
 """Configuration key listing the modules that register the application's checks."""
@@ -131,6 +137,25 @@ class DeployCheckRegistry:
             return check
 
         return _register
+
+    def load_installed(self) -> None:
+        """Import every package registered under the ``loom.deploy_checks`` entry-point group.
+
+        An entry whose package needs a module that is not installed, as
+        ``loom.rest`` needs fastapi without the ``rest`` extra, is left out,
+        and so are the checks it registered before failing.
+
+        Raises:
+            ModuleNotFoundError: When a module of loom itself is missing.
+        """
+        for entry in list_entry_points(DEPLOY_CHECKS_GROUP):
+            registered = dict(self._checks)
+            try:
+                entry.load()
+            except ModuleNotFoundError as exc:
+                if (exc.name or "").partition(".")[0] == "loom":
+                    raise
+                self._checks = registered
 
     def items(self) -> tuple[tuple[str, DeployCheck], ...]:
         """Return the registered ids with their checks, in registration order."""
