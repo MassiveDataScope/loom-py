@@ -1006,7 +1006,7 @@ environment, an instance or task role, `~/.aws/config`). Nothing talks to AWS
 until a placeholder actually resolves: a YAML without `${secrets:...}` or
 `${ssm:...}` never creates a client and boots without boto3 installed. When a
 placeholder does resolve and boto3 is missing, the error names the extra to
-install, `loom-kernel[config-ssm]`.
+install, `loom-kernel[aws]`.
 
 Resolvers run at job startup — secret rotation takes effect on the next run
 without redeployment. Values are fetched once per loaded config object

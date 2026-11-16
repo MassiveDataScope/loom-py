@@ -74,7 +74,7 @@ class TestAwsClientConfigBuildClient:
     def test_a_missing_boto3_names_the_aws_extra(self, monkeypatch: pytest.MonkeyPatch) -> None:
         without_boto3(monkeypatch)
 
-        with pytest.raises(MissingExtraError, match="aws"):
+        with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
             AwsClientConfig().build_client("s3")
 
     def test_options_the_settings_decide_are_refused(self) -> None:

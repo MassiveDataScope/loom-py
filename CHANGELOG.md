@@ -576,6 +576,7 @@
   | `loom.core.repository.dynamodb` and every module below it (`backend`, `repository`, `uow`, `registry`) | `loom.stores.dynamodb` and the same module below it |
   | `loom.core.repository.mongo` and every module below it (`backend`, `repository`, `uow`, `ids`, `query_compiler`, `values`, `registry`) | `loom.stores.mongo` and the same module below it |
   | `loom.core.repository.dynamodb.repository.run_in_executor` | `loom.core.concurrency.run_in_executor` |
+  | `loom.core._async` (`run_to_completion`, `held_task`, `discard_outcome`) | `loom.core.concurrency` |
   | `loom.core.repository` (the leftover adapter package) | removed |
   | `loom.core.sql` and `loom.core.sql.{abc,caller_bound,config,roles,service}` | `loom.core.stores.sql` and `loom.core.stores.sql.{same name}` |
   | `loom.core.sql.clickhouse` and every module below it (`executor`, `registry`) | `loom.stores.clickhouse` and the same module below it |
