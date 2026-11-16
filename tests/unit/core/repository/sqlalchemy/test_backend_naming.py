@@ -11,7 +11,7 @@ import yaml
 from sqlalchemy import MetaData
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.alembic import load_application
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
@@ -57,7 +57,7 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
     return path
 
 
-def _store_metadata(wiring: PersistenceWiring) -> MetaData:
+def _store_metadata(wiring: StoreWiring) -> MetaData:
     """The metadata the wiring's store compiles its models into."""
     return cast(Any, wiring.uow_factory)._session_manager.metadata
 

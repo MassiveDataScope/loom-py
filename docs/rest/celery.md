@@ -880,7 +880,7 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 ### Persistence
 
 The worker resolves its backend like the API, through the
-`loom.persistence.backends` entry points:
+`loom.stores.backends` entry points:
 
 1. `stores.default.backend`, when the `stores.default` section is declared —
    `sqlalchemy`, `mongo`, `dynamodb`, `none` or a backend of your own;

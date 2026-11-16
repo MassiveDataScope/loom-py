@@ -17,14 +17,14 @@ from loom.core.di.container import LoomContainer
 from loom.core.plugins.entrypoints import DuplicateEntryPointError
 from loom.core.stores import (
     NoneBackend,
-    PersistenceBackend,
-    PersistenceWiring,
-    resolve_backend,
+    StoreBackend,
+    StoreWiring,
+    resolve_store_backend,
 )
-from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from tests.helpers.persistence import build_backend
 
-_GROUP = "loom.persistence.backends"
+_GROUP = "loom.stores.backends"
 _SRC = Path(__file__).resolve().parents[4] / "src"
 
 
@@ -56,9 +56,7 @@ class _FakeBackend:
     name: ClassVar[str] = "fake"
     repository_type: ClassVar[type | None] = None
 
-    def build(
-        self, ctx: ConfigContext, models: object, runtime: BackendRuntime
-    ) -> PersistenceWiring:
+    def build(self, ctx: ConfigContext, models: object, runtime: StoreRuntime) -> StoreWiring:
         return NoneBackend().build(ctx, (), runtime)
 
 
@@ -83,7 +81,7 @@ class TestResolveBackend:
         )
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_backend("missing")
+            resolve_store_backend("missing")
 
         message = str(excinfo.value)
         assert "'missing'" in message
@@ -95,14 +93,14 @@ class TestResolveBackend:
         _install(monkeypatch, ())
 
         with pytest.raises(ConfigError, match="No persistence backends are registered"):
-            resolve_backend("missing")
+            resolve_store_backend("missing")
 
     def test_injected_entry_point_resolves_to_an_instance_of_its_class(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _install(monkeypatch, (AcmePersistenceEntryPoint("fake", "loom-fake", _FakeBackend),))
 
-        backend = resolve_backend("fake")
+        backend = resolve_store_backend("fake")
 
         assert isinstance(backend, _FakeBackend)
         assert backend.name == "fake"
@@ -117,17 +115,17 @@ class TestResolveBackend:
         )
 
         with pytest.raises(DuplicateEntryPointError):
-            resolve_backend("fake")
+            resolve_store_backend("fake")
 
     def test_none_backend_is_registered_by_loom(self) -> None:
-        backend = resolve_backend("none")
+        backend = resolve_store_backend("none")
 
         assert isinstance(backend, NoneBackend)
 
 
 class TestNoneBackend:
-    def _wiring(self) -> PersistenceWiring:
-        backend: PersistenceBackend = NoneBackend()
+    def _wiring(self) -> StoreWiring:
+        backend: StoreBackend = NoneBackend()
         return build_backend(backend, ConfigContext.from_dict({}), (), SERVER_PROFILE)
 
     def test_build_has_no_unit_of_work_and_no_default_repository_type(self) -> None:
@@ -177,7 +175,7 @@ class TestBrokenBackendImport:
         _install(monkeypatch, (_BrokenEntryPoint("sqlalchemy", "loom-kernel", _FakeBackend),))
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_backend("sqlalchemy")
+            resolve_store_backend("sqlalchemy")
 
         message = str(excinfo.value)
         assert "'sqlalchemy'" in message

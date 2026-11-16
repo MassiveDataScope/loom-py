@@ -1099,7 +1099,7 @@ runtime-checkable, so an adapter that omits the declaration no longer
 satisfies `isinstance(x, UnitOfWork)`. Nothing reads the flag yet: the
 bootstrap check that refuses a use case requiring a transaction on a
 non-transactional backend, and the cache rules keyed on it, arrive in a
-later release; see [Persistence backends](persistence-backends.md).
+later release; see [Stores and their backends](stores.md).
 
 ### `PostCommitError` in REST and Celery
 

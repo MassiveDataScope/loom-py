@@ -455,7 +455,7 @@ product provider.
 Cursor tokens are bound to these values: a repository signs every `loom.scope.` key the
 provider returns for the caller into the token, so a cursor issued in one tenant, or
 under an elevation, is refused with `400 unsupported_query` anywhere else (see
-[Cursor tokens](persistence-backends.md#cursor-tokens)).
+[Cursor tokens](stores.md#cursor-tokens)).
 
 ### Configuration
 

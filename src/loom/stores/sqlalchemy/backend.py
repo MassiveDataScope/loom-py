@@ -17,7 +17,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
-from loom.core.stores.backend import PersistenceWiring, no_model_preparation
+from loom.core.stores.backend import StoreWiring, no_model_preparation
 from loom.core.stores.catalog import (
     SQLALCHEMY_BACKEND,
     StoreCapabilities,
@@ -30,7 +30,7 @@ from loom.core.stores.database import (
     SchemaConfig,
     require_schema_key,
 )
-from loom.core.stores.profile import BackendRuntime
+from loom.core.stores.profile import StoreRuntime
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
@@ -111,8 +111,8 @@ class SQLAlchemyBackend:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
+        runtime: StoreRuntime,
+    ) -> StoreWiring:
         """Build the SQLAlchemy wiring of the store ``runtime.store`` for the discovered models.
 
         Args:
@@ -125,7 +125,7 @@ class SQLAlchemyBackend:
             The SQLAlchemy wiring.
 
         With ``runtime.connection_only`` no repository is served; see
-        :class:`~loom.core.stores.BackendRuntime`.
+        :class:`~loom.core.stores.StoreRuntime`.
 
         Raises:
             ConfigError: When the store's section is missing, names another
@@ -170,7 +170,7 @@ class SQLAlchemyBackend:
             if settings is not None:
                 elevation = SQLAlchemyStoreElevation(session_manager)
         store = _Store(path=spec.path, schema=db_cfg.schema, session_manager=session_manager)
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=module,
             lifespan_init=lambda: _lifespan(session_manager),
@@ -183,7 +183,7 @@ class SQLAlchemyBackend:
 
 def _open_session_manager(
     db_cfg: DatabaseConfig,
-    runtime: BackendRuntime,
+    runtime: StoreRuntime,
     database: StoreKey,
     settings: DeferredScopedSettings | None,
     metadata: MetaData | None,

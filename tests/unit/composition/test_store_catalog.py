@@ -165,4 +165,4 @@ class TestStoreCatalog:
 
         stores_module.load_catalog(ConfigContext.from_dict({"stores": stores}))
 
-        assert scans == ["loom.persistence.backends"]
+        assert scans == ["loom.stores.backends"]

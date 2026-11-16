@@ -1,6 +1,6 @@
 """Persistence backend plugin contract.
 
-A backend is resolved by name from the ``loom.persistence.backends`` entry
+A backend is resolved by name from the ``loom.stores.backends`` entry
 point group and asked once, at bootstrap, for everything the host needs to
 wire persistence: the unit-of-work factory, the DI module registering
 repositories, the startup checks, the open/close lifespan, and a model
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.stores.profile import BackendRuntime
+from loom.core.stores.profile import StoreRuntime
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ async def no_startup_checks() -> None:
 
 
 @dataclass(frozen=True)
-class PersistenceWiring:
+class StoreWiring:
     """Everything a host needs from a persistence backend, resolved once at bootstrap.
 
     Args:
@@ -78,7 +78,7 @@ class PersistenceWiring:
     elevation: StoreElevation | None = None
 
 
-class PersistenceBackend(Protocol):
+class StoreBackend(Protocol):
     """Factory a persistence backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
@@ -107,8 +107,8 @@ class PersistenceBackend(Protocol):
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
+        runtime: StoreRuntime,
+    ) -> StoreWiring:
         """Build the persistence wiring for the discovered models.
 
         Args:
@@ -124,8 +124,8 @@ class PersistenceBackend(Protocol):
 
 
 __all__ = [
-    "PersistenceBackend",
-    "PersistenceWiring",
+    "StoreBackend",
+    "StoreWiring",
     "no_lifespan",
     "no_model_preparation",
     "no_startup_checks",

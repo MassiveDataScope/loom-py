@@ -77,7 +77,7 @@ Companion demo application:
    rest/postgres-rls
    rest/celery
    rest/sql
-   rest/persistence-backends
+   rest/stores
    rest/cache
    rest/examples
    rest/testing

@@ -85,7 +85,7 @@ class PoolMetricsSink(Protocol):
 
 
 @dataclass(frozen=True)
-class BackendRuntime:
+class StoreRuntime:
     """What the host hands a persistence backend besides its configuration.
 
     Args:
@@ -147,7 +147,7 @@ __all__ = [
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
-    "BackendRuntime",
+    "StoreRuntime",
     "PoolDefaults",
     "PoolMetricsSink",
     "RuntimeProfile",

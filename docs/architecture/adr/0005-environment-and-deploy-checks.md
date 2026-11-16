@@ -391,7 +391,7 @@ The four need the cursor setting in their configurations, or the id under
 When #371 rebases on this branch it must also:
 
 - rename the cursor key example variables, which carry the `LOOM_` prefix
-  in `docs/rest/persistence-backends.md` and
+  in `docs/rest/stores.md` and
   `src/loom/core/stores/repository/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
   names belong to `loom.core.environment`, and the containment test fails on
   a `LOOM_*` name loom does not own;

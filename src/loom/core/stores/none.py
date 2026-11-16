@@ -8,14 +8,14 @@ from typing import Any, ClassVar
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.backend import StoreWiring
 from loom.core.stores.catalog import (
     NO_CAPABILITIES,
     NONE_BACKEND,
     StoreCapabilities,
     StoreSpec,
 )
-from loom.core.stores.profile import BackendRuntime
+from loom.core.stores.profile import StoreRuntime
 
 
 class NoneBackend:
@@ -37,8 +37,8 @@ class NoneBackend:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
+        runtime: StoreRuntime,
+    ) -> StoreWiring:
         """Build a wiring in which every hook is a no-op.
 
         Args:
@@ -50,7 +50,7 @@ class NoneBackend:
             The no-persistence wiring.
         """
         del ctx, models, runtime
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=None,
             repo_registration_module=_register_no_repositories,
         )

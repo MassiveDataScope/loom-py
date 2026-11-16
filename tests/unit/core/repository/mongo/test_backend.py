@@ -17,7 +17,7 @@ import loom.stores.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import PersistenceWiring, resolve_backend
+from loom.core.stores import StoreWiring, resolve_store_backend
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.stores.repository import Creatable
@@ -41,14 +41,14 @@ sys.modules["pymongo"] = None
 sys.modules["bson"] = None
 
 from loom.core.config import ConfigError
-from loom.core.stores import resolve_backend
+from loom.core.stores import resolve_store_backend
 
 try:
-    resolve_backend("mongo")
+    resolve_store_backend("mongo")
 except ConfigError as exc:
     assert "loom-kernel[mongo]" in str(exc), str(exc)
 else:
-    raise SystemExit("resolve_backend('mongo') did not fail without pymongo")
+    raise SystemExit("resolve_store_backend('mongo') did not fail without pymongo")
 """
 
 
@@ -74,7 +74,7 @@ def _wiring(
     fake_client: FakeMongoClient,
     section: dict[str, Any],
     models: Sequence[type[BaseModel]] = (),
-) -> PersistenceWiring:
+) -> StoreWiring:
     monkeypatch.setattr(
         backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client
     )
@@ -86,7 +86,7 @@ _SECTION: dict[str, Any] = {"url": "mongodb://localhost:27017", "database": "dem
 
 class TestMongoBackendRegistration:
     def test_backend_is_registered_under_its_name(self) -> None:
-        assert isinstance(resolve_backend("mongo"), MongoBackend)
+        assert isinstance(resolve_store_backend("mongo"), MongoBackend)
         assert MongoBackend.name == "mongo"
 
     def test_missing_section_is_a_config_error(self) -> None:
@@ -316,9 +316,7 @@ class TestMongoClientOptions:
 _AUDIT = StoreKey("audit")
 
 
-def _audit_store(
-    monkeypatch: pytest.MonkeyPatch, fake_client: FakeMongoClient
-) -> PersistenceWiring:
+def _audit_store(monkeypatch: pytest.MonkeyPatch, fake_client: FakeMongoClient) -> StoreWiring:
     """Wire a transactional Mongo store under a key other than ``default``."""
     monkeypatch.setattr(
         backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client

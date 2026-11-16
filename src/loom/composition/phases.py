@@ -36,7 +36,7 @@ from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegat
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.stores import BackendRuntime, PersistenceWiring
+from loom.core.stores import StoreRuntime, StoreWiring
 from loom.core.stores.catalog import (
     DEFAULT_STORE,
     DEFAULT_STORE_PATH,
@@ -86,13 +86,13 @@ class Stores:
 
     Args:
         job_settings: Each discovered job's settings.
-        backends: The name of the backend each store's wiring was built by.
+        store_backends: The name of the backend each store's wiring was built by.
         wirings: Each store's wiring, its models prepared.
     """
 
     job_settings: JobSettings
-    backends: dict[StoreKey, str]
-    wirings: dict[StoreKey, PersistenceWiring]
+    store_backends: dict[StoreKey, str]
+    wirings: dict[StoreKey, StoreWiring]
 
     @property
     def factories(self) -> dict[StoreKey, UnitOfWorkFactory]:
@@ -109,7 +109,7 @@ class Stores:
                 manager=wiring.lifespan_init,
                 check=wiring.startup_checks,
                 readiness=wiring.readiness,
-                readiness_key=self.backends[key] if key == DEFAULT_STORE else key,
+                readiness_key=self.store_backends[key] if key == DEFAULT_STORE else key,
             )
             for key, wiring in self.wirings.items()
         )
@@ -187,7 +187,7 @@ def compose_application(
         adapter=type(adapter).__qualname__,
         use_cases=len(discovered.use_cases),
         jobs=len(discovered.jobs),
-        backends=stores.backends,
+        backends=stores.store_backends,
         keys=len(kernel.container.bindings()),
         modules=len(modules),
         overrides=len(recipe.overrides),
@@ -242,17 +242,19 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
     ctx, discovered, catalog = source.config, recipe.discovered, source.catalog
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     stores = catalog.models_by_store(discovered.models)
-    backends = {key: source.backend(key, default=recipe.default_backend) for key in stores}
+    backends = {
+        key: source.store_backend(key, default=recipe.default_store_backend) for key in stores
+    }
     default_label = backends[DEFAULT_STORE].name
     if default_label in stores:
         raise ConfigError(
             f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
-    cursor_codec = recipe.cursor_codec(ctx, catalog.with_default(recipe.default_backend))
-    wirings: dict[StoreKey, PersistenceWiring] = {}
+    cursor_codec = recipe.cursor_codec(ctx, catalog.with_default(recipe.default_store_backend))
+    wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
-        runtime = BackendRuntime(
+        runtime = StoreRuntime(
             recipe.profile,
             pool_metrics=recipe.pool_metrics,
             connection_only=recipe.connection_only,
@@ -264,7 +266,7 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
         wiring.prepare_models(models)
     return Stores(
         job_settings=job_settings,
-        backends={key: backends[key].name for key in stores},
+        store_backends={key: backends[key].name for key in stores},
         wirings=wirings,
     )
 

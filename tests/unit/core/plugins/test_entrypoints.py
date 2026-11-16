@@ -572,6 +572,6 @@ class TestReadOncePerGroup:
 
         for _ in range(3):
             load_entry_point(_GROUP, _NAME, on_duplicate="error")
-        list_entry_points("loom.persistence.backends")
+        list_entry_points("loom.stores.backends")
 
         assert len(reads) == 2

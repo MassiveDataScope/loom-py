@@ -396,7 +396,7 @@ discovery:
 
 ### Choose the persistence backend
 
-Backends are plugins resolved by name from the `loom.persistence.backends`
+Backends are plugins resolved by name from the `loom.stores.backends`
 entry point group. `stores.default.backend` selects it, and the rest of
 `stores.default` is the connection it reads. Without a `stores.default`
 section the API selects `sqlalchemy` and fails at startup naming the missing
@@ -415,7 +415,7 @@ supports, an explicit `include` naming an unsupported one fails at startup.
 An unknown backend name fails at startup listing the registered ones. Writing a
 backend, the capability gate, the cursor contract, the `mongo` keys and the
 recipe for a model that runs unchanged on every backend are described in
-[Persistence backends](../rest/persistence-backends.md).
+[Stores and their backends](../rest/stores.md).
 
 ```yaml
 stores:
@@ -429,7 +429,7 @@ environment. The samples on this page are development configurations and opt
 out with `persistence.cursors.signing: ephemeral`, which logs a WARNING;
 `production.yaml` configures keys instead. Keys, rotation and the opt-outs are
 described in
-[Cursor tokens](../rest/persistence-backends.md#cursor-tokens).
+[Cursor tokens](../rest/stores.md#cursor-tokens).
 
 `none` is for an application whose only content is agents (see
 [An application that is only agents](../ai/overview.md#an-application-that-is-only-agents)).

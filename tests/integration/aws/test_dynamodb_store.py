@@ -10,7 +10,7 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.repository import Creatable, Deletable, Readable
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from tests.helpers.persistence import build_backend
@@ -45,7 +45,7 @@ def table(dynamodb: Any) -> Iterator[str]:
 
 
 @pytest.fixture
-def wiring(write_config: ConfigWriter, table: str) -> PersistenceWiring:
+def wiring(write_config: ConfigWriter, table: str) -> StoreWiring:
     path = write_config(
         {
             "app": {"name": "loom-it-dynamodb"},
@@ -56,12 +56,12 @@ def wiring(write_config: ConfigWriter, table: str) -> PersistenceWiring:
 
 
 class TestDynamodbStore:
-    async def test_the_readiness_probe_finds_the_table(self, wiring: PersistenceWiring) -> None:
+    async def test_the_readiness_probe_finds_the_table(self, wiring: StoreWiring) -> None:
         assert wiring.readiness is not None
         assert await wiring.readiness() is True
 
     async def test_a_repository_round_trips_through_the_table(
-        self, wiring: PersistenceWiring, dynamodb: Any, table: str
+        self, wiring: StoreWiring, dynamodb: Any, table: str
     ) -> None:
         container = LoomContainer()
         wiring.repo_registration_module(container)
@@ -73,9 +73,7 @@ class TestDynamodbStore:
         item = dynamodb.get_item(TableName=table, Key={"id": {"N": "7"}})["Item"]
         assert item["name"] == {"S": "lamp"}
 
-    async def test_a_delete_reports_whether_the_item_existed(
-        self, wiring: PersistenceWiring
-    ) -> None:
+    async def test_a_delete_reports_whether_the_item_existed(self, wiring: StoreWiring) -> None:
         container = LoomContainer()
         wiring.repo_registration_module(container)
         await container.resolve(Creatable[Gadget]).create(Gadget(id=8, name="desk"))

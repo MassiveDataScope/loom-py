@@ -223,7 +223,7 @@ A `Recipe` is a frozen dataclass:
 |---|---|
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
-| `default_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
+| `default_store_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
 | `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
 | `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
 | `agent_endpoints` | Whether the adapter mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
@@ -246,7 +246,7 @@ class ScriptAdapter:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=source.discover(),               # app.discovery
-            default_backend="sqlalchemy",               # without stores.default
+            default_store_backend="sqlalchemy",               # without stores.default
             skip_checks=frozenset({REST_CHECKS}),
         )
 

@@ -23,12 +23,12 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.profile import (
     SERVER_PROFILE,
-    BackendRuntime,
     PoolDefaults,
     RuntimeProfile,
+    StoreRuntime,
 )
 from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
@@ -42,7 +42,7 @@ class AcmeTransportFreeAdapter:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=source.discover(),
-            default_backend="sqlalchemy",
+            default_store_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:
@@ -92,7 +92,7 @@ class _TinyAdapter:
 
 class TestTransportFreeComposition:
     async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
-        self, fixture_project: ProjectFactory, runtimes: list[BackendRuntime]
+        self, fixture_project: ProjectFactory, runtimes: list[StoreRuntime]
     ) -> None:
         config = fixture_project()
 
@@ -170,17 +170,17 @@ class TestTransportFreeComposition:
             build_application(project, adapter=adapter, environment="test")
 
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[BackendRuntime]:
+    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
         """Record the runtime the composition hands the SQLAlchemy backend."""
-        recorded: list[BackendRuntime] = []
+        recorded: list[StoreRuntime] = []
         build = SQLAlchemyBackend.build
 
         def recording(
             self: SQLAlchemyBackend,
             ctx: ConfigContext,
             models: Sequence[type[BaseModel]],
-            runtime: BackendRuntime,
-        ) -> PersistenceWiring:
+            runtime: StoreRuntime,
+        ) -> StoreWiring:
             recorded.append(runtime)
             return build(self, ctx, models, runtime)
 

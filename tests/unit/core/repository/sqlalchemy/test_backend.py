@@ -9,7 +9,7 @@ import pytest
 import loom.stores.sqlalchemy.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
@@ -18,7 +18,7 @@ from tests.helpers.persistence import build_backend
 _UNREACHABLE_URL = "sqlite+aiosqlite:////nonexistent/loom-readiness/store.db"
 
 
-def _wiring(url: str, cursors: dict[str, str] | None = None) -> PersistenceWiring:
+def _wiring(url: str, cursors: dict[str, str] | None = None) -> StoreWiring:
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},

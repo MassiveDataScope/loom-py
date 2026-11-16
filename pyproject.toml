@@ -203,7 +203,7 @@ spark = "loom.etl.backends.spark.provider:SparkProvider"
 
 # Persistence backends `create_app` resolves from `persistence.backend`. A
 # deployment registers its own under the same group from its own package.
-[project.entry-points."loom.persistence.backends"]
+[project.entry-points."loom.stores.backends"]
 sqlalchemy = "loom.stores.sqlalchemy.backend:SQLAlchemyBackend"
 dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
 mongo = "loom.stores.mongo.backend:MongoBackend"

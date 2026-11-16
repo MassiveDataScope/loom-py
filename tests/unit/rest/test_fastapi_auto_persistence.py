@@ -1,6 +1,6 @@
 """Persistence resolution in the auto-bootstrap REST app.
 
-Backends are reached by name through the ``loom.persistence.backends`` entry
+Backends are reached by name through the ``loom.stores.backends`` entry
 point group; these tests exercise the three loom registers, an injected one,
 and the bootstrap steps around them.
 """
@@ -22,9 +22,9 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import NoneBackend, PersistenceWiring
+from loom.core.stores import NoneBackend, StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
-from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
@@ -198,19 +198,19 @@ class _RecordingBackend:
     name: ClassVar[str] = "recording"
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
-    runtimes: ClassVar[list[BackendRuntime]] = []
+    runtimes: ClassVar[list[StoreRuntime]] = []
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         del spec
         return MODELS_ONLY
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
-    ) -> PersistenceWiring:
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+    ) -> StoreWiring:
         self.events.append(("build", tuple(models)))
         self.runtimes.append(runtime)
         wiring = NoneBackend().build(ctx, models, runtime)
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
             lifespan_init=wiring.lifespan_init,
@@ -223,7 +223,7 @@ class _RecordingBackend:
 
 class _RecordingEntryPoint:
     name = _RecordingBackend.name
-    group = "loom.persistence.backends"
+    group = "loom.stores.backends"
 
     def load(self) -> type[_RecordingBackend]:
         return _RecordingBackend
@@ -234,7 +234,7 @@ class _RecordingEntryPoints:
         return (_RecordingEntryPoint(),) if group == _RecordingEntryPoint.group else ()
 
 
-class TestInjectedPersistenceBackend:
+class TestInjectedStoreBackend:
     def test_injected_backend_boots_and_prepares_models_after_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -15,9 +15,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
-from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 
@@ -57,8 +57,8 @@ def _build(
     store: StoreKey,
     *models: type[BaseModel],
     pool_metrics: _Labels | None = None,
-) -> PersistenceWiring:
-    runtime = BackendRuntime(
+) -> StoreWiring:
+    runtime = StoreRuntime(
         SERVER_PROFILE, pool_metrics=pool_metrics, catalog=load_catalog(ctx), store=store
     )
     return SQLAlchemyBackend().build(ctx, models, runtime)
@@ -122,7 +122,7 @@ class TestBackendStores:
         container.register_instance(Environment, Environment.TEST)
 
         for store in (DEFAULT_STORE, _AUDIT):
-            runtime = BackendRuntime(
+            runtime = StoreRuntime(
                 SERVER_PROFILE, catalog=load_catalog(ctx), store=store, cursor_codec=codec
             )
             SQLAlchemyBackend().build(ctx, (), runtime).repo_registration_module(container)

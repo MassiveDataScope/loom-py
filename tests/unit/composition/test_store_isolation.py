@@ -66,7 +66,7 @@ class _Models:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=self.models, use_cases=(), interfaces=()),
-            default_backend="sqlalchemy",
+            default_store_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:

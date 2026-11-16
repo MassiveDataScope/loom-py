@@ -12,9 +12,9 @@ from loom.core.stores.profile import (
     SERVER_PROFILE,
     STREAMING_PROFILE,
     WORKER_PROFILE,
-    BackendRuntime,
     PoolDefaults,
     RuntimeProfile,
+    StoreRuntime,
 )
 
 
@@ -61,9 +61,7 @@ class TestServerProfile:
         assert SERVER_PROFILE.pool.size == 5
 
     def test_backend_runtime_carries_no_metrics_unless_given(self) -> None:
-        runtime = BackendRuntime(
-            SERVER_PROFILE, catalog=StoreCatalog(specs={}), store=DEFAULT_STORE
-        )
+        runtime = StoreRuntime(SERVER_PROFILE, catalog=StoreCatalog(specs={}), store=DEFAULT_STORE)
 
         assert runtime.pool_metrics is None
 

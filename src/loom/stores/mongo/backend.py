@@ -22,10 +22,10 @@ from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.types import NonNegativeInt, PositiveInt
-from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.backend import StoreWiring
 from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.stores.database import PoolConfig
-from loom.core.stores.profile import BackendRuntime, PoolDefaults, RuntimeProfile
+from loom.core.stores.profile import PoolDefaults, RuntimeProfile, StoreRuntime
 from loom.core.stores.repository import CursorCodec
 from loom.stores.mongo.ids import (
     IdPolicy,
@@ -102,8 +102,8 @@ class MongoBackend:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
+        runtime: StoreRuntime,
+    ) -> StoreWiring:
         """Build the Mongo wiring for the discovered models.
 
         Args:
@@ -134,7 +134,7 @@ class MongoBackend:
             maxIdleTimeMS=pool.recycle_s * 1000,
         )
         sessions = MongoSessions(client, spec.key)
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=_unit_of_work_factory(client, spec.key, mongo_cfg),
             repo_registration_module=_with_sessions(
                 build_mongo_repository_registration_module(

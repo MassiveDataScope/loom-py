@@ -61,7 +61,7 @@ class _WithoutAgents:
             discovered=dataclasses.replace(
                 discovered, use_cases=(*discovered.use_cases, AcmeNotifyIncident)
             ),
-            default_backend="sqlalchemy",
+            default_store_backend="sqlalchemy",
             agents=False,
         )
 

@@ -14,7 +14,7 @@ import pytest
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
@@ -74,7 +74,7 @@ class TestDynamoExecutorParallelism:
         assert slow_client.seen_requests == ["req-42"]
 
 
-def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> PersistenceWiring:
+def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> StoreWiring:
     monkeypatch.setattr(AwsClientConfig, "client", lambda _self, _service: client)
     ctx = ConfigContext.from_dict(
         {

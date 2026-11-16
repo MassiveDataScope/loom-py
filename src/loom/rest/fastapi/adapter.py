@@ -44,8 +44,8 @@ from loom.core.introspection import (
 from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
-    PersistenceBackend,
     PoolMetricsSink,
+    StoreBackend,
 )
 from loom.core.stores.catalog import SQLALCHEMY_BACKEND, StoreKey, store_of
 from loom.core.use_case.constants import CrudOp
@@ -215,7 +215,7 @@ def _gate_autocrud_capabilities(
         if interface.auto_crud_model is not None:
             model = interface.auto_crud_model
             key = store_of(model)
-            backend = source.backend(key, default=SQLALCHEMY_BACKEND)
+            backend = source.store_backend(key, default=SQLALCHEMY_BACKEND)
             pruned.update(_gate_interface(interface, model, key, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
@@ -228,7 +228,7 @@ def _gate_interface(
     interface: type[RestInterface[Any]],
     model: type[Any],
     key: StoreKey,
-    backend: PersistenceBackend,
+    backend: StoreBackend,
 ) -> frozenset[type[Any]]:
     """Narrow one interface's generated routes; return the use cases pruned from it."""
     backend_name = backend.name
@@ -254,7 +254,7 @@ def _gate_interface(
     return frozenset(route.use_case for route in generated if route.use_case not in kept)
 
 
-def _serving_repository_type(model: type[Any], backend: PersistenceBackend) -> type[Any] | None:
+def _serving_repository_type(model: type[Any], backend: StoreBackend) -> type[Any] | None:
     """Return the repository class that will serve *model* on *backend*."""
     registered = registered_repository_type(model)
     if registered is not None:
@@ -634,7 +634,7 @@ def compose_rest(
     recipe = Recipe(
         profile=SERVER_PROFILE,
         discovered=discovered,
-        default_backend=SQLALCHEMY_BACKEND,
+        default_store_backend=SQLALCHEMY_BACKEND,
         agents=True,
         metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
         pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, source.app.name),

@@ -11,17 +11,17 @@ from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.stores import (
     SERVER_PROFILE,
-    BackendRuntime,
-    PersistenceBackend,
-    PersistenceWiring,
     PoolMetricsSink,
     RuntimeProfile,
+    StoreBackend,
+    StoreRuntime,
+    StoreWiring,
 )
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
 
 
 def build_backend(
-    backend: PersistenceBackend,
+    backend: StoreBackend,
     ctx: ConfigContext,
     models: Sequence[type[BaseModel]] = (),
     profile: RuntimeProfile = SERVER_PROFILE,
@@ -29,9 +29,9 @@ def build_backend(
     pool_metrics: PoolMetricsSink | None = None,
     connection_only: bool = False,
     store: StoreKey = DEFAULT_STORE,
-) -> PersistenceWiring:
+) -> StoreWiring:
     """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
-    runtime = BackendRuntime(
+    runtime = StoreRuntime(
         profile,
         pool_metrics=pool_metrics,
         connection_only=connection_only,

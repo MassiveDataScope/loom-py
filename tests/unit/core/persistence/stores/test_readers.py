@@ -24,7 +24,7 @@ class TestRetiredStoreSections:
         )
 
         with pytest.raises(ConfigError, match="stores.default"):
-            source.backend(DEFAULT_STORE, default="none")
+            source.store_backend(DEFAULT_STORE, default="none")
 
     def test_each_store_names_the_backend_composed_for_it(self) -> None:
         stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
@@ -34,7 +34,7 @@ class TestRetiredStoreSections:
 
         keys = (DEFAULT_STORE, StoreKey("audit"))
 
-        backends = [source.backend(key, default="mongo").name for key in keys]
+        backends = [source.store_backend(key, default="mongo").name for key in keys]
 
         assert backends == ["none", "sqlalchemy"]
 
@@ -99,4 +99,4 @@ class TestClickHouseStoreReaders:
         )
 
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            source.backend(DEFAULT_STORE, default="none")
+            source.store_backend(DEFAULT_STORE, default="none")

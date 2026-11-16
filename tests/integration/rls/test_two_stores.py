@@ -29,7 +29,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.identity.identity import ANONYMOUS
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.stores.elevation import (
     ElevableScopeInSeveralStores,
@@ -145,7 +145,7 @@ class Store:
     """One store as its backend wires it: the wiring, its session manager and a repository."""
 
     key: StoreKey
-    wiring: PersistenceWiring
+    wiring: StoreWiring
     manager: SessionManager
     notes: RepositorySQLAlchemy
     elevation: StoreElevation | None

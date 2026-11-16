@@ -17,7 +17,7 @@ signals check, open and close the application.  Its recipe declares
   ``worker_shutdown`` closes.
 
 A worker with no model asks for its connection only
-(``BackendRuntime.connection_only``), serving no repository: its check
+(``StoreRuntime.connection_only``), serving no repository: its check
 probes the connection and creates no table, though on Postgres it still
 refuses a superuser or bypass role and scoped tables outside an external
 schema; its row-level security is never bound, so on Postgres with

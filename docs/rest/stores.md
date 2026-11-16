@@ -1,8 +1,8 @@
-# Persistence backends
+# Stores and their backends
 
 Each store is declared under `stores.<name>`: its `backend` names a plugin,
 and the rest of the section is the connection that backend reads. loom
-resolves the backend from the `loom.persistence.backends` entry point group
+resolves the backend from the `loom.stores.backends` entry point group
 at bootstrap, asks it once for everything the host needs, and never imports a
 backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
 `mongo` and `none` — and a package of your own registers a fifth the same way.
@@ -57,10 +57,10 @@ nothing reads them any more. `persistence.cursors` stays where it is.
 
 A backend is a class with a no-argument constructor, a `name`, a
 `repository_type` and a `build` method:
-`build(ctx, models, runtime) -> PersistenceWiring`. `repository_type` is the
+`build(ctx, models, runtime) -> StoreWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
 `None` means the backend serves no repositories. `runtime` is a
-`BackendRuntime`: the `RuntimeProfile` of the entry point building it
+`StoreRuntime`: the `RuntimeProfile` of the entry point building it
 (`server`, `worker`, ...), whose defaults size any connection pool the backend
 opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
 `StoreCatalog` the composition loaded once, `store`, the key of the store it
@@ -103,7 +103,7 @@ import msgspec
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
-from loom.core.stores import BackendRuntime, PersistenceWiring
+from loom.core.stores import StoreRuntime, StoreWiring
 from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -120,13 +120,13 @@ class LedgerBackend:
     repository_type: ClassVar[type[Any] | None] = RepositoryLedger
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
-    ) -> PersistenceWiring:
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+    ) -> StoreWiring:
         # ConfigError when the store is missing, names another backend or is invalid.
         store = runtime.catalog.served_by(self.name, runtime.store)
         cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=None,
             repo_registration_module=build_repository_registration_module(
                 models=models,
@@ -161,7 +161,7 @@ async def _lifespan(client: LedgerClient) -> AsyncIterator[None]:
 
 ```toml
 # pyproject.toml of the billing_ledger package
-[project.entry-points."loom.persistence.backends"]
+[project.entry-points."loom.stores.backends"]
 ledger = "billing_ledger.backend:LedgerBackend"
 ```
 
@@ -170,7 +170,7 @@ startup: the host fails closed instead of picking one.
 
 ### The wiring
 
-`PersistenceWiring` is a frozen dataclass. The host uses each field once:
+`StoreWiring` is a frozen dataclass. The host uses each field once:
 
 | Field | What the host does with it |
 |---|---|
@@ -817,7 +817,7 @@ class Measurement(BaseModel):
 - The application is composed once, transport-neutrally, by
   `loom.composition` ([Composition and lifecycle](../getting-started/composition.md)),
   and the API and the worker are adapters over it:
-  - `PersistenceWiring.default_repository_type` is gone: a backend declares
+  - `StoreWiring.default_repository_type` is gone: a backend declares
     `repository_type` as a class variable.
   - `lifespan_init` only opens and releases; the schema and role checks moved
     to `startup_checks`. Closing a SQLAlchemy backend no longer resets the
@@ -903,7 +903,7 @@ class Measurement(BaseModel):
   connections per process (it allowed thirty); the API keeps five plus five
   and recycles connections every 1800 s. Declare `database.pool` to keep
   other values.
-- `PersistenceBackend.build` takes a third argument, the `BackendRuntime`.
+- `StoreBackend.build` takes a third argument, the `StoreRuntime`.
 - A worker with a malformed `database` section now fails at startup instead
   of running without its database.
 

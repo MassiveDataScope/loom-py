@@ -521,7 +521,7 @@
   | `loom.core.sql.loader` (`sql_island`, `SqlIsland`) | removed; the composition root loads `loom.stores.clickhouse` itself |
 - **stores:** the SQLAlchemy store and its schema loader live under
   `loom.stores.sqlalchemy`, and `loom.core` imports neither `sqlalchemy` nor
-  `loom.stores`. The `sqlalchemy` entry point of `loom.persistence.backends`
+  `loom.stores`. The `sqlalchemy` entry point of `loom.stores.backends`
   now targets `loom.stores.sqlalchemy.backend:SQLAlchemyBackend`.
   **Migration:**
   - Alembic `env.py` files importing `loom.core.repository.sqlalchemy.migrations`
@@ -536,11 +536,30 @@
     below it) must name `loom.stores.sqlalchemy` instead, or it stops matching.
 - **stores:** the DynamoDB and Mongo stores live under `loom.stores.dynamodb`
   and `loom.stores.mongo`. The `dynamodb` and `mongo` entry points of
-  `loom.persistence.backends` now target
+  `loom.stores.backends` now target
   `loom.stores.dynamodb.backend:DynamoDBBackend` and
   `loom.stores.mongo.backend:MongoBackend`. `run_in_executor` is public API
   at `loom.core._async`. `loom.core.repository` is gone.
   **Migration:** update the imports in the table above.
+- **stores:** the backend contract carries the store vocabulary, and the entry
+  point group moves with it. A third-party backend package must re-register
+  its entry point under `[project.entry-points."loom.stores.backends"]`
+  (`loom.persistence.backends` lists nothing any more) and implement
+  `StoreBackend`.
+  **Migration:**
+
+  | Before | After |
+  |---|---|
+  | `PersistenceBackend` | `StoreBackend` |
+  | `PersistenceWiring` | `StoreWiring` |
+  | `BackendRuntime` | `StoreRuntime` |
+  | `resolve_backend` | `resolve_store_backend` |
+  | `unknown_backend_message` | private |
+  | `CompositionSource.backend()` | `CompositionSource.store_backend()` |
+  | `loom.composition.phases.Stores.backends` | `Stores.store_backends` |
+  | `Recipe.default_backend` | `Recipe.default_store_backend` |
+  | entry point group `loom.persistence.backends` | `loom.stores.backends` |
+  | `docs/rest/persistence-backends.md` | `docs/rest/stores.md` |
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
   always passes it to the repository it wraps. Before: a custom repository

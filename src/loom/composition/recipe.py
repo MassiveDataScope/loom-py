@@ -40,7 +40,7 @@ class Recipe:
         profile: Pool defaults of the entry point (server, worker, ...).
         discovered: Use cases, models, interfaces and agent specs, final:
             with whatever the adapter added or pruned.
-        default_backend: Backend of the default store when ``stores.default``
+        default_store_backend: Backend of the default store when ``stores.default``
             is not declared.
         skip_checks: Deploy-check areas this entry point does not serve,
             such as :data:`~loom.core.checks.REST_CHECKS` for a worker.
@@ -56,7 +56,7 @@ class Recipe:
             serves a scrape.
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
-            :class:`~loom.core.stores.BackendRuntime`).
+            :class:`~loom.core.stores.StoreRuntime`).
         callbacks: Job callback classes the entry point builds; the
             dependency graph's roots with the use cases and jobs, never
             compiled.
@@ -74,7 +74,7 @@ class Recipe:
 
     profile: RuntimeProfile
     discovered: DiscoveryResult
-    default_backend: str = NONE_BACKEND
+    default_store_backend: str = NONE_BACKEND
     skip_checks: frozenset[str] = frozenset()
     agents: bool = False
     agent_endpoints: bool = True

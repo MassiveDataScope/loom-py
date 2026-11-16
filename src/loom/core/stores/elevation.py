@@ -21,7 +21,7 @@ from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import PersistenceWiring
+    from loom.core.stores.backend import StoreWiring
 
 
 @unique
@@ -101,7 +101,7 @@ class ScopedElevationSink:
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
     @classmethod
-    def of(cls, wirings: Mapping[StoreKey, PersistenceWiring]) -> ScopedElevationSink | None:
+    def of(cls, wirings: Mapping[StoreKey, StoreWiring]) -> ScopedElevationSink | None:
         """The sink of the stores among *wirings* whose sessions carry elevation flags, if any.
 
         Args:

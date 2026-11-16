@@ -13,9 +13,9 @@ from loom.core._async import run_in_executor
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig, AwsService
 from loom.core.model import BaseModel
-from loom.core.stores.backend import PersistenceWiring
+from loom.core.stores.backend import StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
-from loom.core.stores.profile import BackendRuntime
+from loom.core.stores.profile import StoreRuntime
 from loom.stores.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
@@ -72,8 +72,8 @@ class DynamoDBBackend:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: BackendRuntime,
-    ) -> PersistenceWiring:
+        runtime: StoreRuntime,
+    ) -> StoreWiring:
         """Build the DynamoDB wiring for the discovered models.
 
         Args:
@@ -97,7 +97,7 @@ class DynamoDBBackend:
         )
         client = dynamo_cfg.client(AwsService.DYNAMODB)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=DynamoUnitOfWorkFactory(),
             repo_registration_module=build_dynamodb_repository_registration_module(
                 client, dynamo_cfg.table, models, store=spec.key, executor=executor

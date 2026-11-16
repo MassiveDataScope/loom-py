@@ -23,12 +23,12 @@ from loom.core.environment import Environment, resolve_environment, select_confi
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.stores import resolve_backend
+from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.stores import PersistenceBackend
+    from loom.core.stores import StoreBackend
 
 
 class AppConfig(msgspec.Struct, kw_only=True):
@@ -136,7 +136,7 @@ class CompositionSource:
         """
         return load_catalog(self.config)
 
-    def backend(self, key: StoreKey, *, default: str) -> PersistenceBackend:
+    def store_backend(self, key: StoreKey, *, default: str) -> StoreBackend:
         """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:
@@ -144,4 +144,4 @@ class CompositionSource:
                 registered under that name.
         """
         spec = self.catalog.specs.get(key)
-        return resolve_backend(default if spec is None else spec.backend)
+        return resolve_store_backend(default if spec is None else spec.backend)

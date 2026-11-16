@@ -15,7 +15,7 @@ from loom.composition.phases import build_stores
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import SERVER_PROFILE, BackendRuntime
+from loom.core.stores import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.none import NoneBackend
 from loom.core.stores.repository import CursorCodec
@@ -46,9 +46,9 @@ def _recipe(*, connection_only: bool = False) -> Recipe:
 
 class TestStoreCursorCodec:
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[BackendRuntime]:
+    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
         """Every runtime a ``none`` or SQLAlchemy store is built with, in order."""
-        seen: list[BackendRuntime] = []
+        seen: list[StoreRuntime] = []
         for backend in (NoneBackend, SQLAlchemyBackend):
             build = backend.build
 
@@ -65,14 +65,14 @@ class TestStoreCursorCodec:
         ids=["no-stores", "declared-none"],
     )
     def test_stores_paging_with_no_cursor_need_no_signing_key(
-        self, raw: dict[str, Any], runtimes: list[BackendRuntime]
+        self, raw: dict[str, Any], runtimes: list[StoreRuntime]
     ) -> None:
         _build(raw)
 
         assert [runtime.cursor_codec for runtime in runtimes] == [None]
 
     def test_a_store_paging_with_cursors_shares_one_codec(
-        self, runtimes: list[BackendRuntime]
+        self, runtimes: list[StoreRuntime]
     ) -> None:
         _build({"stores": _SQLITE, "persistence": {"cursors": {"signing": "ephemeral"}}})
 
@@ -95,7 +95,7 @@ class TestStoreCursorCodec:
         assert _recipe().cursor_codec(ctx, load_catalog(ctx).with_default("none")) is None
 
     def test_a_connection_only_composition_builds_no_codec(
-        self, runtimes: list[BackendRuntime]
+        self, runtimes: list[StoreRuntime]
     ) -> None:
         _build({"stores": _SQLITE}, connection_only=True)
 

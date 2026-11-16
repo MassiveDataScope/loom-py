@@ -20,7 +20,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.stores import PersistenceWiring
+from loom.core.stores import StoreWiring
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
@@ -55,13 +55,13 @@ class _CallerScoped(BaseModel, RowScoped):
     id: int = ColumnField(Integer, primary_key=True)
 
 
-def _wiring(database: dict[str, Any]) -> PersistenceWiring:
+def _wiring(database: dict[str, Any]) -> StoreWiring:
     # No persistence.cursors at all: a codec built here would fail.
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy", **database}}})
     return build_backend(SQLAlchemyBackend(), ctx, (), WORKER_PROFILE, connection_only=True)
 
 
-def _registered(wiring: PersistenceWiring) -> LoomContainer:
+def _registered(wiring: StoreWiring) -> LoomContainer:
     container = LoomContainer()
     wiring.repo_registration_module(container)
     return container
@@ -73,7 +73,7 @@ def _tables(path: Path) -> set[str]:
         return {name for (name,) in rows}
 
 
-def _idle(wiring: PersistenceWiring) -> tuple[int, int]:
+def _idle(wiring: StoreWiring) -> tuple[int, int]:
     pool = _registered(wiring).resolve(SessionManager).engine.sync_engine.pool
     return pool.checkedout(), pool.checkedin()
 

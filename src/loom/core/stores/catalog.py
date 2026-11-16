@@ -1,7 +1,7 @@
 """The store catalog: the ``stores.<name>`` sections and the store each model belongs to.
 
 Each ``stores.<name>`` section declares one store: its ``backend``, one of the
-names registered in the ``loom.persistence.backends`` entry-point group, and
+names registered in the ``loom.stores.backends`` entry-point group, and
 the connection that backend reads. A connection-only store
 (:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no persistence backend:
 it serves no model and no repository, never joins a unit of work, and only
@@ -35,8 +35,7 @@ from loom.core.model import BaseModel
 from loom.core.plugins.entrypoints import registered_names
 from loom.core.stores.registry import (
     BACKEND_ENTRY_POINT_GROUP,
-    resolve_backend,
-    unknown_backend_message,
+    resolve_store_backend,
 )
 
 T = TypeVar("T")
@@ -122,7 +121,7 @@ class StoreSpec:
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
-        backend = resolve_backend(self.backend)
+        backend = resolve_store_backend(self.backend)
         if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
                 f"persistence backend {self.backend!r} ({type(backend).__qualname__}) serving "
@@ -367,7 +366,8 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
     if not connection_only and backend not in registered:
         kinds = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
         raise ConfigError(
-            f"{path}.{BACKEND_KEY}: {unknown_backend_message(backend, registered)} "
+            f"{path}.{BACKEND_KEY}: Unknown persistence backend {backend!r}. "
+            f"Registered backends: {', '.join(registered)}. "
             f"Connection-only stores: {kinds}."
         )
     if connection_only and key == DEFAULT_STORE:

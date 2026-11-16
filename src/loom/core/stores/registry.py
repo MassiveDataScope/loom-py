@@ -1,4 +1,4 @@
-"""Resolution of persistence backends from the ``loom.persistence.backends`` group."""
+"""Resolution of persistence backends from the ``loom.stores.backends`` group."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from loom.core.plugins.entrypoints import (
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import PersistenceBackend
+    from loom.core.stores.backend import StoreBackend
 
-BACKEND_ENTRY_POINT_GROUP = "loom.persistence.backends"
+BACKEND_ENTRY_POINT_GROUP = "loom.stores.backends"
 """Entry point group persistence backends register under."""
 
 
-def resolve_backend(name: str) -> PersistenceBackend:
+def resolve_store_backend(name: str) -> StoreBackend:
     """Resolve the persistence backend registered under ``name``.
 
     Args:
@@ -35,17 +35,17 @@ def resolve_backend(name: str) -> PersistenceBackend:
     try:
         target = load_entry_point(BACKEND_ENTRY_POINT_GROUP, name, on_duplicate="error")
     except EntryPointNotFoundError as exc:
-        raise ConfigError(unknown_backend_message(name, exc.available)) from exc
+        raise ConfigError(_unknown_backend_message(name, exc.available)) from exc
     except ImportError as exc:
         raise ConfigError(
             f"Persistence backend {name!r} could not be imported ({exc}). Install the "
             f"distribution providing it (built-in backends: `pip install 'loom-kernel[{name}]'`)."
         ) from exc
-    backend_cls = cast("type[PersistenceBackend]", target)
+    backend_cls = cast("type[StoreBackend]", target)
     return backend_cls()
 
 
-def unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
+def _unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
     """Return the message naming an unknown backend *name* and the *available* ones."""
     if not available:
         return f"Unknown persistence backend {name!r}. No persistence backends are registered."
@@ -55,6 +55,5 @@ def unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
 
 __all__ = [
     "BACKEND_ENTRY_POINT_GROUP",
-    "resolve_backend",
-    "unknown_backend_message",
+    "resolve_store_backend",
 ]
