@@ -71,6 +71,7 @@ class _Binding:
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     refused: str | None = field(default=None, repr=False)
     target: object = field(default=None, repr=False)
+    overridden: list[object] = field(default_factory=list, repr=False)
 
     def build(self, make: Supplier) -> object:
         """Return the instance, built once by *make* under :attr:`lock`, outside any execution."""
@@ -266,6 +267,7 @@ class LoomContainer:
 
         The alias is served by *target*'s own supplier, so both keys return the
         same instance, and a change of *target* reaches ``interface`` with it.
+        The alias takes the scope *target* has when it is registered.
 
         Args:
             interface: The key that resolves through *target*.
@@ -273,9 +275,15 @@ class LoomContainer:
 
         Raises:
             ContainerSealed: When the container is sealed.
+            ResolutionError: When *target* is unbound.
         """
         with STRUCTURE_LOCK:
-            self._bind(interface, lambda: self.resolve(target), Scope.APPLICATION)
+            served = self._bindings.get(target)
+            if served is None:
+                raise ResolutionError(
+                    f"{describe_key(interface)} aliases {describe_key(target)}, which is unbound"
+                )
+            self._bind(interface, served.provider, served.scope)
             self._bindings[interface].target = target
 
     def is_alias_of(self, interface: BindingKey, target: BindingKey) -> bool:
@@ -298,28 +306,54 @@ class LoomContainer:
             instance: What it serves meanwhile.
 
         Raises:
-            ResolutionError: When ``interface`` is unbound, an alias, or not
-                ``APPLICATION`` scoped.
+            ResolutionError: When ``interface`` is unbound, is an alias of
+                another key, or is not ``APPLICATION`` scoped; or, on exit,
+                when another override of the same key was entered after this
+                one and has not exited. This one is removed all the same and
+                the original is back once every override has exited.
         """
         with STRUCTURE_LOCK:
-            binding = self._bindings.get(interface)
-            if (
-                binding is None
-                or binding.target is not None
-                or binding.scope is not Scope.APPLICATION
-            ):
-                raise ResolutionError(
-                    f"{describe_key(interface)} is not an APPLICATION binding that can be replaced"
-                )
-            previous = binding.instance
+            binding = self._replaceable(interface)
+            if not binding.overridden:
+                binding.overridden.append(binding.instance)
+            binding.overridden.append(instance)
             binding.instance = instance
             self._drop_compiled()
         try:
             yield
         finally:
             with STRUCTURE_LOCK:
-                binding.instance = previous
+                exited_in_order = binding.overridden[-1] is instance
+                last = len(binding.overridden) - 1 - binding.overridden[::-1].index(instance)
+                del binding.overridden[last]
+                binding.instance = binding.overridden[-1]
+                if len(binding.overridden) == 1:
+                    binding.overridden.clear()
                 self._drop_compiled()
+            if not exited_in_order:
+                raise ResolutionError(
+                    f"Overrides of {describe_key(interface)} exited out of order: exit the "
+                    "last one entered first. This one is removed; the others stay until they exit"
+                )
+
+    def _replaceable(self, interface: BindingKey) -> _Binding:
+        """The binding of *interface*, which :meth:`overriding` may swap."""
+        binding = self._bindings.get(interface)
+        if binding is None:
+            raise ResolutionError(
+                f"{describe_key(interface)} is unbound: there is nothing to override"
+            )
+        if binding.target is not None:
+            raise ResolutionError(
+                f"{describe_key(interface)} is an alias of {describe_key(binding.target)}: "
+                "override that key instead; for a repository, use Override.repository"
+            )
+        if binding.scope is not Scope.APPLICATION:
+            raise ResolutionError(
+                f"{describe_key(interface)} is bound per execution: only an APPLICATION "
+                "binding can be overridden"
+            )
+        return binding
 
     def resolve(self, interface: BindingKey) -> Any:
         """Return an instance bound to ``interface``.

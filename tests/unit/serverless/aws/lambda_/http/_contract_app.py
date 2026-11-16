@@ -147,8 +147,8 @@ def write_contract_project(
         exclude_paths: Paths served without a token; ``None`` leaves the
             default exclusions.
         health_route: Also serve a business route at the literal ``/health``.
-        agents: Agent artifacts a manifest declares; without them, the
-            interfaces are discovered from the module.
+        agents: The ``app.agents`` globs; without them, only the
+            package is scanned.
         **sections: Extra top-level configuration sections.
     """
     module = _module_of(directory)

@@ -42,18 +42,15 @@ def jobs_recipe(
 ) -> tuple[Recipe, dict[str, type[Job[Any]]]]:
     """The recipe of a function running jobs, with Lambda pool defaults, and the jobs by name.
 
-    AutoCRUD use cases for discovered models are not compiled, and discovered
-    callbacks are not registered. Agents are hosted for the use cases, without
-    their HTTP endpoints.
+    AutoCRUD use cases for discovered models are not compiled. Agents are hosted for the
+    use cases, without their HTTP endpoints.
     """
-    resolved = resolve_worker_components(project.config, jobs, use_cases)
+    resolved = resolve_worker_components(project.discovered, jobs, use_cases)
     if resolved.models:
         _log.warning(
             "Lambda ignores AutoCRUD use cases for discovered models",
             models=len(resolved.models),
         )
-    if resolved.callbacks:
-        _log.warning("Lambda ignores discovered job callbacks", callbacks=len(resolved.callbacks))
     recipe = Recipe(
         profile=LAMBDA_PROFILE,
         discovered=DiscoveryResult(

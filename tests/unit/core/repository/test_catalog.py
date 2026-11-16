@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.di.container import LoomContainer
+from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
@@ -49,6 +49,14 @@ class TestRepositoryCatalogLookup:
             assert catalog.for_table("catalog_orders", store=LEDGER) is double
 
         assert catalog[AcmeOrder] is original
+        assert catalog.for_table("catalog_orders", store=LEDGER) is original
+
+    def test_overriding_an_unserved_model_names_it_plainly(self, container: LoomContainer) -> None:
+        with (
+            pytest.raises(ResolutionError, match="No store serves a repository for AcmeUnserved"),
+            Override.repository(AcmeUnserved, object()).applied(container),
+        ):
+            pass
 
     def test_an_unserved_model_names_itself(self, catalog: RepositoryCatalog) -> None:
         with pytest.raises(KeyError, match="AcmeUnserved"):

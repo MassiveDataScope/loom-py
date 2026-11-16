@@ -16,6 +16,7 @@ from loom.celery.bootstrap import WorkerBootstrapResult
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import DuplicateJobName
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
@@ -86,11 +87,11 @@ class TestDuplicateJobQualnames:
 
             return Duplicate
 
-        ctx = ConfigContext.from_dict({"app": {"name": "duplicate-jobs"}})
         jobs = [make_job(), make_job()]
+        discovered = DiscoveryResult(models=(), use_cases=(), interfaces=())
 
         with pytest.raises(DuplicateJobName):
-            discovery._resolve_compilables_and_jobs(ctx, jobs, [])
+            discovery._resolve_compilables_and_jobs(discovered, jobs, [])
 
 
 # ---------------------------------------------------------------------------

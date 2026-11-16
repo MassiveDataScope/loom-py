@@ -146,8 +146,9 @@ class SupplierCompiler:
     def _scoped(self, key: object, binding: _Binding, make: Supplier) -> Supplier:
         """Serve *binding* by its scope: per execution, as a constant, or built once.
 
-        An unbuilt singleton's supplier is replaced by a constant once built; a
-        dependent compiled earlier keeps it, and it reads the built instance.
+        An unbuilt singleton's supplier is replaced by a constant once built, under
+        its key and under every alias of it; a dependent compiled earlier keeps it,
+        and it reads the built instance.
         """
         if binding.scope.per_execution:
             return per_execution(binding, make)
@@ -161,9 +162,10 @@ class SupplierCompiler:
             if instance is not UNBUILT:
                 return instance
             instance = binding.build(make)
+            constant = repeat(instance).__next__
             with STRUCTURE_LOCK:
-                if served.get(key) is singleton:
-                    served[key] = repeat(instance).__next__
+                for served_key in [k for k, v in served.items() if v is singleton]:
+                    served[served_key] = constant
             return instance
 
         return singleton

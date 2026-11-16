@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import FunctionType
+
 import pytest
 
 from loom.core.di.container import LoomContainer, ResolutionError
@@ -54,10 +56,28 @@ class TestAlias:
         assert len(resolved) == 1
         assert builds.calls == 1
 
-    def test_is_served_by_the_supplier_of_its_target(self, container: LoomContainer) -> None:
+    def test_is_served_as_a_constant_once_the_container_is_sealed(
+        self, container: LoomContainer
+    ) -> None:
+        container.resolve(AcmeReadable)
+        container.resolve(AcmeStore)
+
+        assert not any(
+            isinstance(container._served[key], FunctionType) for key in (AcmeReadable, AcmeStore)
+        )
+
+    def test_is_served_as_a_constant_once_resolving_it_built_its_target(
+        self, builds: CountedBuilds
+    ) -> None:
+        container = LoomContainer()
+        container.register(AcmeStore, builds, scope=Scope.APPLICATION)
+        container.register_alias(AcmeReadable, AcmeStore)
+
         container.resolve(AcmeReadable)
 
-        assert container._served[AcmeReadable] is container._served[AcmeStore]
+        assert not any(
+            isinstance(container._served[key], FunctionType) for key in (AcmeReadable, AcmeStore)
+        )
 
     def test_is_injected_as_the_instance_of_its_target(self, container: LoomContainer) -> None:
         assert container.compiled(AcmeConsumer)().readable is container.resolve(AcmeStore)
@@ -90,12 +110,47 @@ class TestOverriding:
         assert container.resolve(AcmeReadable) is original
         assert builds.calls == 1
 
-    @pytest.mark.parametrize("key", [AcmeReadable, AcmeConsumer, int])
-    def test_refuses_what_is_not_an_application_binding(
-        self, container: LoomContainer, key: type
+    @pytest.mark.parametrize(
+        ("key", "message"),
+        [
+            (AcmeReadable, "alias of AcmeStore.*Override.repository"),
+            (AcmeConsumer, "bound per execution"),
+            (int, "unbound"),
+        ],
+    )
+    def test_refuses_what_cannot_be_replaced_saying_why(
+        self, container: LoomContainer, key: type, message: str
     ) -> None:
-        with (
-            pytest.raises(ResolutionError, match="can be replaced"),
-            container.overriding(key, object()),
-        ):
+        with pytest.raises(ResolutionError, match=message), container.overriding(key, object()):
             pass
+
+    def test_refuses_an_exit_out_of_order_and_leaves_no_double_behind(
+        self, container: LoomContainer
+    ) -> None:
+        original = container.resolve(AcmeStore)
+        first, second = AcmeStore(), AcmeStore()
+        outer = container.overriding(AcmeStore, first)
+        inner = container.overriding(AcmeStore, second)
+        outer.__enter__()
+        inner.__enter__()
+
+        with pytest.raises(ResolutionError, match="out of order"):
+            outer.__exit__(None, None, None)
+        assert container.resolve(AcmeStore) is second
+        inner.__exit__(None, None, None)
+
+        assert container.resolve(AcmeStore) is original
+        assert container.resolve(AcmeReadable) is original
+
+
+class TestRegisterAlias:
+    def test_refuses_an_unbound_target(self) -> None:
+        with pytest.raises(ResolutionError, match="unbound"):
+            LoomContainer().register_alias(AcmeReadable, AcmeStore)
+
+    def test_takes_the_scope_of_its_target(self) -> None:
+        container = LoomContainer()
+        container.register(AcmeStore, AcmeStore, scope=Scope.REQUEST)
+        container.register_alias(AcmeReadable, AcmeStore)
+
+        assert container.resolve(AcmeReadable) is not container.resolve(AcmeReadable)

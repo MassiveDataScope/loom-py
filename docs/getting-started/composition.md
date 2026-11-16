@@ -70,6 +70,21 @@ there, as it does in `app.rest.auth`. In staging and production,
 An interface can belong to only one function. Startup refuses unknown or
 ambiguous names and warns about discovered interfaces assigned to none.
 
+## Finding the application's components
+
+`app.packages` lists the packages, or single modules, the composition scans.
+A package is walked recursively; models, use cases, jobs, REST interfaces
+and `Installer` classes defined in it are found, in module then
+qualified-name order. Abstract classes, classes imported from elsewhere and
+models without their own `__tablename__` are skipped.
+
+- Every module in a listed package is imported at scan: keep script-like
+  modules such as `__main__.py` out of it.
+- A directory inside a listed package that holds `.py` files but no
+  `__init__.py` is refused with a `ConfigError` naming it, as `setuptools`'s
+  `find_packages` would skip it.
+- Job callbacks are not scanned: pass `callbacks=` to the Celery entry point.
+
 ## Event triggers
 
 An `eventbridge`, `s3`, `sns` or `schedule` function runs the job it declares
@@ -246,7 +261,7 @@ class ScriptAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=project.discover(),              # app.packages
+            discovered=project.discovered,              # app.packages
             default_store_backend="sqlalchemy",               # without stores.default
             skip_checks=frozenset({REST_CHECKS}),
         )

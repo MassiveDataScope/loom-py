@@ -51,6 +51,56 @@ from loom.core.errors import NotFound
 harness.force_error(Product, "get_by_id", NotFound("not found"))
 ```
 
+### Substituting dependencies
+
+A harness composes the application once per fixture scope and a test swaps
+what it needs without composing again:
+
+```python
+import pytest
+from loom.testing import HttpTestHarness, InMemoryRepository, Override
+
+@pytest.fixture(scope="module")
+def harness():
+    harness = HttpTestHarness(overrides=[Override.instance(Clock, FixedClock())])
+    harness.client = harness.build_app(interfaces=[ProductRestInterface])
+    return harness
+
+@pytest.fixture
+def products(harness):
+    double = InMemoryRepository(Product)
+    with harness.overriding(Override.repository(Product, double)):
+        yield double
+
+def test_lists_nothing(harness, products):
+    assert harness.client.get("/products/").json() == []
+```
+
+`Override.repository(Model, double)` replaces the model's one repository, so
+injection, `RepoFor[Model]` and every other capability key,
+`catalog[Model]` and `catalog.for_table(...)` all see the double.
+`Override.instance(Key, value)` replaces any `APPLICATION` binding.
+Both are accepted by `overrides=` at build time and by `harness.overriding(...)`
+(also `LambdaTestClient(..., overrides=[...])` and `client.overriding(...)`)
+at any later time. Swapping and restoring never compose the application
+again. Overrides of one key must exit in reverse order; otherwise the
+original is restored and a `ResolutionError` is raised.
+
+A singleton the application already built from the real repository, such as
+a service that received it in its constructor, keeps the real one: override
+that service, or the repository at build time through `overrides=`.
+
+A unit test with no composed application builds a catalog directly:
+
+```python
+from loom.core.stores.repository import RepositoryCatalog
+
+catalog = RepositoryCatalog.from_repositories({Product: InMemoryRepository(Product)})
+```
+
+It indexes tables and stores like a composed catalog and raises the same
+`for_table` errors.
+
 ## Golden harness
 
 `GoldenHarness` runs use cases in isolation with injected fake repositories.

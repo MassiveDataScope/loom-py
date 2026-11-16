@@ -18,7 +18,7 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -136,8 +136,19 @@ class HttpTestHarness:
         self.application: Application | None = None
 
     @contextmanager
-    def overriding(self, *overrides: Override) -> Any:
-        """Apply substitutions for the duration of a test block."""
+    def overriding(self, *overrides: Override) -> Iterator[HttpTestHarness]:
+        """Apply substitutions to the built application until the block exits.
+
+        Args:
+            *overrides: The substitutions; they exit in reverse order.
+
+        Yields:
+            This harness.
+
+        Raises:
+            RuntimeError: When the application is not built yet.
+            ResolutionError: As :meth:`Override.applied` raises it.
+        """
         if self.application is None:
             raise RuntimeError("Build the harness application before overriding dependencies")
         with Override.applying(self.application.kernel.container, overrides):

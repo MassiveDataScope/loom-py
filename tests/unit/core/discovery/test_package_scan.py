@@ -3,11 +3,14 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from loom.celery.adapter import CeleryAdapter
 from loom.composition import Project, Recipe
 from loom.core.config import ConfigError
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
 
@@ -130,6 +133,48 @@ class TestPackageScan:
 
         assert [model.__name__ for model in result.models] == ["Alone", "Deep"]
 
+    def test_a_class_imported_from_outside_the_listed_packages_is_not_collected(
+        self, write_package: PackageWriter
+    ) -> None:
+        write_package("acme_foreign", {"models.py": _MODEL.format(name="Foreign", table="foreign")})
+        write_package(
+            "acme_home",
+            {
+                "models.py": "from acme_foreign.models import Foreign\n"
+                + _MODEL.format(name="Home", table="home")
+            },
+        )
+
+        result = PackageScanner(["acme_home"]).discover()
+
+        assert [model.__name__ for model in result.models] == ["Home"]
+
+    def test_the_order_of_the_entries_does_not_change_the_result(
+        self, write_package: PackageWriter
+    ) -> None:
+        for name in ("acme_zulu", "acme_alpha", "acme_mike"):
+            write_package(name, {"models.py": _MODEL.format(name=name.title(), table=name)})
+
+        forward = PackageScanner(["acme_alpha", "acme_mike", "acme_zulu"]).discover()
+        shuffled = PackageScanner(["acme_zulu", "acme_alpha", "acme_mike"]).discover()
+
+        assert forward == shuffled
+
+    def test_a_directory_with_modules_and_no_init_is_refused_naming_it(
+        self, write_package: PackageWriter
+    ) -> None:
+        write_package("acme_gap", {"loose/models.py": _MODEL.format(name="Loose", table="loose")})
+
+        with pytest.raises(ConfigError, match=r"acme_gap/loose.*__init__\.py"):
+            PackageScanner(["acme_gap"]).discover()
+
+    def test_a_directory_with_no_modules_and_no_init_is_ignored(
+        self, write_package: PackageWriter
+    ) -> None:
+        write_package("acme_assets", {"static/readme.txt": "x"})
+
+        assert PackageScanner(["acme_assets"]).discover().models == ()
+
     def test_duplicate_table_names_name_both_modules(self, write_package: PackageWriter) -> None:
         write_package(
             "acme_duplicates",
@@ -162,9 +207,16 @@ class TestPackageScan:
         ]
 
 
+_JOB = (
+    "from loom.core.job.job import Job\n"
+    "class AcmeJob(Job[None]):\n"
+    "    async def execute(self) -> None: ...\n"
+)
+
+
 class _Adapter:
     def recipe(self, project: Project) -> Recipe:
-        return Recipe(profile=SERVER_PROFILE, discovered=project.discover(), lenient=True)
+        return Recipe(profile=SERVER_PROFILE, discovered=project.discovered, lenient=True)
 
     def bind(self, application: object) -> object:
         return application
@@ -197,6 +249,30 @@ class TestProjectScan:
         application = Project.load(str(config), environment="test").compose(_Adapter())
 
         assert application.kernel.container.resolve(str) == "second"
+
+    def test_scans_once_however_many_times_the_components_are_read(
+        self, tmp_path: Path, write_package: PackageWriter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_package("acme_once", {"jobs.py": _JOB})
+        config = tmp_path / "app.yaml"
+        config.write_text(
+            "app:\n  name: acme\n  packages: [acme_once]\n"
+            "celery:\n  broker_url: memory://\n  result_backend: cache+memory://\n"
+        )
+        scans: list[int] = []
+        scan = PackageScanner.discover
+
+        def counted(self: PackageScanner, **kwargs: Any) -> DiscoveryResult:
+            scans.append(1)
+            return scan(self, **kwargs)
+
+        monkeypatch.setattr(PackageScanner, "discover", counted)
+        project = Project.load(str(config), environment="test")
+
+        project.compose(CeleryAdapter())
+        project.compose(_Adapter())
+
+        assert len(scans) == 1
 
     def test_refuses_the_removed_discovery_block(self, tmp_path: Path) -> None:
         config = tmp_path / "app.yaml"

@@ -16,7 +16,7 @@ Usage::
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
 
@@ -77,8 +77,19 @@ class LambdaTestClient(httpx.Client):
         super().__init__(transport=transport, base_url="http://testserver")
 
     @contextmanager
-    def overriding(self, *overrides: Override) -> Any:
-        """Apply substitutions for the duration of a test block."""
+    def overriding(self, *overrides: Override) -> Iterator[LambdaTestClient]:
+        """Apply substitutions to the composed application until the block exits.
+
+        Args:
+            *overrides: The substitutions; they exit in reverse order.
+
+        Yields:
+            This client.
+
+        Raises:
+            RuntimeError: When the client was built over a handler, not composed here.
+            ResolutionError: As :meth:`Override.applied` raises it.
+        """
         if self.application is None:
             raise RuntimeError("A composed application is required for overrides")
         with Override.applying(self.application.kernel.container, overrides):

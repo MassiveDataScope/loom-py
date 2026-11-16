@@ -18,16 +18,21 @@
   `app.packages: [acme]`; every model, use case, job, REST interface and
   `Installer` defined in those packages and their subpackages is found, in
   module then qualified-name order. An entry may also be a single module,
-  which is scanned on its own; a package is walked recursively. Replace a manifest `AGENTS` list
-  with `app.agents: [globs]`.
-- **composition:** the `modules=` parameter is removed from `Project.compose`,
-  `Project.serve`, `loom.composition.create_app`, `loom.rest.fastapi.auto.create_app`,
-  `loom.celery.auto.create_app`, `loom.celery.bootstrap.bootstrap_worker` and
-  `LambdaTestClient`. **Migration:** subclass `loom.core.di.Installer`,
-  implement `install(self, container)` and define it in an `app.packages`
-  package; installers run in module then qualified-name order, before the
-  framework registers its own bindings. Substitutions in tests use
-  `loom.testing.Override` (see Added).
+  which is scanned on its own; a package is walked recursively, and a
+  directory inside it that holds `.py` files but no `__init__.py` is refused
+  with a `ConfigError` naming it. Replace a manifest `AGENTS` list with
+  `app.agents: [globs]`. A worker manifest's `CALLBACKS` is gone and
+  callbacks are no longer discovered: pass `callbacks=[...]` to
+  `CeleryAdapter`, `bootstrap_worker` or `loom.celery.auto.create_app`.
+- **composition:** the `modules=` parameter is removed from
+  `compose_application`, `build_application`, `loom.composition.create_app`,
+  `loom.rest.fastapi.auto.create_app`, `loom.celery.auto.create_app`,
+  `loom.celery.bootstrap.bootstrap_worker` and the `LambdaTestClient`
+  options. **Migration:** subclass `loom.core.di.Installer`, implement
+  `install(self, container)` and define it in an `app.packages` package;
+  installers run in module then qualified-name order, before the framework
+  registers its own bindings. Substitutions in tests use
+  `loom.testing.Override` (see Features, testing).
 - **composition:** the composition now scans `app.packages` before the adapter
   plans, so an unimportable package is refused before a configuration the
   adapter would refuse (for instance a Lambda function serving an SQL
@@ -38,9 +43,6 @@
   all of them, `catalog[Model]` and injection return the same object, with no
   extra work per request. Binding a double to a capability key alone is
   refused with a `ConfigError` naming `Override.repository`.
-  `RepositoryCatalog.for_table` only sees models a store serves.
-- **composition:** `ComposedEvent` logs a `scan` phase in `phase_ms` and an
-  `installers` count in place of `modules`.
 
 - **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
   `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
@@ -312,8 +314,7 @@
   **Migration:** move a `register*` made after start-up
   (`application.kernel.container.register(Port, Impl)`,
   `worker.container.register(...)`) into a module passed to the application
-  (`create_app(..., modules=[...])`, `Project.compose(...,
-  modules=...)`); to reconfigure, build a new container (in tests, a new
+  (a discovered `Installer` in `app.packages`); to reconfigure, build a new container (in tests, a new
   application).
 - **di:** sealing a container freezes its execution kinds. Before: a resolver
   could be bound after start-up. Now: after `seal()`,
@@ -707,10 +708,10 @@
 
 - **composition:** the composition is composed and served through `Project`.
   Before: `CompositionSource.load(...)` loaded the configuration and
-  `build_application(...)`, `compose_application(source, adapter, modules=)`
+  `build_application(...)`, `compose_application(source, adapter)`
   and `load_source(...)` composed it. Now: `Project.load(...)` loads it,
-  `project.compose(adapter, modules=)` returns the `Application` and
-  `project.serve(adapter, modules=)` mounts the adapter's transport on it;
+  `project.compose(adapter)` returns the `Application` and
+  `project.serve(adapter)` mounts the adapter's transport on it;
   `create_app` stays the only shortcut. `build_application`, `load_source`
   and `compose_application` no longer exist and nothing is re-exported; the
   module `loom.composition.source` is now `loom.composition.project`. The
@@ -723,7 +724,7 @@
   | `loom.composition.source.CompositionSource` | `loom.composition.project.Project` |
   | `loom.composition.source.AppConfig` | `loom.composition.project.AppConfig` |
   | `build_application(*paths, adapter=a, **load)` | `Project.load(*paths, **load).compose(a)` |
-  | `compose_application(source, a, modules=m)` | `source.compose(a, modules=m)` |
+  | `compose_application(source, a)` | `source.compose(a)` |
   | `load_source(*paths, **load)` | `Project.load(*paths, **load)` |
   | `Adapter.recipe(source)` parameter | `Adapter.recipe(project)` parameter |
 
@@ -733,12 +734,12 @@
   # before
   application = build_application("config/base.yaml", adapter=adapter, environment="test")
   source = load_source("config/base.yaml")
-  application = compose_application(source, adapter, modules=[install_acme])
+  application = compose_application(source, adapter)
 
   # after
   application = Project.load("config/base.yaml", environment="test").compose(adapter)
   source = Project.load("config/base.yaml")
-  application = source.compose(adapter, modules=[install_acme])
+  application = source.compose(adapter)
   ```
 
 
@@ -943,7 +944,7 @@
   override included, and raises `KeyError` when no store serves it.
   `catalog.for_table(table, store=None)` returns the repository of the model
   stored in that table; it raises `ValueError` naming the stores when two
-  serve the table and `KeyError` when none does. Inject the repository
+  serve the table and `KeyError` when none does; it only sees models a store serves. Inject the repository
   instead when the model is known where the component is written.
 
 - **stores:** `create_many(data, *, on_conflict=OnConflict.ERROR)` on the
@@ -1099,13 +1100,13 @@
 - **composition:** a composed application logs one structured info event,
   `loom.composition.composed`, through `loom.core.logger` (logger
   `loom.composition.phases`), with `adapter`, `use_cases`, `jobs`, `backends`
-  (each store and the backend that built it), `keys`, `modules`, `overrides`,
-  `agents`, `mcp_servers`, `phase_ms` (the milliseconds of `plan`,
+  (each store and the backend that built it), `keys`, `installers`, `overrides`,
+  `agents`, `mcp_servers`, `phase_ms` (the milliseconds of `scan`, `plan`,
   `build_stores`, `register`, `analysed`, `wire_ai` and `seal`) and
   `duration_ms` (the total). It keeps the
   `[BOOT]` container and use-case compilation lines of `bootstrap_app`, and
   its `[BOOT] Registering module` line for every module it runs: the
-  caller's, the overrides, each store's repository module and the cache
+  discovered installers, the overrides, each store's repository module and the cache
   module. It no longer logs the validation and completion lines.
 - **composition (new API):** `Project.load(*config_paths, ...)` loads the
   project. `AiWiring.ABSENT`

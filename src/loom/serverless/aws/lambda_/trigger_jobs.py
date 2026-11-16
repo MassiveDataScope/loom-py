@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.discovery.worker import discovered_jobs
+from loom.core.discovery.scanner import PackageScanner
 from loom.core.use_case.markers import marks_input
 from loom.serverless.aws.lambda_.functions import EventTrigger, JobsTrigger, declared_lambda
 
@@ -87,6 +87,6 @@ def _discovered_jobs(ctx: ConfigContext) -> dict[str, type[Job[Any]]]:
     """
     try:
         packages = ctx.raw("app.packages", [])
-        return {job.__qualname__: job for job in discovered_jobs(packages)}
+        return {job.__qualname__: job for job in PackageScanner(packages).discover().jobs}
     except (ImportError, RuntimeError, ValueError) as exc:
         raise ConfigError(f"the jobs of the event triggers cannot be discovered: {exc}") from exc

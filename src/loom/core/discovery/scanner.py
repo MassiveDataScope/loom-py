@@ -6,6 +6,7 @@ import importlib
 import pkgutil
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from types import ModuleType
 from typing import TypeVar
 
@@ -38,20 +39,22 @@ class PackageScanner:
             The discovered classes, each group ordered by module then qualified name.
 
         Raises:
-            ConfigError: When an entry cannot be imported, or when one
-                store serves the same table from two models.
+            ConfigError: When an entry cannot be imported, a directory inside a
+                package holds modules but no ``__init__.py``, or one store
+                serves the same table from two models.
         """
-        models, use_cases, interfaces, jobs, installers = collect_from_modules(self._modules())
+        found = collect_from_modules(self._modules())
+        models = self._ordered(found.models)
         self._refuse_duplicate_tables(models)
-        seen = set(use_cases)
-        for use_case in collect_use_cases_from_interfaces(interfaces):
-            _append_unique(use_cases, seen, use_case)
+        seen = set(found.use_cases)
+        for use_case in collect_use_cases_from_interfaces(found.interfaces):
+            _append_unique(found.use_cases, seen, use_case)
         return DiscoveryResult(
-            models=self._ordered(models),
-            use_cases=self._ordered(use_cases),
-            interfaces=self._ordered(interfaces),
-            jobs=self._ordered(jobs),
-            installers=self._ordered(installers),
+            models=models,
+            use_cases=self._ordered(found.use_cases),
+            interfaces=self._ordered(found.interfaces),
+            jobs=self._ordered(found.jobs),
+            installers=self._ordered(found.installers),
             agent_specs=tuple(agents),
         )
 
@@ -60,13 +63,29 @@ class PackageScanner:
         for package_name in self._packages:
             package = self._import(package_name)
             modules[package.__name__] = package
+            self._refuse_directories_without_init(package)
             for found in pkgutil.walk_packages(
                 getattr(package, "__path__", ()),
                 f"{package.__name__}.",
                 onerror=self._raise_import_error,
             ):
                 modules[found.name] = self._import(found.name)
-        return [modules[name] for name in sorted(modules)]
+        return list(modules.values())
+
+    def _refuse_directories_without_init(self, package: ModuleType) -> None:
+        for root in getattr(package, "__path__", ()):
+            for directory in sorted(Path(root).rglob("*")):
+                if (
+                    directory.is_dir()
+                    and not directory.name.startswith((".", "__"))
+                    and not (directory / "__init__.py").exists()
+                    and any(directory.glob("*.py"))
+                ):
+                    raise ConfigError(
+                        f"Directory {str(directory)!r} inside app.packages entry "
+                        f"{package.__name__!r} holds Python modules but no __init__.py, so the "
+                        "scan would skip it: add an __init__.py"
+                    )
 
     def _refuse_duplicate_tables(self, models: Sequence[type[BaseModel]]) -> None:
         by_table: dict[tuple[str, str], type[BaseModel]] = {}

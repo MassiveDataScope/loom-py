@@ -155,6 +155,7 @@ class TestDefaultKeys:
 
         assert container.resolve(Creatable[AcmeRegistrationWidget]) is original
         assert catalog[AcmeRegistrationWidget] is original
+        assert catalog.for_table("registration_widgets_fixture") is original
 
 
 class _Wrapped:

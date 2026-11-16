@@ -211,12 +211,9 @@ class Project:
             code_path=code_path,
         )
 
-    def discover(self) -> DiscoveryResult:
-        """Discover the components declared in ``app.packages`` and ``app.agents``."""
-        return self._discovered
-
     @functools.cached_property
-    def _discovered(self) -> DiscoveryResult:
+    def discovered(self) -> DiscoveryResult:
+        """What the scan of ``app.packages`` found, with the ``app.agents`` globs; scanned once."""
         return PackageScanner(self.app.packages).discover(agents=self.app.agents)
 
     @functools.cached_property
@@ -270,7 +267,7 @@ class Project:
         """
         logger = get_logger(__name__)
         clock = phases.PhaseClock()
-        clock.lap("scan", self.discover())
+        clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, adapter))
         stores = clock.lap("build_stores", phases.build_stores(self, recipe))
         kernel, sql, job_resources = clock.lap(

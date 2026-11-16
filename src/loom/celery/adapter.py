@@ -70,11 +70,10 @@ from loom.composition import (
 from loom.core.async_bridge import build_backend_options
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
+from loom.core.discovery._utils import collect_use_cases_from_interfaces
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import (
     WorkerComponents,
-    merge_unique,
-    use_cases_from_interfaces,
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
@@ -345,21 +344,20 @@ class CeleryAdapter:
             )
         ctx = project.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
-        resolved = _resolve_compilables_and_jobs(ctx, self._jobs, self._use_cases)
-        compilables = merge_unique(
-            resolved.compilables, use_cases_from_interfaces(self._interfaces)
+        resolved = _resolve_compilables_and_jobs(project.discovered, self._jobs, self._use_cases)
+        compilables = tuple(
+            dict.fromkeys(
+                (*resolved.compilables, *collect_use_cases_from_interfaces(list(self._interfaces)))
+            )
         )
         resolved = WorkerComponents(
             compilables=compilables,
             jobs=resolved.jobs,
             models=tuple(dict.fromkeys(resolved.models)),
-            callbacks=merge_unique(resolved.callbacks, self._callbacks),
         )
         _emit_worker_init_graph(resolved)
 
-        self._declared = _Declared(
-            celery=celery_cfg, jobs=resolved.jobs, callbacks=resolved.callbacks
-        )
+        self._declared = _Declared(celery=celery_cfg, jobs=resolved.jobs, callbacks=self._callbacks)
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
@@ -371,7 +369,7 @@ class CeleryAdapter:
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,
-            callbacks=resolved.callbacks,
+            callbacks=self._callbacks,
             connection_only=not resolved.models,
         )
 

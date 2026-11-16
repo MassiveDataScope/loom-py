@@ -133,10 +133,10 @@ def _fold_config_interfaces(
     registration, use-case compilation — treats a config interface exactly
     like a Python one.  Additive only: a use case or model discovery already
     found is never duplicated, so a use case reached by both a Python route
-    and a manifest/module scan still compiles once.
+    and the package scan still compiles once.
 
     Args:
-        discovered: Result of the configured discovery engine.
+        discovered: What the scan of ``app.packages`` found.
         config_interfaces: Interfaces built from ``app.rest.interfaces``.
 
     Returns:
@@ -282,11 +282,11 @@ def _reject_unsupported_include(
 def _discover_components(project: Project) -> DiscoveryResult:
     """Run discovery and reject a result with nothing to serve.
 
-    Use cases, REST interfaces and manifest agents are each optional on their
+    Use cases, REST interfaces and ``app.agents`` are each optional on their
     own: an application whose only content is agents has neither use cases nor
     interfaces. Only a result with none of the three is an error.
     """
-    discovered = project.discover()
+    discovered = project.discovered
     if not discovered.use_cases and not discovered.interfaces and not discovered.agent_specs:
         raise RuntimeError(
             "Nothing discovered: no UseCase, no RestInterface and no agents. "

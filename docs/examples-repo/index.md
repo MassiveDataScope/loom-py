@@ -560,7 +560,7 @@ class AddressRestInterface(RestInterface[Address]):
 
 ## 9. Bootstrap
 
-### Modules mode
+### Package scan
 
 In `config/api.yaml`:
 

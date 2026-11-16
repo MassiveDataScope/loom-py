@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
-from loom.core.di.container import LoomContainer
+from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model import LoomStruct
 from loom.core.stores.repository.registration import (
     capability_keys,
@@ -65,7 +65,15 @@ class Override:
 
     @contextmanager
     def applied(self, container: LoomContainer) -> Iterator[None]:
-        """Substitute this value in a composed application until the block exits."""
+        """Substitute this value in a composed application until the block exits.
+
+        Raises:
+            ResolutionError: When nothing is bound to substitute, as
+                :meth:`~loom.core.di.container.LoomContainer.overriding` raises it.
+        """
+        if self.kind is OverrideKind.REPOSITORY and not container.is_registered(self.binding_key):
+            model = cast(type[LoomStruct], self.key)
+            raise ResolutionError(f"No store serves a repository for {model.__qualname__}")
         with container.overriding(self.binding_key, self.value):
             yield
 

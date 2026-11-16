@@ -34,7 +34,7 @@ class AcmeTransportFreeAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=project.discover(),
+            discovered=project.discovered,
             default_store_backend="sqlalchemy",
         )
 
@@ -73,7 +73,7 @@ class _Handler:
 # The adapter under test: a profile of its own, one extra use case, its own result type.
 class _TinyAdapter:
     def recipe(self, project: Project) -> Recipe:
-        discovered = project.discover()
+        discovered = project.discovered
         return Recipe(
             profile=_TINY,
             discovered=dataclasses.replace(discovered, use_cases=(*discovered.use_cases, _Answer)),

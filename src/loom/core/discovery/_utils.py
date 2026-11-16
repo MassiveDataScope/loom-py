@@ -23,7 +23,7 @@ _REST_MODEL = "loom.rest.model"
 
 
 @dataclass
-class _DiscoveryCollector:
+class DiscoveryCollector:
     models: list[type[BaseModel]] = field(default_factory=list)
     use_cases: list[type[UseCase[object, object]]] = field(default_factory=list)
     interfaces: list[type[RestInterface[object]]] = field(default_factory=list)
@@ -111,7 +111,7 @@ def _as_installer(cls: type[Any]) -> type[Installer] | None:
 
 def _append_discovered_class(
     cls: type[Any],
-    collector: _DiscoveryCollector,
+    collector: DiscoveryCollector,
 ) -> None:
     appenders: tuple[
         tuple[_LocalClassResolver, typing.Callable[[type[Any]], None]],
@@ -131,31 +131,16 @@ def _append_discovered_class(
         return
 
 
-def collect_from_modules(
-    modules: list[ModuleType],
-) -> tuple[
-    list[type[BaseModel]],
-    list[type[UseCase[object, object]]],
-    list[type[RestInterface[object]]],
-    list[type[Job[Any]]],
-    list[type[Installer]],
-]:
-    collector = _DiscoveryCollector()
-
+def collect_from_modules(modules: list[ModuleType]) -> DiscoveryCollector:
+    """Collect the concrete classes each of *modules* defines, grouped by component kind."""
+    collector = DiscoveryCollector()
     for module in modules:
         module_name = module.__name__
         for _, cls in inspect.getmembers(module, inspect.isclass):
             if not _is_local_class(cls, module_name) or inspect.isabstract(cls):
                 continue
             _append_discovered_class(cls, collector)
-
-    return (
-        collector.models,
-        collector.use_cases,
-        collector.interfaces,
-        collector.jobs,
-        collector.installers,
-    )
+    return collector
 
 
 def collect_use_cases_from_interfaces(
