@@ -26,7 +26,6 @@ from loom.core.stores.backend import StoreWiring
 from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.stores.database import PoolConfig
 from loom.core.stores.profile import PoolDefaults, RuntimeProfile, StoreRuntime
-from loom.core.stores.repository import CursorCodec
 from loom.stores.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -119,7 +118,7 @@ class MongoBackend:
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
-        cursor_codec = runtime.cursor_codec or CursorCodec.from_context(ctx)
+        cursor_codec = runtime.cursor_codec
         pool = mongo_cfg.pool.resolve(runtime.profile)
         client_cfg = msgspec.structs.replace(
             mongo_cfg,

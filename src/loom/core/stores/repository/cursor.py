@@ -76,6 +76,8 @@ _EPHEMERAL_KEY_ID: Final = b"ephemeral"
 _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
+_NOT_ENABLED: Final = "cursor pagination is not enabled"
+_DISABLED_SIGNING: Final = "disabled"
 CURSORS_SECTION: Final = f"{ConfigKey.STORES_SETTINGS}.cursors"
 """Dotted path of the cursor signing section."""
 
@@ -246,16 +248,16 @@ class CursorCodec:
             )
 
     @classmethod
-    def from_context(cls, ctx: ConfigContext) -> CursorCodec | None:
+    def from_context(cls, ctx: ConfigContext) -> CursorCodec:
         """Build the codec of the ``stores.settings.cursors`` section of ``ctx``.
 
         Args:
             ctx: Application configuration; the section may be absent.
 
         Returns:
-            The codec, built as :meth:`from_config` builds it, or ``None``
-            when the section is absent: configuring it turns cursor paging
-            on. An opt-out built from a configuration that lists
+            The codec, built as :meth:`from_config` builds it, or
+            :meth:`disabled` when the section is absent: configuring it turns
+            cursor paging on. An opt-out built from a configuration that lists
             :data:`CURSOR_SIGNING_CHECK` under ``checks.silenced`` may be
             registered in a deployed environment.
 
@@ -265,22 +267,24 @@ class CursorCodec:
         """
         config = ctx.section_optional(CURSORS_SECTION, CursorConfig)
         if config is None:
-            return None
+            return cls.disabled()
         codec = cls.from_config(config)
         codec._opt_out_silenced = CURSOR_SIGNING_CHECK in silenced_checks(ctx)
         return codec
 
     @staticmethod
-    def required(codec: CursorCodec | None) -> CursorCodec:
-        """Return *codec*, which a cursor page needs.
+    def disabled() -> CursorCodec:
+        """The codec of an application that does not page by cursor.
 
-        Raises:
-            UnsupportedQuery: When *codec* is ``None``, because no key is
-                configured under ``stores.settings.cursors``.
+        Every store shares the one instance. Its :meth:`encode` and
+        :meth:`decode` raise ``UnsupportedQuery``.
         """
-        if codec is None:
-            raise UnsupportedQuery("cursor pagination is not enabled")
-        return codec
+        return _DISABLED
+
+    @property
+    def is_enabled(self) -> bool:
+        """Whether this codec issues and verifies tokens."""
+        return True
 
     @property
     def signing(self) -> str:
@@ -415,6 +419,42 @@ class CursorCodec:
             return None
         expected = _mac(key, tag[2:id_end], _binding(binding, query, scope), payload)
         return payload if hmac.compare_digest(expected, tag[id_end:]) else None
+
+
+class _DisabledCursorCodec(CursorCodec):
+    """The codec of an application without ``stores.settings.cursors``: it refuses every token."""
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        pass
+
+    @property
+    def signing(self) -> str:
+        return _DISABLED_SIGNING
+
+    @property
+    def is_enabled(self) -> bool:
+        return False
+
+    def encode(self, cursor: Cursor, *, model: type | str, query: QuerySpec, scope: str) -> str:
+        raise UnsupportedQuery(_NOT_ENABLED)
+
+    def decode(
+        self,
+        token: str,
+        *,
+        backend: str,
+        model: type | str,
+        query: QuerySpec,
+        scope: str,
+        columns: Mapping[str, Any],
+        primary_key: Sequence[str],
+    ) -> Cursor:
+        raise UnsupportedQuery(_NOT_ENABLED)
+
+
+_DISABLED: Final = _DisabledCursorCodec()
 
 
 def _keyring(
@@ -626,7 +666,7 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
             would sign with different keys, and each would refuse the other's
             tokens; or when the deployed environment refuses an opt-out.
     """
-    if codec.signing != _SIGNED and not codec._opt_out_silenced:
+    if codec.is_enabled and codec.signing != _SIGNED and not codec._opt_out_silenced:
         environment = (
             container.resolve(Environment)
             if container.is_registered(Environment)

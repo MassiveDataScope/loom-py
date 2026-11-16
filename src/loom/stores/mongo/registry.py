@@ -76,7 +76,7 @@ class MongoDefaultRepositoryBuilder:
     collections: Mapping[str, str]
     id_policy: IdPolicy
     session_provider: SessionProvider
-    cursor_codec: CursorCodec | None
+    cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
@@ -104,7 +104,7 @@ def build_mongo_repository_registration_module(
     collections: Mapping[str, str],
     id_policy: IdPolicy,
     session_provider: SessionProvider,
-    cursor_codec: CursorCodec | None,
+    cursor_codec: CursorCodec,
     store: StoreKey,
     logical_models: Sequence[type[Any]] = (),
 ) -> Callable[[LoomContainer], None]:
@@ -162,8 +162,7 @@ def build_mongo_repository_registration_module(
     )
 
     def _register_with_database(container: LoomContainer) -> None:
-        if cursor_codec is not None:
-            register_cursor_codec(container, cursor_codec)
+        register_cursor_codec(container, cursor_codec)
         register(container)
 
     return _register_with_database

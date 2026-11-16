@@ -66,14 +66,19 @@
   call with `PaginationMode.CURSOR` raises `UnsupportedQuery`. Offset paging is
   unchanged. Configuring the section without a key still fails at start-up.
   `stores.<name>.settings` is a `ConfigError` pointing to `stores.settings`.
-  `CursorCodec.from_context` and `Recipe.build_cursor_codec(ctx)` return `None`
-  without the section, the repositories, compiler and registration modules
-  accept `cursor_codec=None`, `StoreCapabilities.pages_with_cursors` and
+  `CursorCodec.from_context` and `Recipe.build_cursor_codec(ctx)` return
+  `CursorCodec.disabled()` without the section (its `encode` and `decode`
+  raise `UnsupportedQuery`, and `is_enabled` is `False`), the repositories,
+  compiler and registration modules always take and register a codec,
+  `StoreRuntime.cursor_codec` is required, `CursorCodec.required` is removed,
+  `StoreCapabilities.pages_with_cursors` and
   `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
   `StoreCatalog.with_default` is removed with them. **Migration:** an
   application that pages by cursor keeps its `stores.settings.cursors`
   section; one that does not can delete it (and its unused keys); a custom
-  backend's `capabilities()` drops the `pages_with_cursors` argument.
+  backend's `capabilities()` drops the `pages_with_cursors` argument; code
+  building a `StoreRuntime` passes `cursor_codec=` (`CursorCodec.disabled()`
+  for none), and code testing a codec for `None` tests `is_enabled`.
 
 ### security
 

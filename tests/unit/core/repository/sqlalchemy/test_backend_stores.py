@@ -61,7 +61,11 @@ def _build(
     pool_metrics: _Labels | None = None,
 ) -> StoreWiring:
     runtime = StoreRuntime(
-        SERVER_PROFILE, pool_metrics=pool_metrics, catalog=load_catalog(ctx), store=store
+        SERVER_PROFILE,
+        pool_metrics=pool_metrics,
+        catalog=load_catalog(ctx),
+        store=store,
+        cursor_codec=CursorCodec.from_context(ctx),
     )
     return SQLAlchemyBackend().build(ctx, models, runtime)
 

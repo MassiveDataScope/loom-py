@@ -112,7 +112,8 @@ def compile_api(
     compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
         resolved_routes
     )
-    if not result.container.is_registered(CursorCodec):
+    codec = result.container.resolve_or_none(CursorCodec) or CursorCodec.disabled()
+    if not codec.is_enabled:
         for route in compiled:
             if route.effective_pagination_mode is PaginationMode.CURSOR:
                 raise InterfaceCompilationError(

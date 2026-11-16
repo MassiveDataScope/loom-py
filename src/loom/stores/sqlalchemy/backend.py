@@ -31,7 +31,6 @@ from loom.core.stores.database import (
     require_schema_key,
 )
 from loom.core.stores.profile import StoreRuntime
-from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -155,7 +154,7 @@ class SQLAlchemyBackend:
                     db_cfg.schema.naming_convention, path=spec.path
                 )
             )
-            cursor_codec = runtime.cursor_codec or CursorCodec.from_context(ctx)
+            cursor_codec = runtime.cursor_codec
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
             module = build_sqlalchemy_repository_registration_module(
                 session_manager, models, cursor_codec=cursor_codec

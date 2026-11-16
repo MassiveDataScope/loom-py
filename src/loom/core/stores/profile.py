@@ -107,9 +107,8 @@ class StoreRuntime:
             ``stores`` from the configuration again.
         store: The store the backend serves.
         cursor_codec: The application's one cursor codec, which the host
-            builds once and every store it composes registers. A backend
-            given none builds its own from ``stores.settings.cursors``: the host
-            gives none only when it composes no model, so one store at most.
+            builds once and every store it composes registers; disabled when
+            ``stores.settings.cursors`` is absent, and for a connection-only host.
     """
 
     profile: RuntimeProfile
@@ -117,7 +116,7 @@ class StoreRuntime:
     connection_only: bool = False
     catalog: StoreCatalog = field(kw_only=True)
     store: StoreKey = field(kw_only=True)
-    cursor_codec: CursorCodec | None = field(default=None, kw_only=True)
+    cursor_codec: CursorCodec = field(kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

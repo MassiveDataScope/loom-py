@@ -16,6 +16,7 @@ from loom.core.stores.profile import (
     RuntimeProfile,
     StoreRuntime,
 )
+from loom.core.stores.repository import CursorCodec
 
 
 class TestServerProfile:
@@ -61,7 +62,12 @@ class TestServerProfile:
         assert SERVER_PROFILE.pool.size == 5
 
     def test_backend_runtime_carries_no_metrics_unless_given(self) -> None:
-        runtime = StoreRuntime(SERVER_PROFILE, catalog=StoreCatalog(specs={}), store=DEFAULT_STORE)
+        runtime = StoreRuntime(
+            SERVER_PROFILE,
+            catalog=StoreCatalog(specs={}),
+            store=DEFAULT_STORE,
+            cursor_codec=CursorCodec.disabled(),
+        )
 
         assert runtime.pool_metrics is None
 

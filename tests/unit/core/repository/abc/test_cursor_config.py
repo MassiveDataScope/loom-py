@@ -76,10 +76,10 @@ class TestSection:
         with pytest.raises(ConfigError, match=r"stores\.settings\.cursors"):
             CursorCodec.from_context(ctx)
 
-    def test_an_absent_section_builds_no_codec(self) -> None:
+    def test_an_absent_section_builds_the_disabled_codec(self) -> None:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
 
-        assert CursorCodec.from_context(ctx) is None
+        assert CursorCodec.from_context(ctx) is CursorCodec.disabled()
 
     def test_an_empty_section_is_the_signed_default_and_needs_keys(self) -> None:
         ctx = ConfigContext.from_dict({"stores": {"settings": {"cursors": {}}}})

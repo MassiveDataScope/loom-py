@@ -60,7 +60,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     backend_name: ClassVar[str]
     model: type[Any]
     session_manager: SessionManager
-    cursor_codec: CursorCodec | None
+    cursor_codec: CursorCodec
     _sa_model: type[Any] | None = None
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None

@@ -1,4 +1,4 @@
-"""Without cursor settings no codec exists: a cursor page is refused, an offset page is not."""
+"""The disabled codec refuses a cursor page and leaves an offset page alone."""
 
 from __future__ import annotations
 
@@ -10,7 +10,13 @@ from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE
-from loom.core.stores.repository import CursorCodec, PaginationMode, QuerySpec, SortSpec
+from loom.core.stores.repository import (
+    Cursor,
+    CursorCodec,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
+)
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -44,14 +50,14 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
     repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
-        session_manager=manager, model=_Row, cursor_codec=None
+        session_manager=manager, model=_Row, cursor_codec=CursorCodec.disabled()
     )
     await repo.create_many([_CreateRow(rank=rank) for rank in (1, 2, 3)])
     yield repo
     await manager.dispose()
 
 
-class TestCursorPagingWithoutACodec:
+class TestCursorPagingWithTheDisabledCodec:
     async def test_a_cursor_page_is_refused(
         self, repository: RepositorySQLAlchemy[_Row, int]
     ) -> None:
@@ -70,12 +76,26 @@ class TestCursorPagingWithoutACodec:
         assert [row.rank for row in page.items] == [1, 2]
 
 
-class TestRequiredCodec:
-    def test_the_codec_is_returned_when_present(self) -> None:
-        codec = CursorCodec(signing="ephemeral")
+class TestDisabledCodec:
+    def test_it_is_one_shared_instance_that_reports_itself_disabled(self) -> None:
+        assert CursorCodec.disabled() is CursorCodec.disabled()
+        assert not CursorCodec.disabled().is_enabled
+        assert CursorCodec(signing="ephemeral").is_enabled
 
-        assert CursorCodec.required(codec) is codec
+    def test_encode_refuses_with_the_documented_error(self) -> None:
+        cursor = Cursor(backend="sqlalchemy", keys=(1,), tie_breaker=1)
 
-    def test_a_missing_codec_raises_the_documented_error(self) -> None:
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
-            CursorCodec.required(None)
+            CursorCodec.disabled().encode(cursor, model="m", query=QuerySpec(), scope="")
+
+    def test_decode_refuses_with_the_documented_error(self) -> None:
+        with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
+            CursorCodec.disabled().decode(
+                "token",
+                backend="sqlalchemy",
+                model="m",
+                query=QuerySpec(),
+                scope="",
+                columns={},
+                primary_key=("id",),
+            )

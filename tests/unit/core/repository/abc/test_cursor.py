@@ -664,6 +664,13 @@ class TestOptOutsInADeployedEnvironment:
 
         assert container.resolve(CursorCodec) is codec
 
+    def test_the_disabled_codec_registers_in_a_deployed_environment(self) -> None:
+        container = self._container(Environment.PRODUCTION)
+
+        register_cursor_codec(container, CursorCodec.disabled())
+
+        assert container.resolve(CursorCodec) is CursorCodec.disabled()
+
     def test_an_opt_out_registers_outside_a_deployed_environment(self) -> None:
         container = self._container(Environment.DEVELOPMENT)
 

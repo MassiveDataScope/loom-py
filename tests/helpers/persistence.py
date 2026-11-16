@@ -18,6 +18,7 @@ from loom.core.stores import (
     StoreWiring,
 )
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
+from loom.core.stores.repository import CursorCodec
 
 
 def build_backend(
@@ -37,6 +38,7 @@ def build_backend(
         connection_only=connection_only,
         catalog=load_catalog(ctx),
         store=store,
+        cursor_codec=CursorCodec.from_context(ctx),
     )
     return backend.build(ctx, models, runtime)
 

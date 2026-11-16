@@ -115,20 +115,20 @@ class Recipe:
             warnings.warn(warning, stacklevel=2)
         return analysis
 
-    def build_cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
+    def build_cursor_codec(self, ctx: ConfigContext) -> CursorCodec:
         """The one cursor codec every store shares.
 
         Args:
             ctx: The configuration holding ``stores.settings.cursors``.
 
         Returns:
-            The codec, or ``None`` for a connection-only recipe or when
+            The codec, which is disabled for a connection-only recipe and when
             ``stores.settings.cursors`` is not configured.
 
         Raises:
             ConfigError: When ``stores.settings.cursors`` is invalid.
         """
-        return None if self.connection_only else CursorCodec.from_context(ctx)
+        return CursorCodec.disabled() if self.connection_only else CursorCodec.from_context(ctx)
 
 
 class Adapter(Protocol[T_co]):

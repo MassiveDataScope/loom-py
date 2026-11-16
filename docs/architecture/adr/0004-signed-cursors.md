@@ -243,7 +243,10 @@ its values with the order of the rows, and reads them from the token
   built in code never meets `loom.cursors.E001`, so registering one applies
   its rule: in the deployed environment the container resolves, an
   `ephemeral` or `unsigned` codec is refused unless `CursorCodec.from_context`
-  built it from a configuration that silences the check.
+  built it from a configuration that silences the check. Without
+  `stores.settings.cursors` the codec is `CursorCodec.disabled()`: one shared
+  instance that registers like any other, reports `is_enabled` as `False`
+  and refuses every `encode` and `decode` with `UnsupportedQuery`.
 - An empty `cursor` is an invalid token on both backends (400), not a first
   page.
 - The public surface is `CursorCodec`, its configuration (`CursorConfig`,

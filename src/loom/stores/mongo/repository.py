@@ -190,7 +190,8 @@ class RepositoryMongo(
             session the driver call runs in, or ``None``. Defaults to no
             session.
         cursor_codec: Codec that issues and verifies cursor tokens; the
-            backend builds one from ``stores.settings.cursors`` and shares it.
+            backend builds one from ``stores.settings.cursors`` and shares it;
+            a disabled codec refuses a cursor page.
             Mongo has no row-level-security scope, so cursors are bound to
             no scope (``""``) beyond the model, filters and sort.
             A codec passed here by hand skips the deployed-environment
@@ -216,7 +217,7 @@ class RepositoryMongo(
         id_policy: IdPolicy | None = None,
         session_provider: SessionProvider = _no_session,
         *,
-        cursor_codec: CursorCodec | None,
+        cursor_codec: CursorCodec,
     ) -> None:
         self._model = model
         self._cursor_codec = cursor_codec
@@ -557,7 +558,7 @@ class RepositoryMongo(
 
     def _decode(self, token: str, query: QuerySpec) -> Cursor:
         """Verify and decode the token and put its keys in storage form."""
-        cursor = CursorCodec.required(self._cursor_codec).decode(
+        cursor = self._cursor_codec.decode(
             token,
             backend=self.backend_name,
             model=self._model,
@@ -588,9 +589,7 @@ class RepositoryMongo(
             keys=tuple(getattr(item, spec.field) for spec in query.sort),
             tie_breaker=getattr(item, self._id_attr),
         )
-        return CursorCodec.required(self._cursor_codec).encode(
-            position, model=self._model, query=query, scope=""
-        )
+        return self._cursor_codec.encode(position, model=self._model, query=query, scope="")
 
     def _key(self, obj_id: object) -> MongoFilter:
         return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}

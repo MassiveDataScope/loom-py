@@ -54,7 +54,7 @@ class SQLAlchemyDefaultRepositoryBuilder:
     """
 
     session_manager: SessionManager
-    cursor_codec: CursorCodec | None
+    cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
@@ -82,7 +82,7 @@ def build_sqlalchemy_repository_registration_module(
     session_manager: SessionManager,
     models: Sequence[type[BaseModel]],
     *,
-    cursor_codec: CursorCodec | None,
+    cursor_codec: CursorCodec,
     logical_models: Sequence[type[Any]] = (),
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers model repositories and their capability bindings.
@@ -138,8 +138,7 @@ def build_sqlalchemy_repository_registration_module(
 
     def _register_with_session(container: LoomContainer) -> None:
         register_session_manager(container, session_manager)
-        if cursor_codec is not None:
-            register_cursor_codec(container, cursor_codec)
+        register_cursor_codec(container, cursor_codec)
         register(container)
 
     return _register_with_session
