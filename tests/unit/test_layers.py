@@ -65,7 +65,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     # The container reads keys through an injected classifier, never the packages above it.
     "loom.core.di": (
-        ("loom.core.stores", "loom.core.repository", "loom.core.use_case", "loom.ai"),
+        ("loom.core.stores", "loom.core.use_case", "loom.ai"),
         (),
     ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),

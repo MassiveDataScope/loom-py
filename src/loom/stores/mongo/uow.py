@@ -7,7 +7,7 @@ opt-in (``stores.<name>.transactions: true``):
   ``begin``, commits or aborts it, and ends the session afterwards. It is a
   participant of the invocation scope (:mod:`loom.core.stores.uow.scope`), and
   :class:`MongoSessions` finds its session there: a
-  :class:`~loom.core.repository.mongo.repository.RepositoryMongo` built with
+  :class:`~loom.stores.mongo.repository.RepositoryMongo` built with
   ``session_provider=MongoSessions(client, store)`` joins the transaction of
   the use case it runs in. It declares the coordinator's ``phased`` marker:
   ``begin``, ``flush``, ``commit``, ``rollback`` and ``close`` are separate

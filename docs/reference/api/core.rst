@@ -60,6 +60,14 @@ Code path
 
    loom.core.locator
 
+Async helpers
+-------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core._async
+
 Logging
 -------
 

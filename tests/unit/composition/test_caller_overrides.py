@@ -26,13 +26,13 @@ from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.job import Job
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.mongo.uow import MongoSessions
 from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.stores.catalog import StoreCatalog, StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.stores.mongo.uow import MongoSessions
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.composition import ProjectFactory, composition_source, uow_factory
 

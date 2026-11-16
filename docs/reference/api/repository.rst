@@ -24,6 +24,26 @@ SQLAlchemy adapter
    loom.stores.sqlalchemy.migrations
    loom.stores.sqlalchemy.migrations.operations
 
+DynamoDB adapter
+----------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.stores.dynamodb
+   loom.stores.dynamodb.backend
+   loom.stores.dynamodb.repository
+
+Mongo adapter
+-------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.stores.mongo
+   loom.stores.mongo.backend
+   loom.stores.mongo.repository
+
 Cache layer
 -----------
 

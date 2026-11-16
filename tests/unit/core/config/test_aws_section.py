@@ -11,10 +11,10 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError, SsmResolver, load_config
 from loom.core.config.aws import inherit_aws
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
+from loom.stores.dynamodb.backend import DynamoDBBackend
 from tests.helpers.extras import AwsClientFactory, patched_aws_clients
 from tests.helpers.persistence import build_backend
 

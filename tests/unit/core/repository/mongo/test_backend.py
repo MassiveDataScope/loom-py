@@ -13,19 +13,19 @@ from typing import Any
 import pytest
 
 import loom.core.connections.mongo.client as mongo_island
-import loom.core.repository.mongo.backend as backend_module
+import loom.stores.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.mongo.backend import MongoBackend
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.stores import PersistenceWiring, resolve_backend
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.mongo.backend import MongoBackend
+from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.helpers.persistence import build_backend
 
 from ._fake import FakeMongoClient

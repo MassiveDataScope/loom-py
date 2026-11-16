@@ -152,7 +152,7 @@ class TestPersistencePackageImport:
             "sys.modules['sqlalchemy'] = None\n"
             "sys.modules['boto3'] = None\n"
             "import loom.core.stores\n"
-            "adapters = ('loom.core.repository', 'loom.stores')\n"
+            "adapters = ('loom.stores',)\n"
             "leaked = sorted(m for m in sys.modules if m.startswith(adapters))\n"
             "assert not leaked, leaked\n"
         )

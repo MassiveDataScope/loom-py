@@ -4,11 +4,11 @@ The repository speaks to one ``AsyncCollection`` through pymongo's native
 async client, so every driver call is awaited directly. The model's primary
 key is stored as ``_id`` and mapped back on read, so a model declaring
 ``slug`` as its key never sees ``_id``. The key is minted by an
-:class:`~loom.core.repository.mongo.ids.IdPolicy` when the input carries
+:class:`~loom.stores.mongo.ids.IdPolicy` when the input carries
 none.
 
 Values cross the wire in their storage form
-(:mod:`loom.core.repository.mongo.values`): ``datetime`` native as aware UTC
+(:mod:`loom.stores.mongo.values`): ``datetime`` native as aware UTC
 at millisecond precision, ``date``, ``time``, ``Decimal`` and ``UUID`` as
 strings restored by the output struct's annotation on read. A
 ``DateTime(tz=False)`` column reads back naive (UTC), so the output of
@@ -44,9 +44,6 @@ from loom.core.model.introspection import (
     get_id_attributes,
     get_table_name,
 )
-from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
-from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
-from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
 from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
@@ -74,6 +71,9 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.cursor import require_cursor_sort
 from loom.core.stores.repository.record import RecordLayout
+from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
+from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
+from loom.stores.mongo.values import to_storage_datetime, to_storage_value
 
 Document = dict[str, Any]
 SessionProvider = Callable[[bool], AsyncClientSession | None]
@@ -176,7 +176,7 @@ class RepositoryMongo(
     Beyond refusing a composite key, the repository does not judge the
     model's key declaration: a model whose key Mongo cannot mint
     (``autoincrement=True``) is rejected at boot by
-    :func:`~loom.core.repository.mongo.ids.validate_id_field`, which the
+    :func:`~loom.stores.mongo.ids.validate_id_field`, which the
     backend runs over every discovered model.
 
     Args:
@@ -185,7 +185,7 @@ class RepositoryMongo(
         collection: pymongo ``AsyncCollection`` (or any object with the same
             async shape) holding the documents.
         id_policy: Strategy minting and converting ids; defaults to
-            :class:`~loom.core.repository.mongo.ids.Uuid4IdPolicy`.
+            :class:`~loom.stores.mongo.ids.Uuid4IdPolicy`.
         session_provider: Given whether the call writes, returns the client
             session the driver call runs in, or ``None``. Defaults to no
             session.
@@ -250,7 +250,7 @@ class RepositoryMongo(
 
         True while the ``session_provider`` yields a session for a read, as
         the backend's provider does while a
-        :class:`~loom.core.repository.mongo.uow.MongoUnitOfWork` of the store
+        :class:`~loom.stores.mongo.uow.MongoUnitOfWork` of the store
         takes part in the invocation: the session dies when that caller
         unwinds and holds writes only that caller can see.  False with the
         default provider, and with ``transactions: false``, where every

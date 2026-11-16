@@ -17,9 +17,6 @@ from pymongo.results import DeleteResult, InsertManyResult
 from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, DateTime, TimestampedModel
 from loom.core.model.enums import ServerDefault
-from loom.core.repository.mongo import repository as repository_module
-from loom.core.repository.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
-from loom.core.repository.mongo.repository import RepositoryMongo, SessionProvider
 from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
@@ -35,6 +32,9 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
+from loom.stores.mongo import repository as repository_module
+from loom.stores.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
+from loom.stores.mongo.repository import RepositoryMongo, SessionProvider
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article

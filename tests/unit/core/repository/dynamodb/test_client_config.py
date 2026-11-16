@@ -11,9 +11,9 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections.aws.client import build_aws_client
-from loom.core.repository.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 

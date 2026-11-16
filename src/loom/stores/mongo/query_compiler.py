@@ -8,7 +8,7 @@ same rows for one ``QuerySpec``: ``NE`` never matches a ``null`` field, hence
 it is emitted with a ``{field: {"$ne": None}}`` guard (MongoDB's bare ``$ne``
 would match ``null`` and missing fields).
 
-Values are compared in their storage form (:mod:`loom.core.repository.mongo.values`);
+Values are compared in their storage form (:mod:`loom.stores.mongo.values`);
 primary-key values take the form the repository's ``IdPolicy`` writes to
 ``_id``, supplied as ``id_to_storage``. ``Decimal`` columns are stored as
 strings, whose order is lexicographic, so range operators and sorts on them
@@ -26,9 +26,9 @@ from typing import Any, ClassVar
 
 from loom.core.errors import UnsupportedQuery
 from loom.core.model.introspection import get_column_fields
-from loom.core.repository.mongo.values import to_storage_value
 from loom.core.stores.repository.cursor import Cursor
 from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, SortSpec
+from loom.stores.mongo.values import to_storage_value
 
 MongoFilter = dict[str, Any]
 MongoSort = list[tuple[str, int]]
@@ -204,7 +204,7 @@ class MongoQueryCompiler:
         """Return ``value`` as the document stores it in ``field``.
 
         The primary key takes the ``id_to_storage`` form; any other column
-        takes :func:`~loom.core.repository.mongo.values.to_storage_value`.
+        takes :func:`~loom.stores.mongo.values.to_storage_value`.
 
         Args:
             field: Model field name.

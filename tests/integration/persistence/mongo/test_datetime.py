@@ -14,8 +14,8 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.model import BaseModel, ColumnField, ServerDefault
-from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.stores.repository import CursorCodec
+from loom.stores.mongo.repository import RepositoryMongo
 from tests.unit.core.repository.contract.conftest import SEED
 
 from .conftest import _SessionDatabase

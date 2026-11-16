@@ -11,12 +11,12 @@ from botocore.exceptions import ClientError
 
 from loom.core.errors import Conflict, ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
 from loom.core.model import BaseModel, Field, Integer, String
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import OnConflict
 from loom.core.stores.uow.coordinator import NonTransactional, OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation, invocation_error
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 from .conftest import FakeClient, Product, ProductCreate, ProductUpdate

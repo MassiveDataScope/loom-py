@@ -6,11 +6,11 @@ import logging
 
 import pytest
 
-import loom.core.repository.dynamodb.backend as backend_module
+import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.dynamodb.backend import DynamoDBBackend
 from tests.helpers.persistence import build_backend
 
 from .conftest import FakeClient

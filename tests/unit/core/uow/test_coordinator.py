@@ -20,7 +20,6 @@ from sqlalchemy.engine import make_url
 from loom.core._async import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
-from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow import coordinator as coordinator_module
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
@@ -37,6 +36,7 @@ from loom.core.stores.uow.coordinator import (
     StoreOutcome,
     Uncertain,
 )
+from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
 from ._coordinator_fakes import (

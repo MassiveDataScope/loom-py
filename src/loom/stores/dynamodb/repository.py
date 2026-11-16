@@ -17,16 +17,14 @@ key attribute is the model's ``primary_key`` field, resolved via
 
 from __future__ import annotations
 
-import asyncio
-import contextvars
-import functools
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
 from decimal import Decimal
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, cast
 
 import msgspec
 
+from loom.core._async import run_in_executor
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict, UnsupportedQuery
@@ -47,8 +45,6 @@ from loom.core.stores.repository import (
 from loom.core.stores.repository.record import RecordLayout
 from loom.core.stores.uow.coordinator import Participant
 from loom.core.stores.uow.scope import InvocationScope, current_scope
-
-_ResultT = TypeVar("_ResultT")
 
 _CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailedException"
 _CONDITION_FAILED_REASON = "ConditionalCheckFailed"
@@ -424,22 +420,6 @@ class RepositoryDynamoDB(
         stores it, so a key such as a ``UUID`` matches its stored form.
         """
         return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
-
-
-async def run_in_executor(
-    executor: Executor | None, call: Callable[..., _ResultT], /, *args: Any, **kwargs: Any
-) -> _ResultT:
-    """Run a blocking client *call* on *executor*, carrying the caller's context.
-
-    Like :func:`asyncio.to_thread` — the trace id and every other context
-    variable stay visible inside the thread — but on a chosen executor, so the
-    parallelism follows the client's connection pool instead of the CPU count.
-    """
-    context = contextvars.copy_context()
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        executor, functools.partial(context.run, call, *args, **kwargs)
-    )
 
 
 def _single_id_attribute(model: type) -> str:

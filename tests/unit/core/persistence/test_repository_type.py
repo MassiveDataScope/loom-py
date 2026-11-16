@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.mongo.backend import MongoBackend
-from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.stores.none import NoneBackend
+from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.mongo.backend import MongoBackend
+from loom.stores.mongo.repository import RepositoryMongo
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 

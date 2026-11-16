@@ -1230,7 +1230,7 @@ def _require_full_repository(repository: object) -> None:
 
     Only a class that declared itself cacheable is held to the whole protocol:
     a partial repository that never asked for the wrapper —
-    :class:`~loom.core.repository.dynamodb.repository.RepositoryDynamoDB`, which
+    :class:`~loom.stores.dynamodb.repository.RepositoryDynamoDB`, which
     serves no list and no count — may still be wrapped by hand for the reads it
     does support.
 

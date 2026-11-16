@@ -24,14 +24,14 @@ import pytest
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork, NoOpMongoUnitOfWork
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.stores.repository.registration import capabilities_of
 from loom.core.stores.uow.abc import UnitOfWork
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.uow import DynamoUnitOfWork
+from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork, NoOpMongoUnitOfWork
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager

@@ -16,10 +16,10 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.errors import ForeignSessionError, ScopeOwnershipError
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 

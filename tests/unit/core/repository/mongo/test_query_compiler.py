@@ -9,9 +9,9 @@ import pytest
 
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.core.stores.repository import Cursor, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.stores.repository.query_compiler import QueryCompiler
+from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 
 from .conftest import Article
 

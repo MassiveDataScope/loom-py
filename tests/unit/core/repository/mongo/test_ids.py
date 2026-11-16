@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.mongo.ids import validate_id_field
+from loom.stores.mongo.ids import validate_id_field
 
 
 class _TextKey(BaseModel):

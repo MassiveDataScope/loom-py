@@ -3,23 +3,45 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import weakref
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core._async import run_to_completion
-from loom.core.repository.mongo.uow import MongoUnitOfWork
+from loom.core._async import run_in_executor, run_to_completion
 from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.unit.core.conftest import make_session
 from tests.unit.core.uow.conftest import make_session_manager
 
 _LONG = 60.0
 """A timeout no step here reaches."""
+
+_REQUEST: contextvars.ContextVar[str] = contextvars.ContextVar("request", default="")
+
+
+class TestRunInExecutor:
+    async def test_returns_what_the_call_returned(self) -> None:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            assert await run_in_executor(executor, str.upper, "ab") == "AB"
+
+    async def test_the_caller_context_is_visible_inside_the_thread(self) -> None:
+        seen: list[str] = []
+
+        def call() -> None:
+            seen.append(_REQUEST.get())
+
+        _REQUEST.set("req-42")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await run_in_executor(executor, call)
+
+        assert seen == ["req-42"]
 
 
 class TestRunStepResult:

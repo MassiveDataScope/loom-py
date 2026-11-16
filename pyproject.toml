@@ -205,8 +205,8 @@ spark = "loom.etl.backends.spark.provider:SparkProvider"
 # deployment registers its own under the same group from its own package.
 [project.entry-points."loom.persistence.backends"]
 sqlalchemy = "loom.stores.sqlalchemy.backend:SQLAlchemyBackend"
-dynamodb = "loom.core.repository.dynamodb.backend:DynamoDBBackend"
-mongo = "loom.core.repository.mongo.backend:MongoBackend"
+dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
+mongo = "loom.stores.mongo.backend:MongoBackend"
 none = "loom.core.stores.none:NoneBackend"
 
 [build-system]

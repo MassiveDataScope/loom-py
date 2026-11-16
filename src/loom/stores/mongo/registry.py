@@ -1,6 +1,6 @@
 """DI module registering Mongo repositories for the discovered models.
 
-Mirrors :mod:`loom.core.repository.dynamodb.registry`: every model is bound
+Mirrors :mod:`loom.stores.dynamodb.registry`: every model is bound
 to a collection of one shared database. The collection is named by the
 model's ``__tablename__``, the same source the SQL backends use for the
 table, unless ``stores.<name>.collections`` maps the model's class name
@@ -16,12 +16,6 @@ from typing import Any, Protocol
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
-from loom.core.repository.mongo.ids import IdPolicy
-from loom.core.repository.mongo.repository import (
-    MongoCollection,
-    RepositoryMongo,
-    SessionProvider,
-)
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import (
     CursorCodec,
@@ -32,6 +26,12 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.cursor import register_cursor_codec
 from loom.core.stores.repository.registry import RepositoryRegistration
+from loom.stores.mongo.ids import IdPolicy
+from loom.stores.mongo.repository import (
+    MongoCollection,
+    RepositoryMongo,
+    SessionProvider,
+)
 
 
 class MongoDatabase(Protocol):

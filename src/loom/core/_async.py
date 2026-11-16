@@ -1,14 +1,38 @@
-"""Running one step to completion whatever happens to the task awaiting it."""
+"""Running a step to completion, and blocking work on an executor (public API)."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+import contextvars
+import functools
+from collections.abc import Callable, Coroutine
+from concurrent.futures import Executor
 from typing import Any, TypeVar
 
 _T = TypeVar("_T")
 
 _held: set[asyncio.Task[Any]] = set()
+
+
+async def run_in_executor(
+    executor: Executor | None, call: Callable[..., _T], /, *args: Any, **kwargs: Any
+) -> _T:
+    """Run a blocking *call* on *executor* with the caller's context variables visible.
+
+    Args:
+        executor: The executor that runs *call*; ``None`` uses the loop's default.
+        call: The blocking callable.
+        *args: Positional arguments for *call*.
+        **kwargs: Keyword arguments for *call*.
+
+    Returns:
+        What *call* returns.
+    """
+    context = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor, functools.partial(context.run, call, *args, **kwargs)
+    )
 
 
 async def run_to_completion(

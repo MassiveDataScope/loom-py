@@ -7,7 +7,6 @@ from typing import Any
 
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import (
     RepositoryBuildContext,
@@ -21,6 +20,7 @@ from loom.core.stores.repository.registry import (
     get_repository_registration,
     repository_for,
 )
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
 
 __all__ = [
     "DynamoDBDefaultRepositoryBuilder",

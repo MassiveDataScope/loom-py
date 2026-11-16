@@ -11,9 +11,7 @@ import pytest
 from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 
-import loom.core.repository.mongo.uow as uow_module
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
+import loom.stores.mongo.uow as uow_module
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.coordinator import (
@@ -25,6 +23,8 @@ from loom.core.stores.uow.coordinator import (
     Uncertain,
 )
 from loom.core.stores.uow.scope import current_scope
+from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 from ._fake import FakeMongoClient
 from .conftest import Article

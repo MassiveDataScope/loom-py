@@ -499,6 +499,10 @@
   | `loom.core.repository.sqlalchemy.rls.guard/*.sql` (package data) | `loom.stores.sqlalchemy.rls.guard/*.sql` |
   | `loom.core.locator.load_application` and `loom.core.locator.Application` | `loom.stores.sqlalchemy.alembic.load_application` and `loom.stores.sqlalchemy.alembic.Application` |
   | `loom.core.locator.{add_code_path,DEFAULT_CODE_PATH}` | unchanged |
+  | `loom.core.repository.dynamodb` and every module below it (`backend`, `repository`, `uow`, `registry`) | `loom.stores.dynamodb` and the same module below it |
+  | `loom.core.repository.mongo` and every module below it (`backend`, `repository`, `uow`, `ids`, `query_compiler`, `values`, `registry`) | `loom.stores.mongo` and the same module below it |
+  | `loom.core.repository.dynamodb.repository.run_in_executor` | `loom.core._async.run_in_executor` |
+  | `loom.core.repository` (the leftover adapter package) | removed |
 - **stores:** the SQLAlchemy store and its schema loader live under
   `loom.stores.sqlalchemy`, and `loom.core` imports neither `sqlalchemy` nor
   `loom.stores`. The `sqlalchemy` entry point of `loom.persistence.backends`
@@ -514,6 +518,13 @@
   - Logger names come from `__name__`, so every `observability`
     `named_levels` key naming `loom.core.repository.sqlalchemy` (or a module
     below it) must name `loom.stores.sqlalchemy` instead, or it stops matching.
+- **stores:** the DynamoDB and Mongo stores live under `loom.stores.dynamodb`
+  and `loom.stores.mongo`. The `dynamodb` and `mongo` entry points of
+  `loom.persistence.backends` now target
+  `loom.stores.dynamodb.backend:DynamoDBBackend` and
+  `loom.stores.mongo.backend:MongoBackend`. `run_in_executor` is public API
+  at `loom.core._async`. `loom.core.repository` is gone.
+  **Migration:** update the imports in the table above.
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
   always passes it to the repository it wraps. Before: a custom repository

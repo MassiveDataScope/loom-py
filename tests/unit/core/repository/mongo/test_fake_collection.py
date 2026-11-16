@@ -7,8 +7,8 @@ import pytest
 from pymongo import ReturnDocument
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
-from loom.core.repository.mongo.query_compiler import MongoQueryCompiler
 from loom.core.stores.repository import Cursor, FilterGroup, FilterOp, FilterSpec, SortSpec
+from loom.stores.mongo.query_compiler import MongoQueryCompiler
 
 from ._fake import FakeCollection
 

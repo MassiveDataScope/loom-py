@@ -3,7 +3,7 @@
 DynamoDB has no multi-item transaction boundary that maps to the per-UseCase
 Unit of Work used by the relational backend: each write is autocommitted by its
 own ``PutItem`` / ``DeleteItem`` call inside
-:class:`~loom.core.repository.dynamodb.repository.RepositoryDynamoDB`. This
+:class:`~loom.stores.dynamodb.repository.RepositoryDynamoDB`. This
 Unit of Work therefore satisfies the
 :class:`~loom.core.stores.uow.abc.UnitOfWork` protocol with empty ``begin`` /
 ``commit`` / ``rollback`` so :class:`~loom.core.engine.executor.RuntimeExecutor`

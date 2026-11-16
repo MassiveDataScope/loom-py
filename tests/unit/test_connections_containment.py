@@ -55,7 +55,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
     "boto3": frozenset(
         {
             "core/connections/aws/client.py",
-            "core/repository/dynamodb/repository.py",  # item serializers, conditions
+            "stores/dynamodb/repository.py",  # item serializers, conditions
             "etl/io/sources/_dynamodb_items.py",  # item deserializers
             "etl/io/sources/_dynamodb_predicate.py",  # condition builders
         }
@@ -63,7 +63,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
     "botocore": frozenset(
         {
             "core/connections/aws/client.py",
-            "core/repository/dynamodb/repository.py",  # error types
+            "stores/dynamodb/repository.py",  # error types
             "prefect/notify/_sns.py",  # error types
         }
     ),
@@ -76,9 +76,9 @@ _ISLANDS: dict[str, frozenset[str]] = {
     "pymongo": frozenset(
         {
             "core/connections/mongo/client.py",
-            "core/repository/mongo/backend.py",  # client type of the backend
-            "core/repository/mongo/repository.py",  # results, errors
-            "core/repository/mongo/uow.py",  # sessions
+            "stores/mongo/backend.py",  # client type of the backend
+            "stores/mongo/repository.py",  # results, errors
+            "stores/mongo/uow.py",  # sessions
             "streaming/mongo/_bytewax_source.py",  # change-stream errors
         }
     ),

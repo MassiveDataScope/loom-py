@@ -2,7 +2,7 @@
 
 Scope is deliberately narrow (plan decision 10): the calls the Mongo
 repository and unit of work issue, over the operators
-:class:`~loom.core.repository.mongo.query_compiler.MongoQueryCompiler` emits.
+:class:`~loom.stores.mongo.query_compiler.MongoQueryCompiler` emits.
 Any other query or update operator raises :class:`NotImplementedError` naming
 it, so a drift between compiler and fake is visible instead of silently
 matching nothing.

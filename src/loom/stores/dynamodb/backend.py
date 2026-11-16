@@ -9,19 +9,20 @@ from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, ParamSpec, TypeVar
 
+from loom.core._async import run_in_executor
 from loom.core.config import ConfigContext
 from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
-from loom.core.repository.dynamodb.registry import (
-    build_dynamodb_repository_registration_module,
-)
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB, run_in_executor
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.stores.backend import PersistenceWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.profile import BackendRuntime
+from loom.stores.dynamodb.registry import (
+    build_dynamodb_repository_registration_module,
+)
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
 
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 

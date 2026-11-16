@@ -17,10 +17,10 @@ from pymongo.asynchronous.collection import AsyncCollection
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import ScopeOwnershipError
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import current_scope
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.integration.support.scope_doubles import BusinessError, Run
 
 

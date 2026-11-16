@@ -38,7 +38,7 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Domain and application | `loom.core.model`, `use_case`, `engine`, `command`, `projection`, `identity`, `authz` | no infrastructure, no SDK |
 | Ports | `loom.core.stores.backend`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
 | Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.stores.database`, `loom.core.stores.profile` | validated data; no SDK |
-| Outbound adapters (islands) | `loom.core.stores.repository.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
+| Outbound adapters (islands) | `loom.stores.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
 | Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
 | Inbound adapters | `loom.rest.fastapi`, `loom.celery` (the worker), the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
 
@@ -209,11 +209,8 @@ everywhere. Three levels are judged separately.
 
 ### Known debt
 
-- Infrastructure adapters still live inside `loom.core`: `core/repository`
-  (MongoDB, DynamoDB) and `core/connections` import their drivers. Strictly,
-  `core` would hold only the ports. The SQLAlchemy store already sits in
-  `loom.stores.sqlalchemy`; the other adapters move there with the persistence
-  boundary (spec 015).
+- Island clients under `loom.core.connections` (`aws`, `mongo`, `clickhouse`)
+  still import their drivers. The store adapters live in `loom.stores`.
 - The logger does not fit AWS Lambda. Its redesign is the next spec (logging
   standard, Lambda first).
 - The use-case compiler names `Agent()` and `Mcp()` for `execute()` markers;

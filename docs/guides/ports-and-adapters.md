@@ -351,10 +351,8 @@ separately.
 
 Known debt:
 
-- Infrastructure adapters still live inside `loom.core`: `core/repository`
-  (MongoDB, DynamoDB) and `core/connections` import their drivers. The
-  SQLAlchemy store already sits in `loom.stores.sqlalchemy`; the other
-  adapters move there with the persistence boundary.
+- Island clients under `loom.core.connections` (`aws`, `mongo`, `clickhouse`)
+  still import their drivers. The store adapters live in `loom.stores`.
 - The logger does not fit AWS Lambda. Its redesign is planned next.
 
 ## Migrating ports, DI and identity

@@ -10,7 +10,6 @@ import msgspec
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
     BulkCreatable,
@@ -33,6 +32,7 @@ from loom.core.stores.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
 )
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 
 

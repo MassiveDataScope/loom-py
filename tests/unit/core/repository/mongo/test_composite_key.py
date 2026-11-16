@@ -6,8 +6,8 @@ import pytest
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.stores.repository import CursorCodec
+from loom.stores.mongo.repository import RepositoryMongo
 
 from ._fake import FakeCollection
 

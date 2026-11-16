@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
 
 
 class TestDynamoUnitOfWork:

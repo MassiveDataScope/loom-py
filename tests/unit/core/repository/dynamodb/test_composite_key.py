@@ -6,7 +6,7 @@ import pytest
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import RepositoryDynamoDB
 
 from .conftest import FakeClient
 
