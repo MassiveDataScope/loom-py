@@ -136,12 +136,12 @@ In `config/development.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: sqlite+aiosqlite:///store.db
-persistence:
-  cursors:
-    signing: ephemeral
 ```
 
 `signing: ephemeral` is a random key per process; see the persistence guide.
@@ -150,12 +150,12 @@ In `config/test.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      signing: unsigned
   default:
     backend: sqlalchemy
     url: sqlite+aiosqlite:///
-persistence:
-  cursors:
-    signing: unsigned
 ```
 
 In `config/production.yaml`:
@@ -172,11 +172,12 @@ app:
         algorithms: [HS256]
         audience: my-store
         issuer: https://idp.example.com
-persistence:
-  cursors:
-    current_key_id: "2026-10"
-    keys:
-      "2026-10": {path: /run/secrets/cursor-2026-10}
+stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {path: /run/secrets/cursor-2026-10}
 ```
 
 ```bash
@@ -209,7 +210,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   added in lower case; the section types that refuse unknown keys
   (`app.rest`, the `observability` sub-sections, `sql`, `celery`, `jobs`,
   `storage`, `kafka`, the bytewax runtime, `dynamodb`) then refuse a typo.
-  The keys of `app`, a `sqlalchemy` store, `persistence` and the top of
+  The keys of `app`, a `sqlalchemy` store, `stores.settings` and the top of
   `observability`, which several readers share, are not checked.
 - The first level must name a section the configuration declares or loom
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
@@ -248,10 +249,10 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   authentication settings, the deploy checks, the documentation and metrics
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
-  that can match a key inside `checks`, `config`, `persistence.cursors`,
+  that can match a key inside `checks`, `config`, `stores.settings.cursors`,
   `aws`, `sqs.queues`, `app.discovery`, `lambda.handler` or a Lambda
   function's `trigger`
-  (`persistence.*.signing` and `lambda.functions.*.trigger.job` included)
+  (`stores.settings.*.signing` and `lambda.functions.*.trigger.job` included)
   stops startup naming the entry; the entries
   are checked at every load, in every environment. Any other key you list
   is a reviewed choice, much like setting it from `${oc.env:...}` in the
@@ -344,16 +345,16 @@ In `config/base.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 payments:
   api_key: ${oc.env:PAYMENTS_API_KEY}
-persistence:
-  cursors:
-    current_key_id: "2026-10"
-    keys:
-      "2026-10": {env: CURSOR_KEY_2026_10}
 ```
 
 The variable is named, never interpolated.
@@ -415,7 +416,7 @@ check fails startup, a `W` check logs a warning.
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
-| `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
+| `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
 `loom.rest` checks. A runner built from a whole configuration (a file, a

@@ -87,9 +87,9 @@ class TestCreateSchema:
                             "scopes": {"owner": "identity.subject", "editor": "request.editor"},
                             "guard": "loom_guard_notes_wired",
                         },
-                    }
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
             return build_backend(
                 SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
@@ -156,9 +156,9 @@ class TestCreateSchema:
                     "backend": "sqlalchemy",
                     "url": database.bypass,
                     "schema": {"mode": "external"},
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         wiring = build_backend(
             SQLAlchemyBackend(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE

@@ -59,11 +59,13 @@ app:
     mode: modules
     modules:
       include: [bench_app]
-database:
-  url: "sqlite+aiosqlite:///{db_path}"
-persistence:
-  cursors:
-    signing: ephemeral
+stores:
+  default:
+    backend: sqlalchemy
+    url: "sqlite+aiosqlite:///{db_path}"
+  settings:
+    cursors:
+      signing: ephemeral
 """
 
 _STARTUP_CHILD = textwrap.dedent(

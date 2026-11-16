@@ -129,11 +129,10 @@ app:
     title: My Store API
     version: 0.1.0
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}

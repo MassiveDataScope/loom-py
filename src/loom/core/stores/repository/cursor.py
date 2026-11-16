@@ -76,7 +76,10 @@ _EPHEMERAL_KEY_ID: Final = b"ephemeral"
 _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
-_OPT_OUT: Final = "persistence.cursors.signing: ephemeral in development.yaml"
+CURSORS_SECTION: Final = f"{ConfigKey.STORES_SETTINGS}.cursors"
+"""Dotted path of the cursor signing section."""
+
+_OPT_OUT: Final = f"{CURSORS_SECTION}.signing: ephemeral in development.yaml"
 _CARRIED_TYPES: Final = (datetime, date, time, UUID, Decimal)
 _SORTABLE_TYPES: Final = (bool, int, float, str, datetime, date, time, UUID, Decimal, Enum)
 
@@ -121,7 +124,7 @@ class CursorKeySource(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
 
 
 class CursorConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """The ``persistence.cursors`` section.
+    """The ``stores.settings.cursors`` section.
 
     Args:
         signing: ``signed`` (the default when absent) signs with ``keys``;
@@ -134,12 +137,13 @@ class CursorConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_f
 
     Example YAML::
 
-        persistence:
-          cursors:
-            current_key_id: "2026-10"
-            keys:
-              "2026-10": {env: CURSOR_KEY_2026_10}
-              "2026-07": {path: /run/secrets/cursor-2026-07}
+        stores:
+          settings:
+            cursors:
+              current_key_id: "2026-10"
+              keys:
+                "2026-10": {env: CURSOR_KEY_2026_10}
+                "2026-07": {path: /run/secrets/cursor-2026-07}
     """
 
     signing: _Signing = "signed"
@@ -220,7 +224,7 @@ class CursorCodec:
         current_key_id: str | None = None,
     ) -> None:
         if signing not in _SIGNING_MODES:
-            raise ConfigError(f"persistence.cursors.signing {signing!r} is not a signing mode")
+            raise ConfigError(f"{CURSORS_SECTION}.signing {signing!r} is not a signing mode")
         self._signing = signing
         self._opt_out_silenced = False
         if signing == _SIGNED:
@@ -231,7 +235,7 @@ class CursorCodec:
             _logger.warning(
                 "cursor signing is ephemeral: a random key generated for this process signs "
                 "cursors, so they do not survive a restart and other instances refuse them. "
-                "Configure persistence.cursors keys outside development."
+                f"Configure {CURSORS_SECTION} keys outside development."
             )
         else:
             self._current = b""
@@ -243,7 +247,7 @@ class CursorCodec:
 
     @classmethod
     def from_context(cls, ctx: ConfigContext) -> CursorCodec:
-        """Build the codec of the ``persistence.cursors`` section of ``ctx``.
+        """Build the codec of the ``stores.settings.cursors`` section of ``ctx``.
 
         Args:
             ctx: Application configuration; the section may be absent.
@@ -259,7 +263,7 @@ class CursorCodec:
                 ``checks`` section, is invalid.
         """
         codec = cls.from_config(
-            ctx.section_or_default(ConfigKey.PERSISTENCE_CURSORS, CursorConfig, CursorConfig())
+            ctx.section_or_default(CURSORS_SECTION, CursorConfig, CursorConfig())
         )
         codec._opt_out_silenced = CURSOR_SIGNING_CHECK in silenced_checks(ctx)
         return codec
@@ -271,7 +275,7 @@ class CursorCodec:
 
     @classmethod
     def from_config(cls, config: CursorConfig) -> CursorCodec:
-        """Build the codec of a ``persistence.cursors`` section, reading its keys.
+        """Build the codec of a ``stores.settings.cursors`` section, reading its keys.
 
         Args:
             config: The section, or ``CursorConfig()`` when it is absent.
@@ -404,8 +408,8 @@ def _keyring(
 ) -> tuple[dict[bytes, bytes], bytes]:
     if not keys:
         raise ConfigError(
-            "cursor signing needs a key: set persistence.cursors.current_key_id and "
-            f"persistence.cursors.keys, or opt out for development with {_OPT_OUT}"
+            f"cursor signing needs a key: set {CURSORS_SECTION}.current_key_id and "
+            f"{CURSORS_SECTION}.keys, or opt out for development with {_OPT_OUT}"
         )
     for key_id, key in keys.items():
         if _KEY_ID.fullmatch(key_id) is None:
@@ -413,7 +417,7 @@ def _keyring(
         if len(key) < MIN_KEY_BYTES:
             raise ConfigError(f"cursor key {key_id!r} is shorter than {MIN_KEY_BYTES} bytes")
     if current_key_id is None or current_key_id not in keys:
-        raise ConfigError("persistence.cursors.current_key_id must name a configured key")
+        raise ConfigError(f"{CURSORS_SECTION}.current_key_id must name a configured key")
     return {key_id.encode(): key for key_id, key in keys.items()}, current_key_id.encode()
 
 
@@ -617,7 +621,7 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
         if environment.is_deployed:
             raise ConfigError(
                 f"{CURSOR_SIGNING_CHECK}: a CursorCodec in {codec.signing} mode cannot serve "
-                f"the {str(environment)!r} environment; configure persistence.cursors keys, "
+                f"the {str(environment)!r} environment; configure {CURSORS_SECTION} keys, "
                 f"or list {CURSOR_SIGNING_CHECK} under checks.silenced and build the codec "
                 "with CursorCodec.from_context"
             )

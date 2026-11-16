@@ -103,8 +103,10 @@ def _write_project(tmp_path: Path) -> str:
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": "pydantic-ai",
             "specs": ["ai/agents/*/agent.yaml"],

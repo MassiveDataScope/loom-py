@@ -26,3 +26,6 @@ class TestAuditCheck:
         )
         assert _run({"main": {"backend": "sqlalchemy"}}) is None
         assert _run({}) is None
+
+    def test_the_shared_settings_are_not_read_as_a_store(self) -> None:
+        assert _run({"settings": {"schema": {"audit": {"enabled": False}}}}) is None

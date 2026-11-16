@@ -360,7 +360,7 @@ loom has no external legacy, so the duplicates are removed outright:
 
 ## Coordination
 
-`hotfix/strict-signed-cursors` adds `persistence.cursors.signing` (`signed` by
+`hotfix/strict-signed-cursors` adds `stores.settings.cursors.signing` (`signed` by
 default, `ephemeral`, `unsigned`). Its check is not part of this decision.
 After this branch merges, that branch registers `loom.cursors.E001` with
 `@deploy_check` in a module its package already imports, and adds the package
@@ -368,7 +368,7 @@ to `_load_check_packages` in `loom.cli.check` so `loom check --deploy` sees
 it. `loom.cursors.E001` applies only when a repository backend is
 configured. The development fixture in `tests/unit/rest/test_deploy_checks.py`
 that builds a REST app from its own YAML already sets
-`persistence.cursors.signing: ephemeral`. The tests that will break are the
+`stores.settings.cursors.signing: ephemeral`. The tests that will break are the
 ones that start an application with a repository backend in a deployed
 environment and expect it to start:
 
@@ -399,11 +399,11 @@ When #371 rebases on this branch it must also:
   `abc/cursor.py`) through `loom.core.environment`, or add that file to the
   containment test's dynamic readers with its reason: the closed-world rule
   refuses a bare `os.environ` outside the environment module;
-- keep `persistence.cursors.*` off the override allowlist. In production and
-  staging `LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` then fails at
+- keep `stores.settings.cursors.*` off the override allowlist. In production and
+  staging `LOOM__STORES__SETTINGS__CURSORS__SIGNING=unsigned` then fails at
   startup as a key off the allowlist, before any deploy check runs;
 - make its cursor configuration struct forbid unknown fields if
-  `persistence.cursors` has a single reader, like the other single-reader
+  `stores.settings.cursors` has a single reader, like the other single-reader
   sections.
 
 **Resolved by ADR 0004 / #371.** The items above are done: `loom.cursors.E001`
@@ -412,7 +412,7 @@ imports that package; the four tests sign their cursors with a configured
 key; the cursor key variables are `CURSOR_KEY_*` and are read through
 `loom.core.environment.configured_variable`, which the AI providers'
 `credentials_ref` now uses too, so the containment test lists one dynamic
-reader; `persistence.cursors` stays off the allowlist and is protected like
+reader; `stores.settings.cursors` stays off the allowlist and is protected like
 `config` and `checks` against `config.overridable`; `CursorConfig` forbids
 unknown fields.
 

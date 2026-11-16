@@ -18,14 +18,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
-from loom.core.config.keys import ConfigKey
 from loom.core.stores.catalog import load_catalog
-from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CursorConfig
+from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CURSORS_SECTION, CursorConfig
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
-_SECTION = ConfigKey.PERSISTENCE_CURSORS
+_SECTION = CURSORS_SECTION
 _SIGNED = CursorConfig().signing
 _HINT = (
     f"drop {_SECTION}.signing from the deployed configuration (signed is the default) "

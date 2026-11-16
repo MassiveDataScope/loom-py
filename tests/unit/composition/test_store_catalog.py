@@ -133,7 +133,7 @@ class TestStoreCatalog:
         build_application(path, adapter=FastAPIAdapter(), environment="test", resolvers=[counter])
 
         assert counter.calls == Counter({"url": 1, "database": 1})
-        # settings() for the retired keys and decode() share the one resolution.
+        # section() for the retired keys and decode() share the one resolution.
         assert store_resolutions == Counter({"stores.default": 1})
 
     def test_a_store_spec_resolves_once_for_settings_and_decode(
@@ -143,7 +143,7 @@ class TestStoreCatalog:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "none", "url": "u"}}})
         spec = StoreSpec(key=DEFAULT_STORE, backend="none", config=ctx)
 
-        settings = spec.settings()
+        settings = spec.section()
         settings["url"] = "changed"
 
         assert spec.decode(dict) == {"url": "u"}

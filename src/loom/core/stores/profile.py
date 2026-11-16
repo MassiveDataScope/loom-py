@@ -108,7 +108,7 @@ class StoreRuntime:
         store: The store the backend serves.
         cursor_codec: The application's one cursor codec, which the host
             builds once and every store it composes registers. A backend
-            given none builds its own from ``persistence.cursors``: the host
+            given none builds its own from ``stores.settings.cursors``: the host
             gives none only when it composes no model, so one store at most.
     """
 

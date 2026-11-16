@@ -204,8 +204,10 @@ def _write_project(
                 "interfaces": {"modules": [module], "warn_recommended": False},
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     path = directory / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")

@@ -276,7 +276,7 @@ class SQLAlchemyDefaultRepositoryBuilder:
 A builder that constructs a `RepositorySQLAlchemy` or a `RepositoryMongo`
 itself passes the shared `CursorCodec`: resolve it from
 `context.container`, where the backend registers the one it built from
-`persistence.cursors`.
+`stores.settings.cursors`.
 
 An application that wants a different project-wide base repository can
 register another `DefaultRepositoryBuilder` implementation in the container.

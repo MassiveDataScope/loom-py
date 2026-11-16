@@ -48,7 +48,9 @@ class _Labels:
 
 def _context(**stores: dict[str, Any]) -> ConfigContext:
     return ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
 
 

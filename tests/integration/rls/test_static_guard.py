@@ -403,9 +403,9 @@ class TestStaticGuard:
                         "scopes": dict(notes.SCOPE_BINDINGS),
                         "guard": installed.guard,
                     },
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         register_scope_source("editor", lambda: None)
         try:

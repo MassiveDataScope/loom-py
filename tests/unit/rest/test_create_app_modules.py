@@ -87,8 +87,10 @@ def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str
                 "interfaces": {"modules": [module], "warn_recommended": False},
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     config_file = tmp_path / "app.yaml"
     config_file.write_text(yaml.safe_dump(config), encoding="utf-8")

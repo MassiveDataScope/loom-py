@@ -34,8 +34,10 @@ def store_context(store: Mapping[str, object] | None = None, **sections: object)
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "stores": {"default": dict(store or SQLITE_STORE)},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {
+                "default": dict(store or SQLITE_STORE),
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
             **sections,
         }
     )

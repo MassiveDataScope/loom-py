@@ -64,8 +64,10 @@ def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     if extra:
         base.update(extra)
@@ -133,8 +135,10 @@ class TestBootstrapWorkerTaskRegistration:
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {
+                "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"},
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
         }
         if extra_cfg:
             cfg.update(extra_cfg)
@@ -315,7 +319,8 @@ class TestBootstrapWorkerTaskRegistration:
                     "backend": "sqlalchemy",
                     "url": "sqlite+aiosqlite:///test.db",
                     "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
         }
         try:

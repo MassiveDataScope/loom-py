@@ -100,10 +100,12 @@ class TwoServers:
             {
                 "app": {"name": "two_stores"},
                 "stores": {
-                    key: _section(database, urls.get(key), external=key not in unscoped)
-                    for key, database in self.databases.items()
+                    **{
+                        key: _section(database, urls.get(key), external=key not in unscoped)
+                        for key, database in self.databases.items()
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         )
 

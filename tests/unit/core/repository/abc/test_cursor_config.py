@@ -51,7 +51,7 @@ def _from_env(monkeypatch: pytest.MonkeyPatch, secret: str) -> CursorCodec:
 
 class TestDefaultMode:
     def test_without_keys_the_default_fails_and_names_the_opt_out(self) -> None:
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec.from_config(CursorConfig())
 
     def test_the_default_signs_and_refuses_an_unsigned_token(
@@ -71,15 +71,15 @@ class TestSection:
         ids=["unknown-mode", "unknown-field", "sourceless-key"],
     )
     def test_an_invalid_section_fails_startup(self, section: dict[str, object]) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"cursors": section}})
+        ctx = ConfigContext.from_dict({"stores": {"settings": {"cursors": section}}})
 
-        with pytest.raises(ConfigError, match=r"persistence\.cursors"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors"):
             CursorCodec.from_context(ctx)
 
     def test_an_absent_section_is_the_signed_default(self) -> None:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
 
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec.from_context(ctx)
 
 

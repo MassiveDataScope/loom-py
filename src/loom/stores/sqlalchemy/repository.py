@@ -100,7 +100,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]
         session_manager: Shared session manager.
         model: Model the repository serves.
         cursor_codec: Codec that issues and verifies cursor tokens; the
-            backend builds one from ``persistence.cursors`` and shares it.
+            backend builds one from ``stores.settings.cursors`` and shares it.
             Cursors are bound to the row-level-security scope values of the
             caller when the session manager has them, to no scope otherwise.
             A codec passed here by hand skips the deployed-environment

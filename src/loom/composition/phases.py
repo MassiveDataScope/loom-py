@@ -42,6 +42,7 @@ from loom.core.stores.catalog import (
     DEFAULT_STORE_PATH,
     StoreCatalog,
     StoreKey,
+    StoreSetting,
 )
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.uow.abc import UnitOfWorkFactory
@@ -236,7 +237,7 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
 
     Raises:
         ConfigError: When a job's settings, a store section or, for a store
-            that pages with cursors, ``persistence.cursors`` is invalid, or a
+            that pages with cursors, ``stores.settings.cursors`` is invalid, or a
             store is named after the default store's backend.
     """
     ctx, discovered, catalog = source.config, recipe.discovered, source.catalog
@@ -303,7 +304,7 @@ def register(
 
     Raises:
         ConfigError: When the ``cache`` section, an elevation,
-            ``persistence.rollback_timeout``,
+            ``stores.settings.rollback_timeout``,
             ``identity.max_delegation_seconds`` or the ``sql`` section is
             invalid. Raised as is.
         ReservedBindingError: When a caller module or an override binds or
@@ -325,7 +326,7 @@ def register(
         OrderedCommits(
             factories,
             rollback_timeout=ctx.positive_seconds(
-                "persistence.rollback_timeout", ROLLBACK_TIMEOUT_S
+                StoreSetting.ROLLBACK_TIMEOUT.path, ROLLBACK_TIMEOUT_S
             ),
         )
         if factories

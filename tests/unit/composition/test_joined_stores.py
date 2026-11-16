@@ -73,7 +73,9 @@ def _compose(
         stores["audit"] = audit
     source = composition_source(
         ConfigContext.from_dict(
-            {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+            {
+                "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+            }
         ),
         app=AppConfig(name="api"),
         code_path=tmp_path,

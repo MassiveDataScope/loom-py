@@ -56,9 +56,9 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
             "default": {
                 "backend": "sqlalchemy",
                 "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
-            }
+            },
+            "settings": {"cursors": {"signing": "ephemeral"}},
         },
-        "persistence": {"cursors": {"signing": "ephemeral"}},
         "app": {
             "name": "worker",
             "discovery": {"mode": "modules", "modules": {"include": [__name__]}},

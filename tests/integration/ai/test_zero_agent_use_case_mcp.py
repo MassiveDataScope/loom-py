@@ -130,8 +130,10 @@ def _write_project(tmp_path: Path, *, declares_use_case: bool) -> str:
             "code_path": str(tmp_path),
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

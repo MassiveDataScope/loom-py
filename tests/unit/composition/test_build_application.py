@@ -143,11 +143,11 @@ class TestTransportFreeComposition:
 
         assert application.kernel.container.resolve_or_none(ElevationSink) is None
 
-    def test_the_rollback_deadline_comes_from_the_persistence_section(
+    def test_the_rollback_deadline_comes_from_the_shared_store_settings(
         self,
         fixture_project: ProjectFactory,
     ) -> None:
-        project = fixture_project(persistence={"rollback_timeout": 5})
+        project = fixture_project(settings={"rollback_timeout": 5})
 
         application = build_application(
             project, adapter=AcmeTransportFreeAdapter(), environment="test"
@@ -161,11 +161,11 @@ class TestTransportFreeComposition:
     def test_a_rollback_deadline_not_a_finite_number_above_zero_is_refused(
         self, fixture_project: ProjectFactory, timeout: float
     ) -> None:
-        project = fixture_project(persistence={"rollback_timeout": timeout})
+        project = fixture_project(settings={"rollback_timeout": timeout})
         adapter = AcmeTransportFreeAdapter()
 
         with pytest.raises(
-            ConfigError, match="persistence.rollback_timeout must be a finite number above zero"
+            ConfigError, match="stores.settings.rollback_timeout must be a finite number above zero"
         ):
             build_application(project, adapter=adapter, environment="test")
 

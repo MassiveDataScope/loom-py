@@ -121,7 +121,7 @@ def write_project(
     rest: dict[str, Any] | None = None,
     sql: dict[str, Any] | None = None,
     observability: dict[str, Any] | None = None,
-    persistence: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
     store: dict[str, Any] | None = _DEFAULT_STORE,
     cache: dict[str, Any] | None = None,
     identity: dict[str, Any] | None = None,
@@ -137,7 +137,7 @@ def write_project(
         rest: Contents of the ``app.rest`` section.
         sql: Contents of the ``sql`` section.
         observability: Contents of the ``observability`` section.
-        persistence: Contents of the ``persistence`` section, on top of an
+        settings: Contents of the ``stores.settings`` section, on top of an
             explicit ``cursors.signing: ephemeral``.
         store: Contents of the ``stores.default`` section; ``None`` omits it.
         cache: Contents of the ``cache`` section; ``None`` omits it.
@@ -169,8 +169,9 @@ def write_project(
             },
         },
     }
+    config["stores"] = {"settings": {"cursors": {"signing": "ephemeral"}, **(settings or {})}}
     if store is not None:
-        config["stores"] = {"default": dict(store)}
+        config["stores"]["default"] = dict(store)
     if cache is not None:
         config["cache"] = dict(cache)
     if identity is not None:
@@ -181,8 +182,6 @@ def write_project(
         config["sql"] = sql
     if observability is not None:
         config["observability"] = observability
-    # Every fixture app opts out of cursor signing keys explicitly.
-    config["persistence"] = {"cursors": {"signing": "ephemeral"}, **(persistence or {})}
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(config_path)

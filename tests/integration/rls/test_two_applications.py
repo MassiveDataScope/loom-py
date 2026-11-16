@@ -71,9 +71,9 @@ def _compose(url: str, name: str) -> Application:
                     "backend": "sqlalchemy",
                     "url": url,
                     "schema": {"mode": "external", "scopes": {"desk": "request.desk"}},
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
     return compose_application(composition_source(ctx, app=AppConfig(name=name)), _Tickets())

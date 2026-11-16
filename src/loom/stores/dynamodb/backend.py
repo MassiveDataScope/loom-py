@@ -93,7 +93,7 @@ class DynamoDBBackend:
         spec = runtime.catalog.served_by(self.name, runtime.store)
         del ctx
         dynamo_cfg = DynamoDBRepositoryConfig.from_config(
-            spec.config, spec.path, own=spec.settings()
+            spec.config, spec.path, own=spec.section()
         )
         client = dynamo_cfg.client(AwsService.DYNAMODB)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)

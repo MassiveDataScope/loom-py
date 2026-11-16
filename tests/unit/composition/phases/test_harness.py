@@ -38,14 +38,17 @@ from tests.unit.composition.phases.paths import SQLITE
 
 _LEDGER: dict[str, Any] = {
     "app": {"name": "acme", "job_service": "inline"},
-    "stores": {"default": SQLITE, "ledger": {"backend": "none"}},
-    "persistence": {"cursors": {"signing": "ephemeral"}},
+    "stores": {
+        "default": SQLITE,
+        "ledger": {"backend": "none"},
+        "settings": {"cursors": {"signing": "ephemeral"}},
+    },
 }
 # No store builds a cursor codec, so only a deploy check refuses the ephemeral keys;
 # composed with no component, so no other lenient skip is involved.
 _EPHEMERAL_KEYS: dict[str, Any] = {
     "app": {"name": "acme", "job_service": "inline"},
-    "persistence": {"cursors": {"signing": "ephemeral"}},
+    "stores": {"settings": {"cursors": {"signing": "ephemeral"}}},
 }
 _SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
     "missing-binding": ({"use_cases": (AcmePing, AcmeNeedsService)}, BootstrapError),

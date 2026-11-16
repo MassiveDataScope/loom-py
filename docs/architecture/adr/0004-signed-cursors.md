@@ -109,7 +109,7 @@ token are not served to another scope.
 
 ### Keys and rotation
 
-- `persistence.cursors` holds `current_key_id` and `keys`, a mapping of key
+- `stores.settings.cursors` holds `current_key_id` and `keys`, a mapping of key
   id to exactly one source: `path` (a file, the same contract as
   `JwtAuthConfig.secret_path`) or `env` (an environment variable, which is
   how ECS and Fargate inject secrets). Key material never appears in the
@@ -127,7 +127,7 @@ token are not served to another scope.
 
 ### Modes
 
-`persistence.cursors.signing` selects the mode, following Django's pattern:
+`stores.settings.cursors.signing` selects the mode, following Django's pattern:
 the code default is the secure one and every opt-out is written explicitly in
 the configuration file of the environment that needs it.
 
@@ -144,7 +144,7 @@ There is no environment logic in the codec. With `signing` absent the mode is
 `signed` in every environment, so a backend that serves repositories
 (`sqlalchemy`, `mongo`) and a Celery worker that registers repositories fail
 at startup without a key, with a `ConfigError` that names the
-`persistence.cursors.signing: ephemeral` opt-out for `development.yaml`.
+`stores.settings.cursors.signing: ephemeral` opt-out for `development.yaml`.
 
 A deploy check, `loom.cursors.E001`, registered with `@deploy_check` from
 the deploy-check registry of ADR 0005, refuses a deployment that serves
@@ -154,7 +154,7 @@ and `loom check --deploy` imports that package. It applies when the
 configuration has a `database` section (SQLAlchemy, and the Celery worker)
 or a `persistence.mongo` section, and finds:
 
-- `persistence.cursors.signing` set to anything but the literal `signed`
+- `stores.settings.cursors.signing` set to anything but the literal `signed`
   (absent means `signed`): `ephemeral` and `unsigned` are for development
   and tests;
 - a `current_key_id` that is not a literal entry of `keys`. Startup fails on
@@ -163,12 +163,12 @@ or a `persistence.mongo` section, and finds:
 Like the other checks it reads the keys as written and resolves no
 placeholder, so it runs without the key material. At startup it runs only
 in production and staging (ADR 0005); `loom check --deploy` runs it in any
-environment. `persistence.cursors.*` is not on the
+environment. `stores.settings.cursors.*` is not on the
 `LOOM__*` override allowlist, so in production and staging
-`LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` fails at startup before any
-check runs. `persistence.cursors` is also protected like `config` and
+`LOOM__STORES__SETTINGS__CURSORS__SIGNING=unsigned` fails at startup before any
+check runs. `stores.settings.cursors` is also protected like `config` and
 `checks`: a `config.overridable` entry that could match a key under it
-(`persistence.cursors.signing`, `persistence.*.signing`) stops every load,
+(`stores.settings.cursors.signing`, `stores.settings.*.signing`) stops every load,
 so the files cannot reopen it either. A key's `env` source names the
 variable holding it; loom reads it through
 `loom.core.environment.configured_variable`, which refuses a `LOOM_*` name,
@@ -295,7 +295,7 @@ new version byte if a consumer needs it.
 ## Consequences
 
 - Breaking: an application with a repository-serving backend needs
-  `persistence.cursors` keys or an explicit opt-out. Tokens issued before
+  `stores.settings.cursors` keys or an explicit opt-out. Tokens issued before
   this change are refused with 400; clients restart from the first page.
 - Breaking: the repository constructors, the default builders, the
   registration modules and `build_repository_harness` take `cursor_codec`;

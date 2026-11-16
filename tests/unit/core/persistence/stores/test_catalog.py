@@ -49,7 +49,7 @@ class TestStoreCatalog:
         assert StoreKey("default") == DEFAULT_STORE
         assert spec.key == DEFAULT_STORE
         assert spec.backend == "sqlalchemy"
-        assert spec.settings() == {"url": "sqlite+aiosqlite:///:memory:"}
+        assert spec.section() == {"url": "sqlite+aiosqlite:///:memory:"}
         with pytest.raises(AttributeError):
             spec.backend = "mongo"
 
@@ -77,7 +77,7 @@ class TestStoreCatalog:
             StoreKey("sessions"): "dynamodb",
             StoreKey("legacy"): "mongo",
         }
-        assert catalog.specs[StoreKey("default")].settings() == {}
+        assert catalog.specs[StoreKey("default")].section() == {}
 
     def test_absent_stores_section_loads_an_empty_catalog(self) -> None:
         catalog = load_catalog(ConfigContext.from_dict({"service": {"name": "api"}}))
@@ -153,8 +153,10 @@ class TestStoreCatalog:
         assert "persistence.dynamodb" in str(error.value)
         assert "stores." in str(error.value)
 
-    def test_persistence_cursors_alone_does_not_require_stores(self) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"cursors": {"enabled": True}}})
+    def test_the_shared_settings_alone_declare_no_store(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"stores": {"settings": {"cursors": {"signing": "unsigned"}}}}
+        )
 
         assert load_catalog(ctx).specs == {}
 

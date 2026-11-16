@@ -34,8 +34,10 @@ def _pool_settings(manager: SessionManager) -> tuple[Any, ...]:
 def _api_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
         {
-            "stores": {"default": {"backend": "sqlalchemy", **database}},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {
+                "default": {"backend": "sqlalchemy", **database},
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
         }
     )
     wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)

@@ -49,7 +49,7 @@ _INVALID_SQL = {
 }
 _UNKNOWN_BACKEND = {"app": {"job_service": "rabbit"}}
 _INVALID_JOB_SECTION = {"jobs": {AcmeJob.__name__: {"unknown": 1}}}
-_INVALID_CURSORS = {"persistence": {"cursors": {"signing": "unknown"}}}
+_INVALID_CURSORS = {"stores": {"settings": {"cursors": {"signing": "unknown"}}}}
 _UNCOMPOSED_LEDGER = {"stores": {"ledger": {"backend": "none"}}}
 
 

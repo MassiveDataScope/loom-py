@@ -74,16 +74,26 @@ class TestStoreCursorCodec:
     def test_a_store_paging_with_cursors_shares_one_codec(
         self, runtimes: list[StoreRuntime]
     ) -> None:
-        _build({"stores": _SQLITE, "persistence": {"cursors": {"signing": "ephemeral"}}})
+        _build(
+            {
+                "stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
+            }
+        )
 
         assert [type(runtime.cursor_codec) for runtime in runtimes] == [CursorCodec]
 
     def test_a_store_paging_with_cursors_still_needs_a_signing_key(self) -> None:
         with pytest.raises(ConfigError, match="cursor signing needs a key"):
-            _build({"stores": _SQLITE, "persistence": {"cursors": {"signing": "signed"}}})
+            _build(
+                {
+                    "stores": {**_SQLITE, "settings": {"cursors": {"signing": "signed"}}},
+                }
+            )
 
     def test_an_implicit_default_store_paging_with_cursors_builds_the_codec(self) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"cursors": {"signing": "ephemeral"}}})
+        ctx = ConfigContext.from_dict(
+            {"stores": {"settings": {"cursors": {"signing": "ephemeral"}}}}
+        )
 
         codec = _recipe().cursor_codec(ctx, load_catalog(ctx).with_default("sqlalchemy"))
 

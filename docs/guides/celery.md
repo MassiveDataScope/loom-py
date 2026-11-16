@@ -371,11 +371,10 @@ app:
         - app.product.interface
         - app.product.callbacks
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
@@ -430,11 +429,10 @@ app:
     manifest:
       module: app.manifest
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}

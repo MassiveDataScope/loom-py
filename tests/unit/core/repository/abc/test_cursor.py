@@ -654,7 +654,7 @@ class TestOptOutsInADeployedEnvironment:
         ctx = ConfigContext.from_dict(
             {
                 "checks": {"silenced": [CURSOR_SIGNING_CHECK]},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {"settings": {"cursors": {"signing": "ephemeral"}}},
             }
         )
         container = self._container(Environment.STAGING)
@@ -712,5 +712,5 @@ class TestModes:
             CursorCodec(signing="signed", keys={"old": _key()}, current_key_id="new")
 
     def test_a_signed_codec_without_keys_is_refused(self) -> None:
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec(signing="signed")

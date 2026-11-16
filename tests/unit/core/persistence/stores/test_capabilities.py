@@ -112,7 +112,7 @@ class _CustomBackend:
         type(self).calls += 1
         return StoreCapabilities(
             serves_models=True,
-            transactional=spec.settings().get("transactional", False),
+            transactional=spec.section().get("transactional", False),
             pages_with_cursors=True,
         )
 
@@ -170,8 +170,10 @@ class TestPluginStoreCapabilities:
         settings = {"url": "mongodb://localhost", "database": "test"} if backend == "mongo" else {}
         ctx = ConfigContext.from_dict(
             {
-                "stores": {"default": {"backend": backend, **settings}},
-                "persistence": {"cursors": {"signing": "unsigned"}},
+                "stores": {
+                    "default": {"backend": backend, **settings},
+                    "settings": {"cursors": {"signing": "unsigned"}},
+                },
             }
         )
         report = run_deploy_checks(ctx)

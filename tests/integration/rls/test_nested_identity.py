@@ -215,7 +215,7 @@ class RunOrDispatchJob(UseCase[notes.Note, Any]):
 def _config(tmp_path: Path, schema: str) -> str:
     document: dict[str, Any] = yaml.safe_load((tmp_path / f"{schema}.yaml").read_text())
     document["app"]["discovery"]["modules"]["include"].append(__name__)
-    document["persistence"] = {"cursors": {"signing": "ephemeral"}}
+    document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     path = tmp_path / "app.yaml"
     path.write_text(yaml.safe_dump(document))
     return str(path)

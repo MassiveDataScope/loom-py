@@ -34,10 +34,35 @@ model whose `__store__` points at it fails at startup). Without a
 `stores.default` section the API fails at startup, as it did without `database`, and the Celery worker runs
 without persistence (`none`).
 
-## Migrating from `database` and `persistence.backend`
+## Shared settings
+
+`stores.settings` is no store: it holds the settings every store shares, and a
+store cannot take that name. It has two keys, each global:
+
+```yaml
+stores:
+  settings:
+    rollback_timeout: 5
+    cursors: {current_key_id: "2026-10", keys: {"2026-10": {env: CURSOR_KEY_2026_10}}}
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `rollback_timeout` | `30` | Seconds the rollbacks of one invocation may take together, across every store it enlisted. A finite number above zero. |
+| `cursors` | signed | The signing of pagination cursors; see [Cursor tokens](#cursor-tokens). |
+
+A store's own `settings` mapping may not name either key: startup fails with a
+`ConfigError` naming the key and `stores.settings`. `LOOM__STORES__SETTINGS__*`
+variables are refused in production and staging unless a `config.overridable`
+entry spells `stores.settings` out; a `stores.*` entry never opens it.
+
+## Migrating from `database` and `persistence`
 
 The old keys stop startup with a `ConfigError` naming their replacement;
-nothing reads them any more. `persistence.cursors` stays where it is.
+nothing reads them any more. The whole `persistence` section is gone.
 
 | Old key | New key |
 |---|---|
@@ -51,7 +76,9 @@ nothing reads them any more. `persistence.cursors` stays where it is.
 | `LOOM__DATABASE__POOL__SIZE` (and the other `database.*` overrides) | `LOOM__STORES__DEFAULT__POOL__SIZE` (`stores.*.pool.size`, ...) |
 | `LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT` (and the other `persistence.dynamodb.*` overrides) | `LOOM__STORES__DEFAULT__READ_TIMEOUT` (`stores.*.read_timeout`, ...) |
 | model `__database__ = "<name>"` | model `__store__ = "<name>"` |
-| `persistence.cursors` | unchanged |
+| `persistence.cursors` | `stores.settings.cursors` |
+| `persistence.rollback_timeout` | `stores.settings.rollback_timeout` |
+| `LOOM__PERSISTENCE__CURSORS__*` | refused: `stores.settings.cursors` cannot be set from a variable in production or staging |
 
 ## Writing a backend
 
@@ -310,19 +337,20 @@ row-level-security scope values of the caller (see
 the scope is `""`, which binds the token to no tenant on purpose.
 
 Every backend issues and verifies tokens through one `CursorCodec`, built at
-startup from the `persistence.cursors` section and registered in DI. The code
+startup from the `stores.settings.cursors` section and registered in DI. The code
 default is `signed` in every environment; each opt-out is written in the file
 of the environment that needs it:
 
 In `production.yaml`:
 
 ```yaml
-persistence:
-  cursors:
-    current_key_id: "2026-10"
-    keys:
-      "2026-10": {env: CURSOR_KEY_2026_10}
-      "2026-07": {env: CURSOR_KEY_2026_07}
+stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}
+        "2026-07": {env: CURSOR_KEY_2026_07}
 ```
 
 | Key | Meaning |
@@ -333,17 +361,19 @@ persistence:
 In `development.yaml`:
 
 ```yaml
-persistence:
-  cursors:
-    signing: ephemeral
+stores:
+  settings:
+    cursors:
+      signing: ephemeral
 ```
 
 In `test.yaml`:
 
 ```yaml
-persistence:
-  cursors:
-    signing: unsigned
+stores:
+  settings:
+    cursors:
+      signing: unsigned
 ```
 
 | Key | Default | Meaning |
@@ -372,7 +402,7 @@ Production uses `signed`. In production and staging the deploy check
 store whose backend is `sqlalchemy` or `mongo` is declared and `signing` is anything but
 `signed` or `current_key_id` names no entry of `keys` (see
 [Environments](../getting-started/environments.md#deploy-checks)).
-`persistence.cursors` cannot be set from a `LOOM__*` variable in those
+`stores.settings.cursors` cannot be set from a `LOOM__*` variable in those
 environments: it is not on the override allowlist, and no `config.overridable`
 entry may open a key under it. A key's `env` source names
 the variable holding the key, which must not start with `LOOM_`; on ECS it is
@@ -803,10 +833,9 @@ class Measurement(BaseModel):
 ## Upgrade notes
 
 - Persistence is declared under `stores.<name>` (ADR 0008): `database`,
-  `database.<name>`, `persistence.backend`, `persistence.mongo`,
-  `persistence.dynamodb` and a model's `__database__` stop startup naming
-  their replacement; see
-  [Migrating from `database` and `persistence.backend`](#migrating-from-database-and-persistencebackend).
+  `database.<name>`, `persistence` and a model's `__database__` stop startup
+  naming their replacement; see
+  [Migrating from `database` and `persistence`](#migrating-from-database-and-persistence).
   The worker's backend is `stores.default.backend`, or `none` without a
   `stores.default` section. A SQLAlchemy or ClickHouse sink names its store
   with `store:`; a ClickHouse sink's connection is a connection-only

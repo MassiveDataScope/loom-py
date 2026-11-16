@@ -118,8 +118,10 @@ def _write_project(
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     auth: dict[str, Any] = {}
     if jwt_section is not None:

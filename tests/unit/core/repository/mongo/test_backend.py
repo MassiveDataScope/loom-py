@@ -62,10 +62,11 @@ class AcmeMongoTicket(BaseModel):
 
 
 def _ctx(section: dict[str, Any] | None, cursors: dict[str, Any] | None = None) -> ConfigContext:
-    persistence = {"cursors": {"signing": "ephemeral"} if cursors is None else cursors}
-    config: dict[str, Any] = {"app": {"name": "demo"}, "persistence": persistence}
+    settings = {"cursors": {"signing": "ephemeral"} if cursors is None else cursors}
+    stores: dict[str, Any] = {"settings": settings}
     if section is not None:
-        config["stores"] = {"default": {"backend": "mongo", **section}}
+        stores["default"] = {"backend": "mongo", **section}
+    config: dict[str, Any] = {"app": {"name": "demo"}, "stores": stores}
     return ConfigContext.from_dict(config)
 
 
@@ -105,7 +106,7 @@ class TestMongoBackendRegistration:
         )
         ctx = _ctx(_SECTION, cursors={})
 
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             build_backend(MongoBackend(), ctx, (), SERVER_PROFILE)
 
     def test_wiring_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -325,8 +326,11 @@ def _audit_store(monkeypatch: pytest.MonkeyPatch, fake_client: FakeMongoClient) 
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
-            "stores": {"default": section, "audit": section},
+            "stores": {
+                "default": section,
+                "audit": section,
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
         }
     )
     return build_backend(MongoBackend(), ctx, (Article,), SERVER_PROFILE, store=_AUDIT)

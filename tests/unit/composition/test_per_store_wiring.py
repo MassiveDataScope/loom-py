@@ -120,7 +120,9 @@ def _source(databases: tuple[Path, Path], second: str = _LEDGER) -> CompositionS
         second: {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{other}"},
     }
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
     return composition_source(ctx, app=AppConfig(name="ledger"))
 
@@ -169,7 +171,9 @@ def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Com
     )
     monkeypatch.setattr("loom.composition.source.discover", lambda config: discovered)
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
     return composition_source(ctx, app=AppConfig(name="ledger"))
 
@@ -225,7 +229,9 @@ def _compose_audit(tmp_path: Path, component: type[object]) -> Application:
         "ledger": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'ledger.db'}"},
     }
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
     source = composition_source(ctx, app=AppConfig(name="audit"))
     jobs = (component,) if issubclass(component, Job) else ()

@@ -488,8 +488,10 @@ def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) 
             "code_path": str(tmp_path),
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST}},
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": "pydantic-ai",
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

@@ -93,7 +93,7 @@ class SQLAlchemyBackend:
     """Backend for ``stores.<name>.backend: sqlalchemy``.
 
     Reads the section of the store the host hands it (``runtime.store``) and
-    ``persistence.cursors``, opens one engine shared by the unit of work and
+    ``stores.settings.cursors``, opens one engine shared by the unit of work and
     every repository of that store, compiles its models into a metadata of its
     own, creates their tables at startup and disposes the engine at shutdown.
     Built connection-only, its startup probes the connection instead.
@@ -116,7 +116,7 @@ class SQLAlchemyBackend:
         """Build the SQLAlchemy wiring of the store ``runtime.store`` for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``persistence.cursors`` section.
+            ctx: Configuration context holding the ``stores.settings.cursors`` section.
             models: Models whose repositories the DI module registers.
             runtime: Entry-point pool defaults, the optional pool-metrics
                 receiver, the catalog and the store to serve.
@@ -130,7 +130,7 @@ class SQLAlchemyBackend:
         Raises:
             ConfigError: When the store's section is missing, names another
                 backend or is invalid, or repositories are served and
-                ``persistence.cursors`` cannot build a cursor codec.
+                ``stores.settings.cursors`` cannot build a cursor codec.
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         db_cfg = spec.decode(DatabaseConfig)

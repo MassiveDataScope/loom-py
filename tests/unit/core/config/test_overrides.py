@@ -265,7 +265,7 @@ class TestDeployedOperationalOverrides:
             ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
             ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
             ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
-            ("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned"),
+            ("LOOM__STORES__SETTINGS__CURSORS__SIGNING", "unsigned"),
             ("LOOM__STORES__DEFAULT__URL", "postgresql+asyncpg://evil@db/app"),
             ("LOOM__STORES__DEFAULT__POOL__PRE_PING", "false"),
             ("LOOM__STORES__DEFAULT__BACKEND", "none"),
@@ -295,6 +295,29 @@ class TestDeployedOperationalOverrides:
 
         with pytest.raises(ConfigError, match=f"{variable}.*not overridable in 'production'"):
             _load_deployed(deployed_file)
+
+    def test_a_store_key_under_the_shared_settings_is_refused_naming_them(
+        self, deployed_file: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOOM__STORES__SETTINGS__POOL__SIZE", "1")
+
+        with pytest.raises(
+            ConfigError, match=r"LOOM__STORES__SETTINGS__POOL__SIZE.*stores\.settings"
+        ):
+            _load_deployed(deployed_file)
+
+    def test_an_entry_spelling_the_shared_settings_opens_one_of_their_keys(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        document = {
+            **_DEPLOYED_DOCUMENT,
+            "config": {"overridable": ["stores.settings.rollback_timeout"]},
+        }
+        monkeypatch.setenv("LOOM__STORES__SETTINGS__ROLLBACK_TIMEOUT", "7")
+
+        context = _load_deployed(_write_document(tmp_path, document))
+
+        assert _value(context, "stores.settings.rollback_timeout") == 7
 
     def test_the_files_extend_the_allowlist_under_config_overridable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -379,10 +402,11 @@ class TestConfigOverridableAllowlist:
             "CHECKS.modules",
             "config.overridable",
             "config.*",
-            "persistence.cursors.signing",
-            "Persistence.Cursors.current_key_id",
-            "persistence.*.signing",
-            "persistence.cursors.keys.*.env",
+            "stores.settings.cursors.signing",
+            "Stores.Settings.Cursors.current_key_id",
+            "stores.settings.*.signing",
+            "stores.*.cursors.signing",
+            "stores.settings.cursors.keys.*.env",
             "aws.url",
             "aws.*",
             "sqs.queues.default",

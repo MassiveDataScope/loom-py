@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import Finding, deploy_check
 from loom.core.config.keys import ConfigKey
+from loom.core.stores.catalog import SETTINGS_KEY
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -34,10 +35,12 @@ def _audit_disabled(config: ConfigContext) -> Finding | None:
 
 
 def _disabled_stores(stores: object) -> list[str]:
-    """The stores whose audit switch is written as false, sorted."""
+    """The stores whose audit switch is written as false, sorted, ``stores.settings`` excluded."""
     if not isinstance(stores, dict):
         return []
-    return sorted(name for name, store in stores.items() if _audit_off(store))
+    return sorted(
+        name for name, store in stores.items() if name != SETTINGS_KEY and _audit_off(store)
+    )
 
 
 def _audit_off(store: object) -> bool:

@@ -436,8 +436,10 @@ class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
                 "code_path": str(tmp_path),
                 "discovery": {"mode": "manifest", "manifest": {"module": manifest_module}},
             },
-            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {
+                "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
             # Deliberately no 'ai:' section: FR-08 / T501 item 6, the case
             # 'ctx.has(ConfigKey.AI)' being false must still abort a
             # deployment whose use case declares 'Mcp()'.

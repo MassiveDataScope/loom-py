@@ -116,8 +116,10 @@ def write_project(
             "code_path": ".",
             "discovery": {"mode": "modules", "modules": {"include": [module]}},
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     if rest is not None:
         config["app"]["rest"] = rest

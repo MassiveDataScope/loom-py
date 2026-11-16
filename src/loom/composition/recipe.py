@@ -119,7 +119,7 @@ class Recipe:
         """The one cursor codec every store shares; ``None`` when no store pages with cursors.
 
         Args:
-            ctx: The configuration holding ``persistence.cursors``.
+            ctx: The configuration holding ``stores.settings.cursors``.
             catalog: The stores the application builds.
 
         Returns:
@@ -128,7 +128,7 @@ class Recipe:
 
         Raises:
             ConfigError: When a store pages with cursors and
-                ``persistence.cursors`` is invalid.
+                ``stores.settings.cursors`` is invalid.
         """
         if self.connection_only or not catalog.pages_with_cursors:
             return None

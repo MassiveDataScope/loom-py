@@ -154,8 +154,10 @@ class TestCheckDeploy:
             tmp_path / "app.yaml",
             {
                 "app": _UNAUTHENTICATED_APP,
-                "stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}},
-                "persistence": {"cursors": {"signing": "unsigned"}},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"},
+                    "settings": {"cursors": {"signing": "unsigned"}},
+                },
             },
         )
 

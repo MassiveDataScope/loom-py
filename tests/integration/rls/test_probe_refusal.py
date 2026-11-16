@@ -112,7 +112,11 @@ class TestProbeRefusal:
             "schema": {"mode": "create_all"},
         }
         cursors = {"cursors": {"signing": "ephemeral"}}
-        ctx = ConfigContext.from_dict({"stores": {"default": store}, "persistence": cursors})
+        ctx = ConfigContext.from_dict(
+            {
+                "stores": {"default": store, "settings": cursors},
+            }
+        )
         wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
         wiring.prepare_models((_Plain,))
 

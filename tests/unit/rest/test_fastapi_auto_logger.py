@@ -74,10 +74,12 @@ class TestRequestObservabilityStack:
         raw = OmegaConf.create(
             {
                 "app": {"name": "demo"},
-                "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+                    "settings": {"cursors": {"signing": "ephemeral"}},
+                },
                 # Development refuses an unsigned cursor keyring. The section under
                 # test is observability; the opt-out only lets composition finish.
-                "persistence": {"cursors": {"signing": "ephemeral"}},
                 "observability": {
                     "log": {"enabled": False},
                     "prometheus": {"enabled": False, "config": {"path": "/metrics"}},

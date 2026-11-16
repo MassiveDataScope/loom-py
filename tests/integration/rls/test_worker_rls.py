@@ -100,7 +100,7 @@ def _config(tmp_path: Path) -> str:
         "result_backend": "cache+memory://",
         "task_always_eager": True,
     }
-    document["persistence"] = {"cursors": {"signing": "ephemeral"}}
+    document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     path = tmp_path / "both.yaml"
     path.write_text(yaml.safe_dump(document))
     return str(path)

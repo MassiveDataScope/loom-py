@@ -97,9 +97,9 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
             "default": {
                 "backend": "sqlalchemy",
                 "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
-            }
+            },
+            "settings": {"cursors": {"signing": "ephemeral"}},
         },
-        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if discover:
         document["app"]["discovery"] = {"mode": "modules", "modules": {"include": [__name__]}}

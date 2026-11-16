@@ -61,9 +61,9 @@ def _config(tmp_path: Path) -> str:
                     "default": {
                         "backend": "sqlalchemy",
                         "url": f"sqlite+aiosqlite:///{tmp_path / 'slots.sqlite'}",
-                    }
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         ),
         encoding="utf-8",

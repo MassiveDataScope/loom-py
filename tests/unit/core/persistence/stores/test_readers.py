@@ -48,7 +48,7 @@ class TestRetiredStoreSections:
             }
         )
 
-        settings = load_catalog(ctx).specs[DEFAULT_STORE].settings()
+        settings = load_catalog(ctx).specs[DEFAULT_STORE].section()
 
         assert settings == {"url": "sqlite:///orders.db"}
 
@@ -71,7 +71,7 @@ class TestClickHouseStoreReaders:
         spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
 
         assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
-        assert spec.settings() == {"url": "clickhouse://ch:8123/analytics"}
+        assert spec.section() == {"url": "clickhouse://ch:8123/analytics"}
 
     def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_ones(
         self,

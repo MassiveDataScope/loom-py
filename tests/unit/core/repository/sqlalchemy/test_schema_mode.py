@@ -62,8 +62,10 @@ def _scoped() -> dict:
 def _wiring(url: str, *models: type, **schema: object):
     config = {
         "app": {"name": "demo"},
-        "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": url, "schema": schema},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     return build_backend(
         SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE

@@ -163,8 +163,10 @@ def _write_project(
             "code_path": str(tmp_path),
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     if with_ai_section:
         ai_section: dict[str, Any] = {

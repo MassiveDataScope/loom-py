@@ -26,8 +26,7 @@ def source() -> CompositionSource:
         ConfigContext.from_dict(
             {
                 "app": {"name": "acme", "job_service": "inline"},
-                "stores": {"default": SQLITE},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
             }
         )
     )

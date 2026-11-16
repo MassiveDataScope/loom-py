@@ -29,6 +29,31 @@
   re-exported. **Migration:** replace those calls with the methods above;
   `loom.core.connections.aws.client.build_aws_client` stays the island's
   builder but only `AwsClientConfig.client` calls it.
+- **stores:** the `persistence:` YAML section is removed and `stores.settings`
+  replaces it. Before: `persistence.cursors` and `persistence.rollback_timeout`
+  configured cursor signing and the rollback budget. Now: `stores.settings` is
+  a reserved name holding the settings every store shares (`cursors`,
+  `rollback_timeout`); a store named `settings`, a `settings` key that holds
+  `backend`, an unknown key under `stores.settings` and any `persistence` key
+  (empty or not) raise `ConfigError` naming the replacement. A store's own
+  `settings` mapping may not name `cursors` or `rollback_timeout`: both are
+  global. `StoreSpec.settings()` is renamed `StoreSpec.section()` and also
+  strips `settings`. `ConfigKey.PERSISTENCE` and `ConfigKey.PERSISTENCE_CURSORS`
+  are removed and `ConfigKey.STORES_SETTINGS` is added.
+  `LOOM__PERSISTENCE__CURSORS__*` is now `LOOM__STORES__SETTINGS__CURSORS__*`,
+  protected from `config.overridable` as before, and
+  `LOOM__STORES__SETTINGS__POOL__SIZE` and its siblings are refused in
+  production and staging: `stores.settings` is no store, so no `stores.*`
+  entry opens it. **Migration:**
+
+  | Old key | New key |
+  |---|---|
+  | `persistence.cursors.*` | `stores.settings.cursors.*` |
+  | `persistence.rollback_timeout` | `stores.settings.rollback_timeout` |
+  | `persistence:` | removed; loading it is a `ConfigError` naming `stores.settings` |
+  | `LOOM__PERSISTENCE__CURSORS__*` | `LOOM__STORES__SETTINGS__CURSORS__*` (still refused outside development and test) |
+  | `spec.settings()` | `spec.section()` |
+  | (new) `stores.settings` | reserved; a store named `settings` is a `ConfigError` |
 
 ### security
 

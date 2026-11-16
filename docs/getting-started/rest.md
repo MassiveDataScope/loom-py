@@ -57,11 +57,10 @@ app:
     title: My Store API
     version: 0.1.0
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
@@ -347,11 +346,10 @@ app:
     title: My Store API
     version: 0.1.0
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
@@ -426,7 +424,7 @@ stores:
 A backend that serves repositories (`sqlalchemy`, `mongo`) signs its
 pagination cursors and fails at startup without a signing key, in every
 environment. The samples on this page are development configurations and opt
-out with `persistence.cursors.signing: ephemeral`, which logs a WARNING;
+out with `stores.settings.cursors.signing: ephemeral`, which logs a WARNING;
 `production.yaml` configures keys instead. Keys, rotation and the opt-outs are
 described in
 [Cursor tokens](../rest/stores.md#cursor-tokens).

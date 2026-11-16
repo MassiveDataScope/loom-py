@@ -244,7 +244,9 @@ class TwoStores:
             AUDIT: store_section(self.audit, memos.SCOPE_BINDINGS),
         }
         ctx = ConfigContext.from_dict(
-            {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+            {
+                "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+            }
         )
         source = composition_source(ctx, app=AppConfig(name="two_stores_composed"))
         adapter = Serving(notes.Note, memos.Memo, use_cases=_USE_CASES)

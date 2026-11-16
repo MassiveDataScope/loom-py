@@ -51,9 +51,11 @@ Callers ask the capability, never the backend's name.
 - `stores.<name>` declares each store with its backend (`sqlalchemy`,
   `mongo`, `dynamodb`) and connection.
 - A model declares `__store__`; without it, the model belongs to `default`.
-- The retired keys `database`, `database.<name>`, `persistence.backend`,
-  `persistence.mongo`, `persistence.dynamodb` and `__database__` fail with a
-  migration message. `persistence.cursors` stays.
+- `stores.settings` is no store: it holds the settings every store shares,
+  `cursors` and `rollback_timeout`, and a store's own `settings` may not name
+  them. A store cannot take the name `settings`.
+- The retired keys `database`, `database.<name>`, `persistence` and
+  `__database__` fail with a migration message.
 - Each store has its own engine or client, metadata, repositories, startup
   checks, readiness and pool metrics. A foreign key or relation across stores
   fails at startup.

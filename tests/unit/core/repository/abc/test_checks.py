@@ -29,8 +29,8 @@ def _found(raw: dict[str, Any]) -> bool:
 
 
 def _with_cursors(backend: dict[str, Any], cursors: dict[str, Any]) -> dict[str, Any]:
-    persistence = {**backend.get("persistence", {}), "cursors": cursors}
-    return {**backend, "persistence": persistence}
+    stores = backend.get("stores", {})
+    return {**backend, "stores": {**stores, "settings": {"cursors": cursors}}}
 
 
 class TestCursorSigningChecks:
@@ -65,4 +65,4 @@ class TestCursorSigningChecks:
         assert _found(_with_cursors(backend, cursors))
 
     def test_a_configuration_serving_no_repositories_is_not_judged(self) -> None:
-        assert not _found({"persistence": {"cursors": {"signing": "unsigned"}}})
+        assert not _found({"stores": {"settings": {"cursors": {"signing": "unsigned"}}}})

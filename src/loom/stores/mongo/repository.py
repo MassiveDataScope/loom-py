@@ -190,7 +190,7 @@ class RepositoryMongo(
             session the driver call runs in, or ``None``. Defaults to no
             session.
         cursor_codec: Codec that issues and verifies cursor tokens; the
-            backend builds one from ``persistence.cursors`` and shares it.
+            backend builds one from ``stores.settings.cursors`` and shares it.
             Mongo has no row-level-security scope, so cursors are bound to
             no scope (``""``) beyond the model, filters and sort.
             A codec passed here by hand skips the deployed-environment

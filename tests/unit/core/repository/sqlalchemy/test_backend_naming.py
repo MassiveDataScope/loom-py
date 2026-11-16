@@ -48,9 +48,9 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
                     "version_tables": {"structure": "alembic_version", "data": "alembic_data"},
                     "naming_convention": naming_convention,
                 },
-            }
+            },
+            "settings": {"cursors": {"signing": "ephemeral"}},
         },
-        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     path = tmp_path / "loom.yaml"
     path.write_text(yaml.safe_dump(config))
@@ -121,9 +121,9 @@ class TestNamingConvention:
                         "backend": "sqlalchemy",
                         "url": "sqlite+aiosqlite:///",
                         "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
-                    }
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         )
         wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)

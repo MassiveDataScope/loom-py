@@ -51,7 +51,7 @@ class AcmeCodeHeaderAuthenticator:
 
 
 def _signed_cursors(tmp_path: Path) -> dict[str, Any]:
-    """A ``persistence`` section signing cursors with a mounted key, as a deployment does."""
+    """A ``stores.settings`` section signing cursors with a mounted key, as a deployment does."""
     key = tmp_path / "cursor.key"
     key.write_text(base64.b64encode(secrets.token_bytes(32)).decode(), encoding="utf-8")
     keys = {"k1": {"path": str(key)}}
@@ -170,7 +170,7 @@ class TestCreateAppInADeployedEnvironment:
         assert app.title == "Loom API"
 
     def test_an_authenticator_declared_as_custom_starts_in_production(self, tmp_path: Path) -> None:
-        config = write_project(tmp_path, rest=_CUSTOM_AUTH, persistence=_signed_cursors(tmp_path))
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH, settings=_signed_cursors(tmp_path))
 
         app = create_app(
             config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator()
@@ -182,7 +182,7 @@ class TestCreateAppInADeployedEnvironment:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         config = write_project(
-            tmp_path, rest={"auth": {"custom": True}}, persistence=_signed_cursors(tmp_path)
+            tmp_path, rest={"auth": {"custom": True}}, settings=_signed_cursors(tmp_path)
         )
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
@@ -193,7 +193,7 @@ class TestCreateAppInADeployedEnvironment:
     def test_a_silenced_error_lets_the_app_start_and_is_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = write_project(tmp_path, rest=_NO_DOCS, persistence=_signed_cursors(tmp_path))
+        config = write_project(tmp_path, rest=_NO_DOCS, settings=_signed_cursors(tmp_path))
         _merge_yaml(Path(config), {"checks": {"silenced": [AUTHENTICATION_CHECK]}})
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
@@ -436,10 +436,12 @@ class TestUseCaseReceivesTheResolvedEnvironment:
                             "interfaces": {"modules": [module], "warn_recommended": False},
                         },
                     },
-                    "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
+                    "stores": {
+                        "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+                        "settings": {"cursors": {"signing": "ephemeral"}},
+                    },
                     # The default "signed" needs a key; in development no deploy
                     # check runs.
-                    "persistence": {"cursors": {"signing": "ephemeral"}},
                 }
             ),
             encoding="utf-8",

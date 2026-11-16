@@ -287,9 +287,11 @@ def project(directory: Path, url: str, *, auth: Mapping[str, Any] | None = None)
         },
         # Unused by the probe, but an application declares a store; a deployed one signs
         # its cursors with a configured key (loom.cursors.E001).
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {
-            "cursors": {"current_key_id": "a3", "keys": {"a3": {"env": CURSOR_KEY_VARIABLE}}}
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {
+                "cursors": {"current_key_id": "a3", "keys": {"a3": {"env": CURSOR_KEY_VARIABLE}}}
+            },
         },
     }
     path = directory / "app.yaml"

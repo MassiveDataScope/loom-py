@@ -77,9 +77,9 @@ def _compose(database: Path, *models: type[BaseModel]) -> Application:
     ctx = ConfigContext.from_dict(
         {
             "stores": {
-                "default": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{database}"}
+                "default": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{database}"},
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
     source = composition_source(ctx, app=AppConfig(name=database.stem))

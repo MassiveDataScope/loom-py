@@ -22,8 +22,10 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> StoreWiring:
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "stores": {"default": {"backend": "sqlalchemy", "url": url}},
-            "persistence": {"cursors": {"signing": "ephemeral"} if cursors is None else cursors},
+            "stores": {
+                "default": {"backend": "sqlalchemy", "url": url},
+                "settings": {"cursors": {"signing": "ephemeral"} if cursors is None else cursors},
+            },
         }
     )
     return build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
@@ -31,7 +33,7 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> StoreWiring:
 
 class TestSqlAlchemyBackend:
     def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(self) -> None:
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             _wiring("sqlite+aiosqlite:///", cursors={})
 
     def test_an_unsigned_build_warns_at_startup(self, caplog: pytest.LogCaptureFixture) -> None:

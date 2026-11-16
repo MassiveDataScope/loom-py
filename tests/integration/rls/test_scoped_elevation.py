@@ -125,7 +125,7 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
     document: dict[str, Any] = yaml.safe_load((tmp_path / f"{schema}.yaml").read_text())
     document["app"]["discovery"]["modules"]["include"].append(__name__)
     document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
-    document["persistence"] = {"cursors": {"signing": "ephemeral"}}
+    document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     (tmp_path / "app.yaml").write_text(yaml.safe_dump(document))
     built = build_application(
         str(tmp_path / "app.yaml"), adapter=FastAPIAdapter(), environment="test"

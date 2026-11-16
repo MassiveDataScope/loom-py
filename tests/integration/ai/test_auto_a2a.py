@@ -88,8 +88,10 @@ def _write_project(tmp_path: Path, *, ai_extra: dict[str, Any]) -> str:
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": _ENGINE_NAME,
             "specs": ["ai/agents/*/agent.yaml"],

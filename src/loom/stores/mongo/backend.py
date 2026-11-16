@@ -81,7 +81,7 @@ class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
 class MongoBackend:
     """Backend for ``stores.<name>.backend: mongo``.
 
-    Reads the section of the store it serves and ``persistence.cursors``,
+    Reads the section of the store it serves and ``stores.settings.cursors``,
     opens one async client shared by the unit of work and every repository,
     binds each model to a collection of the configured database and closes
     the client at shutdown. Pool keys resolve against the entry-point profile;
@@ -107,7 +107,7 @@ class MongoBackend:
         """Build the Mongo wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``persistence.cursors`` section.
+            ctx: Configuration context holding the ``stores.settings.cursors`` section.
             models: Models whose repositories the DI module registers.
             runtime: The catalog, store and entry-point pool defaults.
 
@@ -117,7 +117,7 @@ class MongoBackend:
         Raises:
             ConfigError: When the store's section is missing, names
                 another backend, holds a retired key or is invalid, or
-                ``persistence.cursors`` cannot build a cursor codec.
+                ``stores.settings.cursors`` cannot build a cursor codec.
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)

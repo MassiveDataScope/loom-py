@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 from omegaconf import OmegaConf
@@ -154,13 +155,16 @@ class TestConfigContextPositiveSeconds:
         "seconds", [0, -1, math.inf, math.nan], ids=["zero", "negative", "infinite", "nan"]
     )
     @pytest.mark.parametrize(
-        "key", ["identity.max_delegation_seconds", "persistence.rollback_timeout"]
+        "key", ["identity.max_delegation_seconds", "stores.settings.rollback_timeout"]
     )
     def test_refuses_anything_but_a_finite_number_above_zero(
         self, key: str, seconds: float
     ) -> None:
-        section, name = key.split(".")
-        ctx = ConfigContext.from_dict({section: {name: seconds}})
+        *parents, name = key.split(".")
+        raw: dict[str, Any] = {name: seconds}
+        for parent in reversed(parents):
+            raw = {parent: raw}
+        ctx = ConfigContext.from_dict(raw)
 
         with pytest.raises(ConfigError, match=rf"{key} must be a finite number above zero"):
             ctx.positive_seconds(key, 30.0)

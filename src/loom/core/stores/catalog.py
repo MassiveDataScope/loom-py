@@ -8,6 +8,10 @@ it serves no model and no repository, never joins a unit of work, and only
 hands its connection to the streaming and ETL sinks that name it. A model
 declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`.
 
+``stores.settings`` is no store: it holds the settings every store shares, one
+member of :class:`StoreSetting` per key. A store's own ``settings`` mapping may
+not name any of them.
+
 Loading the catalog resolves nothing but each ``backend``: a deploy check or
 CI can load it without the secrets the connections name. A store resolves
 the rest of its section, and its capabilities, the first time they are read.
@@ -19,6 +23,7 @@ import functools
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Final, NewType, TypeVar
 
@@ -52,6 +57,9 @@ DEFAULT_STORE_PATH: Final = f"{ConfigKey.STORES}.{DEFAULT_STORE}"
 BACKEND_KEY: Final = "backend"
 """The key of a store section naming its backend."""
 
+SETTINGS_KEY: Final = "settings"
+"""The reserved store name holding the shared settings, and the key of a store's own settings."""
+
 SQLALCHEMY_BACKEND: Final = "sqlalchemy"
 """The backend whose stores hold a relational database section."""
 
@@ -67,6 +75,64 @@ CONNECTION_ONLY_BACKENDS: Final = frozenset({CLICKHOUSE_BACKEND})
 _STORE_ATTRIBUTE: Final = "__store__"
 _RETIRED_ATTRIBUTE: Final = "__database__"
 _KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)
+
+
+class StoreSetting(StrEnum):
+    """A key of ``stores.settings``: a setting every store shares.
+
+    Each one is global: a store's own ``settings`` mapping may not name it.
+    """
+
+    CURSORS = "cursors"
+    ROLLBACK_TIMEOUT = "rollback_timeout"
+
+    @property
+    def path(self) -> str:
+        """Dotted path of the key in the configuration."""
+        return f"{ConfigKey.STORES_SETTINGS}.{self.value}"
+
+    @classmethod
+    def refuse_unknown(cls, shared: Mapping[Any, Any]) -> None:
+        """Fail when ``stores.settings`` holds a key that is no store setting.
+
+        Args:
+            shared: The ``stores.settings`` mapping as written.
+
+        Raises:
+            ConfigError: Naming the key; a ``backend`` key says the section is no store.
+        """
+        known = {setting.value for setting in cls}
+        for name in shared:
+            if name == BACKEND_KEY:
+                raise ConfigError(
+                    f"{ConfigKey.STORES_SETTINGS} is reserved for the shared settings and "
+                    f"declares no store: remove {BACKEND_KEY!r}, or name the store otherwise"
+                )
+            if name not in known:
+                raise ConfigError(
+                    f"{ConfigKey.STORES_SETTINGS}.{name} is not a store setting; "
+                    f"the keys are {', '.join(sorted(known))}"
+                )
+
+    @classmethod
+    def refuse_in_store(cls, own: Mapping[Any, Any], path: str) -> None:
+        """Fail when the ``settings`` of the store at *path* names a shared setting or another key.
+
+        Args:
+            own: The store's ``settings`` mapping as written.
+            path: Dotted path of the store's section.
+
+        Raises:
+            ConfigError: Naming the key, and the ``stores.settings`` key that holds it.
+        """
+        known = {setting.value: setting for setting in cls}
+        for name in own:
+            if name in known:
+                raise ConfigError(
+                    f"{path}.{SETTINGS_KEY}.{name} is global: set it once under "
+                    f"{known[name].path}, no store overrides it"
+                )
+            raise ConfigError(f"{path}.{SETTINGS_KEY}.{name} is not a setting a store may override")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -136,13 +202,16 @@ class StoreSpec:
 
     @functools.cached_property
     def _resolved(self) -> dict[str, Any]:
-        """The section without ``backend``, resolved on first read and kept."""
+        """The section without ``backend`` and ``settings``, resolved on first read and kept."""
         resolved = self.config.section(self.path, dict)
         resolved.pop(BACKEND_KEY, None)
+        resolved.pop(SETTINGS_KEY, None)
         return resolved
 
-    def settings(self) -> dict[str, Any]:
-        """Return a copy of the section resolved, without ``backend``: what the backend decodes.
+    def section(self) -> dict[str, Any]:
+        """Return a copy of the resolved section without ``backend`` and ``settings``.
+
+        It is what the backend decodes.
 
         Raises:
             ConfigError: When an interpolation of the section does not resolve.
@@ -150,7 +219,7 @@ class StoreSpec:
         return dict(self._resolved)
 
     def decode(self, target: type[T]) -> T:
-        """Decode :meth:`settings` into *target*, as a section of the configuration decodes.
+        """Decode :meth:`section` into *target*, as a section of the configuration decodes.
 
         A connection type's retired keys fail first, naming their replacement.
 
@@ -308,11 +377,12 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
 
     Raises:
         ConfigError: When the configuration declares a retired persistence
-            key (``database``, ``persistence.backend``, ...), ``stores`` or
+            key (``database``, ``persistence``, ...), ``stores`` or
             one of its entries is not a mapping, a key is not a store key, a store declares no
             backend, or one that is neither a registered persistence backend
-            nor a connection-only kind, or :data:`DEFAULT_STORE` is
-            connection-only.
+            nor a connection-only kind, :data:`DEFAULT_STORE` is
+            connection-only, ``stores.settings`` holds a key that is no store
+            setting, or a store's own ``settings`` names any key.
     """
     reject_retired_sections(ctx)
     written = ctx.raw(ConfigKey.STORES)
@@ -323,6 +393,9 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     registered = registered_names(BACKEND_ENTRY_POINT_GROUP)
     specs: dict[StoreKey, StoreSpec] = {}
     for name, section in written.items():
+        if name == SETTINGS_KEY:
+            _refuse_shared_settings(section)
+            continue
         key = _store_key(name, owner=f"{ConfigKey.STORES} key")
         if not isinstance(section, Mapping):
             raise ConfigError(
@@ -330,6 +403,13 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
             )
         specs[key] = _spec(ctx, key, registered)
     return StoreCatalog(specs=MappingProxyType(specs))
+
+
+def _refuse_shared_settings(shared: object) -> None:
+    """Fail unless ``stores.settings`` is a mapping of store settings."""
+    if not isinstance(shared, Mapping):
+        raise ConfigError(f"{ConfigKey.STORES_SETTINGS} must map each store setting to its value")
+    StoreSetting.refuse_unknown(shared)
 
 
 def _path(key: str) -> str:
@@ -348,6 +428,11 @@ def _store_key(value: object, *, owner: str) -> StoreKey:
             f"{owner} {value!r} is not a store key: "
             "use letters, digits and underscores, not starting with a digit"
         )
+    if value == SETTINGS_KEY:
+        raise ConfigError(
+            f"{owner} {value!r} is reserved: {ConfigKey.STORES_SETTINGS} holds the shared "
+            "settings, so no store can take that name"
+        )
     return StoreKey(value)
 
 
@@ -359,6 +444,11 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
             default store is connection-only.
     """
     path = _path(key)
+    own = ctx.raw(f"{path}.{SETTINGS_KEY}")
+    if own is not None:
+        if not isinstance(own, Mapping):
+            raise ConfigError(f"{path}.{SETTINGS_KEY} must be a mapping")
+        StoreSetting.refuse_in_store(own, path)
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
         raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's persistence backend")
@@ -387,10 +477,12 @@ __all__ = [
     "MODELS_ONLY",
     "NO_CAPABILITIES",
     "NONE_BACKEND",
+    "SETTINGS_KEY",
     "SQLALCHEMY_BACKEND",
     "StoreCatalog",
     "StoreCapabilities",
     "StoreKey",
+    "StoreSetting",
     "StoreSpec",
     "load_catalog",
     "store_binding",

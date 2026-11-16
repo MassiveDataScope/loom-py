@@ -142,7 +142,7 @@ def _clickhouse_connection(spec: StoreSpec) -> ClickHouseConnection:
         ConfigError: When the section holds another retired key or is not a
             valid ClickHouse connection.
     """
-    raw = spec.settings()
+    raw = spec.section()
     if "http_url" in raw:
         raise ValueError(f"{spec.path}.http_url was renamed to url; rename the key")
     url = str(raw.get("url") or "")

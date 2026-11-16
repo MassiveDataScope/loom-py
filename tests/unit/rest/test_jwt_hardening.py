@@ -267,7 +267,7 @@ class TestResolvedClaims:
         project = tmp_path / "app"
         project.mkdir()
         config = write_project(
-            project, rest={**_NO_DOCS, "auth": {"jwt": jwt}}, persistence=_signed_cursors(project)
+            project, rest={**_NO_DOCS, "auth": {"jwt": jwt}}, settings=_signed_cursors(project)
         )
 
         with pytest.raises(ConfigError, match=AUDIENCE_CHECK):

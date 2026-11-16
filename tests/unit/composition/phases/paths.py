@@ -189,8 +189,7 @@ def _composed(
     }
     base = {
         "app": app,
-        "stores": {"default": SQLITE},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
     }
     written = _merged(_merged(base, document), composition.config)
     source = composition_source(
