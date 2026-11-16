@@ -97,7 +97,7 @@ def build_manifest(
     for queue, url in queues.items():
         _literal(f"sqs.queues.{queue}", url)
     app = convert_section(ctx.raw(ConfigKey.APP), ConfigKey.APP, AppConfig)
-    source = Project(
+    project = Project(
         config=ctx,
         environment=environment,
         code_path=code_path,
@@ -115,7 +115,7 @@ def build_manifest(
         code_path=app.code_path,
         queues=queues,
         functions={
-            name: _function(source, document, declared.functions, name, queues) for name in names
+            name: _function(project, document, declared.functions, name, queues) for name in names
         },
     )
 
@@ -129,7 +129,7 @@ def _literal(key: str, value: str | None) -> str:
 
 
 def _function(
-    source: Project,
+    project: Project,
     document: dict[str, Any],
     functions: Mapping[str, LambdaFunction],
     name: str,
@@ -141,7 +141,7 @@ def _function(
     trigger = function.trigger
     event: dict[str, Any]
     if isinstance(trigger, HttpTrigger):
-        event = _http_event(source, functions, name)
+        event = _http_event(project, functions, name)
     elif isinstance(trigger, EventTrigger) and not trigger.queued:
         event = _direct_event(trigger)
     else:
@@ -206,22 +206,22 @@ def _direct_event(trigger: EventTrigger) -> dict[str, Any]:
 
 
 def _http_event(
-    source: Project, functions: Mapping[str, LambdaFunction], name: str
+    project: Project, functions: Mapping[str, LambdaFunction], name: str
 ) -> dict[str, Any]:
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
     from loom.rest.compiler import InterfaceCompilationError, published_routes
     from loom.rest.fastapi.adapter import served_routes
 
-    served = http_function(source.config, name, functions)
+    served = http_function(project.config, name, functions)
     try:
-        _, sources = served_routes(source, served.select)
+        _, sources = served_routes(project, served.select)
         published = published_routes(sources)
     except (InterfaceCompilationError, RuntimeError) as exc:
         raise ConfigError(f"lambda.functions.{name} cannot be composed: {exc}") from exc
     routes = sorted(published, key=lambda route: (route[1], route[0]))
     return {
         "routes": [{"method": method, "path": path} for method, path in routes],
-        "auth": source.config.raw(served.auth_section or "app.rest.auth"),
+        "auth": project.config.raw(served.auth_section or "app.rest.auth"),
     }
 
 

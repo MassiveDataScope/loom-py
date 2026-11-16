@@ -28,7 +28,7 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 _AGENTS_GLOB = "agents/*.yaml"
 _SERVER_A = "server-a"
@@ -90,8 +90,8 @@ class AcmeAgentEntryPoint:
         self._use_case = use_case
         self._agent_endpoints = agent_endpoints
 
-    def recipe(self, source: Project) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(
@@ -143,10 +143,10 @@ def _compose(
             yaml.safe_dump(_agent(name, capability)), encoding="utf-8"
         )
     document = {"app": {"name": "reachable"}, "ai": _AI}
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(document), code_path=tmp_path, config_root=tmp_path
     )
-    return source.compose(AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints))
+    return project.compose(AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints))
 
 
 def _init(application: Application) -> None:

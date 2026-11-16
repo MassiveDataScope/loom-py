@@ -29,7 +29,7 @@ from tests.unit.rest._fixture_app import write_project
 ProjectFactory = Callable[..., str]
 
 
-def composition_source(
+def composition_project(
     ctx: ConfigContext,
     *,
     environment: Environment = Environment.TEST,
@@ -76,8 +76,8 @@ class Serving:
         self.overrides = overrides
         self.lenient = lenient
 
-    def recipe(self, source: Project) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=self.discovered,

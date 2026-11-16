@@ -32,7 +32,7 @@ from loom.rest.model import RestInterface, RestRoute
 from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
@@ -269,8 +269,8 @@ class TestDiscoverComponents:
     def test_discover_components_accepts_agents_only_result(
         self, agents_only_discovery: None
     ) -> None:
-        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
-        discovered = _discover_components(source)
+        project = composition_project(ConfigContext.from_dict({"app": {"name": "demo"}}))
+        discovered = _discover_components(project)
 
         assert discovered.agent_specs == ("agents/*.yaml",)
 
@@ -278,10 +278,10 @@ class TestDiscoverComponents:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("loom.composition.project.discover", lambda _cfg: _no_models())
-        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
+        project = composition_project(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
         with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
-            _discover_components(source)
+            _discover_components(project)
 
         message = str(exc_info.value)
         assert "discovery.mode: manifest" in message

@@ -21,7 +21,7 @@ from loom.composition import JobBackendContext, JobBackendError, Project
 from loom.core.job.service import InlineJobService, JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory
-from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_source
+from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_project
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 _ROUTED = {"celery": {**BROKER, "queues": ["default", "emails"]}}
@@ -36,7 +36,7 @@ class _ContextBackend(InlineJobService):
 
 
 def _service(tmp_path: Path, config: dict[str, Any], job_service: str) -> JobService:
-    application = job_source(tmp_path, config, job_service).compose(JobsAdapter())
+    application = job_project(tmp_path, config, job_service).compose(JobsAdapter())
     return application.kernel.container.resolve(JobService)
 
 
@@ -65,7 +65,7 @@ from loom.core.stores.profile import WORKER_PROFILE
 
 
 class Bare:
-    def recipe(self, source):
+    def recipe(self, project):
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
@@ -131,23 +131,23 @@ class TestJobBackends:
         assert type(_service(tmp_path, config, job_service)) is expected
 
     def test_a_module_class_backend_receives_the_backend_context(self, tmp_path: Path) -> None:
-        source = job_source(tmp_path, {}, f"{__name__}:_ContextBackend")
+        project = job_project(tmp_path, {}, f"{__name__}:_ContextBackend")
 
-        application = source.compose(JobsAdapter())
+        application = project.compose(JobsAdapter())
 
         service = application.kernel.container.resolve(JobService)
         assert isinstance(service, _ContextBackend)
-        assert service.context.config is source.config
+        assert service.context.config is project.config
         assert service.context.factory is application.kernel.factory
         assert service.context.executor is application.kernel.executor
-        assert service.context.observability is source.observability
+        assert service.context.observability is project.observability
 
     def test_a_name_of_no_backend_stops_startup(self, tmp_path: Path) -> None:
-        source = job_source(tmp_path, {}, "rabbit")
+        project = job_project(tmp_path, {}, "rabbit")
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match="'rabbit' names no job backend"):
-            source.compose(adapter)
+            project.compose(adapter)
 
     @pytest.mark.parametrize(
         ("config", "job_service"),
@@ -162,18 +162,18 @@ class TestJobBackends:
         job_service: str,
     ) -> None:
         monkeypatch.setitem(sys.modules, "loom.celery.config", None)
-        source = job_source(tmp_path, config, job_service)
+        project = job_project(tmp_path, config, job_service)
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match=r"loom\[celery\] extra is not installed"):
-            source.compose(adapter)
+            project.compose(adapter)
 
     def test_celery_queues_without_its_default_queue_stops_startup(self, tmp_path: Path) -> None:
-        source = job_source(tmp_path, {"celery": {**BROKER, "queues": ["emails"]}}, "inline")
+        project = job_project(tmp_path, {"celery": {**BROKER, "queues": ["emails"]}}, "inline")
         adapter = JobsAdapter()
 
         with pytest.raises(JobBackendError, match="the celery section is invalid"):
-            source.compose(adapter)
+            project.compose(adapter)
 
 
 class TestApiJobSettings:

@@ -29,12 +29,14 @@ def _singletons(container: LoomContainer) -> None:
 class TestASingletonAdapterHoldingHandles:
     async def test_is_built_at_seal_and_serves_each_execution(
         self,
-        source: Project,
+        project: Project,
         engines: CountingEngineProvider,
         session: RecordingMcpSession,
     ) -> None:
         del engines
-        application = source.compose(LambdaAdapter(use_cases=(AcmeMarket,)), modules=(_singletons,))
+        application = project.compose(
+            LambdaAdapter(use_cases=(AcmeMarket,)), modules=(_singletons,)
+        )
         container, runtime = application.kernel.container, application.ai.runtime
         quotes = container.resolve(AcmeQuotes)
         assert runtime is not None

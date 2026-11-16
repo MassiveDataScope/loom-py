@@ -21,7 +21,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import PageParams
 from loom.stores.sqlalchemy.transactional import ForeignSessionError
-from tests.helpers.composition import composition_source, uow_factory
+from tests.helpers.composition import composition_project, uow_factory
 
 
 class AcmeIsolatedInvoice(BaseModel):
@@ -55,8 +55,8 @@ class _Models:
     def __init__(self, *models: type[BaseModel]) -> None:
         self.models = models
 
-    def recipe(self, source: Project) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=self.models, use_cases=(), interfaces=()),
@@ -76,8 +76,8 @@ def _compose(database: Path, *models: type[BaseModel]) -> Application:
             },
         }
     )
-    source = composition_source(ctx, app=AppConfig(name=database.stem))
-    return source.compose(_Models(*models))
+    project = composition_project(ctx, app=AppConfig(name=database.stem))
+    return project.compose(_Models(*models))
 
 
 def _tables(database: Path) -> set[str]:

@@ -117,13 +117,13 @@ class Stores:
         )
 
 
-def plan(source: Project, adapter: Adapter[object]) -> Recipe:
+def plan(project: Project, adapter: Adapter[object]) -> Recipe:
     """Ask *adapter* for its recipe, then refuse a failing deploy check.
 
     A lenient recipe runs no deploy check.
 
     Args:
-        source: What the application composes from.
+        project: What the application composes from.
         adapter: Whose recipe to take.
 
     Returns:
@@ -133,20 +133,20 @@ def plan(source: Project, adapter: Adapter[object]) -> Recipe:
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
     """
-    recipe = adapter.recipe(source)
+    recipe = adapter.recipe(project)
     if not recipe.lenient:
-        enforce_deploy_checks(source.config, source.environment, skip=recipe.skip_checks)
+        enforce_deploy_checks(project.config, project.environment, skip=recipe.skip_checks)
     return recipe
 
 
-def build_stores(source: Project, recipe: Recipe) -> Stores:
+def build_stores(project: Project, recipe: Recipe) -> Stores:
     """Read each job's settings, then build and prepare every store the discovered models use.
 
     The stores share one cursor codec, built only when
     ``stores.settings.cursors`` is configured.
 
     Args:
-        source: What the application composes from.
+        project: What the application composes from.
         recipe: What it composes.
 
     Returns:
@@ -157,11 +157,11 @@ def build_stores(source: Project, recipe: Recipe) -> Stores:
             ``stores.settings.cursors`` is invalid, or a
             store is named after the default store's backend.
     """
-    ctx, discovered, catalog = source.config, recipe.discovered, source.catalog
+    ctx, discovered, catalog = project.config, recipe.discovered, project.catalog
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     stores = catalog.models_by_store(discovered.models)
     backends = {
-        key: source.resolve_store_backend(key, default=recipe.default_store_backend)
+        key: project.resolve_store_backend(key, default=recipe.default_store_backend)
         for key in stores
     }
     default_label = backends[DEFAULT_STORE].name
@@ -191,7 +191,7 @@ def build_stores(source: Project, recipe: Recipe) -> Stores:
 
 
 def register(
-    source: Project,
+    project: Project,
     recipe: Recipe,
     stores: Stores,
     *,
@@ -211,7 +211,7 @@ def register(
     validated when the application is sealed.
 
     Args:
-        source: What the application composes from.
+        project: What the application composes from.
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
         modules: The caller's DI modules.
@@ -233,7 +233,7 @@ def register(
             missing. Raised as is.
         SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
     """
-    ctx, catalog, observability = source.config, source.catalog, source.observability
+    ctx, catalog, observability = project.config, project.catalog, project.observability
     cache = cache_module_for(ctx)
     configure_delegation(
         ctx.positive_seconds("identity.max_delegation_seconds", DEFAULT_MAX_DELEGATION_SECONDS)
@@ -251,8 +251,8 @@ def register(
         else None
     )
     seeds = {
-        type(source.app): source.app,
-        Environment: source.environment,
+        type(project.app): project.app,
+        Environment: project.environment,
         ObservabilityRuntime: observability,
         StoreCatalog: catalog,
     }
@@ -279,7 +279,7 @@ def register(
         ctx,
         kernel,
         observability,
-        backend=source.app.job_service,
+        backend=project.app.job_service,
         jobs=recipe.discovered.jobs,
         settings=stores.job_settings,
     )
@@ -289,7 +289,7 @@ def register(
 
 
 def wire_ai(
-    source: Project,
+    project: Project,
     recipe: Recipe,
     kernel: KernelRuntime,
     analysis: GraphAnalysis,
@@ -305,7 +305,7 @@ def wire_ai(
     lenient recipe that hosts no agents refuses none and walks nothing.
 
     Args:
-        source: What the application composes from.
+        project: What the application composes from.
         recipe: What it composes.
         kernel: The kernel whose executor resolves the markers.
         analysis: The analysed dependency graph.
@@ -327,10 +327,10 @@ def wire_ai(
         declared.verify({})
         return AiWiring.ABSENT
     ai = AiWiring.build(
-        source.config,
+        project.config,
         kernel=kernel,
         sql_cfg=sql.config,
-        code_path=source.code_path,
+        code_path=project.code_path,
         manifest_agent_specs=recipe.discovered.agent_specs,
         declared=declared,
         names=(

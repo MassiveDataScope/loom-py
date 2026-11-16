@@ -16,7 +16,7 @@ from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case import Exists, LoadById, UnservedModelError, UseCase, UseCaseErrorCode
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 
 
 class AcmeUnreadInvoice(BaseModel):
@@ -43,8 +43,8 @@ class _InvoiceExists(UseCase[object, bool]):
         return known
 
 
-def _source(tmp_path: Path) -> Project:
-    return composition_source(
+def _project(tmp_path: Path) -> Project:
+    return composition_project(
         ConfigContext.from_dict(
             {
                 "stores": {
@@ -66,10 +66,10 @@ class TestUnservedModel:
     def test_a_marker_over_an_undiscovered_model_fails_the_composition(
         self, tmp_path: Path, use_case: type[UseCase[Any, Any]], parameter: str
     ) -> None:
-        source = _source(tmp_path)
+        project = _project(tmp_path)
         adapter = Serving(use_cases=(use_case,))
         with pytest.raises(UnservedModelError) as caught:
-            source.compose(adapter)
+            project.compose(adapter)
 
         issue = caught.value.issue
         assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
@@ -77,7 +77,7 @@ class TestUnservedModel:
         assert caught.value.model is AcmeUnreadInvoice
 
     def test_a_discovered_model_composes(self, tmp_path: Path) -> None:
-        application = _source(tmp_path).compose(
+        application = _project(tmp_path).compose(
             Serving(AcmeUnreadInvoice, use_cases=(_ReadInvoice, _InvoiceExists))
         )
 

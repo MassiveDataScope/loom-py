@@ -25,7 +25,7 @@ from loom.core.di.scope import Scope
 from loom.core.job.service import InlineJobService, JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory
-from tests.helpers.jobs import BROKER, JobsAdapter, job_source
+from tests.helpers.jobs import BROKER, JobsAdapter, job_project
 from tests.unit.composition.doubles import AcmePingJob
 
 _CELERY = {"celery": BROKER}
@@ -43,7 +43,7 @@ def _own_job_service(container: LoomContainer) -> None:
 
 
 def _implicit_service(tmp_path: Path, config: dict[str, Any]) -> JobService:
-    application = job_source(tmp_path, config).compose(JobsAdapter())
+    application = job_project(tmp_path, config).compose(JobsAdapter())
     return application.kernel.container.resolve(JobService)
 
 
@@ -51,7 +51,7 @@ class TestRegisteredJobService:
     def test_composing_celery_service_preserves_current_app(self, tmp_path: Path) -> None:
         before = current_app._get_current_object()
 
-        job_source(tmp_path, _CELERY).compose(CeleryAdapter(jobs=[AcmePingJob]))
+        job_project(tmp_path, _CELERY).compose(CeleryAdapter(jobs=[AcmePingJob]))
 
         assert current_app._get_current_object() is before
 
@@ -63,8 +63,8 @@ class TestRegisteredJobService:
     async def test_application_closes_its_celery_service_once(
         self, tmp_path: Path, config: dict[str, Any], job_service: str | None
     ) -> None:
-        source = job_source(tmp_path, config, job_service)
-        application = source.compose(CeleryAdapter(jobs=[AcmePingJob]))
+        project = job_project(tmp_path, config, job_service)
+        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]))
         assert [resource.kind for resource in application.resources].count(ResourceKind.CELERY) == 1
 
         with patch.object(CeleryJobService, "close", autospec=True) as close:
@@ -73,7 +73,7 @@ class TestRegisteredJobService:
             close.assert_called_once()
 
     def test_caller_service_has_no_celery_resource(self, tmp_path: Path) -> None:
-        application = job_source(tmp_path, _CELERY).compose(
+        application = job_project(tmp_path, _CELERY).compose(
             CeleryAdapter(jobs=[AcmePingJob]), modules=[_own_job_service]
         )
 
@@ -96,9 +96,9 @@ class TestRegisteredJobService:
 
     def test_the_worker_keeps_the_job_service_a_module_registered(self, tmp_path: Path) -> None:
         # A celery section would otherwise register the Celery service.
-        source = job_source(tmp_path, _CELERY)
+        project = job_project(tmp_path, _CELERY)
 
-        application = source.compose(CeleryAdapter(jobs=[AcmePingJob]), modules=[_own_job_service])
+        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]), modules=[_own_job_service])
 
         assert isinstance(application.kernel.container.resolve(JobService), _OwnJobService)
 

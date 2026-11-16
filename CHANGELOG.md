@@ -658,6 +658,7 @@
   | `build_application(*paths, adapter=a, **load)` | `Project.load(*paths, **load).compose(a)` |
   | `compose_application(source, a, modules=m)` | `source.compose(a, modules=m)` |
   | `load_source(*paths, **load)` | `Project.load(*paths, **load)` |
+  | `Adapter.recipe(source)` parameter | `Adapter.recipe(project)` parameter |
 
   **Migration:**
 

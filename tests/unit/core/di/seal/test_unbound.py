@@ -20,7 +20,7 @@ from loom.core.di.graph import (
 from loom.core.di.scope import Scope
 from loom.core.execution import Kind
 from loom.core.use_case import Mcp, UseCase
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 from tests.unit.composition.phases.components import AcmeMcpUser, AcmeRecord
 from tests.unit.composition.phases.paths import SQLITE
 from tests.unit.core.di.graph import acme
@@ -118,8 +118,8 @@ def _binds_crm(container: LoomContainer) -> None:
     container.register(AcmeCrmPort, AcmeMcpCrm, scope=Scope.APPLICATION)
 
 
-def _source() -> Project:
-    return composition_source(
+def _project() -> Project:
+    return composition_project(
         ConfigContext.from_dict(
             {
                 "app": {"name": "acme", "job_service": "inline"},
@@ -135,20 +135,20 @@ class TestUnboundMcpAdapter:
     ) -> None:
         """No MCP resolver is ever bound without agents: the AI phase refuses first (T11)."""
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
-        source = _source()
+        project = _project()
 
         with pytest.raises(AgentCompilationError) as caught:
-            source.compose(adapter, modules=(_binds_crm,))
+            project.compose(adapter, modules=(_binds_crm,))
 
         assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
         assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
 
     def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
-        source = _source()
+        project = _project()
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-            application = source.compose(adapter, modules=(_binds_crm,))
+            application = project.compose(adapter, modules=(_binds_crm,))
 
         with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
             application.kernel.container.resolve(AcmeCrmPort)
@@ -156,7 +156,7 @@ class TestUnboundMcpAdapter:
     def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)
 
-        application = _source().compose(adapter)
+        application = _project().compose(adapter)
 
         assert application.kernel.compiler.get_plan(AcmeMcpUser) is not None
 

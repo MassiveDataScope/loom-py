@@ -21,7 +21,7 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.rls import register_scope_source
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 pytestmark = pytest.mark.integration
 
@@ -38,8 +38,8 @@ class _Ticket(BaseModel, RowScoped):
 class _Tickets:
     """Composes the ticket model on the SQLAlchemy backend."""
 
-    def recipe(self, source: Project) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=(_Ticket,), use_cases=(), interfaces=()),
@@ -70,7 +70,7 @@ def _compose(url: str, name: str) -> Application:
             },
         }
     )
-    return composition_source(ctx, app=AppConfig(name=name)).compose(_Tickets())
+    return composition_project(ctx, app=AppConfig(name=name)).compose(_Tickets())
 
 
 async def _desk(application: Application) -> str:

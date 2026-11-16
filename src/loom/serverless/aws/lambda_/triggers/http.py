@@ -50,7 +50,7 @@ _PATH_LOCATION = "path"
 
 
 def compose_http(
-    source: Project, function: str | None, authenticator: Authenticator | None
+    project: Project, function: str | None, authenticator: Authenticator | None
 ) -> tuple[Recipe, Callable[[Application], LambdaHTTPHandler]]:
     """The FastAPI recipe with the Lambda pool profile, and how to bind its application.
 
@@ -62,7 +62,7 @@ def compose_http(
     ``exclude_paths`` is honoured as written.
 
     Args:
-        source: What the entry point composes from.
+        project: What the entry point composes from.
         function: The ``http`` function of ``lambda.functions`` served: its
             interfaces only, with its ``auth`` when it declares one; every
             interface when ``None``.
@@ -75,10 +75,10 @@ def compose_http(
         ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
             raises it.
     """
-    _refuse_sql_endpoints(source.config)
-    served = http_function(source.config, function)
+    _refuse_sql_endpoints(project.config)
+    served = http_function(project.config, function)
     recipe, declared = compose_rest(
-        source,
+        project,
         authenticator=authenticator,
         serves_documentation=False,
         auth_section=served.auth_section,

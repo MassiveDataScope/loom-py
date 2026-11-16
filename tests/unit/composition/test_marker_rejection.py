@@ -54,8 +54,8 @@ class AcmeAgentAndServer(UseCase[object, object]):
 class _WithoutAgents:
     """An entry point hosting no agents, compiling a use case that declares one."""
 
-    def recipe(self, source: Project) -> Recipe:
-        discovered = source.discover()
+    def recipe(self, project: Project) -> Recipe:
+        discovered = project.discover()
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=dataclasses.replace(

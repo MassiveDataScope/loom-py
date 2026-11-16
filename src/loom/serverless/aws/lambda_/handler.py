@@ -124,7 +124,7 @@ class LambdaAdapter:
         self._bind: _Bind | None = None
         self._handler: LambdaHandler | None = None
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """Compose what the function's trigger serves, with the Lambda pool profile.
 
         Raises:
@@ -140,13 +140,13 @@ class LambdaAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
-        refuse_unserved_config(source)
-        name, trigger = served_trigger(source.config, self._function, source.app.entry)
+        refuse_unserved_config(project)
+        name, trigger = served_trigger(project.config, self._function, project.app.entry)
         if trigger is None or isinstance(trigger, HttpTrigger):
-            recipe, self._bind = self._compose_http(source, name)
+            recipe, self._bind = self._compose_http(project, name)
         else:
             assert name is not None
-            recipe, self._bind = self._compose_jobs(source, name, trigger)
+            recipe, self._bind = self._compose_jobs(project, name, trigger)
         return recipe
 
     def bind(self, application: Application) -> LambdaHandler:
@@ -176,19 +176,19 @@ class LambdaAdapter:
         if self._handler is not None:
             self._handler.close()
 
-    def _compose_http(self, source: Project, name: str | None) -> tuple[Recipe, _Bind]:
+    def _compose_http(self, project: Project, name: str | None) -> tuple[Recipe, _Bind]:
         if self._jobs or self._use_cases or self._metrics is not None:
             raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
         from loom.serverless.aws.lambda_.triggers.http import compose_http
 
-        return compose_http(source, name, self._authenticator)
+        return compose_http(project, name, self._authenticator)
 
     def _compose_jobs(
-        self, source: Project, name: str, trigger: JobsTrigger | EventTrigger
+        self, project: Project, name: str, trigger: JobsTrigger | EventTrigger
     ) -> tuple[Recipe, _Bind]:
         if self._authenticator is not None:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
-        recipe, declared = jobs_recipe(source, self._jobs, self._use_cases, self._metrics)
+        recipe, declared = jobs_recipe(project, self._jobs, self._use_cases, self._metrics)
         if not isinstance(trigger, EventTrigger):
             failures = trigger.reports_batch_item_failures
             return recipe, functools.partial(_bind_jobs, declared, failures)

@@ -189,7 +189,7 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
             )
 
 
-def _gate_autocrud_capabilities(discovered: DiscoveryResult, source: Project) -> DiscoveryResult:
+def _gate_autocrud_capabilities(discovered: DiscoveryResult, project: Project) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
     The repository is the explicit ``repository_for`` class when there is one,
@@ -213,7 +213,7 @@ def _gate_autocrud_capabilities(discovered: DiscoveryResult, source: Project) ->
         if interface.auto_crud_model is not None:
             model = interface.auto_crud_model
             key = store_of(model)
-            backend = source.resolve_store_backend(key, default=SQLALCHEMY_BACKEND)
+            backend = project.resolve_store_backend(key, default=SQLALCHEMY_BACKEND)
             pruned.update(_gate_interface(interface, model, key, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
@@ -279,14 +279,14 @@ def _reject_unsupported_include(
         )
 
 
-def _discover_components(source: Project) -> DiscoveryResult:
+def _discover_components(project: Project) -> DiscoveryResult:
     """Run discovery and reject a result with nothing to serve.
 
     Use cases, REST interfaces and manifest agents are each optional on their
     own: an application whose only content is agents has neither use cases nor
     interfaces. Only a result with none of the three is an error.
     """
-    discovered = source.discover()
+    discovered = project.discover()
     if not discovered.use_cases and not discovered.interfaces and not discovered.agent_specs:
         raise RuntimeError(
             f"Nothing discovered: no UseCase, no RestInterface and no agents. {AGENTS_ONLY_HINT}"
@@ -528,7 +528,7 @@ def _interfaces_by_name(
 
 
 def served_routes(
-    source: Project,
+    project: Project,
     select_interfaces: InterfaceSelector | None = None,
 ) -> tuple[DiscoveryResult, RouteSources]:
     """Validate REST config, discover routes, and narrow to *select_interfaces*.
@@ -543,9 +543,9 @@ def served_routes(
         RuntimeError: When discovery finds nothing to serve, or a CRUD
             route cannot be served by the backend.
     """
-    interfaces, disabled = _route_config(source.config)
+    interfaces, disabled = _route_config(project.config)
     config_interfaces = build_interfaces_from_config(interfaces)
-    discovered = _discover_components(source)
+    discovered = _discover_components(project)
     python_interfaces = discovered.interfaces
     unserved: tuple[type[RestInterface[Any]], ...] = ()
     if select_interfaces is not None:
@@ -557,7 +557,7 @@ def served_routes(
         discovered = discovered.with_changes(interfaces=python_interfaces)
     discovered = _fold_config_interfaces(discovered, config_interfaces)
     _reject_autocrud_without_model(discovered)
-    discovered = _gate_autocrud_capabilities(discovered, source)
+    discovered = _gate_autocrud_capabilities(discovered, project)
     routes = RouteSources(
         python=python_interfaces,
         config=config_interfaces,
@@ -579,7 +579,7 @@ class RestDeclaration:
 
 
 def compose_rest(
-    source: Project,
+    project: Project,
     *,
     authenticator: Authenticator | None = None,
     metrics_registry: CollectorRegistry | None = None,
@@ -593,7 +593,7 @@ def compose_rest(
     authentication, discovery and the CRUD gating have one source of truth.
 
     Args:
-        source: What the entry point composes from.
+        project: What the entry point composes from.
         authenticator: Custom authentication mechanism; requires
             ``app.rest.auth.custom: true``.
         metrics_registry: Prometheus registry of the metrics; the global one
@@ -614,20 +614,20 @@ def compose_rest(
         RuntimeError: When discovery finds nothing to serve, or a CRUD
             route cannot be served by the backend.
     """
-    ctx = source.config
+    ctx = project.config
     rest_cfg = _section_rest_config(ctx)
-    metrics_cfg = source.observability_config.prometheus
+    metrics_cfg = project.observability_config.prometheus
     auth_cfg = rest_cfg.auth if auth_section is None else ctx.section(auth_section, _RestAuthConfig)
     auth = _resolve_authentication(
         auth_cfg,
         authenticator,
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
-    _require_deployed_jwt_claims(ctx, source.environment, auth.jwt_config)
+    _require_deployed_jwt_claims(ctx, project.environment, auth.jwt_config)
     _check_sql_section(ctx, auth)
-    discovered, routes = served_routes(source, select_interfaces)
+    discovered, routes = served_routes(project, select_interfaces)
     declared = RestDeclaration(
-        name=source.app.name, rest=rest_cfg, auth=auth, metrics_cfg=metrics_cfg, routes=routes
+        name=project.app.name, rest=rest_cfg, auth=auth, metrics_cfg=metrics_cfg, routes=routes
     )
     recipe = Recipe(
         profile=SERVER_PROFILE,
@@ -635,7 +635,7 @@ def compose_rest(
         default_store_backend=SQLALCHEMY_BACKEND,
         agents=True,
         metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
-        pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, source.app.name),
+        pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, project.app.name),
     )
     return recipe, declared
 
@@ -663,7 +663,7 @@ class FastAPIAdapter:
         self._authenticator = authenticator
         self._declared: RestDeclaration | None = None
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
 
         Raises:
@@ -681,7 +681,7 @@ class FastAPIAdapter:
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="FastAPIAdapter")
             )
         recipe, self._declared = compose_rest(
-            source,
+            project,
             authenticator=self._authenticator,
             metrics_registry=self._metrics_registry,
         )

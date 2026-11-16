@@ -58,7 +58,7 @@ ProjectFactory = Callable[..., str]
 
 @pytest.fixture
 def recipe(contract_project: ProjectFactory) -> Recipe:
-    source = Project.load(
+    project = Project.load(
         contract_project(),
         config_dir=None,
         environment=_TEST,
@@ -66,7 +66,7 @@ def recipe(contract_project: ProjectFactory) -> Recipe:
         resolvers=(),
         caller=_TEST,
     )
-    return LambdaAdapter().recipe(source)
+    return LambdaAdapter().recipe(project)
 
 
 class TestLambdaRecipe:

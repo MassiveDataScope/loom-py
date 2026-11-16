@@ -29,7 +29,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -62,8 +62,8 @@ class _KnowledgeUseCase(UseCase[object, object]):
         return gateway
 
 
-def _source(tmp_path: Path, config: dict[str, Any]) -> Project:
-    return composition_source(
+def _project(tmp_path: Path, config: dict[str, Any]) -> Project:
+    return composition_project(
         ConfigContext.from_dict({"celery": _CELERY, **config}),
         app=AppConfig(name="worker"),
         code_path=tmp_path,
@@ -72,12 +72,12 @@ def _source(tmp_path: Path, config: dict[str, Any]) -> Project:
 
 
 def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter) -> Application:
-    return _source(tmp_path, config).compose(adapter)
+    return _project(tmp_path, config).compose(adapter)
 
 
-def _default_backend(source: Project, recipe: Recipe) -> str:
+def _default_backend(project: Project, recipe: Recipe) -> str:
     """The backend the composition builds the default store of *recipe* with."""
-    return source.resolve_store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
+    return project.resolve_store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
 
 
 class TestBackendRule:
@@ -90,36 +90,36 @@ class TestBackendRule:
     ) -> None:
         config = {"stores": {"default": {"backend": backend, "url": _SQLITE}}}
 
-        source = _source(tmp_path, config)
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
+        project = _project(tmp_path, config)
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
 
-        assert _default_backend(source, recipe) == backend
+        assert _default_backend(project, recipe) == backend
 
     def test_a_database_url_without_backend_serves_sqlalchemy(self, tmp_path: Path) -> None:
         stores = {"default": {"backend": "sqlalchemy", "url": _SQLITE}}
-        source = _source(tmp_path, {"stores": stores})
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
+        project = _project(tmp_path, {"stores": stores})
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
 
-        assert _default_backend(source, recipe) == "sqlalchemy"
+        assert _default_backend(project, recipe) == "sqlalchemy"
 
     def test_credentials_without_url_are_the_workers_own_section_decoded_strictly(
         self, tmp_path: Path
     ) -> None:
-        source = _source(
+        project = _project(
             tmp_path, {"stores": {"default": {"backend": "sqlalchemy", "username": "app"}}}
         )
 
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
 
-        assert _default_backend(source, recipe) == "sqlalchemy"
+        assert _default_backend(project, recipe) == "sqlalchemy"
         adapter = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(ConfigError, match="url"):
-            source.compose(adapter)
+            project.compose(adapter)
 
 
 class TestRecipe:
     def test_the_worker_declares_its_profile_checks_and_no_agents(self, tmp_path: Path) -> None:
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_source(tmp_path, {}))
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_project(tmp_path, {}))
 
         assert recipe.profile is WORKER_PROFILE
         assert recipe.skip_checks == frozenset({REST_CHECKS})
@@ -130,7 +130,7 @@ class TestRecipe:
             async def execute(self) -> object:
                 return None
 
-        recipe = CeleryAdapter(jobs=[_PingJob], use_cases=[_Lookup]).recipe(_source(tmp_path, {}))
+        recipe = CeleryAdapter(jobs=[_PingJob], use_cases=[_Lookup]).recipe(_project(tmp_path, {}))
 
         assert set(recipe.discovered.use_cases) == {_PingJob, _Lookup}
 
@@ -141,7 +141,7 @@ class TestRecipe:
 
         adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_AcmeAuditCallback])
 
-        recipe = adapter.recipe(_source(tmp_path, {}))
+        recipe = adapter.recipe(_project(tmp_path, {}))
 
         assert recipe.callbacks == (_AcmeAuditCallback,)
         assert _AcmeAuditCallback not in recipe.discovered.use_cases
@@ -149,19 +149,19 @@ class TestRecipe:
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
         metrics: Any = object()
 
-        recipe = CeleryAdapter(jobs=[_PingJob], metrics=metrics).recipe(_source(tmp_path, {}))
+        recipe = CeleryAdapter(jobs=[_PingJob], metrics=metrics).recipe(_project(tmp_path, {}))
 
         assert recipe.metrics is metrics
 
     def test_a_second_recipe_on_the_same_adapter_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
-        adapter.recipe(_source(tmp_path, {}))
+        adapter.recipe(_project(tmp_path, {}))
 
-        source = _source(tmp_path, {})
+        project = _project(tmp_path, {})
         with pytest.raises(
             CompositionStateError, match="one adapter instance composes one application"
         ) as raised:
-            adapter.recipe(source)
+            adapter.recipe(project)
         assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
 
     def test_bind_before_recipe_is_refused(self) -> None:
@@ -173,11 +173,11 @@ class TestRecipe:
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
-        source = _source(tmp_path, {"celery": {"broker_url": 5}})
+        project = _project(tmp_path, {"celery": {"broker_url": 5}})
         with pytest.raises(ConfigError):
-            adapter.recipe(source)
+            adapter.recipe(project)
 
-        assert adapter.recipe(_source(tmp_path, {})).profile is WORKER_PROFILE
+        assert adapter.recipe(_project(tmp_path, {})).profile is WORKER_PROFILE
 
 
 class TestBind:

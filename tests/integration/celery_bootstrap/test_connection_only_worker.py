@@ -31,7 +31,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
 from loom.stores.sqlalchemy.schema import compile_all, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 URI_ENV = "LOOM_PG_IT_URI"
 _TABLE = "connection_only_unserved"
@@ -94,7 +94,7 @@ async def worker_url() -> AsyncIterator[str]:
 
 
 def _worker(tmp_path: Path, url: str) -> Any:
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {
                 "stores": {"default": {"backend": "sqlalchemy", "url": url}},
@@ -105,7 +105,7 @@ def _worker(tmp_path: Path, url: str) -> Any:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return source.compose(CeleryAdapter(jobs=[_RawSqlJob]))
+    return project.compose(CeleryAdapter(jobs=[_RawSqlJob]))
 
 
 async def _connections(database: str, name: str) -> int:

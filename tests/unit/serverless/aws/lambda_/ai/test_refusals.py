@@ -26,7 +26,7 @@ from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, make_record, with_worker
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
@@ -74,11 +74,11 @@ _UNDISCOVERABLE_APP = {
 ProbeFixture = tuple[type[Job[None]], Probe]
 
 
-def _jobs_source(tmp_path: Path, manifest: str, ai: dict[str, Any]) -> Project:
+def _jobs_project(tmp_path: Path, manifest: str, ai: dict[str, Any]) -> Project:
     """A ``jobs`` function discovering from *manifest*, with the ``ai`` section *ai*."""
     discovery = {"mode": "manifest", "manifest": {"module": manifest}}
     document = with_worker({"app": {"name": "lambda-ai", "discovery": discovery}, "ai": ai})
-    return composition_source(
+    return composition_project(
         ConfigContext.from_dict(document),
         app=AppConfig(name="lambda-ai", entry=WORKER),
         code_path=tmp_path,
@@ -86,9 +86,9 @@ def _jobs_source(tmp_path: Path, manifest: str, ai: dict[str, Any]) -> Project:
     )
 
 
-def _http_source(ai: dict[str, Any]) -> Project:
+def _http_project(ai: dict[str, Any]) -> Project:
     """An ``http`` function whose discovery would fail, with the ``ai`` section *ai*."""
-    return composition_source(ConfigContext.from_dict({"app": _UNDISCOVERABLE_APP, "ai": ai}))
+    return composition_project(ConfigContext.from_dict({"app": _UNDISCOVERABLE_APP, "ai": ai}))
 
 
 def _write_agent(code_path: Path) -> None:
@@ -144,21 +144,21 @@ _A2A = {"base_url": "https://agents.example.com", "expose": [_AGENT]}
 
 class TestLambdaAiRefusals:
     @pytest.mark.parametrize(
-        "source",
+        "make_project",
         [
-            pytest.param(lambda tmp_path: _http_source(_STDIO_AI), id="http"),
+            pytest.param(lambda tmp_path: _http_project(_STDIO_AI), id="http"),
             pytest.param(
-                lambda tmp_path: _jobs_source(tmp_path, _MISSING_MANIFEST, _STDIO_AI), id="jobs"
+                lambda tmp_path: _jobs_project(tmp_path, _MISSING_MANIFEST, _STDIO_AI), id="jobs"
             ),
         ],
     )
     def test_a_stdio_mcp_server_is_refused_before_discovery(
-        self, tmp_path: Path, source: Callable[[Path], Project]
+        self, tmp_path: Path, make_project: Callable[[Path], Project]
     ) -> None:
         adapter = LambdaAdapter()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
-            adapter.recipe(source(tmp_path))
+            adapter.recipe(make_project(tmp_path))
 
         assert raised.value.key == "ai.mcp_servers.x.transport"
         assert "stdio" in str(raised.value)
@@ -168,7 +168,7 @@ class TestLambdaAiRefusals:
     ) -> None:
         adapter = LambdaAdapter()
 
-        recipe = adapter.recipe(_jobs_source(tmp_path, jobs_manifest, _HTTP_AI))
+        recipe = adapter.recipe(_jobs_project(tmp_path, jobs_manifest, _HTTP_AI))
 
         assert (recipe.agents, recipe.agent_endpoints) == (True, False)
         assert recipe.discovered.agent_specs == (_AGENTS_GLOB,)
@@ -185,11 +185,11 @@ class TestLambdaAiRefusals:
     ) -> None:
         _write_agent(tmp_path)
         config = write_contract_project(tmp_path, agents=(_AGENTS_GLOB,), ai=_AI)
-        source = Project.load(
+        project = Project.load(
             config, config_dir=None, environment=_TEST, code_path=None, resolvers=(), caller=_TEST
         )
 
-        recipe = adapter().recipe(source)
+        recipe = adapter().recipe(project)
 
         assert (recipe.agents, recipe.agent_endpoints) == (True, endpoints)
         assert recipe.discovered.agent_specs == (_AGENTS_GLOB,)
@@ -198,7 +198,7 @@ class TestLambdaAiRefusals:
         self, tmp_path: Path, jobs_manifest: str, probe: ProbeFixture, lifetime: list[str]
     ) -> None:
         adapter = LambdaAdapter()
-        application = _jobs_source(tmp_path, jobs_manifest, _AI).compose(adapter)
+        application = _jobs_project(tmp_path, jobs_manifest, _AI).compose(adapter)
 
         handler = adapter.bind(application)
         assert lifetime == ["enter"]
@@ -238,7 +238,7 @@ class TestLambdaAiRefusals:
         monkeypatch.setenv("LOOM_TEST_MCP_TRANSPORT", "stdio")
         server = {"transport": "${oc.env:LOOM_TEST_MCP_TRANSPORT}", "command": "mcp-server"}
         adapter = LambdaAdapter()
-        application = _jobs_source(
+        application = _jobs_project(
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
 
@@ -274,7 +274,7 @@ class TestLambdaAiRefusals:
         keys: list[str],
     ) -> None:
         adapter = LambdaAdapter()
-        application = _jobs_source(tmp_path, jobs_manifest, ai).compose(adapter)
+        application = _jobs_project(tmp_path, jobs_manifest, ai).compose(adapter)
 
         caplog.clear()
         handler = adapter.bind(application)

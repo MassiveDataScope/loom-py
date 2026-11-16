@@ -22,7 +22,7 @@ from loom.rest.auth import RequestCredentials
 from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -103,14 +103,14 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
             trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
         document = {"lambda": {"functions": {name: function}}}
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="events", job_service="inline", entry=name),
             code_path=tmp_path,
             config_root=tmp_path,
         )
         adapter = LambdaAdapter(jobs=[ImportInvoice, ImportObject], **options)
-        application = source.compose(adapter)
+        application = project.compose(adapter)
         if observer is not None:
             application.observability = ObservabilityRuntime([observer])
         adapters.append(adapter)

@@ -66,7 +66,7 @@ class _HarnessAdapter:
         self._overrides = overrides
         self._fastapi_kwargs = fastapi_kwargs
 
-    def source(self) -> Project:
+    def project(self) -> Project:
         """The ``test-harness`` application, its jobs inline, in the ``LOOM_ENV`` environment.
 
         Raises:
@@ -85,9 +85,9 @@ class _HarnessAdapter:
             observability_config=ObservabilityConfig(),
         )
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """The routes' use cases over no model, leniently."""
-        del source
+        del project
         interfaces = (*self._routes.python, *self._routes.config)
         use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
         return Recipe(
@@ -257,5 +257,5 @@ class HttpTestHarness:
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        app = adapter.source().serve(adapter)
+        app = adapter.project().serve(adapter)
         return TestClient(app, raise_server_exceptions=False)

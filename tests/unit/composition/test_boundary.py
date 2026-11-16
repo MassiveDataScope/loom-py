@@ -59,7 +59,7 @@ from loom.core.stores.profile import WORKER_PROFILE
 
 
 class Bare:
-    def recipe(self, source):
+    def recipe(self, project):
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),

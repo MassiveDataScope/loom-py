@@ -19,7 +19,7 @@ from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreSpec
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory, composition_source
+from tests.helpers.composition import ProjectFactory, composition_project
 from tests.helpers.persistence import record_catalogs
 from tests.unit.composition.doubles import AcmePingJob
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
@@ -42,8 +42,8 @@ class _CountingResolver:
         return self.values[key]
 
 
-def _worker_source(stores: dict[str, Any]) -> Any:
-    return composition_source(
+def _worker_project(stores: dict[str, Any]) -> Any:
+    return composition_project(
         ConfigContext.from_dict({"stores": stores, "celery": _CELERY}),
         app=AppConfig(name="worker"),
     )
@@ -82,23 +82,23 @@ class TestStoreCatalog:
         self,
         catalogs: list[StoreCatalog],
     ) -> None:
-        source = _worker_source(
+        project = _worker_project(
             {DEFAULT_STORE: {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}}
         )
 
-        application = source.compose(CeleryAdapter(jobs=[AcmePingJob]))
+        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]))
 
         assert len(catalogs) == 1
-        assert application.kernel.container.resolve(StoreCatalog) is source.catalog is catalogs[0]
+        assert application.kernel.container.resolve(StoreCatalog) is project.catalog is catalogs[0]
 
     def test_a_connection_only_default_store_fails_the_composition(self) -> None:
-        source = _worker_source(
+        project = _worker_project(
             {DEFAULT_STORE: {"backend": "clickhouse", "url": "clickhouse://ch"}}
         )
 
         adapter = CeleryAdapter(jobs=[AcmePingJob])
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            source.compose(adapter)
+            project.compose(adapter)
 
     def test_a_sqlalchemy_store_resolves_its_section_once_per_composition(
         self, fixture_project: ProjectFactory, store_resolutions: Counter[str]

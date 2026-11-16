@@ -24,7 +24,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.testing.in_memory import InMemoryRepository
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.helpers.jobs import BROKER
 from tests.unit.composition.phases.components import (
     AcmeInterface,
@@ -194,13 +194,13 @@ def _composed(
         "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
     }
     written = _merged(_merged(base, document), composition.config)
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(written),
         environment=composition.environment,
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    application = source.compose(cast(Adapter[object], adapter), modules=composition.modules)
+    application = project.compose(cast(Adapter[object], adapter), modules=composition.modules)
     return application.kernel.container
 
 

@@ -35,7 +35,7 @@ class LambdaUnservedConfigError(ConfigError):
         self.key = key
 
 
-def refuse_unserved_config(source: Project) -> None:
+def refuse_unserved_config(project: Project) -> None:
     """Refuse, from the configuration alone, what no Lambda function serves.
 
     Runs before discovery: a metrics scrape and an MCP server spoken to over
@@ -43,18 +43,18 @@ def refuse_unserved_config(source: Project) -> None:
     interpolation is not seen here: :func:`check_resolved_ai` refuses it at Init.
 
     Args:
-        source: What the entry point composes from.
+        project: What the entry point composes from.
 
     Raises:
         LambdaUnservedConfigError: When metrics are enabled or an MCP server
             declares ``transport: stdio``.
     """
-    if source.observability_config.prometheus.enabled:
+    if project.observability_config.prometheus.enabled:
         raise LambdaUnservedConfigError(
             "observability.prometheus.enabled",
             "a Lambda function serves no metrics scrape. Disable it for this entry point.",
         )
-    _refuse_stdio(_written_transports(source.config.raw(f"{ConfigKey.AI}.mcp_servers")))
+    _refuse_stdio(_written_transports(project.config.raw(f"{ConfigKey.AI}.mcp_servers")))
 
 
 def check_resolved_ai(config: AiConfig | None) -> None:

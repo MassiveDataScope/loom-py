@@ -59,7 +59,7 @@ The transport factories stay as shortcuts with their signatures:
 
 An adapter implements the `Adapter` protocol:
 
-- `recipe(source) -> Recipe` is synchronous, declarative and opens nothing.
+- `recipe(project) -> Recipe` is synchronous, declarative and opens nothing.
   The `Recipe` names the pool profile, the final `DiscoveryResult`, the
   backend, the deploy-check areas to skip, whether agents are hosted, the
   use-case and pool metrics, and `connection_only` for an entry point with no

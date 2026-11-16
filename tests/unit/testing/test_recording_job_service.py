@@ -18,7 +18,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from loom.testing import DispatchedJob, RecordingJobService
-from tests.helpers.jobs import JobsAdapter, job_source
+from tests.helpers.jobs import JobsAdapter, job_project
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(10)
@@ -71,8 +71,8 @@ def composed(tmp_path: Path) -> tuple[RecordingJobService, type[Job[str]]]:
             return "ran"
 
     config = {"jobs": {"MovedJob": {"queue": "bulk"}}}
-    source = job_source(tmp_path, config, "loom.testing:RecordingJobService")
-    application = source.compose(JobsAdapter(MovedJob))
+    project = job_project(tmp_path, config, "loom.testing:RecordingJobService")
+    application = project.compose(JobsAdapter(MovedJob))
     service = application.kernel.container.resolve(JobService)
     assert isinstance(service, RecordingJobService)
     return service, MovedJob

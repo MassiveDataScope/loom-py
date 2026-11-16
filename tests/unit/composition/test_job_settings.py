@@ -19,7 +19,7 @@ from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from tests.helpers.jobs import BROKER, JobsAdapter, job_source
+from tests.helpers.jobs import BROKER, JobsAdapter, job_project
 
 _CONFIGURED = {"queue": "reports", "countdown": 5, "priority": 3, "timeout": 60}
 _DECLARED = {"queue": "default", "countdown": 0, "priority": 0, "soft_time_limit": None}
@@ -43,8 +43,8 @@ def _compose(
         config["jobs"] = jobs
     directory = tmp_path / name
     directory.mkdir()
-    source = job_source(directory, config, job_service)
-    return source.compose(JobsAdapter(_ReportJob))
+    project = job_project(directory, config, job_service)
+    return project.compose(JobsAdapter(_ReportJob))
 
 
 async def _sent(application: Application) -> dict[str, Any] | None:
@@ -115,8 +115,8 @@ class TestJobSettings:
         assert sent["configured"]["queue"] == "reports"
 
     def test_a_malformed_jobs_section_fails_the_composition(self, tmp_path: Path) -> None:
-        source = job_source(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
+        project = job_project(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
         adapter = JobsAdapter(_ReportJob)
 
         with pytest.raises(ConfigError, match="_ReportJob"):
-            source.compose(adapter)
+            project.compose(adapter)

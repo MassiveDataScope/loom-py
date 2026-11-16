@@ -18,7 +18,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.stores.clickhouse import registry as clickhouse_registry
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.unit.core.sql._fakes import (
     DEFAULT_ROLES,
     DEFAULT_URL,
@@ -28,7 +28,7 @@ from tests.unit.core.sql._fakes import (
 
 
 class AcmeProbeAdapter:
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
@@ -45,14 +45,14 @@ def _application(tmp_path: Path) -> Application:
         "allowed_roles": list(DEFAULT_ROLES),
         "default_role": DEFAULT_ROLES[0],
     }
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {"app": {"name": "sql"}, "sql": {"connections": {"analytics": connection}}}
         ),
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return source.compose(AcmeProbeAdapter())
+    return project.compose(AcmeProbeAdapter())
 
 
 def _factory(

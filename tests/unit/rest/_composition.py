@@ -12,7 +12,7 @@ from loom.core.environment import Environment
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
-from tests.helpers.composition import composition_source, uow_factory
+from tests.helpers.composition import composition_project, uow_factory
 
 SQLITE_STORE: dict[str, object] = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
 """An in-memory SQLite default store."""
@@ -57,6 +57,6 @@ def build_bootstrap(
     The application config comes from *ctx*'s ``app`` section, as it does in
     ``create_app``; the first argument is accepted for the callers' sake.
     """
-    application = composition_source(ctx, environment=environment).compose(FastAPIAdapter())
+    application = composition_project(ctx, environment=environment).compose(FastAPIAdapter())
     discovered = application.discovered
     return application.kernel, uow_factory(application), discovered, discovered.interfaces

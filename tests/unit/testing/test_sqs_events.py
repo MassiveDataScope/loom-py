@@ -17,7 +17,7 @@ from loom.core.job.context import clear_pending_dispatches, flush_pending_dispat
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import LambdaEvent
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import SQSClient, sqs_service
 
@@ -45,7 +45,7 @@ def seen() -> Iterator[list[tuple[str, str]]]:
 
 @pytest.fixture
 def handler(tmp_path: Path) -> Iterator[LambdaHandler]:
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
         ),
@@ -54,7 +54,7 @@ def handler(tmp_path: Path) -> Iterator[LambdaHandler]:
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    yield adapter.bind(source.compose(adapter))
+    yield adapter.bind(project.compose(adapter))
     adapter.close()
 
 

@@ -22,7 +22,7 @@ from loom.core.use_case.errors import (
     UncomposedWriteStore,
     UseCaseErrorCode,
 )
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -71,7 +71,7 @@ def _compose(
     }
     if audit is not None:
         stores["audit"] = audit
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {
                 "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
@@ -82,8 +82,8 @@ def _compose(
         config_root=tmp_path,
     )
     if issubclass(component, Job):
-        return source.compose(Serving(AcmeJoinedInvoice, jobs=(component,)))
-    return source.compose(Serving(AcmeJoinedInvoice, use_cases=(component,)))
+        return project.compose(Serving(AcmeJoinedInvoice, jobs=(component,)))
+    return project.compose(Serving(AcmeJoinedInvoice, use_cases=(component,)))
 
 
 class TestJoinedStores:

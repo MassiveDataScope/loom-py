@@ -23,7 +23,7 @@ from loom.core.di.container import ResolutionError
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.use_case.errors import UncomposedWriteStore, UnservedModelError
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 from tests.unit.composition.phases.components import (
     AcmeAgentUser,
     AcmeLedgerWriter,
@@ -59,35 +59,35 @@ _SKIPPED: dict[str, tuple[dict[str, Any], type[Exception]]] = {
 
 class TestLenientHarness:
     @pytest.fixture
-    def ledger_source(self) -> Project:
+    def ledger_project(self) -> Project:
         """``acme`` over SQLite, beside a ``ledger`` store with no unit of work; jobs inline."""
-        return composition_source(ConfigContext.from_dict(_LEDGER))
+        return composition_project(ConfigContext.from_dict(_LEDGER))
 
     @pytest.mark.parametrize("check", list(_SKIPPED))
     def test_a_strict_recipe_refuses_what_a_lenient_one_skips(
-        self, check: str, ledger_source: Project
+        self, check: str, ledger_project: Project
     ) -> None:
         components, refused = _SKIPPED[check]
 
         with pytest.raises(refused):
-            ledger_source.compose(Serving(AcmeRecord, **components))
+            ledger_project.compose(Serving(AcmeRecord, **components))
 
     @pytest.mark.parametrize("check", list(_SKIPPED))
-    def test_a_lenient_recipe_skips_the_check(self, check: str, ledger_source: Project) -> None:
+    def test_a_lenient_recipe_skips_the_check(self, check: str, ledger_project: Project) -> None:
         components, _ = _SKIPPED[check]
 
         adapter = Serving(AcmeRecord, **components, lenient=True)
 
-        kernel = ledger_source.compose(adapter).kernel
+        kernel = ledger_project.compose(adapter).kernel
 
         assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
 
     def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
         self,
-        ledger_source: Project,
+        ledger_project: Project,
     ) -> None:
         with pytest.raises(BootstrapError) as caught:
-            ledger_source.compose(
+            ledger_project.compose(
                 Serving(AcmeRecord, use_cases=(AcmePing,), lenient=True),
                 modules=(binds_unbuildable,),
             )
@@ -95,7 +95,7 @@ class TestLenientHarness:
         assert isinstance(caught.value.__cause__, ResolutionError)
 
     def test_a_strict_recipe_runs_the_deploy_checks(self) -> None:
-        production = composition_source(
+        production = composition_project(
             ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=Environment.PRODUCTION
         )
 
@@ -106,11 +106,11 @@ class TestLenientHarness:
     def test_a_lenient_recipe_runs_no_deploy_check(
         self, environment: Environment, caplog: pytest.LogCaptureFixture
     ) -> None:
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict(_EPHEMERAL_KEYS), environment=environment
         )
 
         with caplog.at_level(logging.DEBUG, logger="loom.core.checks"):
-            source.compose(Serving(lenient=True))
+            project.compose(Serving(lenient=True))
 
         assert [r for r in caplog.records if r.name == "loom.core.checks"] == []

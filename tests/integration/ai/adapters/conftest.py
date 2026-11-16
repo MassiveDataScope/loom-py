@@ -22,7 +22,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores import SERVER_PROFILE
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.integration.ai.adapters.doubles import (
     AGENT,
     SERVER,
@@ -67,8 +67,8 @@ class AgentlessHost:
     def __init__(self, use_cases: tuple[type, ...], callbacks: tuple[type, ...] = ()) -> None:
         self.use_cases, self.callbacks = use_cases, callbacks
 
-    def recipe(self, source: Project) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         discovered = DiscoveryResult(models=(), use_cases=self.use_cases, interfaces=(), jobs=())
         return Recipe(
             profile=SERVER_PROFILE, discovered=discovered, agents=False, callbacks=self.callbacks
@@ -104,7 +104,7 @@ def engines(
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> Project:
+def project(tmp_path: Path) -> Project:
     """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts."""
     agents = tmp_path / "agents"
     agents.mkdir()
@@ -122,7 +122,7 @@ def source(tmp_path: Path) -> Project:
         },
         "lambda": {"functions": {WORKER: {"trigger": {"source": "jobs"}}}},
     }
-    return composition_source(
+    return composition_project(
         ConfigContext.from_dict(document),
         app=AppConfig(name="acme-adapters", entry=WORKER, job_service="inline"),
         code_path=tmp_path,
@@ -138,7 +138,7 @@ def binding(port: type, adapter: object) -> Callable[[LoomContainer], None]:
 
 
 @pytest.fixture
-def compose(source: Project, engines: CountingEngineProvider) -> Compose:
+def compose(project: Project, engines: CountingEngineProvider) -> Compose:
     """Compose the Lambda function ``worker`` (or *host*) over *use_cases* with the ports bound.
 
     ``quotes`` and ``advice`` default to the adapters declaring ``Mcp('pricing')``
@@ -153,7 +153,7 @@ def compose(source: Project, engines: CountingEngineProvider) -> Compose:
         host: object | None = None,
     ) -> Application:
         cases = use_cases or (AcmeMarket,)
-        return source.compose(
+        return project.compose(
             host or LambdaAdapter(use_cases=cases),
             modules=(binding(AcmeQuotes, quotes), binding(AcmeAdvice, advice)),
         )

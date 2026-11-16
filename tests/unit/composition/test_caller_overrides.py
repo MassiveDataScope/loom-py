@@ -34,7 +34,7 @@ from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.stores.mongo.uow import MongoSessions
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import ProjectFactory, composition_source, uow_factory
+from tests.helpers.composition import ProjectFactory, composition_project, uow_factory
 
 
 class _OverrideJob(Job[int]):
@@ -64,7 +64,7 @@ def _module(key: BindingKey) -> Callable[[LoomContainer], None]:
 
 
 def _worker(tmp_path: Path, module: Callable[[LoomContainer], None]) -> Application:
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {
                 "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
@@ -75,7 +75,7 @@ def _worker(tmp_path: Path, module: Callable[[LoomContainer], None]) -> Applicat
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return source.compose(CeleryAdapter(jobs=[_OverrideJob]), modules=[module])
+    return project.compose(CeleryAdapter(jobs=[_OverrideJob]), modules=[module])
 
 
 def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:

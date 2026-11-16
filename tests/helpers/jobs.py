@@ -12,7 +12,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.jobs.aws.sqs import SQSConfig, SQSJobService
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 BROKER = {"broker_url": "memory://", "result_backend": "cache+memory://"}
 SQS_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/emails"
@@ -32,7 +32,7 @@ class JobsAdapter:
     def __init__(self, *jobs: type[Job[Any]]) -> None:
         self._jobs = jobs
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
@@ -45,8 +45,8 @@ class JobsAdapter:
         return application
 
 
-def job_source(tmp_path: Path, config: dict[str, Any], job_service: str | None = None) -> Project:
-    return composition_source(
+def job_project(tmp_path: Path, config: dict[str, Any], job_service: str | None = None) -> Project:
+    return composition_project(
         ConfigContext.from_dict(config),
         app=AppConfig(name="jobs", job_service=job_service),
         code_path=tmp_path,

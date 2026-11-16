@@ -328,7 +328,7 @@ class CeleryAdapter:
         self._metrics = metrics
         self._declared: _Declared | None = None
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """Decode ``celery`` and discover the worker's components; the composition applies ``jobs``.
 
         Raises:
@@ -343,7 +343,7 @@ class CeleryAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="CeleryAdapter")
             )
-        ctx = source.config
+        ctx = project.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
         resolved = _resolve_compilables_and_jobs(ctx, self._jobs, self._use_cases)
         compilables = merge_unique(

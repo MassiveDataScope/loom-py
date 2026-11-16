@@ -144,8 +144,8 @@ class Adapter(Protocol[T_co]):
     an object that owns closing it.
     """
 
-    def recipe(self, source: Project) -> Recipe:
-        """Declare how to compose the application from *source*."""
+    def recipe(self, project: Project) -> Recipe:
+        """Declare how to compose the application from *project*."""
         ...
 
     def bind(self, application: Application) -> T_co:

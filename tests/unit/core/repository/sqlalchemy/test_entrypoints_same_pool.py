@@ -15,7 +15,7 @@ from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
-from tests.helpers.composition import composition_source, uow_factory
+from tests.helpers.composition import composition_project, uow_factory
 from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
@@ -56,13 +56,13 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
             return 1
 
     celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {"stores": {"default": {"backend": "sqlalchemy", **database}}, "celery": celery}
         ),
         app=AppConfig(name="worker"),
     )
-    factory: Any = uow_factory(source.compose(CeleryAdapter(jobs=[_PingJob])))
+    factory: Any = uow_factory(project.compose(CeleryAdapter(jobs=[_PingJob])))
     return factory._session_manager
 
 

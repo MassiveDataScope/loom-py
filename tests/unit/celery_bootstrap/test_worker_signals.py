@@ -39,7 +39,7 @@ from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from tests.helpers.celery import WorkerDouble, isolated_signals
-from tests.helpers.composition import TaskAffine, application_of, composition_source
+from tests.helpers.composition import TaskAffine, application_of, composition_project
 
 _SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
 
@@ -229,7 +229,7 @@ class TestFailedChildOpen:
 
     def _worker(self, tmp_path: Path) -> Any:
         adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_SyncCallback])
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict(
                 {
                     "celery": {
@@ -243,7 +243,7 @@ class TestFailedChildOpen:
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        application = source.compose(adapter)
+        application = project.compose(adapter)
 
         @asynccontextmanager
         async def _failing(*, check: bool = True) -> AsyncIterator[Application]:

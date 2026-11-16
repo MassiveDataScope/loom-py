@@ -31,7 +31,7 @@ from loom.core.use_case.kinds import AGENT, MCP
 from loom.rest.auth import RequestCredentials
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 from tests.integration.hexagonal.adapters import gateway_root
 from tests.integration.hexagonal.shipping import TrackShipment, TrackShipmentJob
 
@@ -178,8 +178,8 @@ class Stubbed:
         self._transport = transport
         self._stubs = stubs
 
-    def recipe(self, source: Project) -> Recipe:
-        recipe = self._transport.recipe(source)
+    def recipe(self, project: Project) -> Recipe:
+        recipe = self._transport.recipe(project)
         return dataclasses.replace(
             recipe, agents=False, lenient=True, overrides=(*recipe.overrides, self._stubs.bind)
         )
@@ -231,9 +231,9 @@ TRANSPORTS: dict[str, Callable[[], Adapter[Any]]] = {
 
 
 @pytest.fixture
-def source() -> Project:
+def project() -> Project:
     """Acme shipping's configuration, held in memory."""
-    return composition_source(ConfigContext.from_dict(acme_config()))
+    return composition_project(ConfigContext.from_dict(acme_config()))
 
 
 @pytest.fixture
@@ -252,7 +252,7 @@ Compose = Callable[..., tuple[Application, Any]]
 
 
 @pytest.fixture
-def compose(source: Project, stubs: Stubs) -> Iterator[Compose]:
+def compose(project: Project, stubs: Stubs) -> Iterator[Compose]:
     """Compose acme shipping on *transport* with *root*; return the application and its entry.
 
     A Lambda function's handler is closed when the test ends.
@@ -264,7 +264,7 @@ def compose(source: Project, stubs: Stubs) -> Iterator[Compose]:
         if isinstance(adapter, LambdaAdapter):
             opened.append(adapter)
         stubbed = Stubbed(adapter, stubs)
-        application = source.compose(stubbed, modules=(root,))
+        application = project.compose(stubbed, modules=(root,))
         return application, stubbed.bind(application)
 
     yield build
@@ -273,10 +273,10 @@ def compose(source: Project, stubs: Stubs) -> Iterator[Compose]:
 
 
 @pytest.fixture
-def compose_strictly(source: Project) -> Callable[..., Application]:
+def compose_strictly(project: Project) -> Callable[..., Application]:
     """Compose acme shipping on *transport* with *root* as production does, with no stub."""
 
     def build(transport: str, root: Module = gateway_root) -> Application:
-        return source.compose(TRANSPORTS[transport](), modules=(root,))
+        return project.compose(TRANSPORTS[transport](), modules=(root,))
 
     return build

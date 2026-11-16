@@ -14,27 +14,27 @@ from loom.core.stores.catalog import (
     StoreKey,
     load_catalog,
 )
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 
 class TestRetiredStoreSections:
     def test_the_composition_refuses_a_retired_section_in_memory_too(self) -> None:
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "database": {"url": "sqlite://"}})
         )
 
         with pytest.raises(ConfigError, match="stores.default"):
-            source.resolve_store_backend(DEFAULT_STORE, default="none")
+            project.resolve_store_backend(DEFAULT_STORE, default="none")
 
     def test_each_store_names_the_backend_composed_for_it(self) -> None:
         stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "stores": stores})
         )
 
         keys = (DEFAULT_STORE, StoreKey("audit"))
 
-        backends = [source.resolve_store_backend(key, default="mongo").name for key in keys]
+        backends = [project.resolve_store_backend(key, default="mongo").name for key in keys]
 
         assert backends == ["none", "sqlalchemy"]
 
@@ -94,9 +94,9 @@ class TestClickHouseStoreReaders:
             _catalog({"default": _CLICKHOUSE})
 
     def test_a_clickhouse_default_store_is_not_composed_as_a_backend(self) -> None:
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "stores": {"default": _CLICKHOUSE}})
         )
 
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            source.resolve_store_backend(DEFAULT_STORE, default="none")
+            project.resolve_store_backend(DEFAULT_STORE, default="none")

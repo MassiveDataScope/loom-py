@@ -31,10 +31,10 @@ from tests.helpers.composition import ProjectFactory, coordinator_of
 class AcmeTransportFreeAdapter:
     """No transport at all: what a script or a test composes."""
 
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=source.discover(),
+            discovered=project.discover(),
             default_store_backend="sqlalchemy",
         )
 
@@ -72,8 +72,8 @@ class _Handler:
 
 # The adapter under test: a profile of its own, one extra use case, its own result type.
 class _TinyAdapter:
-    def recipe(self, source: Project) -> Recipe:
-        discovered = source.discover()
+    def recipe(self, project: Project) -> Recipe:
+        discovered = project.discover()
         return Recipe(
             profile=_TINY,
             discovered=dataclasses.replace(discovered, use_cases=(*discovered.use_cases, _Answer)),
@@ -215,9 +215,9 @@ class TestLoadSource:
         config = tmp_path / "config.yaml"
         config.write_text("app:\n  name: acme\n", encoding="utf-8")
 
-        source = Project.load(str(config))
+        project = Project.load(str(config))
 
-        assert source.app.name == "acme"
+        assert project.app.name == "acme"
 
     @pytest.mark.parametrize(
         ("entry", "name"),

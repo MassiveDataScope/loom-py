@@ -35,7 +35,7 @@ Read = Callable[[Any], Sequence[tuple[JobEnvelope, str | None]]]
 
 
 def jobs_recipe(
-    source: Project,
+    project: Project,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
     metrics: MetricsAdapter | None,
@@ -46,7 +46,7 @@ def jobs_recipe(
     callbacks are not registered. Agents are hosted for the use cases, without
     their HTTP endpoints.
     """
-    resolved = resolve_worker_components(source.config, jobs, use_cases)
+    resolved = resolve_worker_components(project.config, jobs, use_cases)
     if resolved.models:
         _log.warning(
             "Lambda ignores AutoCRUD use cases for discovered models",

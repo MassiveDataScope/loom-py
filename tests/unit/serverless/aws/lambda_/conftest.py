@@ -19,7 +19,7 @@ from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.helpers.loops import event_loops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import (
@@ -70,8 +70,8 @@ def loops(probe: tuple[type[Job[None]], Probe]) -> list[asyncio.AbstractEventLoo
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> Project:
-    return composition_source(
+def project(tmp_path: Path) -> Project:
+    return composition_project(
         ConfigContext.from_dict(with_worker({"app": {"name": "lambda-sqs"}})),
         app=AppConfig(name="lambda-sqs", entry=WORKER),
         code_path=tmp_path,
@@ -81,10 +81,10 @@ def source(tmp_path: Path) -> Project:
 
 @pytest.fixture
 def built(
-    source: Project, probe: tuple[type[Job[None]], Probe]
+    project: Project, probe: tuple[type[Job[None]], Probe]
 ) -> tuple[LambdaAdapter, Application, list[str]]:
     adapter = LambdaAdapter(jobs=[probe[0]])
-    application = source.compose(adapter)
+    application = project.compose(adapter)
     lifecycle: list[str] = []
 
     @asynccontextmanager

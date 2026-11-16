@@ -19,7 +19,7 @@ from loom.core.stores import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.none import NoneBackend
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 _SQLITE = {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}}
 
@@ -31,8 +31,8 @@ class AcmeCursorNote(BaseModel):
 
 
 def _build(raw: dict[str, Any], *, connection_only: bool = False) -> None:
-    source = composition_source(ConfigContext.from_dict(raw), app=AppConfig(name="notes"))
-    build_stores(source, _recipe(connection_only=connection_only))
+    project = composition_project(ConfigContext.from_dict(raw), app=AppConfig(name="notes"))
+    build_stores(project, _recipe(connection_only=connection_only))
 
 
 def _recipe(*, connection_only: bool = False) -> Recipe:

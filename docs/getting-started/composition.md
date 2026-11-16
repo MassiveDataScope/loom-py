@@ -187,7 +187,7 @@ The order is fixed; no adapter reorders it:
    `LOOM__*` overrides).
 2. Configure observability from `observability`.
 3. Put the code path on `sys.path`.
-4. Ask the adapter for its recipe: `adapter.recipe(source)`. Discovery runs
+4. Ask the adapter for its recipe: `adapter.recipe(project)`. Discovery runs
    here, inside the adapter.
 5. Run the deploy checks, skipping the areas the recipe names
    (`skip_checks`).
@@ -212,7 +212,7 @@ reach the outside.
 
 An adapter is any object with two methods, the `Adapter` protocol:
 
-- `recipe(source) -> Recipe` declares what to compose. It is synchronous and
+- `recipe(project) -> Recipe` declares what to compose. It is synchronous and
   opens nothing.
 - `bind(application) -> T` mounts the transport and returns what the entry
   point serves. It opens nothing either: the application's lifecycle owns
@@ -243,10 +243,10 @@ from loom.core.stores import WORKER_PROFILE
 
 
 class ScriptAdapter:
-    def recipe(self, source: Project) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=source.discover(),               # app.discovery
+            discovered=project.discover(),              # app.discovery
             default_store_backend="sqlalchemy",               # without stores.default
             skip_checks=frozenset({REST_CHECKS}),
         )

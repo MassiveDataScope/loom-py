@@ -81,8 +81,8 @@ class _SingleStoreAdapter:
         self._build_use_cases = build_use_cases
         self.use_cases: tuple[type, ...] = ()
 
-    def recipe(self, source: Project) -> Recipe:
-        discovered = source.discover()
+    def recipe(self, project: Project) -> Recipe:
+        discovered = project.discover()
         model = _config_record(discovered)
         self.use_cases = self._build_use_cases(model)
         return Recipe(

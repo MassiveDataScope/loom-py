@@ -157,18 +157,18 @@ class TestStartupErrors:
         assert type(caught.value) is BootstrapError
         assert isinstance(caught.value.__cause__, RuntimeError)
 
-    def test_seal_validates_the_container_it_seals(self, source: Project) -> None:
+    def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
-        recipe = phases.plan(source, adapter)
-        stores = phases.build_stores(source, recipe)
+        recipe = phases.plan(project, adapter)
+        stores = phases.build_stores(project, recipe)
         kernel, _sql, _jobs = phases.register(
-            source, recipe, stores, modules=(binds_unbuildable,), logger=get_logger("tests.acme")
+            project, recipe, stores, modules=(binds_unbuildable,), logger=get_logger("tests.acme")
         )
         analysis = recipe.analysed(kernel.factory.graph)
 
         with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:
             phases.seal(
-                kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories
+                kernel, analysis, recipe, catalog=project.catalog, factories=stores.factories
             )
 
         assert isinstance(caught.value.__cause__, ResolutionError)
