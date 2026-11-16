@@ -24,7 +24,7 @@ from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
@@ -307,7 +307,7 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
 
     In an invocation scope that settles its actions by store, owned by this
     task, that is the channel of the stores
-    :meth:`~loom.core.uow.scope.InvocationScope.owners_of` names. Anywhere
+    :meth:`~loom.core.stores.uow.scope.InvocationScope.owners_of` names. Anywhere
     else a job dispatch (``store`` omitted) is queued on
     :func:`active_channel`, and a cache invalidation gets ``None``: its write
     is already durable, so it runs now. A job dispatch from a task whose

@@ -25,14 +25,14 @@ from loom.core.errors import ForeignSessionError, ScopeOwnershipError, Undeclare
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec, PageParams
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
-from loom.core.uow.scope import Frame, InvocationScope, invocation
+from loom.core.stores.repository import CursorCodec, PageParams
+from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
+from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
 from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 

@@ -1,6 +1,6 @@
 """Keyset predicate compilation and next-cursor extraction for SQLAlchemy.
 
-Positions follow :mod:`loom.core.repository.abc.cursor`: every sort key plus
+Positions follow :mod:`loom.core.stores.repository.cursor`: every sort key plus
 the primary key as the final tie-breaker.
 
 The N+1 trick:  fetch ``limit + 1`` rows.  If the result set has exactly
@@ -16,10 +16,10 @@ from typing import Any, cast
 
 from sqlalchemy import and_, or_
 
-from loom.core.repository.abc.cursor import Cursor
-from loom.core.repository.abc.query import SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
 from loom.core.repository.sqlalchemy.values import to_comparison_value
+from loom.core.stores.repository.cursor import Cursor
+from loom.core.stores.repository.query import SortSpec
 
 
 def compile_cursor_predicate(

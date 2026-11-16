@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Field, Integer
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import record_mutation, transactional
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.mutation import MutationEvent
 
 from ...conftest import RecordingSessionManager
 

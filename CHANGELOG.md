@@ -477,13 +477,23 @@
 
 ### stores
 
+- **stores:** the store ports moved under `loom.core.stores`, with no
+  re-exports left at the old paths. **Migration:** update the imports:
+
+  | Old | New |
+  |---|---|
+  | `loom.core.repository` and `loom.core.repository.abc` | `loom.core.stores.repository` |
+  | `loom.core.repository.abc.repo_for` | `loom.core.stores.repository.capabilities` |
+  | `loom.core.repository.abc.{checks,cursor,query,query_compiler,repository,session_scope}` | `loom.core.stores.repository.{same name}` |
+  | `loom.core.repository.{mutation,record,registration,registry}` | `loom.core.stores.repository.{same name}` |
+  | `loom.core.uow` and `loom.core.uow.{abc,alone,coordinator,scope}` | `loom.core.stores.uow` and `loom.core.stores.uow.{same name}` |
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
   always passes it to the repository it wraps. Before: a custom repository
   declaring `BulkCreatable` implemented `create_many(data)`. Now: calling it
   through the cache raises `TypeError`. **Migration:** add
   `*, on_conflict: OnConflict = OnConflict.ERROR` to the custom
-  `create_many` (`OnConflict` from `loom.core.repository.abc`) and honour or
+  `create_many` (`OnConflict` from `loom.core.stores.repository`) and honour or
   refuse `OnConflict.IGNORE`.
 
 ## ✨ Features

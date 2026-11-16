@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
-from loom.core.repository.abc import BulkCreatable, Listable, PageParams
+from loom.core.stores.repository import BulkCreatable, Listable, PageParams
 
 from .conftest import SEED, BackendCase, CreateOrder, OrderStatus, UpdateOrder, require
 

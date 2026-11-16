@@ -10,7 +10,7 @@ from loom.composition import Application
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.model import LoomStruct
-from loom.core.repository.abc import Readable
+from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute

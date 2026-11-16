@@ -13,7 +13,9 @@ from loom.core.errors import BoundaryValidationError, UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BaseModel, ColumnField, DateTime, String
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import (
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
     CursorResult,
@@ -21,8 +23,6 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 
 class _Row(BaseModel):

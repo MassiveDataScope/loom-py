@@ -26,16 +26,16 @@ from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork, NoOpMongoUnitOfWork
-from loom.core.repository.registration import capabilities_of
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow.abc import UnitOfWork
+from loom.core.stores.repository import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
+from loom.core.stores.repository.registration import capabilities_of
+from loom.core.stores.uow.abc import UnitOfWork
 
 from ..dynamodb._fake import FakeClient
 from ..mongo._fake import FakeMongoClient

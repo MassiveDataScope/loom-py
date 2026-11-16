@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.repository.abc import PageParams
+from loom.core.stores.repository import PageParams
 
 
 @pytest.fixture

@@ -30,11 +30,11 @@ from loom.core.engine.post_commit import store_channel
 from loom.core.errors import ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
 from loom.core.identity import Identity
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
-from loom.core.repository.abc import RepoFor
 from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.rls.verify import verify
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.coordinator import Committed, RolledBack
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.uow.coordinator import Committed, RolledBack
 from loom.core.use_case import Input, Joined, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
 from tests.helpers.composition import Serving, composition_source

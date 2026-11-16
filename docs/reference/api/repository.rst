@@ -7,8 +7,8 @@ Contracts
 .. autosummary::
    :toctree: generated
 
-   loom.core.repository.abc
-   loom.core.repository.abc.query
+   loom.core.stores.repository
+   loom.core.stores.repository.query
 
 SQLAlchemy adapter
 ------------------

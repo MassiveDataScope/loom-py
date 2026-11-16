@@ -15,10 +15,10 @@ from loom.core.command import Command
 from loom.core.errors import Conflict
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec, OnConflict
-from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec, OnConflict
+from loom.core.stores.repository.mutation import MutationEvent
 
 pytestmark = pytest.mark.integration
 

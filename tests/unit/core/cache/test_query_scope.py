@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository.abc import SupportsCacheScope
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
+from loom.core.stores.repository import SupportsCacheScope
+from loom.core.stores.repository.query import PaginationMode, QuerySpec
 
 from ._doubles import AcmeCacheWidget, CountingRepository, wrap_with_cache
 

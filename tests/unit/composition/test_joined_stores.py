@@ -15,7 +15,7 @@ from loom.composition import AppConfig, Application, compose_application
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import (
     JoinedAutocommitStore,

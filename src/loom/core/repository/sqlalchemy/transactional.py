@@ -20,11 +20,11 @@ from loom.core.errors import (
     UndeclaredStoreWrite,
 )
 from loom.core.logger import get_logger
-from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow.alone import single_store
-from loom.core.uow.scope import InvocationScope, current_scope
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.uow.alone import single_store
+from loom.core.stores.uow.scope import InvocationScope, current_scope
 
 
 @runtime_checkable
@@ -62,7 +62,7 @@ def transactional(
     ``@transactional`` call) the method joins the participant of its owner's
     store and nothing else happens: the invocation commits it and runs the
     post-commit actions. Outside one, the method runs in an invocation of
-    its owner's store alone (:func:`~loom.core.uow.alone.single_store`),
+    its owner's store alone (:func:`~loom.core.stores.uow.alone.single_store`),
     which commits on return and rolls back on any exception; once it
     committed, ``on_transaction_committed(pending)`` runs on the owner and on
     its :class:`SupportsPostCommit` attributes, after the cache invalidations.

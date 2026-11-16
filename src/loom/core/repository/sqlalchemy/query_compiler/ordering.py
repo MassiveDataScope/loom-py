@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.repository.abc.query import SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
+from loom.core.stores.repository.query import SortSpec
 
 
 def compile_order_by(sa_model: type[Any], sort: tuple[SortSpec, ...]) -> list[Any]:

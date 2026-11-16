@@ -50,7 +50,7 @@ from loom.core.identity import Identity, current_identity
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository.query import (
     FilterGroup,
     FilterOp,
     FilterSpec,

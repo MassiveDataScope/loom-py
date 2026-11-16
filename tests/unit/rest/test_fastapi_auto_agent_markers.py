@@ -27,8 +27,8 @@ from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.registration import classify_key
 from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Agent
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker

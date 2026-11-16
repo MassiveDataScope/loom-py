@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from loom.core.execution import ExecutionBinding
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
-from loom.core.uow.scope import Frame
+from loom.core.stores.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
@@ -16,7 +16,7 @@ from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
 
 if TYPE_CHECKING:
-    from loom.core.uow.coordinator import Participant
+    from loom.core.stores.uow.coordinator import Participant
 
 
 class ParameterBindingError(ValueError):

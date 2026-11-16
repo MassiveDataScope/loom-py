@@ -10,9 +10,9 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 # ---------------------------------------------------------------------------

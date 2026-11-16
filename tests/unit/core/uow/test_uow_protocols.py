@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 
 # ---------------------------------------------------------------------------
 # Fake implementations (satisfy protocol structurally)

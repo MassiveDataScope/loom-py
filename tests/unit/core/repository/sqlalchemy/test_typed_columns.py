@@ -20,8 +20,11 @@ from loom.core.model import JSON, BaseModel, ColumnField, ColumnType, LoomStruct
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import (
+from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.query import (
     FilterGroup,
     FilterOp,
     FilterParams,
@@ -31,9 +34,6 @@ from loom.core.repository.abc.query import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 _CODEC = CursorCodec(signing="ephemeral")
 

@@ -44,8 +44,8 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import NestedElevation
-from loom.core.uow.coordinator import Coordinator, OrderedCommits
-from loom.core.uow.scope import (
+from loom.core.stores.uow.coordinator import Coordinator, OrderedCommits
+from loom.core.stores.uow.scope import (
     Frame,
     InvocationScope,
     invocation,

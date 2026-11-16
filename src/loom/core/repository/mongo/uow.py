@@ -5,7 +5,7 @@ opt-in (``stores.<name>.transactions: true``):
 
 - :class:`MongoUnitOfWork` starts a client session and a transaction in
   ``begin``, commits or aborts it, and ends the session afterwards. It is a
-  participant of the invocation scope (:mod:`loom.core.uow.scope`), and
+  participant of the invocation scope (:mod:`loom.core.stores.uow.scope`), and
   :class:`MongoSessions` finds its session there: a
   :class:`~loom.core.repository.mongo.repository.RepositoryMongo` built with
   ``session_provider=MongoSessions(client, store)`` joins the transaction of
@@ -33,10 +33,10 @@ from pymongo.errors import PyMongoError
 from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork, UowEvent
-from loom.core.uow.alone import EntersAlone
-from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
-from loom.core.uow.scope import current_handle
+from loom.core.stores.uow.abc import UnitOfWork, UowEvent
+from loom.core.stores.uow.alone import EntersAlone
+from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore
+from loom.core.stores.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(component="uow")
 

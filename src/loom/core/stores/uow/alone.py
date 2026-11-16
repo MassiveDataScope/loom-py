@@ -15,9 +15,9 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import (
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import (
     Frame,
     InvocationScope,
     invocation,
@@ -37,7 +37,7 @@ async def single_store(
     exit the coordinator commits it, or rolls it back if the block raised.
     The post-commit actions queued in the block, a nested use case's
     included, run once the store has ended, by its outcome
-    (:meth:`~loom.core.uow.scope.InvocationScope.settle_post_commit`).
+    (:meth:`~loom.core.stores.uow.scope.InvocationScope.settle_post_commit`).
 
     Args:
         key: Store the unit of work belongs to.
@@ -116,7 +116,7 @@ class EntersAlone:
         """End the invocation ``__aenter__`` opened: commit on clean exit, roll back otherwise.
 
         The coordinator rolls back a failed commit, and the unit of work
-        always closes; see :mod:`loom.core.uow.coordinator` for how
+        always closes; see :mod:`loom.core.stores.uow.coordinator` for how
         cancellation is handled.
         """
         alone, self._alone = self._alone, None

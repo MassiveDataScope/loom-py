@@ -60,9 +60,9 @@ from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import LifecycleEvent
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.registration import classify_key
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import Agent, Caller, Input, UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker

@@ -17,7 +17,7 @@ from loom.core.persistence.stores import (
     StoreSpec,
     load_catalog,
 )
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 
 _ALL = StoreCapabilities(serves_models=True, transactional=True, pages_with_cursors=True)
 _NOTHING = StoreCapabilities(serves_models=False, transactional=False, pages_with_cursors=False)

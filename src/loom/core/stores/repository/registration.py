@@ -10,7 +10,7 @@ from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, LoomStruct
 from loom.core.model.introspection import generic_type_arg
 from loom.core.persistence.stores import StoreKey, store_binding
-from loom.core.repository.abc.repo_for import (
+from loom.core.stores.repository.capabilities import (
     BulkCreatable,
     Countable,
     Creatable,
@@ -20,7 +20,7 @@ from loom.core.repository.abc.repo_for import (
     RepoFor,
     Updatable,
 )
-from loom.core.repository.registry import (
+from loom.core.stores.repository.registry import (
     DefaultRepositoryBuilder,
     RepositoryBuildContext,
     RepositoryRegistration,

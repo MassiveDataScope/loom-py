@@ -11,7 +11,9 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import (
+from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
     Creatable,
@@ -21,19 +23,17 @@ from loom.core.repository.abc import (
     Readable,
     Updatable,
 )
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.registration import (
+from loom.core.stores.repository.registration import (
     RepositoryDecorator,
     build_repository_registration_module,
     capabilities_of,
 )
-from loom.core.repository.registry import (
+from loom.core.stores.repository.registry import (
     DefaultRepositoryBuilder,
     RepositoryBuildContext,
     RepositoryRegistration,
     RepositoryToken,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 
 
 class AcmeRegistrationWidget(BaseModel):

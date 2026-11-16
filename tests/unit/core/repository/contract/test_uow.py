@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from loom.core.repository.abc import Creatable, Readable
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository import Creatable, Readable
+from loom.core.stores.uow.scope import current_scope
 
 from .conftest import SEED, BackendCase, mongo_client_of, require
 

@@ -27,11 +27,11 @@ from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_regist
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import Input
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase

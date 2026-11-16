@@ -8,14 +8,14 @@ from typing import Any
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.stores import StoreKey
-from loom.core.repository import (
+from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.stores.repository import (
     RepositoryBuildContext,
 )
-from loom.core.repository import (
+from loom.core.stores.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.registry import (
+from loom.core.stores.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
     get_repository_registration,

@@ -1,6 +1,6 @@
 """SQLAlchemy query compiler for QuerySpec.
 
-Translates :class:`~loom.core.repository.abc.query.QuerySpec` objects into
+Translates :class:`~loom.core.stores.repository.query.QuerySpec` objects into
 SQLAlchemy constructs (WHERE clauses, ORDER BY, cursor predicates).
 
 Public surface:

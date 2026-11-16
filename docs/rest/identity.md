@@ -105,7 +105,7 @@ explicitly — the framework never substitutes it.
 The most common use of the caller is not a role check but a data boundary:
 
 ```python
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 
 
 def owned_by(query: QuerySpec, subject: str) -> QuerySpec:

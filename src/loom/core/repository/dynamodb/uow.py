@@ -5,7 +5,7 @@ Unit of Work used by the relational backend: each write is autocommitted by its
 own ``PutItem`` / ``DeleteItem`` call inside
 :class:`~loom.core.repository.dynamodb.repository.RepositoryDynamoDB`. This
 Unit of Work therefore satisfies the
-:class:`~loom.core.uow.abc.UnitOfWork` protocol with empty ``begin`` /
+:class:`~loom.core.stores.uow.abc.UnitOfWork` protocol with empty ``begin`` /
 ``commit`` / ``rollback`` so :class:`~loom.core.engine.executor.RuntimeExecutor`
 can wrap UseCases uniformly regardless of backend.
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from loom.core.uow.abc import UnitOfWork
+from loom.core.stores.uow.abc import UnitOfWork
 
 
 class DynamoUnitOfWork:

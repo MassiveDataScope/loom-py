@@ -16,8 +16,8 @@ from loom.celery.bootstrap import bootstrap_worker
 from loom.core.cache import CachedRepository, cached
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import repository_for
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.core.stores.repository import repository_for
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 

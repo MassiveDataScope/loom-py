@@ -12,9 +12,9 @@ from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_regist
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
 
 pytestmark = pytest.mark.integration
 

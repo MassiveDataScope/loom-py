@@ -13,7 +13,7 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase

@@ -14,7 +14,7 @@ import pytest
 
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 
 _DATABASE = {"stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}}}
 _MONGO = {

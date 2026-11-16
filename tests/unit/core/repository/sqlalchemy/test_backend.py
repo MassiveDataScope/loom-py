@@ -11,8 +11,8 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.stores.repository import CursorCodec
 from tests.helpers.persistence import build_backend
 
 _UNREACHABLE_URL = "sqlite+aiosqlite:////nonexistent/loom-readiness/store.db"

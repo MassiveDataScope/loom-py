@@ -14,8 +14,8 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import PostCommitError
-from loom.core.repository.mutation import MutationEvent
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.uow.scope import current_scope
 
 from .conftest import OuterService, PostCommitService, ServiceWithMixedDependencies
 

@@ -23,10 +23,16 @@ from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, DateTime
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import Repository
-from loom.core.repository.abc import CursorCodec, CursorResult, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import (
+    CursorCodec,
+    CursorResult,
+    PaginationMode,
+    QuerySpec,
+    Repository,
+    SortSpec,
+)
 
 pytestmark = pytest.mark.integration
 

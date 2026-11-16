@@ -22,15 +22,14 @@ from loom.core.cache.repository import _DELEGATED_METHODS
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
 from loom.core.errors import PostCommitError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
-from loom.core.repository import FilterParams, PageParams, PageResult, Repository
-from loom.core.repository.abc import OnConflict
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository import FilterParams, OnConflict, PageParams, PageResult, Repository
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.repository.query import (
     CursorResult,
     PaginationMode,
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.mutation import MutationEvent
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,

@@ -8,23 +8,23 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.repository.abc.cursor import CursorCodec, require_cursor_sort
-from loom.core.repository.abc.query import (
-    FilterGroup,
-    PaginationMode,
-    QuerySpec,
-    SortSpec,
-)
 from loom.core.repository.sqlalchemy.query_compiler.cursor import (
     compile_cursor_predicate,
     extract_next_cursor,
 )
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.query_compiler.ordering import compile_order_by
+from loom.core.stores.repository.cursor import CursorCodec, require_cursor_sort
+from loom.core.stores.repository.query import (
+    FilterGroup,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
+)
 
 
 class QuerySpecCompiler:
-    """Compiles a :class:`~loom.core.repository.abc.query.QuerySpec` into
+    """Compiles a :class:`~loom.core.stores.repository.query.QuerySpec` into
     SQLAlchemy statements and executes them.
 
     Designed to be instantiated once per repository mixin call — it holds

@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import (
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import (
     CommitUncertain,
     InvocationOutcome,
     Participant,

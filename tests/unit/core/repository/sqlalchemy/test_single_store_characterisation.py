@@ -34,7 +34,6 @@ from loom.core.engine.post_commit import active_channel
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
@@ -42,7 +41,8 @@ from loom.core.repository.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
 )
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository import CursorCodec, PageParams, RepoFor
+from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
 from tests.helpers.composition import ProjectFactory, fixture_project, uow_factory

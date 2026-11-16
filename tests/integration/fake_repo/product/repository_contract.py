@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from tests.integration.fake_repo.product.model import Product
 
 

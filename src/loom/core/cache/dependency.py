@@ -7,7 +7,7 @@ from loom.core.cache._batching import COUNTER_BATCH_SIZE, batched
 from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
 from loom.core.cache.keys import stable_hash
-from loom.core.repository.mutation import MutationEvent
+from loom.core.stores.repository.mutation import MutationEvent
 
 
 class GenerationalDependencyResolver(DependencyResolver, BatchFingerprintResolver):

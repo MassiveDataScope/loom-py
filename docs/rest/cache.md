@@ -18,7 +18,7 @@ through and invalidate.
 
 ```python
 from loom.core.cache import cache_query, cached
-from loom.core.repository import repository_for
+from loom.core.stores.repository import repository_for
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
 
 
@@ -418,7 +418,7 @@ An empty `cache: {}` is not the same thing: every field has a default and
 memory backend. Write `enabled: false` to turn it off.
 
 The wrapping itself is a container binding, `RepositoryDecorator` from
-`loom.core.repository`: a single slot that the cache module fills only when it
+`loom.core.stores.repository`: a single slot that the cache module fills only when it
 is empty. A deployment that registers its own decorator before loom's module
 replaces the wrapping — a second registration replaces, it does not compose.
 Repositories registered in the container by hand, outside the registration

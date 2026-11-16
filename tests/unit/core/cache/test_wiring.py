@@ -35,13 +35,13 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model.redaction import RedactedMap
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import (
+from loom.core.stores.repository import (
     RepositoryBuildContext,
     RepositoryDecorator,
     RepositoryRegistration,
     build_repository_registration_module,
 )
-from loom.core.repository.abc.repo_for import Listable, Readable
+from loom.core.stores.repository.capabilities import Listable, Readable
 
 from ._doubles import (
     MEMORY_BACKEND,

@@ -44,8 +44,8 @@ from loom.core.persistence.stores import (
     StoreCatalog,
     StoreKey,
 )
-from loom.core.uow.abc import UnitOfWorkFactory
-from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
+from loom.core.stores.uow.abc import UnitOfWorkFactory
+from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.factory import ModelRead
 from loom.core.use_case.kinds import AGENT, MCP
 

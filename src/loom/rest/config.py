@@ -34,7 +34,7 @@ from typing import Any, Literal
 import msgspec
 
 from loom.core.config.errors import ConfigError
-from loom.core.repository.abc.query import PaginationMode
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.symbols import import_symbol
 from loom.core.use_case.constants import CrudOp
 from loom.core.use_case.use_case import UseCase

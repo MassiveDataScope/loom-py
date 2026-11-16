@@ -104,7 +104,7 @@ from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.repository import RepositoryBuildContext, build_repository_registration_module
+from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
 from billing_ledger.repository import RepositoryLedger
@@ -192,7 +192,7 @@ and the post-commit actions that run once it has closed.
 
 Repositories declare what they can do by inheriting capability protocols:
 `Readable`, `Creatable`, `BulkCreatable`, `Updatable`, `Deletable`, `Listable`
-and `Countable` (`loom.core.repository.abc`). `capabilities_of(repository_type)`
+and `Countable` (`loom.core.stores.repository`). `capabilities_of(repository_type)`
 is the single detector — the registration module binds a DI key per declared
 protocol, and the auto-CRUD gate mounts one operation per protocol:
 
@@ -215,7 +215,7 @@ The gate looks at the class that will serve the model — the explicit
 - refuses an interface whose backend supports none of the five.
 
 ```python
-from loom.core.repository.registration import capabilities_of
+from loom.core.stores.repository.registration import capabilities_of
 
 capabilities_of(RepositoryLedger)   # (Readable, Creatable, BulkCreatable)
 ```
@@ -291,7 +291,7 @@ the model.
 ## Cursor tokens
 
 Keyset pagination has one token contract for every backend
-(`loom.core.repository.abc.cursor`, decided in ADR 0004,
+(`loom.core.stores.repository.cursor`, decided in ADR 0004,
 `docs/architecture/adr/0004-signed-cursors.md`). A token carries the
 issuing backend's name, the sort key values of the last row on the page and the
 primary key as tie-breaker, and it is signed with HMAC-SHA256:
@@ -399,7 +399,7 @@ A service paginating by hand resolves the same codec and binds its own scope:
 
 ```python
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.repository.abc import Cursor, CursorCodec, PaginationMode, QuerySpec, SortSpec
+from loom.core.stores.repository import Cursor, CursorCodec, PaginationMode, QuerySpec, SortSpec
 
 codec = container.resolve(CursorCodec)
 query = QuerySpec(sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR)

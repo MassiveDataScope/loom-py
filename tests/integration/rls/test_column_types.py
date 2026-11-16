@@ -9,10 +9,10 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import create_schema, rls_session_settings
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
 from tests.integration.agnosticism import devices
 from tests.integration.rls.conftest import BootstrapFactory, application_for, scalar
 

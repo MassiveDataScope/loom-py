@@ -3,7 +3,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     FilterGroup,
     FilterOp,
     FilterParams,

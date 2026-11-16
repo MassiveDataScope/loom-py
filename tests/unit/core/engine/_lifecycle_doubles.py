@@ -12,8 +12,8 @@ from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.job.context import add_pending_dispatch
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 

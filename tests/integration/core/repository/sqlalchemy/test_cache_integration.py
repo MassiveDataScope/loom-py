@@ -19,12 +19,11 @@ from loom.core.cache import (
 from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import Repository
-from loom.core.repository.abc import CursorCodec, PageParams
-from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
+from loom.core.stores.repository import CursorCodec, PageParams, Repository
+from loom.core.stores.repository.mutation import MutationEvent
 from loom.testing import RepositoryIntegrationHarness, ScenarioDict
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview

@@ -16,9 +16,9 @@ from loom.core.identity import Identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.registry import RepositoryToken
 from loom.core.sql import SqlQueryService
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.repository.registry import RepositoryToken
 from loom.core.use_case import Agent, Caller, Input, Joined, LoadById, Mcp, UseCase
 from loom.rest.model import RestInterface, RestRoute
 from loom.testing.in_memory import InMemoryRepository

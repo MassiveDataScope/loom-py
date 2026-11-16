@@ -5,7 +5,7 @@ HTTP request, a job, a message). It is published in a single ``ContextVar``
 and holds:
 
 - the task that owns it, the only one allowed to touch its participants;
-- its :class:`~loom.core.uow.coordinator.Coordinator`, which enlists stores
+- its :class:`~loom.core.stores.uow.coordinator.Coordinator`, which enlists stores
   and ends them together;
 - the participants, one per store, in enlistment order;
 - a stack of :class:`Frame`, one per execution, naming the stores that
@@ -13,8 +13,8 @@ and holds:
 
 Every access to a participant goes through one checkpoint,
 :meth:`InvocationScope.participant_for`. The scope never commits: the
-:class:`~loom.core.uow.coordinator.Coordinator` does, and the caller turns its
-:class:`~loom.core.uow.coordinator.InvocationOutcome` into the invocation's
+:class:`~loom.core.stores.uow.coordinator.Coordinator` does, and the caller turns its
+:class:`~loom.core.stores.uow.coordinator.InvocationOutcome` into the invocation's
 error with :func:`invocation_error`.
 
 Example::
@@ -46,7 +46,7 @@ from loom.core.errors import (
 )
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.coordinator import (
+from loom.core.stores.uow.coordinator import (
     Committed,
     Coordinator,
     InvocationOutcome,
@@ -59,7 +59,7 @@ from loom.core.uow.coordinator import (
 
 if TYPE_CHECKING:
     from loom.core.engine.post_commit import PostCommitChannel
-    from loom.core.repository.mutation import MutationEvent
+    from loom.core.stores.repository.mutation import MutationEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +88,7 @@ class Frame:
 class InvocationScope:
     """The participants of one invocation and the task that owns them.
 
-    Satisfies :class:`~loom.core.uow.coordinator.ParticipantScope`.
+    Satisfies :class:`~loom.core.stores.uow.coordinator.ParticipantScope`.
 
     Attributes:
         owner_task: The only task allowed to touch the participants.
@@ -236,7 +236,7 @@ class InvocationScope:
     def poison(self, keys: Iterable[StoreKey], cause: BaseException) -> None:
         """Forbid the invocation to commit, through the participants of ``keys`` that are enlisted.
 
-        See :meth:`~loom.core.uow.coordinator.Participant.poison`.
+        See :meth:`~loom.core.stores.uow.coordinator.Participant.poison`.
 
         Args:
             keys: Stores whose transaction can no longer be trusted.

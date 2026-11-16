@@ -9,17 +9,6 @@ import pytest
 from loom.core.di.container import LoomContainer
 from loom.core.model.introspection import scalar_column_annotations
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import (
-    Creatable,
-    CursorCodec,
-    CursorResult,
-    Listable,
-    PaginationMode,
-    QuerySpec,
-    Readable,
-    SortSpec,
-)
 from loom.core.repository.mongo.ids import IdPolicy, ObjectIdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.registry import (
     MongoDatabase,
@@ -28,6 +17,18 @@ from loom.core.repository.mongo.registry import (
 )
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions
+from loom.core.stores.repository import (
+    Creatable,
+    CursorCodec,
+    CursorResult,
+    DefaultRepositoryBuilder,
+    Listable,
+    PaginationMode,
+    QuerySpec,
+    Readable,
+    RepositoryBuildContext,
+    SortSpec,
+)
 
 from ._fake import FakeMongoClient
 from .conftest import Article

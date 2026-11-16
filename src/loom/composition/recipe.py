@@ -18,7 +18,7 @@ from loom.core.di.graph import (
     refuse_unmapped_repository,
 )
 from loom.core.persistence.stores import NONE_BACKEND, StoreCatalog
-from loom.core.repository.abc import CursorCodec
+from loom.core.stores.repository import CursorCodec
 
 if TYPE_CHECKING:
     from loom.composition.application import Application

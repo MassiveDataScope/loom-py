@@ -25,7 +25,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.core.identity import Identity
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app

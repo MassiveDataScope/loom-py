@@ -12,7 +12,7 @@ from loom.core.di import ContainerSealed, ResolutionError
 from loom.core.di.compiler import STRUCTURE_LOCK
 from loom.core.di.container import LoomContainer
 from loom.core.execution import ExecutionKinds, Kind
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.seal.doubles import AcmeBoundLedger, AcmeLateLedger
 

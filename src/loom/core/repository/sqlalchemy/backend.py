@@ -38,7 +38,6 @@ from loom.core.persistence.stores import (
     StoreKey,
     StoreSpec,
 )
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -54,6 +53,7 @@ from loom.core.repository.sqlalchemy.rls.integrity import (
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores.repository import CursorCodec
 
 _logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 
 from loom.core.cache import GenerationalDependencyResolver
-from loom.core.repository.mutation import MutationEvent
+from loom.core.stores.repository.mutation import MutationEvent
 
 from ._doubles import CountingCacheBackend
 

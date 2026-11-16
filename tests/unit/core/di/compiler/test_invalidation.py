@@ -9,7 +9,7 @@ import pytest
 from loom.core.di import ContainerSealed
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
 from tests.unit.core.di.compiler.doubles import (
     AcmeAudit,
     AcmeAuditReport,

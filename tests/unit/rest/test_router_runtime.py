@@ -30,16 +30,16 @@ from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import (
+from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.query import (
     PageParams,
     PageResult,
     PaginationMode,
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.registration import classify_key
-from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.markers import Exists, Input

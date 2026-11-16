@@ -23,9 +23,9 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow import coordinator as coordinator_module
-from loom.core.uow.abc import UnitOfWork, UowEvent
-from loom.core.uow.coordinator import (
+from loom.core.stores.uow import coordinator as coordinator_module
+from loom.core.stores.uow.abc import UnitOfWork, UowEvent
+from loom.core.stores.uow.coordinator import (
     UNKNOWN_PHYSICAL,
     Committed,
     CommitUncertain,

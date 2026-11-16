@@ -13,8 +13,8 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository import PageParams
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.stores.repository import PageParams
+from loom.core.stores.repository.query import QuerySpec
 
 from ._doubles import (
     AcmeCacheWidget,

@@ -23,7 +23,7 @@ from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import SERVER_PROFILE
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.stores.uow.abc import UnitOfWorkFactory
 from tests.unit.rest._fixture_app import write_project
 
 ProjectFactory = Callable[..., str]

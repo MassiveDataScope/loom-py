@@ -25,18 +25,24 @@ from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import FilterParams, PageParams, PageResult, Repository, repository_for
-from loom.core.repository.abc.query import (
+from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
+from loom.core.stores.repository import (
+    FilterParams,
+    PageParams,
+    PageResult,
+    Repository,
+    repository_for,
+)
+from loom.core.stores.repository.capabilities import Listable, OnConflict, Readable
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterOp,
     PaginationMode,
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.abc.repo_for import Listable, OnConflict, Readable
-from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, invocation
 from tests.unit.core.uow._coordinator_fakes import (
     Factory,
     Ledger,

@@ -19,7 +19,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.coordinator import OrderedCommits
 
 from ._lifecycle_doubles import Boom, Log, Ok, cancel_mid_flight, context_is_clean
 

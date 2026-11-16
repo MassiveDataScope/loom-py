@@ -8,22 +8,22 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.persistence.stores import store_binding
-from loom.core.repository import (
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import (
+    CursorCodec,
     RepositoryBuildContext,
 )
-from loom.core.repository import (
+from loom.core.stores.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.cursor import register_cursor_codec
-from loom.core.repository.registry import (
+from loom.core.stores.repository.cursor import register_cursor_codec
+from loom.core.stores.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
     get_repository_registration,
     repository_for,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 __all__ = [
     "RepositoryRegistration",

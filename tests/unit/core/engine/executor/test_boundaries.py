@@ -31,15 +31,15 @@ from loom.core.errors import (
 )
 from loom.core.job.context import add_pending_dispatch
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import RepoFor
-from loom.core.uow.coordinator import (
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.uow.coordinator import (
     Committed,
     InvocationOutcome,
     OrderedCommits,
     RolledBack,
     Uncertain,
 )
-from loom.core.uow.scope import InvocationScope, current_scope
+from loom.core.stores.uow.scope import InvocationScope, current_scope
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import JoinedAutocommitStore
 

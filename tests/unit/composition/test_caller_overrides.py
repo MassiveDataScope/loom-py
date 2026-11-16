@@ -27,10 +27,10 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.job import Job
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence.stores import StoreCatalog, StoreKey
-from loom.core.repository import DefaultRepositoryBuilder
 from loom.core.repository.mongo.uow import MongoSessions
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.sql import CallerBoundSql, SqlQueryService
+from loom.core.stores.repository import DefaultRepositoryBuilder
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter

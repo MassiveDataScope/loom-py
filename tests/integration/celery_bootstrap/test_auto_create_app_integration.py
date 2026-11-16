@@ -17,9 +17,9 @@ from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
 from loom.core.use_case import Input
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker

@@ -50,7 +50,7 @@ _FREE_DICT = frozenset(
 _EXTRA_MODULES = (
     "loom.ai.inference",
     "loom.core.persistence.database",
-    "loom.core.repository.abc.cursor",
+    "loom.core.stores.repository.cursor",
     "loom.streaming.nodes._table.common",
 )
 _UNION = (Union, types.UnionType)

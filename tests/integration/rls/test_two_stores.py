@@ -36,14 +36,14 @@ from loom.core.persistence.elevation import (
     StoreElevation,
 )
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, current_scope, invocation
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, current_scope, invocation
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (

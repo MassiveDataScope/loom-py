@@ -10,7 +10,7 @@ from loom.core.errors.codes import ErrorCode
 
 if TYPE_CHECKING:
     from loom.core.persistence.stores import StoreKey
-    from loom.core.uow.coordinator import InvocationOutcome
+    from loom.core.stores.uow.coordinator import InvocationOutcome
 
 
 class ForeignSessionError(SystemError):

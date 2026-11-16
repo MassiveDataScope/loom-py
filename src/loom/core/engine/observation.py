@@ -24,9 +24,9 @@ from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
 from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import LoggerPort
+from loom.core.stores.uow.coordinator import InvocationOutcome
+from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
-from loom.core.uow.coordinator import InvocationOutcome
-from loom.core.uow.scope import InvocationScope
 
 ResultT = TypeVar("ResultT")
 

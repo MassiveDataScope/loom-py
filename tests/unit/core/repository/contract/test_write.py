@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from loom.core.errors import Conflict
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     Creatable,
     Deletable,
     FilterGroup,

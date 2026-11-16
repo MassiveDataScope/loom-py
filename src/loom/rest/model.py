@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, get_args, get_origin
 
-from loom.core.repository.abc.query import PaginationMode
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.use_case import UseCase
 

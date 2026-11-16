@@ -7,9 +7,9 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all
 from loom.core.command import Command
 from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
 from tests.unit.core.conftest import SessionManagerFactory
 
 

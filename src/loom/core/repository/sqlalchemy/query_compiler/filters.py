@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import and_, or_
 from sqlalchemy.sql.expression import ClauseElement
 
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
 from loom.core.repository.sqlalchemy.query_compiler.subquery import (
@@ -16,6 +15,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_not_exists,
 )
 from loom.core.repository.sqlalchemy.values import to_comparison_value
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {

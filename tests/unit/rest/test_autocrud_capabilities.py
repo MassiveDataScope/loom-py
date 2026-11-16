@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import loom.core.repository as repository_package
+import loom.core.stores.repository as repository_package
 from loom.composition import AppConfig
 from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
@@ -26,9 +26,9 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc import BulkCreatable, Creatable, Listable, OnConflict, Readable
-from loom.core.repository.registration import classify_key
-from loom.core.repository.registry import repository_for
+from loom.core.stores.repository import BulkCreatable, Creatable, Listable, OnConflict, Readable
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.repository.registry import repository_for
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.registry import model_entity_key

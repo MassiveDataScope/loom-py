@@ -176,7 +176,7 @@ class CreateAddressUseCase(UseCase[Address, Address]):
 Build explicit queries without raw SQL:
 
 ```python
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository.query import (
     FilterGroup, FilterOp, FilterSpec, PageResult, PaginationMode, QuerySpec, SortSpec,
 )
 

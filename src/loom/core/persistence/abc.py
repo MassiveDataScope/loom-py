@@ -19,7 +19,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.stores.uow.abc import UnitOfWorkFactory
 
 if TYPE_CHECKING:
     from loom.core.persistence.elevation import StoreElevation

@@ -152,8 +152,9 @@ class TestPersistencePackageImport:
             "sys.modules['sqlalchemy'] = None\n"
             "sys.modules['boto3'] = None\n"
             "import loom.core.persistence\n"
-            "assert not [m for m in sys.modules if m.startswith('loom.core.repository')], "
-            "sorted(m for m in sys.modules if m.startswith('loom.core.repository'))\n"
+            "adapters = ('loom.core.repository', 'loom.stores')\n"
+            "leaked = sorted(m for m in sys.modules if m.startswith(adapters))\n"
+            "assert not leaked, leaked\n"
         )
         env = {**os.environ, "PYTHONPATH": str(_SRC)}
         result = subprocess.run(

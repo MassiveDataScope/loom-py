@@ -10,7 +10,7 @@ import msgspec
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
-from loom.core.repository.record import RecordLayout
+from loom.core.stores.repository.record import RecordLayout
 from loom.rest.autocrud import _derive_create_struct
 
 

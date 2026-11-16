@@ -26,9 +26,9 @@ from typing import Any, ClassVar
 
 from loom.core.errors import UnsupportedQuery
 from loom.core.model.introspection import get_column_fields
-from loom.core.repository.abc.cursor import Cursor
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.mongo.values import to_storage_value
+from loom.core.stores.repository.cursor import Cursor
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, SortSpec
 
 MongoFilter = dict[str, Any]
 MongoSort = list[tuple[str, int]]

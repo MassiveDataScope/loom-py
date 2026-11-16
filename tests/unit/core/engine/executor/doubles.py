@@ -24,11 +24,11 @@ from loom.core.identity import Identity, current_caller, current_identity
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.registration import classify_key
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import Participant
-from loom.core.uow.scope import Frame, InvocationScope, current_scope
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import Participant
+from loom.core.stores.uow.scope import Frame, InvocationScope, current_scope
 from loom.core.use_case import Joined
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds

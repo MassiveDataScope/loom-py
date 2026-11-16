@@ -5,7 +5,8 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.core.repository.abc import (
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.core.stores.repository import (
     CursorCodec,
     FilterGroup,
     FilterOp,
@@ -16,7 +17,6 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.testing import RepositoryIntegrationHarness, ScenarioDict
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview

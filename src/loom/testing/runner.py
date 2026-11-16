@@ -23,7 +23,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.execution import current_execution, execution_identity
 from loom.core.identity import Identity
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")

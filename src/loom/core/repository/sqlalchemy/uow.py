@@ -5,7 +5,7 @@ to provide a single, atomic transaction scope per UseCase execution.
 
 :meth:`SQLAlchemyUnitOfWork.begin` opens an ``AsyncSession`` from the
 ``SessionManager``. The unit of work is a participant of an invocation scope
-(:mod:`loom.core.uow.scope`): repositories, ``@transactional`` and
+(:mod:`loom.core.stores.uow.scope`): repositories, ``@transactional`` and
 :attr:`~loom.core.repository.sqlalchemy.session_manager.SessionManager.active_session`
 find its :attr:`~SQLAlchemyUnitOfWork.session` through the scope, never
 through a context variable of their own.
@@ -34,9 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
-from loom.core.uow.abc import UnitOfWork, UowEvent
-from loom.core.uow.alone import EntersAlone
-from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
+from loom.core.stores.uow.abc import UnitOfWork, UowEvent
+from loom.core.stores.uow.alone import EntersAlone
+from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore
 
 _log = get_logger(__name__).bind(component="uow")
 

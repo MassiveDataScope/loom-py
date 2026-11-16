@@ -13,7 +13,7 @@ from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer
 from loom.core.di.errors import DependencyUnresolvable
 from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, GraphAnalysis, KeyNode
-from loom.core.repository.abc import Listable, RepoFor
+from loom.core.stores.repository import Listable, RepoFor
 from loom.core.use_case import UnservedModelError, UseCase
 from tests.helpers.composition import Serving
 from tests.unit.composition.phases.components import (

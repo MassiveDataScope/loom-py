@@ -20,8 +20,8 @@ from loom.core.execution import (
 )
 from loom.core.identity import Identity, current_caller
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.uow.coordinator import Coordinator
-from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.stores.uow.coordinator import Coordinator
+from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP
 
 if TYPE_CHECKING:

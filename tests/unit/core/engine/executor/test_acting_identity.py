@@ -28,8 +28,8 @@ from loom.core.execution import ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity, current_caller, current_identity
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.service import InlineJobService
+from loom.core.stores.uow.scope import current_scope
 from loom.core.tracing import active_trace_id
-from loom.core.uow.scope import current_scope
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as

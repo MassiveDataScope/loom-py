@@ -7,8 +7,8 @@ import pytest
 
 from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import OnConflict
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.stores.repository import OnConflict
 
 from .conftest import FakeClient, Product, ProductCreate, ProductUpdate
 

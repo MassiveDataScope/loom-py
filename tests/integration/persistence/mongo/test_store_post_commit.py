@@ -23,14 +23,14 @@ from loom.core.errors import StoresNotCommitted
 from loom.core.job.context import add_pending_dispatch
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import UseCase
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]

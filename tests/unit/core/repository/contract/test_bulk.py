@@ -6,7 +6,7 @@ import msgspec
 import pytest
 
 from loom.core.errors import Conflict
-from loom.core.repository.abc import BulkCreatable, Countable, OnConflict, Readable
+from loom.core.stores.repository import BulkCreatable, Countable, OnConflict, Readable
 
 from .conftest import SEED, BackendCase, require
 

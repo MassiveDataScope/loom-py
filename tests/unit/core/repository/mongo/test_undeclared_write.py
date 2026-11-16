@@ -16,11 +16,11 @@ from pymongo import AsyncMongoClient
 from loom.core.command import Command
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import MongoCollection, RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, invocation
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article

@@ -12,7 +12,7 @@ from loom.celery.adapter import CeleryAdapter  # noqa: E402
 from loom.composition import AppConfig, compose_application  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
-from loom.core.uow.abc import UnitOfWorkFactory  # noqa: E402
+from loom.core.stores.uow.abc import UnitOfWorkFactory  # noqa: E402
 from tests.helpers.composition import composition_source, uow_factory  # noqa: E402
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"

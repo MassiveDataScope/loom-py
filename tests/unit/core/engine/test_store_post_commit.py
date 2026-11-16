@@ -32,13 +32,13 @@ from loom.core.job.context import (
 )
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
-from loom.core.uow.scope import current_scope, unscoped
+from loom.core.stores.repository import CursorCodec, RepoFor
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import CommitUncertain, OrderedCommits
+from loom.core.stores.uow.scope import current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
 from tests.unit.core.cache._doubles import CountingCacheBackend

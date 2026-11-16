@@ -19,10 +19,10 @@ from loom.core.command import Command
 from loom.core.errors import BoundaryValidationError
 from loom.core.model import BaseModel, ColumnField, ColumnType, Postgres, String
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 
 pytestmark = pytest.mark.integration
 

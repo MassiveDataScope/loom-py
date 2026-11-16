@@ -20,8 +20,8 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, InvocationScope, invocation
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
 
 from .mongo._fake import FakeMongoClient
 

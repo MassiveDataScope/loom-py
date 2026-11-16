@@ -77,8 +77,8 @@ class ConfigPingInterface(RestInterface[str]):
 _CACHED_MODEL_SOURCE = '''
 
 from loom.core.cache import cached
-from loom.core.repository import RepositoryBuildContext, repository_for
-from loom.core.repository.abc import CursorCodec
+from loom.core.stores.repository import RepositoryBuildContext, repository_for
+from loom.core.stores.repository import CursorCodec
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy, SessionManager
 from tests.unit.rest._fixture_app import CACHED_READS
 

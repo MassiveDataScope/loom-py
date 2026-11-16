@@ -46,8 +46,15 @@ from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.persistence.stores import store_of
 from loom.core.projection.loaders import resolve_model_reference
-from loom.core.repository import FilterParams, MutationEvent, PageParams, PageResult, Repository
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository import (
+    FilterParams,
+    MutationEvent,
+    PageParams,
+    PageResult,
+    Repository,
+)
+from loom.core.stores.repository.capabilities import BulkCreatable, OnConflict
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterGroup,
     FilterOp,
@@ -55,9 +62,8 @@ from loom.core.repository.abc.query import (
     PaginationMode,
     QuerySpec,
 )
-from loom.core.repository.abc.repo_for import BulkCreatable, OnConflict
-from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
-from loom.core.repository.abc.session_scope import (
+from loom.core.stores.repository.repository import CreateT, IdT, OutputT, UpdateT
+from loom.core.stores.repository.session_scope import (
     SupportsCacheScope,
     SupportsCallerScopedSession,
 )
@@ -181,7 +187,7 @@ class CachedRepository(
 
     The cached list path reloads the entities missing from a warm index with a
     single ``<primary key> IN (...)`` query, so the wrapped repository should
-    support :attr:`~loom.core.repository.abc.query.FilterOp.IN` on the primary
+    support :attr:`~loom.core.stores.repository.query.FilterOp.IN` on the primary
     key; a repository whose ``allowed_filter_fields`` excludes the primary key
     is detected and served with per-id reads instead, and so is a model with a
     composite primary key, which a filter on one field cannot match.  The key
@@ -277,7 +283,7 @@ class CachedRepository(
         """The caller's scope every cache key carries; ``""`` when unscoped.
 
         Forwards the wrapped repository's
-        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
+        :class:`~loom.core.stores.repository.session_scope.SupportsCacheScope`,
         so a wrapper around this one keys its entries by the same scope.  Read
         once per cache operation, and every key of that operation is built
         from the value read.  The scope stays out of the dependency tags: a
@@ -296,7 +302,7 @@ class CachedRepository(
         """Whether the wrapped repository reports a session owned by the caller.
 
         Implements
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`
         by forwarding it, so a wrapper around this one stays out of the
         caller's transaction too.  A repository that does not declare the
         capability is taken to own the scope of its own reads.
@@ -1282,7 +1288,7 @@ def _require_reported_scope(repository: object) -> None:
     """Refuse a repository whose sessions carry settings but which reports no cache scope.
 
     Every cache key carries the scope the wrapped repository reports through
-    :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`; a
+    :class:`~loom.core.stores.repository.session_scope.SupportsCacheScope`; a
     repository whose ``session_manager`` applies session settings but reports
     none would key every caller under ``""``, so it is refused.  A wrapper
     exposing neither ``cache_scope`` nor ``session_manager`` is not detected.

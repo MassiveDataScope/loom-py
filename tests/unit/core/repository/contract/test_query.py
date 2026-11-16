@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     FilterGroup,
     FilterOp,
     FilterSpec,

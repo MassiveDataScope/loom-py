@@ -10,7 +10,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.errors import UnsupportedQuery
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
     CursorConfig,

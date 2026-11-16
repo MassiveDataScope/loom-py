@@ -44,7 +44,10 @@ from loom.core.model.introspection import (
     get_id_attributes,
     get_table_name,
 )
-from loom.core.repository.abc import (
+from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
+from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
+from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
+from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
     Creatable,
@@ -69,11 +72,8 @@ from loom.core.repository.abc import (
     Updatable,
     build_page_result,
 )
-from loom.core.repository.abc.cursor import require_cursor_sort
-from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
-from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
-from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
-from loom.core.repository.record import RecordLayout
+from loom.core.stores.repository.cursor import require_cursor_sort
+from loom.core.stores.repository.record import RecordLayout
 
 Document = dict[str, Any]
 SessionProvider = Callable[[bool], AsyncClientSession | None]
@@ -257,7 +257,7 @@ class RepositoryMongo(
         driver call autocommits on its own.
 
         Implements
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`.
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`.
 
         Returns:
             ``True`` when a caller-scoped session is bound to the context.

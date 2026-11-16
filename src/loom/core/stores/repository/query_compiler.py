@@ -1,7 +1,7 @@
 """Backend-neutral contract for compiling :class:`QuerySpec` parts.
 
-Each persistence backend compiles :class:`~loom.core.repository.abc.query.FilterGroup`
-and :class:`~loom.core.repository.abc.query.SortSpec` into its own native
+Each persistence backend compiles :class:`~loom.core.stores.repository.query.FilterGroup`
+and :class:`~loom.core.stores.repository.query.SortSpec` into its own native
 expression types; the protocol fixes the entry points and the error contract
 so repositories can be written against a compiler instead of a backend.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeVar
 
-from loom.core.repository.abc.query import FilterGroup, SortSpec
+from loom.core.stores.repository.query import FilterGroup, SortSpec
 
 FilterT_co = TypeVar("FilterT_co", covariant=True)
 SortT_co = TypeVar("SortT_co", covariant=True)

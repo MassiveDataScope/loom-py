@@ -34,7 +34,7 @@ from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
 from loom.core.persistence.stores import store_of
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     BulkCreatable,
     Creatable,
     Deletable,
@@ -44,9 +44,9 @@ from loom.core.repository.abc import (
     Readable,
     Updatable,
 )
-from loom.core.repository.record import RecordLayout
-from loom.core.uow.coordinator import Participant
-from loom.core.uow.scope import InvocationScope, current_scope
+from loom.core.stores.repository.record import RecordLayout
+from loom.core.stores.uow.coordinator import Participant
+from loom.core.stores.uow.scope import InvocationScope, current_scope
 
 _ResultT = TypeVar("_ResultT")
 

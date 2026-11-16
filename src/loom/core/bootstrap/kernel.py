@@ -26,8 +26,8 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.repository.registration import classify_key
-from loom.core.uow.coordinator import Coordinator
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.kinds import declare_kinds
@@ -222,7 +222,7 @@ class KernelRecipe:
         """Return a new container that reads constructors as loom builds a use case.
 
         Annotations are classified with
-        :func:`~loom.core.repository.registration.classify_key`, a use case
+        :func:`~loom.core.stores.repository.registration.classify_key`, a use case
         built through ``UseCase.__init__`` gets its main repository
         (:func:`~loom.core.use_case.factory.main_repository`), and the kinds
         are declared (:func:`~loom.core.use_case.kinds.declare_kinds`) before

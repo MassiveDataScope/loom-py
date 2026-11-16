@@ -29,9 +29,9 @@ from loom.core.errors import (
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.alone import single_store
-from loom.core.uow.coordinator import (
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.alone import single_store
+from loom.core.stores.uow.coordinator import (
     Committed,
     InvocationOutcome,
     NonTransactional,
@@ -39,7 +39,7 @@ from loom.core.uow.coordinator import (
     RolledBack,
     Uncertain,
 )
-from loom.core.uow.scope import (
+from loom.core.stores.uow.scope import (
     Frame,
     InvocationScope,
     current_handle,

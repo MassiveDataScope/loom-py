@@ -4,7 +4,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 import msgspec
 
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterParams,
     PageParams,
@@ -87,14 +87,14 @@ class RepositoryRead(Protocol[OutputT, IdT]):
         profile: str = "default",
     ) -> PageResult[OutputT] | CursorResult[OutputT]:
         """Fetch entities using a structured
-        :class:`~loom.core.repository.abc.query.QuerySpec`.
+        :class:`~loom.core.stores.repository.query.QuerySpec`.
 
         Supports both offset and cursor pagination, structured filters, and
         explicit sort directives.  The concrete return type depends on
         ``query.pagination``:
 
-        - ``PaginationMode.OFFSET`` → :class:`~loom.core.repository.abc.query.PageResult`
-        - ``PaginationMode.CURSOR`` → :class:`~loom.core.repository.abc.query.CursorResult`
+        - ``PaginationMode.OFFSET`` → :class:`~loom.core.stores.repository.query.PageResult`
+        - ``PaginationMode.CURSOR`` → :class:`~loom.core.stores.repository.query.CursorResult`
 
         Args:
             query: Structured query specification.

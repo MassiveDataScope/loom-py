@@ -14,7 +14,7 @@ logged. A check returns a :class:`Finding` when the configuration is unsafe,
 
 A check registers when the module defining it is imported. loom's own checks
 live in packages the entry points import anyway (``loom.core.logger``,
-``loom.core.repository.abc`` and ``loom.rest``); an application lists the
+``loom.core.stores.repository`` and ``loom.rest``); an application lists the
 modules holding its checks under ``checks.modules``, which every run imports
 first, so the same checks run at startup and in ``loom check --deploy``.
 

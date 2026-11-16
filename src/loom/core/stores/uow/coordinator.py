@@ -41,7 +41,7 @@ from loom.core._async import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
 
 _log = get_logger(__name__).bind(component="uow")
 

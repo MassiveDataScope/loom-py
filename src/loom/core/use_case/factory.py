@@ -16,7 +16,7 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import BINDING_REFUSALS, ClassNode, DependencyGraphError
 from loom.core.di.introspection import Constructor, RepoDependency, no_implicit_dependencies
-from loom.core.repository.registration import classify_key, is_standard_capability
+from loom.core.stores.repository.registration import classify_key, is_standard_capability
 from loom.core.use_case.errors import UnservedModelError
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.use_case import UseCase
@@ -88,7 +88,7 @@ class UseCaseFactory:
     Attributes:
         graph: The container's dependency graph, read as loom reads a use
             case or a job: constructor annotations classified with
-            :func:`~loom.core.repository.registration.classify_key`, a use
+            :func:`~loom.core.stores.repository.registration.classify_key`, a use
             case's main repository included (:func:`main_repository`).
     """
 

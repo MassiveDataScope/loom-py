@@ -12,7 +12,7 @@ import msgspec
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository import PageParams
+from loom.core.stores.repository import PageParams
 
 from ._doubles import AcmeCacheWidget, CachedEnv, CountingRepository, wrap_with_cache
 

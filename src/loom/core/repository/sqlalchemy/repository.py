@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.errors import ForeignSessionError
 from loom.core.logger import get_logger
-from loom.core.repository.abc import (
+from loom.core.repository.sqlalchemy.mixins import (
+    SQLAlchemyBulkCreateMixin,
+    SQLAlchemyCreateMixin,
+    SQLAlchemyDeleteMixin,
+    SQLAlchemyReadMixin,
+    SQLAlchemyUpdateMixin,
+)
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
+from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
     Creatable,
@@ -21,15 +29,7 @@ from loom.core.repository.abc import (
     Readable,
     Updatable,
 )
-from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.mixins import (
-    SQLAlchemyBulkCreateMixin,
-    SQLAlchemyCreateMixin,
-    SQLAlchemyDeleteMixin,
-    SQLAlchemyReadMixin,
-    SQLAlchemyUpdateMixin,
-)
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
+from loom.core.stores.repository.mutation import MutationEvent
 
 R = TypeVar("R")
 
@@ -132,7 +132,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]
         would open and close a session of its own for the call.
 
         Implements
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`.
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`.
 
         Returns:
             ``True`` when the store's participant holds a session.

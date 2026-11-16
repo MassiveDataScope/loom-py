@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from loom.core.repository.abc import Countable, Readable
+from loom.core.stores.repository import Countable, Readable
 
 from .conftest import SEED, BackendCase, OrderStatus, require
 

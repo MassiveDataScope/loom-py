@@ -49,7 +49,7 @@ from loom.core.config.keys import ConfigKey
 from loom.core.environment import Environment, configured_variable, resolve_environment
 from loom.core.errors import UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
-from loom.core.repository.abc.query import FilterSpec, QuerySpec
+from loom.core.stores.repository.query import FilterSpec, QuerySpec
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext

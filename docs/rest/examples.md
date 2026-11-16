@@ -171,8 +171,8 @@ from typing import Protocol
 
 import msgspec
 
-from loom.core.repository import repository_for
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import repository_for
+from loom.core.stores.repository import RepoFor
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
 
 
@@ -204,7 +204,7 @@ want the usual REST `camelCase` output.
 ```python
 from typing import Protocol
 
-from loom.core.repository import repository_for
+from loom.core.stores.repository import repository_for
 from loom.core.response import Response
 from loom.core.use_case.use_case import UseCase
 
@@ -254,8 +254,8 @@ Conceptually, the current SQLAlchemy fallback is:
 ```python
 from dataclasses import dataclass
 
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import CursorCodec
+from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
+from loom.core.stores.repository import CursorCodec
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -288,7 +288,7 @@ repository while keeping `UseCase[Model, Result]` unchanged:
 ```python
 from dataclasses import dataclass
 
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
+from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 
 
 @dataclass(frozen=True)
@@ -318,7 +318,7 @@ For per-model overrides that need extra dependencies, use `builder=` on
 from dataclasses import dataclass
 
 from loom.core.di.scope import Scope
-from loom.core.repository import RepositoryBuildContext, repository_for
+from loom.core.stores.repository import RepositoryBuildContext, repository_for
 from loom.core.response import Response
 
 

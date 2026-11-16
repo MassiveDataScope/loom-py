@@ -13,10 +13,10 @@ from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 
 import loom.core.repository.mongo.uow as uow_module
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import (
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import (
     InvocationOutcome,
     OrderedCommits,
     Participant,
@@ -24,7 +24,7 @@ from loom.core.uow.coordinator import (
     RolledBack,
     Uncertain,
 )
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.scope import current_scope
 
 from ._fake import FakeMongoClient
 from .conftest import Article

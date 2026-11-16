@@ -51,8 +51,8 @@ from loom.core.errors import UnsupportedBoundaryType
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.repository.abc.cursor import cursor_carries
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.cursor import cursor_carries
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam

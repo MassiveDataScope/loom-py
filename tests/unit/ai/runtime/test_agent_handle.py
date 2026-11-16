@@ -38,8 +38,8 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import msgspec_type
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.registration import classify_key
 from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Agent, Caller, Input, UseCase
 from loom.core.use_case.factory import main_repository
 from tests.integration.ai.conftest import (

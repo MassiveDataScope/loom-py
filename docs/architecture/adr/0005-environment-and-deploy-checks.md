@@ -407,7 +407,7 @@ When #371 rebases on this branch it must also:
   sections.
 
 **Resolved by ADR 0004 / #371.** The items above are done: `loom.cursors.E001`
-is registered in `loom.core.repository.abc.checks` and `loom check --deploy`
+is registered in `loom.core.stores.repository.checks` and `loom check --deploy`
 imports that package; the four tests sign their cursors with a configured
 key; the cursor key variables are `CURSOR_KEY_*` and are read through
 `loom.core.environment.configured_variable`, which the AI providers'

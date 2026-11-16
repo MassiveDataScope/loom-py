@@ -28,8 +28,8 @@ from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
     install_session_settings,
 )
+from loom.core.stores.uow.scope import current_handle
 from loom.core.tracing import get_trace_id
-from loom.core.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(module="session_manager")
 

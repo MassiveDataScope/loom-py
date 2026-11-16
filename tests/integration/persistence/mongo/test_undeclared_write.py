@@ -23,11 +23,16 @@ from pymongo.monitoring import (
 
 from loom.core.errors import ForeignSessionError, UndeclaredStoreWrite
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, RolledBack, StoreOutcome
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import (
+    InvocationOutcome,
+    OrderedCommits,
+    RolledBack,
+    StoreOutcome,
+)
+from loom.core.stores.uow.scope import Frame, invocation
 from tests.unit.core.repository.contract.conftest import AcmeContractOrder, CreateOrder, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]

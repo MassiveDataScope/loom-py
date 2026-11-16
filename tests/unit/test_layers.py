@@ -44,7 +44,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.core.engine",
             "loom.core.di",
             "loom.core.use_case",
-            "loom.core.uow",
+            "loom.core.stores.uow",
             "opentelemetry",
         ),
         (),
@@ -55,7 +55,10 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (),
     ),
     # The container reads keys through an injected classifier, never the packages above it.
-    "loom.core.di": (("loom.core.repository", "loom.core.use_case", "loom.ai"), ()),
+    "loom.core.di": (
+        ("loom.core.stores", "loom.core.repository", "loom.core.use_case", "loom.ai"),
+        (),
+    ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
     "loom.rest": (("loom.serverless",), ()),
     # A job backend raises its own errors; the composition root maps them.

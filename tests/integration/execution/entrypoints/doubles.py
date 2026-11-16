@@ -19,7 +19,7 @@ from loom.core.identity import (
     current_identity,
 )
 from loom.core.job.job import Job
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Caller

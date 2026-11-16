@@ -99,7 +99,7 @@ def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
 def _load_check_packages() -> None:
     """Import the packages registering loom's checks; the REST ones need the rest extra."""
     importlib.import_module("loom.core.logger")
-    importlib.import_module("loom.core.repository.abc")
+    importlib.import_module("loom.core.stores.repository")
     importlib.import_module("loom.core.persistence.audit_checks")
     if importlib.util.find_spec("fastapi") is not None:
         importlib.import_module("loom.rest")

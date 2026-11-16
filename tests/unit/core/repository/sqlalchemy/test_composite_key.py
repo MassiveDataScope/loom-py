@@ -6,19 +6,19 @@ from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import PageParams
-from loom.core.repository.abc import (
+from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
     CursorResult,
+    PageParams,
     PaginationMode,
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository.mutation import MutationEvent
 from tests.unit.core.conftest import SessionManagerFactory
 
 _Key = tuple[int, int]

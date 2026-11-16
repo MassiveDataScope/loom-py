@@ -10,7 +10,7 @@ from loom.core.discovery._utils import _append_unique, collect_use_cases_from_in
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
-from loom.core.repository.abc import Repository
+from loom.core.stores.repository import Repository
 from loom.core.use_case.use_case import UseCase
 
 if TYPE_CHECKING:

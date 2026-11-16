@@ -19,7 +19,7 @@ from loom.core.persistence.stores import StoreKey
 
 if TYPE_CHECKING:
     from loom.core.persistence.stores import StoreCatalog
-    from loom.core.repository.abc import CursorCodec
+    from loom.core.stores.repository import CursorCodec
 
 
 @dataclass(frozen=True)

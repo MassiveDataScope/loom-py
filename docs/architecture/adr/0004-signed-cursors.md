@@ -149,7 +149,7 @@ at startup without a key, with a `ConfigError` that names the
 A deploy check, `loom.cursors.E001`, registered with `@deploy_check` from
 the deploy-check registry of ADR 0005, refuses a deployment that serves
 repositories without signing its cursors with a configured key. It lives in
-`loom.core.repository.abc.checks`, which `loom.core.repository.abc` imports,
+`loom.core.stores.repository.checks`, which `loom.core.stores.repository` imports,
 and `loom check --deploy` imports that package. It applies when the
 configuration has a `database` section (SQLAlchemy, and the Celery worker)
 or a `persistence.mongo` section, and finds:

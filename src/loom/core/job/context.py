@@ -23,7 +23,7 @@ from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
 from loom.core.execution import execution_ended
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.scope import current_scope
 
 _fallback: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_pending_dispatches", default=None

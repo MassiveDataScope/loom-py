@@ -18,9 +18,9 @@ import pytest
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache._batching import COUNTER_BATCH_SIZE, REFILL_BATCH_SIZE
 from loom.core.cache.keys import entity_key, stable_hash
-from loom.core.repository import PageParams, PageResult
-from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
-from loom.core.repository.mutation import MutationEvent
+from loom.core.stores.repository import PageParams, PageResult
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.repository.query import FilterOp, PaginationMode, QuerySpec
 
 from ._doubles import (
     AcmeCacheWidget,

@@ -10,7 +10,7 @@ from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
 from tests.helpers.composition import composition_source, uow_factory

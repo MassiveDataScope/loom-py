@@ -26,9 +26,9 @@ from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import current_handle
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import current_handle
 
 from ...repository.mongo._fake import FakeMongoClient
 from .._lifecycle_doubles import Broker, Log, Metrics, start_hanging

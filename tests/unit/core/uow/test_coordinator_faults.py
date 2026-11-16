@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import pytest
 
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.coordinator import (
+from loom.core.stores.uow.coordinator import (
     Committed,
     InvocationOutcome,
     NonTransactional,

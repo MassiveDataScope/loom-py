@@ -16,7 +16,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     CURSOR_SIGNING_CHECK,
     Cursor,
     CursorCodec,
@@ -27,7 +27,7 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.abc.cursor import register_cursor_codec
+from loom.core.stores.repository.cursor import register_cursor_codec
 
 _BACKEND = "sqlalchemy"
 _MODEL = "billing.Invoice"

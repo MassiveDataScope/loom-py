@@ -22,7 +22,16 @@ from loom.core.model.introspection import (
     get_table_name,
     scalar_column_annotations,
 )
-from loom.core.repository.abc import (
+from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
+from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
+from loom.core.repository.sqlalchemy.transactional import record_mutation
+from loom.core.repository.sqlalchemy.values import (
+    check_time_offsets,
+    is_json_column,
+    to_comparison_value,
+)
+from loom.core.stores.repository import (
     CursorCodec,
     CursorResult,
     FilterParams,
@@ -35,17 +44,8 @@ from loom.core.repository.abc import (
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.record import RecordLayout
-from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
-from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
-from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
-from loom.core.repository.sqlalchemy.transactional import record_mutation
-from loom.core.repository.sqlalchemy.values import (
-    check_time_offsets,
-    is_json_column,
-    to_comparison_value,
-)
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.repository.record import RecordLayout
 
 if TYPE_CHECKING:
     from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -589,7 +589,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         profile: str = "default",
     ) -> PageResult[OutputT] | CursorResult[OutputT]:
         """Fetch entities using a structured
-        :class:`~loom.core.repository.abc.query.QuerySpec`.
+        :class:`~loom.core.stores.repository.query.QuerySpec`.
 
         Supports offset and cursor pagination, structured filters, and
         explicit sort directives.
@@ -599,8 +599,8 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
             profile: Loading profile name for eager-load options.
 
         Returns:
-            :class:`~loom.core.repository.abc.query.PageResult` for offset
-            queries, :class:`~loom.core.repository.abc.query.CursorResult`
+            :class:`~loom.core.stores.repository.query.PageResult` for offset
+            queries, :class:`~loom.core.stores.repository.query.CursorResult`
             for cursor queries.
         """
         async with self._session_scope(write=False) as scoped_session:
@@ -637,7 +637,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
     def cache_scope(self) -> str:
         """Every session setting the caller's transactions start with; ``""`` when none.
 
-        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        Implements :class:`~loom.core.stores.repository.session_scope.SupportsCacheScope`.
         A row-level policy may read any setting, not only ``loom.scope.*``, so
         all of them partition the cache; the ``loom.scope.*`` ones are among
         them, so this tells apart every caller the cursor tokens do.

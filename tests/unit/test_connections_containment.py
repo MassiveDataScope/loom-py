@@ -131,7 +131,7 @@ class TestConnectionsContainment:
             "import json, sys\n"
             "import loom.core.config\n"
             "print(json.dumps(sorted(m for m in sys.modules if m.startswith("
-            "('loom.core.persistence', 'loom.core.uow', 'loom.core.di')))))\n"
+            "('loom.core.persistence', 'loom.core.stores.uow', 'loom.core.di')))))\n"
         )
         result = subprocess.run(
             [sys.executable, "-s", "-c", script],

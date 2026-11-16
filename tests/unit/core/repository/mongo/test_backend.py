@@ -20,12 +20,12 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import PersistenceWiring, resolve_backend
 from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.persistence.stores import StoreKey
-from loom.core.repository.abc import Creatable
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.repository import Creatable
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, invocation
 from tests.helpers.persistence import build_backend
 
 from ._fake import FakeMongoClient

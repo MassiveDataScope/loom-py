@@ -1,7 +1,7 @@
 """Persistence backend plugins: contract, registry and the ``none`` backend.
 
 This package imports no concrete backend; SQLAlchemy, DynamoDB and the rest
-live under ``loom.core.repository`` and are reached only through their entry
+live under ``loom.stores`` and are reached only through their entry
 points.
 """
 

@@ -22,7 +22,7 @@ import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache.result_codec import to_payload
-from loom.core.repository import FilterParams, PageParams, PageResult
+from loom.core.stores.repository import FilterParams, PageParams, PageResult
 
 from ._doubles import CountingCacheBackend
 

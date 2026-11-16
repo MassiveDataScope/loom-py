@@ -59,7 +59,9 @@ class TestAutoImportsNoRepositoryBackend:
         self,
     ) -> None:
         leaked = {
-            m for m in _imported_modules(_AUTO_SOURCE) if m.startswith("loom.core.repository")
+            m
+            for m in _imported_modules(_AUTO_SOURCE)
+            if m.startswith(("loom.core.repository", "loom.stores"))
         }
 
         assert leaked == set()

@@ -18,7 +18,7 @@ from typing import Any, Protocol, TypeVar
 
 import msgspec
 
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterParams,
     PageParams,

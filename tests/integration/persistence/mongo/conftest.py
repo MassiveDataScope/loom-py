@@ -29,10 +29,10 @@ from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
-from loom.core.repository.registration import capabilities_of
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.registration import capabilities_of
 from tests.unit.core.repository.contract import conftest as contract
 from tests.unit.core.repository.contract.conftest import AcmeContractOrder, BackendCase
 

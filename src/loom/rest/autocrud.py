@@ -28,10 +28,16 @@ import msgspec
 from loom.core.command import Command
 from loom.core.errors import NotFound
 from loom.core.model.introspection import get_column_fields, get_id_attributes
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
-from loom.core.repository.abc.repo_for import Creatable, Deletable, Listable, Readable, Updatable
-from loom.core.repository.registration import capabilities_of
-from loom.core.repository.registry import get_repository_registration
+from loom.core.stores.repository.capabilities import (
+    Creatable,
+    Deletable,
+    Listable,
+    Readable,
+    Updatable,
+)
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.registration import capabilities_of
+from loom.core.stores.repository.registry import get_repository_registration
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.keys import get_use_case_key, set_use_case_key
 from loom.core.use_case.markers import Input
