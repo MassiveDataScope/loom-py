@@ -279,9 +279,7 @@ class CursorCodec:
                 configured under ``stores.settings.cursors``.
         """
         if codec is None:
-            raise UnsupportedQuery(
-                f"cursor pagination is not enabled: configure keys under {CURSORS_SECTION}"
-            )
+            raise UnsupportedQuery("cursor pagination is not enabled")
         return codec
 
     @property
