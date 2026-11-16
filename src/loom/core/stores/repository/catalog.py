@@ -15,14 +15,14 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class RepositoryCatalog:
-    """Resolves the repository bound for a model, or for a table name, at run time.
-
-    Inject the repository itself when the model is known when the component
-    is written; use the catalog only when the model is chosen at run time.
+    """Resolves the repository bound for a model, or for a table name.
 
     Args:
         container: Where the repositories are bound.
         models: The models each store serves.
+
+    Raises:
+        ValueError: When a store serves two models of one table.
     """
 
     def __init__(
@@ -35,7 +35,14 @@ class RepositoryCatalog:
         self._tables: dict[str, dict[StoreKey, type[BaseModel]]] = {}
         for store, served in models.items():
             for model in served:
-                self._tables.setdefault(get_table_name(model), {})[store] = model
+                table = get_table_name(model)
+                by_store = self._tables.setdefault(table, {})
+                if store in by_store:
+                    raise ValueError(
+                        f"Store {store!r} serves table {table!r} twice: "
+                        f"{by_store[store].__qualname__} and {model.__qualname__}"
+                    )
+                by_store[store] = model
 
     def __getitem__(self, model: type[ModelT]) -> RepoFor[ModelT]:
         """Return the repository bound for *model*.

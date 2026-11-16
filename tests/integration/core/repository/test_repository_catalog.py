@@ -39,12 +39,12 @@ class AcmeLedgerRefund(BaseModel):
     id: int = ColumnField(primary_key=True)
 
 
-class _Rows(Command, frozen=True):
+class AcmeRows(Command, frozen=True):
     table: str
     ids: tuple[int, ...]
 
 
-class _NewRow(Command, frozen=True):
+class AcmeNewRow(Command, frozen=True):
     id: int
 
 
@@ -54,19 +54,20 @@ class AcmeWriteRows(Job[int]):
     def __init__(self, catalog: RepositoryCatalog) -> None:
         self.catalog = catalog
 
-    async def execute(self, rows: _Rows = Input()) -> int:
+    async def execute(self, rows: AcmeRows = Input()) -> int:
         inserted = await self.catalog.for_table(rows.table).create_many(
-            [_NewRow(id=row_id) for row_id in rows.ids], on_conflict=OnConflict.IGNORE
+            [AcmeNewRow(id=row_id) for row_id in rows.ids], on_conflict=OnConflict.IGNORE
         )
         return len(inserted)
 
 
-def _row_ids(database: Path, table: str) -> list[int]:
-    with sqlite3.connect(database) as connection:
-        return [row_id for (row_id,) in connection.execute(f'SELECT id FROM "{table}" ORDER BY id')]
-
-
 class TestRepositoryCatalogJob:
+    @staticmethod
+    def row_ids(database: Path, table: str) -> list[int]:
+        with sqlite3.connect(database) as connection:
+            rows = connection.execute(f'SELECT id FROM "{table}" ORDER BY id')
+            return [row_id for (row_id,) in rows]
+
     @pytest.fixture
     def databases(self, tmp_path: Path) -> tuple[Path, Path]:
         return tmp_path / "default.db", tmp_path / "ledger.db"
@@ -105,5 +106,5 @@ class TestRepositoryCatalogJob:
 
         _, ledger = databases
         assert (first, second, other) == (2, 1, 1)
-        assert _row_ids(ledger, "catalog_flow_orders") == [1, 2, 3]
-        assert _row_ids(ledger, "catalog_flow_refunds") == [9]
+        assert self.row_ids(ledger, "catalog_flow_orders") == [1, 2, 3]
+        assert self.row_ids(ledger, "catalog_flow_refunds") == [9]

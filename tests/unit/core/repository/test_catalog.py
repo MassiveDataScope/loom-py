@@ -6,6 +6,7 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
+from loom.core.model.introspection import get_table_name
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.repository.registry import RepositoryToken
@@ -13,6 +14,7 @@ from tests.unit.core.repository.conftest import (
     LEDGER,
     AcmeInvoice,
     AcmeOrder,
+    AcmeOrderCopy,
     AcmeSharedDefault,
     AcmeSharedLedger,
     AcmeUnserved,
@@ -84,3 +86,33 @@ class TestRepositoryCatalogForTable:
     ) -> None:
         with pytest.raises(KeyError, match=f"catalog_orders.*{DEFAULT_STORE}"):
             catalog.for_table("catalog_orders", store=DEFAULT_STORE)
+
+
+class TestRepositoryCatalogIndex:
+    def test_no_table_name_is_read_after_construction(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        container: LoomContainer,
+        served_models: dict[StoreKey, tuple[type[BaseModel], ...]],
+    ) -> None:
+        reads: list[type] = []
+
+        def spy(model: type) -> str:
+            reads.append(model)
+            return get_table_name(model)
+
+        monkeypatch.setattr("loom.core.stores.repository.catalog.get_table_name", spy)
+        catalog = RepositoryCatalog(container, served_models)
+        built = len(reads)
+
+        for _ in range(3):
+            catalog.for_table("catalog_orders")
+            catalog.for_table("catalog_shared", store=LEDGER)
+
+        assert (built, len(reads)) == (4, 4)
+
+    def test_a_store_serving_two_models_of_one_table_is_refused(
+        self, container: LoomContainer
+    ) -> None:
+        with pytest.raises(ValueError, match="ledger.*catalog_orders.*AcmeOrder.*AcmeOrderCopy"):
+            RepositoryCatalog(container, {LEDGER: (AcmeOrder, AcmeOrderCopy)})

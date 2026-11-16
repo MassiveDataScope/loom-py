@@ -40,6 +40,12 @@ class AcmeSharedLedger(BaseModel):
     id: int = ColumnField(primary_key=True)
 
 
+class AcmeOrderCopy(BaseModel):
+    __tablename__ = "catalog_orders"
+
+    id: int = ColumnField(primary_key=True)
+
+
 class AcmeUnserved(BaseModel):
     __tablename__ = "catalog_unserved"
 

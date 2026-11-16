@@ -327,9 +327,19 @@ container serves, so a test override is what comes back, and the index of
 table names is built once at composition.
 
 ```python
+from loom.core.command import Command
 from loom.core.job.job import Job
 from loom.core.stores.repository import OnConflict, RepositoryCatalog
 from loom.core.use_case import Input
+
+
+class AcmeNewRow(Command, frozen=True):
+    id: int
+
+
+class AcmeRows(Command, frozen=True):
+    table: str
+    items: tuple[AcmeNewRow, ...]
 
 
 class AcmeWriteRows(Job[int]):

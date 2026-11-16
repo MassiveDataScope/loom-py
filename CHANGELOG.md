@@ -2,8 +2,6 @@
 
 ## 💥 Breaking
 
-- **stores:** `RepoFor` now includes `BulkCreatable`. **Migration:** a
-  third-party repository typed as `RepoFor` must implement `create_many`.
 - **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
   `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
   **Migration:** import them from the new path; nothing is re-exported.
@@ -553,6 +551,10 @@
 
 ### stores
 
+- **stores:** `RepoFor` now includes `BulkCreatable`, whose
+  `create_many(data, *, on_conflict=OnConflict.ERROR)` the SQLAlchemy, Mongo
+  and DynamoDB repositories already implement. **Migration:** a third-party
+  repository typed as `RepoFor` must implement `create_many`.
 - **stores:** the store ports moved under `loom.core.stores`, with no
   re-exports left at the old paths. **Migration:** update the imports:
 
@@ -692,16 +694,6 @@
 
 
 ## ✨ Features
-
-### stores
-
-- **stores:** `RepositoryCatalog` (`loom.core.stores.repository`) is registered
-  by the composition, and its key is reserved. `catalog[Model]` returns the
-  repository bound for the model, an override included, and `KeyError` when no
-  store serves it; `catalog.for_table(table, store=None)` returns the one of a
-  `__tablename__`, raising `ValueError` naming the stores when two serve it
-  and `KeyError` when none does. For a model chosen at run time; otherwise
-  inject the repository.
 
 ### composition
 
@@ -876,6 +868,15 @@
   the harness; an adapter marker with no double fails closed.
 
 ### stores
+
+- **stores:** `RepositoryCatalog` (`loom.core.stores.repository`) looks up a
+  repository at run time and is registered by the composition, with its key
+  reserved. `catalog[Model]` returns the repository bound for the model, an
+  override included, and raises `KeyError` when no store serves it.
+  `catalog.for_table(table, store=None)` returns the repository of the model
+  stored in that table; it raises `ValueError` naming the stores when two
+  serve the table and `KeyError` when none does. Inject the repository
+  instead when the model is known where the component is written.
 
 - **stores:** `create_many(data, *, on_conflict=OnConflict.ERROR)` on the
   SQLAlchemy, Mongo and DynamoDB repositories (`OnConflict` from
