@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import threading
 import warnings
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeVar
@@ -69,6 +70,7 @@ class _Binding:
     instance: object = field(default=UNBUILT, repr=False)
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     refused: str | None = field(default=None, repr=False)
+    target: object = field(default=None, repr=False)
 
     def build(self, make: Supplier) -> object:
         """Return the instance, built once by *make* under :attr:`lock`, outside any execution."""
@@ -258,6 +260,66 @@ class LoomContainer:
         """
         with STRUCTURE_LOCK:
             self._bind(interface, lambda: instance, Scope.APPLICATION)
+
+    def register_alias(self, interface: BindingKey, target: BindingKey) -> None:
+        """Serve ``interface`` from whatever is bound under *target*.
+
+        The alias is served by *target*'s own supplier, so both keys return the
+        same instance, and a change of *target* reaches ``interface`` with it.
+
+        Args:
+            interface: The key that resolves through *target*.
+            target: The key whose binding serves it.
+
+        Raises:
+            ContainerSealed: When the container is sealed.
+        """
+        with STRUCTURE_LOCK:
+            self._bind(interface, lambda: self.resolve(target), Scope.APPLICATION)
+            self._bindings[interface].target = target
+
+    def is_alias_of(self, interface: BindingKey, target: BindingKey) -> bool:
+        """Return ``True`` when ``interface`` is an alias of *target*."""
+        binding = self._bindings.get(interface)
+        return binding is not None and binding.target == target
+
+    @contextmanager
+    def overriding(self, interface: BindingKey, instance: Any) -> Iterator[None]:
+        """Serve *instance* for an ``APPLICATION`` binding until the block exits.
+
+        The bound singleton is swapped for *instance* and put back on exit,
+        also when the block raises. Nothing is registered again: every key
+        that resolves through ``interface``, and every class plan, is
+        compiled again at its next use. A singleton already built from the
+        old value keeps it.
+
+        Args:
+            interface: The key of an ``APPLICATION`` binding, not an alias.
+            instance: What it serves meanwhile.
+
+        Raises:
+            ResolutionError: When ``interface`` is unbound, an alias, or not
+                ``APPLICATION`` scoped.
+        """
+        with STRUCTURE_LOCK:
+            binding = self._bindings.get(interface)
+            if (
+                binding is None
+                or binding.target is not None
+                or binding.scope is not Scope.APPLICATION
+            ):
+                raise ResolutionError(
+                    f"{describe_key(interface)} is not an APPLICATION binding that can be replaced"
+                )
+            previous = binding.instance
+            binding.instance = instance
+            self._drop_compiled()
+        try:
+            yield
+        finally:
+            with STRUCTURE_LOCK:
+                binding.instance = previous
+                self._drop_compiled()
 
     def resolve(self, interface: BindingKey) -> Any:
         """Return an instance bound to ``interface``.

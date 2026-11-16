@@ -326,8 +326,11 @@ class DependencyGraph:
                     constructor = self.reader.built_by_loom(cls)
                 case KeyNode(key):
                     binding = self.binding(key)
-                    provider = None if binding is None else binding.provider
-                    constructor = self.reader.dependencies(provider)
+                    if binding is not None and binding.target is not None:
+                        constructor = (("target", KeyDependency(binding.target)),)
+                    else:
+                        provider = None if binding is None else binding.provider
+                        constructor = self.reader.dependencies(provider)
             self._constructors[node] = constructor
         return constructor
 

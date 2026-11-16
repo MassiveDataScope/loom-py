@@ -17,8 +17,8 @@
   `loom.core.discovery.scanner.PackageScanner`. **Migration:** declare
   `app.packages: [acme]`; every model, use case, job, REST interface and
   `Installer` defined in those packages and their subpackages is found, in
-  module then qualified-name order. An entry must be a package (a directory
-  with `__init__.py`), not a single module. Replace a manifest `AGENTS` list
+  module then qualified-name order. An entry may also be a single module,
+  which is scanned on its own; a package is walked recursively. Replace a manifest `AGENTS` list
   with `app.agents: [globs]`.
 - **composition:** the `modules=` parameter is removed from `Project.compose`,
   `Project.serve`, `loom.composition.create_app`, `loom.rest.fastapi.auto.create_app`,
@@ -32,11 +32,13 @@
   plans, so an unimportable package is refused before a configuration the
   adapter would refuse (for instance a Lambda function serving an SQL
   endpoint).
-- **stores:** a model's repository has one source, `RepositoryToken(Model)`;
-  `RepoFor[Model]` and every other capability key resolve through it. Binding
-  a double to a capability key alone is refused with a `ConfigError` naming
-  `Override.repository`. `RepositoryCatalog.for_table` only sees models a
-  store serves.
+- **stores:** a model's repository has one binding, `RepositoryToken(Model)`,
+  an `APPLICATION` singleton built once as before. `RepoFor[Model]` and every
+  other capability key are aliases of it (`LoomContainer.register_alias`), so
+  all of them, `catalog[Model]` and injection return the same object, with no
+  extra work per request. Binding a double to a capability key alone is
+  refused with a `ConfigError` naming `Override.repository`.
+  `RepositoryCatalog.for_table` only sees models a store serves.
 - **composition:** `ComposedEvent` logs a `scan` phase in `phase_ms` and an
   `installers` count in place of `modules`.
 
@@ -911,7 +913,10 @@
   `Override.instance(Key, value)`; `HttpTestHarness(overrides=[...])` and
   `LambdaTestClient(..., overrides=[...])` compose once, and
   `with harness.overriding(Override.repository(Model, double)):` swaps the
-  model's single source and restores it on exit, with no recomposition.
+  singleton of the model's one binding and restores it on exit, with no
+  recomposition. It is `LoomContainer.overriding(key, instance)`, usable on
+  any `APPLICATION` binding; classes compile again at their next build, and a
+  singleton already built from the old value keeps it.
 
 - **testing:** Lambda functions are tested in process, without AWS:
   `LambdaTestClient`, an `httpx.Client` like FastAPI's `TestClient`, sends API

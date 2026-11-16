@@ -71,40 +71,6 @@ class RepositoryToken:
     model: type[LoomStruct]
 
 
-@dataclass(frozen=True)
-class RepositorySourceToken:
-    """DI key for the mutable source of a model repository."""
-
-    model: type[LoomStruct]
-
-
-class ReplaceableSource:
-    """Return the built repository or a temporary replacement."""
-
-    def __init__(self, provider: Callable[[], Any]) -> None:
-        self._repository = provider()
-        self._replacement: Any = _NO_REPLACEMENT
-
-    def get(self) -> Any:
-        """Return the active repository."""
-        if self._replacement is not _NO_REPLACEMENT:
-            return self._replacement
-        return self._repository
-
-    def swap(self, replacement: Any) -> Any:
-        """Replace the active repository and return the previous replacement."""
-        previous = self._replacement
-        self._replacement = replacement
-        return previous
-
-    def restore(self, previous: Any) -> None:
-        """Restore a replacement returned by :meth:`swap`."""
-        self._replacement = previous
-
-
-_NO_REPLACEMENT = object()
-
-
 def repository_for(
     model: type[LoomStruct],
     *,

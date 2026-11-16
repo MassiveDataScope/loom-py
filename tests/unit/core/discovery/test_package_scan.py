@@ -116,14 +116,19 @@ class TestPackageScan:
         with pytest.raises(ConfigError, match="acme_missing"):
             PackageScanner(["acme_missing"]).discover()
 
-    def test_an_entry_that_is_a_module_is_refused(
-        self, tmp_path: Path, write_package: PackageWriter
+    def test_a_module_entry_is_scanned_alone_and_a_package_entry_walked(
+        self, write_package: PackageWriter
     ) -> None:
-        write_package("acme_host", {})
-        (tmp_path / "acme_module.py").write_text("")
+        root = write_package(
+            "acme_walked",
+            {"deep/__init__.py": "", "deep/m.py": _MODEL.format(name="Deep", table="deep")},
+        )
+        (root.parent / "acme_alone.py").write_text(_MODEL.format(name="Alone", table="alone"))
+        (root.parent / "acme_sibling.py").write_text(_MODEL.format(name="Sibling", table="sibling"))
 
-        with pytest.raises(ConfigError, match="acme_module.*not a package"):
-            PackageScanner(["acme_module"]).discover()
+        result = PackageScanner(["acme_alone", "acme_walked"]).discover()
+
+        assert [model.__name__ for model in result.models] == ["Alone", "Deep"]
 
     def test_duplicate_table_names_name_both_modules(self, write_package: PackageWriter) -> None:
         write_package(

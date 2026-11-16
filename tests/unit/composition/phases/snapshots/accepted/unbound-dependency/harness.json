@@ -45,14 +45,10 @@
       "resolved": "function",
       "scope": "APPLICATION"
     },
-    "RepositorySourceToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
-      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "ReplaceableSource",
-      "scope": "APPLICATION"
-    },
     "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
-      "provider": "register_repository_binding.<locals>.<lambda>",
-      "scope": "REQUEST"
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
     },
     "RuntimeExecutor": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",

@@ -23,10 +23,8 @@ from loom.core.stores.repository.capabilities import (
 )
 from loom.core.stores.repository.registry import (
     DefaultRepositoryBuilder,
-    ReplaceableSource,
     RepositoryBuildContext,
     RepositoryRegistration,
-    RepositorySourceToken,
     RepositoryToken,
     get_repository_registration,
 )
@@ -266,42 +264,30 @@ def register_repository_binding(
     binding_key: object,
     provider: Callable[[], Any],
 ) -> None:
-    """Bind a model's one repository source and every key that resolves through it.
+    """Bind a model's one repository and make every capability key an alias of it.
 
     Args:
         container: The container being filled.
         model: The model the repository serves.
         capability_keys: The capability keys the repository answers.
-        binding_key: The key the model's repository resolves under.
+        binding_key: The key the model's repository is bound under.
         provider: Builds the repository.
 
     Raises:
-        ConfigError: When a capability key is already bound on its own, with no
-            repository source to resolve it through.
+        ConfigError: When a capability key is already bound on its own, not
+            as an alias of *binding_key*.
     """
-    source_key = RepositorySourceToken(model)
-    has_repository_override = container.is_registered(source_key)
+    container.register_default(binding_key, provider, scope=Scope.APPLICATION)
+    container.register_repo(model, binding_key)
     for key in capability_keys:
-        if container.is_registered(key) and not has_repository_override:
+        if container.is_alias_of(key, binding_key):
+            continue
+        if container.is_registered(key):
             raise ConfigError(
                 f"Repository capability {key!r} is bound independently; "
                 "use Override.repository(Model, double) in loom.testing"
             )
-    container.register_default(
-        source_key, lambda: ReplaceableSource(provider), scope=Scope.APPLICATION
-    )
-    container.register_default(
-        binding_key,
-        lambda: container.resolve(source_key).get(),
-        scope=Scope.REQUEST,
-    )
-    container.register_repo(model, binding_key)
-    for key in capability_keys:
-        container.register_default(
-            key,
-            lambda: container.resolve(binding_key),
-            scope=Scope.REQUEST,
-        )
+        container.register_alias(key, binding_key)
 
 
 def build_repository_registration_module(

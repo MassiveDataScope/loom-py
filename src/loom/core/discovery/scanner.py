@@ -29,7 +29,7 @@ class PackageScanner:
         self._packages = packages
 
     def discover(self, *, agents: Sequence[str] = ()) -> DiscoveryResult:
-        """Return the classes declared inside the configured packages.
+        """Return the classes of the configured modules and packages, subpackages included.
 
         Args:
             agents: The ``app.agents`` artifact paths or globs, carried into the result.
@@ -38,7 +38,7 @@ class PackageScanner:
             The discovered classes, each group ordered by module then qualified name.
 
         Raises:
-            ConfigError: When a package cannot be imported or is not a package, or when one
+            ConfigError: When an entry cannot be imported, or when one
                 store serves the same table from two models.
         """
         models, use_cases, interfaces, jobs, installers = collect_from_modules(self._modules())
@@ -59,11 +59,11 @@ class PackageScanner:
         modules: dict[str, ModuleType] = {}
         for package_name in self._packages:
             package = self._import(package_name)
-            if not hasattr(package, "__path__"):
-                raise ConfigError(f"app.packages entry {package_name!r} is not a package")
             modules[package.__name__] = package
             for found in pkgutil.walk_packages(
-                package.__path__, f"{package.__name__}.", onerror=self._raise_import_error
+                getattr(package, "__path__", ()),
+                f"{package.__name__}.",
+                onerror=self._raise_import_error,
             ):
                 modules[found.name] = self._import(found.name)
         return [modules[name] for name in sorted(modules)]

@@ -131,10 +131,16 @@ class SupplierCompiler:
             raise DependencyGraphError(binding.refused)
         self._open.add(key)
         try:
-            make = self._constructor_call(path, KeyNode(key), binding.provider)
+            if binding.target is not None:
+                supplier = self._compile(
+                    path.to(Edge(KeyNode(binding.target), "target")), binding.target
+                )
+            else:
+                make = self._constructor_call(path, KeyNode(key), binding.provider)
+                supplier = self._scoped(key, binding, make)
         finally:
             self._open.discard(key)
-        supplier = self._served[key] = self._scoped(key, binding, make)
+        self._served[key] = supplier
         return supplier
 
     def _scoped(self, key: object, binding: _Binding, make: Supplier) -> Supplier:

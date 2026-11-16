@@ -9,15 +9,12 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
 from loom.core.stores.repository.registration import (
     capability_keys,
     register_repository_binding,
 )
 from loom.core.stores.repository.registry import (
-    ReplaceableSource,
-    RepositorySourceToken,
     RepositoryToken,
 )
 
@@ -32,13 +29,6 @@ class OverrideKind(StrEnum):
 
     REPOSITORY = "repository"
     INSTANCE = "instance"
-
-
-@dataclass(frozen=True)
-class InstanceSourceToken:
-    """DI key for a replaceable test instance."""
-
-    key: object
 
 
 @dataclass(frozen=True)
@@ -61,33 +51,23 @@ class Override:
 
     def install(self, container: LoomContainer) -> None:
         """Register this substitution during composition."""
-        source_key = self._source_token
-        container.register_instance(source_key, ReplaceableSource(lambda: self.value))
         if self.kind is OverrideKind.INSTANCE:
-            container.register(
-                self.key,
-                lambda: container.resolve(source_key).get(),
-                scope=Scope.REQUEST,
-            )
+            container.register_instance(self.key, self.value)
             return
         model = cast(type[LoomStruct], self.key)
         register_repository_binding(
             container=container,
             model=model,
             capability_keys=capability_keys(type(self.value), model),
-            binding_key=RepositoryToken(model),
+            binding_key=self.binding_key,
             provider=lambda: self.value,
         )
 
     @contextmanager
     def applied(self, container: LoomContainer) -> Iterator[None]:
         """Substitute this value in a composed application until the block exits."""
-        source = container.resolve(self._source_token)
-        previous = source.swap(self.value)
-        try:
+        with container.overriding(self.binding_key, self.value):
             yield
-        finally:
-            source.restore(previous)
 
     @classmethod
     @contextmanager
@@ -99,10 +79,11 @@ class Override:
             yield
 
     @property
-    def _source_token(self) -> object:
+    def binding_key(self) -> object:
+        """The container key whose binding this substitution replaces."""
         if self.kind is OverrideKind.REPOSITORY:
-            return RepositorySourceToken(cast(type[LoomStruct], self.key))
-        return InstanceSourceToken(self.key)
+            return RepositoryToken(cast(type[LoomStruct], self.key))
+        return self.key
 
 
 class OverrideAdapter:
