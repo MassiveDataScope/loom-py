@@ -1265,18 +1265,28 @@ class TestCreateFastApiApp:
         )
         assert isinstance(app, FastAPI)
 
-    def test_a_cursor_route_without_a_cursor_key_fails_at_start_up_naming_it(self) -> None:
+    @pytest.mark.parametrize(
+        "registered",
+        [None, CursorCodec.disabled()],
+        ids=["no-codec-registered", "disabled-codec-registered"],
+    )
+    def test_a_cursor_route_without_a_cursor_key_fails_at_start_up_naming_it(
+        self, registered: CursorCodec | None
+    ) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"
             routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
         defaults = RestApiDefaults(pagination_mode=PaginationMode.CURSOR)
+        result = _bootstrap(AcmePingUseCase)
+        if registered is not None:
+            result.container.register_instance(CursorCodec, registered)
 
         with pytest.raises(
             InterfaceCompilationError, match=r"IFace.*GET.*stores\.settings\.cursors"
         ):
             create_fastapi_app(
-                _bootstrap(AcmePingUseCase),
+                result,
                 routes=RouteSources(python=[IFace]),
                 observability_runtime=ObservabilityRuntime.noop(),
                 defaults=defaults,

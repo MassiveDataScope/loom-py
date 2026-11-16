@@ -517,6 +517,7 @@ class RepositoryMongo(
         return build_page_result(items, total, page_params)
 
     async def _list_cursor(self, query: QuerySpec) -> CursorResult[OutputT]:
+        self._cursor_codec.require_enabled()
         require_cursor_sort(
             query,
             backend=self.backend_name,

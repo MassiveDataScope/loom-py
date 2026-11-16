@@ -68,6 +68,16 @@ class TestCursorPagingWithTheDisabledCodec:
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
             await repository.list_with_query(query)
 
+    async def test_a_cursor_page_with_no_next_page_is_refused_too(
+        self, repository: RepositorySQLAlchemy[_Row, int]
+    ) -> None:
+        query = QuerySpec(
+            pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=10
+        )
+
+        with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
+            await repository.list_with_query(query)
+
     async def test_offset_paging_is_unaffected(
         self, repository: RepositorySQLAlchemy[_Row, int]
     ) -> None:
@@ -80,6 +90,7 @@ class TestDisabledCodec:
     def test_it_is_one_shared_instance_that_reports_itself_disabled(self) -> None:
         assert CursorCodec.disabled() is CursorCodec.disabled()
         assert not CursorCodec.disabled().is_enabled
+        assert CursorCodec.disabled().signing == "disabled"
         assert CursorCodec(signing="ephemeral").is_enabled
 
     def test_encode_refuses_with_the_documented_error(self) -> None:

@@ -79,12 +79,12 @@ class TaskViewInterface(RestInterface[TaskView]):
 
 
 def _make_register_repos(
-    session_manager: SessionManager,
+    session_manager: SessionManager, codec: CursorCodec
 ) -> Callable[[LoomContainer], None]:
     repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
         session_manager=session_manager,
         model=AutoProduct,
-        cursor_codec=CursorCodec(signing="ephemeral"),
+        cursor_codec=codec,
     )
 
     def _provider() -> RepositorySQLAlchemy[Any, int]:
@@ -99,7 +99,7 @@ def _make_register_repos(
     return register
 
 
-def _build_app(db_path: Path) -> FastAPI:
+def _build_app(db_path: Path, codec: CursorCodec | None = None) -> FastAPI:
     database_url = f"sqlite+aiosqlite:///{db_path}"
     session_manager = SessionManager(
         database_url,
@@ -121,7 +121,7 @@ def _build_app(db_path: Path) -> FastAPI:
     result = bootstrap_app(
         config={"name": "test"},
         use_cases=use_cases,
-        modules=[_make_register_repos(session_manager)],
+        modules=[_make_register_repos(session_manager, codec or CursorCodec(signing="ephemeral"))],
     )
 
     @asynccontextmanager
@@ -190,6 +190,13 @@ def _build_logical_app(db_path: Path) -> FastAPI:
 @pytest.fixture
 def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     app = _build_app(tmp_path / "auto_test.sqlite")
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def keyless_client(tmp_path: Path) -> Generator[TestClient, None, None]:
+    app = _build_app(tmp_path / "keyless_test.sqlite", CursorCodec.disabled())
     with TestClient(app) as c:
         yield c
 
@@ -338,3 +345,23 @@ class TestAwareTimeRefusal:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "boundary_validation"
         assert "08:30" not in resp.text
+
+
+class TestAutoInterfaceWithoutCursorKeys:
+    def test_a_cursor_request_answers_400_unsupported_query(
+        self, keyless_client: TestClient
+    ) -> None:
+        keyless_client.post("/auto-products/", json={"name": "A"})
+
+        response = keyless_client.get("/auto-products/?pagination=cursor")
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "unsupported_query"
+
+    def test_an_offset_request_still_answers_the_page(self, keyless_client: TestClient) -> None:
+        keyless_client.post("/auto-products/", json={"name": "A"})
+
+        response = keyless_client.get("/auto-products/")
+
+        assert response.status_code == 200
+        assert response.json()["totalCount"] == 1

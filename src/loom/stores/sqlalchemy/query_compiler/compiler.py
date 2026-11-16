@@ -150,12 +150,14 @@ class QuerySpecCompiler:
         appended as the tie-breaker, so the keyset predicate is total.
 
         Raises:
-            UnsupportedQuery: If a sort field or key column is not a non-null
+            UnsupportedQuery: If cursor pagination is not enabled, a sort field
+                or key column is not a non-null
                 column a cursor carries, or ``query.cursor`` (an empty one
                 included) is malformed or forged, was issued for another
                 binding or backend, or does not match ``query.sort`` or the
                 primary key in number or type of values.
         """
+        self._cursor_codec.require_enabled()
         primary_key = [column.key for column in self._id_columns]
         require_cursor_sort(
             query,

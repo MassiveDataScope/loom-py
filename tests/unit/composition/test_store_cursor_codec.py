@@ -97,3 +97,13 @@ class TestStoreCursorCodec:
         _build({"stores": _SQLITE}, connection_only=True)
 
         assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+
+    def test_a_connection_only_composition_ignores_configured_cursor_settings(
+        self, runtimes: list[StoreRuntime]
+    ) -> None:
+        _build(
+            {"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}},
+            connection_only=True,
+        )
+
+        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]

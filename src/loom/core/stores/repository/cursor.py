@@ -58,10 +58,12 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _Signing = Literal["signed", "ephemeral", "unsigned"]
+_Mode = Literal["signed", "ephemeral", "unsigned", "disabled"]
 _SIGNED: Final = "signed"
 _EPHEMERAL: Final = "ephemeral"
 _UNSIGNED: Final = "unsigned"
-_SIGNING_MODES: Final = frozenset({_SIGNED, _EPHEMERAL, _UNSIGNED})
+_DISABLED: Final = "disabled"
+_SIGNING_MODES: Final = frozenset({_SIGNED, _EPHEMERAL, _UNSIGNED, _DISABLED})
 
 CURSOR_SIGNING_CHECK: Final = "loom.cursors.E001"
 """Id of the deploy check refusing cursors not signed with a configured key."""
@@ -77,7 +79,6 @@ _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
 _NOT_ENABLED: Final = "cursor pagination is not enabled"
-_DISABLED_SIGNING: Final = "disabled"
 CURSORS_SECTION: Final = f"{ConfigKey.STORES_SETTINGS}.cursors"
 """Dotted path of the cursor signing section."""
 
@@ -191,8 +192,9 @@ class CursorCodec:
 
     Args:
         signing: ``signed`` (``keys`` and ``current_key_id`` required),
-            ``ephemeral`` or ``unsigned``. The two opt-outs ignore ``keys``
-            and log a WARNING when built.
+            ``ephemeral``, ``unsigned`` or ``disabled``. The two opt-outs
+            ignore ``keys`` and log a WARNING when built; ``disabled`` holds
+            no key and refuses every token.
         keys: Signing keys by key id, each at least :data:`MIN_KEY_BYTES` long.
         current_key_id: Key id that signs new tokens.
 
@@ -221,7 +223,7 @@ class CursorCodec:
     def __init__(
         self,
         *,
-        signing: _Signing,
+        signing: _Mode,
         keys: Mapping[str, bytes] | None = None,
         current_key_id: str | None = None,
     ) -> None:
@@ -242,10 +244,11 @@ class CursorCodec:
         else:
             self._current = b""
             self._keys = {}
-            _logger.warning(
-                "cursor signing is unsigned: cursors carry no signature, so any client can "
-                "forge one. Use it only for tests and debugging, never in production."
-            )
+            if signing == _UNSIGNED:
+                _logger.warning(
+                    "cursor signing is unsigned: cursors carry no signature, so any client can "
+                    "forge one. Use it only for tests and debugging, never in production."
+                )
 
     @classmethod
     def from_context(cls, ctx: ConfigContext) -> CursorCodec:
@@ -279,17 +282,26 @@ class CursorCodec:
         Every store shares the one instance. Its :meth:`encode` and
         :meth:`decode` raise ``UnsupportedQuery``.
         """
-        return _DISABLED
+        return _DISABLED_CODEC
 
     @property
     def is_enabled(self) -> bool:
         """Whether this codec issues and verifies tokens."""
-        return True
+        return self._signing != _DISABLED
 
     @property
     def signing(self) -> str:
-        """The signing mode: ``signed``, ``ephemeral`` or ``unsigned``."""
+        """The signing mode: ``signed``, ``ephemeral``, ``unsigned`` or ``disabled``."""
         return self._signing
+
+    def require_enabled(self) -> None:
+        """Refuse the call when this codec is the disabled one.
+
+        Raises:
+            UnsupportedQuery: If cursor pagination is not enabled.
+        """
+        if self._signing == _DISABLED:
+            raise UnsupportedQuery(_NOT_ENABLED)
 
     @classmethod
     def from_config(cls, config: CursorConfig) -> CursorCodec:
@@ -347,7 +359,8 @@ class CursorCodec:
             ) from None
         token = _Token(b=cursor.backend, k=keys, id=tie)
         payload = msgspec.json.encode(token)
-        if self._signing == _UNSIGNED:
+        if not self._keys:
+            self.require_enabled()
             return _b64encode(payload)
         key_id = self._current
         mac = _mac(self._keys[key_id], key_id, _binding(binding, query, scope), payload)
@@ -406,7 +419,8 @@ class CursorCodec:
         self, token: str, binding: str, query: QuerySpec, scope: str
     ) -> bytes | None:
         """The payload bytes once the signature checks out, or ``None``."""
-        if self._signing == _UNSIGNED:
+        if not self._keys:
+            self.require_enabled()
             return None if "." in token else _b64decode(token)
         body, separator, signature = token.partition(".")
         payload = _b64decode(body)
@@ -421,40 +435,7 @@ class CursorCodec:
         return payload if hmac.compare_digest(expected, tag[id_end:]) else None
 
 
-class _DisabledCursorCodec(CursorCodec):
-    """The codec of an application without ``stores.settings.cursors``: it refuses every token."""
-
-    __slots__ = ()
-
-    def __init__(self) -> None:
-        pass
-
-    @property
-    def signing(self) -> str:
-        return _DISABLED_SIGNING
-
-    @property
-    def is_enabled(self) -> bool:
-        return False
-
-    def encode(self, cursor: Cursor, *, model: type | str, query: QuerySpec, scope: str) -> str:
-        raise UnsupportedQuery(_NOT_ENABLED)
-
-    def decode(
-        self,
-        token: str,
-        *,
-        backend: str,
-        model: type | str,
-        query: QuerySpec,
-        scope: str,
-        columns: Mapping[str, Any],
-        primary_key: Sequence[str],
-    ) -> Cursor:
-        raise UnsupportedQuery(_NOT_ENABLED)
-
-
-_DISABLED: Final = _DisabledCursorCodec()
+_DISABLED_CODEC: Final = CursorCodec(signing=_DISABLED)
 
 
 def _keyring(
