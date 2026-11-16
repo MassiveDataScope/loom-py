@@ -14,7 +14,7 @@ from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.unit.core.discovery.conftest import PackageWriter
+from tests.helpers.package_writer import PackageWriter
 
 _MODEL = (
     "from loom.core.model import BaseModel\n"

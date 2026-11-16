@@ -49,7 +49,8 @@
   `check_triggers` now takes a `Project` or the `CheckedProject` of
   `Project.check` instead of a `ConfigContext`, and reads the jobs from the
   scan that object holds, so `loom check --deploy` and the manifest scan
-  `app.packages` once. **Migration:** import them from the new path and pass
+  `app.packages` once; `loom deploy manifest` now reports handler and function
+  errors before trigger errors. **Migration:** import them from the new path and pass
   the project; nothing is re-exported.
 - **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
   Before: a use case with a missing binding, a dependency cycle or a main
@@ -761,7 +762,8 @@
   loads the configuration as written, resolving no placeholder and requiring
   no `app.name`, runs the registered deploy checks and returns a
   `CheckedProject` (`config`, `environment`, `report`, `skipped`,
-  `config_root`, `code_path`). `loom check --deploy` and `loom deploy manifest`
+  `config_root`, `code_path`, and `discovered`, the scan of `app.packages` as
+  written, run once). `loom check --deploy` and `loom deploy manifest`
   run through it; the CLI also refuses misdeclared lambda triggers, which no
   `--skip` leaves out.
 - **core:** the entry-point group `loom.deploy_checks` names the packages whose

@@ -222,7 +222,11 @@ class Project:
 
     @functools.cached_property
     def discovered(self) -> DiscoveryResult:
-        """What the scan of ``app.packages`` found, with the ``app.agents`` globs; scanned once."""
+        """What the scan of ``app.packages`` found, with the ``app.agents`` globs; scanned once.
+
+        Raises:
+            ConfigError: When a package cannot be scanned.
+        """
         return PackageScanner(self.app.packages).discover(agents=self.app.agents)
 
     @functools.cached_property

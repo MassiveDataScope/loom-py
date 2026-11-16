@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-PackageWriter = Callable[[str, dict[str, str]], Path]
+from tests.helpers.package_writer import PackageWriter
 
 
 @pytest.fixture

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -150,7 +151,7 @@ class TestLambdaTestClient:
         self, config: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
     ) -> None:
         directory = tmp_path / ("elsewhere" if source == "variable" else "config")
-        directory.mkdir()
+        shutil.copytree(Path(config).parent, directory)
         (directory / "base.yaml").write_bytes(Path(config).read_bytes())
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)

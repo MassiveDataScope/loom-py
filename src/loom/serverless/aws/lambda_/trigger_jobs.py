@@ -59,8 +59,6 @@ def _execute_parameters(job_type: type[Job[Any]]) -> tuple[bool, list[str]]:
 def check_triggers(project: Project | CheckedProject) -> None:
     """Refuse, as startup would, a misdeclared ``lambda`` section or an event trigger's job.
 
-    The jobs come from the scan *project* holds, so nothing is scanned twice.
-
     Args:
         project: The loaded project, or the configuration ``loom check`` loaded as written.
 
