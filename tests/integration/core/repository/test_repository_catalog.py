@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 
@@ -13,7 +12,7 @@ from loom.core.command import Command
 from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores.repository import BulkCreatable, OnConflict, RepositoryCatalog
+from loom.core.stores.repository import OnConflict, RepositoryCatalog
 from loom.core.use_case import Input
 from tests.helpers.composition import Serving, composition_project
 
@@ -56,8 +55,7 @@ class AcmeWriteRows(Job[int]):
         self.catalog = catalog
 
     async def execute(self, rows: _Rows = Input()) -> int:
-        repository = cast(BulkCreatable[Any], self.catalog.for_table(rows.table))
-        inserted = await repository.create_many(
+        inserted = await self.catalog.for_table(rows.table).create_many(
             [_NewRow(id=row_id) for row_id in rows.ids], on_conflict=OnConflict.IGNORE
         )
         return len(inserted)

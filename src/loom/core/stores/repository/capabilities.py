@@ -162,6 +162,7 @@ class Countable(Protocol[ModelT]):
 class RepoFor(
     Readable[ModelT],
     Creatable[ModelT],
+    BulkCreatable[ModelT],
     Updatable[ModelT],
     Deletable[ModelT],
     Listable[ModelT],

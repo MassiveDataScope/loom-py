@@ -327,10 +327,8 @@ container serves, so a test override is what comes back, and the index of
 table names is built once at composition.
 
 ```python
-from typing import Any, cast
-
 from loom.core.job.job import Job
-from loom.core.stores.repository import BulkCreatable, OnConflict, RepositoryCatalog
+from loom.core.stores.repository import OnConflict, RepositoryCatalog
 from loom.core.use_case import Input
 
 
@@ -341,7 +339,7 @@ class AcmeWriteRows(Job[int]):
         self.catalog = catalog
 
     async def execute(self, rows: AcmeRows = Input()) -> int:
-        repository = cast(BulkCreatable[Any], self.catalog.for_table(rows.table))
+        repository = self.catalog.for_table(rows.table)
         inserted = await repository.create_many(rows.items, on_conflict=OnConflict.IGNORE)
         return len(inserted)
 ```

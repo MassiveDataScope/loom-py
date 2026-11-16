@@ -2,6 +2,8 @@
 
 ## 💥 Breaking
 
+- **stores:** `RepoFor` now includes `BulkCreatable`. **Migration:** a
+  third-party repository typed as `RepoFor` must implement `create_many`.
 - **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
   `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
   **Migration:** import them from the new path; nothing is re-exported.
