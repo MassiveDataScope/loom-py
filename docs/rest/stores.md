@@ -25,7 +25,7 @@ to several stores is in ADR 0008
 (`docs/architecture/adr/0008-stores-and-units-of-work.md`). Migrations cover
 `default` only and log `StoresNotLoaded` naming the stores they leave out; the
 row-level-security schema tooling takes the store to work on
-(`load_application(path, store="audit")`, then `create_schema` and `verify`).
+(`load_store_schema(path, store="audit")`, then `create_schema` and `verify`).
 A streaming sink
 names any store with `store: <name>`. A `clickhouse` store is
 connection-only: it is no persistence backend, serves no model, never joins a
@@ -107,7 +107,7 @@ a backend that ignores it builds as usual.
 ### Store capabilities
 
 Every backend must declare `capabilities(self, spec: StoreSpec) -> StoreCapabilities`,
-returning `serves_models` and `transactional` (its unit of work can roll
+returning `can_serve_models` and `is_transactional` (its unit of work can roll
 back), both keyword-only. The catalog asks it the first
 time something reads `spec.capabilities`, once per store, so loading the
 catalog resolves no secret. When a capability depends on a setting, read only

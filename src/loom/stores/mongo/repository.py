@@ -620,7 +620,7 @@ class RepositoryMongo(
         Every field that is not ``msgspec.UNSET`` is included, defaults too.
         """
         values = msgspec.to_builtins(
-            RecordLayout.of(type(data)).values(data), builtin_types=_NATIVE_TYPES
+            RecordLayout.from_struct(type(data)).to_values(data), builtin_types=_NATIVE_TYPES
         )
         return self._stored_columns(cast(dict[str, Any], values))
 

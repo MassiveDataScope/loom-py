@@ -435,12 +435,12 @@ the connection returns.
 provider for programmatic use, for a session manager a script builds itself:
 
 ```python
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.stores.sqlalchemy import SessionManager
 from loom.stores.sqlalchemy.rls import install_pool_reset, rls_session_settings
 
-application = load_application()
+application = load_store_schema()
 sessions = SessionManager(
     APP_URL, session_settings=rls_session_settings(application), store=DEFAULT_STORE
 )
@@ -518,10 +518,10 @@ compilation refuses it with `ValueError`. `ck` takes the rule of `__checks__` as
 `%(constraint_name)s`. The names loom builds for `__indexes__` and `__partial_unique__`
 are final and no convention renames them.
 
-{func}`~loom.stores.sqlalchemy.alembic.load_application` reads this file (the path given, or
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` reads this file (the path given, or
 `LOOM_CONFIG`), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
 discovers and compiles the models into a `MetaData` owned by the returned
-{class}`~loom.stores.sqlalchemy.alembic.Application` and builds the
+{class}`~loom.stores.sqlalchemy.alembic.StoreSchema` and builds the
 {class}`~loom.stores.sqlalchemy.rls.BootstrapConfig`. A missing key raises
 `ConfigError` naming it, and a missing name points at `loom schema init`; no name has a
 default. Two applications in one process share no table, listener or registry.
@@ -591,7 +591,7 @@ Every name Postgres sees passes one validator,
 The roles, groups and users must have distinct names, and the two version tables must
 differ. A name Postgres would fold, truncate or resolve to something else never reaches
 the server: {meth}`~loom.stores.sqlalchemy.rls.BootstrapConfig.validated` and
-`SchemaNames.derived` raise `ValueError`, while `load_application`, `apply_bootstrap`
+`SchemaNames.derived` raise `ValueError`, while `load_store_schema`, `apply_bootstrap`
 and the migration runners raise `ConfigError` naming `stores.default.schema`. A valid name
 still reaches Postgres only as a bound parameter, and the guard quotes it itself.
 
@@ -632,12 +632,12 @@ schema must run as the same role.
 import asyncio
 import os
 
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.stores.sqlalchemy.rls import apply_bootstrap
 
 
 async def main() -> None:
-    bootstrap = load_application().bootstrap
+    bootstrap = load_store_schema().bootstrap
     if bootstrap is None:
         raise SystemExit("no RowScoped model in this application")
     passwords = {
@@ -716,7 +716,7 @@ What it guarantees:
 - When the structural version table already exists, each bypass user is left with
   exactly `SELECT` on it.
 
-`load_application` builds the
+`load_store_schema` builds the
 {class}`~loom.stores.sqlalchemy.rls.BootstrapConfig` with both defaults; set them
 on the returned value before applying it:
 
@@ -776,10 +776,10 @@ that may create event triggers.
 import asyncio
 import os
 
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.stores.sqlalchemy.rls import create_schema
 
-asyncio.run(create_schema(os.environ["MIGRATOR_URL"], load_application()))
+asyncio.run(create_schema(os.environ["MIGRATOR_URL"], load_store_schema()))
 ```
 
 {func}`~loom.stores.sqlalchemy.rls.create_schema` always takes the migrator
@@ -797,13 +797,13 @@ the application with `mode: external` and the URL of a `read` or `write` user.
 
 ### Several Postgres stores
 
-`load_application()` loads the `default` store. Each other Postgres store whose models
-are row-scoped is prepared and checked on its own: `load_application(store=...)` loads
+`load_store_schema()` loads the `default` store. Each other Postgres store whose models
+are row-scoped is prepared and checked on its own: `load_store_schema(store=...)` loads
 that store's models and its `stores.<store>.schema` section, and the bootstrap,
 `create_schema` and `verify` take that `Application` with that store's URLs.
 
 ```python
-audit = load_application(store="audit")
+audit = load_store_schema(store="audit")
 if audit.bootstrap is None:
     raise SystemExit("no RowScoped model in the audit store")
 await apply_bootstrap(os.environ["AUDIT_SUPERUSER_URL"], audit.bootstrap, audit_passwords)
@@ -846,11 +846,11 @@ live connection. Generate and apply structural revisions with the migrator URL:
 ```python
 from alembic import command
 
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.stores.sqlalchemy.migrations import alembic_config
 
 config = alembic_config("alembic", MIGRATOR_URL)
-config.attributes["application"] = load_application()
+config.attributes["application"] = load_store_schema()
 command.revision(config, message="add entries", autogenerate=True)
 command.upgrade(config, "head")
 ```
@@ -941,7 +941,7 @@ table or unmarking a scoped one is out of scope: no revision is generated for it
 lock, creates no version table and writes nothing.
 
 The migration package, the environment and
-{func}`~loom.stores.sqlalchemy.alembic.load_application` work without the `rest` extra: they import
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` work without the `rest` extra: they import
 nothing from FastAPI.
 
 ### Data migrations
@@ -1325,7 +1325,7 @@ Every `LG001` and `LG002` message starts with `loom_guard[<schema>]:`.
 | `LG002` | the assertion, `ddl_command_end`, `sql_drop`, `COMMIT` of a transaction that opened the hatch, C5 in `protect_scoped_table`, `unprotect_scoped_table` | a guard invariant is broken, the message naming the object to repair; DDL on the guard schema outside the bootstrap; or an unprotect without the hatch |
 | `22023` | `protect_scoped_table`, the bootstrap | an invalid declaration, a `char(n)` scope column or one with a nondeterministic collation, or a server below Postgres 14 |
 | `42501` | `open_hatch`, `protect_scoped_table`, `unprotect_scoped_table`, the bootstrap | wrong schema, wrong owner, a caller that is not a member of the owner, prior policies, a table not registered, a role that exists and this guard did not create, a recorded role that differs from the declaration, a reserved role prefix, an unexpected or `ADMIN` membership, a guard or application schema the bootstrap does not own, or a bootstrap by another installer |
-| `ConfigError` | startup, `load_application`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name or lock timeout, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know or below the minimum compatible one (`guard revision pending`), a guard operation outside `run_migrations`, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift; messages that call for a bootstrap point at `apply_bootstrap` |
+| `ConfigError` | startup, `load_store_schema`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name or lock timeout, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know or below the minimum compatible one (`guard revision pending`), a guard operation outside `run_migrations`, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift; messages that call for a bootstrap point at `apply_bootstrap` |
 | `ValueError` | `compile_all`, the revision hook, `BootstrapConfig.validated`, `SchemaNames.derived` | a compile rule, an FK whose target is not compiled with it, a revision that would leave a table unprotected, or an invalid name |
 
 ### Other dialects
@@ -1588,7 +1588,7 @@ unmarked table pays nothing.
 - **`database.schema` as a string.** loom 2.11 ignored a scalar `database.schema`;
   from 2.12 the key is a section, so a string value fails at startup with a
   `ConfigError`. Move a schema name to `database.schema.name`.
-- **Discovery imports.** `load_application` reuses the server's discovery, which
+- **Discovery imports.** `load_store_schema` reuses the server's discovery, which
   recognises REST interfaces only when the product's modules have already imported
   `loom.rest.model`; it never imports it itself.
 

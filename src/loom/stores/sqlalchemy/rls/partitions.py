@@ -43,7 +43,7 @@ from loom.stores.sqlalchemy.scoped_ddl import (
 )
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 _CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
 _DETACH_PARTITION: Final = text(DETACH_PARTITION)
@@ -57,7 +57,7 @@ _SCHEMA_LOCK: Final = text(SCHEMA_LOCK)
 
 async def ensure_range_partitions(
     target: str | AsyncConnection,
-    application: Application,
+    application: StoreSchema,
     model: type | str,
     start: dt.date,
     end: dt.date,
@@ -94,7 +94,7 @@ async def ensure_range_partitions(
 
 async def detach_range_partitions(
     target: str | AsyncConnection,
-    application: Application,
+    application: StoreSchema,
     model: type | str,
     start: dt.date,
     end: dt.date,
@@ -128,7 +128,7 @@ async def detach_range_partitions(
         return tuple(changed)
 
 
-def _partitioned(application: Application, model: type | str) -> ScopedTable:
+def _partitioned(application: StoreSchema, model: type | str) -> ScopedTable:
     name = model if isinstance(model, str) else get_table_name(model)
     scoped = next((t for t in application.scoped.values() if t.name == name), None)
     if scoped is None or scoped.partition_by is None:
@@ -138,7 +138,7 @@ def _partitioned(application: Application, model: type | str) -> ScopedTable:
 
 @asynccontextmanager
 async def _guarded(
-    target: str | AsyncConnection, application: Application, lock_timeout: str
+    target: str | AsyncConnection, application: StoreSchema, lock_timeout: str
 ) -> AsyncIterator[tuple[AsyncConnection, str]]:
     bootstrap = application.require_bootstrap("partitions")
     try:

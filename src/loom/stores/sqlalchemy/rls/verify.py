@@ -49,7 +49,7 @@ from loom.stores.sqlalchemy.rls.integrity import (
 from loom.stores.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 WRITES: Final = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
 USAGE: Final = frozenset({"USAGE"})
@@ -118,7 +118,7 @@ class Report:
     expired_audit_partitions: tuple[str, ...] = ()
 
 
-async def verify(url: str, application: Application) -> Report:
+async def verify(url: str, application: StoreSchema) -> Report:
     """Compare the database with the application's declaration."""
     bootstrap = application.bootstrap
     if bootstrap is None:
@@ -130,7 +130,7 @@ async def verify(url: str, application: Application) -> Report:
             await connection.execute(_GUARD_FIRST, guard)
             findings = await _guard_integrity(connection, bootstrap)
             audit = await audit_state(connection, bootstrap.schema, bootstrap.names.guard)
-            findings += audit_findings(audit, application.active_audited)
+            findings += audit_findings(audit, application.recording_audit_tables)
             if audit.relations or application.audited:
                 findings += await audit_shape_findings(connection, bootstrap.schema)
             findings += await _registry(connection, application.scoped)
@@ -328,7 +328,7 @@ def _bypass_expectation(
 
 
 def _global_privileges(
-    acl: Acl, application: Application, bootstrap: BootstrapConfig
+    acl: Acl, application: StoreSchema, bootstrap: BootstrapConfig
 ) -> list[Finding]:
     groups = {"readers": bootstrap.names.readers, "writers": bootstrap.names.writers}
     findings: list[Finding] = []

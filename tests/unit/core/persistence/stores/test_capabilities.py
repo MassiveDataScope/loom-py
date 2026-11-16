@@ -17,10 +17,10 @@ from loom.core.stores.catalog import (
     load_catalog,
 )
 
-_ALL = StoreCapabilities(serves_models=True, transactional=True)
-_NOTHING = StoreCapabilities(serves_models=False, transactional=False)
-_MODELS_ONLY = StoreCapabilities(serves_models=True, transactional=False)
-_NO_ROLLBACK = StoreCapabilities(serves_models=True, transactional=False)
+_ALL = StoreCapabilities(can_serve_models=True, is_transactional=True)
+_NOTHING = StoreCapabilities(can_serve_models=False, is_transactional=False)
+_MODELS_ONLY = StoreCapabilities(can_serve_models=True, is_transactional=False)
+_NO_ROLLBACK = StoreCapabilities(can_serve_models=True, is_transactional=False)
 
 
 class TestBuiltinStoreCapabilities:
@@ -57,9 +57,9 @@ class TestBuiltinStoreCapabilities:
         assert spec.capabilities == _NOTHING
 
     def test_capabilities_are_immutable(self) -> None:
-        capabilities = StoreCapabilities(serves_models=True, transactional=True)
+        capabilities = StoreCapabilities(can_serve_models=True, is_transactional=True)
         with pytest.raises(FrozenInstanceError):
-            capabilities.transactional = False  # type: ignore[misc]
+            capabilities.is_transactional = False  # type: ignore[misc]
 
     def test_capabilities_take_keywords_only(self) -> None:
         with pytest.raises(TypeError):
@@ -107,8 +107,8 @@ class _CustomBackend:
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         type(self).calls += 1
         return StoreCapabilities(
-            serves_models=True,
-            transactional=spec.section().get("transactional", False),
+            can_serve_models=True,
+            is_transactional=spec.section().get("transactional", False),
         )
 
 

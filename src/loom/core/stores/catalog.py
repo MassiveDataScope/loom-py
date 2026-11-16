@@ -91,15 +91,20 @@ class StoreSetting(StrEnum):
         return f"{ConfigKey.STORES_SETTINGS}.{self.value}"
 
     @classmethod
-    def refuse_unknown(cls, shared: Mapping[Any, Any]) -> None:
-        """Fail when ``stores.settings`` holds a key that is no store setting.
+    def check_section(cls, shared: object) -> None:
+        """Fail unless ``stores.settings`` is a mapping of store settings.
 
         Args:
-            shared: The ``stores.settings`` mapping as written.
+            shared: The ``stores.settings`` value as written.
 
         Raises:
-            ConfigError: Naming the key; a ``backend`` key says the section is no store.
+            ConfigError: When it is no mapping, or holds a key that is no store
+                setting, naming the key; a ``backend`` key says the section is no store.
         """
+        if not isinstance(shared, Mapping):
+            raise ConfigError(
+                f"{ConfigKey.STORES_SETTINGS} must map each store setting to its value"
+            )
         known = {setting.value for setting in cls}
         for name in shared:
             if name == BACKEND_KEY:
@@ -118,17 +123,17 @@ class StoreSetting(StrEnum):
 class StoreCapabilities:
     """Capabilities of a configured store."""
 
-    serves_models: bool
+    can_serve_models: bool
     """Whether the store can serve model repositories."""
-    transactional: bool
+    is_transactional: bool
     """Whether its unit of work can roll back."""
 
 
-MODELS_ONLY: Final = StoreCapabilities(serves_models=True, transactional=False)
+MODELS_ONLY: Final = StoreCapabilities(can_serve_models=True, is_transactional=False)
 """A store that serves models, without rollback; the conservative default
 of a backend that does not describe itself."""
 
-NO_CAPABILITIES: Final = StoreCapabilities(serves_models=False, transactional=False)
+NO_CAPABILITIES: Final = StoreCapabilities(can_serve_models=False, is_transactional=False)
 """A store that supports none of them: ``none``, or a connection-only kind."""
 
 
@@ -270,7 +275,7 @@ class StoreCatalog:
             key = store_of(model)
             if key != DEFAULT_STORE:
                 spec = self.require(key, purpose=f"model {model.__name__}")
-                if not spec.capabilities.serves_models:
+                if not spec.capabilities.can_serve_models:
                     raise ConfigError(
                         f"{model.__name__} belongs to store {key!r}, a connection-only "
                         f"{spec.backend} store that serves no model; {spec.path} only hands "
@@ -338,7 +343,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     specs: dict[StoreKey, StoreSpec] = {}
     for name, section in written.items():
         if name == SETTINGS_KEY:
-            _refuse_shared_settings(section)
+            StoreSetting.check_section(section)
             continue
         key = _store_key(name, owner=f"{ConfigKey.STORES} key")
         if not isinstance(section, Mapping):
@@ -347,13 +352,6 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
             )
         specs[key] = _spec(ctx, key, registered)
     return StoreCatalog(specs=MappingProxyType(specs))
-
-
-def _refuse_shared_settings(shared: object) -> None:
-    """Fail unless ``stores.settings`` is a mapping of store settings."""
-    if not isinstance(shared, Mapping):
-        raise ConfigError(f"{ConfigKey.STORES_SETTINGS} must map each store setting to its value")
-    StoreSetting.refuse_unknown(shared)
 
 
 def _path(key: str) -> str:

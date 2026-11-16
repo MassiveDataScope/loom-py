@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.config import ConfigError
 from loom.core.schema_names import sql_identifier
 from loom.stores.sqlalchemy import scoped_ddl
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.rls import (
     create_schema,
     detach_range_partitions,
@@ -48,7 +48,7 @@ MONTHS = ("note_events_p202601", "note_events_p202602", "note_events_p202603")
 
 async def _installed(
     scoped_database: BootstrapFactory, tmp_path: Path
-) -> tuple[str, ScopedDatabase, Application]:
+) -> tuple[str, ScopedDatabase, StoreSchema]:
     schema = f"np{secrets.token_hex(3)}"
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)

@@ -120,7 +120,7 @@ def _build_dynamodb_client(config: AwsClientConfig) -> Any:
     Raises:
         MissingExtraError: When the ``dynamodb`` extra is not installed.
     """
-    return config.client(AwsService.DYNAMODB)
+    return config.build_client(AwsService.DYNAMODB)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:

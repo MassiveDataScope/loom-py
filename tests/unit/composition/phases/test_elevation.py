@@ -34,7 +34,7 @@ class TestElevationSink:
     def sink(self, monkeypatch: pytest.MonkeyPatch) -> FakeSink:
         """The sink the composition builds from its stores."""
         built = FakeSink()
-        monkeypatch.setattr(ScopedElevationSink, "of", lambda wirings: built)
+        monkeypatch.setattr(ScopedElevationSink, "from_wirings", lambda wirings: built)
         return built
 
     async def test_the_executors_sink_is_the_one_bound(

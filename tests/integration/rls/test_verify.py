@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.rls import create_schema, verify
 from tests.integration.agnosticism import ledger, notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
@@ -51,8 +51,8 @@ def tmp_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture
 async def products(
     scoped_database: BootstrapFactory, tmp_dir: Path
-) -> dict[str, tuple[ScopedDatabase, Application]]:
-    built: dict[str, tuple[ScopedDatabase, Application]] = {}
+) -> dict[str, tuple[ScopedDatabase, StoreSchema]]:
+    built: dict[str, tuple[ScopedDatabase, StoreSchema]] = {}
     for product in (notes, ledger):
         database = await scoped_database(product.SCHEMA)
         application = application_for(product, database, tmp_dir)
@@ -61,7 +61,7 @@ async def products(
     return built
 
 
-async def _checks(url: str, application: Application) -> set[str]:
+async def _checks(url: str, application: StoreSchema) -> set[str]:
     report = await verify(url, application)
     return {finding.check for finding in report.findings}
 

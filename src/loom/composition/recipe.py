@@ -115,7 +115,7 @@ class Recipe:
             warnings.warn(warning, stacklevel=2)
         return analysis
 
-    def cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
+    def build_cursor_codec(self, ctx: ConfigContext) -> CursorCodec | None:
         """The one cursor codec every store shares.
 
         Args:

@@ -244,7 +244,8 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     stores = catalog.models_by_store(discovered.models)
     backends = {
-        key: source.store_backend(key, default=recipe.default_store_backend) for key in stores
+        key: source.resolve_store_backend(key, default=recipe.default_store_backend)
+        for key in stores
     }
     default_label = backends[DEFAULT_STORE].name
     if default_label in stores:
@@ -252,7 +253,7 @@ def build_stores(source: CompositionSource, recipe: Recipe) -> Stores:
             f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
-    cursor_codec = recipe.cursor_codec(ctx)
+    cursor_codec = recipe.build_cursor_codec(ctx)
     wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
         runtime = StoreRuntime(
@@ -320,7 +321,7 @@ def register(
     configure_delegation(
         ctx.positive_seconds("identity.max_delegation_seconds", DEFAULT_MAX_DELEGATION_SECONDS)
     )
-    sink = ScopedElevationSink.of(stores.wirings)
+    sink = ScopedElevationSink.from_wirings(stores.wirings)
     factories = stores.factories
     coordinator = (
         OrderedCommits(

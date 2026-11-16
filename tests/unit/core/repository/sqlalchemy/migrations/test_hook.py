@@ -14,7 +14,7 @@ from loom.core.model.types import Integer as LoomInteger
 from loom.core.model.types import String
 from loom.core.model.types import Text as LoomText
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations.hook import (
     scope_protection_hook,
 )
@@ -52,11 +52,11 @@ class Kind(BaseModel):
     name: str = ColumnField(LoomText)
 
 
-def _application() -> Application:
+def _application() -> StoreSchema:
     metadata = MetaData()
     metadata.info[SCHEMA_KEY] = SCHEMA
     compile_all(Note, Kind, metadata=metadata)
-    return Application(
+    return StoreSchema(
         models=(Note, Kind),
         metadata=metadata,
         database=DatabaseConfig(
@@ -82,7 +82,7 @@ def _script(
     )
 
 
-def _rewrite(application: Application, script: ops.MigrationScript) -> ops.MigrationScript:
+def _rewrite(application: StoreSchema, script: ops.MigrationScript) -> ops.MigrationScript:
     hook = scope_protection_hook(application)
     hook(None, ("head",), [script])
     return script

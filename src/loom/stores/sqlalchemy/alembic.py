@@ -1,10 +1,10 @@
-"""Load one application from its configuration file for Alembic and the schema tools.
+"""Load one store schema from its configuration file for Alembic and the schema tools.
 
-``load_application`` is the single entry point the Alembic environment, the
+``load_store_schema`` is the single entry point the Alembic environment, the
 command line and the schema tools share: it reads the file named by
 ``LOOM_CONFIG`` (or an explicit path), discovers the models the same way the
 server does, compiles them into a ``MetaData`` owned by the returned
-``Application`` and builds the bootstrap declaration from one store's
+``StoreSchema`` and builds the bootstrap declaration from one store's
 section, ``stores.default`` unless another is named. Only that store's models
 are compiled. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
 """
@@ -72,8 +72,8 @@ class _AppSection(msgspec.Struct, kw_only=True):
 
 
 @dataclass(frozen=True, slots=True)
-class Application:
-    """One application: its models compiled into their own metadata and its declarations.
+class StoreSchema:
+    """One store schema: its models compiled into their own metadata and its declarations.
 
     Attributes:
         store: The store whose models and declarations these are.
@@ -89,12 +89,12 @@ class Application:
     audited: AuditedTables = field(default_factory=dict)
 
     @property
-    def guarded(self) -> bool:
+    def is_guarded(self) -> bool:
         """Whether the store needs the guard: it declares scoped or audited tables."""
         return bool(self.scoped or self.audited)
 
     @property
-    def active_audited(self) -> AuditedTables:
+    def recording_audit_tables(self) -> AuditedTables:
         """The audited tables that record rows: the marked ones while ``schema.audit.enabled``."""
         return self.audited if self.database.schema.audit.enabled else {}
 
@@ -118,9 +118,9 @@ class Application:
         return self.bootstrap
 
 
-def load_application(
+def load_store_schema(
     config_path: str | None = None, *, store: StoreKey = DEFAULT_STORE
-) -> Application:
+) -> StoreSchema:
     """Load, discover and compile the models of one store of ``config_path``'s application.
 
     ``config_path``, else ``LOOM_CONFIG``, is a file or a config directory:
@@ -153,7 +153,7 @@ def load_application(
     audited = audited_tables(metadata)
     bootstrap = _bootstrap(schema, spec.path) if scoped or audited else None
     scope_sources = _scope_sources(schema, scoped, spec.path) if scoped else {}
-    return Application(
+    return StoreSchema(
         models=tuple(models),
         metadata=metadata,
         database=database,

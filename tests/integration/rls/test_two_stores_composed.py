@@ -2,7 +2,7 @@
 
 ``default`` serves ``notes`` on server A and ``audit`` serves ``memos`` on
 server B, each from a schema of its own: B's is created and verified through
-``load_application(store="audit")``. Use cases run through the composed
+``load_store_schema(store="audit")``. Use cases run through the composed
 application as a caller, so every session they touch, in either store, must
 carry that caller's identity and its own store's settings.
 """

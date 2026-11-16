@@ -75,7 +75,7 @@ class TestDynamoExecutorParallelism:
 
 
 def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> StoreWiring:
-    monkeypatch.setattr(AwsClientConfig, "client", lambda _self, _service: client)
+    monkeypatch.setattr(AwsClientConfig, "build_client", lambda _self, _service: client)
     ctx = ConfigContext.from_dict(
         {
             "stores": {

@@ -18,7 +18,9 @@ from loom.core.plugins.optional import MissingExtraError
 _CLIENT = ("client",)
 
 
-def aws_client(service: AwsService, region: str | None, *, resolver: str, root: Any) -> Any:
+def build_resolver_client(
+    service: AwsService, region: str | None, *, resolver: str, root: Any
+) -> Any:
     """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 
     The resolvers are the ones resolving the placeholders, so they read
@@ -56,7 +58,7 @@ def aws_client(service: AwsService, region: str | None, *, resolver: str, root: 
     ctx = ConfigContext.from_dict({ConfigKey.AWS: written})
     config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, **overrides)
     try:
-        return config.client(service)
+        return config.build_client(service)
     except MissingExtraError as exc:
         raise ConfigError(
             f"boto3 is required for {resolver}. "

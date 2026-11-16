@@ -311,7 +311,7 @@ class InvocationScope:
             return None
         if store is not None:
             participant = self.participants.get(store)
-            holds = participant is not None and participant.transactional and participant.phased
+            holds = participant is not None and participant.is_transactional and participant.phased
             return frozenset((store,)) if holds else None
         owners = frozenset(next((f.stores for f in reversed(self.frames) if f.primary), ()))
         return owners if owners and owners <= self.participants.keys() else None

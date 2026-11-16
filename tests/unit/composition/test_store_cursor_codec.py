@@ -80,14 +80,14 @@ class TestStoreCursorCodec:
             _build({"stores": {**_SQLITE, "settings": {"cursors": {"signing": "signed"}}}})
 
     def test_an_absent_section_builds_no_codec(self) -> None:
-        assert _recipe().cursor_codec(ConfigContext.from_dict({})) is None
+        assert _recipe().build_cursor_codec(ConfigContext.from_dict({})) is None
 
     def test_a_configured_section_builds_the_codec(self) -> None:
         ctx = ConfigContext.from_dict(
             {"stores": {"settings": {"cursors": {"signing": "ephemeral"}}}}
         )
 
-        assert isinstance(_recipe().cursor_codec(ctx), CursorCodec)
+        assert isinstance(_recipe().build_cursor_codec(ctx), CursorCodec)
 
     def test_a_connection_only_composition_builds_no_codec(
         self, runtimes: list[StoreRuntime]

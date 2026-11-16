@@ -32,14 +32,14 @@ from loom.stores.sqlalchemy.migrations.operations import (
 from loom.stores.sqlalchemy.scoped_ddl import privilege_names, scope_documents
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 RevisionHook = Callable[[Any, Any, Sequence[ops.MigrationScript]], None]
 _Seal = Callable[[str], ops.MigrateOperation]
 _COLUMN_OPS = (ops.AlterColumnOp, ops.DropColumnOp)
 
 
-def scope_protection_hook(application: Application) -> RevisionHook:
+def scope_protection_hook(application: StoreSchema) -> RevisionHook:
     """Return the ``process_revision_directives`` callable for ``application``."""
     rewriter = _Rewriter(application)
 
@@ -56,7 +56,7 @@ def scope_protection_hook(application: Application) -> RevisionHook:
 
 
 class _Rewriter:
-    def __init__(self, application: Application) -> None:
+    def __init__(self, application: StoreSchema) -> None:
         self._scoped: Mapping[str, ScopedTable] = {
             table.name: table for table in application.scoped.values()
         }

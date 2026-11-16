@@ -373,7 +373,7 @@ class ExecutionPlan:
             JoinedAutocommitStore: For the first joined store, by name, that cannot.
         """
         for key in self.frame.stores[1:]:
-            if not stores[key].transactional:
+            if not stores[key].is_transactional:
                 issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                     component=self.use_case_type, store=key
                 )

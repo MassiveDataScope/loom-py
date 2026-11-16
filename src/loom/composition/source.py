@@ -136,7 +136,7 @@ class CompositionSource:
         """
         return load_catalog(self.config)
 
-    def store_backend(self, key: StoreKey, *, default: str) -> StoreBackend:
+    def resolve_store_backend(self, key: StoreKey, *, default: str) -> StoreBackend:
         """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:

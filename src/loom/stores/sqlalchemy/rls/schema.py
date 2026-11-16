@@ -25,7 +25,7 @@ from loom.stores.sqlalchemy.scoped_ddl import (
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 PROTECT_SIGNATURE: Final = "protect_scoped_table(regclass,jsonb,text[])"
 CURRENT_SCHEMA: Final = "SELECT current_schema()"
@@ -43,7 +43,7 @@ _MISSING_EVENT_TRIGGERS: Final = text(MISSING_EVENT_TRIGGERS)
 
 
 async def create_schema(
-    migrator_url: str, application: Application, *, lock_timeout: str = "5s"
+    migrator_url: str, application: StoreSchema, *, lock_timeout: str = "5s"
 ) -> None:
     """Run ``create_all`` on the application's metadata through the migrator.
 
@@ -72,7 +72,7 @@ async def create_schema(
             allow_unprotected=application.database.schema.allow_unprotected_dialect,
             path=application.path,
         )
-        bootstrap = application.bootstrap if application.guarded else None
+        bootstrap = application.bootstrap if application.is_guarded else None
         async with manager.engine.begin() as connection:
             if bootstrap is None:
                 await connection.run_sync(application.metadata.create_all)
@@ -84,7 +84,7 @@ async def create_schema(
 
 async def _create_protected(
     connection: AsyncConnection,
-    application: Application,
+    application: StoreSchema,
     bootstrap: BootstrapConfig,
     lock_timeout: str,
 ) -> None:
@@ -104,7 +104,7 @@ async def _create_protected(
     await connection.execute(_GUARD_FIRST, path)
     await connection.run_sync(
         lambda sync: reconcile_audited(
-            sync, schema=schema, guard=guard, declared=application.active_audited
+            sync, schema=schema, guard=guard, declared=application.recording_audit_tables
         )
     )
     await connection.execute(_ASSERT_SCHEMA)

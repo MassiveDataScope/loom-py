@@ -368,7 +368,10 @@ class RepositoryDynamoDB(
 
         Every field that is not ``msgspec.UNSET`` is included, defaults too.
         """
-        return cast(dict[str, Any], msgspec.to_builtins(RecordLayout.of(type(data)).values(data)))
+        return cast(
+            dict[str, Any],
+            msgspec.to_builtins(RecordLayout.from_struct(type(data)).to_values(data)),
+        )
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
         """Serialize a struct to a dict keyed by internal (snake_case) field names."""

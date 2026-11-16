@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.config._resolver_utils import aws_client, resolve_cached
+from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import AwsService, aws_error_code
 
@@ -133,7 +133,7 @@ class SecretsManagerResolver:
             name=self.name,
             label="Secrets Manager",
             unbound=self._unbound,
-            client=lambda: aws_client(
+            client=lambda: build_resolver_client(
                 AwsService.SECRETS_MANAGER,
                 self._region,
                 resolver="SecretsManagerResolver",

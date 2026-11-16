@@ -11,7 +11,7 @@ from sqlalchemy import MetaData
 from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.stores.catalog import StoreKey
-from loom.stores.sqlalchemy.alembic import Application, load_application
+from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
 from loom.stores.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
@@ -64,11 +64,11 @@ class TestScopedApplicationSchema:
         self,
         tmp_path: Path,
     ) -> None:
-        application = load_application(
+        application = load_store_schema(
             _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
         )
 
-        assert isinstance(application, Application)
+        assert isinstance(application, StoreSchema)
         assert {model.__name__ for model in application.models} == {"Note", "NoteItem", "NoteEvent"}
         assert set(application.metadata.tables) == {"notes", "note_items", "note_events"}
         assert set(application.scoped) == {
@@ -93,7 +93,7 @@ class TestScopedApplicationSchema:
         }
 
     def test_access_is_parsed_for_every_database_user(self, tmp_path: Path) -> None:
-        application = load_application(
+        application = load_store_schema(
             _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
         )
 
@@ -111,7 +111,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=r"notes_ro.*admin"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     @pytest.mark.parametrize(
         "missing",
@@ -124,7 +124,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=rf"stores\.default\.schema\.{missing}"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_a_missing_name_points_at_schema_init(self, tmp_path: Path) -> None:
         schema = _scoped_schema()
@@ -133,7 +133,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match="loom schema init"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_groups_sharing_a_name_with_a_role_are_rejected(self, tmp_path: Path) -> None:
         schema = _scoped_schema()
@@ -142,7 +142,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*distinct names"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_a_version_table_that_is_not_an_identifier_is_rejected(self, tmp_path: Path) -> None:
         schema = _scoped_schema()
@@ -151,7 +151,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*'Versions'"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_a_declared_scope_without_a_source_names_the_scope(self, tmp_path: Path) -> None:
         schema = _scoped_schema()
@@ -160,7 +160,7 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=r"stores\.default\.schema\.scopes\.editor"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     @pytest.mark.parametrize(
         ("scopes", "match"),
@@ -182,12 +182,12 @@ class TestScopedApplicationSchema:
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=match):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_an_application_without_scoped_models_needs_no_schema_keys(
         self, tmp_path: Path
     ) -> None:
-        application = load_application(
+        application = load_store_schema(
             _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
         )
 
@@ -197,10 +197,10 @@ class TestScopedApplicationSchema:
         assert set(application.metadata.tables) == {"widgets"}
 
     def test_two_applications_share_no_metadata(self, tmp_path: Path) -> None:
-        scoped = load_application(
+        scoped = load_store_schema(
             _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
         )
-        plain = load_application(
+        plain = load_store_schema(
             _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
         )
 
@@ -216,13 +216,13 @@ class TestLocatorConfigPath:
             "LOOM_CONFIG", _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
         )
 
-        assert set(load_application().metadata.tables) == {"widgets"}
+        assert set(load_store_schema().metadata.tables) == {"widgets"}
 
     def test_a_missing_loom_config_variable_is_named(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("LOOM_CONFIG", raising=False)
 
         with pytest.raises(ConfigError, match="LOOM_CONFIG"):
-            load_application()
+            load_store_schema()
 
     def test_a_relative_code_path_resolves_against_the_config_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -246,7 +246,7 @@ class TestLocatorConfigPath:
         monkeypatch.chdir(elsewhere)
         monkeypatch.setattr(sys, "path", list(sys.path))
 
-        application = load_application(_write(project, "loom.yaml", config))
+        application = load_store_schema(_write(project, "loom.yaml", config))
 
         assert set(application.metadata.tables) == {"gadgets"}
 
@@ -258,7 +258,7 @@ class TestCompiledSchemaNaming:
         config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(ConfigError, match=r"stores\.default\.schema"):
-            load_application(config_path)
+            load_store_schema(config_path)
 
     def test_a_naming_convention_names_the_constraints_of_the_compiled_metadata(
         self,
@@ -267,7 +267,9 @@ class TestCompiledSchemaNaming:
         convention = {"pk": "pk_%(table_name)s", "ck": "ck_%(table_name)s_%(constraint_name)s"}
         schema = {**_scoped_schema(), "naming_convention": convention}
 
-        application = load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+        application = load_store_schema(
+            _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+        )
 
         assert application.metadata.naming_convention["pk"] == "pk_%(table_name)s"
         assert application.metadata.tables["notes"].primary_key.name == "pk_notes"
@@ -276,7 +278,7 @@ class TestCompiledSchemaNaming:
         self,
         tmp_path: Path,
     ) -> None:
-        application = load_application(
+        application = load_store_schema(
             _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
         )
 
@@ -291,7 +293,7 @@ class TestCompiledSchemaNaming:
         with pytest.raises(
             ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
         ):
-            load_application(config_path)
+            load_store_schema(config_path)
 
 
 class TestLocatorEnvironmentOverlay:
@@ -312,7 +314,7 @@ class TestLocatorEnvironmentOverlay:
         monkeypatch.setenv("LOOM_ENV", "staging")
         monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
 
-        application = load_application()
+        application = load_store_schema()
 
         assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
 
@@ -377,7 +379,7 @@ class TestStoreSections:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.INFO):
-            application = load_application(two_stores, store=StoreKey(store))
+            application = load_store_schema(two_stores, store=StoreKey(store))
 
         loaded = (set(application.metadata.tables), application.store, application.path)
         left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]

@@ -12,7 +12,7 @@ from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import Integer, String, Text
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.rls import (
     register_scope_source,
     rls_session_settings,
@@ -37,10 +37,10 @@ def _clean_sources() -> Iterator[None]:
     clear_scope_sources()
 
 
-def _application(**sources: str) -> Application:
+def _application(**sources: str) -> StoreSchema:
     metadata = MetaData()
     compile_all(Note, metadata=metadata)
-    return Application(
+    return StoreSchema(
         models=(Note,),
         metadata=metadata,
         database=DatabaseConfig(

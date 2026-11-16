@@ -95,7 +95,7 @@ class DynamoDBBackend:
         dynamo_cfg = DynamoDBRepositoryConfig.from_config(
             spec.config, spec.path, own=spec.section()
         )
-        client = dynamo_cfg.client(AwsService.DYNAMODB)
+        client = dynamo_cfg.build_client(AwsService.DYNAMODB)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return StoreWiring(
             uow_factory=DynamoUnitOfWorkFactory(),

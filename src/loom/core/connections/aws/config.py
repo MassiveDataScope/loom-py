@@ -150,7 +150,7 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
 
         return convert_section(cls.inherit(ctx, own or {}, path) | over, path, cls)
 
-    def client(self, service: AwsService, **options: Any) -> Any:
+    def build_client(self, service: AwsService, **options: Any) -> Any:
         """Build one boto3 client for *service* from these settings.
 
         Args:

@@ -52,14 +52,14 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
 
 
 class TestCursorPagingWithoutACodec:
-    async def test_a_cursor_page_is_refused_naming_the_section(
+    async def test_a_cursor_page_is_refused(
         self, repository: RepositorySQLAlchemy[_Row, int]
     ) -> None:
         query = QuerySpec(
             pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=2
         )
 
-        with pytest.raises(UnsupportedQuery, match=r"stores\.settings\.cursors"):
+        with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
             await repository.list_with_query(query)
 
     async def test_offset_paging_is_unaffected(

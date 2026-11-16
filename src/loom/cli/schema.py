@@ -159,11 +159,11 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     guard's configuration row needs a privileged reader. Audit partitions past
     the retention are listed, not counted as drift.
     """
-    from loom.stores.sqlalchemy.alembic import load_application
+    from loom.stores.sqlalchemy.alembic import load_store_schema
     from loom.stores.sqlalchemy.rls import verify
 
     try:
-        application = load_application(str(config))
+        application = load_store_schema(str(config))
         url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
         report = asyncio.run(verify(url, application))
     except ConfigError as exc:
@@ -223,9 +223,9 @@ async def _as_migrator(action: Callable[[AsyncConnection], Awaitable[_T]]) -> _T
 
 
 def _bootstrap_config(config: Path) -> BootstrapConfig:
-    from loom.stores.sqlalchemy.alembic import load_application
+    from loom.stores.sqlalchemy.alembic import load_store_schema
 
-    settings = load_application(str(config)).bootstrap
+    settings = load_store_schema(str(config)).bootstrap
     if settings is None:
         raise ConfigError(f"{config} declares no row-scoped schema to bootstrap")
     return settings

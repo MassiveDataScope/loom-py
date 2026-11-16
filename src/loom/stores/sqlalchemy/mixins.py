@@ -196,7 +196,9 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         defaults included. A mapping is returned unchanged.
         """
         if isinstance(data, msgspec.Struct):
-            return self._checked_columns(to_column_value(RecordLayout.of(type(data)).values(data)))
+            return self._checked_columns(
+                to_column_value(RecordLayout.from_struct(type(data)).to_values(data))
+            )
         return data
 
     def _checked_columns(self, values: dict[str, Any]) -> dict[str, Any]:

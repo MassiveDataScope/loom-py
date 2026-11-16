@@ -24,7 +24,7 @@ class TestRetiredStoreSections:
         )
 
         with pytest.raises(ConfigError, match="stores.default"):
-            source.store_backend(DEFAULT_STORE, default="none")
+            source.resolve_store_backend(DEFAULT_STORE, default="none")
 
     def test_each_store_names_the_backend_composed_for_it(self) -> None:
         stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
@@ -34,7 +34,7 @@ class TestRetiredStoreSections:
 
         keys = (DEFAULT_STORE, StoreKey("audit"))
 
-        backends = [source.store_backend(key, default="mongo").name for key in keys]
+        backends = [source.resolve_store_backend(key, default="mongo").name for key in keys]
 
         assert backends == ["none", "sqlalchemy"]
 
@@ -70,7 +70,7 @@ class TestClickHouseStoreReaders:
     def test_a_clickhouse_store_is_a_connection_only_kind_of_the_catalog(self) -> None:
         spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
 
-        assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
+        assert (spec.backend, spec.capabilities.can_serve_models) == ("clickhouse", False)
         assert spec.section() == {"url": "clickhouse://ch:8123/analytics"}
 
     def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_ones(
@@ -99,4 +99,4 @@ class TestClickHouseStoreReaders:
         )
 
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            source.store_backend(DEFAULT_STORE, default="none")
+            source.resolve_store_backend(DEFAULT_STORE, default="none")

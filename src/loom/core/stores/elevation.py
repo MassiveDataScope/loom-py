@@ -101,7 +101,7 @@ class ScopedElevationSink:
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
     @classmethod
-    def of(cls, wirings: Mapping[StoreKey, StoreWiring]) -> ScopedElevationSink | None:
+    def from_wirings(cls, wirings: Mapping[StoreKey, StoreWiring]) -> ScopedElevationSink | None:
         """The sink of the stores among *wirings* whose sessions carry elevation flags, if any.
 
         Args:

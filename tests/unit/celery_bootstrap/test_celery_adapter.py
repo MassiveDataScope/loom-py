@@ -78,7 +78,7 @@ def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter)
 
 def _default_backend(source: CompositionSource, recipe: Recipe) -> str:
     """The backend the composition builds the default store of *recipe* with."""
-    return source.store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
+    return source.resolve_store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
 
 
 class TestBackendRule:

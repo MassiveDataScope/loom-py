@@ -94,7 +94,7 @@ class MongoBackend:
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe the store, resolving only its ``transactions`` key, never its connection."""
         transactional = spec.config.section_or_default(f"{spec.path}.transactions", bool, False)
-        return StoreCapabilities(serves_models=True, transactional=transactional)
+        return StoreCapabilities(can_serve_models=True, is_transactional=transactional)
 
     def build(
         self,

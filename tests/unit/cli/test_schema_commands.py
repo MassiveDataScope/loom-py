@@ -44,7 +44,7 @@ class TestSchemaCommands:
             "app_rw": DatabaseUser(login=True, access="write"),
             "app_nologin": DatabaseUser(login=False, access="read"),
         }
-        monkeypatch.setattr(alembic, "load_application", lambda path: _application(users))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application(users))
         monkeypatch.setattr(rls, "apply_bootstrap", apply)
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_RW", "s3cret")
@@ -61,7 +61,7 @@ class TestSchemaCommands:
         self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         users = {"app_rw": DatabaseUser(login=True, access="write")}
-        monkeypatch.setattr(alembic, "load_application", lambda path: _application(users))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application(users))
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
         monkeypatch.delenv("LOOM_DB_PASSWORD_APP_RW", raising=False)
@@ -74,7 +74,7 @@ class TestSchemaCommands:
     def test_bootstrap_without_the_superuser_url_fails(
         self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(alembic, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
         monkeypatch.delenv("LOOM_SUPERUSER_URL", raising=False)
 
@@ -96,7 +96,7 @@ class TestSchemaCommands:
             assert url == "postgresql+asyncpg://verifier@db/app"
             return report
 
-        monkeypatch.setattr(alembic, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setattr(rls, "verify", check)
         monkeypatch.setenv("LOOM_VERIFY_URL", "postgresql+asyncpg://verifier@db/app")
 
@@ -110,7 +110,7 @@ class TestSchemaCommands:
         async def check(url: str, application: Any) -> Report:
             return Report(ok=True, findings=())
 
-        monkeypatch.setattr(alembic, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setattr(rls, "verify", check)
         monkeypatch.delenv("LOOM_VERIFY_URL", raising=False)
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")

@@ -10,7 +10,7 @@ import msgspec
 class RecordLayout:
     """The fields of one struct type that can hold ``msgspec.UNSET``, and its tag.
 
-    A layout is built once per struct type; :meth:`of` returns the same
+    A layout is built once per struct type; :meth:`from_struct` returns the same
     object for the same type.
     """
 
@@ -35,14 +35,14 @@ class RecordLayout:
         )
 
     @classmethod
-    def of(cls, struct_type: type[msgspec.Struct]) -> RecordLayout:
+    def from_struct(cls, struct_type: type[msgspec.Struct]) -> RecordLayout:
         """Return the layout of *struct_type*, building it on first use."""
         layout = cls._layouts.get(struct_type)
         if layout is None:
             layout = cls._layouts[struct_type] = cls(struct_type)
         return layout
 
-    def values(self, row: msgspec.Struct) -> dict[str, Any]:
+    def to_values(self, row: msgspec.Struct) -> dict[str, Any]:
         """Return the field values of *row* keyed by field name, ``UNSET`` fields left out.
 
         A field left at its default is included, whatever ``omit_defaults``

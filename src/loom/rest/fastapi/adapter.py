@@ -215,7 +215,7 @@ def _gate_autocrud_capabilities(
         if interface.auto_crud_model is not None:
             model = interface.auto_crud_model
             key = store_of(model)
-            backend = source.store_backend(key, default=SQLALCHEMY_BACKEND)
+            backend = source.resolve_store_backend(key, default=SQLALCHEMY_BACKEND)
             pruned.update(_gate_interface(interface, model, key, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted

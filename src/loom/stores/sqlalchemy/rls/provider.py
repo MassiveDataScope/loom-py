@@ -31,7 +31,7 @@ from loom.stores.sqlalchemy.rls.sources import ScopeSource, bind_sources
 from loom.stores.sqlalchemy.session_settings import SessionSettings
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 SETTING_NAMESPACE: Final = "loom."
 SCOPE_PREFIX = "loom.scope."
@@ -53,7 +53,7 @@ def elevation_setting(scope: str) -> str:
 
 
 def rls_session_settings(
-    application: Application, product: SessionSettings | None = None
+    application: StoreSchema, product: SessionSettings | None = None
 ) -> Callable[[], Mapping[str, str]]:
     """Build the provider for ``application``; the product's settings are merged in.
 

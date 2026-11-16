@@ -18,7 +18,7 @@ from .conftest import FakeClient
 
 
 def _wiring(monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, table: str) -> StoreWiring:
-    monkeypatch.setattr(AwsClientConfig, "client", lambda _self, _service: fake_client)
+    monkeypatch.setattr(AwsClientConfig, "build_client", lambda _self, _service: fake_client)
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},

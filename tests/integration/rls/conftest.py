@@ -27,7 +27,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_of
-from loom.stores.sqlalchemy.alembic import Application, load_application
+from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
 from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
 
@@ -267,8 +267,8 @@ def application_for(
     *,
     schema: str | None = None,
     store: StoreKey = DEFAULT_STORE,
-) -> Application:
-    """Load a synthetic product as *store*'s ``Application`` from a generated configuration file."""
+) -> StoreSchema:
+    """Load a synthetic product as *store*'s ``StoreSchema`` from a generated configuration file."""
     name = schema or product.SCHEMA
     config = {
         "app": {
@@ -301,7 +301,7 @@ def application_for(
     }
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config))
-    return load_application(str(path), store=store)
+    return load_store_schema(str(path), store=store)
 
 
 def store_section(

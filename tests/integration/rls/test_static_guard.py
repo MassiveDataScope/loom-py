@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 from loom.stores.sqlalchemy.rls import create_schema, verify
 from loom.stores.sqlalchemy.rls.integrity import startup_problems
@@ -39,7 +39,7 @@ class Installed:
     schema: str
     guard: str
     database: ScopedDatabase
-    application: Application
+    application: StoreSchema
 
 
 def _raw(url: str) -> str:

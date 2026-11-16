@@ -18,7 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
 from loom.core.schema_names import SchemaNames
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations.runners import LOCK, UNLOCK
 from loom.stores.sqlalchemy.rls import (
     BootstrapConfig,
@@ -125,7 +125,7 @@ async def _guarded_table(scoped_database: BootstrapFactory) -> ScopedDatabase:
 
 async def _installed(
     scoped_database: BootstrapFactory, tmp_path: Path
-) -> tuple[ScopedDatabase, Application]:
+) -> tuple[ScopedDatabase, StoreSchema]:
     schema = _name()
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
@@ -133,7 +133,7 @@ async def _installed(
     return database, application
 
 
-async def _startup_checks(url: str, application: Application) -> set[str]:
+async def _startup_checks(url: str, application: StoreSchema) -> set[str]:
     bootstrap = application.bootstrap
     assert bootstrap is not None
     engine = create_async_engine(url, poolclass=NullPool)
@@ -147,7 +147,7 @@ async def _startup_checks(url: str, application: Application) -> set[str]:
     return {problem.check for problem in problems}
 
 
-async def _verify_checks(url: str, application: Application) -> set[str]:
+async def _verify_checks(url: str, application: StoreSchema) -> set[str]:
     report = await verify(url, application)
     return {finding.check for finding in report.findings}
 

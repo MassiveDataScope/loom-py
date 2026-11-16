@@ -217,7 +217,7 @@ class TestSnsNotifier:
 
 class TestBuildSnsNotifier:
     def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(AwsClientConfig, "client", MagicMock())
+        monkeypatch.setattr(AwsClientConfig, "build_client", MagicMock())
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

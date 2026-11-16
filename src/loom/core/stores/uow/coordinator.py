@@ -331,7 +331,7 @@ class Participant:
 
     Attributes:
         key: Store the participant belongs to.
-        transactional: Whether its unit of work can roll back.
+        is_transactional: Whether its unit of work can roll back.
         first_write: Invocation-wide order of its first write, or ``None``.
         wrote: Whether a write went through it.
         poisoned: Why the invocation must not commit, once :meth:`poison` set it.
@@ -339,7 +339,7 @@ class Participant:
 
     def __init__(self, key: StoreKey, uow: UnitOfWork) -> None:
         self.key = key
-        self.transactional = type(uow).transactional
+        self.is_transactional = type(uow).transactional
         self.first_write: int | None = None
         self.wrote = False
         self.poisoned: BaseException | None = None
@@ -546,13 +546,13 @@ def _is_success(outcome: StoreOutcome | None) -> bool:
 
 
 def _succeeded(participant: Participant) -> StoreOutcome:
-    if participant.transactional:
+    if participant.is_transactional:
         return Committed(participant.key)
     return NonTransactional(participant.key, participant.wrote)
 
 
 def _undone(participant: Participant, cause: BaseException) -> StoreOutcome:
-    if participant.transactional:
+    if participant.is_transactional:
         return RolledBack(participant.key, cause)
     return NonTransactional(participant.key, participant.wrote)
 
@@ -565,7 +565,7 @@ def _failed(participant: Participant, error: BaseException) -> StoreOutcome:
     non-transactional write is uncertain.
     """
     defined = isinstance(error, Exception) and not isinstance(error, CommitUncertain)
-    if defined and (participant.transactional or not participant.wrote):
+    if defined and (participant.is_transactional or not participant.wrote):
         return RolledBack(participant.key, error)
     return Uncertain(participant.key, _cause(error))
 

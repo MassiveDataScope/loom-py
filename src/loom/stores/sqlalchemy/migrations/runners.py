@@ -45,7 +45,7 @@ from loom.stores.sqlalchemy.scoped_ddl import (
 )
 
 if TYPE_CHECKING:
-    from loom.stores.sqlalchemy.alembic import Application
+    from loom.stores.sqlalchemy.alembic import StoreSchema
 
 IncludeObject = Callable[[Any, "str | None", str, bool, Any], bool]
 VersionApply = Callable[[MigrationContext, MigrationInfo, Collection[Any], Mapping[str, Any]], None]
@@ -100,7 +100,7 @@ def alembic_config(script_location: str, url: str) -> Config:
 
 def run_migrations(
     connection: Connection,
-    application: Application,
+    application: StoreSchema,
     *,
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
@@ -139,7 +139,7 @@ def run_migrations(
             include_object=include_object_for(names),
             process_revision_directives=scope_protection_hook(application),
             on_version_apply=_close_revision(
-                names.guard, schema, application.active_audited, read_only=read_only
+                names.guard, schema, application.recording_audit_tables, read_only=read_only
             ),
             loom_guard=names.guard,
         )
@@ -152,10 +152,10 @@ def run_migrations(
 
 
 def _reconcile_audit(
-    connection: Connection, application: Application, schema: str, guard: str
+    connection: Connection, application: StoreSchema, schema: str, guard: str
 ) -> None:
     connection.commit()
-    _reconcile_present(connection, schema, guard, application.active_audited)
+    _reconcile_present(connection, schema, guard, application.recording_audit_tables)
     connection.execute(_ASSERT_SCHEMA)
     connection.commit()
 
@@ -175,7 +175,7 @@ def _reconcile_present(
 
 def run_data_migrations(
     connection: Connection,
-    application: Application,
+    application: StoreSchema,
     *,
     lock_timeout: str = "5s",
     statement_timeout: str = "60s",
@@ -207,7 +207,7 @@ def run_data_migrations(
         _unlock(connection, schema)
 
 
-def check(config: Config, application: Application) -> None:
+def check(config: Config, application: StoreSchema) -> None:
     """Fail when the models, the database or the guard registry disagree.
 
     Tables and columns are compared by Alembic's autogenerate; the registry is
@@ -237,7 +237,7 @@ def _sqlstate(exc: DBAPIError) -> str | None:
     return getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
 
 
-async def _registry_drift(config: Config, application: Application) -> None:
+async def _registry_drift(config: Config, application: StoreSchema) -> None:
     bootstrap = _require_bootstrap(application)
     url = str(config.get_main_option("sqlalchemy.url")).replace("%%", "%")
     engine = create_async_engine(url, poolclass=NullPool)
@@ -262,7 +262,7 @@ async def _registry_drift(config: Config, application: Application) -> None:
         )
 
 
-def _require_bootstrap(application: Application) -> BootstrapConfig:
+def _require_bootstrap(application: StoreSchema) -> BootstrapConfig:
     bootstrap = application.require_bootstrap("migrations")
     try:
         return bootstrap.validated()
@@ -302,7 +302,7 @@ def require_landing(connection: Connection, owner: str, schema: str) -> None:
         )
 
 
-def _require_bypass(connection: Connection, application: Application) -> None:
+def _require_bypass(connection: Connection, application: StoreSchema) -> None:
     user, bypass = connection.execute(_BYPASS_SELF).one()
     users = application.bootstrap.database_users if application.bootstrap else {}
     declared = users.get(str(user))

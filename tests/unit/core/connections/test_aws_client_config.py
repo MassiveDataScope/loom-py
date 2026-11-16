@@ -1,4 +1,4 @@
-"""``AwsClientConfig.from_config`` and ``AwsClientConfig.client``, the one way to an AWS client."""
+"""``AwsClientConfig.from_config`` and ``build_client``, the one way to an AWS client."""
 
 from __future__ import annotations
 
@@ -61,13 +61,13 @@ class TestAwsClientConfigFromConfig:
         assert (type(config), config.table) == (Product, "orders")
 
 
-class TestAwsClientConfigClient:
+class TestAwsClientConfigBuildClient:
     @pytest.mark.parametrize("service", list(AwsService))
     def test_the_client_is_built_for_the_service_in_the_region_of_the_settings(
         self, service: AwsService
     ) -> None:
         with patched_aws_clients() as clients:
-            AwsClientConfig(region="eu-west-1").client(service)
+            AwsClientConfig(region="eu-west-1").build_client(service)
 
         clients.assert_called_once_with(service.value, region_name="eu-west-1")
 
@@ -87,8 +87,8 @@ class TestAwsClientConfigClient:
         without_boto3(monkeypatch)
 
         with pytest.raises(MissingExtraError, match=extra):
-            AwsClientConfig().client(service)
+            AwsClientConfig().build_client(service)
 
     def test_options_the_settings_decide_are_refused(self) -> None:
         with pytest.raises(ValueError, match="read_timeout"):
-            AwsClientConfig().client(AwsService.DYNAMODB, read_timeout=60)
+            AwsClientConfig().build_client(AwsService.DYNAMODB, read_timeout=60)

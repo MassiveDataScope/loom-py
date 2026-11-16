@@ -35,7 +35,7 @@ def resolve_store_backend(name: str) -> StoreBackend:
     try:
         target = load_entry_point(BACKEND_ENTRY_POINT_GROUP, name, on_duplicate="error")
     except EntryPointNotFoundError as exc:
-        raise ConfigError(_unknown_backend_message(name, exc.available)) from exc
+        raise ConfigError(_describe_unknown_backend(name, exc.available)) from exc
     except ImportError as exc:
         raise ConfigError(
             f"Persistence backend {name!r} could not be imported ({exc}). Install the "
@@ -45,7 +45,7 @@ def resolve_store_backend(name: str) -> StoreBackend:
     return backend_cls()
 
 
-def _unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
+def _describe_unknown_backend(name: str, available: tuple[str, ...]) -> str:
     """Return the message naming an unknown backend *name* and the *available* ones."""
     if not available:
         return f"Unknown persistence backend {name!r}. No persistence backends are registered."

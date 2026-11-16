@@ -13,7 +13,7 @@ from sqlalchemy import MetaData
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 from loom.stores.sqlalchemy.schema import get_metadata, reset_registry
 from tests.helpers.persistence import build_backend
@@ -75,7 +75,7 @@ class TestNamingConvention:
         tmp_path: Path,
     ) -> None:
         path = _config_file(tmp_path, rosters.NAMING_CONVENTION)
-        application = load_application(str(path))
+        application = load_store_schema(str(path))
         wiring = build_backend(
             SQLAlchemyBackend(), ConfigContext.from_yaml(str(path)), rosters.MODELS, SERVER_PROFILE
         )

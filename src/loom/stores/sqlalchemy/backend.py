@@ -105,7 +105,7 @@ class SQLAlchemyBackend:
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe SQLAlchemy: models and rollback, whatever *spec* says."""
         del spec
-        return StoreCapabilities(serves_models=True, transactional=True)
+        return StoreCapabilities(can_serve_models=True, is_transactional=True)
 
     def build(
         self,

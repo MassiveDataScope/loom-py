@@ -12,7 +12,7 @@ from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, Scoped
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import DateTime, String, Text
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.stores.sqlalchemy.migrations.operations import (
     DetachRangePartitionsOp,
@@ -43,11 +43,11 @@ class Event(BaseModel, RowScoped):
     kind: str = ColumnField(Text)
 
 
-def _application() -> Application:
+def _application() -> StoreSchema:
     metadata = MetaData()
     metadata.info[SCHEMA_KEY] = SCHEMA
     compile_all(Event, metadata=metadata)
-    return Application(
+    return StoreSchema(
         models=(Event,),
         metadata=metadata,
         database=DatabaseConfig(

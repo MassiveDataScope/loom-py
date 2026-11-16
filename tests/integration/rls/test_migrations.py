@@ -21,7 +21,7 @@ from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
 from loom.core.environment import CONFIG_VARIABLE
-from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations import (
     ENV_TEMPLATE_PATH,
     alembic_config,
@@ -133,7 +133,7 @@ async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) ->
 class Trees:
     """One structural and one data script location sharing loom's environment."""
 
-    def __init__(self, root: Path, application: Application) -> None:
+    def __init__(self, root: Path, application: StoreSchema) -> None:
         self.structural = root / "alembic"
         self.data = self.structural / "data"
         self.application = application

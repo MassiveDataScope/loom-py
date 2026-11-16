@@ -90,7 +90,7 @@ class TestRunnerConfiguration:
     def test_the_locator_puts_the_code_path_on_sys_path(self, tmp_path, monkeypatch) -> None:
         import sys
 
-        from loom.stores.sqlalchemy.alembic import load_application
+        from loom.stores.sqlalchemy.alembic import load_store_schema
 
         package = tmp_path / "code" / "located_pkg"
         package.mkdir(parents=True)
@@ -118,7 +118,7 @@ class TestRunnerConfiguration:
         )
         monkeypatch.setattr(sys, "path", list(sys.path))
 
-        application = load_application(str(config))
+        application = load_store_schema(str(config))
 
         assert "located" in application.metadata.tables
 

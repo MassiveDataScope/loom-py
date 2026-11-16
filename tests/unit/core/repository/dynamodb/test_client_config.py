@@ -112,7 +112,7 @@ class TestDynamoClientConfig:
             strict=True,
         )
         repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
-            cfg.client(AwsService.DYNAMODB), "products", Product
+            cfg.build_client(AwsService.DYNAMODB), "products", Product
         )
 
         started = time.perf_counter()

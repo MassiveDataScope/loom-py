@@ -92,7 +92,7 @@ def reconcile_audited(
         connection: The migrator's connection, inside the deploy transaction.
         schema: The application schema.
         guard: The guard schema, to tell whether it has the audit log's revision.
-        declared: The tables that record rows (``Application.active_audited``);
+        declared: The tables that record rows (``StoreSchema.recording_audit_tables``);
             empty stops auditing every registered table.
     """
     schema = schema_identifier(schema)

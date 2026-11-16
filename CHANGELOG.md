@@ -66,7 +66,7 @@
   call with `PaginationMode.CURSOR` raises `UnsupportedQuery`. Offset paging is
   unchanged. Configuring the section without a key still fails at start-up.
   `stores.<name>.settings` is a `ConfigError` pointing to `stores.settings`.
-  `CursorCodec.from_context` and `Recipe.cursor_codec(ctx)` return `None`
+  `CursorCodec.from_context` and `Recipe.build_cursor_codec(ctx)` return `None`
   without the section, the repositories, compiler and registration modules
   accept `cursor_codec=None`, `StoreCapabilities.pages_with_cursors` and
   `StoreCatalog.pages_with_cursors` are removed (nothing reads them), and
@@ -555,7 +555,7 @@
   | `loom.core.backend` and `loom.core.backend.protocol` (`PersistenceBackend` protocol) | removed |
   | `loom.core.repository.sqlalchemy` and every module below it (`backend`, `repository`, `uow`, `session_manager`, `rls`, `migrations`, `query_compiler`, ...) | `loom.stores.sqlalchemy` and the same module below it |
   | `loom.core.repository.sqlalchemy.rls.guard/*.sql` (package data) | `loom.stores.sqlalchemy.rls.guard/*.sql` |
-  | `loom.core.locator.load_application` and `loom.core.locator.Application` | `loom.stores.sqlalchemy.alembic.load_application` and `loom.stores.sqlalchemy.alembic.Application` |
+  | `loom.core.locator.load_application` and `loom.core.locator.Application` | `loom.stores.sqlalchemy.alembic.load_store_schema` and `loom.stores.sqlalchemy.alembic.StoreSchema` |
   | `loom.core.locator.{add_code_path,DEFAULT_CODE_PATH}` | unchanged |
   | `loom.core.repository.dynamodb` and every module below it (`backend`, `repository`, `uow`, `registry`) | `loom.stores.dynamodb` and the same module below it |
   | `loom.core.repository.mongo` and every module below it (`backend`, `repository`, `uow`, `ids`, `query_compiler`, `values`, `registry`) | `loom.stores.mongo` and the same module below it |
@@ -572,7 +572,7 @@
   - Alembic `env.py` files importing `loom.core.repository.sqlalchemy.migrations`
     or `loom.core.locator.load_application` import
     `loom.stores.sqlalchemy.migrations` and
-    `loom.stores.sqlalchemy.alembic.load_application`.
+    `loom.stores.sqlalchemy.alembic.load_store_schema`.
   - Alembic revision files importing `migrations.operations`,
     `ENV_TEMPLATE_PATH` or `alembic_config` take them from
     `loom.stores.sqlalchemy.migrations`.
@@ -600,7 +600,7 @@
   | `BackendRuntime` | `StoreRuntime` |
   | `resolve_backend` | `resolve_store_backend` |
   | `unknown_backend_message` | private |
-  | `CompositionSource.backend()` | `CompositionSource.store_backend()` |
+  | `CompositionSource.backend()` | `CompositionSource.resolve_store_backend()` |
   | `loom.composition.phases.Stores.backends` | `Stores.store_backends` |
   | `Recipe.default_backend` | `Recipe.default_store_backend` |
   | entry point group `loom.persistence.backends` | `loom.stores.backends` |
@@ -613,6 +613,25 @@
   `*, on_conflict: OnConflict = OnConflict.ERROR` to the custom
   `create_many` (`OnConflict` from `loom.core.stores.repository`) and honour or
   refuse `OnConflict.IGNORE`.
+- **stores:** the store and composition names that were nouns or bare
+  participles now carry a verb or a role. The behaviour is the same.
+  **Migration:** rename every use.
+
+  | Before | After |
+  |---|---|
+  | `loom.stores.sqlalchemy.alembic.Application` | `StoreSchema` |
+  | `loom.stores.sqlalchemy.alembic.load_application` | `load_store_schema` |
+  | `StoreSchema.guarded` | `StoreSchema.is_guarded` |
+  | `StoreSchema.active_audited` | `StoreSchema.recording_audit_tables` |
+  | `StoreCapabilities.serves_models` | `StoreCapabilities.can_serve_models` |
+  | `StoreCapabilities.transactional` | `StoreCapabilities.is_transactional` |
+  | `RecordLayout.of(type)` | `RecordLayout.from_struct(type)` |
+  | `RecordLayout.values(row)` | `RecordLayout.to_values(row)` |
+  | `ScopedElevationSink.of(wirings)` | `ScopedElevationSink.from_wirings(wirings)` |
+  | `CompositionSource.store_backend(key, default=)` | `CompositionSource.resolve_store_backend(key, default=)` |
+  | `Recipe.cursor_codec(ctx)` | `Recipe.build_cursor_codec(ctx)` |
+  | `AwsClientConfig.client(service)` | `AwsClientConfig.build_client(service)` |
+  | `StoreSetting.refuse_unknown(shared)` | `StoreSetting.check_section(shared)` |
 
 ## ✨ Features
 

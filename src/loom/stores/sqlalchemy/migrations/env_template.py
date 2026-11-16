@@ -3,7 +3,7 @@
 The same file serves ``alembic/`` (structural tree) and ``alembic/data`` (data
 tree): ``alembic_config`` records which tree a script location is. The
 application comes from ``config.attributes["application"]`` or, failing that,
-from ``LOOM_CONFIG`` through ``load_application``. Offline mode is refused because the
+from ``LOOM_CONFIG`` through ``load_store_schema``. Offline mode is refused because the
 guard needs a connection.
 """
 
@@ -15,7 +15,7 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.alembic import load_store_schema
 from loom.stores.sqlalchemy.migrations.runners import (
     DATA_TREE,
     run_data_migrations,
@@ -23,7 +23,7 @@ from loom.stores.sqlalchemy.migrations.runners import (
 )
 
 config = context.config
-application = config.attributes.get("application") or load_application(
+application = config.attributes.get("application") or load_store_schema(
     config.attributes.get("config_path")
 )
 runner = run_data_migrations if config.attributes.get("tree") == DATA_TREE else run_migrations
