@@ -46,7 +46,8 @@ def create_app(
 
     Configuration comes from exactly one of two forms. *config_dir* loads its
     ``base.yaml``, then ``<environment>.yaml`` when present. Explicit
-    *config_paths* are merged left-to-right as given. Either way later files
+    *config_paths* are merged left-to-right as given. With neither, the
+    directory is ``LOOM_CONFIG_DIR``, else ``./config``. Either way later files
     override earlier ones, each file's ``includes`` merge before its own
     values, and the ``LOOM__SECTION__KEY`` variables merge last (see
     :mod:`loom.core.config.overrides`).
@@ -88,7 +89,8 @@ def create_app(
         *config_paths: Paths to YAML configuration files, merged left to
             right. Mutually exclusive with *config_dir*.
         config_dir: Local directory holding ``base.yaml`` and the
-            per-environment overlays. Mutually exclusive with *config_paths*.
+            per-environment overlays. Mutually exclusive with *config_paths*;
+            with neither, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Optional override for ``app.code_path``.  Resolved relative
             to the first config file when not absolute.

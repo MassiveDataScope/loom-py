@@ -89,3 +89,19 @@ class TestBootstrapResolvers:
         )
 
         assert result.celery_app.conf.broker_url == "memory://"
+
+
+class TestBootstrapWorkerDefaultConfig:
+    def test_without_a_path_the_worker_loads_the_default_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "config"
+        directory.mkdir()
+        written = Path(_write_worker_yaml(tmp_path, "memory://"))
+        (directory / "base.yaml").write_bytes(written.read_bytes())
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        result = bootstrap_worker(jobs=[_SyncJob])
+
+        assert result.celery_app.conf.broker_url == "memory://"

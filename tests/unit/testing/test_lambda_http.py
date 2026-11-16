@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -143,6 +144,22 @@ class TestLambdaTestClient:
 
             assert client.application is not None
         assert (served, unserved) == (200, 404)
+
+    @pytest.mark.parametrize("source", ["variable", "local"])
+    def test_a_client_without_a_path_loads_the_default_config_directory(
+        self, config: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        directory = tmp_path / ("elsewhere" if source == "variable" else "config")
+        directory.mkdir()
+        (directory / "base.yaml").write_bytes(Path(config).read_bytes())
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        if source == "variable":
+            monkeypatch.setenv("LOOM_CONFIG_DIR", str(directory))
+        with LambdaTestClient(function="items", environment="test") as client:
+            served = client.get("/items/7", headers=bearer("alice")).status_code
+
+        assert served == 200
 
     def test_a_handler_takes_no_create_app_options(self, handler: LambdaHTTPHandler) -> None:
         with pytest.raises(TypeError, match="need a configuration path"):

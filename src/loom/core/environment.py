@@ -280,15 +280,20 @@ def resolve_config_dir() -> Path:
 
     Raises:
         ConfigError: When that directory does not exist; the message names the
-            path tried and both sources.
+            path tried, and both sources when the variable is unset.
     """
-    directory = Path(loom_variable(CONFIG_DIR_VARIABLE) or _DEFAULT_CONFIG_DIR)
-    if not directory.is_dir():
+    configured = loom_variable(CONFIG_DIR_VARIABLE)
+    directory = Path(configured or _DEFAULT_CONFIG_DIR)
+    if directory.is_dir():
+        return directory
+    if configured:
         raise ConfigError(
-            f"config directory {str(directory)!r} not found: "
-            f"set {CONFIG_DIR_VARIABLE} or create ./config"
+            f"{CONFIG_DIR_VARIABLE} names {str(directory)!r}, which is not a directory"
         )
-    return directory
+    raise ConfigError(
+        f"config directory {str(directory)!r} not found: "
+        f"{CONFIG_DIR_VARIABLE} is not set and ./config does not exist"
+    )
 
 
 def select_config_paths(

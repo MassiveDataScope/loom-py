@@ -56,7 +56,8 @@ def create_app(
         adapter: The transport, and how it wants the application composed;
             ``app.entry`` picks it when omitted: ``fastapi``, ``lambda`` or a
             function of ``lambda.functions``.
-        config_dir: Directory with ``base.yaml`` and the per-environment overlays.
+        config_dir: Directory with ``base.yaml`` and the per-environment overlays;
+            with no *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Overrides ``app.code_path``, relative to the first config file.
         resolvers: Resolvers for ``${name:key}`` placeholders, ahead of the

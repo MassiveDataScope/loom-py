@@ -217,6 +217,17 @@ class TestLocatorConfigPath:
 
         assert set(load_store_schema().metadata.tables) == {"widgets"}
 
+    def test_an_explicit_path_wins_over_the_config_dir_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        variable = tmp_path / "variable"
+        variable.mkdir()
+        _write(variable, "base.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+        monkeypatch.setenv("LOOM_CONFIG_DIR", str(variable))
+        explicit = _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
+
+        assert set(load_store_schema(explicit).metadata.tables) == {"widgets"}
+
     def test_a_missing_default_directory_names_both_sources(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

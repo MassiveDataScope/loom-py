@@ -34,6 +34,8 @@ def create_app(
             exclusive with *config_dir*.
         config_dir: Directory holding ``base.yaml`` and the per-environment
             overlays; ``<environment>.yaml`` loads after the base when present.
+            With no *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or
+            ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``, which
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.

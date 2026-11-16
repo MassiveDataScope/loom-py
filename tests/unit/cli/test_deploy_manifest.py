@@ -495,3 +495,26 @@ class TestDeployManifest:
         assert "environment: production" in result.stderr
         assert "silenced: loom.cursors.E001" in result.stderr
         assert "WARNING loom.rest.W001" in result.stderr
+
+
+class TestDefaultConfigDirectory:
+    def test_without_a_path_the_manifest_comes_from_the_default_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "config"
+        directory.mkdir()
+        (directory / "base.yaml").write_text("app:\n  name: acme\n", encoding="utf-8")
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        roots: list[Path] = []
+
+        def build(config: Any, environment: Any, function: Any, **options: Any) -> dict[str, Any]:
+            roots.append(options["config_root"])
+            return {}
+
+        monkeypatch.setattr("loom.cli.deploy.build_manifest", build)
+
+        result = runner.invoke(app, ["deploy", "manifest", "--skip", "loom.rest"])
+
+        assert result.exit_code == 0, result.output
+        assert roots == [directory.resolve()]

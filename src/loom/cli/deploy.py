@@ -7,13 +7,12 @@ manifest. The manifest alone goes to stdout.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 import msgspec
 import typer
 
-from loom.cli.check import check_config, print_report
+from loom.cli.check import ConfigArgument, check_config, print_report
 from loom.core.config.errors import ConfigError
 from loom.serverless.aws.lambda_.manifest import build_manifest
 
@@ -22,13 +21,7 @@ deploy_app = typer.Typer(no_args_is_help=True, help="Describe what a deployment 
 
 @deploy_app.command("manifest")
 def manifest(
-    config: Annotated[
-        list[Path] | None,
-        typer.Argument(
-            help="A config directory (base.yaml plus overlays) or YAML files; "
-            "defaults to LOOM_CONFIG_DIR, else ./config."
-        ),
-    ] = None,
+    config: ConfigArgument = None,
     function: Annotated[
         str | None,
         typer.Option("--function", help="Only this function of lambda.functions."),

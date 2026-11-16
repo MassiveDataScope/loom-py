@@ -56,21 +56,25 @@ class TestResolveConfigDir:
     ) -> None:
         assert resolve_config_dir() == Path("config")
 
-    @pytest.mark.parametrize("variable", [None, "/not/a/directory"])
-    def test_a_missing_directory_names_both_sources_and_the_path_tried(
-        self, workdir: Path, monkeypatch: pytest.MonkeyPatch, variable: str | None
-    ) -> None:
-        if variable is not None:
-            monkeypatch.setenv(CONFIG_DIR_VARIABLE, variable)
-        tried = variable or "config"
-
+    def test_a_missing_local_directory_names_both_sources(self, workdir: Path) -> None:
         with pytest.raises(ConfigError) as raised:
             resolve_config_dir()
 
         message = str(raised.value)
         assert "LOOM_CONFIG_DIR" in message
         assert "./config" in message
-        assert repr(tried) in message
+
+    def test_a_missing_variable_directory_names_the_value_as_the_path_tried(
+        self, workdir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(CONFIG_DIR_VARIABLE, "/not/a/directory")
+
+        with pytest.raises(ConfigError) as raised:
+            resolve_config_dir()
+
+        message = str(raised.value)
+        assert "'/not/a/directory'" in message
+        assert "./config" not in message
 
 
 class TestSelectConfigPaths:

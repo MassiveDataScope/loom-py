@@ -119,6 +119,30 @@ class TestSchemaCommands:
 
         assert result.exit_code == 0, result.output
 
+    @pytest.mark.parametrize("command", ["bootstrap", "verify"])
+    def test_without_config_the_default_directory_is_left_to_the_loader(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        paths: list[str | None] = []
+
+        def load(path: str | None) -> Any:
+            paths.append(path)
+            return _application({})
+
+        async def noop(*args: Any) -> Report:
+            return Report(ok=True, findings=())
+
+        monkeypatch.setattr(alembic, "load_store_schema", load)
+        monkeypatch.setattr(rls, "apply_bootstrap", noop)
+        monkeypatch.setattr(rls, "verify", noop)
+        monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
+        monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
+
+        result = runner.invoke(app, ["schema", command])
+
+        assert result.exit_code == 0, result.output
+        assert paths == [None]
+
     @pytest.mark.parametrize(
         ("dropped", "expected"),
         [("audit_log_p202401", "audit_log_p202401"), (None, "no audit partition")],

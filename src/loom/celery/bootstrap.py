@@ -110,7 +110,8 @@ def bootstrap_worker(
         config_dir: Local directory holding ``base.yaml`` and the
             per-environment overlays: ``base.yaml`` loads first, then
             ``<environment>.yaml`` when present. Either way the
-            ``LOOM__SECTION__KEY`` variables merge last.
+            ``LOOM__SECTION__KEY`` variables merge last. With no
+            *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``.
         jobs: Concrete ``Job`` subclasses to compile/register.  When
             omitted, jobs are discovered from ``app.discovery`` using

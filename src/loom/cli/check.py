@@ -27,15 +27,17 @@ from loom.composition.project import CheckedProject, Project
 from loom.core.config.errors import ConfigError
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
+ConfigArgument = Annotated[
+    list[Path] | None,
+    typer.Argument(
+        help="A config directory (base.yaml plus overlays) or YAML files; "
+        "defaults to LOOM_CONFIG_DIR, else ./config."
+    ),
+]
+
 
 def check(
-    config: Annotated[
-        list[Path] | None,
-        typer.Argument(
-            help="A config directory (base.yaml plus overlays) or YAML files; "
-            "defaults to LOOM_CONFIG_DIR, else ./config."
-        ),
-    ] = None,
+    config: ConfigArgument = None,
     deploy: Annotated[bool, typer.Option("--deploy", help="Run the deploy checks.")] = False,
     env: Annotated[
         str | None,
