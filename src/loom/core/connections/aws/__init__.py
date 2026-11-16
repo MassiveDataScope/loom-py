@@ -9,7 +9,6 @@ from __future__ import annotations
 from loom.core.connections.aws.config import (
     AwsClientConfig,
     AwsPool,
-    AwsService,
     RetryMode,
     aws_error_code,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "AwsClientConfig",
     "AwsIsland",
     "AwsPool",
-    "AwsService",
     "RetryMode",
     "aws_error_code",
     "aws_island",

@@ -17,7 +17,7 @@ from typing import Any
 
 from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
 from loom.core.config.errors import ConfigError
-from loom.core.connections.aws import AwsService, aws_error_code
+from loom.core.connections.aws import aws_error_code
 
 
 def _fetch_secret(client: Any, name: str, *, label: str) -> str:
@@ -134,7 +134,7 @@ class SecretsManagerResolver:
             label="Secrets Manager",
             unbound=self._unbound,
             client=lambda: build_resolver_client(
-                AwsService.SECRETS_MANAGER,
+                "secretsmanager",
                 self._region,
                 resolver="SecretsManagerResolver",
                 root=_root_,

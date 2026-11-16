@@ -144,7 +144,7 @@ class TestDefaultResolvers:
 
         assert _names(resolvers) == ("secrets", "ssm", "file")
         for resolver in resolvers[:2]:
-            with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+            with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
                 resolver.resolve("/x")
 
     def test_no_client_created_without_placeholders(
@@ -164,5 +164,5 @@ class TestDefaultResolvers:
         without_boto3(monkeypatch)
         cfg = load_config(secrets_yaml, resolvers=default_resolvers())
 
-        with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[aws\]"):
             _ = cfg.token

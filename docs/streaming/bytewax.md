@@ -143,7 +143,7 @@ The built-in resolvers use boto3's default region and credential chain, and
 create their client only when a placeholder resolves: a YAML with no
 `${secrets:...}` or `${ssm:...}` never touches AWS and boots without boto3.
 When a placeholder does resolve and boto3 is missing, the error names the extra
-to install, `loom-kernel[config-ssm]`.
+to install, `loom-kernel[aws]`.
 
 `resolvers=` adds your own prefixes or overrides a built-in by name, on
 `from_yaml` and on `run(config_path=...)`. Any object with a `name` and a

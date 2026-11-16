@@ -47,7 +47,7 @@ class TestAwsClientBuilder:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
+        island = import_optional("loom.core.connections.aws.client", extra="aws")
         session = _Recorder()
         session.client = _Recorder()  # type: ignore[attr-defined]
         monkeypatch.setattr(island.boto3, "Session", session)
@@ -74,7 +74,7 @@ class TestAwsClientBuilder:
         assert botocore.retries == {"total_max_attempts": 2, "mode": "adaptive"}
 
     def test_aws_builder_refuses_an_extra_the_config_decides(self) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
+        island = import_optional("loom.core.connections.aws.client", extra="aws")
 
         with pytest.raises(ValueError, match="read_timeout"):
             island.build_aws_client("dynamodb", AwsClientConfig(), read_timeout=60)

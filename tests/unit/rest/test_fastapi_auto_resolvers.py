@@ -50,7 +50,7 @@ class TestSecretsPlaceholder:
         _without_boto3(monkeypatch)
         config_path = write_project(tmp_path, rest={"title": "${secrets:/api/title}"})
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             create_app(config_path)
 
     def test_no_aws_client_without_placeholders(

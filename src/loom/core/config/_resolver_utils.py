@@ -12,15 +12,13 @@ from typing import Any, cast
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsService
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.plugins.optional import MissingExtraError
 
 _CLIENT = ("client",)
 
 
-def build_resolver_client(
-    service: AwsService, region: str | None, *, resolver: str, root: Any
-) -> Any:
+def build_resolver_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
     """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 
     The resolvers are the ones resolving the placeholders, so they read
@@ -61,8 +59,7 @@ def build_resolver_client(
         return config.build_client(service)
     except MissingExtraError as exc:
         raise ConfigError(
-            f"boto3 is required for {resolver}. "
-            f"Install it with: pip install loom-kernel[{service.extra}]"
+            f"boto3 is required for {resolver}. Install it with: pip install loom-kernel[aws]"
         ) from exc
 
 

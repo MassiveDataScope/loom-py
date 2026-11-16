@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.aws import AwsClientConfig, AwsService
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.plugins.optional import MissingExtraError
 from tests.helpers.extras import patched_aws_clients, without_boto3
 
@@ -62,33 +62,21 @@ class TestAwsClientConfigFromConfig:
 
 
 class TestAwsClientConfigBuildClient:
-    @pytest.mark.parametrize("service", list(AwsService))
-    def test_the_client_is_built_for_the_service_in_the_region_of_the_settings(
-        self, service: AwsService
+    @pytest.mark.parametrize("service", ["dynamodb", "sqs", "s3"])
+    def test_the_client_is_built_for_the_boto3_service_in_the_region_of_the_settings(
+        self, service: str
     ) -> None:
         with patched_aws_clients() as clients:
             AwsClientConfig(region="eu-west-1").build_client(service)
 
-        clients.assert_called_once_with(service.value, region_name="eu-west-1")
+        clients.assert_called_once_with(service, region_name="eu-west-1")
 
-    @pytest.mark.parametrize(
-        ("service", "extra"),
-        [
-            (AwsService.DYNAMODB, "dynamodb"),
-            (AwsService.SQS, "sqs"),
-            (AwsService.SNS, "prefect"),
-            (AwsService.SSM, "config-ssm"),
-            (AwsService.SECRETS_MANAGER, "config-ssm"),
-        ],
-    )
-    def test_a_missing_boto3_names_the_extra_of_the_service(
-        self, monkeypatch: pytest.MonkeyPatch, service: AwsService, extra: str
-    ) -> None:
+    def test_a_missing_boto3_names_the_aws_extra(self, monkeypatch: pytest.MonkeyPatch) -> None:
         without_boto3(monkeypatch)
 
-        with pytest.raises(MissingExtraError, match=extra):
-            AwsClientConfig().build_client(service)
+        with pytest.raises(MissingExtraError, match="aws"):
+            AwsClientConfig().build_client("s3")
 
     def test_options_the_settings_decide_are_refused(self) -> None:
         with pytest.raises(ValueError, match="read_timeout"):
-            AwsClientConfig().build_client(AwsService.DYNAMODB, read_timeout=60)
+            AwsClientConfig().build_client("dynamodb", read_timeout=60)

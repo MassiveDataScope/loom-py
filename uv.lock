@@ -6,7 +6,7 @@ resolution-markers = [
     "python_full_version == '3.14.*'",
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' or (python_full_version == '3.12.*' and sys_platform != 'emscripten')",
+    "(python_full_version < '3.13' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
 ]
 
 [[package]]
@@ -368,7 +368,7 @@ resolution-markers = [
     "python_full_version == '3.14.*'",
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' or (python_full_version == '3.12.*' and sys_platform != 'emscripten')",
+    "(python_full_version < '3.13' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c7/94/1009e248bbfbab11397abca7193bea6626806be9a327d399810d523a07cb/beartype-0.22.9.tar.gz", hash = "sha256:8f82b54aa723a2848a56008d18875f91c1db02c32ef6a62319a002e3e25a975f", size = 1608866, upload-time = "2025-12-13T06:50:30.72Z" }
 wheels = [
@@ -2236,6 +2236,9 @@ ai-templates = [
 ai-typesafe = [
     { name = "pydantic-ai-slim", extra = ["typesafe"] },
 ]
+aws = [
+    { name = "boto3" },
+]
 cache = [
     { name = "aiocache" },
     { name = "omegaconf" },
@@ -2260,9 +2263,6 @@ config-ssm = [
     { name = "boto3" },
     { name = "fsspec" },
     { name = "omegaconf" },
-]
-dynamodb = [
-    { name = "boto3" },
 ]
 etl-otel = [
     { name = "opentelemetry-api" },
@@ -2333,9 +2333,6 @@ sqlalchemy = [
     { name = "alembic" },
     { name = "greenlet" },
     { name = "sqlalchemy" },
-]
-sqs = [
-    { name = "boto3" },
 ]
 streaming = [
     { name = "anyio" },
@@ -2419,10 +2416,9 @@ requires-dist = [
     { name = "aiocache", marker = "extra == 'cache'", specifier = ">=0.12,<1.0" },
     { name = "alembic", marker = "extra == 'sqlalchemy'", specifier = ">=1.13,<2" },
     { name = "anyio", marker = "extra == 'streaming'", specifier = ">=4.0,<5.0" },
+    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'config-ssm'", specifier = ">=1.35" },
-    { name = "boto3", marker = "extra == 'dynamodb'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'prefect'", specifier = ">=1.35" },
-    { name = "boto3", marker = "extra == 'sqs'", specifier = ">=1.35" },
     { name = "bytewax", marker = "python_full_version < '3.13' and extra == 'streaming'", specifier = ">=0.21" },
     { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.9.2,<1.0" },
@@ -2502,7 +2498,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'rest'", specifier = ">=0.21,<1.0" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'streaming'", specifier = ">=0.21,<1.0" },
 ]
-provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "dynamodb", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "sqs", "streaming", "testing"]
+provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "aws", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5062,7 +5058,7 @@ resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version == '3.13.*'",
-    "python_full_version < '3.12' or (python_full_version == '3.12.*' and sys_platform != 'emscripten')",
+    "(python_full_version < '3.13' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/29/6a1391d31cd00ff9e927215a224a880e1e84e826b64ba80a499e51c074d8/tzdata-2026.6.tar.gz", hash = "sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d", size = 201017, upload-time = "2026-10-28T09:57:09.137Z" }
 wheels = [

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 import msgspec
 
 from loom.core.config import ConfigError, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsService, aws_error_code
+from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.engine.post_commit import log_never_ran
@@ -90,12 +90,12 @@ def check_queues(
 
 
 def build_backend(context: JobBackendContext) -> SQSJobService:
-    """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[sqs]`` extra."""
+    """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[aws]`` extra."""
     ctx = context.config
     written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
     config = SQSConfig.from_config(ctx, ConfigKey.SQS, own=written)
     check_queues(config.queues, context.jobs, context.settings)
-    client = config.build_client(AwsService.SQS)
+    client = config.build_client("sqs")
     return SQSJobService(
         client,
         config,

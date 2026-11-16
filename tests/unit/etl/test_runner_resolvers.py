@@ -58,7 +58,7 @@ class TestStorageResolvers:
         _without_boto3(monkeypatch)
         config_path = _write_etl_yaml(tmp_path, "${secrets:/etl/lake}")
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             ETLRunner.from_yaml(config_path)
 
     def test_no_aws_client_without_placeholders(

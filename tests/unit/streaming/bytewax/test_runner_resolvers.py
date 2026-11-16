@@ -80,7 +80,7 @@ class TestFromYaml:
         _without_boto3(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             StreamingRunner.from_yaml(bytewax_stream_flow, config_path)
 
     def test_no_aws_client_without_placeholders(
@@ -185,7 +185,7 @@ class TestRunWithConfigPath:
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
         runner = StreamingRunner()
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             runner.run(flow=bytewax_stream_flow, config_path=config_path)
 
     def test_no_aws_client_without_placeholders(

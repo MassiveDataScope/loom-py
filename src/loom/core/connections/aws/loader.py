@@ -23,13 +23,13 @@ class AwsIsland(Protocol):
     def build_aws_client(self, service: str, config: AwsClientConfig, **extra: Any) -> Any: ...
 
 
-def aws_island(*, extra: str) -> AwsIsland:
-    """Load the AWS island; *extra* is the loom extra that brings boto3 to the caller.
+def aws_island() -> AwsIsland:
+    """Load the AWS island.
 
     Raises:
         MissingExtraError: When boto3 is not installed.
     """
-    return cast(AwsIsland, import_optional(_ISLAND, extra=extra))
+    return cast(AwsIsland, import_optional(_ISLAND, extra="aws"))
 
 
 __all__ = ["AwsIsland", "aws_island"]

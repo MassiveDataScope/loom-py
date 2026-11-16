@@ -1,7 +1,7 @@
 """The AWS SDK island: the one module of loom that builds a boto3 client.
 
 Loaded with :func:`~loom.core.connections.aws.loader.aws_island` by every
-context calling AWS, each naming the extra that brings boto3 to it.
+context calling AWS; the ``aws`` extra brings boto3 to it.
 """
 
 from __future__ import annotations

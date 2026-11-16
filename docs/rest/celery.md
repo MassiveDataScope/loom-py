@@ -363,7 +363,7 @@ stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 - `dispatch_parallel()` over jobs of several backends returns one `JobGroup`
   in input order, and refuses callbacks with `MixedJobBackendsError`.
 - Startup fails with `JobBackendError` for an unknown name or when Celery or
-  SQS is needed without its `loom[celery]` or `loom[sqs]` extra.
+  SQS is needed without its `loom[celery]` or `loom[aws]` extra.
 - A `module:Class` backend is built as `Class(context)`, where `context` is a
   `loom.composition.JobBackendContext`.
 - `LOOM__APP__JOB_SERVICE` can override the key in production and staging,
@@ -377,7 +377,7 @@ section and the extra select Celery, and anything else runs inline.
 
 `app.job_service: sqs` sends each dispatched job to Amazon SQS as one message
 whose body is the `JobEnvelope` the Lambda SQS adapter runs. Install
-`loom-kernel[sqs]`.
+`loom-kernel[aws]`.
 
 ```yaml
 app:
@@ -760,7 +760,7 @@ The built-in resolvers use boto3's default region and credential chain, and
 create their client only when a placeholder resolves: a YAML with no
 `${secrets:...}` or `${ssm:...}` never touches AWS and boots without boto3.
 When a placeholder does resolve and boto3 is missing, the error names the extra
-to install, `loom-kernel[config-ssm]`.
+to install, `loom-kernel[aws]`.
 
 `resolvers=` adds your own prefixes or overrides a built-in by name. Any object
 with a `name` and a `resolve(key) -> object` works:

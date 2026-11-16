@@ -291,7 +291,7 @@ class TestSqsDispatch:
         without_boto3(monkeypatch)
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(EmailJob)
-        with pytest.raises(JobBackendError, match=r"loom\[sqs\] extra is not installed"):
+        with pytest.raises(JobBackendError, match=r"loom\[aws\] extra is not installed"):
             project.compose(adapter)
 
     @pytest.mark.parametrize(

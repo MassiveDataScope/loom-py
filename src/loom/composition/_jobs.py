@@ -99,7 +99,7 @@ def _sqs(context: JobBackendContext) -> _Built:
         return build_backend(context), ()
     except MissingExtraError as exc:
         raise JobBackendError(
-            "app.job_service is sqs, but the loom[sqs] extra is not installed"
+            "app.job_service is sqs, but the loom[aws] extra is not installed"
         ) from exc
 
 

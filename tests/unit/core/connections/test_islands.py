@@ -51,7 +51,7 @@ class TestAwsConnectionIsland:
         # configuration must not decide the test.
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
+        island = import_optional("loom.core.connections.aws.client", extra="aws")
         config = AwsClientConfig(
             region="eu-west-1",
             url=Dsn("http://localhost:8000"),

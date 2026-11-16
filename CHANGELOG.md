@@ -24,14 +24,20 @@
   a product section and `build_aws_client("dynamodb", config)` (or
   `aws_island(extra=...).build_aws_client`) built the client. Now:
   `Target.from_config(ctx, path, own=section, **over)` decodes it,
-  `config.build_client(AwsService.DYNAMODB)` builds the client, and
-  `AwsClientConfig.inherit(ctx, own, path)` returns the merged mapping;
-  `AwsService` (`DYNAMODB`, `SQS`, `SNS`, `SSM`, `SECRETS_MANAGER`) names the
-  services and its `extra` property names the loom extra that brings boto3.
+  `config.build_client("dynamodb")` builds the client with boto3's service
+  name, and `AwsClientConfig.inherit(ctx, own, path)` returns the merged
+  mapping. `aws_island()` takes no argument and names the `aws` extra.
   `written_aws`, `inherit_aws` and `decode_aws` no longer exist and nothing is
   re-exported. **Migration:** replace those calls with the methods above;
   `loom.core.connections.aws.client.build_aws_client` stays the island's
   builder but only `AwsClientConfig.build_client` calls it.
+- **aws:** the `dynamodb` and `sqs` extras are replaced by one `aws` extra
+  that installs boto3 for every AWS service; `config-ssm` and `prefect` keep
+  their own boto3 requirement. **Migration:** install `loom-kernel[aws]`
+  instead of `loom-kernel[dynamodb]` or `loom-kernel[sqs]`. pip only warns
+  about an unknown extra, so an un-migrated `loom-kernel[dynamodb]` installs
+  without boto3 and fails at the first client build with an error naming the
+  `aws` extra.
 - **stores:** the `persistence:` YAML section is removed and `stores.settings`
   replaces it. Before: `persistence.cursors` and `persistence.rollback_timeout`
   configured cursor signing and the rollback budget. Now: `stores.settings` is
@@ -785,7 +791,7 @@
   `celery.queues`, but Celery's default queue, go to Celery through the new
   `JobRouter`. Use cases keep
   injecting `JobService`.
-- **jobs:** `app.job_service: sqs` (extra `loom[sqs]`) sends each job to the
+- **jobs:** `app.job_service: sqs` (extra `loom[aws]`) sends each job to the
   SQS queue `sqs.queues` maps its queue to, after the commit, as the
   `JobEnvelope` a Lambda `jobs` function runs. `sqs:` inherits `aws:`.
   FIFO queues take the SHA-256 of the new `Job.__group_by__` payload field as

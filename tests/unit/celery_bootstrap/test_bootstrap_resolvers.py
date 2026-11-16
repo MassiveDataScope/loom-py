@@ -61,7 +61,7 @@ class TestBootstrapResolvers:
         _without_boto3(monkeypatch)
         config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             bootstrap_worker(config_path, jobs=[_SyncJob])
 
     def test_no_aws_client_without_placeholders(
