@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,7 @@ from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
-
-PackageWriter = Callable[[str, dict[str, str]], Path]
+from tests.unit.core.discovery.conftest import PackageWriter
 
 _MODEL = (
     "from loom.core.model import BaseModel\n"
@@ -24,27 +22,6 @@ _MODEL = (
     "    __tablename__ = '{table}'\n"
     "    id: int\n"
 )
-
-
-@pytest.fixture
-def write_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[PackageWriter]:
-    """Write a package of *files* under ``tmp_path``, importable until the test ends."""
-    monkeypatch.syspath_prepend(str(tmp_path))
-    written: list[str] = []
-
-    def write(name: str, files: dict[str, str]) -> Path:
-        written.append(name)
-        root = tmp_path / name
-        for relative, source in {"__init__.py": "", **files}.items():
-            target = root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source)
-        return root
-
-    yield write
-    for name in tuple(sys.modules):
-        if name.split(".")[0] in written:
-            sys.modules.pop(name)
 
 
 class TestPackageScan:

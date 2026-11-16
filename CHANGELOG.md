@@ -46,7 +46,11 @@
 
 - **serverless:** the module `loom.serverless.aws.lambda_.checks` is now
   `loom.serverless.aws.lambda_.trigger_jobs` (`trigger_job`, `check_triggers`).
-  **Migration:** import them from the new path; nothing is re-exported.
+  `check_triggers` now takes a `Project` or the `CheckedProject` of
+  `Project.check` instead of a `ConfigContext`, and reads the jobs from the
+  scan that object holds, so `loom check --deploy` and the manifest scan
+  `app.packages` once. **Migration:** import them from the new path and pass
+  the project; nothing is re-exported.
 - **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
   Before: a use case with a missing binding, a dependency cycle or a main
   model with no repository failed at its first invocation. Now: it fails at

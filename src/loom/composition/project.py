@@ -72,6 +72,15 @@ class CheckedProject:
     config_root: Path
     code_path: Path
 
+    @functools.cached_property
+    def discovered(self) -> DiscoveryResult:
+        """What the scan of ``app.packages``, as written, found; scanned once, nothing resolved.
+
+        Raises:
+            ConfigError: When a package cannot be scanned.
+        """
+        return PackageScanner(self.config.raw(f"{ConfigKey.APP}.packages", [])).discover()
+
 
 @dataclass(frozen=True, kw_only=True)
 class Project:

@@ -89,7 +89,6 @@ def build_manifest(
             trigger names a job startup would refuse, or an HTTP function
             would not compose at startup.
     """
-    check_triggers(ctx)
     declared = declared_lambda(ctx)
     handler = _literal("lambda.handler", declared.handler)
     if not _HANDLER.fullmatch(handler):
@@ -109,6 +108,7 @@ def build_manifest(
         observability=ObservabilityRuntime.noop(),
         observability_config=ObservabilityConfig(),
     )
+    check_triggers(project)
     document = ctx.document()
     names = sorted(declared.functions) if function is None else [function]
     return DeployManifest(

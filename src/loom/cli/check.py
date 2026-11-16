@@ -55,7 +55,7 @@ def check(
     try:
         checked = check_config(config or [], env, tuple(skip or ()))
         print_report(checked, err=False)
-        check_triggers(checked.config)
+        check_triggers(checked)
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

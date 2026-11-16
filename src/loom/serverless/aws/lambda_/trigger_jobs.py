@@ -6,12 +6,12 @@ import inspect
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from loom.core.config import ConfigContext, ConfigError
-from loom.core.discovery.scanner import PackageScanner
+from loom.core.config import ConfigError
 from loom.core.use_case.markers import marks_input
 from loom.serverless.aws.lambda_.functions import EventTrigger, JobsTrigger, declared_lambda
 
 if TYPE_CHECKING:
+    from loom.composition.project import CheckedProject, Project
     from loom.core.job.job import Job
 
 
@@ -56,16 +56,19 @@ def _execute_parameters(job_type: type[Job[Any]]) -> tuple[bool, list[str]]:
     return has_input, required
 
 
-def check_triggers(ctx: ConfigContext) -> None:
+def check_triggers(project: Project | CheckedProject) -> None:
     """Refuse, as startup would, a misdeclared ``lambda`` section or an event trigger's job.
 
-    The jobs are discovered from ``app.packages`` as written: nothing resolves.
+    The jobs come from the scan *project* holds, so nothing is scanned twice.
+
+    Args:
+        project: The loaded project, or the configuration ``loom check`` loaded as written.
 
     Raises:
         ConfigError: When ``lambda.functions`` is misdeclared, the jobs
             cannot be discovered, or :func:`trigger_job` refuses one.
     """
-    functions = declared_lambda(ctx).functions
+    functions = declared_lambda(project.config).functions
     events = {
         name: function.trigger
         for name, function in functions.items()
@@ -74,19 +77,6 @@ def check_triggers(ctx: ConfigContext) -> None:
     consumes_jobs = any(isinstance(f.trigger, JobsTrigger) for f in functions.values())
     if not events and not consumes_jobs:
         return
-    jobs = _discovered_jobs(ctx)
+    jobs = {job.__qualname__: job for job in project.discovered.jobs}
     for name, trigger in events.items():
         trigger_job(name, trigger, jobs)
-
-
-def _discovered_jobs(ctx: ConfigContext) -> dict[str, type[Job[Any]]]:
-    """The jobs ``app.packages``, as written, discovers, by qualified name.
-
-    Raises:
-        ConfigError: When they cannot be discovered.
-    """
-    try:
-        packages = ctx.raw("app.packages", [])
-        return {job.__qualname__: job for job in PackageScanner(packages).discover().jobs}
-    except (ImportError, RuntimeError, ValueError) as exc:
-        raise ConfigError(f"the jobs of the event triggers cannot be discovered: {exc}") from exc
