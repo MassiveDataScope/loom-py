@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from billiard import get_all_start_methods, set_start_method  # type: ignore[import-untyped]
 from celery import Celery  # type: ignore[import-untyped]
 from celery.concurrency import get_implementation  # type: ignore[import-untyped]
 from celery.concurrency.prefork import TaskPool as PreforkPool  # type: ignore[import-untyped]
@@ -165,12 +166,25 @@ class _WorkerLifecycle:
         """
         try:
             if _is_prefork(worker):
+                self._fork_children(worker)
                 asyncio.run(self._application.check())
             else:
                 self._open(check=True)
         except Exception as exc:
             _logger.exception("worker application failed to start")
             raise WorkerTerminate(_EX_FAILURE) from exc
+
+    @staticmethod
+    def _fork_children(worker: Any) -> None:
+        """Start the pool's children by forking when the worker is configured to.
+
+        Children inherit the tasks the parent registered and its signal
+        handlers only by forking. billiard's default on macOS is a fresh
+        interpreter that has neither, so ``worker_pool_start_method: fork``
+        (Celery's default) is pinned here.
+        """
+        if worker.pool_start_method == "fork" and "fork" in get_all_start_methods():
+            set_start_method("fork", force=True)
 
     def on_process_init(self) -> None:
         """Open in a prefork child; the parent already checked.

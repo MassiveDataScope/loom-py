@@ -12,11 +12,12 @@ from celery.utils.dispatch import Signal  # type: ignore[import-untyped]
 class WorkerDouble:
     """The ``worker_init`` sender of a worker: the controller, its pool not yet resolved.
 
-    Defaults to ``--pool=solo``.
+    Defaults to ``--pool=solo`` and Celery's default ``fork`` start method.
     """
 
-    def __init__(self, pool: object = "solo") -> None:
+    def __init__(self, pool: object = "solo", start_method: str = "fork") -> None:
         self.pool_cls = pool
+        self.pool_start_method = start_method
 
 
 def isolated_signals(*signals: Signal, clear: bool = False) -> Callable[[], Iterator[None]]:

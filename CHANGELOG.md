@@ -891,6 +891,15 @@
   Lambda `jobs` trigger's `queue` block declares `batch_size`,
   `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
   `false` makes the SQS handler fail the whole batch.
+- **jobs:** fix: `loom-kernel[celery]` now installs a redis-py compatible with
+  kombu's Redis transport (`celery[redis]`), instead of pinning `redis<6`,
+  with which a Redis broker failed at start with
+  `kombu.exceptions.VersionMismatch`. This also affects 11.0.0.
+- **jobs:** fix: a prefork worker forks its children when
+  `worker_pool_start_method` is `fork`, Celery's default. On macOS billiard
+  started them as fresh interpreters that had neither the tasks Loom registers
+  at start-up nor its lifecycle signals, so every job failed with
+  `NotRegistered`. This also affects 11.0.0.
 
 ### lambda
 

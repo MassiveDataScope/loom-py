@@ -13,6 +13,7 @@ import inspect
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -121,7 +122,44 @@ def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
     return bridge
 
 
+@pytest.fixture(autouse=True)
+def start_methods(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bool]]:
+    """Record the start methods the lifecycle sets instead of changing billiard's."""
+    chosen: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        adapter_module, "set_start_method", lambda method, force: chosen.append((method, force))
+    )
+    return chosen
+
+
 class TestPrefork:
+    def test_worker_init_pins_fork_for_the_children(
+        self, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        _connect(_ApplicationSpy())
+
+        worker_init.send(sender=WorkerDouble("prefork"))
+
+        assert start_methods == [("fork", True)]
+
+    def test_worker_init_leaves_a_spawn_pool_as_configured(
+        self, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        _connect(_ApplicationSpy())
+
+        worker_init.send(sender=WorkerDouble("prefork", start_method="spawn"))
+
+        assert start_methods == []
+
+    def test_a_single_process_pool_changes_no_start_method(
+        self, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        _connect(_ApplicationSpy())
+
+        worker_init.send(sender=WorkerDouble("solo"))
+
+        assert start_methods == []
+
     @pytest.mark.parametrize("pool", ["prefork", "processes", PreforkPool])
     def test_worker_init_checks_once_and_opens_nothing(self, pool: object) -> None:
         application = _ApplicationSpy()
@@ -327,8 +365,8 @@ class TestTaskAffineResources:
     @pytest.mark.parametrize(
         ("pool", "opening", "closing"),
         [
-            ("prefork", worker_process_init, worker_process_shutdown),
-            ("solo", worker_init, worker_shutdown),
+            ("prefork", partial(worker_process_init.send, sender=None), worker_process_shutdown),
+            ("solo", lambda: None, worker_shutdown),
         ],
     )
     def test_a_task_affine_resource_closes_cleanly(
@@ -340,7 +378,7 @@ class TestTaskAffineResources:
         worker_init.send(sender=WorkerDouble(pool))
 
         with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
-            opening.send(sender=None)
+            opening()
             assert application.is_open
             closing.send(sender=None)
 

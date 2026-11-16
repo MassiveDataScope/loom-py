@@ -111,15 +111,15 @@ def bootstrap_worker(
             ``LOOM__SECTION__KEY`` variables merge last. With no
             *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``.
-        jobs: Concrete ``Job`` subclasses to compile/register.  When
-            omitted, jobs are discovered from ``app.packages``.
-        use_cases: Additional ``UseCase`` subclasses to compile alongside
-            ``jobs``.  Required when callbacks invoke
-            :class:`~loom.core.use_case.invoker.ApplicationInvoker`
-            (e.g. ``app.entity(Product).get(...)``), so that the
-            corresponding use-case keys are registered in the worker
-            process.  Ignored when jobs are discovered via ``app.packages``
-            (discovery already includes all compiled use-cases).
+        jobs: Concrete ``Job`` subclasses to compile and register. When
+            given they replace the jobs the scan of ``app.packages`` finds;
+            when omitted, those are served.
+        use_cases: ``UseCase`` subclasses to compile alongside the jobs, in
+            addition to the ones the scan of ``app.packages`` finds. Needed
+            only for use cases outside those packages that callbacks invoke
+            through :class:`~loom.core.use_case.invoker.ApplicationInvoker`
+            (e.g. ``app.entity(Product).get(...)``), so that their keys are
+            registered in the worker process.
         interfaces: ``RestInterface`` subclasses whose route use-cases
             should be compiled in the worker.  Equivalent to passing the
             same classes via ``use_cases=`` but without having to enumerate
