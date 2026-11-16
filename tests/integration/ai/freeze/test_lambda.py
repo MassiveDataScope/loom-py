@@ -391,14 +391,37 @@ class _World:
         The client sends a GET while the function's loop runs, in Init or an
         invocation; this only waits for the server's thread to log it.
         """
+        self._wait(lambda: self.streams() >= streams, f"{streams} GET streams")
+
+    def settle_stream(self, session: str | None) -> None:
+        """Wait until the server logged a GET event stream of *session*."""
+        self._wait(lambda: self.streams_of(session) > 0, f"a GET stream of session {session}")
+
+    def _wait(self, logged: Callable[[], bool], what: str) -> None:
         deadline = time.monotonic() + _SETTLE_S
-        while self.streams() < streams:
-            assert time.monotonic() < deadline, f"the server logged {self.streams()} GET streams"
+        while not logged():
+            assert time.monotonic() < deadline, f"the server never logged {what}"
             time.sleep(0.01)
 
     def streams(self) -> int:
         """GET event streams the client opened in all."""
         return sum(request.verb == "GET" for request in self.server.log)
+
+    def streams_of(self, session: str | None) -> int:
+        """GET event streams of *session* the client opened since the mark."""
+        return sum(
+            request.verb == "GET" and request.session == session
+            for request in self.server.log[self.since.log :]
+        )
+
+    def sessions(self, method: str) -> list[str | None]:
+        """The session each request of *method* since the mark carried, in order."""
+        since = self.server.log[self.since.log :]
+        return [request.session for request in since if request.method == method]
+
+    def silent_connects(self) -> int:
+        """TCP connects since the mark that carried no request."""
+        return self.server.silent_connects(self.since.connects)
 
     @property
     def since(self) -> _Mark:

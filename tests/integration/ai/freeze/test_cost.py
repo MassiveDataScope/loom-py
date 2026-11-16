@@ -195,7 +195,13 @@ class TestRowThawSessionStillValid:
 
 
 class TestRowThawLegacySessionExpired:
-    """First call after a thaw, legacy session expired: the 404 call, a renewal, the retry."""
+    """First call after a thaw, legacy session expired: the 404 call, a renewal, the retry.
+
+    The eviction cuts the replaced session's event stream, which the mcp client
+    reopens after its reconnection delay (DEFAULT_RECONNECTION_DELAY_MS) unless
+    the session closes first: a background +1 TCP, either as a GET of the
+    replaced session or as a connection that carried no request.
+    """
 
     @_PATHS
     @_TRIGGERS
@@ -209,10 +215,15 @@ class TestRowThawLegacySessionExpired:
         built.freeze(6.0)
 
         assert built.by(path)
-        built.settle(streams=2)  # the new session's stream, opened within the invocation
+        replaced, renewed = built.sessions("tools/call")
+        built.settle_stream(renewed)
+        reopened = built.streams_of(replaced)
+        silent = built.silent_connects()
 
         assert built.methods() == ["tools/call", *_RENEWAL, "tools/call"]
-        assert built.connects() == _LEGACY_RENEWAL_CONNECTS
+        assert replaced != renewed
+        assert reopened + silent in (0, 1)
+        assert built.connects() == _LEGACY_RENEWAL_CONNECTS + reopened + silent
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches - fetched == 0
         assert (built.evictions(), built.rebuilds()) == (1, 1)
