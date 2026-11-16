@@ -14,6 +14,7 @@ from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
+from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
-    from loom.core.job.callback import JobCallback
     from loom.core.use_case.factory import UseCaseFactory
 
 
@@ -35,7 +35,7 @@ class JobBackendContext:
     """What a job backend is built with; a ``module:Class`` backend receives it.
 
     ``jobs`` are the discovered jobs this backend serves: those on
-    ``celery.queues`` go to Celery instead. ``callbacks`` are the discovered
+    ``celery.queues`` go to Celery instead. ``callbacks`` holds the discovered
     job callbacks a dispatch may name. ``settings`` hold each job's
     queue, retries, countdown, timeout and priority in this application.
     """
@@ -46,7 +46,7 @@ class JobBackendContext:
     metrics: MetricsAdapter | None
     observability: ObservabilityRuntime | None
     jobs: tuple[type[Job[Any]], ...] = ()
-    callbacks: tuple[type[JobCallback], ...] = ()
+    callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks)
     settings: JobSettings = field(default_factory=JobSettings)
 
 
@@ -89,7 +89,10 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
 
 
 def _inline(context: JobBackendContext) -> _Built:
-    return InlineJobService(context.factory, context.executor, settings=context.settings), ()
+    service = InlineJobService(
+        context.factory, context.executor, settings=context.settings, callbacks=context.callbacks
+    )
+    return service, ()
 
 
 def _celery(context: JobBackendContext) -> _Built:
@@ -220,7 +223,7 @@ def configure_job_service(
         metrics=result.metrics,
         observability=observability_runtime,
         jobs=jobs,
-        callbacks=callbacks,
+        callbacks=DispatchableCallbacks(callbacks),
         settings=settings,
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)

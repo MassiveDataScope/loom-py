@@ -118,9 +118,7 @@ def _as_installer(cls: type[Any]) -> type[Installer] | None:
 
 
 def _as_callback(cls: type[Any]) -> type[JobCallback] | None:
-    if issubclass(cls, JobCallback) and cls is not JobCallback:
-        return cls
-    return None
+    return cls if issubclass(cls, JobCallback) else None
 
 
 def _append_discovered_class(

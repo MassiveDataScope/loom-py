@@ -24,7 +24,6 @@ from loom.core.errors.jobs import (
     JobTimeoutError,
     MalformedJobMessage,
     MixedJobBackendsError,
-    UndiscoveredCallback,
     UnknownJob,
 )
 from loom.core.errors.model import BoundaryValidationError, UnsupportedBoundaryType
@@ -57,7 +56,6 @@ __all__ = [
     "MalformedJobMessage",
     "MissingCaller",
     "MixedJobBackendsError",
-    "UndiscoveredCallback",
     "NestedElevation",
     "NestedIdentityMismatch",
     "NotFound",

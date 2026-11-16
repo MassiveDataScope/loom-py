@@ -225,9 +225,9 @@ class TestCallbackScan:
             {
                 "__init__.py": "from .callbacks import Concrete\n",
                 "callbacks.py": (
-                    "from abc import abstractmethod\n"
+                    "from abc import ABC, abstractmethod\n"
                     "from loom.core.job.callback import JobCallback\n"
-                    "class AbstractCallback(JobCallback):\n"
+                    "class AbstractCallback(JobCallback, ABC):\n"
                     "    @abstractmethod\n"
                     "    def on_success(self, job_id, result, **context): ...\n"
                     "class Concrete(AbstractCallback):\n"

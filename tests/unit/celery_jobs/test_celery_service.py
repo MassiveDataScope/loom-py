@@ -10,8 +10,7 @@ import pytest
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.celery.service import CeleryJobService
 from loom.core.engine.events import EventKind
-from loom.core.errors import UndiscoveredCallback
-from loom.core.job.callback import JobCallback
+from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -56,7 +55,9 @@ class _FailureCallback(JobCallback):
 
 def _make_service() -> tuple[CeleryJobService, MagicMock]:
     mock_app = MagicMock()
-    service = CeleryJobService(mock_app, callbacks=[_SuccessCallback, _FailureCallback])
+    service = CeleryJobService(
+        mock_app, callbacks=DispatchableCallbacks([_SuccessCallback, _FailureCallback])
+    )
     return service, mock_app
 
 
@@ -239,7 +240,9 @@ class TestUndiscoveredCallback:
     async def test_dispatch_refuses_a_callback_the_scan_did_not_find(self, hook: str) -> None:
         service, mock_app = _make_service()
 
-        with pytest.raises(UndiscoveredCallback, match="_UndiscoveredCallback.*app.packages"):
+        with pytest.raises(
+            ValueError, match="_UndiscoveredCallback was not discovered.*app.packages"
+        ):
             service.dispatch(_EmailJob, **{hook: _UndiscoveredCallback})
 
         await flush_pending_dispatches()
@@ -266,7 +269,9 @@ class TestCallbackLinks:
         self, hook: str, callback: type[JobCallback], task: str, immutable: bool
     ) -> None:
         mock_app = MagicMock()
-        CeleryJobService(mock_app, callbacks=[callback]).dispatch(_EmailJob, **{hook: callback})
+        CeleryJobService(mock_app, callbacks=DispatchableCallbacks([callback])).dispatch(
+            _EmailJob, **{hook: callback}
+        )
 
         assert mock_app.signature.call_args.args == (task,)
         assert mock_app.signature.call_args.kwargs["immutable"] is immutable
@@ -283,9 +288,9 @@ class TestCallbackLinks:
         mock_app = MagicMock()
         token = set_trace_id(trace_id)
         try:
-            handle = CeleryJobService(mock_app, callbacks=[callback]).dispatch(
-                _EmailJob, payload={"order_id": 99}, **{hook: callback}
-            )
+            handle = CeleryJobService(
+                mock_app, callbacks=DispatchableCallbacks([callback])
+            ).dispatch(_EmailJob, payload={"order_id": 99}, **{hook: callback})
         finally:
             reset_trace_id(token)
 

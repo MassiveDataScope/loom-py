@@ -85,20 +85,3 @@ class MixedJobBackendsError(SystemError):
             "these jobs route to several",
             code=ErrorCode.JOB_BACKENDS_MIXED,
         )
-
-
-class UndiscoveredCallback(SystemError):
-    """A dispatch names a job callback the scan of ``app.packages`` did not find.
-
-    Not retryable: no worker registers a task for the class.
-    """
-
-    retryable = False
-
-    def __init__(self, callback_type: type) -> None:
-        self.callback_type = callback_type
-        super().__init__(
-            f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was not "
-            "discovered: inherit from JobCallback in a package listed in app.packages",
-            code=ErrorCode.UNDISCOVERED_CALLBACK,
-        )

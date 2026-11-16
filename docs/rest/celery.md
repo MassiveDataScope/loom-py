@@ -181,7 +181,8 @@ task for it. Both hooks do nothing until overridden, so override `on_success`,
 `on_failure` or both, each as `def` or `async def`. The DI container builds the
 callback, so it can interact with the application via `ApplicationInvoker`.
 A `dispatch(..., on_success=X)` naming a class the scan did not find is refused
-with `UndiscoveredCallback` before anything is sent:
+with a `ValueError`, by the inline and Celery job services alike, before anything is
+sent:
 
 ```python
 # app/product/callbacks.py

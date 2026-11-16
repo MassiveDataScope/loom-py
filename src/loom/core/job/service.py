@@ -14,7 +14,7 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.job.callback import CallbackOutcome, JobCallback, notify, refuse_reserved_payload
+from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks, JobCallback, notify
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
@@ -196,6 +196,7 @@ class InlineJobService:
         factory: Used to build Job and callback instances from the container.
         executor: Used to drive the compiled ExecutionPlan.
         settings: The application's job settings; the ClassVars when omitted.
+        callbacks: The callbacks a dispatch may attach; any class when omitted.
 
     Example::
 
@@ -211,7 +212,9 @@ class InlineJobService:
         executor: RuntimeExecutor,
         *,
         settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks | None = None,
     ) -> None:
+        self._callbacks = callbacks or DispatchableCallbacks()
         self._factory = factory
         self._executor = executor
         self._settings = settings or JobSettings()
@@ -275,13 +278,12 @@ class InlineJobService:
             returns the result once the queue is flushed.
 
         Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            ValueError: When a callback is attached that the scan did not find,
+                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         _ = (countdown, priority, eta)
         payload = payload or {}
-        if on_success is not None or on_failure is not None:
-            refuse_reserved_payload(payload)
+        self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
         outcome = InlineOutcome()
         pending = _PendingDispatch(

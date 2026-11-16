@@ -21,22 +21,26 @@
   which is scanned on its own; a package is walked recursively, and a
   directory inside it that holds `.py` files but no `__init__.py` is refused
   with a `ConfigError` naming it. Replace a manifest `AGENTS` list with
-  `app.agents: [globs]`. A worker manifest's `CALLBACKS` is gone:
-  inherit from `JobCallback` in a package listed in `app.packages`;
-  `CALLBACKS` and `NullJobCallback` are removed.
+  `app.agents: [globs]`. A worker manifest's `CALLBACKS` is removed:
+  inherit from `JobCallback` in a package listed in `app.packages` (see **jobs**
+  below).
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
-  `def` or `async def`); `loom.core.job.NullJobCallback` is removed. The
-  package scan finds every concrete `JobCallback` subclass defined in
-  `app.packages` as it finds a `Job`, and `loom.celery` registers a success and
+  `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
+  manifest's `CALLBACKS` are removed. The package scan finds every concrete
+  `JobCallback` subclass defined in `app.packages` as it finds a `Job`; an
+  abstract intermediate inherits `JobCallback` and `ABC`. Discovered callbacks
+  are dependency-graph roots in every adapter, like jobs, so one injecting an
+  unbound service is refused at start-up. `loom.celery` registers a success and
   a failure task for each; the `callbacks=` parameter is removed from
   `CeleryAdapter`, `loom.celery.bootstrap.bootstrap_worker` and
-  `loom.celery.auto.create_app`. `CeleryJobService` refuses a dispatch naming a
-  callback class the scan did not find with `UndiscoveredCallback`, code
-  `undiscovered_callback`, before sending anything. **Migration:** inherit from
-  `JobCallback` in a package listed in `app.packages` and drop `callbacks=`;
-  replace `NullJobCallback()` with `JobCallback()`; a class that only
-  implemented the hooks is neither found nor registered.
+  `loom.celery.auto.create_app`. The inline and Celery job services built by
+  the composition refuse, with a `ValueError`, a dispatch naming a callback
+  class the scan did not find; a service built by hand accepts any class.
+  **Migration:** inherit from `JobCallback` in a package listed in
+  `app.packages` and drop `callbacks=`; replace `NullJobCallback()` with
+  `JobCallback()`; a class that only implemented the hooks is neither found nor
+  registered.
 - **composition:** the `modules=` parameter is removed from
   `compose_application`, `build_application`, `loom.composition.create_app`,
   `loom.rest.fastapi.auto.create_app`, `loom.celery.auto.create_app`,

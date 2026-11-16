@@ -22,7 +22,6 @@ from loom.composition import (
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.errors import UndiscoveredCallback
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -31,6 +30,8 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
+from tests.helpers import acme_callbacks
+from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.composition import composition_project
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
@@ -44,14 +45,6 @@ class _PingJob(Job[int]):
 
     def execute(self) -> int:
         return 1
-
-
-class _PingCallback(JobCallback):
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        del job_id, result, context
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        del job_id, exc_type, exc_msg, context
 
 
 class _OtherCallback(JobCallback):
@@ -68,15 +61,12 @@ class _KnowledgeUseCase(UseCase[object, object]):
         return gateway
 
 
-def _project(
-    tmp_path: Path, config: dict[str, Any], callbacks: tuple[type[JobCallback], ...] = ()
-) -> Project:
+def _project(tmp_path: Path, config: dict[str, Any], *modules: str) -> Project:
     return composition_project(
         ConfigContext.from_dict({"celery": _CELERY, **config}),
-        app=AppConfig(name="worker"),
+        app=AppConfig(name="worker", packages=list(modules)),
         code_path=tmp_path,
         config_root=tmp_path,
-        callbacks=callbacks,
     )
 
 
@@ -84,9 +74,9 @@ def _application(
     tmp_path: Path,
     config: dict[str, Any],
     adapter: CeleryAdapter,
-    callbacks: tuple[type[JobCallback], ...] = (),
+    *modules: str,
 ) -> Application:
-    return _project(tmp_path, config, callbacks).compose(adapter)
+    return _project(tmp_path, config, *modules).compose(adapter)
 
 
 def _default_backend(project: Project, recipe: Recipe) -> str:
@@ -151,10 +141,10 @@ class TestRecipe:
     def test_the_discovered_callbacks_reach_the_recipe_as_graph_roots(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
 
-        recipe = adapter.recipe(_project(tmp_path, {}, (_PingCallback,)))
+        recipe = adapter.recipe(_project(tmp_path, {}, acme_callbacks.MODULE))
 
-        assert recipe.discovered.callbacks == (_PingCallback,)
-        assert _PingCallback not in recipe.discovered.use_cases
+        assert AcmePingCallback in recipe.discovered.callbacks
+        assert AcmePingCallback not in recipe.discovered.use_cases
 
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
         metrics: Any = object()
@@ -196,12 +186,12 @@ class TestBind:
     ) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
 
-        app = adapter.bind(_application(tmp_path, {}, adapter, (_PingCallback,)))
+        app = adapter.bind(_application(tmp_path, {}, adapter, acme_callbacks.MODULE))
 
         assert isinstance(app, Celery)
         assert f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}" in app.tasks
-        assert f"{TASK_CALLBACK_PREFIX}.{_PingCallback.__qualname__}" in app.tasks
-        assert f"{TASK_CALLBACK_ERROR_PREFIX}.{_PingCallback.__qualname__}" in app.tasks
+        assert f"{TASK_CALLBACK_PREFIX}.{AcmePingCallback.__qualname__}" in app.tasks
+        assert f"{TASK_CALLBACK_ERROR_PREFIX}.{AcmePingCallback.__qualname__}" in app.tasks
 
     def test_bind_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
@@ -224,11 +214,11 @@ class TestServices:
         self, tmp_path: Path
     ) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
-        container = _application(tmp_path, {}, adapter, (_PingCallback,)).kernel.container
+        container = _application(tmp_path, {}, adapter, acme_callbacks.MODULE).kernel.container
         service = container.resolve(JobService)
 
-        service.dispatch(_PingJob, on_success=_PingCallback)
-        with pytest.raises(UndiscoveredCallback, match="_OtherCallback"):
+        service.dispatch(_PingJob, on_success=AcmePingCallback)
+        with pytest.raises(ValueError, match="_OtherCallback was not discovered"):
             service.dispatch(_PingJob, on_success=_OtherCallback)
 
     def test_job_and_sql_services_are_resolvable(self, tmp_path: Path) -> None:

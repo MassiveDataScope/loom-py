@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import REST_CHECKS
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.run import run_job
@@ -53,12 +52,11 @@ def jobs_recipe(
         )
     recipe = Recipe(
         profile=LAMBDA_PROFILE,
-        discovered=DiscoveryResult(
+        discovered=project.discovered.with_changes(
             models=tuple(dict.fromkeys(resolved.models)),
             use_cases=cast(Any, resolved.compilables),
             interfaces=(),
             jobs=resolved.jobs,
-            agent_specs=resolved.agent_specs,
         ),
         skip_checks=frozenset({REST_CHECKS}),
         agents=True,

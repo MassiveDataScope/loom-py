@@ -71,7 +71,6 @@ from loom.core.async_bridge import build_backend_options
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
 from loom.core.discovery._utils import collect_use_cases_from_interfaces
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import (
     WorkerComponents,
 )
@@ -82,7 +81,6 @@ from loom.core.stores import WORKER_PROFILE
 
 if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter
-    from loom.core.job.callback import JobCallback
     from loom.core.job.job import Job
 
 _logger = logging.getLogger(__name__)
@@ -273,7 +271,7 @@ def _register_tasks(
             observability_runtime=observability,
             settings=application.job_settings,
         )
-    for callback_type in declared.callbacks:
+    for callback_type in application.discovered.callbacks:
         for outcome in CallbackOutcome:
             _make_callback_task(
                 celery_app,
@@ -291,7 +289,6 @@ class _Declared:
 
     celery: CeleryConfig
     jobs: tuple[type[Job[Any]], ...]
-    callbacks: tuple[type[JobCallback], ...]
 
 
 class CeleryAdapter:
@@ -355,17 +352,14 @@ class CeleryAdapter:
         )
         _emit_worker_init_graph(resolved)
 
-        self._declared = _Declared(
-            celery=celery_cfg, jobs=resolved.jobs, callbacks=project.discovered.callbacks
-        )
+        self._declared = _Declared(celery=celery_cfg, jobs=resolved.jobs)
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(
+            discovered=project.discovered.with_changes(
                 models=resolved.models,
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
                 jobs=resolved.jobs,
-                callbacks=project.discovered.callbacks,
             ),
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,

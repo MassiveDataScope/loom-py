@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.service import CeleryJobService
-from loom.core.job.callback import CallbackOutcome, JobCallback, refuse_reserved_payload
+from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks, JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
 from loom.testing.jobs import RecordingJobService
@@ -76,11 +76,20 @@ class _AcmeJob(Job[None]):
         return None
 
 
+_DISCOVERED = DispatchableCallbacks([_AcmeCallback])
+
+
+class _AcmeUndiscoveredCallback(JobCallback):
+    pass
+
+
 SERVICES = pytest.mark.parametrize(
     "service",
     [
-        pytest.param(lambda: InlineJobService(MagicMock(), MagicMock()), id="inline"),
-        pytest.param(lambda: CeleryJobService(MagicMock(), callbacks=[_AcmeCallback]), id="celery"),
+        pytest.param(
+            lambda: InlineJobService(MagicMock(), MagicMock(), callbacks=_DISCOVERED), id="inline"
+        ),
+        pytest.param(lambda: CeleryJobService(MagicMock(), callbacks=_DISCOVERED), id="celery"),
         pytest.param(RecordingJobService, id="recording"),
     ],
 )
@@ -109,7 +118,27 @@ class TestReservedCallbackArguments:
         jobs.dispatch(_AcmeJob, payload={"job_id": "acme"})
 
 
+class TestUndiscoveredCallbacks:
+    @pytest.mark.parametrize("hook", ["on_success", "on_failure"])
+    @pytest.mark.parametrize("service", [InlineJobService, CeleryJobService])
+    def test_a_service_built_from_composition_refuses_a_class_the_scan_did_not_find(
+        self, service: type[Any], hook: str
+    ) -> None:
+        jobs = service(
+            *[MagicMock()] * (2 if service is InlineJobService else 1), callbacks=_DISCOVERED
+        )
+
+        with pytest.raises(ValueError, match="_AcmeUndiscoveredCallback was not discovered"):
+            jobs.dispatch(_AcmeJob, **{hook: _AcmeUndiscoveredCallback})
+
+    def test_a_hand_built_service_accepts_any_class(self) -> None:
+        DispatchableCallbacks().refuse({}, _AcmeUndiscoveredCallback)
+
+    def test_a_dispatch_with_no_callback_is_never_refused(self) -> None:
+        _DISCOVERED.refuse({"job_id": 1}, None, None)
+
+
 class TestRefuseReserved:
     def test_names_every_reserved_key_the_payload_holds(self) -> None:
         with pytest.raises(ValueError, match="cannot hold exc_msg, job_id: "):
-            refuse_reserved_payload({"job_id": 1, "exc_msg": "m", "acme": 2})
+            _DISCOVERED.refuse({"job_id": 1, "exc_msg": "m", "acme": 2}, _AcmeCallback)

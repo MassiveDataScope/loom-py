@@ -31,7 +31,6 @@ from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import resolve_environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -87,12 +86,13 @@ class _HarnessAdapter:
 
     def recipe(self, project: Project) -> Recipe:
         """The routes' use cases over no model, leniently."""
-        del project
         interfaces = (*self._routes.python, *self._routes.config)
         use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=tuple(use_cases), interfaces=()),
+            discovered=project.discovered.with_changes(
+                models=(), use_cases=tuple(use_cases), interfaces=()
+            ),
             overrides=self._overrides,
             lenient=True,
         )

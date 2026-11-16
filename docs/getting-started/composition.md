@@ -84,8 +84,8 @@ models without their own `__tablename__` are skipped.
   `__init__.py` is refused with a `ConfigError` naming it, as `setuptools`'s
   `find_packages` would skip it.
 - A job callback must be defined in a listed package: Celery registers a task
-  for each one found, and a dispatch naming another class is refused with
-  `UndiscoveredCallback`.
+  for each one found, and a dispatch naming another class is refused with a
+  `ValueError` by the inline and Celery job services.
 
 ## Event triggers
 

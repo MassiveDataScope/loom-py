@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.identity import Identity, captured_delegation
-from loom.core.job.callback import refuse_reserved_payload
+from loom.core.job.callback import DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.handle import JobGroup, JobHandle
@@ -64,10 +64,16 @@ class RecordingJobService:
     def __init__(self, context: JobBackendContext | None = None) -> None:
         self.dispatched: list[DispatchedJob] = []
         self._settings = JobSettings() if context is None else context.settings
+        self._callbacks = DispatchableCallbacks() if context is None else context.callbacks
         self._inline = (
             None
             if context is None
-            else InlineJobService(context.factory, context.executor, settings=self._settings)
+            else InlineJobService(
+                context.factory,
+                context.executor,
+                settings=self._settings,
+                callbacks=self._callbacks,
+            )
         )
 
     async def run(
@@ -102,13 +108,12 @@ class RecordingJobService:
         """Record *job_type* once the current execution commits.
 
         Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            ValueError: When a callback is attached that the scan did not find,
+                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
         """
         _ = (countdown, priority, eta)
         payload = payload or {}
-        if on_success is not None or on_failure is not None:
-            refuse_reserved_payload(payload)
+        self._callbacks.refuse(payload, on_success, on_failure)
         record = DispatchedJob(
             job_type=job_type,
             payload=copy.deepcopy(payload),

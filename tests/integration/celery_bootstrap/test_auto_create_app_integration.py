@@ -26,7 +26,13 @@ from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import WithOverrides, discovering_callbacks
+from tests.helpers import acme_recording_callbacks
+from tests.helpers.acme_recording_callbacks import (
+    AcmeCallbackSink,
+    AcmeRecordFailureCallback,
+    AcmeRecordSuccessCallback,
+)
+from tests.helpers.composition import WithOverrides, scanning
 
 
 class _Record(BaseModel):
@@ -210,34 +216,6 @@ class _AlwaysFailJob(Job[None]):
         raise RuntimeError("forced job failure")
 
 
-class _CallbackSink:
-    def __init__(self) -> None:
-        self.successes: list[str] = []
-        self.failures: list[str] = []
-
-
-class _RecordSuccessCallback(JobCallback):
-    def __init__(self, sink: _CallbackSink) -> None:
-        self._sink = sink
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        self._sink.successes.append(f"{job_id}:{result}:{context.get('name', '')}")
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        del job_id, exc_type, exc_msg, context
-
-
-class _RecordFailureCallback(JobCallback):
-    def __init__(self, sink: _CallbackSink) -> None:
-        self._sink = sink
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        del job_id, result, context
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self._sink.failures.append(f"{job_id}:{exc_type}:{context.get('name', '')}:{exc_msg}")
-
-
 class _DispatchChildJobUseCase(UseCase[_Record, bool]):
     def __init__(self, jobs: JobService) -> None:
         super().__init__()
@@ -250,10 +228,10 @@ class _DispatchChildJobUseCase(UseCase[_Record, bool]):
 
         if cmd.should_fail:
             job_type = _AlwaysFailJob
-            on_failure = _RecordFailureCallback
+            on_failure = AcmeRecordFailureCallback
         else:
             job_type = _CreateRecordInlineJob
-            on_success = _RecordSuccessCallback
+            on_success = AcmeRecordSuccessCallback
 
         self._jobs.dispatch(
             job_type,
@@ -318,7 +296,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
 
     asyncio.run(_create_schema(db_url))
 
-    callback_sink = _CallbackSink()
+    callback_sink = AcmeCallbackSink()
 
     def _module(container: LoomContainer) -> None:
         # SessionManager is the backend's: the composition refuses a module binding it.
@@ -332,7 +310,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             scope=Scope.REQUEST,
         )
         container.register_repo(_Record, _RecordRepository)
-        container.register(_CallbackSink, lambda: callback_sink, scope=Scope.APPLICATION)
+        container.register(AcmeCallbackSink, lambda: callback_sink, scope=Scope.APPLICATION)
         container.register(
             JobService,
             lambda: InlineJobService(
@@ -370,10 +348,9 @@ class TestAutoCreateAppIntegration:
                 _DispatchChildJobOrchestratorJob,
             ],
         )
-        project = discovering_callbacks(
+        project = scanning(
             Project.load(config_path, code_path=None, caller="test"),
-            _RecordSuccessCallback,
-            _RecordFailureCallback,
+            acme_recording_callbacks.MODULE,
         )
         celery_app = adapter.bind(project.compose(WithOverrides(adapter, module)))
 

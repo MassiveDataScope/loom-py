@@ -14,7 +14,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 import pytest
 from celery.concurrency.prefork import TaskPool as PreforkPool
@@ -37,8 +37,9 @@ from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext
-from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
+from tests.helpers import acme_callbacks
+from tests.helpers.acme_callbacks import AcmeSyncCallback
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.helpers.composition import TaskAffine, application_of, composition_project
 
@@ -213,18 +214,6 @@ class _PingJob(Job[int]):
         return 1
 
 
-class _SyncCallback(JobCallback):
-    """Sync hooks run in the task thread, not on the bridge: they must still refuse."""
-
-    calls: ClassVar[list[str]] = []
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        self.calls.append("success")
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self.calls.append("failure")
-
-
 class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
@@ -240,10 +229,9 @@ class TestFailedChildOpen:
                     }
                 }
             ),
-            app=AppConfig(name="worker"),
+            app=AppConfig(name="worker", packages=[acme_callbacks.MODULE]),
             code_path=tmp_path,
             config_root=tmp_path,
-            callbacks=(_SyncCallback,),
         )
         application = project.compose(adapter)
 
@@ -284,14 +272,14 @@ class TestFailedChildOpen:
         self, tmp_path: Path, prefix: str, kwargs: dict[str, Any]
     ) -> None:
         celery_app = self._worker(tmp_path)
-        task = celery_app.tasks[f"{prefix}.{_SyncCallback.__qualname__}"]
-        _SyncCallback.calls.clear()
+        task = celery_app.tasks[f"{prefix}.{AcmeSyncCallback.__qualname__}"]
+        AcmeSyncCallback.calls.clear()
 
         worker_process_init.send(sender=None)
         failure = task.apply(**kwargs, kwargs={"job_id": "job-1", "context": {}}).result
 
         assert isinstance(failure, WorkerNotOpenError)
-        assert _SyncCallback.calls == []
+        assert AcmeSyncCallback.calls == []
 
 
 class TestClosing:

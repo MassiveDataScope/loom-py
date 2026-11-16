@@ -29,7 +29,7 @@ from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Delegation, Identity
-from loom.core.job.callback import CallbackOutcome
+from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import wire_job_name
 from loom.core.observability.event import EventKind, Scope
@@ -143,7 +143,7 @@ class TestCeleryJobTask:
     ) -> None:
         app = MagicMock()
         service = CeleryJobService(
-            app, factory=factory, executor=executor, callbacks=[AcmeCallback]
+            app, factory=factory, executor=executor, callbacks=DispatchableCallbacks([AcmeCallback])
         )
 
         async def dispatch() -> None:

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from abc import ABC
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -13,15 +12,14 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 
-class JobCallback(ABC):  # noqa: B024
+class JobCallback:
     """Base of job lifecycle hooks; both hooks do nothing until overridden.
 
     Subclass it in a package listed in ``app.packages`` and override the
     hook, or hooks, to run: the scan finds the class, and the dispatcher
     names it in ``dispatch(Job, on_success=..., on_failure=...)``.  Each hook
-    may be plain ``def`` or ``async def``; the runner detects the kind via
-    ``inspect.iscoroutinefunction`` at execution time, so a hook left as
-    the base's plain ``def`` costs no executor hop.
+    may be plain ``def`` or ``async def``.  An abstract intermediate class
+    inherits ``JobCallback`` and ``ABC`` and is not collected.
 
     Subclasses are instantiated by the factory, so constructor dependencies
     are injected via DI like any other service.
@@ -46,7 +44,6 @@ class JobCallback(ABC):  # noqa: B024
             result: Value returned by ``Job.execute()``.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        return None
 
     def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> Any:
         """Called when the job raises an unrecoverable exception.
@@ -57,7 +54,6 @@ class JobCallback(ABC):  # noqa: B024
             exc_msg: String representation of the exception.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        return None
 
 
 _HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})
@@ -81,24 +77,47 @@ class CallbackOutcome(StrEnum):
         return getattr(callback, f"on_{self}")
 
 
-def refuse_reserved_payload(payload: Mapping[str, object]) -> None:
-    """Refuse a dispatch payload naming an argument a callback hook receives.
-
-    The payload reaches the hooks as keyword arguments beside ``job_id``,
-    ``result``, ``exc_type`` and ``exc_msg``.
+class DispatchableCallbacks:
+    """The callbacks a dispatch may attach, and the payload it may carry with one.
 
     Args:
-        payload: The payload of a dispatch that attaches a callback.
-
-    Raises:
-        ValueError: Naming each reserved key the payload holds.
+        discovered: The callback classes the scan found; ``None`` accepts any class.
     """
-    reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
-    if reserved:
-        raise ValueError(
-            f"A job payload with a callback cannot hold {', '.join(reserved)}: "
-            "the callback hooks receive these arguments"
-        )
+
+    def __init__(self, discovered: Collection[type[JobCallback]] | None = None) -> None:
+        self._discovered = None if discovered is None else frozenset(discovered)
+
+    def refuse(
+        self, payload: Mapping[str, object], *callback_types: type[JobCallback] | None
+    ) -> None:
+        """Refuse a dispatch attaching an undiscovered callback or a payload naming a hook argument.
+
+        The payload reaches the hooks as keyword arguments beside ``job_id``,
+        ``result``, ``exc_type`` and ``exc_msg``.
+
+        Args:
+            payload: The payload of the dispatch.
+            *callback_types: The callbacks the dispatch attaches; ``None`` for none.
+
+        Raises:
+            ValueError: Naming a callback the scan did not find, or each reserved
+                key the payload holds when a callback is attached.
+        """
+        attached = [callback_type for callback_type in callback_types if callback_type is not None]
+        if not attached:
+            return
+        for callback_type in attached:
+            if self._discovered is not None and callback_type not in self._discovered:
+                raise ValueError(
+                    f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was "
+                    "not discovered: inherit from JobCallback in a package listed in app.packages"
+                )
+        reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
+        if reserved:
+            raise ValueError(
+                f"A job payload with a callback cannot hold {', '.join(reserved)}: "
+                "the callback hooks receive these arguments"
+            )
 
 
 async def notify(
