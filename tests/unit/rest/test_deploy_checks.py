@@ -335,8 +335,13 @@ class TestCreateAppFromAConfigDirectory:
         with pytest.raises(ConfigError, match="config_dir"):
             create_app(base, config_dir=str(config_dir))
 
-    def test_no_configuration_at_all_is_refused(self) -> None:
-        with pytest.raises(ConfigError, match="config_dir"):
+    def test_no_configuration_at_all_names_the_default_sources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ConfigError, match="LOOM_CONFIG_DIR"):
             create_app()
 
 

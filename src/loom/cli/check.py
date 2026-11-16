@@ -30,9 +30,12 @@ from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
 def check(
     config: Annotated[
-        list[Path],
-        typer.Argument(help="A config directory (base.yaml plus overlays) or YAML files."),
-    ],
+        list[Path] | None,
+        typer.Argument(
+            help="A config directory (base.yaml plus overlays) or YAML files; "
+            "defaults to LOOM_CONFIG_DIR, else ./config."
+        ),
+    ] = None,
     deploy: Annotated[bool, typer.Option("--deploy", help="Run the deploy checks.")] = False,
     env: Annotated[
         str | None,
@@ -45,10 +48,10 @@ def check(
 ) -> None:
     """Run the deploy checks against the configuration, for CI."""
     if not deploy:
-        typer.echo("only deploy checks exist: run 'loom check --deploy <config>'.", err=True)
+        typer.echo("only deploy checks exist: run 'loom check --deploy [config]'.", err=True)
         raise typer.Exit(2)
     try:
-        checked = check_config(config, env, tuple(skip or ()))
+        checked = check_config(config or [], env, tuple(skip or ()))
         print_report(checked, err=False)
         check_triggers(checked.config)
     except ConfigError as exc:
@@ -61,10 +64,14 @@ def check(
 def check_config(config: list[Path], env: str | None, skip: tuple[str, ...]) -> CheckedProject:
     """Run the deploy checks on *config*: one directory, or YAML files.
 
+    An empty *config* checks the default config directory.
+
     Raises:
         ConfigError: When the configuration does not load, or directories and
             files are mixed.
     """
+    if not config:
+        return Project.check(environment=env, skip=skip)
     if len(config) == 1 and config[0].is_dir():
         return Project.check(config_dir=str(config[0]), environment=env, skip=skip)
     if any(path.is_dir() for path in config):

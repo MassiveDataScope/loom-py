@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
-from loom.core.environment import CONFIG_VARIABLE
+from loom.core.environment import CONFIG_DIR_VARIABLE
 from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations import (
     ENV_TEMPLATE_PATH,
@@ -122,7 +122,7 @@ async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) ->
         "-c",
         code,
         cwd=Path(__file__).parents[3],
-        env={**os.environ, CONFIG_VARIABLE: str(config_path)},
+        env={**os.environ, CONFIG_DIR_VARIABLE: str(config_path)},
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -242,7 +242,9 @@ class TestMigrations:
         trees = Trees(tmp_path, application)
         first = trees.config(trees.structural, database.migrator)
         await asyncio.to_thread(command.revision, first, "initial", autogenerate=True)
-        config_path = tmp_path / "notes_twice.yaml"
+        config_path = tmp_path / "notes_twice_config"
+        config_path.mkdir()
+        (config_path / "base.yaml").write_bytes((tmp_path / "notes_twice.yaml").read_bytes())
 
         await asyncio.gather(
             _upgrade_in_subprocess(trees.structural, database.migrator, config_path),

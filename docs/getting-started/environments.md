@@ -99,7 +99,7 @@ directory without `base.yaml` is a startup error. The Celery
 `create_app(config_dir=...)` and `bootstrap_worker(config_dir=...)` do the
 same, and so do `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`, the
 storage configuration of a Prefect flow run (`LOOM_STORAGE_CONFIG_PATH`) and
-the migration locator (`LOOM_CONFIG`) when given a directory instead of a
+the migration locator when given a directory instead of a
 file.
 
 loom does not read `.env`: your runner does, for example
@@ -189,6 +189,26 @@ The logger section refuses a key it does not declare, a removed one included
 (`observability.log.config.environment`), and an `observability` section that
 fails validation stops startup: a stale setting fails loudly instead of being
 silently ignored.
+
+### Where the configuration is found
+
+Called with no path, every entry point loads the same directory: the one
+`LOOM_CONFIG_DIR` names, else `./config`. This covers `create_app()`,
+`bootstrap_worker()` and `Project.load()`, the Lambda handler, `loom check
+--deploy`, `loom deploy manifest`, `loom schema bootstrap` and `verify`, the
+Alembic `env.py` and `load_store_schema()`, and `LambdaTestClient()`.
+
+```bash
+LOOM_CONFIG_DIR=/srv/acme/config loom check --deploy
+loom check --deploy            # ./config
+loom check --deploy config/base.yaml config/eu.yaml
+```
+
+An explicit path or `config_dir=` always wins over both. loom does not read
+the project's `pyproject.toml`: it is absent at runtime, so the CLI and the
+running application could disagree silently. A missing directory is a
+`ConfigError` naming `LOOM_CONFIG_DIR`, `./config` and the path it tried.
+`LOOM_CONFIG_DIR` takes a directory, not a file.
 
 ### `LOOM__*` overrides
 
@@ -297,7 +317,7 @@ sets.
 
 The allowlist guards against careless per-deploy overrides, not against an
 attacker. Whoever controls the process environment also controls `LOOM_ENV`,
-`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
 `PYTHONPATH`, and so which files load and which code runs; protect the
 environment itself (the task definition, its IAM permissions) for that.
 

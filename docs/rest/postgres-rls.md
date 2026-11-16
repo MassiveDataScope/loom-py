@@ -519,7 +519,7 @@ compilation refuses it with `ValueError`. `ck` takes the rule of `__checks__` as
 are final and no convention renames them.
 
 {func}`~loom.stores.sqlalchemy.alembic.load_store_schema` reads this file (the path given, or
-`LOOM_CONFIG`), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
+the default config directory), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
 discovers and compiles the models into a `MetaData` owned by the returned
 {class}`~loom.stores.sqlalchemy.alembic.StoreSchema` and builds the
 {class}`~loom.stores.sqlalchemy.rls.BootstrapConfig`. A missing key raises
@@ -840,7 +840,7 @@ shutil.copy(ENV_TEMPLATE_PATH, "alembic/data/env.py")
 ```
 
 The environment loads the application from `config.attributes["application"]` or, when
-that is absent, from `LOOM_CONFIG`. It refuses offline mode, because the guard needs a
+that is absent, from the default config directory (`LOOM_CONFIG_DIR`, else `./config`). It refuses offline mode, because the guard needs a
 live connection. Generate and apply structural revisions with the migrator URL:
 
 ```python

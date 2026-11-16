@@ -209,19 +209,21 @@ class TestScopedApplicationSchema:
 
 
 class TestLocatorConfigPath:
-    def test_the_config_path_defaults_to_the_loom_config_variable(
+    def test_the_config_path_defaults_to_the_config_dir_variable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(
-            "LOOM_CONFIG", _write(tmp_path, "p.yaml", _config(PLAIN_MODULE, mode="create_all"))
-        )
+        _write(tmp_path, "base.yaml", _config(PLAIN_MODULE, mode="create_all"))
+        monkeypatch.setenv("LOOM_CONFIG_DIR", str(tmp_path))
 
         assert set(load_store_schema().metadata.tables) == {"widgets"}
 
-    def test_a_missing_loom_config_variable_is_named(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("LOOM_CONFIG", raising=False)
+    def test_a_missing_default_directory_names_both_sources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
 
-        with pytest.raises(ConfigError, match="LOOM_CONFIG"):
+        with pytest.raises(ConfigError, match="LOOM_CONFIG_DIR"):
             load_store_schema()
 
     def test_a_relative_code_path_resolves_against_the_config_directory(
@@ -312,7 +314,7 @@ class TestLocatorEnvironmentOverlay:
             },
         )
         monkeypatch.setenv("LOOM_ENV", "staging")
-        monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
+        monkeypatch.setenv("LOOM_CONFIG_DIR", str(tmp_path))
 
         application = load_store_schema()
 

@@ -3,8 +3,8 @@
 The same file serves ``alembic/`` (structural tree) and ``alembic/data`` (data
 tree): ``alembic_config`` records which tree a script location is. The
 application comes from ``config.attributes["application"]`` or, failing that,
-from ``LOOM_CONFIG`` through ``load_store_schema``. Offline mode is refused because the
-guard needs a connection.
+from the default config directory (``LOOM_CONFIG_DIR`` or ``./config``) through
+``load_store_schema``. Offline mode is refused because the guard needs a connection.
 """
 
 from __future__ import annotations

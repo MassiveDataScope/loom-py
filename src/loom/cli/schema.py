@@ -38,7 +38,13 @@ schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema
 audit_app = typer.Typer(no_args_is_help=True, help="Operate the store's audit log.")
 schema_app.add_typer(audit_app, name="audit")
 
-_CONFIG_OPTION = typer.Option("--config", help="A config directory or file, as the app loads it.")
+_ConfigOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--config",
+        help="A config directory or file; defaults to LOOM_CONFIG_DIR, else ./config.",
+    ),
+]
 
 
 @schema_app.command("init")
@@ -131,7 +137,7 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
 
 
 @schema_app.command("bootstrap")
-def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+def bootstrap(config: _ConfigOption = None) -> None:
     """Install or upgrade the guard and configure roles, as the superuser; idempotent.
 
     The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
@@ -148,11 +154,11 @@ def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
         asyncio.run(apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
     except ConfigError as exc:
         _fail(exc)
-    typer.echo(f"guard of {config} is installed and configured")
+    typer.echo("guard is installed and configured")
 
 
 @schema_app.command("verify")
-def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+def verify_schema(config: _ConfigOption = None) -> None:
     """Compare the database with the application; exit 1 on any drift.
 
     The URL comes from ``LOOM_VERIFY_URL``, else ``LOOM_SUPERUSER_URL``: the
@@ -163,7 +169,7 @@ def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
     from loom.stores.sqlalchemy.rls import verify
 
     try:
-        schema = load_store_schema(str(config))
+        schema = load_store_schema(None if config is None else str(config))
         url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
         report = asyncio.run(verify(url, schema))
     except ConfigError as exc:
@@ -222,12 +228,12 @@ async def _as_migrator(action: Callable[[AsyncConnection], Awaitable[_T]]) -> _T
         await engine.dispose()
 
 
-def _bootstrap_config(config: Path) -> BootstrapConfig:
+def _bootstrap_config(config: Path | None) -> BootstrapConfig:
     from loom.stores.sqlalchemy.alembic import load_store_schema
 
-    settings = load_store_schema(str(config)).bootstrap
+    settings = load_store_schema(None if config is None else str(config)).bootstrap
     if settings is None:
-        raise ConfigError(f"{config} declares no row-scoped schema to bootstrap")
+        raise ConfigError("the configuration declares no row-scoped schema to bootstrap")
     return settings
 
 

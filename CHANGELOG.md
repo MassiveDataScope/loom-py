@@ -183,6 +183,13 @@
   reaching `aws` or `sqs.queues` does; `app.*` is such an entry.
   **Migration:** remove such an entry from `config.overridable` and set the
   key in the deployed configuration.
+- **config:** `LOOM_CONFIG` is renamed `LOOM_CONFIG_DIR` and `CONFIG_VARIABLE`
+  is renamed `CONFIG_DIR_VARIABLE`. Before: it named a file or a directory
+  and only `load_store_schema` read it. Now: it names the directory every
+  entry point loads when no path is given. `loom schema bootstrap` and
+  `verify` take `--config` as an option that may be omitted.
+  **Migration:** set `LOOM_CONFIG_DIR` to the configuration directory; point
+  an explicit path at a file instead of a variable.
 
 ### errors
 
@@ -697,6 +704,16 @@
 
 ### composition
 
+- **config:** every entry point finds the configuration the same way when no
+  path is given: `LOOM_CONFIG_DIR` if set, else `./config`, layered by
+  `LOOM_ENV`. `Project.load()`, `Project.check()`, `create_app()`,
+  `bootstrap_worker()`, the Lambda handler, `loom check --deploy [CONFIG]...`,
+  `loom deploy manifest [CONFIG]...`, `loom schema bootstrap` and `verify`,
+  the Alembic `env.py`, `load_store_schema()` and `LambdaTestClient()` take no
+  path. An explicit path or `config_dir=` wins; a missing directory raises
+  `ConfigError` naming both sources and the path tried.
+  `resolve_config_dir()` returns the directory. The project's
+  `pyproject.toml` is never read.
 - **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
   loads the configuration as written, resolving no placeholder and requiring
   no `app.name`, runs the registered deploy checks and returns a

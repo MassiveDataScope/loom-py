@@ -38,7 +38,7 @@ startup.
 
 `loom.core.environment` is the only module that names or reads loom's process
 variables: the selector, the `LOOM__*` overrides and every other `LOOM_*`
-variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
+variable (`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
 `LOOM_SPOOL_DIR`, the Spark test ones), which the rest of loom reads through
 `loom_variable` and sets for a block through `scoped_loom_variable`.
 
@@ -114,8 +114,8 @@ Within any file, its own values win over its `includes`.
   configuration and the migration locator take a file or a directory, which
   `config_source_paths` layers the same way.
 - Migrations: Alembic has no application entry point, so the locator still
-  needs `LOOM_CONFIG` or an explicit path; either may name the same config
-  directory, layered by `LOOM_ENV` like the application. `app.code_path` is
+  falls back to the default config directory (`LOOM_CONFIG_DIR`, else `./config`)
+  when given no path; an explicit path may name a file or a directory, layered by `LOOM_ENV` like the application. `app.code_path` is
   put on `sys.path` by one function, `loom.core.locator.add_code_path`, for
   `create_app`, the CLI and the locator alike: relative to the first file's
   directory, once, and only when the directory exists.
@@ -208,7 +208,7 @@ application (discovery, interfaces, routes, `code_path`) and
 
 The allowlist guards against careless per-deploy overrides, not against an
 attacker. Whoever controls the process environment also controls `LOOM_ENV`,
-`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
 `PYTHONPATH`, and so which files load and which code runs; the allowlist is
 no boundary against that access.
 

@@ -23,9 +23,12 @@ deploy_app = typer.Typer(no_args_is_help=True, help="Describe what a deployment 
 @deploy_app.command("manifest")
 def manifest(
     config: Annotated[
-        list[Path],
-        typer.Argument(help="A config directory (base.yaml plus overlays) or YAML files."),
-    ],
+        list[Path] | None,
+        typer.Argument(
+            help="A config directory (base.yaml plus overlays) or YAML files; "
+            "defaults to LOOM_CONFIG_DIR, else ./config."
+        ),
+    ] = None,
     function: Annotated[
         str | None,
         typer.Option("--function", help="Only this function of lambda.functions."),
@@ -41,7 +44,7 @@ def manifest(
 ) -> None:
     """Print the deploy manifest of lambda.functions once the deploy checks pass."""
     try:
-        checked = check_config(config, env, tuple(skip or ()))
+        checked = check_config(config or [], env, tuple(skip or ()))
         print_report(checked, err=True)
         if checked.report.errors:
             raise typer.Exit(1)

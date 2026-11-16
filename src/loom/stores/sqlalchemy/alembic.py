@@ -1,8 +1,8 @@
 """Load one store schema from its configuration file for Alembic and the schema tools.
 
 ``load_store_schema`` is the single entry point the Alembic environment, the
-command line and the schema tools share: it reads the file named by
-``LOOM_CONFIG`` (or an explicit path), discovers the models the same way the
+command line and the schema tools share: it reads the file or
+directory given, else the default config directory, discovers the models the same way the
 server does, compiles them into a ``MetaData`` owned by the returned
 ``StoreSchema`` and builds the bootstrap declaration from one store's
 section, ``stores.default`` unless another is named. Only that store's models
@@ -24,9 +24,8 @@ from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.config import DISCOVERY_MODES, decode_discovery, discover
 from loom.core.environment import (
-    CONFIG_VARIABLE,
     config_source_paths,
-    loom_variable,
+    resolve_config_dir,
     resolve_environment,
 )
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
@@ -123,7 +122,8 @@ def load_store_schema(
 ) -> StoreSchema:
     """Load, discover and compile the models of one store of ``config_path``'s application.
 
-    ``config_path``, else ``LOOM_CONFIG``, is a file or a config directory:
+    ``config_path``, else the directory :func:`~loom.core.environment.resolve_config_dir`
+    returns, is a file or a config directory:
     a directory loads ``base.yaml`` then the overlay of the environment
     ``LOOM_ENV`` selects, as the application factories do, and the
     ``LOOM__*`` variables merge last. The models of other stores are left
@@ -133,7 +133,7 @@ def load_store_schema(
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
     """
-    path = _resolve_path(config_path)
+    path = config_path or resolve_config_dir()
     environment = resolve_environment()
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
@@ -174,15 +174,6 @@ def _compiled_metadata(models: Sequence[type], schema: SchemaConfig, path: str) 
         metadata.info[SCHEMA_KEY] = _schema_name(schema.name, path)
     compile_all(*models, metadata=metadata)
     return metadata
-
-
-def _resolve_path(config_path: str | None) -> str:
-    if config_path:
-        return config_path
-    from_env = loom_variable(CONFIG_VARIABLE)
-    if not from_env:
-        raise ConfigError(f"{CONFIG_VARIABLE} is not set and no config path was given")
-    return from_env
 
 
 def _discover(section: Mapping[str, Any]) -> tuple[type, ...]:

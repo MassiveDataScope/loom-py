@@ -33,8 +33,9 @@ class LambdaTestClient(httpx.Client):
 
     Args:
         app: The handler ``create_app`` returned, which the caller closes; or a
-            configuration path, composed here as ``create_app`` would with
-            ``LambdaAdapter(function=function)`` and closed with the client.
+            configuration path, or none for the default config directory, composed
+            here as ``create_app`` would with ``LambdaAdapter(function=function)``
+            and closed with the client.
         function: The function of ``lambda.functions`` to serve; with a
             configuration path only.
         event_format: ``"v2"`` for HTTP API events, ``"v1"`` for REST API ones.
@@ -51,7 +52,7 @@ class LambdaTestClient(httpx.Client):
 
     def __init__(
         self,
-        app: HttpHandler | str,
+        app: HttpHandler | str | None = None,
         *,
         function: str | None = None,
         event_format: EventFormat = "v2",
@@ -59,10 +60,11 @@ class LambdaTestClient(httpx.Client):
     ) -> None:
         self.application: Application | None = None
         owned: LambdaHandler | None = None
-        if isinstance(app, str):
+        if app is None or isinstance(app, str):
+            paths = () if app is None else (app,)
             adapter = LambdaAdapter(function=function)
             modules = options.pop("modules", ())
-            self.application = Project.load(app, **options).compose(adapter, modules=modules)
+            self.application = Project.load(*paths, **options).compose(adapter, modules=modules)
             owned = adapter.bind(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options:
