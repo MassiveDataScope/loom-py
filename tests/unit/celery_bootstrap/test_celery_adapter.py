@@ -10,7 +10,7 @@ from celery import Celery
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.celery.adapter import CeleryAdapter
-from loom.celery.constants import TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.composition import (
     AppConfig,
     Application,
@@ -22,6 +22,8 @@ from loom.composition import (
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.errors import UndiscoveredCallback
+from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.stores import WORKER_PROFILE
@@ -44,12 +46,16 @@ class _PingJob(Job[int]):
         return 1
 
 
-class _PingCallback:
+class _PingCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         del job_id, result, context
 
     def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
         del job_id, exc_type, exc_msg, context
+
+
+class _OtherCallback(JobCallback):
+    pass
 
 
 class _TriageUseCase(UseCase[object, object]):
@@ -62,17 +68,25 @@ class _KnowledgeUseCase(UseCase[object, object]):
         return gateway
 
 
-def _project(tmp_path: Path, config: dict[str, Any]) -> Project:
+def _project(
+    tmp_path: Path, config: dict[str, Any], callbacks: tuple[type[JobCallback], ...] = ()
+) -> Project:
     return composition_project(
         ConfigContext.from_dict({"celery": _CELERY, **config}),
         app=AppConfig(name="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
+        callbacks=callbacks,
     )
 
 
-def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter) -> Application:
-    return _project(tmp_path, config).compose(adapter)
+def _application(
+    tmp_path: Path,
+    config: dict[str, Any],
+    adapter: CeleryAdapter,
+    callbacks: tuple[type[JobCallback], ...] = (),
+) -> Application:
+    return _project(tmp_path, config, callbacks).compose(adapter)
 
 
 def _default_backend(project: Project, recipe: Recipe) -> str:
@@ -134,17 +148,13 @@ class TestRecipe:
 
         assert set(recipe.discovered.use_cases) == {_PingJob, _Lookup}
 
-    def test_the_callbacks_reach_the_recipe_as_graph_roots(self, tmp_path: Path) -> None:
-        class _AcmeAuditCallback:
-            def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-                del job_id, result, context
+    def test_the_discovered_callbacks_reach_the_recipe_as_graph_roots(self, tmp_path: Path) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
 
-        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_AcmeAuditCallback])
+        recipe = adapter.recipe(_project(tmp_path, {}, (_PingCallback,)))
 
-        recipe = adapter.recipe(_project(tmp_path, {}))
-
-        assert recipe.callbacks == (_AcmeAuditCallback,)
-        assert _AcmeAuditCallback not in recipe.discovered.use_cases
+        assert recipe.discovered.callbacks == (_PingCallback,)
+        assert _PingCallback not in recipe.discovered.use_cases
 
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
         metrics: Any = object()
@@ -181,14 +191,17 @@ class TestRecipe:
 
 
 class TestBind:
-    def test_bind_returns_a_celery_app_with_jobs_and_callbacks(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_PingCallback])
+    def test_bind_returns_a_celery_app_with_jobs_and_discovered_callbacks(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
 
-        app = adapter.bind(_application(tmp_path, {}, adapter))
+        app = adapter.bind(_application(tmp_path, {}, adapter, (_PingCallback,)))
 
         assert isinstance(app, Celery)
         assert f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}" in app.tasks
         assert f"{TASK_CALLBACK_PREFIX}.{_PingCallback.__qualname__}" in app.tasks
+        assert f"{TASK_CALLBACK_ERROR_PREFIX}.{_PingCallback.__qualname__}" in app.tasks
 
     def test_bind_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
@@ -207,6 +220,17 @@ class TestBind:
 
 
 class TestServices:
+    def test_the_job_service_dispatches_the_discovered_callbacks_and_refuses_others(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
+        container = _application(tmp_path, {}, adapter, (_PingCallback,)).kernel.container
+        service = container.resolve(JobService)
+
+        service.dispatch(_PingJob, on_success=_PingCallback)
+        with pytest.raises(UndiscoveredCallback, match="_OtherCallback"):
+            service.dispatch(_PingJob, on_success=_OtherCallback)
+
     def test_job_and_sql_services_are_resolvable(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
 

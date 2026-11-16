@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import inspect
+from abc import ABC
 from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from loom.core.execution import ExecutionScope
 from loom.core.identity import current_caller
@@ -12,20 +13,22 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 
-@runtime_checkable
-class JobCallback(Protocol):
-    """Protocol for job lifecycle hooks.
+class JobCallback(ABC):  # noqa: B024
+    """Base of job lifecycle hooks; both hooks do nothing until overridden.
 
-    Implement this to react to job completion or failure.  Both methods
-    may be plain ``def`` or ``async def`` — the runner detects the kind
-    via ``inspect.iscoroutinefunction`` at execution time.
+    Subclass it in a package listed in ``app.packages`` and override the
+    hook, or hooks, to run: the scan finds the class, and the dispatcher
+    names it in ``dispatch(Job, on_success=..., on_failure=...)``.  Each hook
+    may be plain ``def`` or ``async def``; the runner detects the kind via
+    ``inspect.iscoroutinefunction`` at execution time, so a hook left as
+    the base's plain ``def`` costs no executor hop.
 
-    Implementations are instantiated by the factory, so constructor
-    dependencies are injected via DI like any other service.
+    Subclasses are instantiated by the factory, so constructor dependencies
+    are injected via DI like any other service.
 
     Example::
 
-        class AuditCallback:
+        class AuditCallback(JobCallback):
             def __init__(self, audit_repo: AuditRepository) -> None:
                 self._repo = audit_repo
 
@@ -33,11 +36,6 @@ class JobCallback(Protocol):
                 self, job_id: str, result: Any, **context: Any
             ) -> None:
                 await self._repo.record_success(job_id, result)
-
-            async def on_failure(
-                self, job_id: str, exc_type: str, exc_msg: str, **context: Any
-            ) -> None:
-                await self._repo.record_failure(job_id, exc_type, exc_msg)
     """
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> Any:
@@ -48,7 +46,7 @@ class JobCallback(Protocol):
             result: Value returned by ``Job.execute()``.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        ...
+        return None
 
     def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> Any:
         """Called when the job raises an unrecoverable exception.
@@ -59,24 +57,7 @@ class JobCallback(Protocol):
             exc_msg: String representation of the exception.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        ...
-
-
-class NullJobCallback:
-    """No-op callback for tests and contexts that do not need lifecycle hooks.
-
-    Satisfies the ``JobCallback`` protocol without any side effects.
-
-    Example::
-
-        service = InlineJobService(factory, executor, callback=NullJobCallback())
-    """
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        """Accept success notification and do nothing."""
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        """Accept failure notification and do nothing."""
+        return None
 
 
 _HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})

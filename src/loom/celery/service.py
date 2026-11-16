@@ -25,7 +25,7 @@ Usage::
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -36,6 +36,7 @@ from celery import Celery  # type: ignore[import-untyped]
 from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.metrics import NoMetrics
+from loom.core.errors import UndiscoveredCallback
 from loom.core.identity import captured_delegation
 from loom.core.job.callback import CallbackOutcome, refuse_reserved_payload
 from loom.core.job.config import JobSettings
@@ -168,6 +169,8 @@ class CeleryJobService:
         factory: Optional use-case factory.  Required for :meth:`run`.
         executor: Optional runtime executor.  Required for :meth:`run`.
         settings: The application's job settings; the ClassVars when omitted.
+        callbacks: The discovered job callbacks; a dispatch naming another
+            class is refused.
 
     Example::
 
@@ -184,8 +187,10 @@ class CeleryJobService:
         observability_runtime: ObservabilityRuntime | None = None,
         *,
         settings: JobSettings | None = None,
+        callbacks: Collection[type[JobCallback]] = (),
     ) -> None:
         self._app = celery_app
+        self._callbacks = frozenset(callbacks)
         self._settings = settings or JobSettings()
         self._metrics = NoMetrics() if metrics is None else metrics
         self._factory = factory
@@ -283,7 +288,10 @@ class CeleryJobService:
         Raises:
             ValueError: When a callback is attached and *payload* holds
                 ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            UndiscoveredCallback: When a callback class is not among the
+                discovered ones.
         """
+        self._refuse_undiscovered(on_success, on_failure)
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
         identity = captured_delegation().encoded()
@@ -331,6 +339,11 @@ class CeleryJobService:
             queue=eff_queue,
             dispatched_at=datetime.now(UTC),
         )
+
+    def _refuse_undiscovered(self, *callback_types: type[JobCallback] | None) -> None:
+        for callback_type in callback_types:
+            if callback_type is not None and callback_type not in self._callbacks:
+                raise UndiscoveredCallback(callback_type)
 
     def dispatch_parallel(
         self,

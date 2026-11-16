@@ -447,9 +447,10 @@ Callbacks receive the job result and a context dict. They can call back into the
 application via `ApplicationInvoker` without tight coupling:
 
 ```python
+from loom.core.job.callback import JobCallback
 from loom.core.use_case.invoker import ApplicationInvoker
 
-class RestockEmailSuccessCallback:
+class RestockEmailSuccessCallback(JobCallback):
     def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
 

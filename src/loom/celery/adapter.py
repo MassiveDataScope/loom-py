@@ -82,6 +82,7 @@ from loom.core.stores import WORKER_PROFILE
 
 if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.job.callback import JobCallback
     from loom.core.job.job import Job
 
 _logger = logging.getLogger(__name__)
@@ -290,14 +291,15 @@ class _Declared:
 
     celery: CeleryConfig
     jobs: tuple[type[Job[Any]], ...]
-    callbacks: tuple[type[Any], ...]
+    callbacks: tuple[type[JobCallback], ...]
 
 
 class CeleryAdapter:
     """Serve a composed application as a Celery worker.
 
     One instance composes one application: :meth:`recipe` keeps the jobs,
-    callbacks and Celery configuration it resolves for :meth:`bind`.
+    the discovered job callbacks and the Celery configuration it resolves for
+    :meth:`bind`.
 
     Args:
         jobs: ``Job`` subclasses to register as tasks; when empty, they are
@@ -306,8 +308,6 @@ class CeleryAdapter:
             a job can invoke them.
         interfaces: ``RestInterface`` subclasses whose route use cases are
             compiled in the worker.
-        callbacks: ``JobCallback`` classes to register as success and
-            failure tasks.
         metrics: Use-case and job metrics, or ``None``.
     """
 
@@ -317,13 +317,11 @@ class CeleryAdapter:
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
         interfaces: Sequence[type[Any]] = (),
-        callbacks: Sequence[type[Any]] = (),
         metrics: MetricsAdapter | None = None,
     ) -> None:
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)
         self._interfaces = tuple(interfaces)
-        self._callbacks = tuple(callbacks)
         self._metrics = metrics
         self._declared: _Declared | None = None
 
@@ -357,7 +355,9 @@ class CeleryAdapter:
         )
         _emit_worker_init_graph(resolved)
 
-        self._declared = _Declared(celery=celery_cfg, jobs=resolved.jobs, callbacks=self._callbacks)
+        self._declared = _Declared(
+            celery=celery_cfg, jobs=resolved.jobs, callbacks=project.discovered.callbacks
+        )
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(
@@ -365,11 +365,11 @@ class CeleryAdapter:
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
                 jobs=resolved.jobs,
+                callbacks=project.discovered.callbacks,
             ),
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,
-            callbacks=self._callbacks,
             connection_only=not resolved.models,
         )
 

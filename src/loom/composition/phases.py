@@ -287,6 +287,7 @@ def register(
         observability,
         backend=project.app.job_service,
         jobs=recipe.discovered.jobs,
+        callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,
     )
     sql = resolve_sql(ctx)

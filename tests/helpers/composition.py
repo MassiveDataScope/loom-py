@@ -19,6 +19,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
+from loom.core.job.callback import JobCallback
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -37,14 +38,15 @@ def composition_project(
     app: AppConfig | None = None,
     code_path: Path | None = None,
     config_root: Path | None = None,
+    callbacks: tuple[type[JobCallback], ...] = (),
 ) -> Project:
     """What ``Project.load`` would have resolved from files holding *ctx*.
 
     Without *app*, the ``app`` section of *ctx* is decoded, as its
     ``observability`` section always is; the paths default to the working
-    directory.
+    directory. *callbacks* are what the scan of ``app.packages`` is taken to have found.
     """
-    return Project(
+    project = Project(
         config=ctx,
         environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
@@ -55,6 +57,14 @@ def composition_project(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
     )
+    return discovering_callbacks(project, *callbacks) if callbacks else project
+
+
+def discovering_callbacks(project: Project, *callbacks: type[JobCallback]) -> Project:
+    """*project*, its scan of ``app.packages`` taken to have found *callbacks* too."""
+    found = project.discovered
+    project.__dict__["discovered"] = found.with_changes(callbacks=(*found.callbacks, *callbacks))
+    return project
 
 
 class Serving:

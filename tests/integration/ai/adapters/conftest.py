@@ -19,6 +19,7 @@ from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.job.callback import JobCallback
 from loom.core.stores import SERVER_PROFILE
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
@@ -64,15 +65,21 @@ def _agent_spec(name: str) -> dict[str, Any]:
 class AgentlessHost:
     """A host that runs the given use cases and callbacks and hosts no agents, as a worker does."""
 
-    def __init__(self, use_cases: tuple[type, ...], callbacks: tuple[type, ...] = ()) -> None:
+    def __init__(
+        self, use_cases: tuple[type, ...], callbacks: tuple[type[JobCallback], ...] = ()
+    ) -> None:
         self.use_cases, self.callbacks = use_cases, callbacks
 
     def recipe(self, project: Project) -> Recipe:
         del project
-        discovered = DiscoveryResult(models=(), use_cases=self.use_cases, interfaces=(), jobs=())
-        return Recipe(
-            profile=SERVER_PROFILE, discovered=discovered, agents=False, callbacks=self.callbacks
+        discovered = DiscoveryResult(
+            models=(),
+            use_cases=self.use_cases,
+            interfaces=(),
+            jobs=(),
+            callbacks=self.callbacks,
         )
+        return Recipe(profile=SERVER_PROFILE, discovered=discovered, agents=False)
 
     def bind(self, application: Application) -> Application:
         return application

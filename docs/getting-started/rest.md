@@ -243,7 +243,9 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
 Callbacks are resolved by the DI container and receive the job result + context:
 
 ```python
-class RestockEmailSuccessCallback:
+from loom.core.job.callback import JobCallback
+
+class RestockEmailSuccessCallback(JobCallback):
     def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
 

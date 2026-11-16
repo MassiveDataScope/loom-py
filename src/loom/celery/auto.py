@@ -21,7 +21,6 @@ def create_app(
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
-    callbacks: Sequence[type[Any]] = (),
     metrics: MetricsAdapter | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> Celery:
@@ -38,7 +37,6 @@ def create_app(
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
             Optional when ``app.packages`` is configured.
-        callbacks: Optional callback classes for success/failure hooks.
         metrics: Optional metrics adapter.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
@@ -52,7 +50,6 @@ def create_app(
         config_dir=config_dir,
         environment=environment,
         jobs=jobs,
-        callbacks=callbacks,
         metrics=metrics,
         resolvers=resolvers,
     )

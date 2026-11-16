@@ -26,7 +26,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import WithOverrides
+from tests.helpers.composition import WithOverrides, discovering_callbacks
 
 
 class _Record(BaseModel):
@@ -369,9 +369,12 @@ class TestAutoCreateAppIntegration:
                 _AlwaysFailJob,
                 _DispatchChildJobOrchestratorJob,
             ],
-            callbacks=[_RecordSuccessCallback, _RecordFailureCallback],
         )
-        project = Project.load(config_path, code_path=None, caller="test")
+        project = discovering_callbacks(
+            Project.load(config_path, code_path=None, caller="test"),
+            _RecordSuccessCallback,
+            _RecordFailureCallback,
+        )
         celery_app = adapter.bind(project.compose(WithOverrides(adapter, module)))
 
         create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]

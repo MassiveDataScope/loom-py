@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import Any
 
 from loom.core.di.installer import Installer
+from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
@@ -31,12 +32,14 @@ class DiscoveryCollector:
     interfaces: list[type[RestInterface[object]]] = field(default_factory=list)
     jobs: list[type[Job[Any]]] = field(default_factory=list)
     installers: list[type[Installer]] = field(default_factory=list)
+    callbacks: list[type[JobCallback]] = field(default_factory=list)
 
     _seen_models: set[type[BaseModel]] = field(default_factory=set)
     _seen_use_cases: set[type[UseCase[object, object]]] = field(default_factory=set)
     _seen_interfaces: set[type[RestInterface[object]]] = field(default_factory=set)
     _seen_jobs: set[type[Job[Any]]] = field(default_factory=set)
     _seen_installers: set[type[Installer]] = field(default_factory=set)
+    _seen_callbacks: set[type[JobCallback]] = field(default_factory=set)
 
     def append_model(self, value: type[Any]) -> None:
         _append_unique(self.models, self._seen_models, typing.cast(type[BaseModel], value))
@@ -60,6 +63,9 @@ class DiscoveryCollector:
 
     def append_installer(self, value: type[Any]) -> None:
         _append_unique(self.installers, self._seen_installers, typing.cast(type[Installer], value))
+
+    def append_callback(self, value: type[Any]) -> None:
+        _append_unique(self.callbacks, self._seen_callbacks, typing.cast(type[JobCallback], value))
 
 
 def _append_unique(items: list[ItemT], seen: set[ItemT], value: ItemT) -> None:
@@ -111,6 +117,12 @@ def _as_installer(cls: type[Any]) -> type[Installer] | None:
     return None
 
 
+def _as_callback(cls: type[Any]) -> type[JobCallback] | None:
+    if issubclass(cls, JobCallback) and cls is not JobCallback:
+        return cls
+    return None
+
+
 def _append_discovered_class(
     cls: type[Any],
     collector: DiscoveryCollector,
@@ -124,6 +136,7 @@ def _append_discovered_class(
         (_as_interface, collector.append_interface),
         (_as_job, collector.append_job),
         (_as_installer, collector.append_installer),
+        (_as_callback, collector.append_callback),
     )
     for resolver, append in appenders:
         discovered = resolver(cls)

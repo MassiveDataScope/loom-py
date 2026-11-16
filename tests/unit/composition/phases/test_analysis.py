@@ -12,6 +12,7 @@ from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer
 from loom.core.di.errors import DependencyUnresolvable
 from loom.core.di.graph import ClassNode, DependencyGraphError, Edge, GraphAnalysis, KeyNode
+from loom.core.job.callback import JobCallback
 from loom.core.stores.repository import Listable, RepoFor
 from loom.core.use_case import UnservedModelError, UseCase
 from tests.helpers.composition import Serving
@@ -31,7 +32,7 @@ class AcmeCallbackTrail:
     pass
 
 
-class AcmeAuditCallback:
+class AcmeAuditCallback(JobCallback):
     """A job callback injecting :class:`AcmeCallbackTrail`."""
 
     def __init__(self, trail: AcmeCallbackTrail) -> None:
@@ -76,7 +77,8 @@ class _WithCallbacks(Serving):
         self.callbacks = callbacks
 
     def recipe(self, project: Project) -> Recipe:
-        return replace(super().recipe(project), callbacks=self.callbacks)
+        recipe = super().recipe(project)
+        return replace(recipe, discovered=recipe.discovered.with_changes(callbacks=self.callbacks))
 
 
 def _binds(key: type, provider: type) -> Any:

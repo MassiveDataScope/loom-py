@@ -73,8 +73,8 @@ ambiguous names and warns about discovered interfaces assigned to none.
 ## Finding the application's components
 
 `app.packages` lists the packages, or single modules, the composition scans.
-A package is walked recursively; models, use cases, jobs, REST interfaces
-and `Installer` classes defined in it are found, in module then
+A package is walked recursively; models, use cases, jobs, job callbacks (`JobCallback`
+subclasses), REST interfaces and `Installer` classes defined in it are found, in module then
 qualified-name order. Abstract classes, classes imported from elsewhere and
 models without their own `__tablename__` are skipped.
 
@@ -83,7 +83,9 @@ models without their own `__tablename__` are skipped.
 - A directory inside a listed package that holds `.py` files but no
   `__init__.py` is refused with a `ConfigError` naming it, as `setuptools`'s
   `find_packages` would skip it.
-- Job callbacks are not scanned: pass `callbacks=` to the Celery entry point.
+- A job callback must be defined in a listed package: Celery registers a task
+  for each one found, and a dispatch naming another class is refused with
+  `UndiscoveredCallback`.
 
 ## Event triggers
 
@@ -189,7 +191,7 @@ shortcuts over the composition:
 | Shortcut | Equivalent to |
 |---|---|
 | `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., adapter=FastAPIAdapter(metrics_registry=, authenticator=))` |
-| `loom.celery.auto.create_app(..., jobs=, callbacks=, metrics=)` | `create_app(..., adapter=CeleryAdapter(jobs=, callbacks=, metrics=))` |
+| `loom.celery.auto.create_app(..., jobs=, metrics=)` | `create_app(..., adapter=CeleryAdapter(jobs=, metrics=))` |
 | `loom.celery.bootstrap.bootstrap_worker(...)` | the same composition; returns `WorkerBootstrapResult` |
 
 `FastAPIAdapter` lives in `loom.rest.fastapi.adapter` and `CeleryAdapter` in

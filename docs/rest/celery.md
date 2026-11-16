@@ -175,18 +175,23 @@ Use `dispatch()` for fire-and-forget work; use `run()` when you need the result 
 
 ## Callbacks
 
-Callbacks are injected by the DI container and can interact with the application
-via `ApplicationInvoker`. Implement `on_success` and/or `on_failure` — both can be
-sync or async:
+A callback is a subclass of `JobCallback` defined in a package listed in
+`app.packages`: the scan finds it, and Celery registers a success and a failure
+task for it. Both hooks do nothing until overridden, so override `on_success`,
+`on_failure` or both, each as `def` or `async def`. The DI container builds the
+callback, so it can interact with the application via `ApplicationInvoker`.
+A `dispatch(..., on_success=X)` naming a class the scan did not find is refused
+with `UndiscoveredCallback` before anything is sent:
 
 ```python
 # app/product/callbacks.py
 from typing import Any
+from loom.core.job.callback import JobCallback
 from loom.core.use_case.invoker import ApplicationInvoker
 from app.product.model import Product
 
 
-class RestockEmailSuccessCallback:
+class RestockEmailSuccessCallback(JobCallback):
     """Tags the product category when a restock email is sent successfully."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -208,7 +213,7 @@ class RestockEmailSuccessCallback:
         pass  # log or send alert
 
 
-class RestockEmailFailureCallback:
+class RestockEmailFailureCallback(JobCallback):
     """Tags the product category when restock email dispatch fails."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -615,32 +620,32 @@ result = bootstrap_worker("config/worker.yaml")
 celery_app = result.celery_app
 ```
 
-The scanner sorts classes by defining module and qualname. Pass job callbacks
-explicitly to `bootstrap_worker` when the worker needs them.
+The scanner sorts classes by defining module and qualname. Job callbacks, the
+`JobCallback` subclasses of those packages, are found the same way: no
+`callbacks=` argument exists.
 
 ### Option 3: Explicit jobs in code
 
 For simple workers or micro-services with a single job, pass jobs directly.
 If `app.packages` is also present in the YAML (e.g. inherited from a shared
 `base.yaml`), use cases discovered there are automatically added to the registry —
-callbacks can use `ApplicationInvoker` without any extra parameter:
+callbacks, found in the same packages, can use `ApplicationInvoker` without any
+extra parameter:
 
 ```python
 # src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
 from app.product.jobs import SendRestockEmailJob
-from app.product.callbacks import RestockEmailSuccessCallback
 
 result = bootstrap_worker(
     "config/worker.yaml",   # includes base.yaml → app.packages supplements registry
     jobs=[SendRestockEmailJob],
-    callbacks=[RestockEmailSuccessCallback],
 )
 celery_app = result.celery_app
 ```
 
-If `app.packages` is **not** in the YAML and callbacks need `ApplicationInvoker`,
-pass the interfaces whose routes the callbacks interact with:
+A callback is found only through `app.packages`. Without it, a worker whose jobs
+need `ApplicationInvoker` passes the interfaces whose routes they interact with:
 
 ```python
 from app.product.interface import ProductInterface
@@ -649,7 +654,6 @@ result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
     interfaces=[ProductInterface],     # auto-extracts use-cases from routes (including AutoCRUD)
-    callbacks=[RestockEmailSuccessCallback],
 )
 ```
 
@@ -662,7 +666,6 @@ result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
     use_cases=[GetProductUseCase, UpdateProductUseCase],
-    callbacks=[RestockEmailSuccessCallback],
 )
 ```
 

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from loom.core.errors import MixedJobBackendsError
-from loom.core.job.callback import NullJobCallback
+from loom.core.job.callback import JobCallback
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -117,7 +117,7 @@ class TestJobRouter:
         self, router: JobRouter, seen: list[str], callback: str
     ) -> None:
         jobs = [(_ReportJob, {}), (EmailJob, {})]
-        callbacks = {callback: NullJobCallback}
+        callbacks = {callback: JobCallback}
 
         with pytest.raises(MixedJobBackendsError):
             router.dispatch_parallel(jobs, **callbacks)

@@ -186,6 +186,79 @@ class TestPackageScan:
         ]
 
 
+_CALLBACK = (
+    "from loom.core.job.callback import JobCallback\n"
+    "class {name}(JobCallback):\n"
+    "    def on_success(self, job_id, result, **context): pass\n"
+)
+
+
+class TestCallbackScan:
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param({"callbacks.py": _CALLBACK.format(name="AcmeCallback")}, id="flat"),
+            pytest.param(
+                {
+                    "nested/__init__.py": "",
+                    "nested/deeper/__init__.py": "",
+                    "nested/deeper/callbacks.py": _CALLBACK.format(name="AcmeCallback"),
+                },
+                id="nested",
+            ),
+        ],
+    )
+    def test_finds_a_callback_at_any_depth(
+        self, write_package: PackageWriter, files: dict[str, str]
+    ) -> None:
+        write_package("acme_callbacks", files)
+
+        result = PackageScanner(["acme_callbacks"]).discover()
+
+        assert [callback.__name__ for callback in result.callbacks] == ["AcmeCallback"]
+
+    def test_skips_the_base_abstract_classes_and_reexports(
+        self, write_package: PackageWriter
+    ) -> None:
+        write_package(
+            "acme_callback_filters",
+            {
+                "__init__.py": "from .callbacks import Concrete\n",
+                "callbacks.py": (
+                    "from abc import abstractmethod\n"
+                    "from loom.core.job.callback import JobCallback\n"
+                    "class AbstractCallback(JobCallback):\n"
+                    "    @abstractmethod\n"
+                    "    def on_success(self, job_id, result, **context): ...\n"
+                    "class Concrete(AbstractCallback):\n"
+                    "    def on_success(self, job_id, result, **context): pass\n"
+                ),
+                "reexport.py": "from loom.core.job.callback import JobCallback\n",
+            },
+        )
+
+        result = PackageScanner(["acme_callback_filters"]).discover()
+
+        assert [callback.__name__ for callback in result.callbacks] == ["Concrete"]
+
+    def test_orders_callbacks_by_module_and_qualname(self, write_package: PackageWriter) -> None:
+        write_package(
+            "acme_callback_order",
+            {
+                "zeta.py": _CALLBACK.format(name="Alpha"),
+                "alpha.py": _CALLBACK.format(name="Zeta") + _CALLBACK.format(name="Beta"),
+            },
+        )
+
+        result = PackageScanner(["acme_callback_order"]).discover()
+
+        assert [(cls.__module__, cls.__name__) for cls in result.callbacks] == [
+            ("acme_callback_order.alpha", "Beta"),
+            ("acme_callback_order.alpha", "Zeta"),
+            ("acme_callback_order.zeta", "Alpha"),
+        ]
+
+
 _JOB = (
     "from loom.core.job.job import Job\n"
     "class AcmeJob(Job[None]):\n"

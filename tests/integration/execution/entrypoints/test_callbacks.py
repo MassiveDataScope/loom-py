@@ -31,6 +31,7 @@ from .doubles import (
     AcmeFailingJob,
     AcmeProbeJob,
     AcmeRun,
+    AcmeSuccessOnlyCallback,
     CallbackLog,
 )
 
@@ -63,6 +64,30 @@ class TestInlineCallbacks:
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
 
         assert callback_log == [("built", AS_ALICE), (moment, AS_ALICE)]
+
+    @pytest.mark.parametrize(
+        ("job", "moments"),
+        [(AcmeProbeJob, ["built", "on_success"]), (AcmeFailingJob, ["built"])],
+        ids=["success-runs-the-override", "failure-runs-the-base-no-op"],
+    )
+    async def test_a_callback_overriding_one_hook_serves_both_outcomes(
+        self,
+        factory: UseCaseFactory,
+        executor: RuntimeExecutor,
+        callback_log: CallbackLog,
+        job: type[Job[object]],
+        moments: list[str],
+    ) -> None:
+        jobs = InlineJobService(factory, executor)
+
+        async def dispatch() -> None:
+            jobs.dispatch(
+                job, on_success=AcmeSuccessOnlyCallback, on_failure=AcmeSuccessOnlyCallback
+            )
+
+        await executor.execute(AcmeRun(dispatch), identity=ALICE)
+
+        assert [moment for moment, _ in callback_log] == moments
 
     async def test_a_dispatch_with_no_caller_gives_the_job_and_them_none(
         self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog

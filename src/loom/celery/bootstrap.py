@@ -82,7 +82,6 @@ def bootstrap_worker(
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
-    callbacks: Sequence[type[Any]] = (),
     metrics: MetricsAdapter | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
@@ -93,7 +92,8 @@ def bootstrap_worker(
     ``config_dir`` or ``config_paths`` and composes the worker with
     :class:`~loom.celery.adapter.CeleryAdapter`: discovery, deploy checks
     (except the ``loom.rest`` ones: a worker serves no HTTP), persistence,
-    kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks and
+    kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks (one
+    per job, and one per discovered ``JobCallback`` subclass and outcome) and
     the lifecycle signals. The environment is registered in the container.
 
     Persistence note: ``stores.default.backend`` selects the backend, with
@@ -125,8 +125,6 @@ def bootstrap_worker(
             same classes via ``use_cases=`` but without having to enumerate
             individual use-case types — useful when callbacks interact with
             AutoCRUD-generated use-cases that are not importable by name.
-        callbacks: Concrete ``JobCallback`` subclasses to register as
-            Celery callback (success / error) tasks.
         metrics: Optional metrics adapter forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
@@ -155,7 +153,6 @@ def bootstrap_worker(
             "config/worker.yaml",
             jobs=[SendEmailJob, RecalcPricesJob],
             interfaces=[ProductInterface],
-            callbacks=[EmailSentCallback],
         )
         result.celery_app.start()
     """
@@ -171,7 +168,6 @@ def bootstrap_worker(
         jobs=jobs,
         use_cases=use_cases,
         interfaces=interfaces,
-        callbacks=callbacks,
         metrics=metrics,
     )
     application = project.compose(adapter)

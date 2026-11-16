@@ -46,14 +46,6 @@ class _DiscoveredModel(BaseModel):
     name: str = ColumnField(length=120)
 
 
-class _ObservedCallback:
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        del job_id, result, context
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        del job_id, exc_type, exc_msg, context
-
-
 def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
     """Build a minimal configuration for bootstrap_worker tests."""
     base = {
@@ -124,7 +116,6 @@ class TestBootstrapWorkerTaskRegistration:
         extra_cfg: dict[str, Any] | None = None,
         *,
         jobs: tuple[type[Job[Any]], ...] | None = (_SyncJob,),
-        callbacks: tuple[type[Any], ...] = (),
     ) -> WorkerBootstrapResult:
         """Write a minimal YAML config and call bootstrap_worker."""
         import yaml  # type: ignore[import-untyped]
@@ -148,10 +139,13 @@ class TestBootstrapWorkerTaskRegistration:
             package = tmp_path / packages[0]
             package.mkdir()
             (package / "__init__.py").write_text(
+                "from loom.core.job.callback import JobCallback\n"
                 "from loom.core.job.job import Job\n"
                 "from loom.core.model import BaseModel, ColumnField\n"
                 "class _SyncJob(Job[int]):\n"
                 "    def execute(self, value: int = 0) -> int: return value * 2\n"
+                "class _FixtureCallback(JobCallback):\n"
+                "    def on_success(self, job_id, result, **context): pass\n"
                 "class _DiscoveredModel(BaseModel):\n"
                 "    __tablename__ = 'discovered_model_bootstrap_test'\n"
                 "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
@@ -166,8 +160,6 @@ class TestBootstrapWorkerTaskRegistration:
         kwargs: dict[str, Any] = {}
         if jobs is not None:
             kwargs["jobs"] = list(jobs)
-        if callbacks:
-            kwargs["callbacks"] = list(callbacks)
         return bootstrap_worker(str(config_path), **kwargs)
 
     def test_task_registered_with_correct_name(self, tmp_path: Any) -> None:
@@ -270,20 +262,17 @@ class TestBootstrapWorkerTaskRegistration:
         expected = f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}"
         assert expected in result.celery_app.tasks
 
-    def test_explicit_callbacks_run_with_package_jobs(self, tmp_path: Any) -> None:
+    def test_registers_the_discovered_callbacks_without_a_callbacks_argument(
+        self, tmp_path: Any
+    ) -> None:
         result = self._run(
-            tmp_path,
-            extra_cfg={"app": {"packages": ["acme_worker_fixture"]}},
-            jobs=None,
-            callbacks=(_ObservedCallback,),
+            tmp_path, extra_cfg={"app": {"packages": ["acme_worker_fixture"]}}, jobs=None
         )
 
-        assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" in result.celery_app.tasks
-        assert f"{TASK_CALLBACK_PREFIX}.{_ObservedCallback.__qualname__}" in result.celery_app.tasks
-        assert (
-            f"{TASK_CALLBACK_ERROR_PREFIX}.{_ObservedCallback.__qualname__}"
-            in result.celery_app.tasks
-        )
+        tasks = result.celery_app.tasks
+        assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" in tasks
+        assert f"{TASK_CALLBACK_PREFIX}._FixtureCallback" in tasks
+        assert f"{TASK_CALLBACK_ERROR_PREFIX}._FixtureCallback" in tasks
 
     def test_compiles_models_under_the_configured_naming_convention(self, tmp_path: Any) -> None:
         """The worker names constraints as the REST runtime and the migrations do."""
@@ -308,16 +297,6 @@ class TestBootstrapWorkerTaskRegistration:
             assert table.primary_key.name == f"pk_{_DiscoveredModel.__tablename__}"
         finally:
             reset_registry(naming_convention=None)
-
-    def test_discovers_callbacks_from_modules_when_jobs_not_passed(self, tmp_path: Any) -> None:
-        cfg = {"app": {"packages": ["acme_worker_fixture"]}}
-        result = self._run(tmp_path, extra_cfg=cfg, jobs=None, callbacks=(_ObservedCallback,))
-        assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" in result.celery_app.tasks
-        assert f"{TASK_CALLBACK_PREFIX}.{_ObservedCallback.__qualname__}" in result.celery_app.tasks
-        assert (
-            f"{TASK_CALLBACK_ERROR_PREFIX}.{_ObservedCallback.__qualname__}"
-            in result.celery_app.tasks
-        )
 
     def test_modules_discovery_includes_autocrud_use_cases_for_models(self, tmp_path: Any) -> None:
         cfg = {"app": {"packages": ["acme_worker_fixture"]}}

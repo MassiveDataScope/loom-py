@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.job.callback import JobCallback
     from loom.core.use_case.factory import UseCaseFactory
 
 
@@ -34,7 +35,8 @@ class JobBackendContext:
     """What a job backend is built with; a ``module:Class`` backend receives it.
 
     ``jobs`` are the discovered jobs this backend serves: those on
-    ``celery.queues`` go to Celery instead. ``settings`` hold each job's
+    ``celery.queues`` go to Celery instead. ``callbacks`` are the discovered
+    job callbacks a dispatch may name. ``settings`` hold each job's
     queue, retries, countdown, timeout and priority in this application.
     """
 
@@ -44,6 +46,7 @@ class JobBackendContext:
     metrics: MetricsAdapter | None
     observability: ObservabilityRuntime | None
     jobs: tuple[type[Job[Any]], ...] = ()
+    callbacks: tuple[type[JobCallback], ...] = ()
     settings: JobSettings = field(default_factory=JobSettings)
 
 
@@ -75,6 +78,7 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
         executor=context.executor,
         observability_runtime=context.observability,
         settings=context.settings,
+        callbacks=context.callbacks,
     )
     closer = Resource(
         kind=ResourceKind.CELERY,
@@ -175,6 +179,7 @@ def configure_job_service(
     *,
     backend: str | None = None,
     jobs: tuple[type[Job[Any]], ...] = (),
+    callbacks: tuple[type[JobCallback], ...] = (),
     settings: JobSettings,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
@@ -194,6 +199,7 @@ def configure_job_service(
             with, or ``None``.
         backend: ``app.job_service``: a built-in name or ``module:Class``.
         jobs: The discovered jobs.
+        callbacks: The discovered job callbacks.
         settings: Each job's settings in this application.
 
     Returns:
@@ -214,6 +220,7 @@ def configure_job_service(
         metrics=result.metrics,
         observability=observability_runtime,
         jobs=jobs,
+        callbacks=callbacks,
         settings=settings,
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)

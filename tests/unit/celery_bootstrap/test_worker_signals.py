@@ -37,6 +37,7 @@ from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext
+from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.helpers.composition import TaskAffine, application_of, composition_project
@@ -212,7 +213,7 @@ class _PingJob(Job[int]):
         return 1
 
 
-class _SyncCallback:
+class _SyncCallback(JobCallback):
     """Sync hooks run in the task thread, not on the bridge: they must still refuse."""
 
     calls: ClassVar[list[str]] = []
@@ -228,7 +229,7 @@ class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_SyncCallback])
+        adapter = CeleryAdapter(jobs=[_PingJob])
         project = composition_project(
             ConfigContext.from_dict(
                 {
@@ -242,6 +243,7 @@ class TestFailedChildOpen:
             app=AppConfig(name="worker"),
             code_path=tmp_path,
             config_root=tmp_path,
+            callbacks=(_SyncCallback,),
         )
         application = project.compose(adapter)
 

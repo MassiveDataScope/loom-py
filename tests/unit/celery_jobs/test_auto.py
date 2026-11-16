@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 from loom.celery.auto import create_app
@@ -27,7 +26,6 @@ class TestCreateApp:
             config_dir=None,
             environment=None,
             jobs=[_DummyJob],
-            callbacks=(),
             metrics=None,
             resolvers=(),
         )
@@ -43,7 +41,6 @@ class TestCreateApp:
             config_dir=None,
             environment=None,
             jobs=(),
-            callbacks=(),
             metrics=None,
             resolvers=(),
         )
@@ -51,7 +48,6 @@ class TestCreateApp:
     def test_create_app_passes_optional_arguments(self) -> None:
         expected = MagicMock()
         result = SimpleNamespace(celery_app=expected)
-        callback: type[Any] = type("Callback", (), {})
         metrics = MagicMock()
 
         with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
@@ -59,7 +55,6 @@ class TestCreateApp:
                 "base.yaml",
                 "worker.yaml",
                 jobs=[_DummyJob],
-                callbacks=[callback],
                 metrics=metrics,
             )
 
@@ -70,7 +65,6 @@ class TestCreateApp:
             config_dir=None,
             environment=None,
             jobs=[_DummyJob],
-            callbacks=[callback],
             metrics=metrics,
             resolvers=(),
         )

@@ -55,6 +55,7 @@ class PackageScanner:
             interfaces=self._ordered(found.interfaces),
             jobs=self._ordered(found.jobs),
             installers=self._ordered(found.installers),
+            callbacks=self._ordered(found.callbacks),
             agent_specs=tuple(agents),
         )
 

@@ -38,7 +38,7 @@ class Recipe:
 
     Args:
         profile: Pool defaults of the entry point (server, worker, ...).
-        discovered: Use cases, models, interfaces and agent specs, final:
+        discovered: Use cases, models, interfaces, job callbacks and agent specs, final:
             with whatever the adapter added or pruned.
         default_store_backend: Backend of the default store when ``stores.default``
             is not declared.
@@ -57,9 +57,6 @@ class Recipe:
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
             :class:`~loom.core.stores.StoreRuntime`).
-        callbacks: Job callback classes the entry point builds; the
-            dependency graph's roots with the use cases and jobs, never
-            compiled.
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Set by the testing harness; no
@@ -81,7 +78,6 @@ class Recipe:
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
-    callbacks: tuple[type, ...] = ()
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
     lenient: bool = False
 
@@ -100,7 +96,7 @@ class Recipe:
             BootstrapError: Wrapping the first structural refusal, cause chained.
         """
         discovered = self.discovered
-        callbacks = tuple(map(ClassNode, self.callbacks))
+        callbacks = tuple(map(ClassNode, discovered.callbacks))
         roots = (*map(ClassNode, (*discovered.use_cases, *discovered.jobs)), *callbacks)
         refusals = (
             LENIENT_REFUSALS

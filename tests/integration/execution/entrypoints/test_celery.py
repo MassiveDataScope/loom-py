@@ -47,6 +47,7 @@ from .doubles import (
     AcmeCallerCallback,
     AcmeProbeJob,
     AcmeRun,
+    AcmeSuccessOnlyCallback,
     CallbackLog,
     seen_now,
 )
@@ -141,7 +142,9 @@ class TestCeleryJobTask:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
     ) -> None:
         app = MagicMock()
-        service = CeleryJobService(app, factory=factory, executor=executor)
+        service = CeleryJobService(
+            app, factory=factory, executor=executor, callbacks=[AcmeCallback]
+        )
 
         async def dispatch() -> None:
             service.dispatch(AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback)
@@ -200,6 +203,34 @@ class TestCeleryCallbackTasks:
         succeed(callback).get()
 
         assert callback_log == [("built", NO_CALLER), ("on_success", NO_CALLER)]
+
+    @pytest.mark.usefixtures("backend_error")
+    @pytest.mark.parametrize(
+        ("outcome", "moments"),
+        [
+            (CallbackOutcome.SUCCESS, ["built", "on_success"]),
+            (CallbackOutcome.FAILURE, ["built"]),
+        ],
+        ids=["success-runs-the-override", "failure-runs-the-base-no-op"],
+    )
+    def test_a_callback_overriding_one_hook_serves_both_outcomes(
+        self,
+        celery_app: Celery,
+        factory: UseCaseFactory,
+        callback_log: CallbackLog,
+        outcome: CallbackOutcome,
+        moments: list[str],
+    ) -> None:
+        task = _make_callback_task(
+            celery_app, AcmeSuccessOnlyCallback, outcome, factory, _CeleryAsyncRuntime()
+        )
+        link = {"job_id": "acme-job", "context": {}, **link_from(BOB, until=time.time() + AN_HOUR)}
+
+        task.apply(
+            args=("acme-result",) if outcome is CallbackOutcome.SUCCESS else (), kwargs=link
+        ).get()
+
+        assert [moment for moment, _ in callback_log] == moments
 
     def test_a_constructor_caller_receives_the_dispatcher(
         self, succeed: Callable[..., Any], callback_log: CallbackLog

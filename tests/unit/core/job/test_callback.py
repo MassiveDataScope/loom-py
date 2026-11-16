@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
@@ -8,81 +9,66 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.service import CeleryJobService
-from loom.core.job.callback import (
-    JobCallback,
-    NullJobCallback,
-    refuse_reserved_payload,
-)
+from loom.core.job.callback import CallbackOutcome, JobCallback, refuse_reserved_payload
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
 from loom.testing.jobs import RecordingJobService
 
-# ---------------------------------------------------------------------------
-# NullJobCallback satisfies the protocol
-# ---------------------------------------------------------------------------
+
+class _OnlySuccess(JobCallback):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
+        self.calls.append(f"success:{job_id}")
+
+
+class _AsyncHooks(JobCallback):
+    async def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
+        await asyncio.sleep(0)
+
+    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+        await asyncio.sleep(0)
 
 
 class TestJobCallback:
-    def test_null_callback_satisfies_protocol(self) -> None:
-        assert isinstance(NullJobCallback(), JobCallback)
+    def test_the_base_on_success_returns_none(self) -> None:
+        assert JobCallback().on_success("j", result=42, user_id=99) is None
 
-    def test_null_callback_on_success_does_not_raise(self) -> None:
-        cb = NullJobCallback()
-        cb.on_success("job-1", result=42, user_id=99)
+    def test_the_base_on_failure_returns_none(self) -> None:
+        assert JobCallback().on_failure("j", exc_type="E", exc_msg="m", user_id=99) is None
 
-    def test_null_callback_on_failure_does_not_raise(self) -> None:
-        cb = NullJobCallback()
-        cb.on_failure("job-1", exc_type="ValueError", exc_msg="boom", user_id=99)
+    @pytest.mark.parametrize("outcome", list(CallbackOutcome))
+    def test_the_base_hooks_are_plain_functions_so_they_cost_no_executor_hop(
+        self, outcome: CallbackOutcome
+    ) -> None:
+        assert not inspect.iscoroutinefunction(outcome.hook(JobCallback))
 
-    def test_null_callback_on_success_returns_none(self) -> None:
-        assert NullJobCallback().on_success("j", result=None) is None
+    def test_a_subclass_overriding_one_hook_keeps_the_other_a_no_op(self) -> None:
+        callback = _OnlySuccess()
 
-    def test_null_callback_on_failure_returns_none(self) -> None:
-        assert NullJobCallback().on_failure("j", exc_type="E", exc_msg="m") is None
+        callback.on_success("j1", result=1)
 
-    # ---------------------------------------------------------------------------
-    # Async implementations also satisfy the protocol (structural check)
-    # ---------------------------------------------------------------------------
+        assert callback.calls == ["success:j1"]
+        assert callback.on_failure("j2", exc_type="E", exc_msg="m") is None
 
-    def test_async_on_success_satisfies_protocol(self) -> None:
-        class AsyncCallback:
-            async def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
-                await asyncio.sleep(0)
+    @pytest.mark.parametrize(
+        ("callback_type", "outcome", "is_async"),
+        [
+            (_OnlySuccess, CallbackOutcome.SUCCESS, False),
+            (_OnlySuccess, CallbackOutcome.FAILURE, False),
+            (_AsyncHooks, CallbackOutcome.SUCCESS, True),
+            (_AsyncHooks, CallbackOutcome.FAILURE, True),
+        ],
+    )
+    def test_the_runner_detects_a_sync_or_async_override(
+        self, callback_type: type[JobCallback], outcome: CallbackOutcome, is_async: bool
+    ) -> None:
+        assert inspect.iscoroutinefunction(outcome.hook(callback_type)) is is_async
 
-            async def on_failure(
-                self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any
-            ) -> None:
-                await asyncio.sleep(0)
 
-        assert isinstance(AsyncCallback(), JobCallback)
-
-    def test_partial_implementation_does_not_satisfy_protocol(self) -> None:
-        class MissingOnFailure:
-            def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
-                # Intentionally empty: the test asserts missing on_failure.
-                return None
-
-        assert not isinstance(MissingOnFailure(), JobCallback)
-
-    # ---------------------------------------------------------------------------
-    # Custom sync callback
-    # ---------------------------------------------------------------------------
-
-    def test_custom_sync_callback_satisfies_protocol(self) -> None:
-        calls: list[str] = []
-
-        class RecordingCallback:
-            def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
-                calls.append(f"success:{job_id}")
-
-            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
-                calls.append(f"failure:{job_id}")
-
-        cb = RecordingCallback()
-        assert isinstance(cb, JobCallback)
-        cb.on_success("j1", result=1)
-        cb.on_failure("j2", exc_type="E", exc_msg="m")
-        assert calls == ["success:j1", "failure:j2"]
+class _AcmeCallback(JobCallback):
+    pass
 
 
 class _AcmeJob(Job[None]):
@@ -94,7 +80,7 @@ SERVICES = pytest.mark.parametrize(
     "service",
     [
         pytest.param(lambda: InlineJobService(MagicMock(), MagicMock()), id="inline"),
-        pytest.param(lambda: CeleryJobService(MagicMock()), id="celery"),
+        pytest.param(lambda: CeleryJobService(MagicMock(), callbacks=[_AcmeCallback]), id="celery"),
         pytest.param(RecordingJobService, id="recording"),
     ],
 )
@@ -113,7 +99,7 @@ class TestReservedCallbackArguments:
         jobs = service()
 
         with pytest.raises(ValueError, match=f"cannot hold {key}"):
-            jobs.dispatch(_AcmeJob, payload={key: "acme"}, **{hook: NullJobCallback})
+            jobs.dispatch(_AcmeJob, payload={key: "acme"}, **{hook: _AcmeCallback})
 
     def test_a_dispatch_without_a_callback_accepts_the_key(
         self, service: Callable[[], JobService]

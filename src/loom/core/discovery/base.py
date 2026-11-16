@@ -6,6 +6,7 @@ from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
 from loom.core.di.installer import Installer
+from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
@@ -25,6 +26,7 @@ class DiscoveryResult:
         agent_specs: Agent artifact paths or globs declared in ``app.agents``.
         jobs: Discovered jobs.
         installers: Discovered installers.
+        callbacks: Discovered job callbacks.
     """
 
     models: tuple[type[BaseModel], ...]
@@ -33,6 +35,7 @@ class DiscoveryResult:
     agent_specs: tuple[str, ...] = ()
     jobs: tuple[type[Job[Any]], ...] = ()
     installers: tuple[type[Installer], ...] = ()
+    callbacks: tuple[type[JobCallback], ...] = ()
 
     def with_changes(self, **changes: Any) -> DiscoveryResult:
         """Return a copy with *changes* applied, keeping every other field (later ones too)."""
