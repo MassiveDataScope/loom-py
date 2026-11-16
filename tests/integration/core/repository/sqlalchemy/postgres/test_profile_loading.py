@@ -9,11 +9,11 @@ from sqlalchemy.exc import ProgrammingError
 
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.projection.loaders import CountLoader, ExistsLoader
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, PageParams
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 pytestmark = pytest.mark.integration
 

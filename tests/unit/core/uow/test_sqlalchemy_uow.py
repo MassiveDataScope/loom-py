@@ -13,12 +13,12 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, Operation
 
 from loom.core._async import run_to_completion
 from loom.core.errors import StoresNotCommitted
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.stores.uow.alone import single_store
 from loom.core.stores.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
 from loom.core.stores.uow.scope import current_scope
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 
 from ..conftest import RecordingSessionManager, make_session
 from .conftest import SessionPair, make_session_manager

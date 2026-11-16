@@ -27,12 +27,12 @@ from loom.core.environment import Environment
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.job import Job
-from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for

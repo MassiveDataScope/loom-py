@@ -173,7 +173,7 @@ import msgspec
 
 from loom.core.stores.repository import repository_for
 from loom.core.stores.repository import RepoFor
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import RepositorySQLAlchemy
 
 
 class ProductRepo(RepoFor[Product], Protocol):
@@ -256,8 +256,8 @@ from dataclasses import dataclass
 
 from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.stores.repository import CursorCodec
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 @dataclass(frozen=True)

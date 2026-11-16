@@ -26,10 +26,10 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.product import clear_authz_product, register_authz_product
-from loom.core.locator import Application, load_application
-from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_of
+from loom.stores.sqlalchemy.alembic import Application, load_application
+from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
 URI_ENV_VAR_B = "LOOM_PG_IT_URI_B"
@@ -192,7 +192,7 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
     """
 
     async def factory(schema: str, **options: Any) -> ScopedDatabase:
-        from loom.core.repository.sqlalchemy.rls import (
+        from loom.stores.sqlalchemy.rls import (
             BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,

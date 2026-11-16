@@ -10,23 +10,23 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls import BootstrapConfig, DatabaseRoles, DatabaseUser
-from loom.core.repository.sqlalchemy.rls.bootstrap import QUIET_LOGS, scram_sha256_verifier
-from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+from loom.core.schema_names import SchemaNames
+from loom.stores.sqlalchemy.rls import BootstrapConfig, DatabaseRoles, DatabaseUser
+from loom.stores.sqlalchemy.rls.bootstrap import QUIET_LOGS, scram_sha256_verifier
+from loom.stores.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
     MIN_COMPATIBLE_GUARD_REVISION,
     preflight_sql,
 )
-from loom.core.repository.sqlalchemy.rls.integrity import (
+from loom.stores.sqlalchemy.rls.integrity import (
     CATALOG_CHECKS,
     access_problems,
     catalog_problems,
     require_revision,
     revision_of,
 )
-from loom.core.schema_names import SchemaNames
 
-GUARD = files("loom.core.repository.sqlalchemy.rls") / "guard"
+GUARD = files("loom.stores.sqlalchemy.rls") / "guard"
 LITERAL = re.compile(r"'(?:[^']|'')*'")
 MIN_LITERAL = 5
 MAX_REPEATS = 2

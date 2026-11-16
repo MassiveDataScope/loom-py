@@ -21,15 +21,15 @@ from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
 from loom.core.environment import CONFIG_VARIABLE
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.migrations import (
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.migrations import (
     ENV_TEMPLATE_PATH,
     alembic_config,
     check,
     runners,
 )
-from loom.core.repository.sqlalchemy.rls import integrity
-from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
+from loom.stores.sqlalchemy.rls import integrity
+from loom.stores.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from tests.integration.agnosticism import bookkeeping, notes, rosters, sites
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -114,7 +114,7 @@ async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) ->
     """Alembic's environment proxy is process-global: concurrent runners are processes."""
     code = (
         "from alembic import command\n"
-        "from loom.core.repository.sqlalchemy.migrations import alembic_config\n"
+        "from loom.stores.sqlalchemy.migrations import alembic_config\n"
         f"command.upgrade(alembic_config({str(location)!r}, {url!r}), 'head')\n"
     )
     process = await asyncio.create_subprocess_exec(
@@ -182,7 +182,7 @@ def downgrade() -> None:
 _PARTITIONS_REVISION = '''"""Partitions of note_events for the first quarter of 2026."""
 
 from alembic import op
-import loom.core.repository.sqlalchemy.migrations.operations
+import loom.stores.sqlalchemy.migrations.operations
 
 revision = "p0002"
 down_revision = {down!r}
@@ -412,7 +412,7 @@ class TestMigrations:
     async def test_verify_is_clean_after_an_upgrade(
         self, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import verify
+        from loom.stores.sqlalchemy.rls import verify
 
         database = await scoped_database("notes_verified")
         trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_verified")
@@ -499,7 +499,7 @@ class TestMigrations:
     async def test_a_partitioned_table_takes_partitions_from_a_revision_and_checks_clean(
         self, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import verify
+        from loom.stores.sqlalchemy.rls import verify
 
         database = await scoped_database("notes_parts")
         trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_parts")

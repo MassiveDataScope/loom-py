@@ -10,7 +10,7 @@ from sqlalchemy.engine import Dialect
 from sqlalchemy.schema import CreateTable
 
 from loom.core.model import BaseModel, ColumnField, Integer
-from loom.core.repository.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class Ticket(BaseModel):

@@ -17,9 +17,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.migrations.runners import LOCK, UNLOCK
-from loom.core.repository.sqlalchemy.rls import (
+from loom.core.schema_names import SchemaNames
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.migrations.runners import LOCK, UNLOCK
+from loom.stores.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
@@ -28,9 +29,8 @@ from loom.core.repository.sqlalchemy.rls import (
     integrity,
     verify,
 )
-from loom.core.repository.sqlalchemy.rls.bootstrap import QUIET_LOGS
-from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
-from loom.core.schema_names import SchemaNames
+from loom.stores.sqlalchemy.rls.bootstrap import QUIET_LOGS
+from loom.stores.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     BootstrapFactory,

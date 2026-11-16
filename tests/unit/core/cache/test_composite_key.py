@@ -21,8 +21,6 @@ from loom.core.cache import (
 from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import (
     CursorCodec,
     CursorResult,
@@ -31,6 +29,8 @@ from loom.core.stores.repository import (
     PaginationMode,
     QuerySpec,
 )
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
 from ._doubles import CountingCacheBackend

@@ -19,10 +19,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.database import DatabaseConfig, PoolConfig
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 
 _CALLERS = 12
 _HOLD_SECONDS = 1.5

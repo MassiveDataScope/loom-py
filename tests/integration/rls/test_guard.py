@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.repository.sqlalchemy.rls import (
+from loom.stores.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,

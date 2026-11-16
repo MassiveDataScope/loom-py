@@ -6,10 +6,10 @@ from typing import Any
 
 import msgspec
 
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import CursorCodec, get_repository_registration
 from loom.core.stores.repository.registry import RepositoryBuildContext
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 ScenarioDict = dict[str, list[msgspec.Struct]]
 

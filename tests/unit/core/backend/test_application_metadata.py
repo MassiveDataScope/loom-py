@@ -4,7 +4,7 @@ from sqlalchemy import MetaData
 
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
-from loom.core.repository.sqlalchemy.schema import (
+from loom.stores.sqlalchemy.schema import (
     compile_all,
     get_metadata,
     reset_registry,

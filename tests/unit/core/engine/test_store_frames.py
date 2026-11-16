@@ -24,10 +24,6 @@ from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec, RepoFor
 from loom.core.stores.repository.registration import classify_key
@@ -35,6 +31,10 @@ from loom.core.stores.uow.coordinator import Committed, InvocationOutcome, Order
 from loom.core.stores.uow.scope import invocation
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(30)
 

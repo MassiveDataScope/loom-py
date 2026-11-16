@@ -16,12 +16,13 @@ SQLAlchemy adapter
 .. autosummary::
    :toctree: generated
 
-   loom.core.repository.sqlalchemy
-   loom.core.repository.sqlalchemy.rls
-   loom.core.repository.sqlalchemy.rls.guard_manifest
-   loom.core.repository.sqlalchemy.rls.integrity
-   loom.core.repository.sqlalchemy.migrations
-   loom.core.repository.sqlalchemy.migrations.operations
+   loom.stores.sqlalchemy
+   loom.stores.sqlalchemy.alembic
+   loom.stores.sqlalchemy.rls
+   loom.stores.sqlalchemy.rls.guard_manifest
+   loom.stores.sqlalchemy.rls.integrity
+   loom.stores.sqlalchemy.migrations
+   loom.stores.sqlalchemy.migrations.operations
 
 Cache layer
 -----------

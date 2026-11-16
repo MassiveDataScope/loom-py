@@ -22,17 +22,17 @@ from sqlalchemy.pool import QueuePool
 from loom.core.command import Command
 from loom.core.errors import ForeignSessionError, ScopeOwnershipError, UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import transactional
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.repository import CursorCodec, PageParams
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import transactional
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 

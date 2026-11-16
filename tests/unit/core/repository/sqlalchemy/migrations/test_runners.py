@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.migrations import alembic_config
-from loom.core.repository.sqlalchemy.migrations.runners import (
+from loom.stores.sqlalchemy.migrations import alembic_config
+from loom.stores.sqlalchemy.migrations.runners import (
     LOCK,
     assert_revision,
     include_object_for,
@@ -14,8 +14,8 @@ from loom.core.repository.sqlalchemy.migrations.runners import (
     require_landing,
     validate_timeout,
 )
-from loom.core.repository.sqlalchemy.rls import SchemaNames
-from loom.core.repository.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
+from loom.stores.sqlalchemy.rls import SchemaNames
+from loom.stores.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
 
 URL = "postgresql+asyncpg://migrator:secret@localhost/app"
 
@@ -90,7 +90,7 @@ class TestRunnerConfiguration:
     def test_the_locator_puts_the_code_path_on_sys_path(self, tmp_path, monkeypatch) -> None:
         import sys
 
-        from loom.core.locator import load_application
+        from loom.stores.sqlalchemy.alembic import load_application
 
         package = tmp_path / "code" / "located_pkg"
         package.mkdir(parents=True)

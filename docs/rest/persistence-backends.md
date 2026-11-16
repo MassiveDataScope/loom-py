@@ -875,7 +875,7 @@ class Measurement(BaseModel):
   `AwsClientConfig`, `MongoConnection`, `ClickHouseConnection` and
   `DatabaseConfig`, in `loom.core.connections`. `loom.etl.storage.ClickHouseConfig`
   and `MongoConfig` and the ETL's `DynamoDbConfig` are gone; so are
-  `loom.core.locator.DatabaseConfig` and `SchemaConfig`.
+  `loom.core.stores.database.DatabaseConfig` and `SchemaConfig`.
 - `storage.dynamodb.enabled` is removed: declaring `storage.dynamodb` enables
   DynamoDB sources. `storage.mongo` and `storage.clickhouse` are disabled by
   omitting them; an empty `uri`/`url` fails. The ETL DynamoDB client now fails

@@ -25,16 +25,16 @@ import pytest
 
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
-from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
-from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import Input
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.schemas import CreateProduct
 

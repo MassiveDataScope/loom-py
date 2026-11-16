@@ -31,20 +31,20 @@ from loom.core.command import Command
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.post_commit import active_channel
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
-from loom.core.repository.sqlalchemy.uow import (
-    SQLAlchemyUnitOfWork,
-    SQLAlchemyUnitOfWorkFactory,
-)
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec, PageParams, RepoFor
 from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import ForeignSessionError, transactional
+from loom.stores.sqlalchemy.uow import (
+    SQLAlchemyUnitOfWork,
+    SQLAlchemyUnitOfWorkFactory,
+)
 from tests.helpers.composition import ProjectFactory, fixture_project, uow_factory
 from tests.helpers.elevation import sink_for
 

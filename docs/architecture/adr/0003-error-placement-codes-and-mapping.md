@@ -49,7 +49,7 @@ Those phrases differ by interpreter: 413 gives `request_entity_too_large` on
 **Subsystem errors outside their concept.** The `QueryCompiler` protocol says
 compilers raise `UnsupportedQuery` (`core/stores/repository/query_compiler.py:37`,
 `:53`). The SQLAlchemy compiler raises `FilterPathError` and `UnsafeFilterError`
-as `ValueError` (`core/repository/sqlalchemy/query_compiler/errors.py:6`, `:22`),
+as `ValueError` (`stores/sqlalchemy/query_compiler/errors.py:6`, `:22`),
 and the router answers them with 500 (`rest/fastapi/router_runtime.py:486-499`;
 #352). One invalid query can therefore produce three codes:
 

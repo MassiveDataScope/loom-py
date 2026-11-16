@@ -13,12 +13,12 @@ from sqlalchemy import event
 from loom.core.command import Command
 from loom.core.errors import Conflict
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, OnConflict
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 pytestmark = pytest.mark.integration
 
@@ -76,7 +76,7 @@ def skus(manager: SessionManager) -> RepositorySQLAlchemy[AcmeBulkSku, int]:
 @pytest.fixture
 def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
     events: list[MutationEvent] = []
-    monkeypatch.setattr("loom.core.repository.sqlalchemy.mixins.record_mutation", events.append)
+    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
     return events
 
 

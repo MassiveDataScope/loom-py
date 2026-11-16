@@ -17,9 +17,9 @@ from loom.core.cache.keys import (
     list_index_key,
     query_index_key,
 )
-from loom.core.repository.sqlalchemy.repository import with_session_scope
 from loom.core.stores.repository import PageParams
 from loom.core.stores.repository.query import QuerySpec
+from loom.stores.sqlalchemy.repository import with_session_scope
 
 from ._doubles import (
     AcmeCacheWidget,

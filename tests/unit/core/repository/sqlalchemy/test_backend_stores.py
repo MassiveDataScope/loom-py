@@ -15,11 +15,11 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 
 _AUDIT = StoreKey("audit")
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"

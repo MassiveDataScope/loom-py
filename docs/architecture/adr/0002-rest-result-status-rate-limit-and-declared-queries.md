@@ -61,7 +61,7 @@ A use case that refuses a caller for exceeding a budget therefore answers 500.
   `bad_request` (`src/loom/rest/fastapi/_errors.py:79-91`). A `limit` above the
   ceiling is clamped, not refused (`router_runtime.py:299-301`).
 - The SQLAlchemy query compiler raises `FilterPathError`/`UnsafeFilterError`,
-  both `ValueError` (`src/loom/core/repository/sqlalchemy/query_compiler/errors.py:6-30`),
+  both `ValueError` (`src/loom/stores/sqlalchemy/query_compiler/errors.py:6-30`),
   and `_dispatch_route` answers any non-`LoomError` with 500
   (`router_runtime.py:489-500`). Read in the code, not run end to end.
 
@@ -170,7 +170,7 @@ Why not in loom:
   one consumer.
 - Calling the port first in `execute` runs before any database statement:
   the unit of work opens an `AsyncSession` (`executor.py:462-483`,
-  `src/loom/core/repository/sqlalchemy/uow.py:79-103`), and the session
+  `src/loom/stores/sqlalchemy/uow.py:79-103`), and the session
   manager only creates the session object (`session_manager.py:175-187`);
   SQLAlchemy connects on the first statement.
 

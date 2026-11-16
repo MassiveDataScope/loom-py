@@ -24,12 +24,12 @@ from loom.core.environment import Environment
 from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.job import Job
-from loom.core.repository.sqlalchemy.rls import create_schema
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.serverless.aws.lambda_.functions import S3Trigger, TriggerIdentity
 from loom.serverless.aws.lambda_.handler import _identity
+from loom.stores.sqlalchemy.rls import create_schema
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import BootstrapFactory, application_for

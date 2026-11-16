@@ -60,7 +60,7 @@ class TestSessionManagerWithoutSqlalchemy:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Building a SQLAlchemy session manager without the extra raises a hinting ImportError."""
-        monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.session_manager", None)
+        monkeypatch.setitem(sys.modules, "loom.stores.sqlalchemy.session_manager", None)
         manager = ResourceManager(cast(AsyncBridge, object()))
 
         with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):

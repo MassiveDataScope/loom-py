@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_GUARD = Path(__file__).parents[6] / "src/loom/core/repository/sqlalchemy/rls/guard"
+_GUARD = Path(__file__).parents[6] / "src/loom/stores/sqlalchemy/rls/guard"
 _HEADER = re.compile(r"^CREATE (OR REPLACE )?FUNCTION (\w+)\(", re.MULTILINE)
 
 

@@ -102,7 +102,7 @@ class TestModelConstraints:
     async def test_create_schema_names_and_enforces_the_declared_constraints(
         self, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import create_schema, verify
+        from loom.stores.sqlalchemy.rls import create_schema, verify
 
         database = await scoped_database(rosters.SCHEMA)
         application = application_for(rosters, database, tmp_path)

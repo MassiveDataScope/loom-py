@@ -22,7 +22,7 @@ from loom.core.model import (
     String,
     get_column_fields,
 )
-from loom.core.repository.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class Reading(BaseModel):

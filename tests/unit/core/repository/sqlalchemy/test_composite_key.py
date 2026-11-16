@@ -5,10 +5,6 @@ import pytest
 from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
@@ -19,6 +15,10 @@ from loom.core.stores.repository import (
     SortSpec,
 )
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
 _Key = tuple[int, int]
@@ -69,7 +69,7 @@ async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_E
 @pytest.fixture
 def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
     events: list[MutationEvent] = []
-    monkeypatch.setattr("loom.core.repository.sqlalchemy.mixins.record_mutation", events.append)
+    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
     return events
 
 

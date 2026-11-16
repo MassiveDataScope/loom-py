@@ -24,7 +24,6 @@ from loom.core.cache.decorators import cache_query, cached
 from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
-from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
     FilterParams,
@@ -43,6 +42,7 @@ from loom.core.stores.repository.query import (
 )
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.sqlalchemy.query_compiler import UnsafeFilterError
 from tests.unit.core.uow._coordinator_fakes import (
     Factory,
     Ledger,

@@ -13,12 +13,12 @@ one context variable per backend. That causes two real faults:
 
 - **A repository of another store writes into the wrong session.** Inside a
   SQLAlchemy unit of work, every SQLAlchemy repository reuses
-  `get_active_session()` (`src/loom/core/repository/sqlalchemy/transactional.py`),
+  `get_active_session()` (`src/loom/stores/sqlalchemy/transactional.py`),
   whatever engine it belongs to. An `audit` repository inside a `default`
   unit of work writes into `default`'s session.
 - **A write to another store commits on its own, outside the unit of work.**
   Outside an active unit of work a repository opens its own session and
-  commits per call (`src/loom/core/repository/sqlalchemy/repository.py`).
+  commits per call (`src/loom/stores/sqlalchemy/repository.py`).
   `RuntimeExecutor._factory_to_own` joins any active unit of work regardless
   of its store. A use case that fails after such a write leaves it committed,
   and nothing reports it.

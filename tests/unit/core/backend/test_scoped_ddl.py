@@ -10,8 +10,8 @@ from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.model.types import Integer, String, Text
-from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
-from loom.core.repository.sqlalchemy.scoped_ddl import (
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
+from loom.stores.sqlalchemy.scoped_ddl import (
     APP_FIRST,
     ASSERT_SCHEMA,
     GRANT_TABLE,

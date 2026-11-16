@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from loom.core.errors import Conflict
-from loom.core.repository.sqlalchemy.integrity import classify_integrity_error
+from loom.stores.sqlalchemy.integrity import classify_integrity_error
 
 
 class _AsyncpgCause(Exception):

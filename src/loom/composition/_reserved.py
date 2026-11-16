@@ -22,7 +22,7 @@ _RESERVED: tuple[BindingKey, ...] = (
 )
 
 _STORE_SESSIONS = (
-    ("loom.core.repository.sqlalchemy.session_manager", "SessionManager"),
+    ("loom.stores.sqlalchemy.session_manager", "SessionManager"),
     ("loom.core.repository.mongo.uow", "MongoSessions"),
 )
 

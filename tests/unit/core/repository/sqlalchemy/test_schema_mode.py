@@ -14,17 +14,17 @@ from loom.core.config.convert import convert_config
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
-from loom.core.repository.sqlalchemy.backend import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, SchemaConfig
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.backend import (
     SQLAlchemyBackend,
     check_time_zone_columns,
     startup_checks,
 )
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.stores.catalog import DEFAULT_STORE
-from loom.core.stores.database import DatabaseConfig, SchemaConfig
-from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.elevation import sink_for
 from tests.helpers.persistence import build_backend
 

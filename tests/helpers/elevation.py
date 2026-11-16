@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from loom.core.authz import Permission, RoleCatalog
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.elevation import ScopedElevationSink, ScopedTables
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 MANAGE = Permission("members.manage")
 

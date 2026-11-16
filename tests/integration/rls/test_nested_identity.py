@@ -31,12 +31,12 @@ from loom.core.errors import NestedElevation, NestedIdentityMismatch, Undeclared
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.repository.sqlalchemy.rls import create_schema, elevate
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.stores.sqlalchemy.rls import create_schema, elevate
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     FLAG,

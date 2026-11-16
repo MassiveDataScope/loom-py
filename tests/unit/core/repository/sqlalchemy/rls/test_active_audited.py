@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from loom.core.locator import Application
 from loom.core.model.audited import AuditedTable
 from loom.core.model.redaction import Dsn
-from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+from loom.core.stores.database import AuditSchemaConfig, DatabaseConfig, SchemaConfig
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.rls.guard_manifest import (
     AUDIT_GUARD_REVISION,
     required_guard_revision,
 )
-from loom.core.stores.database import AuditSchemaConfig, DatabaseConfig, SchemaConfig
 
 _LEDGER = AuditedTable(schema=None, name="ledger", key_columns=("id",), excluded=frozenset())
 

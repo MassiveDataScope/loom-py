@@ -52,8 +52,8 @@ Authorization
    loom.core.authz.elevation
    loom.core.authz.product
 
-Application locator
--------------------
+Code path
+---------
 
 .. autosummary::
    :toctree: generated

@@ -18,16 +18,16 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy import scoped_ddl
-from loom.core.repository.sqlalchemy.rls import (
+from loom.core.schema_names import sql_identifier
+from loom.stores.sqlalchemy import scoped_ddl
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.rls import (
     create_schema,
     detach_range_partitions,
     ensure_range_partitions,
     guard_manifest,
     verify,
 )
-from loom.core.schema_names import sql_identifier
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     BootstrapFactory,

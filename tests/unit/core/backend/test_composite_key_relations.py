@@ -15,7 +15,7 @@ from loom.core.model import (
     ProjectionField,
     RelationField,
 )
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled, reset_registry
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled, reset_registry
 
 
 class _CustomerOut(LoomStruct):

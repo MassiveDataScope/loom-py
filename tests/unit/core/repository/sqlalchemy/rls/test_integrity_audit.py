@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from loom.core.repository.sqlalchemy.rls.audit import (
+from loom.stores.sqlalchemy.rls.audit import (
     EXPIRED_AUDIT_PARTITIONS,
     OLDEST_EXPIRED_AUDIT_PARTITION,
 )
-from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_LOG_SHAPE
-from loom.core.repository.sqlalchemy.rls.integrity import audit_shape_problems
+from loom.stores.sqlalchemy.rls.guard_manifest import AUDIT_LOG_SHAPE
+from loom.stores.sqlalchemy.rls.integrity import audit_shape_problems
 
 
 class TestIntegrityAudit:

@@ -20,7 +20,7 @@ from loom.core.projection.loaders import (
     projection_descriptor_types,
     resolve_model_reference,
 )
-from loom.core.repository.sqlalchemy.loaders import (
+from loom.stores.sqlalchemy.loaders import (
     _SQL_LOADER_FACTORIES,
     _SqlCountLoader,
     _SqlExistsLoader,

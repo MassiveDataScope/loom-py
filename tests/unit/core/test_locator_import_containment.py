@@ -26,7 +26,7 @@ import sys
 
 sys.modules["fastapi"] = None
 
-import loom.core.locator
+import loom.stores.sqlalchemy.alembic
 from loom.core.discovery import ModulesDiscoveryEngine
 
 result = ModulesDiscoveryEngine(["app_models"]).discover()

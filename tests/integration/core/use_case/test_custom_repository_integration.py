@@ -12,10 +12,10 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.response import Response
 from loom.core.stores.repository import CursorCodec, RepositoryBuildContext, repository_for
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.testing import RepositoryIntegrationHarness
 from tests.integration.fake_repo.product.jobs import GetProductIdByNameJob
 from tests.integration.fake_repo.product.model import Product

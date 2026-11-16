@@ -29,12 +29,12 @@ from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import ElevationSink, elevated_scopes
 from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema, elevate
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema, elevate
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     FLAG,

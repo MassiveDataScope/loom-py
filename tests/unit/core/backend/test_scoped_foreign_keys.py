@@ -5,7 +5,7 @@ from sqlalchemy import MetaData
 
 from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
-from loom.core.repository.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.schema import compile_all
 from tests.unit.core.doubles import Catalog
 
 

@@ -11,10 +11,10 @@ from sqlalchemy.pool import QueuePool
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.schema import get_compiled
 from loom.core.stores.backend import PersistenceWiring
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.schema import get_compiled
 from tests.helpers.persistence import build_backend
 
 
@@ -37,7 +37,7 @@ def _queued(
 ) -> PersistenceWiring:
     """Build a file-SQLite backend whose pool is a queue, as Postgres is."""
     monkeypatch.setattr(
-        "loom.core.repository.sqlalchemy.session_manager._default_pool_class",
+        "loom.stores.sqlalchemy.session_manager._default_pool_class",
         lambda _url: QueuePool,
     )
     wiring = _wiring(f"sqlite+aiosqlite:///{path}", *models, **schema)

@@ -57,7 +57,7 @@ class DynamoUnitOfWorkFactory:
 
     Register one instance and inject it into
     :class:`~loom.core.engine.executor.RuntimeExecutor` at startup, mirroring
-    :class:`~loom.core.repository.sqlalchemy.uow.SQLAlchemyUnitOfWorkFactory`.
+    :class:`~loom.stores.sqlalchemy.uow.SQLAlchemyUnitOfWorkFactory`.
     """
 
     def create(self) -> UnitOfWork:

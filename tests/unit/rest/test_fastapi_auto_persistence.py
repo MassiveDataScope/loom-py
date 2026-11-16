@@ -16,7 +16,7 @@ import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
 import loom.core.repository.mongo.backend as mongo_backend_module
-import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
+import loom.stores.sqlalchemy.backend as sqlalchemy_backend_module
 from loom.composition import AiWiring, AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
@@ -24,7 +24,6 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.stores import NoneBackend, PersistenceWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.profile import SERVER_PROFILE, BackendRuntime
@@ -32,6 +31,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.helpers.composition import composition_source
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store

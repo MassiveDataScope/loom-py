@@ -24,7 +24,7 @@ import loom.core
 
 # An Alembic env script: it reads alembic.context.config, which exists only
 # while Alembic runs it.
-ALEMBIC_ENV = "loom.core.repository.sqlalchemy.migrations.env_template"
+ALEMBIC_ENV = "loom.stores.sqlalchemy.migrations.env_template"
 
 for module in pkgutil.walk_packages(loom.core.__path__, "loom.core."):
     if module.name != ALEMBIC_ENV:

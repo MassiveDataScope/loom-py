@@ -6,14 +6,14 @@ import pytest
 from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.migrations.operations import (
+from loom.stores.sqlalchemy.migrations.operations import (
     GUARD_OPTION,
     EnsureRangePartitionsOp,
     OpenHatchOp,
     ProtectScopedTableOp,
     run_guard_operation,
 )
-from loom.core.repository.sqlalchemy.scoped_ddl import APP_FIRST, GUARD_FIRST, OPEN_HATCH, PROTECT
+from loom.stores.sqlalchemy.scoped_ddl import APP_FIRST, GUARD_FIRST, OPEN_HATCH, PROTECT
 
 
 class _Bind:

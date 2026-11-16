@@ -76,7 +76,7 @@ def build_dynamodb_repository_registration_module(
     """Build a DI module that registers DynamoDB repositories and capability bindings.
 
     Mirrors
-    :func:`~loom.core.repository.sqlalchemy.registry.build_sqlalchemy_repository_registration_module`:
+    :func:`~loom.stores.sqlalchemy.registry.build_sqlalchemy_repository_registration_module`:
     the module self-declares its infrastructure by registering a
     ``DefaultRepositoryBuilder`` bound to the shared boto3 client, so the
     bootstrap needs no knowledge of DynamoDB internals.

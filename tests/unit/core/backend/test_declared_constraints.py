@@ -10,7 +10,7 @@ from sqlalchemy.schema import AddConstraint, CreateIndex
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField, OnDelete, RowScoped, ScopedField
 from loom.core.model.types import Boolean, Integer, String, Text
-from loom.core.repository.sqlalchemy.schema import compile_all, configured_naming_convention
+from loom.stores.sqlalchemy.schema import compile_all, configured_naming_convention
 
 CONVENTION = {
     "pk": "pk_%(table_name)s",

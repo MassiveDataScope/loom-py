@@ -13,9 +13,9 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap  # noqa: E402
-from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.core.stores.profile import STREAMING_PROFILE, RuntimeProfile  # noqa: E402
+from loom.stores.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
 
 

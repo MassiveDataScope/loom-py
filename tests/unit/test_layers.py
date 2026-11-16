@@ -22,9 +22,18 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 
 # layer → (packages it must not import at run time, modules allowed inside them).
 _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    # The core composes nothing: the composition root and the transports sit outside it.
+    # The core composes nothing: the composition root, transports and store adapters sit outside it.
     "loom.core": (
-        ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless", "loom.jobs"),
+        (
+            "loom.composition",
+            "loom.rest",
+            "loom.celery",
+            "loom.ai",
+            "loom.serverless",
+            "loom.jobs",
+            "loom.stores",
+            "sqlalchemy",
+        ),
         (),
     ),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.

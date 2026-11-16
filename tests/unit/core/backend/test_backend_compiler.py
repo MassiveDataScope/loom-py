@@ -22,7 +22,7 @@ from loom.core.model import (
 )
 from loom.core.model.types import Numeric, String
 from loom.core.projection.loaders import ExistsLoader
-from loom.core.repository.sqlalchemy.schema import (
+from loom.stores.sqlalchemy.schema import (
     compile_all,
     compile_model,
     get_compiled,
@@ -306,7 +306,7 @@ class TestFqForeignKeyOtmCompilation:
         assert hasattr(sa_record, "notes")
 
     def test_notes_core_relation_step_compiled(self) -> None:
-        from loom.core.repository.sqlalchemy.schema import get_compiled_core
+        from loom.stores.sqlalchemy.schema import get_compiled_core
 
         compile_all(_FqRecord, _FqNote)
         core = get_compiled_core(_FqRecord)
@@ -316,7 +316,7 @@ class TestFqForeignKeyOtmCompilation:
 
     def test_fk_col_is_bare_column_name(self) -> None:
         """CoreRelationStep.fk_col must be 'record_id', not 'fq_test_notes.record_id'."""
-        from loom.core.repository.sqlalchemy.schema import get_compiled_core
+        from loom.stores.sqlalchemy.schema import get_compiled_core
 
         compile_all(_FqRecord, _FqNote)
         core = get_compiled_core(_FqRecord)
@@ -328,7 +328,7 @@ class TestFqForeignKeyOtmCompilation:
 
     def test_has_notes_uses_sql_path_in_default_profile(self) -> None:
         """In 'default' profile 'notes' is not loaded → SQL path (prefer_memory=False) expected."""
-        from loom.core.repository.sqlalchemy.schema import get_compiled_core
+        from loom.stores.sqlalchemy.schema import get_compiled_core
 
         compile_all(_FqRecord, _FqNote)
         core = get_compiled_core(_FqRecord)
@@ -342,7 +342,7 @@ class TestFqForeignKeyOtmCompilation:
 
     def test_has_notes_uses_memory_path_in_with_details_profile(self) -> None:
         """In 'with_details' profile 'notes' IS loaded → memory path expected."""
-        from loom.core.repository.sqlalchemy.schema import get_compiled_core
+        from loom.stores.sqlalchemy.schema import get_compiled_core
 
         compile_all(_FqRecord, _FqNote)
         core = get_compiled_core(_FqRecord)

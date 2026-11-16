@@ -9,9 +9,10 @@ import yaml
 from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
-from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
-from loom.core.repository.sqlalchemy.rls import SchemaNames
+from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.stores.catalog import StoreKey
+from loom.stores.sqlalchemy.alembic import Application, load_application
+from loom.stores.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"

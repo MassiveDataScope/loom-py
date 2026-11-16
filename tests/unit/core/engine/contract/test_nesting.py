@@ -11,10 +11,10 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.context import add_pending_dispatch
-from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.stores.repository.mutation import MutationEvent
 from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy.transactional import transactional
 
 from .._lifecycle_doubles import Broker, Dispatching, Log, Ok, context_is_clean
 from .conftest import CountingSessionManager, LifecycleCase, sqlite_session_manager

@@ -9,7 +9,7 @@ from sqlalchemy import String, create_engine, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.repository.sqlalchemy.model import AuditableModel
+from loom.stores.sqlalchemy.model import AuditableModel
 
 
 class Ticket(AuditableModel):

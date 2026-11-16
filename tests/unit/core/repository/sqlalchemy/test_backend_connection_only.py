@@ -20,12 +20,12 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"

@@ -104,7 +104,7 @@ def _session_manager_builder() -> Callable[
 ]:
     """Return the configured session-manager constructor, or fail naming its extra."""
     try:
-        from loom.core.repository.sqlalchemy.session_manager import build_session_manager
+        from loom.stores.sqlalchemy.session_manager import build_session_manager
     except ImportError as exc:
         raise ImportError(
             "IntoTable(backend=SQLALCHEMY) requires SQLAlchemy. "

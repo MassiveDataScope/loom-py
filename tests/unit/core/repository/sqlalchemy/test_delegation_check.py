@@ -10,8 +10,8 @@ from sqlalchemy import text
 
 from loom.core.errors import Unauthenticated
 from loom.core.identity import Identity
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.delegation import acting_as
 
 _ALICE = Identity(subject="acme-alice", mechanism="test")

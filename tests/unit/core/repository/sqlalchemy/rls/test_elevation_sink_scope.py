@@ -17,11 +17,11 @@ import pytest
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevation_scope
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits, PhysicalStore
 from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")

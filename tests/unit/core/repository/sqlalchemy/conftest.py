@@ -12,13 +12,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.model import BaseModel, Field, Integer
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import record_mutation, transactional
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import record_mutation, transactional
 
 from ...conftest import RecordingSessionManager
 

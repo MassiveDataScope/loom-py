@@ -8,7 +8,7 @@ import pytest
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import RepositorySQLAlchemy
 
 _MANIFEST = "tests.unit.core.discovery._manifest"
 

@@ -29,8 +29,6 @@ from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.query import (
     PageParams,
@@ -53,6 +51,8 @@ from loom.rest.compiler import (
 from loom.rest.fastapi.app import _register_openapi_components, create_fastapi_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
+from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 
 # ---------------------------------------------------------------------------
 # Dummy use cases

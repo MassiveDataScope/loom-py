@@ -11,10 +11,10 @@ from sqlalchemy import event
 from loom.core.command import Command
 from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, ServerDefault
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import CursorCodec, OnConflict
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
 _token_counter = itertools.count(1)
@@ -66,7 +66,7 @@ def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Item, i
 @pytest.fixture
 def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
     events: list[MutationEvent] = []
-    monkeypatch.setattr("loom.core.repository.sqlalchemy.mixins.record_mutation", events.append)
+    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
     return events
 
 

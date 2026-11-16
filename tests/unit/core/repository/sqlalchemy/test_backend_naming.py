@@ -11,11 +11,11 @@ import yaml
 from sqlalchemy import MetaData
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.locator import load_application
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.schema import get_metadata, reset_registry
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.alembic import load_application
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.schema import get_metadata, reset_registry
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import rosters
 

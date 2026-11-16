@@ -15,9 +15,6 @@ from loom.core.job import InlineJobService, JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_metadata, reset_registry
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.use_case import Input
@@ -25,6 +22,9 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import Exists, Load, LoadById, OnMissing
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 class _Record(BaseModel):

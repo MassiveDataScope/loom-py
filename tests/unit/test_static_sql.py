@@ -11,11 +11,12 @@ from tests.helpers.source_tree import parsed
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 LOOM = SRC / "loom"
-SQLALCHEMY = LOOM / "core" / "repository" / "sqlalchemy"
+SQLALCHEMY = LOOM / "stores" / "sqlalchemy"
 SCANNED_PACKAGES = (SQLALCHEMY / "rls", SQLALCHEMY / "migrations", LOOM / "cli")
 SCANNED_MODULES = (
     SQLALCHEMY / "scoped_ddl.py",
     SQLALCHEMY / "schema.py",
+    SQLALCHEMY / "alembic.py",
     LOOM / "core" / "locator.py",
     LOOM / "core" / "schema_names.py",
     SQLALCHEMY / "__init__.py",
@@ -55,12 +56,12 @@ PLACEHOLDER = re.compile(r"\{[A-Za-z_]\w*\}")
 DECLARED_DDL_FRAGMENTS = frozenset(
     {
         (
-            "loom/core/repository/sqlalchemy/schema.py",
+            "loom/stores/sqlalchemy/schema.py",
             "_partial_unique_index",
             "text(partial.where)",
         ),
         (
-            "loom/core/repository/sqlalchemy/schema.py",
+            "loom/stores/sqlalchemy/schema.py",
             "_check_constraint",
             "CheckConstraint(expression, name=rule, info={_RULE_KEY: ('__checks__', rule)})",
         ),
@@ -406,7 +407,7 @@ class TestStaticSql:
     def test_a_declared_fragment_is_exempt_only_in_its_own_function(
         self, function: str, violations: list[str], tmp_path: Path
     ) -> None:
-        module = tmp_path / "loom" / "core" / "repository" / "sqlalchemy" / "schema.py"
+        module = tmp_path / "loom" / "stores" / "sqlalchemy" / "schema.py"
         module.parent.mkdir(parents=True)
         module.write_text(
             f"def {function}(partial, expression, rule):\n"

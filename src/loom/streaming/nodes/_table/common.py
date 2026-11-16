@@ -52,7 +52,7 @@ SQLAlchemy example::
 
     from loom.core.config import ConfigContext
     from loom.core.stores import STREAMING_PROFILE, load_database_config
-    from loom.core.repository.sqlalchemy import build_session_manager
+    from loom.stores.sqlalchemy import build_session_manager
     from loom.streaming.nodes._table import SqlAlchemySinkConfig
 
     ctx = ConfigContext.from_yaml("config.yaml")

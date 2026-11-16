@@ -1316,7 +1316,7 @@ def _passes_a_session(signature: inspect.Signature, args: tuple[Any, ...], kwarg
 
     *signature* is the method's own, not the one ``functools.wraps`` exposes,
     so a method decorated with
-    :func:`~loom.core.repository.sqlalchemy.repository.with_session_scope`
+    :func:`~loom.stores.sqlalchemy.repository.with_session_scope`
     is read as it is called: its ``session`` is a keyword-only parameter.
     A method whose outermost wrapper takes ``(*args, **kwargs)`` exposes no
     positional ``session``, so only a ``session=`` keyword is seen there.

@@ -257,7 +257,7 @@ class TestElevationFailure:
         self,
     ) -> None:
         from loom.core.authz.product import clear_authz_product
-        from loom.core.repository.sqlalchemy.rls import elevate
+        from loom.stores.sqlalchemy.rls import elevate
 
         clear_authz_product()
 

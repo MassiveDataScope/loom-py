@@ -6,9 +6,9 @@ from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.stores.none import NoneBackend
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 
 
 class TestRepositoryType:

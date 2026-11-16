@@ -314,7 +314,7 @@ ledger = "ledger.authz:LedgerAuthz"
 {func}`~loom.core.authz.product.load_authz_product` returns the product, or `None` when
 none is registered; {func}`~loom.core.authz.product.register_authz_product` installs one
 for the process ahead of the entry point, which is what tests use.
-{func}`~loom.core.repository.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
+{func}`~loom.stores.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
 `elevations` names a scope that no compiled model declares, or one that is not elevable.
 It also raises `ElevableScopeInSeveralStores`
 (`ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`) when a scope that is elevable, or
@@ -329,13 +329,13 @@ one-store rule applies. It remains available for programmatic use.
 A [row-scoped table](postgres-rls.md#row-scoped-tables) can declare a write-only,
 elevable scope: callers read every row within the boundary but modify only their own.
 When the product's authorizer allows more, for example an administrator editing other
-users' rows, {func}`~loom.core.repository.sqlalchemy.rls.elevate` turns that decision,
+users' rows, {func}`~loom.stores.sqlalchemy.rls.elevate` turns that decision,
 and only that decision, into the session flag `loom.scope.<scope>.any` for the rest of
 the current execution:
 
 ```python
 from loom.core.authz import Scope, evaluate
-from loom.core.repository.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.rls import elevate
 
 at = Scope.of(account_id)
 decision = evaluate(CATALOG, grants, EDIT_ANY, at)
@@ -370,7 +370,7 @@ lives:
   store that declares the scope, and no other store's, through the executor's elevation
   sink, {class}`~loom.core.stores.elevation.ScopedElevationSink`. The composition
   registers it once, over every store whose wiring exposes an elevation
-  ({class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
+  ({class}`~loom.stores.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
   mode on Postgres); a kernel built by hand registers an `ElevationSink` through one of its
   `modules`. Elevating from a task other than the execution's own (a `gather` child)
   while the scope's store is enlisted raises

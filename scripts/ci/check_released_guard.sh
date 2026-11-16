@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-package="loom/core/repository/sqlalchemy/rls"
+current_package="loom/stores/sqlalchemy/rls"
+released_packages=("loom/core/repository/sqlalchemy/rls" "$current_package")
+compared=0
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -10,37 +12,52 @@ usage() {
   exit 2
 }
 
-compare() {
-  local released="$1" current="$2" label="$3" file name digest
-  [ -d "$released/$package/guard" ] || return 0
-  for file in "$released/$package/guard/"*.sql; do
-    [ -e "$file" ] || continue
-    name="${file##*/}"
-    if ! cmp -s "$file" "$current/$package/guard/$name"; then
-      echo "::error file=src/$package/guard/$name::$name was released in $label and must stay byte-identical; add a new revision"
-      return 1
+released_package() {
+  local root="$1" candidate
+  for candidate in "${released_packages[@]}"; do
+    if [ -d "$root/$candidate/guard" ]; then
+      echo "$candidate"
+      return 0
     fi
   done
-  for digest in $(grep -oE '[0-9a-f]{64}' "$released/$package/guard_manifest.py" || true); do
-    if ! grep -qF "$digest" "$current/$package/guard_manifest.py"; then
-      echo "::error file=src/$package/guard_manifest.py::digest $digest released in $label is missing; the manifest only grows"
+  return 1
+}
+
+compare() {
+  local released_root="$1" current_root="$2" label="$3" released file name digest
+  released="$(released_package "$released_root")" || return 0
+  for file in "$released_root/$released/guard/"*.sql; do
+    [ -e "$file" ] || continue
+    name="${file##*/}"
+    if ! cmp -s "$file" "$current_root/$current_package/guard/$name"; then
+      echo "::error file=src/$current_package/guard/$name::$name was released in $label and must stay byte-identical; add a new revision"
+      return 1
+    fi
+    compared=$((compared + 1))
+  done
+  for digest in $(grep -oE '[0-9a-f]{64}' "$released_root/$released/guard_manifest.py" || true); do
+    if ! grep -qF "$digest" "$current_root/$current_package/guard_manifest.py"; then
+      echo "::error file=src/$current_package/guard_manifest.py::digest $digest released in $label is missing; the manifest only grows"
       return 1
     fi
   done
 }
 
 check_tags() {
-  local tag tree count=0
+  local tag tree candidate count=0
   for tag in $(git tag --list 'v*' --sort=v:refname); do
     tree="$work/$tag"
     mkdir -p "$tree"
-    if git cat-file -e "$tag:src/$package/guard" 2>/dev/null; then
-      git archive "$tag" "src/$package" | tar -x -C "$tree"
-      compare "$tree/src" src "$tag"
-    fi
+    for candidate in "${released_packages[@]}"; do
+      if git cat-file -e "$tag:src/$candidate/guard" 2>/dev/null; then
+        git archive "$tag" "src/$candidate" | tar -x -C "$tree"
+        compare "$tree/src" src "$tag"
+        break
+      fi
+    done
     count=$((count + 1))
   done
-  echo "released guard revisions unchanged across $count release tags"
+  echo "released guard revisions unchanged across $count release tags ($compared files compared)"
 }
 
 unpack() {

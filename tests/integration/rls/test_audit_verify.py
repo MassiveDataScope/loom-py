@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import DBAPIError
 
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.rls import create_schema, verify
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.rls import create_schema, verify
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import (
     BootstrapFactory,

@@ -34,15 +34,16 @@ _FILES = (
     "core/model/privilege.py",
     "core/model/scoped.py",
     "core/model/introspection.py",
-    "core/repository/sqlalchemy/scoped_ddl.py",
+    "stores/sqlalchemy/scoped_ddl.py",
     "core/authz/elevation.py",
     "core/authz/product.py",
     "core/locator.py",
-    "core/repository/sqlalchemy/session_settings.py",
+    "stores/sqlalchemy/alembic.py",
+    "stores/sqlalchemy/session_settings.py",
 )
 _PACKAGES = (
-    "core/repository/sqlalchemy/rls",
-    "core/repository/sqlalchemy/migrations",
+    "stores/sqlalchemy/rls",
+    "stores/sqlalchemy/migrations",
 )
 
 _DOMAIN_WORDS = re.compile(
@@ -93,11 +94,11 @@ def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
     pytest.fail(f"{class_name} not found in {path}")
 
 
-_RLS_CONFIG = "core/repository/sqlalchemy/rls/config.py"
+_RLS_CONFIG = "stores/sqlalchemy/rls/config.py"
 
 
 def _guard_sql() -> list[Path]:
-    return sorted((_SRC / "core/repository/sqlalchemy/rls/guard").glob("*.sql"))
+    return sorted((_SRC / "stores/sqlalchemy/rls/guard").glob("*.sql"))
 
 
 _CONSUMER_VOCABULARY = re.compile(
@@ -214,7 +215,7 @@ class TestDomainContainment:
             assert _offending_lines(text, _DEFAULT_LITERALS) == []
 
     def test_the_bound_bootstrap_document_contains_only_injected_names(self) -> None:
-        from loom.core.repository.sqlalchemy.rls import (
+        from loom.stores.sqlalchemy.rls import (
             BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,

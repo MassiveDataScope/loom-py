@@ -15,10 +15,10 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import elevation_scope
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.repository.sqlalchemy.rls import create_schema, elevate, rls_session_settings
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy.rls import create_schema, elevate, rls_session_settings
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.elevation import sink_for
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (

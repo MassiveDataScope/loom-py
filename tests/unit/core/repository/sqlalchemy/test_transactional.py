@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import DateTime  # noqa: F401
 
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.transactional import record_mutation, transactional
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.transactional import record_mutation, transactional
 
 from .conftest import RepositoryWithTransactionalMethod, ServiceWithoutSessionManager
 

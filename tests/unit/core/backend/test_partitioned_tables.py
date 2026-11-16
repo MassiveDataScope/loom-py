@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import DateTime, Integer, String, Text
-from loom.core.repository.sqlalchemy.schema import compile_all, scoped_tables
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
 
 
 class Event(BaseModel, RowScoped):

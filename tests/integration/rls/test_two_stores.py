@@ -29,10 +29,6 @@ from loom.core.di.container import LoomContainer
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.identity.identity import ANONYMOUS
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import elevate
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores import PersistenceWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.stores.elevation import (
@@ -44,6 +40,10 @@ from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, current_scope, invocation
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (

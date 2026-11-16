@@ -15,11 +15,11 @@ from loom.composition.phases import build_stores
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.stores import SERVER_PROFILE, BackendRuntime
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.none import NoneBackend
 from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
 from tests.helpers.composition import composition_source
 
 _SQLITE = {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}}

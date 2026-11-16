@@ -9,7 +9,7 @@ enumerated from the file tree rather than ``pkgutil.walk_packages`` because
 ``loom.core`` is an implicit namespace package, invisible to ``pkgutil``.
 
 Only one package is skipped because SQLAlchemy is its subject, not a leak:
-``loom.core.repository.sqlalchemy`` (the SQLAlchemy store, its model compiler
+``loom.stores.sqlalchemy`` (the SQLAlchemy store, its model compiler
 included). Every other module is walked, including the Mongo, DynamoDB,
 Prefect, Spark and ETL I/O adapters: an ``ImportError`` there that does not
 mention sqlalchemy is another missing extra and is ignored.
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import loom
 
-SKIPPED_PREFIXES = ("loom.core.repository.sqlalchemy",)
+SKIPPED_PREFIXES = ("loom.stores.sqlalchemy",)
 
 
 class _BlockSqlAlchemy:

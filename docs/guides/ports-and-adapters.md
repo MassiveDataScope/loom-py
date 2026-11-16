@@ -351,10 +351,10 @@ separately.
 
 Known debt:
 
-- Infrastructure adapters live inside `loom.core`: `core/repository`
-  (SQLAlchemy, MongoDB, DynamoDB), `core/connections`, `core/backend` and
-  `locator.py` import their drivers. Moving them out is planned with the
-  persistence boundary, with re-exports so it is not breaking.
+- Infrastructure adapters still live inside `loom.core`: `core/repository`
+  (MongoDB, DynamoDB) and `core/connections` import their drivers. The
+  SQLAlchemy store already sits in `loom.stores.sqlalchemy`; the other
+  adapters move there with the persistence boundary.
 - The logger does not fit AWS Lambda. Its redesign is planned next.
 
 ## Migrating ports, DI and identity

@@ -495,6 +495,25 @@
   | `loom.core.backend.sqlalchemy` | `loom.stores.sqlalchemy.schema` |
   | `loom.core.backend.{core_model,scoped_ddl}` | `loom.stores.sqlalchemy.{same name}` |
   | `loom.core.backend` and `loom.core.backend.protocol` (`PersistenceBackend` protocol) | removed |
+  | `loom.core.repository.sqlalchemy` and every module below it (`backend`, `repository`, `uow`, `session_manager`, `rls`, `migrations`, `query_compiler`, ...) | `loom.stores.sqlalchemy` and the same module below it |
+  | `loom.core.repository.sqlalchemy.rls.guard/*.sql` (package data) | `loom.stores.sqlalchemy.rls.guard/*.sql` |
+  | `loom.core.locator.load_application` and `loom.core.locator.Application` | `loom.stores.sqlalchemy.alembic.load_application` and `loom.stores.sqlalchemy.alembic.Application` |
+  | `loom.core.locator.{add_code_path,DEFAULT_CODE_PATH}` | unchanged |
+- **stores:** the SQLAlchemy store and its schema loader live under
+  `loom.stores.sqlalchemy`, and `loom.core` imports neither `sqlalchemy` nor
+  `loom.stores`. The `sqlalchemy` entry point of `loom.persistence.backends`
+  now targets `loom.stores.sqlalchemy.backend:SQLAlchemyBackend`.
+  **Migration:**
+  - Alembic `env.py` files importing `loom.core.repository.sqlalchemy.migrations`
+    or `loom.core.locator.load_application` import
+    `loom.stores.sqlalchemy.migrations` and
+    `loom.stores.sqlalchemy.alembic.load_application`.
+  - Alembic revision files importing `migrations.operations`,
+    `ENV_TEMPLATE_PATH` or `alembic_config` take them from
+    `loom.stores.sqlalchemy.migrations`.
+  - Logger names come from `__name__`, so every `observability`
+    `named_levels` key naming `loom.core.repository.sqlalchemy` (or a module
+    below it) must name `loom.stores.sqlalchemy` instead, or it stops matching.
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
   always passes it to the repository it wraps. Before: a custom repository

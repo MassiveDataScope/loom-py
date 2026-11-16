@@ -47,8 +47,8 @@ from loom.core.model import (  # noqa: E402
 from loom.core.model.enums import Cardinality  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
-from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
-from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
+from loom.stores.sqlalchemy import session_manager as session_manager_module  # noqa: E402
+from loom.stores.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
 from loom.streaming.nodes._table import _delta as _table_delta  # noqa: E402

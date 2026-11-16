@@ -18,10 +18,6 @@ from loom.core.errors import BoundaryValidationError
 from loom.core.model import JSON, BaseModel, ColumnField, ColumnType, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
-from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.query import (
@@ -34,6 +30,10 @@ from loom.core.stores.repository.query import (
     QuerySpec,
     SortSpec,
 )
+from loom.stores.sqlalchemy.query_compiler.filters import compile_filter_group
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 _CODEC = CursorCodec(signing="ephemeral")
 

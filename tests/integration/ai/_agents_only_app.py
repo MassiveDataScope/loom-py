@@ -157,7 +157,7 @@ def _write_project(root: Path) -> str:
 
 def _assert_block_effective() -> None:
     try:
-        import loom.core.repository.sqlalchemy.schema  # noqa: F401
+        import loom.stores.sqlalchemy.schema  # noqa: F401
     except ModuleNotFoundError:
         return
     raise RuntimeError("the SQLAlchemy model compiler imported although sqlalchemy is blocked")

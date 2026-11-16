@@ -21,12 +21,12 @@ from loom.celery.constants import TASK_JOB_PREFIX
 from loom.core.command import Command
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.schema import reset_registry
 from loom.core.stores.repository.query import CursorResult, PaginationMode, QuerySpec
 from loom.core.use_case.errors import UnservedModelError, UseCaseErrorCode
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy.schema import reset_registry
 from tests.helpers.celery import WorkerDouble, isolated_signals
 
 

@@ -21,7 +21,7 @@ import pytest
 from loom.core.stores.catalog import DEFAULT_STORE
 
 if TYPE_CHECKING:
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
 SessionManagerFactory = Callable[[type], Awaitable["SessionManager"]]
 
@@ -91,8 +91,8 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
 
     Every manager the factory opened is disposed when the test ends.
     """
-    from loom.core.repository.sqlalchemy.schema import compile_all, get_compiled
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
     managers: list[SessionManager] = []
 

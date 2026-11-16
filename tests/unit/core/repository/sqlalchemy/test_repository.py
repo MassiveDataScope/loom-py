@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock, Mock
 import msgspec
 import pytest
 
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import (
     CursorCodec,
     PageParams,
@@ -17,6 +15,8 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 def _session_of(session_manager: Any) -> AsyncMock:

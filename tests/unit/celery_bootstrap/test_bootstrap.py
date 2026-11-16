@@ -300,8 +300,8 @@ class TestBootstrapWorkerTaskRegistration:
 
     def test_compiles_models_under_the_configured_naming_convention(self, tmp_path: Any) -> None:
         """The worker names constraints as the REST runtime and the migrations do."""
-        from loom.core.repository.sqlalchemy.schema import reset_registry
-        from loom.core.repository.sqlalchemy.session_manager import SessionManager
+        from loom.stores.sqlalchemy.schema import reset_registry
+        from loom.stores.sqlalchemy.session_manager import SessionManager
 
         module_name = "tests.unit.celery_bootstrap._manifest_naming_for_test"
         module = types.ModuleType(module_name)

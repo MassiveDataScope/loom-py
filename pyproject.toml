@@ -204,7 +204,7 @@ spark = "loom.etl.backends.spark.provider:SparkProvider"
 # Persistence backends `create_app` resolves from `persistence.backend`. A
 # deployment registers its own under the same group from its own package.
 [project.entry-points."loom.persistence.backends"]
-sqlalchemy = "loom.core.repository.sqlalchemy.backend:SQLAlchemyBackend"
+sqlalchemy = "loom.stores.sqlalchemy.backend:SQLAlchemyBackend"
 dynamodb = "loom.core.repository.dynamodb.backend:DynamoDBBackend"
 mongo = "loom.core.repository.mongo.backend:MongoBackend"
 none = "loom.core.stores.none:NoneBackend"
@@ -312,7 +312,7 @@ packages = [
 include = [
     "src/loom/py.typed",
     "src/loom/ai/declarative/schemas/*.json",
-    "src/loom/core/repository/sqlalchemy/rls/guard/*.sql",
+    "src/loom/stores/sqlalchemy/rls/guard/*.sql",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -439,7 +439,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "loom.core.repository.sqlalchemy.scoped_ddl",
+    "loom.stores.sqlalchemy.scoped_ddl",
 ]
 disallow_untyped_calls = false
 

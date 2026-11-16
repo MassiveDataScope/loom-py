@@ -87,7 +87,7 @@ class TestBootstrapWithoutSqlAlchemy:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A ``database`` section without the SQLAlchemy extra raises a hinting error."""
-        monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.backend", None)
+        monkeypatch.setitem(sys.modules, "loom.stores.sqlalchemy.backend", None)
         config_path = _write_worker_config(
             tmp_path,
             {

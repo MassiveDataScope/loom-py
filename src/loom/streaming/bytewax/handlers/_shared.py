@@ -31,7 +31,7 @@ from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
 
 if TYPE_CHECKING:
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
 Stream: TypeAlias = Any
 AwaitT = TypeVar("AwaitT")

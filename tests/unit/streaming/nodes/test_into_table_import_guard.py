@@ -50,11 +50,11 @@ class TestIntoTableImportGuard:
         ), result.stderr
 
     def test_an_internal_sqlalchemy_island_import_error_keeps_its_cause(self) -> None:
-        result = _select_sqlalchemy_with("loom.core.repository.sqlalchemy.values")
+        result = _select_sqlalchemy_with("loom.stores.sqlalchemy.values")
 
         assert (result.returncode, result.stdout.strip().splitlines()) == (
             0,
-            ["loom.core.repository.sqlalchemy.values", "ModuleNotFoundError"],
+            ["loom.stores.sqlalchemy.values", "ModuleNotFoundError"],
         ), result.stderr
 
     def test_importing_common_does_not_probe_optional_storage_sdks(self) -> None:

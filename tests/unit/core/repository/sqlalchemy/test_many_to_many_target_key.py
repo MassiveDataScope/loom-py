@@ -6,10 +6,10 @@ import pytest
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.schema import compile_all
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
 

@@ -20,13 +20,13 @@ from typing import Any
 from celery import Celery
 from sqlalchemy import event, text
 
-import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend
+import loom.stores.sqlalchemy.backend as sqlalchemy_backend
 from loom.celery.bootstrap import bootstrap_worker
 from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 class _Beat(BaseModel):

@@ -87,7 +87,7 @@ _DB_CHILD = textwrap.dedent(
     """
     import asyncio, json, sys, time
     from sqlalchemy import text
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
     async def main() -> list[float]:
         manager = SessionManager(sys.argv[1])

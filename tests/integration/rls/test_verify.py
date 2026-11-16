@@ -17,8 +17,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.rls import create_schema, verify
+from loom.stores.sqlalchemy.alembic import Application
+from loom.stores.sqlalchemy.rls import create_schema, verify
 from tests.integration.agnosticism import ledger, notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
 

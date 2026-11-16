@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import MetaData
 
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class _Badge(BaseModel):

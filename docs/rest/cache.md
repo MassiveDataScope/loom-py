@@ -19,7 +19,7 @@ through and invalidate.
 ```python
 from loom.core.cache import cache_query, cached
 from loom.core.stores.repository import repository_for
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import RepositorySQLAlchemy
 
 
 @cached
