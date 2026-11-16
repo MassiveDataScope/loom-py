@@ -62,19 +62,24 @@ from loom.testing import HttpTestHarness, InMemoryRepository, Override
 
 @pytest.fixture(scope="module")
 def harness():
-    harness = HttpTestHarness(overrides=[Override.instance(Clock, FixedClock())])
+    baseline = InMemoryRepository(Product)
+    harness = HttpTestHarness(overrides=[Override.repository(Product, baseline)])
     harness.client = harness.build_app(interfaces=[ProductRestInterface])
     return harness
 
 @pytest.fixture
 def products(harness):
     double = InMemoryRepository(Product)
+    double.seed(Product(id=1, name="kettle"))
     with harness.overriding(Override.repository(Product, double)):
         yield double
 
-def test_lists_nothing(harness, products):
-    assert harness.client.get("/products/").json() == []
+def test_reads_the_double(harness, products):
+    assert harness.client.get("/products/1").json()["name"] == "kettle"
 ```
+
+The model must be served when the harness is built, here by the baseline
+override: `overriding` swaps what is bound and binds nothing new.
 
 `Override.repository(Model, double)` replaces the model's one repository, so
 injection, `RepoFor[Model]` and every other capability key,
@@ -83,8 +88,10 @@ injection, `RepoFor[Model]` and every other capability key,
 Both are accepted by `overrides=` at build time and by `harness.overriding(...)`
 (also `LambdaTestClient(..., overrides=[...])` and `client.overriding(...)`)
 at any later time. Swapping and restoring never compose the application
-again. Overrides of one key must exit in reverse order; otherwise the
-original is restored and a `ResolutionError` is raised.
+again. Overrides of one key must exit in reverse order. On an exit out of
+order the exiting override is removed and a `ResolutionError` is raised; the
+overrides still open stay active, and the original comes back only when all
+of them have exited.
 
 A singleton the application already built from the real repository, such as
 a service that received it in its constructor, keeps the real one: override
@@ -98,7 +105,7 @@ from loom.core.stores.repository import RepositoryCatalog
 catalog = RepositoryCatalog.from_repositories({Product: InMemoryRepository(Product)})
 ```
 
-It indexes tables and stores like a composed catalog and raises the same
+Every model needs its own `__tablename__`. It indexes tables and stores like a composed catalog and raises the same
 `for_table` errors.
 
 ## Golden harness

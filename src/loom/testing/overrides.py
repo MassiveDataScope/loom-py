@@ -64,7 +64,7 @@ class Override:
         )
 
     @contextmanager
-    def applied(self, container: LoomContainer) -> Iterator[None]:
+    def apply(self, container: LoomContainer) -> Iterator[None]:
         """Substitute this value in a composed application until the block exits.
 
         Raises:
@@ -79,11 +79,11 @@ class Override:
 
     @classmethod
     @contextmanager
-    def applying(cls, container: LoomContainer, overrides: Sequence[Override]) -> Iterator[None]:
+    def apply_all(cls, container: LoomContainer, overrides: Sequence[Override]) -> Iterator[None]:
         """Substitute every one of *overrides* in a composed application until the block exits."""
         with ExitStack() as stack:
             for override in overrides:
-                stack.enter_context(override.applied(container))
+                stack.enter_context(override.apply(container))
             yield
 
     @property

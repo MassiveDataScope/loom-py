@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import os
 import pkgutil
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 from types import ModuleType
 from typing import TypeVar
 
@@ -74,18 +74,20 @@ class PackageScanner:
 
     def _refuse_directories_without_init(self, package: ModuleType) -> None:
         for root in getattr(package, "__path__", ()):
-            for directory in sorted(Path(root).rglob("*")):
-                if (
-                    directory.is_dir()
-                    and not directory.name.startswith((".", "__"))
-                    and not (directory / "__init__.py").exists()
-                    and any(directory.glob("*.py"))
-                ):
+            for current, subdirectories, files in os.walk(root):
+                subdirectories[:] = sorted(
+                    name for name in subdirectories if not name.startswith((".", "__"))
+                )
+                if self._holds_loose_modules(files):
                     raise ConfigError(
-                        f"Directory {str(directory)!r} inside app.packages entry "
+                        f"Directory {current!r} inside app.packages entry "
                         f"{package.__name__!r} holds Python modules but no __init__.py, so the "
                         "scan would skip it: add an __init__.py"
                     )
+
+    @staticmethod
+    def _holds_loose_modules(files: Sequence[str]) -> bool:
+        return "__init__.py" not in files and any(name.endswith(".py") for name in files)
 
     def _refuse_duplicate_tables(self, models: Sequence[type[BaseModel]]) -> None:
         by_table: dict[tuple[str, str], type[BaseModel]] = {}

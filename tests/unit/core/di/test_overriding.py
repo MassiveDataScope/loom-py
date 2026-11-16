@@ -148,6 +148,16 @@ class TestRegisterAlias:
         with pytest.raises(ResolutionError, match="unbound"):
             LoomContainer().register_alias(AcmeReadable, AcmeStore)
 
+    def test_follows_the_scope_its_target_has_when_validated(self, builds: CountedBuilds) -> None:
+        container = LoomContainer()
+        container.register(AcmeStore, builds, scope=Scope.APPLICATION)
+        container.register_alias(AcmeReadable, AcmeStore)
+        container.register(AcmeStore, builds, scope=Scope.REQUEST)
+
+        container.validate()
+
+        assert builds.calls == 0
+
     def test_takes_the_scope_of_its_target(self) -> None:
         container = LoomContainer()
         container.register(AcmeStore, AcmeStore, scope=Scope.REQUEST)

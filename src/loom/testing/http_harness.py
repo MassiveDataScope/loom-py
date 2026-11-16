@@ -147,11 +147,11 @@ class HttpTestHarness:
 
         Raises:
             RuntimeError: When the application is not built yet.
-            ResolutionError: As :meth:`Override.applied` raises it.
+            ResolutionError: As :meth:`Override.apply` raises it.
         """
         if self.application is None:
             raise RuntimeError("Build the harness application before overriding dependencies")
-        with Override.applying(self.application.kernel.container, overrides):
+        with Override.apply_all(self.application.kernel.container, overrides):
             yield self
 
     def inject_repo(self, model: type[Any], fake: Any) -> None:

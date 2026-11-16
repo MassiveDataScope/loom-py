@@ -44,7 +44,7 @@ class TestRepositoryCatalogLookup:
         original = catalog[AcmeOrder]
         double = object()
 
-        with Override.repository(AcmeOrder, double).applied(container):
+        with Override.repository(AcmeOrder, double).apply(container):
             assert catalog[AcmeOrder] is double
             assert catalog.for_table("catalog_orders", store=LEDGER) is double
 
@@ -54,7 +54,7 @@ class TestRepositoryCatalogLookup:
     def test_overriding_an_unserved_model_names_it_plainly(self, container: LoomContainer) -> None:
         with (
             pytest.raises(ResolutionError, match="No store serves a repository for AcmeUnserved"),
-            Override.repository(AcmeUnserved, object()).applied(container),
+            Override.repository(AcmeUnserved, object()).apply(container),
         ):
             pass
 

@@ -88,11 +88,11 @@ class LambdaTestClient(httpx.Client):
 
         Raises:
             RuntimeError: When the client was built over a handler, not composed here.
-            ResolutionError: As :meth:`Override.applied` raises it.
+            ResolutionError: As :meth:`Override.apply` raises it.
         """
         if self.application is None:
             raise RuntimeError("A composed application is required for overrides")
-        with Override.applying(self.application.kernel.container, overrides):
+        with Override.apply_all(self.application.kernel.container, overrides):
             yield self
 
 

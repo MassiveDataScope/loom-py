@@ -267,7 +267,7 @@ class LoomContainer:
 
         The alias is served by *target*'s own supplier, so both keys return the
         same instance, and a change of *target* reaches ``interface`` with it.
-        The alias takes the scope *target* has when it is registered.
+        The alias has no scope of its own: it follows *target*'s.
 
         Args:
             interface: The key that resolves through *target*.
@@ -406,8 +406,8 @@ class LoomContainer:
             ResolutionError: If an ``APPLICATION`` scope binding fails to
                 instantiate.
         """
-        for interface, binding in self._bindings.items():
-            if binding.scope is Scope.APPLICATION:
+        for interface in self._bindings:
+            if self._graph.scope(KeyNode(interface)) is Scope.APPLICATION:
                 self._instantiate(interface)
 
     def seal(
@@ -491,7 +491,9 @@ class LoomContainer:
         A reached one is left unbuilt only for a deferred kind and keeps its
         binding; one no root reaches is refused for good (:attr:`_Binding.refused`).
         """
-        singletons = [k for k, b in self._bindings.items() if b.scope is Scope.APPLICATION]
+        singletons = [
+            k for k in self._bindings if self._graph.scope(KeyNode(k)) is Scope.APPLICATION
+        ]
         reached_refusals = (refuse_unbound(self.kinds),)
         buildable: list[BindingKey] = []
         unbuilt: list[str] = []

@@ -344,11 +344,15 @@ class DependencyGraph:
                     yield f"{name}: {annotation!r} names nothing the container can serve"
 
     def scope(self, node: Node) -> Scope | None:
-        """The scope of *node*'s binding; ``None`` for a class or an unbound key."""
+        """The scope of *node*'s binding, taking an alias's from its target; ``None`` if none."""
         match node:
             case KeyNode(key):
                 binding = self.binding(key)
-                return None if binding is None else binding.scope
+                if binding is None:
+                    return None
+                if binding.target is not None:
+                    return self.scope(KeyNode(binding.target))
+                return binding.scope
         return None
 
     def binding(self, key: object) -> _Binding | None:

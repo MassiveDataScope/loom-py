@@ -13,6 +13,8 @@ from loom.core.config import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
+from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.serverless.aws.lambda_ import LambdaAdapter
 
 PackageWriter = Callable[[str, dict[str, str]], Path]
 
@@ -214,6 +216,15 @@ _JOB = (
 )
 
 
+_USE_CASE = (
+    "from loom.core.use_case.use_case import UseCase\n"
+    "class AcmePing(UseCase[object, str]):\n"
+    "    async def execute(self) -> str:\n"
+    "        return 'pong'\n"
+)
+_CELERY = "celery:\n  broker_url: memory://\n  result_backend: cache+memory://\n"
+
+
 class _Adapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(profile=SERVER_PROFILE, discovered=project.discovered, lenient=True)
@@ -250,15 +261,32 @@ class TestProjectScan:
 
         assert application.kernel.container.resolve(str) == "second"
 
+    @pytest.mark.parametrize(
+        ("adapter", "sections"),
+        [
+            pytest.param(lambda: CeleryAdapter(), _CELERY, id="celery"),
+            pytest.param(
+                lambda: LambdaAdapter(function="worker"),
+                "lambda:\n  functions:\n    worker:\n      trigger:\n        source: jobs\n",
+                id="lambda-jobs",
+            ),
+            pytest.param(
+                lambda: FastAPIAdapter(), "stores:\n  default:\n    backend: none\n", id="fastapi"
+            ),
+            pytest.param(lambda: _Adapter(), "", id="plain"),
+        ],
+    )
     def test_scans_once_however_many_times_the_components_are_read(
-        self, tmp_path: Path, write_package: PackageWriter, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        write_package: PackageWriter,
+        monkeypatch: pytest.MonkeyPatch,
+        adapter: Callable[[], Any],
+        sections: str,
     ) -> None:
-        write_package("acme_once", {"jobs.py": _JOB})
+        write_package("acme_once", {"jobs.py": _JOB, "cases.py": _USE_CASE})
         config = tmp_path / "app.yaml"
-        config.write_text(
-            "app:\n  name: acme\n  packages: [acme_once]\n"
-            "celery:\n  broker_url: memory://\n  result_backend: cache+memory://\n"
-        )
+        config.write_text("app:\n  name: acme\n  packages: [acme_once]\n" + sections)
         scans: list[int] = []
         scan = PackageScanner.discover
 
@@ -269,10 +297,26 @@ class TestProjectScan:
         monkeypatch.setattr(PackageScanner, "discover", counted)
         project = Project.load(str(config), environment="test")
 
-        project.compose(CeleryAdapter())
+        project.compose(adapter())
         project.compose(_Adapter())
 
         assert len(scans) == 1
+
+    def test_ignores_hidden_and_dunder_directories_without_reading_them(
+        self, write_package: PackageWriter
+    ) -> None:
+        write_package(
+            "acme_pruned",
+            {
+                "models.py": _MODEL.format(name="Kept", table="kept"),
+                ".hidden/x.py": "raise RuntimeError('never imported')",
+                "__snapshots__/x.py": "raise RuntimeError('never imported')",
+            },
+        )
+
+        result = PackageScanner(["acme_pruned"]).discover()
+
+        assert [model.__name__ for model in result.models] == ["Kept"]
 
     def test_refuses_the_removed_discovery_block(self, tmp_path: Path) -> None:
         config = tmp_path / "app.yaml"

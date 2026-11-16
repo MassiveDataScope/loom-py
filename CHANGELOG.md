@@ -5,7 +5,7 @@
 - **discovery:** the `app.discovery` block is removed, with its modes
   `interfaces`, `modules` and `manifest` and every key under them
   (`interfaces.modules`, `interfaces.warn_recommended`, `modules.include`,
-  `modules.exclude`, `manifest.module`); a configuration that still has
+  `manifest.module`); a configuration that still has
   `app.discovery` is refused at load. The manifest module attributes `MODELS`,
   `USE_CASES`, `INTERFACES`, `REPOSITORIES`, `JOBS` and `AGENTS` are gone.
   Removed paths, none re-exported: `loom.core.discovery.config`
@@ -313,9 +313,9 @@
   already bound, and its check and binding are now one locked step.
   **Migration:** move a `register*` made after start-up
   (`application.kernel.container.register(Port, Impl)`,
-  `worker.container.register(...)`) into a module passed to the application
-  (a discovered `Installer` in `app.packages`); to reconfigure, build a new container (in tests, a new
-  application).
+  `worker.container.register(...)`) into an `Installer` in a package listed in
+  `app.packages`; to reconfigure, build a new container (in tests, a new
+  application, or `Override` on a composed one).
 - **di:** sealing a container freezes its execution kinds. Before: a resolver
   could be bound after start-up. Now: after `seal()`,
   declaring a kind on `container.kinds` (`declare_type`, `declare_origin`,

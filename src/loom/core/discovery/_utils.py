@@ -24,6 +24,8 @@ _REST_MODEL = "loom.rest.model"
 
 @dataclass
 class DiscoveryCollector:
+    """The concrete classes found in modules, grouped by component kind, first seen first."""
+
     models: list[type[BaseModel]] = field(default_factory=list)
     use_cases: list[type[UseCase[object, object]]] = field(default_factory=list)
     interfaces: list[type[RestInterface[object]]] = field(default_factory=list)

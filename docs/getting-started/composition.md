@@ -178,7 +178,8 @@ The design and its sources are recorded in ADR 0007
 `config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
 exactly as the REST `create_app` documented in
 [Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml);
-`create_app` also takes `modules`, which `compose` and `serve` take too.
+DI bindings come from the `Installer` classes `app.packages` finds, not from a
+parameter.
 `compose` needs the adapter: its recipe decides what is composed (pool
 profile, discovery, backend), even though no transport is mounted.
 
@@ -208,8 +209,8 @@ The order is fixed; no adapter reorders it:
    (`skip_checks`).
 6. Build the backend with the recipe's profile, then `prepare_models` (compile
    the tables, bind the row-level-security settings).
-7. Build the kernel: your `modules` first, then the repositories, then the
-   cache module.
+7. Build the kernel: the discovered `Installer` classes first, then the
+   repositories, then the cache module.
 8. Register `JobService` (Celery when a `celery` section is present, inline
    otherwise), `SqlQueryService`, `CallerBoundSql` and `ObservabilityRuntime`.
    `loom.celery` is imported lazily: a `celery` section that only dispatches
@@ -375,8 +376,8 @@ request or task:
   store backend, or a backend whose extra is not installed (the message
   names `loom-kernel[<backend>]`).
 - `ReservedBindingError` (`loom.composition`, code
-  `CompositionErrorCode.RESERVED_BINDING`): one of your `modules` registered a
-  framework-owned key. `.key` is the key and `.issue` names the module (see
+  `CompositionErrorCode.RESERVED_BINDING`): an `Installer` of yours registered a
+  framework-owned key. `.key` is the key and `.issue` names the installer (see
   [Caller bindings and framework defaults](#caller-bindings-and-framework-defaults)).
   It is an entry of the `IssueCode` catalogue and carries a `CompileIssue`
   naming the binding.
@@ -395,13 +396,14 @@ request or task:
 
 ## Caller bindings and framework defaults
 
-Your `modules` run before loom registers its own services. What happens to a
-key you bind depends on who owns it:
+Your `Installer` classes run before loom registers its own services. What
+happens to a key you bind depends on who owns it:
 
-| Key | A binding in your `modules` |
+| Key | A binding in your `Installer` |
 |---|---|
 | `JobService` | kept: the framework's default (Celery or inline) is built and registered only when nothing is bound |
-| A repository, or a capability key such as `Listable[Order]` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
+| A model's repository, `RepositoryToken(Order)` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
+| A capability key such as `Listable[Order]`, on its own | refused: startup fails with a `ConfigError` naming `Override.repository`. Every capability key is an alias of the model's repository; to substitute a double use `loom.testing.Override.repository` |
 | `CachedCalls`, `RepositoryDecorator` | kept |
 | `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
 
@@ -411,7 +413,7 @@ observability services are wired into other consumers, so a replacement would
 either be ignored or weaken a guarantee. Failing at startup says so instead of
 silently using the framework's instance.
 
-`register_default` is public, for a module of your own that provides a default
+`register_default` is public, for an installer of your own that provides a default
 someone else may override:
 
 ```python

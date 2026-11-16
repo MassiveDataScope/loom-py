@@ -148,7 +148,7 @@ class TestDefaultKeys:
         original = catalog[AcmeRegistrationWidget]
         double = object()
 
-        with Override.repository(AcmeRegistrationWidget, double).applied(container):
+        with Override.repository(AcmeRegistrationWidget, double).apply(container):
             assert container.resolve(Creatable[AcmeRegistrationWidget]) is double
             assert catalog[AcmeRegistrationWidget] is double
             assert catalog.for_table("registration_widgets_fixture") is double
