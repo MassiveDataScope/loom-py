@@ -108,7 +108,7 @@ jobs:
           pip install --only-binary :all: "uv==0.10.2"
 
       - name: Quality report (strict)
-        uses: MassiveDataScope/loom-actions/actions/python/quality-report@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
+        uses: MassiveDataScope/loom-actions/actions/python/quality-report@033ef60f1830af7fcbe06e116513a95d47c4f3b9 # v1.15.0
         with:
           src-dir: src
           test-dir: tests
@@ -169,7 +169,7 @@ jobs:
 
       - name: SonarQube scan
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != '' }}
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         with:
           args: >
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
