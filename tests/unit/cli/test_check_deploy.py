@@ -58,19 +58,9 @@ def _project(tmp_path: Path) -> Path:
 
 
 def _run_cli(*args: str, blocked: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    """Run ``loom`` in a clean interpreter with *blocked* packages uninstalled.
-
-    A blocked package cannot be imported and its distribution is not found.
-    """
+    """Run ``loom`` in a clean interpreter, with *blocked* modules made unimportable."""
     script = (
         "import sys\n"
-        "import importlib.metadata as metadata\n"
-        "version = metadata.version\n"
-        "def hidden_version(name):\n"
-        f"    if name in {blocked!r}:\n"
-        "        raise metadata.PackageNotFoundError(name)\n"
-        "    return version(name)\n"
-        "metadata.version = hidden_version\n"
         f"for name in {blocked!r}:\n"
         "    sys.modules[name] = None\n"
         f"sys.argv = ['loom', *{args!r}]\n"
@@ -201,6 +191,14 @@ class TestCheckDeploy:
 
         assert result.exit_code == 1
         assert "'Missing', which is no discovered Job" in result.output
+
+    def test_a_missing_server_package_does_not_hide_the_rest_checks(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP})
+
+        result = _run_cli("check", "--deploy", str(config), blocked=("uvicorn", "httptools"))
+
+        assert result.returncode == 1, result.stderr
+        assert "loom.rest.E001" in result.stdout
 
     def test_the_application_check_modules_run_from_its_code_path(self, tmp_path: Path) -> None:
         check = write_failing_check_module(tmp_path / "src")

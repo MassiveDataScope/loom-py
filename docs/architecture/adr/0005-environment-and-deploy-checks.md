@@ -343,8 +343,9 @@ may share `app.rest`), so the CLI does not guess: `--skip loom.rest` checks a
 worker, ETL or streaming configuration as those processes do at startup,
 and the command prints the areas it skipped.
 `app.code_path` joins the import path as `create_app` adds it, so
-`checks.modules` import. It loads loom's own checks, the REST ones only when
-FastAPI is installed.
+`checks.modules` import. It loads loom's own checks; a check package whose
+third-party dependency is not installed is left out (the REST checks without
+FastAPI), so run it with the same extras you deploy.
 
 ### Migration, no shims
 

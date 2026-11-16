@@ -13,16 +13,19 @@ logged. A check returns a :class:`Finding` when the configuration is unsafe,
         return Finding(message="billing uses the sandbox gateway", hint="set billing.gateway")
 
 A check registers when the module defining it is imported. loom's own checks
-live in packages the entry points import anyway (``loom.core.logger``,
-``loom.core.stores.repository`` and ``loom.rest``); an application lists the
-modules holding its checks under ``checks.modules``, which every run imports
-first, so the same checks run at startup and in ``loom check --deploy``. A
-package that ships checks registers under the ``loom.deploy_checks``
-entry-point group, which :meth:`DeployCheckRegistry.load_installed` imports.
+live in packages the ``loom.deploy_checks`` entry-point group names
+(``loom.core.logger``, ``loom.core.stores.repository``,
+``loom.core.stores.audit_checks`` and ``loom.rest.checks``), which
+:meth:`DeployCheckRegistry.load_installed` imports; a package that ships checks
+registers there too, and one whose third-party dependency is not installed is
+left out. An application lists the modules holding its checks under
+``checks.modules``, which every run imports first, so the same checks run at
+startup and in ``loom check --deploy``.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
-checks only in production and staging. ``loom check --deploy`` calls
-:func:`run_deploy_checks`, which runs them whatever the environment, for CI.
+checks only in production and staging. ``loom check --deploy`` runs
+:func:`run_deploy_checks` through ``Project.check``, which runs them whatever
+the environment, for CI.
 An id listed under ``checks.silenced`` in the configuration does not run, and
 enforcing logs a warning naming every silenced id. This module's logger has
 its own WARNING level, so a quieter parent does not hide these warnings.
@@ -36,7 +39,6 @@ import re
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from importlib.metadata import EntryPoint, PackageNotFoundError, version
 from typing import TYPE_CHECKING, Final
 
 import msgspec
@@ -58,10 +60,6 @@ _INTERPOLATION: Final = "${"
 
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
-
-_EXTRA_REQUIREMENT: Final = re.compile(
-    r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)[^;]*;\s*extra\s*==\s*['\"](?P<extra>[^'\"]+)['\"]\s*"
-)
 
 DEPLOY_CHECKS_GROUP: Final = "loom.deploy_checks"
 """Entry-point group naming the packages whose import registers deploy checks."""
@@ -126,6 +124,7 @@ class DeployCheckRegistry:
 
     def __init__(self) -> None:
         self._checks: dict[str, DeployCheck] = {}
+        self._staged: dict[str, DeployCheck] | None = None
 
     def register(self, check_id: str) -> Callable[[DeployCheck], DeployCheck]:
         """Return a decorator registering a check under *check_id*.
@@ -134,65 +133,43 @@ class DeployCheckRegistry:
             ValueError: When *check_id* is outside the id scheme or taken.
         """
         _require_id(check_id)
-        if check_id in self._checks:
+        if check_id in self._checks or check_id in (self._staged or {}):
             raise ValueError(f"deploy check {check_id!r} is already registered")
 
         def _register(check: DeployCheck) -> DeployCheck:
-            self._checks[check_id] = check
+            target = self._checks if self._staged is None else self._staged
+            target[check_id] = check
             return check
 
         return _register
 
     def load_installed(self) -> None:
-        """Import every installed package of the ``loom.deploy_checks`` entry-point group.
+        """Import every package of the ``loom.deploy_checks`` entry-point group.
 
-        Called as ``DEPLOY_CHECKS.load_installed()``: the packages register
-        their checks into :data:`DEPLOY_CHECKS`, whatever registry this is. An
-        entry whose extras are not installed, as ``loom.rest [rest]`` without
-        the ``rest`` extra, is not imported.
+        The checks a package registers through this registry while it imports
+        are kept only when the whole import succeeds. A package whose import
+        needs a module outside loom that is not installed, as ``loom.rest``
+        needs fastapi without the ``rest`` extra, is left out with none of its
+        checks.
 
         Raises:
-            ModuleNotFoundError: When an imported package needs a module that is
-                missing.
+            ModuleNotFoundError: When the missing module belongs to loom.
         """
         for entry in list_entry_points(DEPLOY_CHECKS_GROUP):
-            if _CheckPackage(entry).has_its_extras():
+            self._staged = {}
+            try:
                 entry.load()
+            except ModuleNotFoundError as exc:
+                if (exc.name or "").partition(".")[0] == "loom":
+                    raise
+            else:
+                self._checks.update(self._staged)
+            finally:
+                self._staged = None
 
     def items(self) -> tuple[tuple[str, DeployCheck], ...]:
         """Return the registered ids with their checks, in registration order."""
         return tuple(self._checks.items())
-
-
-@dataclass(frozen=True)
-class _CheckPackage:
-    """A package of the ``loom.deploy_checks`` group, and the extras its entry declares."""
-
-    entry: EntryPoint
-
-    def has_its_extras(self) -> bool:
-        """Whether every requirement guarded by one of the entry's extras is installed.
-
-        Only a requirement whose marker is exactly ``extra == "<name>"`` counts;
-        one with a further condition, such as a platform, is left out.
-        """
-        dist = self.entry.dist
-        if dist is None:
-            return True
-        guarded = (_EXTRA_REQUIREMENT.fullmatch(requirement) for requirement in dist.requires or ())
-        return all(
-            self._is_installed(match["name"])
-            for match in guarded
-            if match is not None and match["extra"] in self.entry.extras
-        )
-
-    @staticmethod
-    def _is_installed(distribution: str) -> bool:
-        try:
-            version(distribution)
-        except PackageNotFoundError:
-            return False
-        return True
 
 
 DEPLOY_CHECKS: Final = DeployCheckRegistry()

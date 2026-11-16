@@ -518,9 +518,9 @@ The configuration loads with loom's default resolvers, and the checks read
 keys as written, so a `${secrets:...}` value no check reads needs no access. `app.code_path` (`src`
 by default, relative to the first file) joins the import path as `create_app`
 adds it, so `checks.modules` import here as well. The checks read
-configuration keys only, so no secret needs to be reachable. The command
-loads loom's own checks, the REST ones only when the `rest` extra is
-installed.
+configuration keys only, so no secret needs to be reachable. A check
+package whose third-party dependency is not installed is left out (the REST
+checks without FastAPI), so run `loom check` with the same extras you deploy.
 
 ## Tests
 

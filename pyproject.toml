@@ -215,7 +215,7 @@ none = "loom.core.stores.none:NoneBackend"
 logger = "loom.core.logger"
 repository = "loom.core.stores.repository"
 audit = "loom.core.stores.audit_checks"
-rest = "loom.rest.checks [rest]"
+rest = "loom.rest.checks"
 
 [build-system]
 requires = [

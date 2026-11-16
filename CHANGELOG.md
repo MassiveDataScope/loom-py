@@ -695,8 +695,10 @@
   `--skip` leaves out.
 - **core:** the entry-point group `loom.deploy_checks` names the packages whose
   import registers deploy checks (`DeployCheckRegistry.load_installed()`); a
-  package shipping checks registers there, and an entry missing a third-party
-  module is left out. loom registers `logger`, `repository`, `audit` and `rest`.
+  package shipping checks registers there. A check package whose third-party
+  dependency is not installed is left out with all its checks; run `loom check`
+  with the same extras you deploy. loom registers `logger`, `repository`,
+  `audit` and `rest`.
 
 ### ai
 

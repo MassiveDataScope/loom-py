@@ -36,7 +36,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # No transport but the JobService adapter, and the ones app.entry selects, lazily.
+    # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
         (
