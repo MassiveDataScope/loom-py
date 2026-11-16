@@ -12,6 +12,7 @@ from loom.core.stores.repository.capabilities import (
     RepoFor,
     Updatable,
 )
+from loom.core.stores.repository.catalog import RepositoryCatalog
 from loom.core.stores.repository.cursor import (
     CURSOR_SIGNING_CHECK,
     Cursor,
@@ -70,6 +71,7 @@ __all__ = [
     "DefaultRepositoryBuilder",
     "RepositoryBuildContext",
     "RepositoryBuilder",
+    "RepositoryCatalog",
     "RepositoryRegistration",
     "RepositoryToken",
     "get_repository_registration",
