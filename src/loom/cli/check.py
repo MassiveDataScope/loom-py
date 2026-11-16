@@ -18,21 +18,13 @@ import here as they do at startup.
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from loom.core.checks import DeployReport, run_deploy_checks
-from loom.core.config import ConfigContext, with_default_resolvers
+from loom.composition.project import CheckedProject, Project
 from loom.core.config.errors import ConfigError
-from loom.core.config.overrides import load_application_config
-from loom.core.environment import Environment, resolve_environment, select_config_paths
-from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
-from loom.serverless.aws.lambda_.checks import check_triggers
 
 
 def check(
@@ -55,7 +47,7 @@ def check(
         typer.echo("only deploy checks exist: run 'loom check --deploy <config>'.", err=True)
         raise typer.Exit(2)
     try:
-        checked = load_checked(config, env, tuple(skip or ()))
+        checked = check_config(config, env, tuple(skip or ()))
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -64,66 +56,21 @@ def check(
         raise typer.Exit(1)
 
 
-@dataclass(frozen=True)
-class CheckedConfig:
-    """A configuration loaded as the application would load it, and its deploy checks."""
-
-    context: ConfigContext
-    environment: Environment
-    report: DeployReport
-    skipped: tuple[str, ...]
-    config_root: Path
-    code_path: Path
-
-
-def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> CheckedConfig:
-    """Load *config* for *env*, put its code path on the import path and run the deploy checks.
+def check_config(config: list[Path], env: str | None, skip: tuple[str, ...]) -> CheckedProject:
+    """Run the deploy checks on *config*: one directory, or YAML files.
 
     Raises:
-        ConfigError: When the configuration does not load, or ``lambda`` is
-            one startup would refuse.
+        ConfigError: When the configuration does not load, or directories and
+            files are mixed.
     """
-    _load_check_packages()
-    environment = resolve_environment(env)
-    paths = _config_paths(config, environment)
-    context = load_application_config(
-        *paths, resolvers=with_default_resolvers(()), environment=environment
-    )
-    config_root = Path(paths[0]).resolve().parent
-    code_path = _add_code_path(context, config_root)
-    check_triggers(context)
-    report = run_deploy_checks(context, skip=skip)
-    return CheckedConfig(context, environment, report, skip, config_root, code_path)
-
-
-def _load_check_packages() -> None:
-    """Import the packages registering loom's checks; the REST ones need the rest extra."""
-    importlib.import_module("loom.core.logger")
-    importlib.import_module("loom.core.stores.repository")
-    importlib.import_module("loom.core.stores.audit_checks")
-    if importlib.util.find_spec("fastapi") is not None:
-        importlib.import_module("loom.rest")
-
-
-def _add_code_path(context: ConfigContext, config_dir: Path) -> Path:
-    raw = context.raw("app.code_path", DEFAULT_CODE_PATH)
-    if not isinstance(raw, str) or "${" in raw:
-        raise ConfigError(
-            "app.code_path must be a literal path for loom check: a placeholder or a "
-            "non-string value cannot name the directory its check modules import from"
-        )
-    return add_code_path(raw, config_dir)
-
-
-def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:
-    directory = config[0] if len(config) == 1 and config[0].is_dir() else None
-    if directory is None and any(path.is_dir() for path in config):
+    if len(config) == 1 and config[0].is_dir():
+        return Project.check(config_dir=str(config[0]), environment=env, skip=skip)
+    if any(path.is_dir() for path in config):
         raise ConfigError("pass one config directory or YAML files, not both")
-    files = () if directory is not None else tuple(str(path) for path in config)
-    return select_config_paths(files, directory, environment, caller="loom check")
+    return Project.check(*(str(path) for path in config), environment=env, skip=skip)
 
 
-def print_report(checked: CheckedConfig, *, err: bool) -> None:
+def print_report(checked: CheckedProject, *, err: bool) -> None:
     """Print the findings of *checked*, to stderr when *err*."""
     report = checked.report
     typer.echo(f"environment: {checked.environment}", err=err)

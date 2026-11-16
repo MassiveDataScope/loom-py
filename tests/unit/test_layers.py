@@ -36,7 +36,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # No transport but the JobService adapter and the ones app.entry selects, lazily.
+    # No transport but the JobService adapter, the ones app.entry selects and lambda checks, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
         (
@@ -44,6 +44,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.celery.config",
             "loom.rest.fastapi.adapter",
             "loom.serverless.aws.lambda_.handler",
+            "loom.serverless.aws.lambda_.checks",
         ),
     ),
     # The acting identity sits under everything that acts: it reads no execution (spec 011, T09a).

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import functools
+import importlib
+import importlib.util
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,7 @@ from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.cache.wiring import CacheGateways
+from loom.core.checks import DeployReport, run_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigError,
@@ -49,6 +52,27 @@ class AppConfig(msgspec.Struct, kw_only=True):
     job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
     discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
+
+
+@dataclass(frozen=True, kw_only=True)
+class CheckedProject:
+    """A configuration loaded as written, and the deploy checks run on it.
+
+    Args:
+        config: Loaded configuration, placeholders left unresolved.
+        environment: Environment the overlay was picked for.
+        report: Findings of the deploy checks.
+        skipped: Check ids or areas left out of the run.
+        config_root: Directory of the first configuration file.
+        code_path: Application code directory, already on ``sys.path``.
+    """
+
+    config: ConfigContext
+    environment: Environment
+    report: DeployReport
+    skipped: tuple[str, ...]
+    config_root: Path
+    code_path: Path
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,6 +154,68 @@ class Project:
             app=app_cfg,
             observability=observability,
             observability_config=observability_config,
+        )
+
+    @classmethod
+    def check(
+        cls,
+        *config_paths: str,
+        config_dir: str | None = None,
+        environment: Environment | str | None = None,
+        skip: tuple[str, ...] = (),
+    ) -> CheckedProject:
+        """Load the configuration as written and run every deploy check, whatever the environment.
+
+        Composes nothing, connects to nothing, builds no observability, requires
+        no ``app.name`` and resolves no placeholder; loom's checks read keys as
+        written. ``app.code_path`` joins ``sys.path`` and ``checks.modules``
+        import from it. The packages registering loom's own checks are
+        imported, the REST ones when the ``rest`` extra is installed.
+
+        Args:
+            *config_paths: See :func:`~loom.composition.create_app`.
+            config_dir: See :func:`~loom.composition.create_app`.
+            environment: See :func:`~loom.composition.create_app`.
+            skip: Check ids, or dotted areas such as ``"loom.rest"``, the
+                process does not run.
+
+        Returns:
+            The loaded configuration with the findings and the silenced ids.
+
+        Raises:
+            ConfigError: When the configuration does not load, ``app.code_path``
+                is not a literal path, ``lambda`` is one startup would refuse,
+                or the ``checks`` section is invalid.
+        """
+        from loom.serverless.aws.lambda_.checks import check_triggers
+
+        importlib.import_module("loom.core.stores.repository")
+        importlib.import_module("loom.core.stores.audit_checks")
+        if importlib.util.find_spec("fastapi") is not None:
+            importlib.import_module("loom.rest")
+        resolved_environment = resolve_environment(environment)
+        paths = select_config_paths(
+            config_paths, config_dir, resolved_environment, caller="loom check"
+        )
+        ctx = load_application_config(
+            *paths, resolvers=with_default_resolvers(()), environment=resolved_environment
+        )
+        config_root = Path(paths[0]).resolve().parent
+        raw_code_path = ctx.raw(f"{ConfigKey.APP}.code_path", DEFAULT_CODE_PATH)
+        if not isinstance(raw_code_path, str) or "${" in raw_code_path:
+            raise ConfigError(
+                "app.code_path must be a literal path for loom check: a placeholder or a "
+                "non-string value cannot name the directory its check modules import from"
+            )
+        code_path = add_code_path(raw_code_path, config_root)
+        check_triggers(ctx)
+        return CheckedProject(
+            config=ctx,
+            environment=resolved_environment,
+            report=run_deploy_checks(ctx, skip=skip),
+            skipped=skip,
+            config_root=config_root,
+            code_path=code_path,
         )
 
     def discover(self) -> DiscoveryResult:

@@ -681,6 +681,14 @@
 
 ## ✨ Features
 
+### composition
+
+- **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
+  loads the configuration as written, resolving no placeholder and requiring
+  no `app.name`, runs every deploy check and returns a `CheckedProject`
+  (`config`, `environment`, `report`, `skipped`, `config_root`, `code_path`).
+  `loom check --deploy` and `loom deploy manifest` run through it.
+
 ### ai
 
 - **ai:** `ai.mcp_servers.<name>.allow_private_plaintext` (default `false`)

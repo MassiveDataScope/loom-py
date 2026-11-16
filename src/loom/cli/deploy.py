@@ -13,7 +13,7 @@ from typing import Annotated
 import msgspec
 import typer
 
-from loom.cli.check import load_checked, print_report
+from loom.cli.check import check_config, print_report
 from loom.core.config.errors import ConfigError
 from loom.serverless.aws.lambda_.manifest import build_manifest
 
@@ -41,12 +41,12 @@ def manifest(
 ) -> None:
     """Print the deploy manifest of lambda.functions once the deploy checks pass."""
     try:
-        checked = load_checked(config, env, tuple(skip or ()))
+        checked = check_config(config, env, tuple(skip or ()))
         print_report(checked, err=True)
         if checked.report.errors:
             raise typer.Exit(1)
         document = build_manifest(
-            checked.context,
+            checked.config,
             checked.environment,
             function,
             config_root=checked.config_root,
