@@ -527,6 +527,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/cf/cd7fcb9d8f5a21fa420ddf19ee96969e36820182275a731abdf4260ed86a/celery-5.7.0-py3-none-any.whl", hash = "sha256:18310a9c919f9029e4735367484d93e6a25cdfd30afdc474622cc263d9b35f6e", size = 519594, upload-time = "2026-11-05T15:14:17.649Z" },
 ]
 
+[package.optional-dependencies]
+redis = [
+    { name = "kombu", extra = ["redis"] },
+]
+
 [[package]]
 name = "certifi"
 version = "2026.10.23"
@@ -2090,6 +2095,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/84/20/f73d8e0bff9708b0f2337220be1b5d7ebd738bc3a89b63cf44d257157014/kombu-5.7.0-py3-none-any.whl", hash = "sha256:dede73bff4c89175be382c4203d2f167cf7017c384396ec75c36a1b5678f1587", size = 266635, upload-time = "2026-11-03T05:58:31.475Z" },
 ]
 
+[package.optional-dependencies]
+redis = [
+    { name = "packaging" },
+    { name = "redis" },
+]
+
 [[package]]
 name = "librt"
 version = "0.8.0"
@@ -2253,9 +2264,8 @@ cache = [
     { name = "omegaconf" },
 ]
 celery = [
-    { name = "celery" },
+    { name = "celery", extra = ["redis"] },
     { name = "kombu" },
-    { name = "redis" },
 ]
 cli = [
     { name = "pyyaml" },
@@ -2430,7 +2440,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'config-ssm'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'prefect'", specifier = ">=1.35" },
     { name = "bytewax", marker = "python_full_version < '3.13' and extra == 'streaming'", specifier = ">=0.21" },
-    { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
+    { name = "celery", extras = ["redis"], marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.9.2,<1.0" },
     { name = "confluent-kafka", marker = "extra == 'streaming'", specifier = ">=2.6,<3.0" },
     { name = "delta-spark", marker = "python_full_version < '3.13' and extra == 'etl-spark'", specifier = ">=3.2,<4.0" },
@@ -2499,7 +2509,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.3.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6" },
     { name = "pyyaml", marker = "extra == 'prefect'", specifier = ">=6.0" },
-    { name = "redis", marker = "extra == 'celery'", specifier = ">=5.0,<6.0" },
     { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0,<3.0" },
     { name = "structlog", specifier = ">=24.4,<27.0" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.12,<1" },
@@ -4239,15 +4248,14 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "5.3.1"
+version = "8.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
-    { name = "pyjwt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/cf/128b1b6d7086200c9f387bd4be9b2572a30b90745ef078bd8b235042dc9f/redis-5.3.1.tar.gz", hash = "sha256:ca49577a531ea64039b5a36db3d6cd1a0c7a60c34124d46924a45b956e8cf14c", size = 4626200, upload-time = "2025-07-25T08:06:27.778Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/26/5c5fa0e83c3621db835cfc1f1d789b37e7fa99ed54423b5f519beb931aa7/redis-5.3.1-py3-none-any.whl", hash = "sha256:dc1909bd24669cc31b5f67a039700b16ec30571096c5f1f0d9d2324bff31af97", size = 272833, upload-time = "2025-07-25T08:06:26.317Z" },
+    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
 ]
 
 [[package]]

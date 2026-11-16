@@ -164,9 +164,8 @@ logfire = [
     "opentelemetry-sdk>=1.27,<2.0",
 ]
 celery = [
-    "celery>=5.3,<6.0",
+    "celery[redis]>=5.3,<6.0",
     "kombu>=5.3,<6.0",
-    "redis>=5.0,<6.0",
 ]
 cli = [
     "pyyaml>=6",
