@@ -132,6 +132,11 @@
   unreadable, names the queue and stops start-up. A record settles only if its
   event source ARN is the consumed queue; any other is logged and listed until
   the queue's own `RedrivePolicy` dead-letters it.
+- **jobs:** a rejected or exhausted Celery job is acknowledged and not
+  retried: the worker stores it as `FAILURE` with the job's own error and runs
+  its callbacks once, and an eager `.get()` raises that error. Loom does no
+  RabbitMQ dead-lettering on Celery. A deferral (`JobRetry`) now carries its
+  `JobRetry` as the retry reason.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -3449,6 +3454,18 @@ by version; each release's own list is in its GitHub Release notes.
 
 ### core
 
+- **core:** `on_failure` receives the class and message of the error that
+  failed a Celery job on both `result_serializer` values, `json` (the loom
+  default) and `pickle`. On a key-value result backend (Redis, memcached,
+  cache) the callback reads the stored `exc_type` and `args`, or the pickled
+  error, instead of letting Celery rebuild the error from its `args`; an error
+  whose `__init__` takes other arguments, such as
+  `PostCommitError(committed=, failures=)`, no longer arrives as
+  `SystemError` or a bare `Exception`, and its message is no longer doubled
+  or mangled. Another backend still answers with the error Celery rebuilds.
+  `LoomError` also pickles and copies with its own class, `args` and
+  attributes, slots included, without calling `__init__`; a `failures` entry
+  that cannot be pickled still makes the whole error unpicklable.
 - **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
   primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
   handed the raw key to boto3's `TypeSerializer`, which raised

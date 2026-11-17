@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
+from celery.backends.base import KeyValueStoreBackend  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
@@ -179,7 +180,8 @@ def _make_job_task(
     succeeded, defers, fails or is rejected; the task only maps that outcome
     to Celery: a failure retries after the policy's backoff, a deferral
     retries after its delay without spending an attempt (the task carries the
-    count in its ``deferrals`` argument), and a rejection raises its error.
+    count in its ``deferrals`` argument), and a rejection raises its error, which
+    the worker stores as the failure and acknowledges (``acks_late``) without a retry.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -249,15 +251,31 @@ def _make_job_task(
         return outcome
 
     def _settle(task_self: Any, outcome: JobOutcome, deferrals: int) -> Any:
-        """Map the outcome to Celery: return the result, retry, or raise the rejection."""
+        """Map the outcome to Celery: return the result, retry, or raise the rejection's error.
+
+        Args:
+            task_self: The bound Celery task.
+            outcome: What the runner decided for this delivery.
+            deferrals: Deferrals already spent, carried to the next delivery.
+
+        Returns:
+            The job's result when it succeeded.
+
+        Raises:
+            Retry: When the job failed with attempts left or was deferred.
+            Exception: The error that ended a rejected job, which the worker
+                stores as the task's failure before acknowledging the message.
+        """
         match outcome:
             case Succeeded(result=result):
                 return result
             case Failed(error=error, delay=delay):
                 raise task_self.retry(exc=error, countdown=delay.seconds) from error
-            case Deferred(delay=delay):
-                kwargs = {**task_self.request.kwargs, "deferrals": deferrals + 1}
-                raise task_self.retry(countdown=delay.seconds, kwargs=kwargs)
+            case Deferred(delay=delay) as deferred:
+                kwargs = {**(task_self.request.kwargs or {}), "deferrals": deferrals + 1}
+                raise task_self.retry(
+                    exc=deferred.failure(), countdown=delay.seconds, kwargs=kwargs
+                )
             case Rejected() as rejected:
                 raise rejected.failure()
 
@@ -266,6 +284,7 @@ def _make_job_task(
         shared=False,
         bind=True,
         acks_late=True,
+        acks_on_failure_or_timeout=True,
         reject_on_worker_lost=True,
         max_retries=None,
         soft_time_limit=timeout,
@@ -294,11 +313,16 @@ def _make_job_task(
 
 
 def _resolve_error_info(job_id: str, app: Celery) -> dict[str, str]:
-    """Look up the exception that caused a job to fail via the result backend.
+    """Look up the class and message of the error that made a job fail.
 
-    Falls back to ``Unknown`` and an empty message if the backend does not
-    hold the result or the stored value is not an exception (e.g. backend
-    not configured).
+    On a key-value result backend (Redis, memcached, cache) the stored result
+    is read as the worker wrote it, so the answer does not depend on the
+    ``result_serializer``: a JSON result holds ``exc_type`` and the error's
+    ``args``, a pickled one the error itself. Reading it through Celery would
+    rebuild the error from its ``args``, and an error whose ``__init__``
+    takes other arguments would come back as a bare ``Exception``. Any other
+    backend answers with the error Celery rebuilds. Falls back to ``Unknown``
+    and an empty message when the backend holds no error.
 
     Args:
         job_id: Celery task UUID of the *failed* job.
@@ -307,10 +331,20 @@ def _resolve_error_info(job_id: str, app: Celery) -> dict[str, str]:
     Returns:
         The ``exc_type`` and ``exc_msg`` arguments of ``on_failure``.
     """
-    exc = AsyncResult(job_id, app=app).result
-    if isinstance(exc, Exception):
-        return {"exc_type": type(exc).__qualname__, "exc_msg": str(exc)}
-    return {"exc_type": "Unknown", "exc_msg": ""}
+    backend = app.backend
+    if isinstance(backend, KeyValueStoreBackend):
+        payload = backend.get(backend.get_key_for_task(job_id))
+        stored = backend.decode(payload)["result"] if payload else None
+    else:
+        stored = AsyncResult(job_id, app=app).result
+    match stored:
+        case {"exc_type": str(exc_type), "exc_message": args}:
+            message = Exception(*args) if isinstance(args, list | tuple) else Exception(args)
+            return {"exc_type": exc_type, "exc_msg": str(message)}
+        case Exception():
+            return {"exc_type": type(stored).__qualname__, "exc_msg": str(stored)}
+        case _:
+            return {"exc_type": "Unknown", "exc_msg": ""}
 
 
 def _make_callback_task(

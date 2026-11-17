@@ -232,6 +232,7 @@ class TestMakeJobTaskRegistration:
         "option",
         [
             pytest.param("acks_late", id="acks_late_is_true"),
+            pytest.param("acks_on_failure_or_timeout", id="acks_on_failure_or_timeout_is_true"),
             pytest.param("reject_on_worker_lost", id="reject_on_worker_lost_is_true"),
         ],
     )
@@ -521,6 +522,19 @@ class TestMakeJobTaskRetry:
         with pytest.raises(JobRejection, match="never"):
             _failing_task(JobRejection("never"))(task_self, payload={"value": 1})
         task_self.retry.assert_not_called()
+
+    def test_a_deferral_of_a_request_without_kwargs_carries_only_its_deferrals(self) -> None:
+        task_self = _retrying_self(retries=0)
+        task_self.request.kwargs = None
+        with pytest.raises(_RetryError):
+            _failing_task(JobRetry("not yet", 7))(task_self)
+        assert task_self.retry.call_args.kwargs["kwargs"] == {"deferrals": 1}
+
+    def test_a_deferral_carries_the_signal_that_asked_for_it(self) -> None:
+        task_self = _retrying_self()
+        with pytest.raises(_RetryError):
+            _failing_task(JobRetry("not yet", 7))(task_self, payload={"value": 1})
+        assert isinstance(task_self.retry.call_args.kwargs["exc"], JobRetry)
 
     def test_job_started_event_emitted_before_execution(self) -> None:
         """JOB_STARTED must arrive before the job runs."""

@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
 from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
+from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
+from loom.core.job.run import EnvelopeInvocation
+from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.profile import WORKER_PROFILE
+from loom.core.stores.repository.registration import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
+from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobService
 from tests.helpers.composition import composition_project
@@ -117,3 +127,29 @@ def sqs_service(client: SQSClient, **knobs: Any) -> SQSJobService:
     queues = {"emails": QueueConfig(url=SQS_URL), "orders": QueueConfig(url=SQS_FIFO_URL)}
     config = SQSConfig(queues=queues, **knobs)
     return SQSJobService(client, config, factory=cast(Any, None), executor=cast(Any, None))
+
+
+class JobKernel:
+    """A real factory and executor, serving the jobs a test delivers."""
+
+    def __init__(self) -> None:
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
+        declare_kinds(container.kinds)
+        self.factory = UseCaseFactory(container)
+        self.executor = RuntimeExecutor(UseCaseCompiler())
+
+    def invoke_directly(self) -> Callable[[JobDelivery], Awaitable[Any]]:
+        async def invoke(delivery: JobDelivery) -> Any:
+            envelope = delivery.envelope
+            return await self.executor.run(
+                delivery.job_type,
+                factory=self.factory,
+                params=envelope.params,
+                payload=envelope.payload,
+                delivery=delivery,
+            )
+
+        return invoke
+
+    def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
+        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
