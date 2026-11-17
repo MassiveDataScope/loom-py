@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
+from celery.exceptions import TaskPredicate  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
 from loom.celery.errors import WorkerNotOpenError
@@ -62,6 +63,9 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 _log = get_logger(__name__)
+
+REDELIVERY = Redelivery.DELAYED
+"""What the broker does with a job that must run again: it waits the countdown it is sent with."""
 
 
 @dataclass(slots=True)
@@ -182,10 +186,12 @@ def _make_job_task(
     retries after its delay without spending an attempt (the task carries the
     count in its ``deferrals`` argument), and a rejection raises its error, which
     the worker stores as the failure and acknowledges (``acks_late``) without a retry.
-    Before it raises, the task sends the failure callback task named in its
-    ``failure_callback`` argument, with the error's class and text; that
-    callback is delivered at least once, as a worker that dies between the
-    send and the acknowledgement sends it again.
+    Every other error that ends the task (a rejection, a worker that could not
+    open its application, a soft time limit) first sends the failure callback
+    task named in its ``failure_callback`` argument, with the error's class and
+    text; a ``Retry``, ``Reject`` or ``Ignore`` sends nothing. The callback is
+    delivered at least once, as a worker that dies between the send and the
+    acknowledgement sends it again, and a hard kill sends none.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -222,7 +228,7 @@ def _make_job_task(
     name = job_type.__qualname__
     runner = JobRunner(
         EnvelopeInvocation(factory, executor, runtime),
-        redelivery=Redelivery.DELAYED,
+        redelivery=REDELIVERY,
         metrics=metrics,
     )
 
@@ -307,20 +313,25 @@ def _make_job_task(
         deferrals: int = 0,
         failure_callback: str | None = None,
     ) -> Any:
-        with active_trace_id(trace_id or None):
-            outcome = _deliver(
-                task_self=self,
-                payload=payload,
-                params=params,
-                identity=identity,
-                trace_id=trace_id,
-                deferrals=deferrals,
-            )
-            if isinstance(outcome, Rejected) and failure_callback is not None:
-                CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
-                    celery_app, failure_callback, outcome.failure()
+        try:
+            with active_trace_id(trace_id or None):
+                outcome = _deliver(
+                    task_self=self,
+                    payload=payload,
+                    params=params,
+                    identity=identity,
+                    trace_id=trace_id,
+                    deferrals=deferrals,
                 )
-            return _settle(self, outcome, deferrals)
+                return _settle(self, outcome, deferrals)
+        except TaskPredicate:
+            raise
+        except Exception as error:
+            if failure_callback is not None:
+                CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
+                    celery_app, failure_callback, error
+                )
+            raise
 
     return _job_task
 

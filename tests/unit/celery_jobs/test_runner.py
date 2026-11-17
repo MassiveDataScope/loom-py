@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from celery import Celery
+from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.runner import (
@@ -99,7 +100,7 @@ class _AsyncCallback:
         pass  # intentional no-op stub
 
 
-class _RetryError(Exception):
+class _RetryError(Retry):
     """Stands in for Celery's ``Retry`` raised by the mocked bound task."""
 
 

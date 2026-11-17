@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,15 +12,9 @@ from celery.worker.request import Request  # type: ignore[import-untyped]
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection
-from tests.integration.celery_jobs.conftest import Workbench
-
-
-class RejectedJob(Job[None]):
-    runs: list[str] = []
-
-    async def execute(self) -> None:
-        self.runs.append("ran")
-        raise JobRejection("tenant deleted")
+from tests.integration.celery_jobs.conftest import JSON, Workbench
+from tests.integration.celery_jobs.doubles import REJECTION, RejectedJob
+from tests.integration.celery_jobs.test_failure_callback import FAILURE_CALLBACK
 
 
 class TestEagerRejection:
@@ -29,43 +22,38 @@ class TestEagerRejection:
         self, workbench: Callable[[str], Workbench], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         bench = workbench("json")
-        app, task = bench.app, bench.job_task(RejectedJob)
+        task: Job[None] = bench.job_task(RejectedJob)
         sent = MagicMock()
-        monkeypatch.setattr(app, "send_task", sent)
-        app.conf.task_always_eager = True
+        monkeypatch.setattr(bench.app, "send_task", sent)
+        monkeypatch.setitem(bench.app.conf, "task_always_eager", True)
 
-        result = task.apply(kwargs={"failure_callback": "on-error"})
+        result = task.apply(kwargs={"failure_callback": "on-error"})  # type: ignore[attr-defined]
 
         assert result.failed()
-        with pytest.raises(JobRejection, match="tenant deleted"):
+        with pytest.raises(JobRejection, match=REJECTION):
             result.get()
         sent.assert_called_once()
         assert sent.call_args.args == ("on-error",)
         assert sent.call_args.kwargs["kwargs"]["exc_type"] == "JobRejection"
 
 
+@JSON
 class TestWorkerRejection:
     def test_is_stored_once_with_its_error_and_acked_not_requeued(
-        self, workbench: Callable[[str], Workbench], monkeypatch: pytest.MonkeyPatch
+        self, served: Workbench, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        bench = workbench("json")
-        app, task = bench.app, bench.job_task(RejectedJob)
         RejectedJob.runs.clear()
-        errbacks: list[str] = []
         failures: list[str] = []
         settlements: list[tuple[str, ...]] = []
+        job_name = wire_job_name(RejectedJob.__qualname__)
 
-        @app.task(name="on-error", shared=False)
-        def on_error(**kwargs: Any) -> None:
-            errbacks.append(kwargs["exc_type"])
-
-        def on_failure(exception: BaseException | None = None, **_: Any) -> None:
+        def on_failure(exception: BaseException | None = None, **_: object) -> None:
             failures.append(type(exception).__name__)
 
         acknowledge, reject = Request.acknowledge, Request.reject
 
         def acknowledge_spy(request: Request) -> None:
-            if not request.acknowledged and request.name == wire_job_name(RejectedJob.__qualname__):
+            if not request.acknowledged and request.name == job_name:
                 settlements.append(("ack",))
             acknowledge(request)
 
@@ -77,13 +65,13 @@ class TestWorkerRejection:
         monkeypatch.setattr(Request, "reject", reject_spy)
         signals.task_failure.connect(on_failure, weak=False)
         try:
-            with bench.worker() as stored:
-                task.apply_async(task_id=bench.task_id, kwargs={"failure_callback": "on-error"})
+            task_id = served.send(served.tasks[RejectedJob], failure_callback=FAILURE_CALLBACK)
+            stored, calls = served.settle(task_id, notified=1)
         finally:
             signals.task_failure.disconnect(on_failure)
 
         assert (stored.state, type(stored.result)) == ("FAILURE", JobRejection)
-        assert errbacks == ["JobRejection"]
-        assert failures == ["JobRejection"]
+        assert [call["hook"] for call in calls] == ["on_failure"]
+        assert failures.count("JobRejection") == 1
         assert settlements == [("ack",)]
         assert RejectedJob.runs == ["ran"]

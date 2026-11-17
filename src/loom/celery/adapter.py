@@ -31,7 +31,6 @@ leaves no connection open, so nothing the parent touched crosses the fork.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable, Coroutine, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -56,6 +55,7 @@ from loom.celery._discovery import (
 )
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
 from loom.celery.runner import (
+    REDELIVERY,
     _CeleryAsyncRuntime,
     _make_callback_task,
     _make_job_task,
@@ -77,6 +77,7 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
+from loom.core.logger import get_logger
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
@@ -84,7 +85,7 @@ if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
 
-_logger = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 _EX_FAILURE = 1
 """Exit status of a worker that cannot start."""
@@ -171,7 +172,7 @@ class _WorkerLifecycle:
             else:
                 self._open(check=True)
         except Exception as exc:
-            _logger.exception("worker application failed to start")
+            _log.exception("worker application failed to start")
             raise WorkerTerminate(_EX_FAILURE) from exc
 
     @staticmethod
@@ -202,7 +203,7 @@ class _WorkerLifecycle:
         try:
             self._open(check=False)
         except Exception as exc:
-            _logger.exception("worker process failed to open its application")
+            _log.exception("worker process failed to open its application")
             self._runtime.refuse(exc)
 
     def close(self) -> None:
@@ -214,7 +215,7 @@ class _WorkerLifecycle:
                 stop_coroutine = stop()
                 self._runtime.run(stop_coroutine, eager_fallback=False)
         except Exception:
-            _logger.warning("worker application failed to close", exc_info=True)
+            _log.warning("worker application failed to close", exc_info=True)
             if stop_coroutine is not None:
                 stop_coroutine.close()
         finally:
@@ -279,6 +280,12 @@ def _register_tasks(
 ) -> None:
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
+    if declared.jobs:
+        _log.info(
+            "Job retry policies",
+            transport="celery",
+            jobs=application.job_settings.describe_retries(REDELIVERY, declared.jobs),
+        )
     for job_type in declared.jobs:
         _make_job_task(
             celery_app,

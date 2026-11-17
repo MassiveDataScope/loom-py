@@ -105,7 +105,7 @@ class JobRunner:
             is emitted, named by the error's class.
         """
         outcome = self._decide(error, attempt, policy)
-        self._metrics.on_event(self._event(outcome, type(error).__qualname__, None, 0.0))
+        self._metrics.on_event(self._event(outcome, type(error).__qualname__, None, None))
         return outcome
 
     def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Rejected | Failed:
@@ -120,7 +120,7 @@ class JobRunner:
 
     @staticmethod
     def _event(
-        outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float
+        outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float | None
     ) -> RuntimeEvent:
         match outcome:
             case Succeeded():

@@ -74,7 +74,6 @@ def jobs_recipe(
         agent_endpoints=False,
         metrics=metrics,
         connection_only=not resolved.models,
-        logs_job_retries=False,
     )
     return recipe, {job_type.__qualname__: job_type for job_type in resolved.jobs}
 
@@ -151,10 +150,9 @@ class QueueConsumer:
         if served:
             _log.info(
                 "Job retry policies",
+                transport="sqs",
                 queue=queue_name,
-                jobs=JobSettings({job: settings.of(job) for job in served}).describe_retries(
-                    redelivery
-                ),
+                jobs=settings.describe_retries(redelivery, served),
             )
         return cls(
             settings,

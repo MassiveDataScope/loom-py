@@ -137,7 +137,7 @@ UoW commits. The HTTP response does not wait for the job to complete.
 | `params` | `dict \| None` | Path/query params for `execute()` signature |
 | `payload` | `dict \| None` | JSON body passed as `Input()` command |
 | `on_success` | `type[Callback] \| None` | Callback invoked by the broker on success |
-| `on_failure` | `type[Callback] \| None` | Callback invoked by the broker on failure |
+| `on_failure` | `type[Callback] \| None` | Callback invoked by the worker that rejects the job |
 | `queue` | `str \| None` | Override the job's `__queue__` for this dispatch only |
 | `countdown` | `int \| None` | Delay in seconds before execution, 0 through 900 inclusive |
 | `priority` | `int \| None` | Override the job's `__priority__` |
@@ -262,6 +262,14 @@ recover entity IDs and other parameters the callback needs.
 > **Fire-and-forget**: when a job dispatched via `dispatch_after_commit()` fails, the failure
 > callback is invoked and the exception is **silenced**. The HTTP layer is not affected.
 > Use `run()` when you need the exception to propagate synchronously.
+
+> **Delivery of the failure callback**: the worker that ends the job with an error sends the
+> failure callback task itself, with the error's class and message, before it stores the failure.
+> Every terminal failure notifies, including a job refused because the worker could not open its
+> application and a soft time limit; a retried failure does not. The callback is delivered *at
+> least once*: a worker that dies between the send and the acknowledgement of the job repeats
+> it. A hard kill (hard time limit, out of memory, `SIGKILL`) cannot notify. Deploy workers before
+> dispatchers: a worker older than the dispatcher refuses the `failure_callback` argument.
 
 ---
 

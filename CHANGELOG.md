@@ -70,7 +70,12 @@
   `InlineJobService.settings` are removed, and
   `JobSettings.describe_retries(redelivery)` is the one owner of the policy
   line, which shows `max_attempts=1 (no redelivery)` for `NONE`. The inline
-  service gets the application's metrics, as Celery and Lambda do. A countdown
+  service gets the application's metrics, as Celery and Lambda do. A Lambda
+  direct trigger (`Redelivery.SAME`) rejects a `JobRetry` and fails a failure
+  for Lambda to retry the event, but neither the Lambda context nor an
+  asynchronous event carries the retry number: every run is attempt 1,
+  `JOB_FAILED` and `JOB_REJECTED` are per invocation, and the trigger's
+  `maximum_retry_attempts` governs the retries. A countdown
   above zero with no timer is still refused at dispatch with `JobDelayRefused`.
   **Migration:** pass `redelivery=` to a `JobRunner` built by hand and call
   `runner.unrunnable` where `JobRunner.decide` was called.
@@ -113,8 +118,8 @@
   Init: the settlement shares the consumer's queue, so settling a batch makes
   no metadata call. A function holds the retry policies its queue implies and
   no longer rewrites `application.job_settings`; a Lambda jobs function logs
-  the one `Job retry policies` line of its consumed jobs, and composition logs
-  none for it (`Recipe.logs_job_retries`). `loom.testing.TEST_QUEUE` is the
+  the one `Job retry policies` line of its consumed jobs, with
+  `transport=sqs` and the queue. `loom.testing.TEST_QUEUE` is the
   `sqs.queues` entry that the default queue ARN of a `LambdaEvent` record
   names (`loom-jobs`, never the FIFO `loom-jobs.fifo` of a record built with
   `group_id`: pass `queue_arn=` for that): declare it in the test configuration,
@@ -442,13 +447,19 @@
   failed a Celery job, whatever `result_serializer` (`json`, the loom default,
   or `pickle`) and whatever result backend. The dispatch carries the failure
   callback task name in the job's keyword arguments, not a Celery `link_error`,
-  and the worker that rejects the job sends that task itself with `exc_type` and
+  and the worker sends that task itself, whenever the job task ends with an
+  error (a rejection, a worker that could not open its application, a soft time
+  limit; not a retried failure), with `exc_type` and
   `exc_msg` taken from the error it raised: nothing is read back from the
   result backend, so an error whose `__init__` takes other arguments, such as
   `PostCommitError(committed=, failures=)`, arrives with its own class and its
   own message. Success keeps the native `link`. The failure callback is
   delivered at least once: a worker that dies between the send and the
-  acknowledgement of the job repeats it. A failure callback task now takes
+  acknowledgement of the job repeats it, and a hard kill (hard time limit,
+  out of memory, `SIGKILL`) cannot notify. A send that fails (broker down) is
+  logged and the job still stores its own error. Deploy workers before
+  dispatchers: a worker older than the dispatcher refuses the new
+  `failure_callback` argument. A failure callback task now takes
   `exc_type` and `exc_msg` as arguments, so a dispatch made by an older version
   that still holds a `link_error` calls it with the class `Unknown` until it
   drains. `LoomError` also pickles and copies with its own class, `args` and
@@ -1127,8 +1138,12 @@
   `job_rejected` to the metrics adapter it is given. The retry policy resolves from
   `jobs.<Job>.retry`, `jobs.defaults.retry`, `__retry__` and the loom default
   (`Backoff(5, 2, 300)`, 3 attempts), each partial section inheriting the layer
-  below; start-up logs one line with each job's policy and the layer it came
-  from, per field when the layers differ. `JobRetry` and `JobRejection` are
+  below; each process that runs jobs logs one `Job retry policies` line at
+  start-up with each job's policy and the layer it came from, per field when
+  the layers differ, naming its `transport` (`inline`, `celery` for a worker,
+  `sqs` for a function consuming a queue); a process that only dispatches (a
+  Celery or SQS producer) applies no policy and logs none, and one with two
+  transports logs two lines. `JobRetry` and `JobRejection` are
   logged as `[SIGNAL]` at INFO and reported as `exec_error` with status
   `deferred` or `rejected`, not as failures. `max_attempts` must be at least 1.
   `JobEnvelope` has an optional `task_id`.
@@ -1882,9 +1897,10 @@
   (`Redelivery.NONE`): its inline service raises `JobDelayRefused` for a
   countdown above zero, rejects a job that raises `JobRetry` as one that cannot
   wait, and rejects a failing job at its first attempt with its own error; the
-  start-up line "Job retry policies" then reports
-  `max_attempts=1 (no redelivery)`. That line is logged once the job service is
-  built. The Lambda host's start-up line naming the job service is now INFO,
+  start-up line "Job retry policies" of that service (`transport=inline`)
+  then reports `max_attempts=1 (no redelivery)`. A Lambda function that
+  consumes an SQS queue logs a second line for the queue, `transport=sqs`. The
+  Lambda host's start-up line naming the job service is now INFO,
   whatever the service.
 - **jobs:** an inline `JobHandle.wait()` on a failed job raises
   `JobFailedError` carrying the job's exception as `cause`, as on Celery;

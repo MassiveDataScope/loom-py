@@ -299,7 +299,6 @@ def register(
         settings=stores.job_settings,
         aws=aws,
         waits_in_process=recipe.profile.waits_in_process,
-        logs_retries=recipe.logs_job_retries,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

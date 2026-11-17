@@ -44,6 +44,7 @@ from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
+from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.tracing import get_trace_id
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
+_log = get_logger(__name__)
 
 
 @dataclass
@@ -137,21 +139,25 @@ class CallbackLink(msgspec.Struct, frozen=True):
         """Send the failure callback task *task_name* with this link and the error's class and text.
 
         The callback runs at least once: a worker that dies between this send
-        and acknowledging the job's message sends it again.
+        and acknowledging the job's message sends it again. A send that fails
+        is logged and never raised, so the caller still raises the job's own error.
 
         Args:
             celery_app: The application the callback task belongs to.
             task_name: The name of the callback task (:func:`callback_task_name`).
             error: The error that ended the job, as the worker raised it.
         """
-        celery_app.send_task(
-            task_name,
-            kwargs={
-                **msgspec.structs.asdict(self),
-                "exc_type": type(error).__qualname__,
-                "exc_msg": str(error),
-            },
-        )
+        try:
+            celery_app.send_task(
+                task_name,
+                kwargs={
+                    **msgspec.structs.asdict(self),
+                    "exc_type": type(error).__qualname__,
+                    "exc_msg": str(error),
+                },
+            )
+        except Exception:
+            _log.exception("Failure callback not sent", job_id=self.job_id, task=task_name)
 
 
 class CeleryJobService:

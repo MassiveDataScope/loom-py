@@ -297,7 +297,15 @@ def _identity(
 
 
 class _DirectEvents:
-    """The warm invocation handler of a direct trigger: fails the event at its first failed job."""
+    """The warm invocation handler of a direct trigger: fails the event at its first failed job.
+
+    Lambda redelivers the same event with no per-message delay (``Redelivery.SAME``): a
+    ``JobRetry`` is rejected as one that cannot wait, and any other failure fails the
+    invocation. Neither the Lambda context nor the event of an asynchronous invocation
+    carries the retry number, so every run is attempt 1: ``JOB_FAILED`` and
+    ``JOB_REJECTED`` are reported per invocation, and the trigger's own retry settings
+    (``maximum_retry_attempts``) decide how many times the event runs.
+    """
 
     def __init__(
         self,

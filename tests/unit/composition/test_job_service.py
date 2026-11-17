@@ -166,6 +166,7 @@ class TestInlineTimer:
         warning, policies = warnings_logged.calls
         assert "wait in process memory" in warning[0]
         assert "Celery or SQS" in warning[0]
+        assert policies[1]["transport"] == "inline"
         assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
     async def test_a_countdown_waits_on_the_timer_of_the_application(self, tmp_path: Path) -> None:
@@ -207,10 +208,21 @@ class TestInlineTimer:
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
         ((event, fields),) = warnings_logged.calls
-        assert event == "Job retry policies"
+        assert (event, fields["transport"]) == ("Job retry policies", "inline")
         assert "max_attempts=1 (no redelivery)" in fields["jobs"][0]["retry"]
 
     def test_a_celery_application_has_no_timer(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+
+
+class TestRetryPolicyLog:
+    """The line is logged where a runner applies the policy; a producer applies none."""
+
+    def test_a_celery_producer_logs_no_policy_line(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
+
+        assert warnings_logged.named("Job retry policies") == []

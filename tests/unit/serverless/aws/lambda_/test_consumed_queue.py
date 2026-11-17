@@ -131,7 +131,9 @@ class TestConsumedQueue:
 
         _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        (logged,) = _logged(caplog, "Job retry policies")
+        (logged,) = [
+            line for line in _logged(caplog, "Job retry policies") if line["transport"] == "sqs"
+        ]
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 

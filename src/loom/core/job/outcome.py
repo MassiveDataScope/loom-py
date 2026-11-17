@@ -65,7 +65,7 @@ class Deferred:
     reason: str
 
     def failure(self) -> JobRetry:
-        """The signal that stands for the deferral, for a transport that cannot wait."""
+        """The signal that stands for the deferral, as the reason of a retry."""
         return JobRetry(self.reason, self.delay.seconds)
 
 

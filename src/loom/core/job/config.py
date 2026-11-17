@@ -23,6 +23,7 @@ class RetrySource(StrEnum):
     CLASS = "__retry__"
     LOOM = "loom default"
     REDRIVE = "RedrivePolicy maxReceiveCount"
+    NO_REDELIVERY = "no redelivery"
 
 
 class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -44,7 +45,6 @@ class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
 
 
 _NO_RETRY = RetryConfig()
-_NO_REDELIVERY = "no redelivery"
 
 
 class JobDefaults(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -139,14 +139,16 @@ class ResolvedRetry:
                 a transport that retries nothing shows one attempt.
         """
         values = {**asdict(self.policy.backoff), "max_attempts": self.policy.max_attempts}
-        origins = {name: source.value for name, source in self.sources.items()}
+        sources = dict(self.sources)
         if not redelivery.retries:
             values["max_attempts"] = 1
-            origins["max_attempts"] = _NO_REDELIVERY
-        shared = set(origins.values())
-        if len(shared) == 1:
-            return f"{_render(values)} ({shared.pop()})"
-        return ", ".join(f"{name}={value} ({origins[name]})" for name, value in values.items())
+            sources["max_attempts"] = RetrySource.NO_REDELIVERY
+        origins = set(sources.values())
+        if len(origins) == 1:
+            return f"{_render(values)} ({origins.pop().value})"
+        return ", ".join(
+            f"{name}={value} ({sources[name].value})" for name, value in values.items()
+        )
 
 
 def _render(values: Mapping[str, Any]) -> str:
@@ -241,13 +243,16 @@ class JobSettings:
         replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
         return replace(self, jobs={**self.jobs, **replaced})
 
-    def describe_retries(self, redelivery: Redelivery) -> list[dict[str, str]]:
+    def describe_retries(
+        self, redelivery: Redelivery, jobs: Iterable[type[Job[Any]]] | None = None
+    ) -> list[dict[str, str]]:
         """Each job's effective retry policy and where it came from, for the start-up log.
 
         Args:
             redelivery: What the transport does with a job that must run again.
+            jobs: The jobs to describe; every job of these settings when omitted.
         """
         return [
             {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe(redelivery)}
-            for job_type in self.jobs
+            for job_type in (self.jobs if jobs is None else jobs)
         ]
