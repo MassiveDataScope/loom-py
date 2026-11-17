@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
-from loom.core.checks import REST_CHECKS
+from loom.core.checks import CheckScope
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.run import run_job
@@ -58,7 +58,7 @@ def jobs_recipe(
             interfaces=(),
             jobs=resolved.jobs,
         ),
-        skip_checks=frozenset({REST_CHECKS}),
+        check_scope=CheckScope.without_rest(),
         agents=True,
         agent_endpoints=False,
         metrics=metrics,

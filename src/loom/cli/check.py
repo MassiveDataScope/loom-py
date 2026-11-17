@@ -6,10 +6,12 @@ and hint, and exits ``1`` when an error remains. loom's checks read keys as
 written and resolve no placeholder; the configuration loads with loom's
 default resolvers, so a ``${secrets:...}`` value no check reads is left alone.
 
-The command cannot tell which kind of process a configuration is for: a REST
-application may declare ``celery`` for its job service and a worker may share
-``app.rest``. ``--skip loom.rest`` (repeatable, any id or area) leaves out
-what the process does not run, as the worker and the runners do at startup.
+The checks of a configuration path run when the configuration declares it
+(``app.rest`` also when ``app.entry`` is ``fastapi``), and the report lists
+the paths it ``checked:`` and ``skipped:``. The command cannot tell which kind
+of process a configuration is for: a worker may share ``app.rest`` with the
+API. ``--skip app.rest`` (repeatable, a configuration path) leaves out what
+the process does not run, as the worker and the runners do at startup.
 
 ``app.code_path`` (``src`` by default, relative to the first file) joins the
 import path as ``create_app`` adds it, so the modules of ``checks.modules``
@@ -45,7 +47,10 @@ def check(
     ] = None,
     skip: Annotated[
         list[str] | None,
-        typer.Option("--skip", help="A check id or area to leave out, e.g. loom.rest; repeatable."),
+        typer.Option(
+            "--skip",
+            help="A configuration path whose checks to leave out, e.g. app.rest; repeatable.",
+        ),
     ] = None,
 ) -> None:
     """Run the deploy checks against the configuration, for CI."""
@@ -73,20 +78,22 @@ def check_config(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
             files are mixed.
     """
     if not config:
-        return Project.check(environment=env, skip=skip)
+        return Project.check(environment=env, excluded=skip)
     if len(config) == 1 and config[0].is_dir():
-        return Project.check(config_dir=str(config[0]), environment=env, skip=skip)
+        return Project.check(config_dir=str(config[0]), environment=env, excluded=skip)
     if any(path.is_dir() for path in config):
         raise ConfigError("pass one config directory or YAML files, not both")
-    return Project.check(*(str(path) for path in config), environment=env, skip=skip)
+    return Project.check(*(str(path) for path in config), environment=env, excluded=skip)
 
 
 def print_report(checked: CheckedProject, *, err: bool) -> None:
     """Print the findings of *checked*, to stderr when *err*."""
     report = checked.report
     typer.echo(f"environment: {checked.environment}", err=err)
-    if checked.skipped:
-        typer.echo(f"skipped: {', '.join(checked.skipped)}", err=err)
+    if report.checked:
+        typer.echo(f"checked: {', '.join(report.checked)}", err=err)
+    if report.skipped:
+        typer.echo(f"skipped: {', '.join(s.describe() for s in report.skipped)}", err=err)
     if report.silenced:
         typer.echo(f"silenced: {', '.join(report.silenced)}", err=err)
     for result in report.results:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from loom.core.checks import Finding, deploy_check
+from loom.core.checks import CheckSet, Finding
 from loom.core.config.keys import ConfigKey
 from loom.core.stores.catalog import SETTINGS_KEY
 
@@ -19,10 +19,13 @@ if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 AUDIT_DISABLED_CHECK: Final = "loom.audit.W001"
+CHECKS: Final = CheckSet()
+"""Checks of ``stores``, run when the process uses that path."""
+
 _STORES: Final = str(ConfigKey.STORES)
 
 
-@deploy_check(AUDIT_DISABLED_CHECK)
+@CHECKS.register(AUDIT_DISABLED_CHECK)
 def _audit_disabled(config: ConfigContext) -> Finding | None:
     off = _disabled_stores(config.raw(_STORES, {}))
     if not off:
@@ -51,4 +54,4 @@ def _audit_off(store: object) -> bool:
     return isinstance(audit, dict) and audit.get("enabled") is False
 
 
-__all__ = ["AUDIT_DISABLED_CHECK"]
+__all__ = ["AUDIT_DISABLED_CHECK", "CHECKS"]

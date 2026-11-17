@@ -20,7 +20,7 @@ from loom.composition import (
     Recipe,
 )
 from loom.core.cache.gateway import CacheGateway
-from loom.core.checks import REST_CHECKS
+from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
@@ -126,7 +126,7 @@ class TestRecipe:
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_project(tmp_path, {}))
 
         assert recipe.profile is WORKER_PROFILE
-        assert recipe.skip_checks == frozenset({REST_CHECKS})
+        assert recipe.check_scope == CheckScope.without_rest()
         assert recipe.agents is False
 
     def test_jobs_and_use_cases_are_compiled(self, tmp_path: Path) -> None:

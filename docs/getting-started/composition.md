@@ -208,8 +208,9 @@ The order is fixed; no adapter reorders it:
 3. Put the code path on `sys.path`.
 4. Ask the adapter for its recipe: `adapter.recipe(project)`. Discovery runs
    here, inside the adapter.
-5. Run the deploy checks, skipping the areas the recipe names
-   (`skip_checks`).
+5. Run the deploy checks of the configuration paths the process uses: the
+   ones the recipe requires, plus the ones the configuration declares, minus
+   the ones the recipe leaves out (`check_scope`).
 6. Build the backend with the recipe's profile, then `prepare_models` (compile
    the tables, bind the row-level-security settings).
 7. Build the kernel: the discovered `Installer` classes first, then the
@@ -244,7 +245,7 @@ A `Recipe` is a frozen dataclass:
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
 | `default_store_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
-| `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
+| `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
 | `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
 | `agent_endpoints` | Whether the adapter mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
 | `metrics` | Use-case metrics, or `None`. |
@@ -256,7 +257,7 @@ A complete adapter, for a script that runs use cases with no transport:
 ```python
 # app/script.py
 from loom.composition import Application, Project, Recipe, create_app
-from loom.core.checks import REST_CHECKS
+from loom.core.checks import CheckScope
 from loom.core.identity import Identity
 from loom.core.stores import WORKER_PROFILE
 
@@ -267,7 +268,7 @@ class ScriptAdapter:
             profile=WORKER_PROFILE,
             discovered=project.discovered,              # app.packages
             default_store_backend="sqlalchemy",               # without stores.default
-            skip_checks=frozenset({REST_CHECKS}),
+            check_scope=CheckScope.without_rest(),
         )
 
     def bind(self, application: Application) -> Application:

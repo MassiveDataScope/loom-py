@@ -140,7 +140,7 @@ def plan(project: Project, adapter: Adapter[object]) -> Recipe:
     """
     recipe = adapter.recipe(project)
     if not recipe.lenient:
-        enforce_deploy_checks(project.config, project.environment, skip=recipe.skip_checks)
+        enforce_deploy_checks(project.config, project.environment, scope=recipe.check_scope)
     return recipe
 
 

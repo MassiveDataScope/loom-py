@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from loom.core.bootstrap import BootstrapError
+from loom.core.checks import UNSCOPED, CheckScope
 from loom.core.di.graph import (
     LENIENT_REFUSALS,
     REFUSALS,
@@ -42,8 +43,8 @@ class Recipe:
             with whatever the adapter added or pruned.
         default_store_backend: Backend of the default store when ``stores.default``
             is not declared.
-        skip_checks: Deploy-check areas this entry point does not serve,
-            such as :data:`~loom.core.checks.REST_CHECKS` for a worker.
+        check_scope: Configuration paths whose deploy checks this entry point
+            requires or leaves out, such as ``app.rest`` for a worker.
         agents: Whether this entry point hosts the agent runtime; without it
             an ``ai`` section is ignored and any compiled use case declaring
             an ``Agent()`` or ``Mcp()`` marker is refused at start-up.
@@ -72,7 +73,7 @@ class Recipe:
     profile: RuntimeProfile
     discovered: DiscoveryResult
     default_store_backend: str = NONE_BACKEND
-    skip_checks: frozenset[str] = frozenset()
+    check_scope: CheckScope = UNSCOPED
     agents: bool = False
     agent_endpoints: bool = True
     metrics: MetricsAdapter | None = None

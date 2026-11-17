@@ -9,18 +9,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 import msgspec
 
-from loom.composition.project import AppConfig, Project
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.composition.project import Project
+from loom.core.config import ConfigError
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
 from loom.core.config.resolver import fetched_name, referenced
-from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.serverless.aws.lambda_.functions import (
     DEFAULT_MAXIMUM_EVENT_AGE_S,
     DEFAULT_MAXIMUM_RETRY_ATTEMPTS,
@@ -35,9 +32,6 @@ from loom.serverless.aws.lambda_.functions import (
 )
 from loom.serverless.aws.lambda_.interfaces import http_function
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
-
-if TYPE_CHECKING:
-    from loom.core.environment import Environment
 
 MANIFEST_VERSION: Final = 2
 """Version of the manifest's schema; a change a consumer must handle bumps it."""
@@ -69,18 +63,16 @@ class DeployManifest(msgspec.Struct, frozen=True, kw_only=True):
     functions: dict[str, FunctionManifest]
 
 
-def build_manifest(
-    ctx: ConfigContext,
-    environment: Environment,
-    function: str | None = None,
-    *,
-    config_root: Path,
-    code_path: Path,
-) -> DeployManifest:
+def build_manifest(project: Project, function: str | None = None) -> DeployManifest:
     """The manifest of every function of ``lambda.functions``, or of *function* alone.
 
     HTTP functions discover the application's code and list their routes as
     startup composes them.
+
+    Args:
+        project: The configuration as written, from ``CheckedProject.project``;
+            its scan of ``app.packages`` is the only one.
+        function: The one function to describe; every function by default.
 
     Raises:
         ConfigError: When ``lambda.handler`` is missing or malformed, no
@@ -89,6 +81,7 @@ def build_manifest(
             trigger names a job startup would refuse, or an HTTP function
             would not compose at startup.
     """
+    ctx = project.config
     declared = declared_lambda(ctx)
     handler = _literal("lambda.handler", declared.handler)
     if not _HANDLER.fullmatch(handler):
@@ -98,24 +91,14 @@ def build_manifest(
     queues = convert_section(ctx.raw("sqs.queues", {}), "sqs.queues", dict[str, str])
     for queue, url in queues.items():
         _literal(f"sqs.queues.{queue}", url)
-    app = convert_section(ctx.raw(ConfigKey.APP), ConfigKey.APP, AppConfig)
-    project = Project(
-        config=ctx,
-        environment=environment,
-        code_path=code_path,
-        config_root=config_root,
-        app=app,
-        observability=ObservabilityRuntime.noop(),
-        observability_config=ObservabilityConfig(),
-    )
     check_triggers(project)
     document = ctx.document()
     names = sorted(declared.functions) if function is None else [function]
     return DeployManifest(
         manifest_version=MANIFEST_VERSION,
-        environment=str(environment),
+        environment=str(project.environment),
         handler=handler,
-        code_path=app.code_path,
+        code_path=project.app.code_path,
         queues=queues,
         functions={
             name: _function(project, document, declared.functions, name, queues) for name in names

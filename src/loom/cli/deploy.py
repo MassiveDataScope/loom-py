@@ -32,7 +32,10 @@ def manifest(
     ] = None,
     skip: Annotated[
         list[str] | None,
-        typer.Option("--skip", help="A check id or area to leave out, e.g. loom.rest; repeatable."),
+        typer.Option(
+            "--skip",
+            help="A configuration path whose checks to leave out, e.g. app.rest; repeatable.",
+        ),
     ] = None,
 ) -> None:
     """Print the deploy manifest of lambda.functions once the deploy checks pass."""
@@ -41,13 +44,7 @@ def manifest(
         print_report(checked, err=True)
         if checked.report.errors:
             raise typer.Exit(1)
-        document = build_manifest(
-            checked.config,
-            checked.environment,
-            function,
-            config_root=checked.config_root,
-            code_path=checked.code_path,
-        )
+        document = build_manifest(checked.project, function)
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

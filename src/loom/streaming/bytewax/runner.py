@@ -14,7 +14,7 @@ from bytewax.recovery import RecoveryConfig
 from bytewax.run import cli_main
 
 from loom.core.async_bridge import AsyncBridge, build_backend_options
-from loom.core.checks import REST_CHECKS, enforce_deploy_checks
+from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -192,7 +192,7 @@ class StreamingRunner:
         obs = observability_runtime or ObservabilityRuntime.from_config(
             observability_cfg, environment=resolved_environment
         )
-        enforce_deploy_checks(config, resolved_environment, skip=(REST_CHECKS,))
+        enforce_deploy_checks(config, resolved_environment, scope=CheckScope.without_rest())
         plan = compile_flow(flow, config=config)
         runtime = config.section_or_default(
             ConfigKey.STREAMING_RUNTIME,

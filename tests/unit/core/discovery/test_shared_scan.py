@@ -188,7 +188,7 @@ class TestOneScanAcrossEntryPoints:
     ) -> None:
         write_package("acme_shared", {"models.py": _MODEL, "jobs.py": _JOB})
         config = write_config("[acme_shared]", _LAMBDA)
-        checked = Project.check(config, environment="test", skip=("loom.rest",))
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
 
         check_triggers(checked)
         check_triggers(checked)
@@ -202,7 +202,7 @@ class TestOneScanAcrossEntryPoints:
         write_package("acme_shared", {"models.py": _MODEL, "jobs.py": _JOB})
         config = write_config("[acme_shared]", _LAMBDA)
 
-        checked = Project.check(config, environment="test", skip=("loom.rest",))
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
         project = Project.load(config, environment="test")
 
         assert checked.discovered.models == project.discovered.models
@@ -213,7 +213,7 @@ class TestOneScanAcrossEntryPoints:
     ) -> None:
         write_package("acme_shared", {"models.py": _MODEL})
         config = write_config("[acme_shared]", _LAMBDA)
-        checked = Project.check(config, environment="test", skip=("loom.rest",))
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
 
         with pytest.raises(ConfigError, match="AcmeJob"):
             check_triggers(checked)

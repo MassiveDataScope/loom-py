@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
-from loom.composition.project import Project
+from loom.composition.project import FASTAPI_ENTRY, Project
 from loom.core.config import ConfigError, ConfigResolver
 from loom.core.environment import Environment
 
@@ -92,7 +92,7 @@ def _lambda(function: str | None = None) -> Adapter[object]:
 
 
 _BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
-    "fastapi": _fastapi,
+    FASTAPI_ENTRY: _fastapi,
     "lambda": _lambda,
 }
 

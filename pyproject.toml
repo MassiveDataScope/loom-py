@@ -205,13 +205,14 @@ dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
 mongo = "loom.stores.mongo.backend:MongoBackend"
 none = "loom.core.stores.none:NoneBackend"
 
-# Packages whose import registers deploy checks; `Project.check` loads them.
-# A package shipping checks registers under the same group.
+# Check sets by the configuration path they validate; a set is imported only
+# when the process uses that path. A package shipping checks registers under
+# the same group, named by the path it validates.
 [project.entry-points."loom.deploy_checks"]
-logger = "loom.core.logger"
-repository = "loom.core.stores.repository"
-audit = "loom.core.stores.audit_checks"
-rest = "loom.rest.checks"
+"observability.log" = "loom.core.logger.checks:CHECKS"
+stores = "loom.core.stores.audit_checks:CHECKS"
+"stores.settings.cursors" = "loom.core.stores.repository.checks:CHECKS"
+"app.rest" = "loom.rest.checks:CHECKS"
 
 [build-system]
 requires = [

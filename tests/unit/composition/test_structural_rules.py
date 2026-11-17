@@ -21,7 +21,7 @@ from loom.core.stores.catalog import StoreCatalog
 
 WriteConfig = Callable[[Mapping[str, object]], str]
 
-_NO_REST: tuple[str, ...] = ("loom.rest",)
+_NO_REST: tuple[str, ...] = ("app.rest",)
 
 
 def _start_up(config: str) -> object:
@@ -29,7 +29,7 @@ def _start_up(config: str) -> object:
 
 
 def _check(config: str) -> object:
-    return Project.check(config, environment="test", skip=_NO_REST)
+    return Project.check(config, environment="test", excluded=_NO_REST)
 
 
 @pytest.fixture
@@ -83,14 +83,14 @@ class TestSameRulesAtStartUpAndInLoomCheck:
         config = write_config({"app": {"name": "${oc.env:ACME_APP_NAME}"}})
 
         assert Project.load(config, environment="test").app.name == "acme"
-        assert Project.check(config, environment="test", skip=_NO_REST).config is not None
+        assert Project.check(config, environment="test", excluded=_NO_REST).config is not None
 
     def test_check_leaves_a_placeholder_application_name_unresolved(
         self, write_config: WriteConfig
     ) -> None:
         config = write_config({"app": {"name": "${oc.env:ACME_NAME_NEVER_SET}"}})
 
-        assert Project.check(config, environment="test", skip=_NO_REST).config is not None
+        assert Project.check(config, environment="test", excluded=_NO_REST).config is not None
 
 
 class TestBackendsLoadedPerEntryPoint:

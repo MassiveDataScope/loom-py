@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
-from loom.core.checks import REST_CHECKS, enforce_deploy_checks
+from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
 from loom.core.config.convert import convert_config
 from loom.core.environment import Environment, resolve_environment
@@ -131,7 +131,9 @@ class ETLRunner:
             resolved_obs_config, environment=resolved_environment
         )
         if config_context is not None:
-            enforce_deploy_checks(config_context, resolved_environment, skip=(REST_CHECKS,))
+            enforce_deploy_checks(
+                config_context, resolved_environment, scope=CheckScope.without_rest()
+            )
         return cls._assemble(
             config,
             resolved_obs_config,
@@ -231,7 +233,7 @@ class ETLRunner:
         observability = ObservabilityRuntime.from_config(
             obs_config, environment=resolved_environment
         )
-        enforce_deploy_checks(context, resolved_environment, skip=(REST_CHECKS,))
+        enforce_deploy_checks(context, resolved_environment, scope=CheckScope.without_rest())
         return cls._assemble(
             storage_config,
             obs_config,

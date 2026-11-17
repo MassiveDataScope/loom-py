@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from loom.core.checks import Finding, deploy_check
+from loom.core.checks import CheckSet, Finding
 from loom.core.logger.config import Renderer
 
 if TYPE_CHECKING:
@@ -19,10 +19,13 @@ if TYPE_CHECKING:
 CONSOLE_RENDERER_CHECK: Final = "loom.logger.W001"
 """Id of the check warning about console log lines in a deployed environment."""
 
+CHECKS: Final = CheckSet()
+"""Checks of ``observability.log``, run when the process uses that path."""
+
 _LOGGER_CONFIG = "observability.log.config"
 
 
-@deploy_check(CONSOLE_RENDERER_CHECK)
+@CHECKS.register(CONSOLE_RENDERER_CHECK)
 def _console_renderer(config: ConfigContext) -> Finding | None:
     log = config.raw("observability.log", {})
     enabled = isinstance(log, dict) and log.get("enabled") is not False

@@ -69,7 +69,7 @@ from loom.composition import (
     Recipe,
 )
 from loom.core.async_bridge import build_backend_options
-from loom.core.checks import REST_CHECKS
+from loom.core.checks import CheckScope
 from loom.core.config import ConfigKey
 from loom.core.discovery._utils import collect_use_cases_from_interfaces
 from loom.core.discovery.worker import (
@@ -375,7 +375,7 @@ class CeleryAdapter:
                 interfaces=(),
                 jobs=resolved.jobs,
             ),
-            skip_checks=frozenset({REST_CHECKS}),
+            check_scope=CheckScope.without_rest(),
             agents=False,
             metrics=self._metrics,
             connection_only=not resolved.models,

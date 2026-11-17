@@ -274,14 +274,14 @@ falling back to defaults.
 - Ids are stable. loom's areas start with `loom.` (`loom.rest.E001`); an
   application registers under its own (`billing.gateway.E001`). A duplicate or
   malformed id is refused at registration.
-- `enforce_deploy_checks(config, environment, skip=...)` runs only when the
+- `enforce_deploy_checks(config, environment, scope=...)` runs only when the
   environment is deployed, on the final merged configuration; otherwise it
   logs one WARNING that the checks were skipped, naming the environment and
-  `LOOM_ENV`. `skip` takes ids
-  or areas a process knows not to apply: processes serving no HTTP (the
-  worker, the ETL and streaming runners, the maintenance flow) skip
-  `REST_CHECKS` (`loom.rest`). Runners run them before building any backend
-  or agent runner.
+  `LOOM_ENV`, and reads no entry point. `scope` is a `CheckScope(required,
+  excluded)` of configuration paths: processes serving no HTTP (the worker,
+  the ETL and streaming runners, the maintenance flow) exclude `app.rest`,
+  and the FastAPI recipe requires it. Runners run them before building any
+  backend or agent runner.
 - `checks.silenced: [ids]` silences by id, like Django's
   `SILENCED_SYSTEM_CHECKS`. The list is visible in the file of the environment
   that accepts the exception, and every deployed startup logs a warning naming
@@ -301,10 +301,23 @@ falling back to defaults.
   `app.code_path` is importable; the worker and runners import from their own
   path, as for discovery. An unknown key under `checks` or a module failing
   at import is a `ConfigError`.
-- loom's own checks live in packages the entry points import anyway:
-  `loom.core.logger` and `loom.rest`.
+- Checks live in a `CheckSet`. Each entry point of the `loom.deploy_checks`
+  group targets a `CHECKS` set and is named by the dotted configuration path
+  its checks validate: `"observability.log"`, `stores`,
+  `"stores.settings.cursors"` and `"app.rest"` for loom's own. A set is
+  imported only when the process uses its path: the configuration declares
+  it or the scope requires it, and the scope does not exclude it. A
+  third-party module a used set needs that is missing is a `ConfigError`
+  naming the path, the module and the extras the distribution metadata
+  gives, never a finding, so `checks.silenced` cannot hide it; a missing
+  module of loom itself propagates. The report lists the paths it `checked`
+  and `skipped`, each skipped one with its reason (`not declared`, `left out
+  by the process`). One cached read of the entry-point metadata plus the
+  loom check modules is the whole production cost; non-deployed
+  environments read none.
 
-There is no plugin framework: no entry points, tags or dependency ordering.
+There is no plugin framework beyond that group: no tags and no dependency
+ordering. Backends carry no checks of their own.
 
 ### Initial checks
 
@@ -331,21 +344,22 @@ given by a placeholder is judged as written.
 
 ### CLI
 
-`loom check --deploy [--env X] [--skip AREA]... <config>` runs every check
-without starting the application, whatever the environment, prints each
+`loom check --deploy [--env X] [--skip PATH]... <config>` runs the checks of
+every path the configuration declares without starting the application, whatever the environment, prints each
 finding with its id and hint, lists the silenced ids, and exits `1` when an
 error remains. `<config>` is a directory (layered by `--env`, which defaults
 to `LOOM_ENV`) or explicit files; it loads with loom's default resolvers, and
 the `LOOM__*` variables of the shell apply (those of a deployed task do not,
 which is why security settings belong in the files). A configuration does
 not say which process it is for (a REST app may declare `celery`, a worker
-may share `app.rest`), so the CLI does not guess: `--skip loom.rest` checks a
+may share `app.rest`), so the CLI does not guess: `--skip app.rest` checks a
 worker, ETL or streaming configuration as those processes do at startup,
-and the command prints the areas it skipped.
+and the command prints a `checked:` and a `skipped:` line. `app.rest` is
+also required when `app.entry` is `fastapi`.
 `app.code_path` joins the import path as `create_app` adds it, so
-`checks.modules` import. It loads loom's own checks; a check package whose
-third-party dependency is not installed is left out (the REST checks without
-FastAPI), so run it with the same extras you deploy.
+`checks.modules` import. A used path whose check set needs a third-party
+module that is not installed (the REST checks without FastAPI) fails with a
+`ConfigError`, so run it with the same extras you deploy.
 
 ### Migration, no shims
 

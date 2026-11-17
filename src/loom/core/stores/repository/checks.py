@@ -15,13 +15,16 @@ in CI without the keys themselves: ``signing`` must be absent or the literal
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from loom.core.checks import Finding, deploy_check
+from loom.core.checks import CheckSet, Finding
 from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CURSORS_SECTION, CursorConfig
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
+
+CHECKS: Final = CheckSet()
+"""Checks of ``stores.settings.cursors``, run when the process uses that path."""
 
 _SECTION = CURSORS_SECTION
 _SIGNED = CursorConfig().signing
@@ -32,7 +35,7 @@ _HINT = (
 )
 
 
-@deploy_check(CURSOR_SIGNING_CHECK)
+@CHECKS.register(CURSOR_SIGNING_CHECK)
 def _cursors_signed(config: ConfigContext) -> Finding | None:
     written = config.raw(_SECTION)
     if written is None:
@@ -55,4 +58,4 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
     )
 
 
-__all__: list[str] = []
+__all__ = ["CHECKS"]

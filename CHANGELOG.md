@@ -72,6 +72,24 @@
   `app.packages` once; `loom deploy manifest` now reports handler and function
   errors before trigger errors. **Migration:** import them from the new path and pass
   the project; nothing is re-exported.
+- **core:** `DeployCheckRegistry` is now `CheckSet`, and `DeployCheckRegistry.load_installed`,
+  `REST_CHECKS`, `Recipe.skip_checks`, `CheckedProject.skipped` and the
+  `skip=` parameters of `run_deploy_checks`, `enforce_deploy_checks` and
+  `Project.check` are removed: `Recipe.check_scope` (a `CheckScope`),
+  `scope=` and `excluded=` replace them, and `build_manifest` takes the
+  `Project` of a `CheckedProject`. Each `loom.deploy_checks` entry point is
+  named by a configuration path and targets a `CHECKS` set (`logger`,
+  `repository`, `audit` and `rest` are now `observability.log`,
+  `stores.settings.cursors`, `stores` and `app.rest`). A third-party module a
+  used set needs that is not installed is a `ConfigError` naming the path,
+  the module and the extras, no longer a silent omission. **Migration:**
+  register your own checks with `CheckSet.register` and point your entry
+  point at the set; reinstall loom so the new entry-point names exist.
+- **cli:** `loom check --skip` and `loom deploy manifest --skip` take
+  configuration paths (`app.rest`), no longer ids or areas (`loom.rest`);
+  `loom.rest.E001` and `loom.rest.W001` no longer fire for a configuration
+  that declares no `app.rest`, except for a FastAPI entry, which requires it.
+  **Migration:** replace `--skip loom.rest` with `--skip app.rest`.
 - **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
   Before: a use case with a missing binding, a dependency cycle or a main
   model with no repository failed at its first invocation. Now: it fails at
@@ -778,31 +796,25 @@
   models serving one table in a store, or a module that fails to import, are a
   `ConfigError` naming the modules. `app.agents` lists agent artifact globs
   for applications with or without Python components.
-- **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
+- **composition:** `Project.check(*paths, config_dir=, environment=, excluded=)`
   loads the configuration as written, resolving no placeholder, applies the
   structural rules start-up applies (`app.name` required, a `${...}`
   placeholder counting as present; `app.discovery` refused; the backend of
   every declared store registered and installed, with the start-up message),
-  runs the registered deploy checks and returns a
-  `CheckedProject` (`config`, `environment`, `report`, `skipped`,
-  `config_root`, `code_path`, and `discovered`, the scan of `app.packages` as
-  written, run once). `loom check --deploy` and `loom deploy manifest`
-  run through it; the CLI also refuses misdeclared lambda triggers, which no
-  `--skip` leaves out.
-- **core:** the entry-point group `loom.deploy_checks` names the packages whose
-  import registers deploy checks (`DeployCheckRegistry.load_installed()`); a
-  package shipping checks registers there. A check package whose third-party
-  dependency is not installed is left out with all its checks; run `loom check`
-  with the same extras you deploy. loom registers `logger`, `repository`,
-  `audit` and `rest`.
-- **stores:** a store backend that needs a third-party module that is not
-  installed fails with a `ConfigError` naming `stores.<key>.backend`, the module
-  and the extras of the distribution that require it (`dynamodb` names
-  `loom-kernel[aws]`, `mongo` names `loom-kernel[mongo]`), or only the module
-  when no extra provides it; a missing module of loom itself is re-raised
-  unchanged instead of being reported as a missing extra.
-  `loom.core.plugins.entrypoints.MissingDependency` derives that message from
-  the entry point's distribution metadata.
+  runs the deploy checks of the configuration paths it declares and returns a
+  `CheckedProject` (`config`, `environment`, `report`, `config_root`,
+  `code_path`, `project`, the `Project` of the configuration as written, and
+  `discovered`, its scan of `app.packages`, run once). `loom check --deploy`
+  and `loom deploy manifest` run through it and share that one scan; the CLI
+  also refuses misdeclared lambda triggers, which no `--skip` leaves out.
+- **core:** the entry-point group `loom.deploy_checks` maps a configuration
+  path to the `CheckSet` validating it; a package shipping checks registers
+  there. A set is imported only when the process uses its path (declared,
+  required by the process and not excluded), so a deployment without FastAPI
+  that declares no `app.rest` never imports the REST checks. loom registers
+  `observability.log`, `stores`, `stores.settings.cursors` and `app.rest`;
+  the report lists the paths `checked` and `skipped`, and `loom check` prints
+  them, so `loom.audit.W001` now also runs at deployed start-up.
 
 ### ai
 
@@ -980,6 +992,14 @@
 
 ### stores
 
+- **stores:** a store backend that needs a third-party module that is not
+  installed fails with a `ConfigError` naming `stores.<key>.backend`, the module
+  and the extras of the distribution that require it (`dynamodb` names
+  `loom-kernel[aws]`, `mongo` names `loom-kernel[mongo]`), or only the module
+  when no extra provides it; a missing module of loom itself is re-raised
+  unchanged instead of being reported as a missing extra.
+  `loom.core.plugins.entrypoints.MissingDependency` derives that message from
+  the entry point's distribution metadata.
 - **stores:** `RepositoryCatalog.from_repositories({Model: repository})`
   builds the model, table and store indexes of a composed catalog, with the
   same `for_table` errors, for unit tests with no composed application.

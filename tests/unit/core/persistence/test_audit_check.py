@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from loom.core.checks import DEPLOY_CHECKS
 from loom.core.config import ConfigContext
-from loom.core.stores.audit_checks import AUDIT_DISABLED_CHECK
+from loom.core.stores.audit_checks import AUDIT_DISABLED_CHECK, CHECKS
 
 
 def _run(stores: dict[str, object]) -> object:
-    check = dict(DEPLOY_CHECKS.items())[AUDIT_DISABLED_CHECK]
+    check = dict(CHECKS.items())[AUDIT_DISABLED_CHECK]
     return check(ConfigContext.from_dict({"stores": stores}))
 
 

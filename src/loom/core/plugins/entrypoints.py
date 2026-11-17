@@ -132,18 +132,22 @@ class MissingDependency:
             return None
         return cls(module=name.partition(".")[0], entry=entry)
 
+    @staticmethod
+    def _normalise(name: str) -> str:
+        return re.sub(r"[-_.]+", "-", name).lower()
+
     @property
     def extras(self) -> tuple[str, ...]:
         """Extras of the entry point's distribution that require the module, in metadata order."""
         dist = self.entry.dist
         if dist is None:
             return ()
-        wanted = _normalise(self.module)
+        wanted = self._normalise(self.module)
         found: list[str] = []
         for requirement in dist.requires or ():
             name = _REQUIREMENT_NAME.match(requirement)
             extra = _EXTRA_MARKER.search(requirement)
-            if name and extra and _normalise(name.group()) == wanted and extra[1] not in found:
+            if name and extra and self._normalise(name.group()) == wanted and extra[1] not in found:
                 found.append(extra[1])
         return tuple(found)
 
@@ -291,10 +295,6 @@ def _resolve_conflict(
 def registered_names(group: str) -> tuple[str, ...]:
     """Return the names registered in *group*, sorted and deduplicated, importing none."""
     return tuple(sorted({ep.name for ep in list_entry_points(group)}))
-
-
-def _normalise(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _distribution_name(ep: EntryPoint) -> str:

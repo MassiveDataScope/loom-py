@@ -16,6 +16,8 @@ from typer.testing import CliRunner
 from loom.cli.app import app
 from loom.core.config.secrets import SecretsManagerResolver
 from loom.core.config.ssm import SsmResolver
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.scanner import PackageScanner
 
 pytestmark = [
     pytest.mark.timeout(30),
@@ -447,7 +449,7 @@ class TestDeployManifest:
     def test_no_skip_hides_an_event_trigger_naming_no_job(self, project: Project) -> None:
         missing = _set("lambda.functions.invoices_in.trigger.job", "MissingJob")
 
-        result = _manifest(project(missing), "--skip", "loom")
+        result = _manifest(project(missing), "--skip", "app.rest")
 
         assert result.exit_code == 1
         assert result.stdout == ""
@@ -490,6 +492,23 @@ class TestDeployManifest:
         assert "silenced: loom.cursors.E001" in result.stderr
         assert "WARNING loom.rest.W001" in result.stderr
 
+    def test_the_manifest_scans_the_application_packages_once(
+        self, project: Project, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[int] = []
+        scan = PackageScanner.discover
+
+        def counted(self: PackageScanner, **kwargs: Any) -> DiscoveryResult:
+            calls.append(1)
+            return scan(self, **kwargs)
+
+        monkeypatch.setattr(PackageScanner, "discover", counted)
+
+        result = _manifest(project())
+
+        assert result.exit_code == 0, result.stderr
+        assert len(calls) == 1
+
 
 class TestDefaultConfigDirectory:
     def test_without_a_path_the_manifest_comes_from_the_default_directory(
@@ -502,13 +521,13 @@ class TestDefaultConfigDirectory:
         monkeypatch.chdir(tmp_path)
         roots: list[Path] = []
 
-        def build(config: Any, environment: Any, function: Any, **options: Any) -> dict[str, Any]:
-            roots.append(options["config_root"])
+        def build(project: Any, function: Any = None) -> dict[str, Any]:
+            roots.append(project.config_root)
             return {}
 
         monkeypatch.setattr("loom.cli.deploy.build_manifest", build)
 
-        result = runner.invoke(app, ["deploy", "manifest", "--skip", "loom.rest"])
+        result = runner.invoke(app, ["deploy", "manifest", "--skip", "app.rest"])
 
         assert result.exit_code == 0, result.output
         assert roots == [directory.resolve()]

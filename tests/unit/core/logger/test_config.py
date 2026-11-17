@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import structlog
 
-from loom.core.checks import DeployCheckRegistry, Finding, enforce_deploy_checks
+from loom.core.checks import CheckSet, Finding, enforce_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
@@ -135,8 +135,8 @@ def loom_loggers_restored() -> Iterator[None]:
             target.removeHandler(handler)
 
 
-def _warning_registry() -> DeployCheckRegistry:
-    registry = DeployCheckRegistry()
+def _warning_registry() -> CheckSet:
+    registry = CheckSet()
 
     @registry.register("tests.floor.W001")
     def _always(config: ConfigContext) -> Finding | None:
@@ -147,7 +147,7 @@ def _warning_registry() -> DeployCheckRegistry:
 
 def _enforce_with_a_warning_and_a_silenced_id() -> None:
     config = ConfigContext.from_dict({"checks": {"silenced": ["tests.floor.W002"]}})
-    enforce_deploy_checks(config, Environment.PRODUCTION, registry=_warning_registry())
+    enforce_deploy_checks(config, Environment.PRODUCTION, application=_warning_registry())
 
 
 class TestDeployCheckLoggerLevels:

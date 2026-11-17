@@ -14,7 +14,7 @@ loom deploy manifest config/ --env production --function worker
 The command loads the configuration the same way `loom check --deploy` does:
 a config directory (`base.yaml` plus the overlay of `--env`) or explicit
 files, `LOOM__` overrides included. It runs the same deploy checks, and
-`--skip` works the same way. Their findings go to stderr. When a check fails,
+`--skip` works the same way and takes configuration paths (`app.rest`). The manifest reuses the scan of `app.packages` the checks already ran. Their findings go to stderr. When a check fails,
 the command prints no manifest and exits `1`. stdout holds only the manifest.
 
 ## What the configuration declares

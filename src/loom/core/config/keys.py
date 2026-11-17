@@ -19,6 +19,7 @@ class ConfigKey(StrEnum):
     """
 
     APP = "app"
+    APP_REST = "app.rest"
     AI = "ai"
     AWS = "aws"
     CACHE = "cache"

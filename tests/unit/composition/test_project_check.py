@@ -28,20 +28,39 @@ class TestProjectCheck:
         checked = Project.check(config, environment="test")
 
         assert checked.report.errors
-        assert checked.skipped == ()
+        assert "app.rest" in checked.report.checked
 
-    def test_leaves_out_the_skipped_area(self, tmp_path: Path) -> None:
+    def test_leaves_out_the_excluded_path(self, tmp_path: Path) -> None:
         config = _write(tmp_path / "app.yaml", _UNAUTHENTICATED)
 
-        checked = Project.check(config, environment="test", skip=("loom.rest",))
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
 
         assert not checked.report.errors
-        assert checked.skipped == ("loom.rest",)
+        assert "app.rest (left out by the process)" in [
+            skipped.describe() for skipped in checked.report.skipped
+        ]
+
+    def test_skips_a_path_the_configuration_does_not_declare(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "worker.yaml", {"app": {"name": "acme"}})
+
+        checked = Project.check(config, environment="test")
+
+        assert "app.rest (not declared)" in [s.describe() for s in checked.report.skipped]
+        assert "app.rest" not in checked.report.checked
+
+    def test_a_fastapi_entry_requires_app_rest_though_it_is_not_declared(
+        self, tmp_path: Path
+    ) -> None:
+        config = _write(tmp_path / "api.yaml", {"app": {"name": "acme", "entry": "fastapi"}})
+
+        checked = Project.check(config, environment="test")
+
+        assert "loom.rest.E001" in [result.id for result in checked.report.errors]
 
     def test_loads_without_resolving_a_placeholder(self, tmp_path: Path) -> None:
         config = _write(tmp_path / "worker.yaml", {"app": {"name": "${secrets:/acme/name}"}})
 
-        checked = Project.check(config, environment="test", skip=("loom.rest",))
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
 
         assert checked.config_root == tmp_path.resolve()
 

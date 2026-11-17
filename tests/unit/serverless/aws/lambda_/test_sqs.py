@@ -14,7 +14,7 @@ import pytest
 
 from loom.composition import AppConfig, Application, CompositionStateError, Project
 from loom.composition.resources import Resource, ResourceKind
-from loom.core.checks import REST_CHECKS
+from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
@@ -253,7 +253,7 @@ print([name for name in loaded if name in sys.modules])
         recipe = adapter.recipe(project)
         assert recipe.profile is LAMBDA_PROFILE
         assert (recipe.agents, recipe.agent_endpoints) == (True, False)
-        assert REST_CHECKS in recipe.skip_checks
+        assert recipe.check_scope == CheckScope.without_rest()
 
     def test_bind_propagates_open_failure(
         self,

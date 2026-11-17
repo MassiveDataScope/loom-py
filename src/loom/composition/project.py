@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Final, TypeVar
 
 import msgspec
 
@@ -14,7 +14,7 @@ from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.cache.wiring import CacheGateways
-from loom.core.checks import DEPLOY_CHECKS, DeployReport, run_deploy_checks
+from loom.core.checks import CheckScope, DeployReport, run_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigError,
@@ -22,6 +22,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.loader import convert_section
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
 
 
 T = TypeVar("T")
+
+FASTAPI_ENTRY: Final = "fastapi"
+"""Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
 
 class AppConfig(msgspec.Struct, kw_only=True):
@@ -95,8 +99,7 @@ class CheckedProject:
     Args:
         config: Loaded configuration, placeholders left unresolved.
         environment: Environment the overlay was picked for.
-        report: Findings of the deploy checks.
-        skipped: Check ids or areas left out of the run.
+        report: Findings of the deploy checks, and the paths checked and skipped.
         config_root: Directory of the first configuration file.
         code_path: Application code directory, already on ``sys.path``.
     """
@@ -104,18 +107,34 @@ class CheckedProject:
     config: ConfigContext
     environment: Environment
     report: DeployReport
-    skipped: tuple[str, ...]
     config_root: Path
     code_path: Path
 
     @functools.cached_property
+    def project(self) -> Project:
+        """The :class:`Project` of the configuration as written: nothing resolved, nothing observed.
+
+        Raises:
+            ConfigError: When the ``app`` section does not convert.
+        """
+        return Project(
+            config=self.config,
+            environment=self.environment,
+            code_path=self.code_path,
+            config_root=self.config_root,
+            app=convert_section(self.config.raw(ConfigKey.APP), ConfigKey.APP, AppConfig),
+            observability=ObservabilityRuntime.noop(),
+            observability_config=ObservabilityConfig(),
+        )
+
+    @property
     def discovered(self) -> DiscoveryResult:
-        """What the scan of ``app.packages``, as written, found; scanned once, nothing resolved.
+        """What the scan of ``app.packages``, as written, found; the project scans once.
 
         Raises:
             ConfigError: When a package cannot be scanned.
         """
-        return PackageScanner(self.config.raw(f"{ConfigKey.APP}.packages", [])).discover()
+        return self.project.discovered
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -200,7 +219,7 @@ class Project:
         *config_paths: str,
         config_dir: str | None = None,
         environment: Environment | str | None = None,
-        skip: tuple[str, ...] = (),
+        excluded: Collection[str] = (),
     ) -> CheckedProject:
         """Load the configuration as written and run every deploy check, whatever the environment.
 
@@ -210,14 +229,15 @@ class Project:
         :meth:`AppConfig.reject_misdeclared` and the installed backend of every
         declared store. ``app.code_path`` joins ``sys.path`` and ``checks.modules``
         import from it. The check packages installed under the
-        ``loom.deploy_checks`` entry-point group are loaded first.
+        ``loom.deploy_checks`` entry-point group run for the paths the
+        configuration declares; ``app.rest`` always runs when ``app.entry`` is ``fastapi``.
 
         Args:
             *config_paths: See :func:`~loom.composition.create_app`.
             config_dir: See :func:`~loom.composition.create_app`.
             environment: See :func:`~loom.composition.create_app`.
-            skip: Check ids, or dotted areas such as ``"loom.rest"``, the
-                process does not run.
+            excluded: Configuration paths whose checks the process does not
+                run, such as ``"app.rest"`` for a process serving no HTTP.
 
         Returns:
             The loaded configuration with the findings and the silenced ids.
@@ -228,7 +248,6 @@ class Project:
                 installed, ``app.code_path`` is not a literal path, or the
                 ``checks`` section is invalid.
         """
-        DEPLOY_CHECKS.load_installed()
         resolved_environment = resolve_environment(environment)
         paths = select_config_paths(
             config_paths, config_dir, resolved_environment, caller="loom check"
@@ -246,11 +265,15 @@ class Project:
                 "non-string value cannot name the directory its check modules import from"
             )
         code_path = add_code_path(raw_code_path, config_root)
+        served = ctx.raw(f"{ConfigKey.APP}.entry") == FASTAPI_ENTRY
+        scope = CheckScope(
+            required=frozenset({ConfigKey.APP_REST}) if served else frozenset(),
+            excluded=frozenset(excluded),
+        )
         return CheckedProject(
             config=ctx,
             environment=resolved_environment,
-            report=run_deploy_checks(ctx, skip=skip),
-            skipped=skip,
+            report=run_deploy_checks(ctx, scope=scope),
             config_root=config_root,
             code_path=code_path,
         )

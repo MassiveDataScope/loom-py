@@ -112,7 +112,7 @@ class TestProjectAndCheckShareTheDefault:
     def test_the_command_without_a_path_checks_the_default_directory(
         self, variable_config: Path
     ) -> None:
-        result = CliRunner().invoke(cli, ["check", "--deploy", "--skip", "loom.rest"])
+        result = CliRunner().invoke(cli, ["check", "--deploy", "--skip", "app.rest"])
 
         assert result.exit_code == 0, result.output
 

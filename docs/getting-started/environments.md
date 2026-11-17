@@ -527,17 +527,22 @@ loom check --deploy config/base.yaml config/production.yaml
 
 `--env` picks the overlay of a directory and defaults to `LOOM_ENV`. The
 `LOOM__*` variables of the shell apply as at startup; those of the deployed
-task do not, so keep security settings in the files. The command cannot tell
-which process a configuration is for, so it runs every check: pass
-`--skip loom.rest` (repeatable, any id or area) for a worker, ETL or
-streaming configuration, as those processes skip the REST checks at startup.
+task do not, so keep security settings in the files. A set of checks runs when
+the configuration declares the path it validates (`observability.log`,
+`stores`, `stores.settings.cursors`, `app.rest`; `app.rest` also when
+`app.entry` is `fastapi`), and the report lists `checked:` and `skipped:` paths.
+The command cannot tell which process a configuration is for, so pass
+`--skip app.rest` (repeatable, a configuration path) for a worker, ETL or
+streaming configuration, as those processes leave the REST checks out at startup.
 The configuration loads with loom's default resolvers, and the checks read
 keys as written, so a `${secrets:...}` value no check reads needs no access. `app.code_path` (`src`
 by default, relative to the first file) joins the import path as `create_app`
 adds it, so `checks.modules` import here as well. The checks read
 configuration keys only, so no secret needs to be reachable. A check
-package whose third-party dependency is not installed is left out (the REST
-checks without FastAPI), so run `loom check` with the same extras you deploy.
+set whose path is used but whose third-party dependency is not installed (the
+REST checks without FastAPI) is a configuration error naming the path, the
+module and the extras, not a finding, so it cannot be silenced: install the
+extra, or pass `--skip <path>` for a process that does not use it.
 
 ## Tests
 
