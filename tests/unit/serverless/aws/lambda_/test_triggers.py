@@ -18,11 +18,14 @@ from loom.core.job.job import Job
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Input
+from loom.jobs.aws.queue import REJECTION_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials
 from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
+from loom.testing.serverless import QueueableEvent
 from tests.helpers.composition import composition_project
+from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
 pytestmark = pytest.mark.timeout(30)
@@ -84,6 +87,15 @@ _SYSTEM = {"subject": "svc:importer"}
 
 
 @pytest.fixture
+def sqs() -> FakeSqs:
+    policy = {
+        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:events-dlq",
+        "maxReceiveCount": 4,
+    }
+    return FakeSqs({queue_url("events"): policy})
+
+
+@pytest.fixture
 def serve(tmp_path: Path, no_aws_clients: None) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
     adapters: list[LambdaAdapter] = []
@@ -94,12 +106,14 @@ def serve(tmp_path: Path, no_aws_clients: None) -> Iterator[Serve]:
         name: str = _FUNCTION,
         observer: _Observer | None = None,
         written: dict[str, Any] | None = None,
+        dead_letter: str = "discard",
         **options: Any,
     ) -> Any:
         if trigger.get("source") in _EVENT_SOURCES:
             trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
         document = consumed_queues("events") | {"lambda": {"functions": {name: function}}}
+        document["sqs"]["queues"]["events"]["dead_letter"] = dead_letter
         project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="events", job_service="inline", entry=name),
@@ -354,14 +368,22 @@ class TestDirectTrigger:
         assert [invoice for invoice, _ in ran] == [Invoice(number="7")]
 
 
+_EVENTS_ARN = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:events"
+_DEAD = queue_url("events-dlq")
+
+
+def _queued(event: QueueableEvent, message_id: str) -> LambdaEvent:
+    return event.via_sqs(message_id=message_id, queue_arn=_EVENTS_ARN)
+
+
 class TestQueued:
     def test_a_failed_message_is_reported_alone(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         handler = serve(_events(queue=_QUEUE, identity=_IDENTITY))
         records = [
-            *LambdaEvent.eventbridge({"number": "1"}).via_sqs(message_id="m1")["Records"],
-            *LambdaEvent.eventbridge({"number": "fail"}).via_sqs(message_id="m2")["Records"],
+            *_queued(LambdaEvent.eventbridge({"number": "1"}), "m1")["Records"],
+            *_queued(LambdaEvent.eventbridge({"number": "fail"}), "m2")["Records"],
         ]
 
         result = handler({"Records": records}, None)
@@ -370,39 +392,58 @@ class TestQueued:
         assert [invoice.number for invoice, _ in ran] == ["1", "fail"]
         assert {caller.mechanism for _, caller in ran} == {f"lambda:{_FUNCTION}:eventbridge"}
 
-    def test_a_final_failure_is_reported_too_so_it_is_dead_lettered(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    def test_a_final_failure_is_rejected_to_the_dead_letter_queue_not_reported(
+        self, serve: Serve, ran: list[tuple[Any, Identity]], sqs: FakeSqs
     ) -> None:
-        handler = serve(_events(queue=_QUEUE))
-        event = LambdaEvent.eventbridge({"number": "final"}).via_sqs(message_id="m1")
+        handler = serve(_events(queue=_QUEUE), dead_letter="redrive")
+        event = _queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
 
         result = handler(event, None)
 
-        assert result == {"batchItemFailures": [{"itemIdentifier": "m1"}]}
+        (rejected,) = sqs.entries("send_message_batch", _DEAD)
+        reason = rejected["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+        assert (result, reason) == ({"batchItemFailures": []}, "_Final")
         assert [invoice.number for invoice, _ in ran] == ["final"]
+
+    def test_a_final_failure_on_a_discard_queue_is_dropped_not_reported(
+        self, serve: Serve, sqs: FakeSqs
+    ) -> None:
+        handler = serve(_events(queue=_QUEUE))
+        event = _queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
+
+        assert (handler(event, None), sqs.batches) == ({"batchItemFailures": []}, [])
 
     def test_an_sns_message_runs_from_its_envelope(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
         handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
 
-        result = handler(LambdaEvent.sns({"number": "7"}).via_sqs(), None)
+        result = handler(_queued(LambdaEvent.sns({"number": "7"}), "m1"), None)
 
         assert (result, [invoice for invoice, _ in ran]) == (
             {"batchItemFailures": []},
             [Invoice(number="7")],
         )
 
-    def test_an_sns_message_delivered_raw_is_malformed(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    @pytest.mark.parametrize(("dead_letter", "dead_lettered"), [("discard", 0), ("redrive", 1)])
+    def test_an_sns_message_delivered_raw_is_rejected_not_reported(
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        sqs: FakeSqs,
+        dead_letter: str,
+        dead_lettered: int,
     ) -> None:
-        handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
+        handler = serve(
+            {"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"}, dead_letter=dead_letter
+        )
 
-        event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r")
+        event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r", queue_arn=_EVENTS_ARN)
 
         result = handler(event, None)
 
-        assert (result, ran) == ({"batchItemFailures": [{"itemIdentifier": "r"}]}, [])
+        assert (result, ran) == ({"batchItemFailures": []}, [])
+        assert len(sqs.entries("send_message_batch", _DEAD)) == dead_lettered
 
 
 class _Authenticator:

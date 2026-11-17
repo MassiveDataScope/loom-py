@@ -130,6 +130,37 @@ class TestConsumedQueue:
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 
+    def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        client = FakeSqs(_POLICY, lookup_raises=RuntimeError("throttled"))
+
+        with pytest.raises(ConfigError, match=r"queue 'jobs'.*RuntimeError: throttled"):
+            _bind(tmp_path, probe, client)
+
+    def test_a_function_declaring_no_queue_warns_that_its_rejections_are_reported(
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        document = {
+            "app": {"name": "lambda-sqs"},
+            "lambda": {"functions": {WORKER: {"trigger": {"source": "jobs"}}}},
+        }
+        project = composition_project(
+            ConfigContext.from_dict(document),
+            app=AppConfig(name="lambda-sqs", entry=WORKER),
+            code_path=tmp_path,
+            config_root=tmp_path,
+        )
+        adapter = LambdaAdapter(jobs=[probe[0]])
+        with patched_aws_clients(FakeSqs()):
+            adapter.bind(project.compose(adapter))
+            adapter.close()
+
+        assert any("declares no queue of sqs.queues" in str(r.msg) for r in caplog.records)
+
     def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
     ) -> None:

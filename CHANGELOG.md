@@ -98,7 +98,14 @@
   none for it (`Recipe.logs_job_retries`). `loom.testing.TEST_QUEUE` is the
   `sqs.queues` entry that the default queue ARN of a `LambdaEvent` record
   names: declare it in the test configuration, and a failed record of a test
-  settles instead of logging that no queue matches.
+  settles instead of logging that no queue matches. Settling calls SQS, so a
+  test patches the AWS client (`docs/rest/testing.md`). A record whose
+  `ApproximateReceiveCount` or `loom.deferrals` is not a number is malformed,
+  and only it is rejected. The RedrivePolicy is read at Init with the
+  application's own SQS client; a queue that cannot be read stops start-up
+  with a `ConfigError` naming it. A jobs function that declares no queue logs
+  a WARNING at Init: its rejections are listed until the queue's own
+  `RedrivePolicy` dead-letters them.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker

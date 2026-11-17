@@ -192,12 +192,12 @@ should retry:
 from loom.composition import create_app
 from loom.testing import LambdaEvent
 
-def test_a_poison_message_is_retried() -> None:
+def test_a_message_naming_an_unknown_job_is_retried() -> None:
     handler = create_app("config.yaml", environment="test")  # app.entry: worker
     try:
         records = [
             *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
-            *LambdaEvent.sqs_record("{", message_id="2")["Records"],
+            *LambdaEvent.sqs_record('{"job": "Missing"}', message_id="2")["Records"],
         ]
         result = handler({"Records": records}, None)
     finally:
@@ -205,6 +205,16 @@ def test_a_poison_message_is_retried() -> None:
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
 ```
+
+A handler settles each record by what its job came to, so a failed record is
+reported only after the handler resolved its queue by the record's
+`queue_arn`. The default ARN of a `LambdaEvent` record names the queue in
+`loom.testing.TEST_QUEUE`; declare it in the test configuration
+(`sqs: {queues: {jobs: ...}}`) so a failure settles instead of logging that no
+queue matches. Settling calls SQS, so **patch the AWS client** in the test (for
+instance `unittest.mock.patch("boto3.Session")`): without a patch the test makes
+real AWS calls. A malformed message is rejected and is not in
+`batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 

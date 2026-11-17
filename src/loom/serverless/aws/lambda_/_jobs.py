@@ -22,9 +22,11 @@ from loom.core.job.policy import DEFAULT_RETRY, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService, JobService
+from loom.core.job.settlement import JobSettlement
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
+from loom.jobs.aws.queue import SqsRecord
 from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
@@ -108,7 +110,7 @@ class QueueConsumer:
 
     settings: JobSettings
     unserved: RetryPolicy
-    settlement: SqsSettlement
+    settlement: JobSettlement[SqsRecord]
 
     @classmethod
     def bind(
@@ -122,8 +124,9 @@ class QueueConsumer:
         logs the consumer's policies.
 
         Raises:
-            ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, or a job on a
-                ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``.
+            ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, a job on a
+                ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``, or
+                the queue cannot be read, naming it.
             SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
         """
         config = SQSConfig.load(application.config)
@@ -136,11 +139,25 @@ class QueueConsumer:
                 raise ConfigError(
                     f"sqs.queues.{queue_name} is missing: a function consumes that queue"
                 )
-            queue = settlement.queues.named(queue_name)
-            settings = base.with_retries(
-                queue.consumed_retries(served, lambda job: base.of(job).retry)
+            try:
+                queue = settlement.queues.named(queue_name)
+                settings = base.with_retries(
+                    queue.consumed_retries(served, lambda job: base.of(job).retry)
+                )
+                unserved = queue.unserved_policy()
+            except ConfigError:
+                raise
+            except Exception as exc:
+                raise ConfigError(
+                    f"cannot read queue {queue_name!r} of sqs.queues at Init: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+        else:
+            _log.warning(
+                "this jobs function declares no queue of sqs.queues: a message loom rejects "
+                "is reported to its queue, not dead-lettered, until the queue's own "
+                "RedrivePolicy does"
             )
-            unserved = queue.unserved_policy()
         if served:
             _log.info(
                 "Job retry policies",

@@ -50,7 +50,7 @@ def make_record(
     job_name: str = "ProbeJob",
     body: str | None = None,
     receive_count: int = 1,
-    deferrals: int | None = None,
+    deferrals: int | str | None = None,
 ) -> dict[str, Any]:
     if body is None:
         envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}

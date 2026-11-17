@@ -15,6 +15,7 @@ import msgspec
 
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
+from loom.core.errors import MalformedJobMessage
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
 from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
@@ -165,6 +166,7 @@ class SqsRecord:
         attributes: The message attributes, in the shape the SQS API takes.
         queue_arn: The ARN of the queue it was received from.
         receive_count: ``ApproximateReceiveCount``: how many times SQS delivered it.
+        unreadable: Why loom cannot read its attributes; empty when it can.
     """
 
     message_id: str
@@ -174,6 +176,7 @@ class SqsRecord:
     attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     queue_arn: str = ""
     receive_count: int = 1
+    unreadable: str = ""
 
     @classmethod
     def from_event(cls, record: Any) -> SqsRecord:
@@ -181,18 +184,36 @@ class SqsRecord:
         if not isinstance(record, Mapping):
             return cls("", "", "")
         system = record.get("attributes", {})
+        attributes = {
+            name: cls._attribute(value)
+            for name, value in record.get("messageAttributes", {}).items()
+        }
+        received, unreadable = 1, ""
+        try:
+            received = int(system.get("ApproximateReceiveCount", 1))
+            int(attributes.get(DEFERRALS_ATTRIBUTE, {}).get("StringValue", 0))
+        except (TypeError, ValueError):
+            unreadable = f"ApproximateReceiveCount or {DEFERRALS_ATTRIBUTE} is not a number"
         return cls(
             message_id=str(record.get("messageId", "")),
             receipt_handle=str(record.get("receiptHandle", "")),
             body=str(record.get("body", "")),
             group_id=system.get("MessageGroupId"),
-            attributes={
-                name: cls._attribute(value)
-                for name, value in record.get("messageAttributes", {}).items()
-            },
+            attributes=attributes,
             queue_arn=str(record.get("eventSourceARN", "")),
-            receive_count=int(system.get("ApproximateReceiveCount", 1)),
+            receive_count=received,
+            unreadable=unreadable,
         )
+
+    def require_readable(self) -> None:
+        """Raise when its attributes cannot be read.
+
+        Raises:
+            MalformedJobMessage: When ``ApproximateReceiveCount`` or ``loom.deferrals``
+                is not a number.
+        """
+        if self.unreadable:
+            raise MalformedJobMessage(self.unreadable)
 
     @property
     def is_settleable(self) -> bool:
@@ -273,10 +294,15 @@ class SqsQueue:
         client: The boto3 ``sqs`` client.
         name: The queue's name in ``sqs.queues``, for messages.
         config: Its URL and dead-letter policy.
+        metadata_client: Reads the queue's attributes and the dead-letter queue's URL;
+            *client* when omitted.
     """
 
-    def __init__(self, client: Any, name: str, config: QueueConfig) -> None:
+    def __init__(
+        self, client: Any, name: str, config: QueueConfig, metadata_client: Any = None
+    ) -> None:
         self._client = client
+        self._metadata_client = client if metadata_client is None else metadata_client
         self.name = name
         self.url = config.url
         self.is_fifo = config.is_fifo
@@ -442,7 +468,7 @@ class SqsQueue:
             raise SQSQueueConfigError(
                 f"queue {self.name!r} is dead_letter: discard: it has no dead-letter queue"
             )
-        attributes = self._client.get_queue_attributes(
+        attributes = self._metadata_client.get_queue_attributes(
             QueueUrl=self.url, AttributeNames=["RedrivePolicy"]
         )
         written = attributes.get("Attributes", {}).get("RedrivePolicy")
@@ -454,9 +480,14 @@ class SqsQueue:
             )
         policy = json.loads(written)
         _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
-        url = self._client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
+        url = self._metadata_client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)[
+            "QueueUrl"
+        ]
         target = SqsQueue(
-            self._client, name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
+            self._client,
+            name,
+            QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD),
+            self._metadata_client,
         )
         return DeadLetter(target, int(policy["maxReceiveCount"]))
 
@@ -486,12 +517,17 @@ class SqsQueues:
     Building one, or asking it for a queue, makes no call to SQS.
 
     Args:
-        client: The boto3 ``sqs`` client every queue uses.
+        client: The boto3 ``sqs`` client every queue sends and settles with.
         queues: ``sqs.queues``, by name.
+        metadata_client: The client that reads queue metadata; *client* when omitted.
     """
 
-    def __init__(self, client: Any, queues: Mapping[str, QueueConfig]) -> None:
-        self._by_name = {name: SqsQueue(client, name, config) for name, config in queues.items()}
+    def __init__(
+        self, client: Any, queues: Mapping[str, QueueConfig], metadata_client: Any = None
+    ) -> None:
+        self._by_name = {
+            name: SqsQueue(client, name, config, metadata_client) for name, config in queues.items()
+        }
 
     def named(self, name: str) -> SqsQueue:
         """The queue *name* of ``sqs.queues``.

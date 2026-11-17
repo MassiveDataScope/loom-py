@@ -551,13 +551,19 @@ ten entries each.
 - Each settlement call is bounded: 1 s to connect, 1 s to read, one attempt. A
   timeout in the middle of a settlement redelivers the batch: a message may run
   twice, none is lost.
-- The function reads the queue's `RedrivePolicy` once, at Init, and settling a
-  batch makes no metadata call. It logs one `Job retry policies` line for its
+- The function reads the queue's `RedrivePolicy` once, at Init, with the
+  application's own SQS client and its retries; a failure names the queue and
+  stops start-up. Settling a batch makes no metadata call. It logs one `Job retry policies` line for its
   jobs.
 - A record the function did not run (the invocation ran out of time, or it
   follows a failed message on a FIFO queue) stays in `batchItemFailures`
   without being settled. It is not an attempt of the job, though SQS counts its
   delivery in `ApproximateReceiveCount`.
+- A function that declares no queue of `sqs.queues` logs a WARNING at Init:
+  loom cannot find the queue of a message, so a rejection is listed in
+  `batchItemFailures` until the queue's own `RedrivePolicy` dead-letters it.
+- A message whose `ApproximateReceiveCount` or `loom.deferrals` is not a number
+  is malformed: only that message is rejected.
 - A malformed message is rejected at once, with `MalformedJobMessage` as reason.
   A message naming a job the function does not serve is retried, as a deploy
   may still be rolling out, but only up to the queue's limit (`maxReceiveCount`

@@ -264,6 +264,16 @@ class TestSqsSettlement:
         deleted = (sqs.client.calls["delete_message"], sqs.client.calls["delete_message_batch"])
         assert deleted == (0, 0)
 
+    def test_metadata_is_read_with_the_retrying_client_and_settling_uses_the_bounded_one(
+        self, settling: Callable[..., Settling]
+    ) -> None:
+        sqs = settling()
+
+        sqs.settle_all([(_record("a"), Rejected("no"))])
+
+        attempts = [o["config"].retries["total_max_attempts"] for o in sqs.factory.options]
+        assert sorted(attempts) == [1, 3]
+
     def test_the_client_it_asks_for_fits_the_safety_margin(
         self, settling: Callable[..., Settling]
     ) -> None:

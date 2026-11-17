@@ -321,3 +321,31 @@ class TestSettlementThroughTheHandler:
 
         assert bound == (1, 1)
         assert (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"]) == bound
+
+    @pytest.mark.parametrize("unreadable", ["deferrals", "receive_count"])
+    def test_a_record_with_a_non_numeric_attribute_alone_is_rejected(
+        self, serve: Serve, sqs: FakeSqs, unreadable: str
+    ) -> None:
+        bad = _record("bad", AcmeOkJob, deferrals="x" if unreadable == "deferrals" else None)
+        if unreadable == "receive_count":
+            bad["attributes"]["ApproximateReceiveCount"] = "x"
+        records = [_record("ok", AcmeOkJob), bad, _record("reject", AcmeRejectingJob)]
+
+        result = serve()({"Records": records}, None)
+
+        sent = sqs.entries("send_message_batch", _DEAD)
+        reasons = {
+            entry["Id"]: entry["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+            for entry in sent
+        }
+        assert _failed(result) == []
+        assert reasons == {"bad": "MalformedJobMessage", "reject": "tenant deleted"}
+
+    def test_a_malformed_message_on_a_discard_queue_is_dropped_at_the_first_delivery(
+        self, serve: Serve, sqs: FakeSqs
+    ) -> None:
+        record = make_record("1", "x", body="{", receive_count=1)
+
+        result = serve(dead_letter="discard")({"Records": [record]}, None)
+
+        assert (_failed(result), sqs.batches) == ([], [])

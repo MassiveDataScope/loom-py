@@ -86,7 +86,11 @@ class SqsSettlement:
 
     @property
     def queues(self) -> SqsQueues:
-        """The configured queues over a client bound to ``SETTLEMENT_TIMEOUT_S``, built once."""
+        """The configured queues, built once.
+
+        They send and settle through a client bound to ``SETTLEMENT_TIMEOUT_S`` and read
+        queue metadata through the application's own client, with its retries.
+        """
         if self._queues is None:
             bounded = msgspec.structs.replace(
                 self._config,
@@ -94,7 +98,11 @@ class SqsSettlement:
                 read_timeout=SETTLEMENT_TIMEOUT_S,
                 max_attempts=1,
             )
-            self._queues = SqsQueues(self._clients.client("sqs", bounded), self._config.queues)
+            self._queues = SqsQueues(
+                self._clients.client("sqs", bounded),
+                self._config.queues,
+                self._clients.client("sqs", self._config),
+            )
         return self._queues
 
     def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:

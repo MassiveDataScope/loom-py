@@ -44,18 +44,28 @@ def seen() -> Iterator[list[tuple[str, str]]]:
 
 
 @pytest.fixture
-def handler(tmp_path: Path) -> Iterator[LambdaHandler]:
+def sqs() -> FakeSqs:
+    return FakeSqs()
+
+
+@pytest.fixture
+def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
     project = composition_project(
         ConfigContext.from_dict(
-            {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
+            {
+                "aws": {"region": "us-east-1"},
+                "sqs": {"queues": {"jobs": TEST_QUEUE}},
+                "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
+            }
         ),
         app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    yield adapter.bind(project.compose(adapter))
-    adapter.close()
+    with patched_aws_clients(sqs):
+        yield adapter.bind(project.compose(adapter))
+        adapter.close()
 
 
 def _failed(result: dict[str, Any]) -> list[str]:
@@ -104,12 +114,19 @@ class TestSqsEvents:
 
         assert seen == [("a", "alice")]
 
-    def test_a_raw_body_loom_cannot_read_is_retried(
-        self, handler: LambdaHandler, seen: list[tuple[str, str]]
+    def test_a_raw_body_loom_cannot_read_is_rejected_not_reported(
+        self, handler: LambdaHandler, seen: list[tuple[str, str]], sqs: FakeSqs
     ) -> None:
         result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
 
-        assert (_failed(result), seen) == (["poison"], [])
+        assert (_failed(result), seen, sqs.batches) == ([], [], [])
+
+    def test_the_default_queue_of_an_event_settles_through_the_test_queue_entry(
+        self, handler: LambdaHandler, sqs: FakeSqs
+    ) -> None:
+        result = handler({"Records": [_marked("fail", "1")]}, None)
+
+        assert (_failed(result), sqs.calls["change_message_visibility_batch"]) == (["1"], 1)
 
     async def test_the_body_is_the_one_sqs_job_service_sends(self) -> None:
         """All but the caller's deadline and the task id SQS dispatch adds."""
@@ -132,27 +149,3 @@ class TestSqsEvents:
         (sent,) = [json.loads(request["MessageBody"]) for request in client.requests]
         assert sent.pop("task_id")
         assert sent == expected
-
-    def test_the_default_queue_of_an_event_resolves_to_the_test_queue_entry(
-        self, tmp_path: Path
-    ) -> None:
-        sqs = FakeSqs()
-        project = composition_project(
-            ConfigContext.from_dict(
-                {
-                    "aws": {"region": "us-east-1"},
-                    "sqs": {"queues": {"jobs": TEST_QUEUE}},
-                    "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
-                }
-            ),
-            app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),
-            code_path=tmp_path,
-            config_root=tmp_path,
-        )
-        adapter = LambdaAdapter(jobs=[MarkJob])
-        with patched_aws_clients(sqs):
-            handler = adapter.bind(project.compose(adapter))
-            result = handler({"Records": [_marked("fail", "1")]}, None)
-            adapter.close()
-
-        assert (_failed(result), sqs.calls["change_message_visibility_batch"]) == (["1"], 1)

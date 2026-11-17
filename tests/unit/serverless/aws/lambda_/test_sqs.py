@@ -105,6 +105,21 @@ class TestSqsHandler:
         with pytest.raises(ConfigError, match="needs batching_window_s"):
             adapter.recipe(project)
 
+    @pytest.mark.parametrize("missing", ["messageId", "receiptHandle"])
+    def test_a_record_that_cannot_be_settled_is_reported_and_never_run(
+        self,
+        handler: LambdaHandler,
+        record: RecordFactory,
+        seen: list[tuple[str, str | None, str | None]],
+        missing: str,
+    ) -> None:
+        runnable = record("1", "a")
+        del runnable[missing]
+
+        result = handler({"Records": [runnable]}, None)
+
+        assert (len(result["batchItemFailures"]), seen) == (1, [])
+
     def test_a_malformed_body_is_rejected_at_once_and_not_reported(
         self,
         handler: LambdaHandler,
