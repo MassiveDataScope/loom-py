@@ -70,7 +70,7 @@ from loom.composition import (
 )
 from loom.core.async_bridge import build_backend_options
 from loom.core.checks import CheckScope
-from loom.core.config import ConfigKey
+from loom.core.config import ConfigError, ConfigKey
 from loom.core.discovery._utils import collect_use_cases_from_interfaces
 from loom.core.discovery.worker import (
     WorkerComponents,
@@ -176,14 +176,19 @@ class _WorkerLifecycle:
 
     @staticmethod
     def _fork_children(worker: Any) -> None:
-        """Start the pool's children by forking when the worker is configured to.
+        """Pin ``fork`` as the pool start method, or refuse ``spawn`` and ``forkserver``.
 
-        Children inherit the tasks the parent registered and its signal
-        handlers only by forking. billiard's default on macOS is a fresh
-        interpreter that has neither, so ``worker_pool_start_method: fork``
-        (Celery's default) is pinned here.
+        Raises:
+            ConfigError: When *worker* starts its pool with ``spawn`` or ``forkserver``.
         """
-        if worker.pool_start_method == "fork" and "fork" in get_all_start_methods():
+        method = worker.pool_start_method
+        if method in {"spawn", "forkserver"}:
+            raise ConfigError(
+                "loom registers tasks in the parent and needs fork "
+                "(worker_pool_start_method: fork); a prefork pool started with "
+                f"{method} does not inherit them"
+            )
+        if method == "fork" and "fork" in get_all_start_methods():
             set_start_method("fork", force=True)
 
     def on_process_init(self) -> None:

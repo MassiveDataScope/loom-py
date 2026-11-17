@@ -22,6 +22,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
@@ -259,7 +260,7 @@ class Project:
         load_catalog(ctx).require_installed()
         config_root = Path(paths[0]).resolve().parent
         raw_code_path = ctx.raw(f"{ConfigKey.APP}.code_path", DEFAULT_CODE_PATH)
-        if not isinstance(raw_code_path, str) or "${" in raw_code_path:
+        if not isinstance(raw_code_path, str) or INTERPOLATION in raw_code_path:
             raise ConfigError(
                 "app.code_path must be a literal path for loom check: a placeholder or a "
                 "non-string value cannot name the directory its check modules import from"

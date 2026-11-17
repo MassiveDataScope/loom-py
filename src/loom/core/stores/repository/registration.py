@@ -29,8 +29,6 @@ from loom.core.stores.repository.registry import (
     get_repository_registration,
 )
 
-_UNBUILT = object()
-
 _STANDARD_PROTOCOLS: tuple[Any, ...] = (
     Readable,
     Creatable,
@@ -220,38 +218,36 @@ def _build_repository_provider(
     build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
     builder_key: object,
 ) -> Callable[[], Any]:
-    """Return the provider shared by every DI key of *model* this module registers.
+    """Return the provider that builds the repository of *model*.
 
-    The first call builds the repository, applies the registered
-    :class:`RepositoryDecorator` if any, and keeps the result, so each key
-    this module registers resolves one instance and the decorator runs once
-    per model per container.  Keys registered beforehand are left untouched,
-    so a pre-registered primary key makes ``resolve_repo`` and the capability
-    keys resolve different objects.
+    The provider applies the bound :class:`RepositoryDecorator` when there is
+    one. It raises ``RuntimeError`` when *model* is not a :class:`BaseModel`
+    and *registration* is ``None``.
+
+    Args:
+        container: The container the repository is built in.
+        model: The model the repository serves.
+        registration: Explicit registration, or ``None`` for the default builder.
+        build_registered_repository: Builds a repository from an explicit registration.
+        builder_key: Key of the default repository builder.
+
+    Returns:
+        A zero-argument provider.
     """
     context = RepositoryBuildContext(model=model, container=container)
-    memo: Any = _UNBUILT
 
-    def _build() -> Any:
+    def _provider() -> Any:
         if registration is not None:
-            return build_registered_repository(context, registration)
-        if not issubclass(model, BaseModel):
+            repository = build_registered_repository(context, registration)
+        elif not issubclass(model, BaseModel):
             raise RuntimeError(
                 f"No default repository can be built for non-persistible type {model.__qualname__}"
             )
-        return container.resolve(builder_key)(context)
-
-    def _decorate(repository: Any) -> Any:
+        else:
+            repository = container.resolve(builder_key)(context)
         if not container.is_registered(RepositoryDecorator):
             return repository
-        decorator = container.resolve(RepositoryDecorator)
-        return decorator(repository)
-
-    def _provider() -> Any:
-        nonlocal memo
-        if memo is _UNBUILT:
-            memo = _decorate(_build())
-        return memo
+        return container.resolve(RepositoryDecorator)(repository)
 
     return _provider
 

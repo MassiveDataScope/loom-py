@@ -210,3 +210,29 @@ class TestProviderMemo:
         assert isinstance(
             container.resolve(RepositoryToken(AcmeRegistrationWidget)), _BulkWidgetRepository
         )
+
+    def test_every_lookup_returns_the_instance_the_provider_built_once(self) -> None:
+        built: list[object] = []
+
+        def build(context: RepositoryBuildContext) -> object:
+            repository = object()
+            built.append(repository)
+            return repository
+
+        container = LoomContainer()
+        build_repository_registration_module(
+            models=(AcmeRegistrationWidget,),
+            build_registered_repository=_unused_builder,
+            default_repository_type=_BulkWidgetRepository,
+            default_builder=build,
+            store=DEFAULT_STORE,
+        )(container)
+        catalog = RepositoryCatalog(container, {DEFAULT_STORE: (AcmeRegistrationWidget,)})
+
+        primary = catalog[AcmeRegistrationWidget]
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is primary
+        assert container.resolve(BulkCreatable[AcmeRegistrationWidget]) is primary
+        assert container.resolve_repo(AcmeRegistrationWidget) is primary
+        assert catalog.for_table("registration_widgets_fixture") is primary
+        assert built == [primary]

@@ -37,7 +37,7 @@ from loom.celery.constants import (
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
 from loom.composition import AppConfig, Application, ApplicationHost
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
@@ -142,14 +142,23 @@ class TestPrefork:
 
         assert start_methods == [("fork", True)]
 
-    def test_worker_init_leaves_a_spawn_pool_as_configured(
-        self, start_methods: list[tuple[str, bool]]
+    @pytest.mark.parametrize("start_method", ["spawn", "forkserver"])
+    def test_a_prefork_worker_refuses_a_pool_that_does_not_fork(
+        self, start_method: str, start_methods: list[tuple[str, bool]]
     ) -> None:
-        _connect(_ApplicationSpy())
+        application = _ApplicationSpy()
+        _connect(application)
 
-        worker_init.send(sender=WorkerDouble("prefork", start_method="spawn"))
+        with pytest.raises(WorkerTerminate) as caught:
+            worker_init.send(sender=WorkerDouble("prefork", start_method=start_method))
 
+        cause = caught.value.__cause__
+        assert isinstance(cause, ConfigError)
+        message = str(cause)
+        assert "loom registers tasks in the parent" in message
+        assert "worker_pool_start_method: fork" in message
         assert start_methods == []
+        assert application.events == []
 
     def test_a_single_process_pool_changes_no_start_method(
         self, start_methods: list[tuple[str, bool]]
