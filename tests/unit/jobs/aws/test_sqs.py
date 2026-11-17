@@ -215,6 +215,13 @@ class TestSqsDispatch:
         )
         assert getattr(decode_identity(envelope.identity), "subject", None) == "alice"
 
+    async def test_the_envelope_carries_the_task_id_of_the_handle(
+        self, service: JobService, client: SQSClient
+    ) -> None:
+        task_id, request = await _sent(service, client, EmailJob, payload={"to": "a@b.c"})
+
+        assert decode_job_envelope(request["MessageBody"]).task_id == task_id
+
     async def test_control_characters_and_emoji_reach_sqs(
         self, service: JobService, client: SQSClient
     ) -> None:

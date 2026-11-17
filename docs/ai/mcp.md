@@ -886,8 +886,7 @@ Known limits:
 ### An interrupted call on a queue
 
 On a `jobs` trigger, a job whose MCP call is interrupted fails. Its record is
-reported in `batchItemFailures` and SQS delivers it again. With
-`report_batch_item_failures: false`, the whole batch fails instead. loom never
+reported in `batchItemFailures` and SQS delivers it again. loom never
 repeats the call itself, but a redelivery runs the job again, so the tool may
 run a second time. Until idempotent delivery exists, make such a tool
 idempotent on the server, or keep it off a queue.

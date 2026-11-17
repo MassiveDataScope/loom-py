@@ -110,7 +110,7 @@ class TestSqsEvents:
         assert (_failed(result), seen) == (["poison"], [])
 
     async def test_the_body_is_the_one_sqs_job_service_sends(self) -> None:
-        """All but the caller's deadline: an event's caller gets one at the worker."""
+        """All but the caller's deadline and the task id SQS dispatch adds."""
         client = SQSClient()
         service = sqs_service(client)
         deadline = time.time() + 60
@@ -126,4 +126,7 @@ class TestSqsEvents:
         event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
         expected = json.loads(event["Records"][0]["body"])
         expected["identity"]["until"] = deadline
-        assert [json.loads(request["MessageBody"]) for request in client.requests] == [expected]
+        del expected["task_id"]
+        (sent,) = [json.loads(request["MessageBody"]) for request in client.requests]
+        assert sent.pop("task_id")
+        assert sent == expected

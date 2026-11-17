@@ -22,6 +22,7 @@ from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.composition import composition_project
 from tests.helpers.extras import patched_aws_clients
 from tests.helpers.loops import event_loops
+from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import (
     WORKER,
@@ -34,9 +35,15 @@ __all__ = ["event_loops"]
 
 
 @pytest.fixture
-def no_aws_clients() -> Iterator[None]:
-    """A consumer of a queue builds its SQS client at Init; here it is a mock, never AWS."""
-    with patched_aws_clients():
+def sqs() -> FakeSqs:
+    """The SQS client every function of the test consumes and settles through."""
+    return FakeSqs()
+
+
+@pytest.fixture
+def no_aws_clients(sqs: FakeSqs) -> Iterator[None]:
+    """A consumer of a queue builds its SQS client at Init; here it is the fake, never AWS."""
+    with patched_aws_clients(sqs):
         yield
 
 
@@ -76,9 +83,14 @@ def loops(probe: tuple[type[Job[None]], Probe]) -> list[asyncio.AbstractEventLoo
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Project:
+def project(tmp_path: Path, no_aws_clients: None) -> Project:
+    document = with_worker({"app": {"name": "lambda-sqs"}}, batch_size=5)
+    document["sqs"]["queues"]["jobs_fifo"] = {
+        "url": f"{queue_url('jobs')}.fifo",
+        "dead_letter": "discard",
+    }
     return composition_project(
-        ConfigContext.from_dict(with_worker({"app": {"name": "lambda-sqs"}})),
+        ConfigContext.from_dict(document),
         app=AppConfig(name="lambda-sqs", entry=WORKER),
         code_path=tmp_path,
         config_root=tmp_path,
@@ -90,7 +102,6 @@ def built(
     project: Project, probe: tuple[type[Job[None]], Probe]
 ) -> tuple[LambdaAdapter, Application, list[str]]:
     adapter = LambdaAdapter(jobs=[probe[0]])
-    application = project.compose(adapter)
     lifecycle: list[str] = []
 
     @asynccontextmanager
@@ -99,6 +110,7 @@ def built(
         yield
         lifecycle.append("close")
 
+    application = project.compose(adapter)
     application.resources = (
         *application.resources,
         Resource(kind=ResourceKind.STORE, name="probe", manager=opened),

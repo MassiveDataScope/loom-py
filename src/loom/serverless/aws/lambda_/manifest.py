@@ -163,7 +163,7 @@ def _queue_event(
         )
     event: dict[str, Any] = {"queue": queue.name}
     event.update({key: getattr(queue, key) for key in _MAPPING_KEYS})
-    event["report_batch_item_failures"] = queue.reports_batch_item_failures
+    event["report_batch_item_failures"] = True
     event["dead_letter_required"] = True
     if isinstance(trigger, EventTrigger):
         written = msgspec.to_builtins(trigger)

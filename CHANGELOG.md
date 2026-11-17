@@ -55,6 +55,42 @@
   to a dead-letter queue directly is moved back with `StartMessageMoveTask`
   and a `DestinationArn` set to the source queue ("Redrive to custom
   destination").
+- **jobs:** a Lambda function consuming an SQS queue settles each message by
+  what its job came to, through the `JobSettlement` port
+  (`loom.core.job.settlement`) and `loom.jobs.aws.settlement.SqsSettlement`; the
+  trigger only builds each delivery, runs it and hands the outcomes over. The
+  attempt is the record's `ApproximateReceiveCount` and the deferrals its
+  `loom.deferrals` attribute (a Lambda job always ran as attempt 1 before), and
+  the envelope's `task_id`, which SQS dispatch now fills, is the delivery's
+  `task_id`. A success makes no call to SQS and no message is ever deleted by
+  loom: Lambda deletes every record not in `batchItemFailures`.
+
+  | Outcome | Action | In `batchItemFailures` |
+  |---|---|---|
+  | Succeeded | none | no |
+  | Rejected, `redrive` | sent to the dead-letter queue with the reason | only if its send failed |
+  | Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
+  | Deferred, standard queue | sent again with `DelaySeconds` and one deferral more | only if its send failed |
+  | Deferred, FIFO queue | refused (a FIFO queue takes no per-message delay), settled as Failed | yes |
+  | Failed | `ChangeMessageVisibility` to the backoff delay | yes |
+  | Attempts exhausted | Rejected | as Rejected |
+
+  A final failure is rejected at once, so it goes to the dead-letter queue
+  instead of burning `maxReceiveCount` or, with `retry_final` unset, being
+  lost: `retry_final` is removed from `QueueSource`. API calls are grouped by
+  action and queue, at most ten entries each; a failed entry lists only its own
+  message, and a failed visibility change is logged and never aborts the batch.
+  Settlement uses an SQS client with 1 s connect and read timeouts and one
+  attempt, so it fits the invocation's one-second safety margin. A record never
+  run (out of time, or behind a failed message on a FIFO queue) stays in
+  `batchItemFailures` without a settlement and is not an attempt of the job,
+  though SQS counts its delivery in `ApproximateReceiveCount`. A message that
+  cannot be read, or names an unknown job, is still retried with the default
+  backoff. A function holds the retry policies its queue implies (the
+  `RedrivePolicy` limit on a `redrive` queue) and no longer rewrites
+  `application.job_settings`; the start-up line `Job retry policies` of a
+  Lambda jobs function omits `max_attempts`, which the consumer's own line
+  `Job retry policies of the consumed queue` states.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -292,7 +328,7 @@
   | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs, queue: {name: ...}}` |
   | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
   | `loom.serverless.aws.lambda_.http` | `loom.serverless.aws.lambda_.triggers.http` |
-  | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.SQSBatchFailedError` |
+  | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | Removed: the batch always reports its failures |
   | `loom.serverless.aws.lambda_.sqs.SQSHandler` | `loom.serverless.aws.lambda_.LambdaHandler` |
   | `loom.serverless.aws.lambda_.LambdaHTTPHandler` | `LambdaHandler`; the class is internal |
   | `loom.serverless.aws.lambda_.sqs.DuplicateJobName` | `loom.core.discovery.worker.DuplicateJobName` |
@@ -302,7 +338,15 @@
   | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
   `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
-  `LambdaUnservedConfigError`, `S3Object` and `SQSBatchFailedError` only.
+  `LambdaUnservedConfigError` and `S3Object` only.
+
+- **lambda:** `ReportBatchItemFailures` is mandatory: the deploy manifest always
+  declares `report_batch_item_failures: true`, and the key is removed from
+  `trigger.queue` (it fails to load as an unknown field), with
+  `QueueMapping.reports_batch_item_failures`, `JobsTrigger.reports_batch_item_failures`
+  and `loom.serverless.aws.lambda_.SQSBatchFailedError` (with
+  `SQSErrorCode.BATCH_FAILED`). **Migration:** drop the key and enable
+  `ReportBatchItemFailures` on the event source mapping.
 
 ### config
 
@@ -340,7 +384,6 @@
   | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
   | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
   | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
-  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
   | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
   | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
 
@@ -360,8 +403,8 @@
 - **errors:** every error belongs to a family. `BoundaryValidationError` and
   `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
   `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
-  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
-  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
+  `PostCommitError`, `UnsupportedBoundaryType` and `SQSDispatchError` are
+  `SystemError`s. HTTP statuses do not change. A
   `DomainError` is never retryable: Celery and the SQS consumers consume a
   job that raises one instead of requeuing it, and the streaming boundary
   files a `BoundaryValidationError` as a business error. `UnsupportedQuery`

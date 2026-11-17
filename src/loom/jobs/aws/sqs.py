@@ -383,6 +383,7 @@ class SQSJobService:
             params=params,
             identity=captured_delegation(),
             trace_id=trace_id,
+            task_id=task_id,
         )
         if any(refused in body for refused in _REFUSED_CHARACTERS):
             raise SQSDispatchError(

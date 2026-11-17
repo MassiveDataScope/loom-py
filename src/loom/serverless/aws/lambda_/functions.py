@@ -49,20 +49,14 @@ class QueueMapping(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fie
     """The event source mapping of a trigger whose messages arrive through a queue.
 
     ``name`` is a key of ``sqs.queues`` and ``batch_size`` at most 10 on a FIFO
-    queue. loom applies only ``report_batch_item_failures``, which ``false``
-    turns into a failed invocation instead of a partial batch.
+    queue. The mapping always reports batch item failures: loom settles each
+    message and reports the ones the queue must deliver again.
     """
 
     name: str
     batch_size: Annotated[int, msgspec.Meta(ge=1, le=10000)] | None = None
     batching_window_s: Annotated[int, msgspec.Meta(ge=0, le=300)] | None = None
     max_concurrency: Annotated[int, msgspec.Meta(ge=2, le=1000)] | None = None
-    report_batch_item_failures: bool | None = None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true by default."""
-        return self.report_batch_item_failures is not False
 
 
 class JobsTrigger(
@@ -76,11 +70,6 @@ class JobsTrigger(
     """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
 
     queue: QueueMapping | None = None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true without a ``queue`` block."""
-        return self.queue is None or self.queue.reports_batch_item_failures
 
 
 class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -119,11 +108,6 @@ class EventTrigger(
     def via(self) -> str | None:
         """``"sqs"`` when the events arrive through a queue, else ``None``, for the manifest."""
         return "sqs" if self.queued else None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true without a ``queue`` block."""
-        return self.queue is None or self.queue.reports_batch_item_failures
 
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""

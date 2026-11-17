@@ -484,7 +484,6 @@ lambda:
           batch_size: 100
           batching_window_s: 5
           max_concurrency: 50
-          report_batch_item_failures: true
 ```
 
 - `name` is a key of `sqs.queues`.
@@ -498,9 +497,9 @@ lambda:
   `BatchSize`, `MaximumBatchingWindowInSeconds` and
   [`ScalingConfig.MaximumConcurrency`](https://docs.aws.amazon.com/lambda/latest/api/API_ScalingConfig.html).
   loom validates them for the deployment but does not apply them.
-- `report_batch_item_failures` (default `true`) must match the mapping's
-  `ReportBatchItemFailures`: `false` makes the handler raise
-  `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
+- The event source mapping must enable `ReportBatchItemFailures`: the deploy
+  manifest always says so, and there is no setting to turn it off. The handler
+  returns the messages the queue must deliver again in `batchItemFailures`.
 - An http function, and a direct event trigger, refuse the `queue:` block.
 
 #### Dead letters and attempts
@@ -521,6 +520,42 @@ limit:
   the jobs of the consumed queue.
 - A function consuming a queue that `sqs.queues` does not map fails startup
   naming `sqs.queues.<name>`.
+
+#### Settlement
+
+The function settles each message by what its job came to. The decision is
+per message; only the calls to SQS are grouped, by action and queue, at most
+ten entries each.
+
+| Outcome | Action | In `batchItemFailures` |
+|---|---|---|
+| Succeeded | none | no |
+| Rejected (`JobRejection`, an error that cannot succeed, or attempts exhausted), `redrive` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.rejection_reason` attribute | only if that send failed |
+| Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
+| Deferred (`JobRetry`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.deferrals` plus one | only if that send failed |
+| Deferred, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
+| Failed | `ChangeMessageVisibilityBatch` to the backoff delay | yes |
+
+- A success makes no call to SQS, and loom never calls `DeleteMessage`: Lambda
+  deletes every record not in `batchItemFailures`.
+- `JobRetry` re-sends the message instead of changing its visibility, so a
+  deferral never counts toward `maxReceiveCount`; a job that keeps asking to
+  wait is never dead-lettered.
+- The attempt a job reads is the record's `ApproximateReceiveCount`, and its
+  deferrals are the `loom.deferrals` attribute. A failure on the last attempt
+  is rejected: a `redrive` queue receives it from loom instead of from SQS
+  after one more delivery.
+- A call that fails for some entries lists only those messages; one that fails
+  for all lists all of them, and the failure is logged in one line per call. A
+  failed visibility change is logged and never aborts the batch.
+- Settlement calls SQS with 1 s connect and read timeouts and no retries, so
+  it fits the one second the function keeps free at the end of the invocation.
+- A record the function did not run (the invocation ran out of time, or it
+  follows a failed message on a FIFO queue) stays in `batchItemFailures`
+  without being settled. It is not an attempt of the job, though SQS counts its
+  delivery in `ApproximateReceiveCount`.
+- A message that cannot be read, or names a job the function does not serve, is
+  retried with the default backoff until the queue dead-letters it.
 
 **IAM.** The role of a function consuming a queue needs:
 

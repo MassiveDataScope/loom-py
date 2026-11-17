@@ -2,18 +2,21 @@
 
 The ``jobs`` function runs ``TrackShipmentJob`` from an SQS record carrying
 the enqueuer's identity. A job refused for its caller is not retryable,
-so the function consumes its record and logs it as failed finally: that log
-is where the refusal surfaces. An envelope that does not decode is reported
-back to the queue instead.
+so the function discards its record (the queue says ``dead_letter: discard``)
+and logs it as failed finally: that log is where the refusal surfaces. An
+envelope that does not decode is reported back to the queue instead.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 import pytest
 
 from loom.core.identity import Identity, current_caller
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
+from tests.helpers.extras import patched_aws_clients
 from tests.integration.hexagonal.conftest import (
     ANA,
     BAD_IDENTITIES,
@@ -33,9 +36,10 @@ CONSUMED = {"batchItemFailures": []}
 
 
 @pytest.fixture
-def lambda_worker(compose: Compose) -> LambdaHandler:
-    """The ``acme-worker`` Lambda function, closed when the test ends."""
-    return compose("lambda-jobs")[1]
+def lambda_worker(compose: Compose) -> Iterator[LambdaHandler]:
+    """The ``acme-worker`` Lambda function, closed when the test ends, over a stand-in SQS."""
+    with patched_aws_clients():
+        yield compose("lambda-jobs")[1]
 
 
 def _job(caller: Identity | None) -> LambdaEvent:

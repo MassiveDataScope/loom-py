@@ -24,6 +24,7 @@ from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
 from loom.jobs.aws.queue import SqsQueues
+from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
 if TYPE_CHECKING:
@@ -70,6 +71,7 @@ def jobs_recipe(
         agent_endpoints=False,
         metrics=metrics,
         connection_only=not resolved.models,
+        states_attempt_limits=False,
     )
     return recipe, {job_type.__qualname__: job_type for job_type in resolved.jobs}
 
@@ -93,13 +95,14 @@ def open_host(application: Application) -> LoopHost:
     return host
 
 
-def check_consumed_queue(
+def consumed_settings(
     application: Application, queue_name: str, jobs: Iterable[type[Job[Any]]]
-) -> None:
-    """Check the queue *queue_name* at Init and give *jobs* the retry policy it implies.
+) -> JobSettings:
+    """Check the queue *queue_name* at Init and return the settings *jobs* run under.
 
-    Only a consumer asks SQS about its queue. The application's job settings
-    then hold each job's effective policy, and one line logs them.
+    Only a consumer asks SQS about its queue. The settings are the application's
+    with each of *jobs* holding the retry policy the queue implies; the
+    application's own are untouched. One line logs the consumer's policies.
 
     Raises:
         ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, or a job on a
@@ -111,16 +114,25 @@ def check_consumed_queue(
         raise ConfigError(f"sqs.queues.{queue_name} is missing: a function consumes that queue")
     client = application.kernel.container.resolve(AwsClients).client("sqs", config)
     queue = SqsQueues(client, config.queues).named(queue_name)
-    settings = application.job_settings
-    retries = queue.consumed_retries(jobs, lambda job: settings.of(job).retry)
-    application.job_settings = settings.with_retries(retries)
-    consumed = JobSettings(
-        {job: application.job_settings.of(job) for job in retries},
-    )
+    base = application.job_settings
+    retries = queue.consumed_retries(jobs, lambda job: base.of(job).retry)
+    settings = base.with_retries(retries)
     _log.info(
         "Job retry policies of the consumed queue",
         queue=queue_name,
-        jobs=consumed.describe_retries(),
+        jobs=JobSettings({job: settings.of(job) for job in retries}).describe_retries(),
+    )
+    return settings
+
+
+def sqs_settlement(application: Application) -> SqsSettlement:
+    """The settlement of the messages a function consumes.
+
+    Raises:
+        ConfigError: When the ``sqs`` section is invalid.
+    """
+    return SqsSettlement(
+        application.kernel.container.resolve(AwsClients), SQSConfig.load(application.config)
     )
 
 
@@ -145,16 +157,29 @@ async def run_envelope(
     application: Application,
     envelope: JobEnvelope,
     job_type: type[Job[Any]],
-    span_id: str | None,
+    task_id: str | None,
     context: Any,
+    *,
+    settings: JobSettings,
+    attempt: int,
+    deferrals: int,
 ) -> JobOutcome:
     """Run *envelope* as *job_type*, within its timeout and what remains of the invocation.
 
+    Args:
+        application: Whose kernel runs the job.
+        envelope: The message to run.
+        job_type: The job it runs as.
+        task_id: The transport's id of the message.
+        context: The Lambda context, for the time that remains.
+        settings: The options and retry policy the function runs its jobs under.
+        attempt: The attempt number the transport counted.
+        deferrals: How many times the job asked to run again.
+
     Returns:
-        What the run came to. The delivery is the first attempt: the queue
-        owns the count of redeliveries.
+        What the run came to.
     """
-    options = application.job_settings.of(job_type)
+    options = settings.of(job_type)
     runner = JobRunner(
         EnvelopeInvocation(
             application.kernel.factory, application.kernel.executor, application.observability
@@ -164,9 +189,9 @@ async def run_envelope(
         JobDelivery(
             job_type=job_type,
             envelope=envelope,
-            task_id=span_id,
-            attempt=1,
-            deferrals=0,
+            task_id=task_id,
+            attempt=attempt,
+            deferrals=deferrals,
             policy=options.retry.policy,
             timeout_s=run_timeout(options.timeout, context),
         )

@@ -52,6 +52,14 @@ def _bind(
     return application
 
 
+def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
+
+
 class TestConsumedQueue:
     def test_a_redrive_queue_with_a_policy_binds_after_one_read_of_it(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
@@ -98,7 +106,7 @@ class TestConsumedQueue:
 
         assert client.metadata_calls == 0
 
-    def test_the_defaults_layer_max_attempts_gives_way_to_max_receive_count(
+    def test_the_consumer_policy_leaves_the_applications_settings_untouched(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
     ) -> None:
         jobs = {"defaults": {"retry": {"max_attempts": 9}}}
@@ -106,7 +114,22 @@ class TestConsumedQueue:
 
         application = _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 4
+        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 9
+
+    def test_the_composition_line_states_no_attempt_limit_for_a_job_the_queue_governs(
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        jobs = {probe[0].__name__: {"queue": "jobs"}}
+
+        _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+
+        (composed,) = _logged(caplog, "Job retry policies")
+        assert "max_attempts" not in composed["jobs"][0]["retry"]
+        (consumed,) = _logged(caplog, "Job retry policies of the consumed queue")
+        assert "max_attempts=4" in consumed["jobs"][0]["retry"]
 
     def test_the_effective_policy_of_a_redrive_consumer_is_logged(
         self,
@@ -118,12 +141,7 @@ class TestConsumedQueue:
 
         _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        (logged,) = [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict)
-            and record.msg.get("event") == "Job retry policies of the consumed queue"
-        ]
+        (logged,) = _logged(caplog, "Job retry policies of the consumed queue")
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 

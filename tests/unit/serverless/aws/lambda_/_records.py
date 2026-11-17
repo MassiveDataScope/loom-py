@@ -10,6 +10,8 @@ from loom.testing import LambdaEvent
 
 RecordFactory = Callable[..., dict[str, Any]]
 WORKER = "worker"
+JOBS_ARN = "arn:aws:sqs:eu-west-1:123456789012:jobs"
+"""The queue :func:`with_worker` consumes, as the event source of its records."""
 
 
 def consumed_queues(*names: str) -> dict[str, Any]:
@@ -47,10 +49,21 @@ def make_record(
     fifo: bool = False,
     job_name: str = "ProbeJob",
     body: str | None = None,
+    receive_count: int = 1,
+    deferrals: int | None = None,
 ) -> dict[str, Any]:
     if body is None:
         envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
         body = json.dumps(envelope | {"payload": {}, "trace_id": trace_id})
-    event = LambdaEvent.sqs_record(body, message_id=message_id, group_id="group" if fifo else None)
+    arn = JOBS_ARN + (".fifo" if fifo else "")
+    event = LambdaEvent.sqs_record(
+        body, message_id=message_id, group_id="group" if fifo else None, queue_arn=arn
+    )
     record: dict[str, Any] = event["Records"][0]
+    record["attributes"]["ApproximateReceiveCount"] = str(receive_count)
+    if deferrals is not None:
+        record["messageAttributes"]["loom.deferrals"] = {
+            "dataType": "Number",
+            "stringValue": str(deferrals),
+        }
     return record

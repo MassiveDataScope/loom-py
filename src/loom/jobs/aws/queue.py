@@ -163,6 +163,8 @@ class SqsRecord:
         body: The message body.
         group_id: ``MessageGroupId`` when the queue is FIFO.
         attributes: The message attributes, in the shape the SQS API takes.
+        queue_arn: The ARN of the queue it was received from.
+        receive_count: ``ApproximateReceiveCount``: how many times SQS delivered it.
     """
 
     message_id: str
@@ -170,19 +172,24 @@ class SqsRecord:
     body: str
     group_id: str | None = None
     attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    queue_arn: str = ""
+    receive_count: int = 1
 
     @classmethod
     def from_event(cls, record: Mapping[str, Any]) -> SqsRecord:
         """The record of an SQS event's ``Records`` entry."""
+        system = record.get("attributes", {})
         return cls(
             message_id=record["messageId"],
             receipt_handle=record["receiptHandle"],
             body=record["body"],
-            group_id=record.get("attributes", {}).get("MessageGroupId"),
+            group_id=system.get("MessageGroupId"),
             attributes={
                 name: cls._attribute(value)
                 for name, value in record.get("messageAttributes", {}).items()
             },
+            queue_arn=record.get("eventSourceARN", ""),
+            receive_count=int(system.get("ApproximateReceiveCount", 1)),
         )
 
     @staticmethod

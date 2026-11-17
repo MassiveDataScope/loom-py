@@ -58,7 +58,7 @@ A `trigger` takes the keys of its `source` only:
 | `source` | Invoked by | Keys |
 |---|---|---|
 | `http` | API Gateway | `interfaces`, `auth` |
-| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`: a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
+| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`: a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency` |
 | `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or through a queue | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); through a queue the `queue` block of `jobs` |
 
 An HTTP function serves only the interfaces it lists, a Python `RestInterface`

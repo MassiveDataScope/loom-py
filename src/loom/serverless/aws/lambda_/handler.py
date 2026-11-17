@@ -2,8 +2,8 @@
 
 An event trigger's job and identity come from the configuration only. A
 direct trigger fails the invocation at the first job that fails, so Lambda
-retries the event, then sends it to the on-failure destination; via SQS every
-failed message is reported, so it is retried, then dead-lettered.
+retries the event, then sends it to the on-failure destination; via SQS each
+message is settled by what its job came to: a final failure is dead-lettered.
 """
 
 from __future__ import annotations
@@ -22,11 +22,12 @@ from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
     Read,
-    check_consumed_queue,
+    consumed_settings,
     fail_in_span,
     jobs_recipe,
     open_host,
     run_envelope,
+    sqs_settlement,
 )
 from loom.serverless.aws.lambda_._refusals import (
     COMPONENT,
@@ -191,9 +192,8 @@ class LambdaAdapter:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
         recipe, declared = jobs_recipe(project, self._jobs, self._use_cases, self._metrics)
         if not isinstance(trigger, EventTrigger):
-            failures = trigger.reports_batch_item_failures
             queue = None if trigger.queue is None else trigger.queue.name
-            return recipe, functools.partial(_bind_jobs, declared, failures, queue)
+            return recipe, functools.partial(_bind_jobs, declared, queue)
         job_type = trigger_job(name, trigger, declared)
         if trigger.queued:
             return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
@@ -202,17 +202,17 @@ class LambdaAdapter:
 
 def _bind_jobs(
     declared: Mapping[str, type[Job[Any]]],
-    report_failures: bool,
     queue_name: str | None,
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a ``jobs`` function: a final failure is consumed."""
+    """The SQS batch handler of a ``jobs`` function: a final failure is rejected."""
+    settings = application.job_settings
     if queue_name is not None:
-        served = [
-            job for job in declared.values() if application.job_settings.of(job).queue == queue_name
-        ]
-        check_consumed_queue(application, queue_name, served)
-    return SQSBatch(application, declared, open_host(application), report_failures=report_failures)
+        served = [job for job in declared.values() if settings.of(job).queue == queue_name]
+        settings = consumed_settings(application, queue_name, served)
+    return SQSBatch(
+        application, declared, open_host(application), settings, sqs_settlement(application)
+    )
 
 
 def _bind_queued_events(
@@ -221,19 +221,17 @@ def _bind_queued_events(
     job_type: type[Job[Any]],
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
+    """The SQS batch handler of a queued event trigger: a final failure is rejected."""
     assert trigger.queue is not None
-    check_consumed_queue(application, trigger.queue.name, [job_type])
+    settings = consumed_settings(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
         label=trigger.job,
-        retry_final=True,
         job=job_type,
     )
-    failures = trigger.reports_batch_item_failures
     host = open_host(application)
-    return SQSBatch(application, {}, host, report_failures=failures, source=source)
+    return SQSBatch(application, {}, host, settings, sqs_settlement(application), source)
 
 
 def _bind_direct_events(
@@ -327,7 +325,16 @@ class _DirectEvents:
         try:
             for envelope, span_id in self._envelopes(event):
                 outcome = self._host.run(
-                    run_envelope(self._application, envelope, self._job_type, span_id, context)
+                    run_envelope(
+                        self._application,
+                        envelope,
+                        self._job_type,
+                        span_id,
+                        context,
+                        settings=self._application.job_settings,
+                        attempt=1,
+                        deferrals=0,
+                    )
                 )
                 error = outcome.failure()
                 if error is not None:

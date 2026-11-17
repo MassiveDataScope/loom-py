@@ -4,7 +4,7 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
@@ -32,7 +32,6 @@ from loom.serverless.aws.lambda_ import (
     LambdaAdapter,
     LambdaHandler,
     LambdaUnservedConfigError,
-    SQSBatchFailedError,
 )
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import RecordedLoops
@@ -42,21 +41,6 @@ from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, wi
 
 class _OtherJobService:
     """A job service the log must name: neither inline nor Celery."""
-
-
-@pytest.fixture
-def whole_batch_handler(
-    tmp_path: Path, probe: tuple[type[Job[None]], Any], no_aws_clients: None
-) -> Iterator[LambdaHandler]:
-    project = composition_project(
-        ConfigContext.from_dict(with_worker({}, report_batch_item_failures=False)),
-        app=AppConfig(name="lambda-sqs", entry=WORKER),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-    adapter = LambdaAdapter(jobs=[probe[0]])
-    yield adapter.bind(project.compose(adapter))
-    adapter.close()
 
 
 def _add_broken_resource(application: Application) -> None:
@@ -121,19 +105,6 @@ class TestSqsHandler:
         adapter = LambdaAdapter(jobs=[probe[0]])
         with pytest.raises(ConfigError, match="needs batching_window_s"):
             adapter.recipe(project)
-
-    @pytest.mark.parametrize("fifo", [False, True])
-    def test_without_batch_item_failures_a_failed_record_fails_the_whole_batch(
-        self, whole_batch_handler: LambdaHandler, record: RecordFactory, fifo: bool
-    ) -> None:
-        records = [record("1", "a", fifo=fifo), record("2", "fail", fifo=fifo)]
-        with pytest.raises(SQSBatchFailedError, match="1 of 2 SQS records failed"):
-            whole_batch_handler({"Records": records}, None)
-
-    def test_without_batch_item_failures_a_batch_that_ran_returns_no_report(
-        self, whole_batch_handler: LambdaHandler, record: RecordFactory
-    ) -> None:
-        assert whole_batch_handler({"Records": [record("1", "a")]}, None) == {}
 
     def test_malformed_body_fails_only_that_standard_record(
         self,
