@@ -116,7 +116,7 @@ class TestConsumedQueue:
 
         assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 9
 
-    def test_the_composition_line_states_no_attempt_limit_for_a_job_the_queue_governs(
+    def test_the_consumer_logs_the_one_policy_line_of_its_jobs(
         self,
         tmp_path: Path,
         probe: tuple[type[Job[None]], Probe],
@@ -126,22 +126,7 @@ class TestConsumedQueue:
 
         _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        (composed,) = _logged(caplog, "Job retry policies")
-        assert "max_attempts" not in composed["jobs"][0]["retry"]
-        (consumed,) = _logged(caplog, "Job retry policies of the consumed queue")
-        assert "max_attempts=4" in consumed["jobs"][0]["retry"]
-
-    def test_the_effective_policy_of_a_redrive_consumer_is_logged(
-        self,
-        tmp_path: Path,
-        probe: tuple[type[Job[None]], Probe],
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        jobs = {probe[0].__name__: {"queue": "jobs"}}
-
-        _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
-
-        (logged,) = _logged(caplog, "Job retry policies of the consumed queue")
+        (logged,) = _logged(caplog, "Job retry policies")
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 

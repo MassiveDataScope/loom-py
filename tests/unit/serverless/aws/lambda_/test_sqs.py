@@ -19,7 +19,6 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
-from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -106,7 +105,7 @@ class TestSqsHandler:
         with pytest.raises(ConfigError, match="needs batching_window_s"):
             adapter.recipe(project)
 
-    def test_malformed_body_fails_only_that_standard_record(
+    def test_a_malformed_body_is_rejected_at_once_and_not_reported(
         self,
         handler: LambdaHandler,
         record: RecordFactory,
@@ -115,7 +114,7 @@ class TestSqsHandler:
         bad = record("1", "a")
         bad["body"] = "{"
         result = handler({"Records": [bad, record("2", "b")]}, None)
-        assert result["batchItemFailures"] == [{"itemIdentifier": "1"}]
+        assert result["batchItemFailures"] == []
         assert [item[0] for item in seen] == ["b"]
 
     def test_message_group_attribute_does_not_enable_fifo_rule(
@@ -261,16 +260,25 @@ print([name for name in loaded if name in sys.modules])
             ["a", marker] if fifo and expected else ["a", marker, "c"]
         )
 
-    @pytest.mark.parametrize("fifo", [False, True])
-    @pytest.mark.parametrize("poison", ["body", "job"])
-    def test_poison_message_retries_and_logs_typed_error(
+    @pytest.mark.parametrize(
+        ("poison", "fifo", "expected", "ran"),
+        [
+            ("body", False, [], ["a", "c"]),
+            ("body", True, [], ["a", "c"]),
+            ("job", False, ["2"], ["a", "c"]),
+            ("job", True, ["2", "3"], ["a"]),
+        ],
+    )
+    def test_a_malformed_message_is_rejected_and_an_unknown_job_retried(
         self,
         handler: LambdaHandler,
         record: RecordFactory,
         seen: list[tuple[str, str | None, str | None]],
         caplog: pytest.LogCaptureFixture,
-        fifo: bool,
         poison: str,
+        fifo: bool,
+        expected: list[str],
+        ran: list[str],
     ) -> None:
         bad = record("2", "bad", fifo=fifo)
         if poison == "body":
@@ -281,9 +289,8 @@ print([name for name in loaded if name in sys.modules])
             bad["body"] = json.dumps(body)
         records = [record("1", "a", fifo=fifo), bad, record("3", "c", fifo=fifo)]
         result = handler({"Records": records}, None)
-        expected = ["2", "3"] if fifo else ["2"]
         assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in expected]
-        assert [item[0] for item in seen] == (["a"] if fifo else ["a", "c"])
+        assert [item[0] for item in seen] == ran
         error_class = "MalformedJobMessage" if poison == "body" else "UnknownJob"
         assert any(error_class in message for message in caplog.messages)
 
@@ -454,7 +461,7 @@ print([name for name in loaded if name in sys.modules])
         ("kind", "expected"),
         [
             ("unknown", [{"itemIdentifier": "1"}]),
-            ("malformed", [{"itemIdentifier": "1"}]),
+            ("malformed", []),
             ("null_payload", []),
             ("missing_id", [{"itemIdentifier": ""}]),
             ("non_mapping", [{"itemIdentifier": ""}]),
@@ -482,10 +489,6 @@ print([name for name in loaded if name in sys.modules])
             item = "bad"
         result = handler({"Records": [item]}, None)
         assert result["batchItemFailures"] == expected
-
-    @pytest.mark.parametrize("error", [MalformedJobMessage("{"), UnknownJob("MissingJob")])
-    def test_poison_errors_remain_retryable(self, error: Exception) -> None:
-        assert error.retryable is True  # type: ignore[attr-defined]
 
     @pytest.mark.parametrize(
         ("jobs", "failed"),

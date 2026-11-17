@@ -23,11 +23,17 @@ if TYPE_CHECKING:
     from loom.core.identity import Identity
     from loom.core.job.job import Job
 
-__all__ = ["EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
+__all__ = ["TEST_QUEUE", "EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
 
 _REGION: Final = "us-east-1"
 _ARN: Final = f"{_REGION}:000000000000"
 _TIME: Final = "2026-01-01T00:00:00Z"
+
+TEST_QUEUE: Final = {
+    "url": f"https://sqs.{_REGION}.amazonaws.com/000000000000/loom-jobs",
+    "dead_letter": "discard",
+}
+"""The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names."""
 
 
 class S3ObjectSpec(TypedDict):

@@ -16,10 +16,12 @@ from loom.core.identity import Identity, current_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from loom.testing import LambdaEvent
+from loom.testing import TEST_QUEUE, LambdaEvent
 from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
+from tests.helpers.extras import patched_aws_clients
 from tests.helpers.jobs import SQSClient, sqs_service
+from tests.helpers.sqs import FakeSqs
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -130,3 +132,27 @@ class TestSqsEvents:
         (sent,) = [json.loads(request["MessageBody"]) for request in client.requests]
         assert sent.pop("task_id")
         assert sent == expected
+
+    def test_the_default_queue_of_an_event_resolves_to_the_test_queue_entry(
+        self, tmp_path: Path
+    ) -> None:
+        sqs = FakeSqs()
+        project = composition_project(
+            ConfigContext.from_dict(
+                {
+                    "aws": {"region": "us-east-1"},
+                    "sqs": {"queues": {"jobs": TEST_QUEUE}},
+                    "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
+                }
+            ),
+            app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),
+            code_path=tmp_path,
+            config_root=tmp_path,
+        )
+        adapter = LambdaAdapter(jobs=[MarkJob])
+        with patched_aws_clients(sqs):
+            handler = adapter.bind(project.compose(adapter))
+            result = handler({"Records": [_marked("fail", "1")]}, None)
+            adapter.close()
+
+        assert (_failed(result), sqs.calls["change_message_visibility_batch"]) == (["1"], 1)

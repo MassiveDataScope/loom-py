@@ -12,7 +12,7 @@ from loom.testing.runner import (
     SqlGrantHandleDouble,
     UseCaseTest,
 )
-from loom.testing.serverless import LambdaEvent
+from loom.testing.serverless import TEST_QUEUE, LambdaEvent
 
 if TYPE_CHECKING:
     from loom.testing.http_harness import HttpTestHarness
@@ -33,6 +33,7 @@ __all__ = [
     "HttpTestHarness",
     "InMemoryRepository",
     "JwtTestAuth",
+    "TEST_QUEUE",
     "LambdaEvent",
     "LambdaTestClient",
     "McpHandleDouble",

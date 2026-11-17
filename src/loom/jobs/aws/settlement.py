@@ -27,7 +27,7 @@ _EntryT = TypeVar("_EntryT")
 _log = get_logger(__name__)
 
 SETTLEMENT_TIMEOUT_S = 1
-"""Seconds a settlement call waits to connect and to read: it must fit what a Lambda reserves."""
+"""Seconds a settlement call waits to connect, and again to read."""
 
 
 @dataclass(slots=True)
@@ -72,14 +72,7 @@ class _Plan:
 class SqsSettlement:
     """Settles Lambda-received SQS messages by what their job runs came to.
 
-    A rejected message goes to the dead-letter queue (``redrive``) or is dropped
-    (``discard``); a deferred one is sent again with its delay; a failed one
-    becomes visible again after its backoff; a succeeded one needs nothing, since
-    Lambda deletes every message the batch does not report. No message is ever
-    deleted here.
-
-    The SQS client is built on the first message that needs a call, bounded to
-    ``SETTLEMENT_TIMEOUT_S``: a batch whose jobs all succeeded makes none.
+    Loom never deletes a message: Lambda deletes every one the batch does not report.
 
     Args:
         clients: The application's AWS clients.
@@ -91,23 +84,9 @@ class SqsSettlement:
         self._config = config
         self._queues: SqsQueues | None = None
 
-    def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
-        """Settle every message by its outcome, one batch call per action and queue.
-
-        Returns:
-            The messages to report as failed: every one that failed, and every
-            rejection or deferral whose send did not go through.
-        """
-        by_queue: dict[str, list[tuple[SqsRecord, JobOutcome]]] = {}
-        for item in settled:
-            if not isinstance(item[1], Succeeded):
-                by_queue.setdefault(item[0].queue_arn, []).append(item)
-        redelivered: list[SqsRecord] = []
-        for arn, group in by_queue.items():
-            redelivered += self._settle_queue(arn, group)
-        return redelivered
-
-    def _bounded_queues(self) -> SqsQueues:
+    @property
+    def queues(self) -> SqsQueues:
+        """The configured queues over a client bound to ``SETTLEMENT_TIMEOUT_S``, built once."""
         if self._queues is None:
             bounded = msgspec.structs.replace(
                 self._config,
@@ -118,11 +97,30 @@ class SqsSettlement:
             self._queues = SqsQueues(self._clients.client("sqs", bounded), self._config.queues)
         return self._queues
 
+    def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
+        """Settle every message by its outcome, one batch call per action and queue.
+
+        Args:
+            settled: Each message that ran and what its run came to.
+
+        Returns:
+            The messages to report as failed: every failed one, and every rejection
+            or deferral whose send did not go through.
+        """
+        by_queue: dict[str, list[tuple[SqsRecord, JobOutcome]]] = {}
+        for item in settled:
+            if not isinstance(item[1], Succeeded):
+                by_queue.setdefault(item[0].queue_arn, []).append(item)
+        redelivered: list[SqsRecord] = []
+        for arn, group in by_queue.items():
+            redelivered += self._settle_queue(arn, group)
+        return redelivered
+
     def _settle_queue(
         self, arn: str, group: Sequence[tuple[SqsRecord, JobOutcome]]
     ) -> list[SqsRecord]:
         try:
-            queue = self._bounded_queues().at(arn)
+            queue = self.queues.at(arn)
         except Exception:
             _log.exception("SQS settlement cannot reach the queue", queue_arn=arn)
             return [record for record, _ in group]
@@ -152,17 +150,18 @@ class SqsSettlement:
         try:
             result = send(entries)
         except Exception as exc:
-            _log.exception("SQS settlement call failed", queue=queue.name, action=action)
+            _log.exception("SQS settlement call raised", queue=queue.name, action=action)
             code = aws_error_code(exc)
             result = BatchResult(failed={record.message_id: code for record, _ in entries})
-        if result.failed:
-            _log.warning(
-                "SQS settlement entries failed",
-                queue=queue.name,
-                action=action,
-                entries=dict(result.failed),
-            )
+        else:
+            if result.failed:
+                _log.warning(
+                    "SQS settlement entries failed",
+                    queue=queue.name,
+                    action=action,
+                    entries=dict(result.failed),
+                )
         return [record for record, _ in entries if record.message_id in result.failed]
 
 
-__all__ = ["SETTLEMENT_TIMEOUT_S", "SqsSettlement"]
+__all__ = ["SqsSettlement"]

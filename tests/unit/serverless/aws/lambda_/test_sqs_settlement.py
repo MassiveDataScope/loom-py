@@ -275,3 +275,49 @@ class TestSettlementThroughTheHandler:
         )
 
         assert (_failed(result), sqs.batches) == (["1", "2"], [])
+
+    def test_a_malformed_message_is_rejected_to_the_dead_letter_queue_with_its_class_as_reason(
+        self, serve: Serve, sqs: FakeSqs
+    ) -> None:
+        record = make_record("1", "x", body="{")
+
+        result = serve()({"Records": [record]}, None)
+
+        (rejected,) = sqs.entries("send_message_batch", _DEAD)
+        reason = rejected["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+        assert (_failed(result), reason) == ([], "MalformedJobMessage")
+
+    @pytest.mark.parametrize(
+        ("receive_count", "failed", "dead_lettered"), [(3, ["1"], 0), (4, [], 1)]
+    )
+    def test_an_unknown_job_is_retried_up_to_the_limit_of_its_queue(
+        self, serve: Serve, sqs: FakeSqs, receive_count: int, failed: list[str], dead_lettered: int
+    ) -> None:
+        record = make_record("1", "x", job_name="MissingJob", receive_count=receive_count)
+
+        result = serve()({"Records": [record]}, None)
+
+        assert _failed(result) == failed
+        assert len(sqs.entries("send_message_batch", _DEAD)) == dead_lettered
+
+    @pytest.mark.parametrize(("receive_count", "failed"), [(2, ["1"]), (3, [])])
+    def test_an_unknown_job_on_a_discard_queue_is_rejected_when_the_attempts_run_out(
+        self, serve: Serve, receive_count: int, failed: list[str]
+    ) -> None:
+        record = make_record("1", "x", job_name="MissingJob", receive_count=receive_count)
+
+        result = serve(dead_letter="discard")({"Records": [record]}, None)
+
+        assert _failed(result) == failed
+
+    def test_settling_a_batch_reads_no_queue_metadata_after_start_up(
+        self, serve: Serve, sqs: FakeSqs
+    ) -> None:
+        handler = serve()
+        bound = (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"])
+        records = [_record("1", AcmeRejectingJob), _record("2", AcmeRejectingJob)]
+
+        handler({"Records": records}, None)
+
+        assert bound == (1, 1)
+        assert (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"]) == bound

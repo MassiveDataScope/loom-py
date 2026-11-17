@@ -21,13 +21,12 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
+    QueueConsumer,
     Read,
-    consumed_settings,
     fail_in_span,
     jobs_recipe,
     open_host,
     run_envelope,
-    sqs_settlement,
 )
 from loom.serverless.aws.lambda_._refusals import (
     COMPONENT,
@@ -206,13 +205,13 @@ def _bind_jobs(
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a ``jobs`` function: a final failure is rejected."""
-    settings = application.job_settings
-    if queue_name is not None:
-        served = [job for job in declared.values() if settings.of(job).queue == queue_name]
-        settings = consumed_settings(application, queue_name, served)
-    return SQSBatch(
-        application, declared, open_host(application), settings, sqs_settlement(application)
-    )
+    served = [
+        job
+        for job in declared.values()
+        if queue_name is None or application.job_settings.of(job).queue == queue_name
+    ]
+    consumer = QueueConsumer.bind(application, queue_name, served)
+    return SQSBatch(application, declared, open_host(application), consumer)
 
 
 def _bind_queued_events(
@@ -223,7 +222,7 @@ def _bind_queued_events(
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: a final failure is rejected."""
     assert trigger.queue is not None
-    settings = consumed_settings(application, trigger.queue.name, [job_type])
+    consumer = QueueConsumer.bind(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
@@ -231,7 +230,7 @@ def _bind_queued_events(
         job=job_type,
     )
     host = open_host(application)
-    return SQSBatch(application, {}, host, settings, sqs_settlement(application), source)
+    return SQSBatch(application, {}, host, consumer, source)
 
 
 def _bind_direct_events(

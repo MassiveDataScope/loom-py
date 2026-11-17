@@ -6,6 +6,7 @@ Shared by the ``jobs`` function, the queued event triggers and the direct ones.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
@@ -17,13 +18,13 @@ from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import JobOutcome
+from loom.core.job.policy import DEFAULT_RETRY, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
-from loom.jobs.aws.queue import SqsQueues
 from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
@@ -71,7 +72,7 @@ def jobs_recipe(
         agent_endpoints=False,
         metrics=metrics,
         connection_only=not resolved.models,
-        states_attempt_limits=False,
+        logs_job_retries=False,
     )
     return recipe, {job_type.__qualname__: job_type for job_type in resolved.jobs}
 
@@ -95,45 +96,58 @@ def open_host(application: Application) -> LoopHost:
     return host
 
 
-def consumed_settings(
-    application: Application, queue_name: str, jobs: Iterable[type[Job[Any]]]
-) -> JobSettings:
-    """Check the queue *queue_name* at Init and return the settings *jobs* run under.
+@dataclass(frozen=True)
+class QueueConsumer:
+    """What a function consuming SQS needs to run and settle a batch.
 
-    Only a consumer asks SQS about its queue. The settings are the application's
-    with each of *jobs* holding the retry policy the queue implies; the
-    application's own are untouched. One line logs the consumer's policies.
-
-    Raises:
-        ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, or a job on a
-            ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``.
-        SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+    Attributes:
+        settings: The options and retry policies its jobs run under.
+        unserved: The retry policy of a message that names no job it serves.
+        settlement: Settles each message by what its job came to.
     """
-    config = SQSConfig.load(application.config)
-    if queue_name not in config.queues:
-        raise ConfigError(f"sqs.queues.{queue_name} is missing: a function consumes that queue")
-    client = application.kernel.container.resolve(AwsClients).client("sqs", config)
-    queue = SqsQueues(client, config.queues).named(queue_name)
-    base = application.job_settings
-    retries = queue.consumed_retries(jobs, lambda job: base.of(job).retry)
-    settings = base.with_retries(retries)
-    _log.info(
-        "Job retry policies of the consumed queue",
-        queue=queue_name,
-        jobs=JobSettings({job: settings.of(job) for job in retries}).describe_retries(),
-    )
-    return settings
 
+    settings: JobSettings
+    unserved: RetryPolicy
+    settlement: SqsSettlement
 
-def sqs_settlement(application: Application) -> SqsSettlement:
-    """The settlement of the messages a function consumes.
+    @classmethod
+    def bind(
+        cls, application: Application, queue_name: str | None, jobs: Iterable[type[Job[Any]]]
+    ) -> QueueConsumer:
+        """Check the queue *queue_name* at Init, and fix the policies *jobs* run under.
 
-    Raises:
-        ConfigError: When the ``sqs`` section is invalid.
-    """
-    return SqsSettlement(
-        application.kernel.container.resolve(AwsClients), SQSConfig.load(application.config)
-    )
+        Only a consumer asks SQS about its queue, once: the settlement shares the
+        queue it reads. A function declaring no queue asks nothing until a message
+        needs settling. The application's own settings are untouched; one line
+        logs the consumer's policies.
+
+        Raises:
+            ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, or a job on a
+                ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``.
+            SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+        """
+        config = SQSConfig.load(application.config)
+        settlement = SqsSettlement(application.kernel.container.resolve(AwsClients), config)
+        served = list(jobs)
+        base = application.job_settings
+        settings, unserved = base, DEFAULT_RETRY
+        if queue_name is not None:
+            if queue_name not in config.queues:
+                raise ConfigError(
+                    f"sqs.queues.{queue_name} is missing: a function consumes that queue"
+                )
+            queue = settlement.queues.named(queue_name)
+            settings = base.with_retries(
+                queue.consumed_retries(served, lambda job: base.of(job).retry)
+            )
+            unserved = queue.unserved_policy()
+        if served:
+            _log.info(
+                "Job retry policies",
+                queue=queue_name,
+                jobs=JobSettings({job: settings.of(job) for job in served}).describe_retries(),
+            )
+        return cls(settings, unserved, settlement)
 
 
 def remaining_ms(context: Any) -> int | None:

@@ -16,6 +16,7 @@ from loom.jobs.aws.queue import (
     REJECTION_REASON_ATTRIBUTE,
     DeadLetterPolicy,
     QueueConfig,
+    SqsQueue,
     SqsRecord,
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SqsSettlement
@@ -200,6 +201,31 @@ class TestSqsSettlement:
         redelivered = sqs.settle_all(
             [(_record("a"), Rejected("no")), (_record("b"), Deferred(Countdown(5), "wait"))]
         )
+
+        assert _ids(redelivered) == ["a", "b"]
+
+    def test_a_dead_letter_lookup_that_raises_reports_the_rejections_in_one_log_line(
+        self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sqs = settling(lookup_raises=RuntimeError("down"))
+
+        redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "ab"])
+
+        assert _ids(redelivered) == ["a", "b"]
+        assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
+        assert not _logged(caplog, "SQS settlement entries failed")
+
+    def test_a_resend_that_raises_reports_the_deferrals(
+        self, settling: Callable[..., Settling], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*_: Any) -> None:
+            raise RuntimeError("down")
+
+        monkeypatch.setattr(SqsQueue, "defer_batch", refuse)
+        sqs = settling()
+        deferred = Deferred(Countdown(5), "wait")
+
+        redelivered = sqs.settle_all([(_record(name), deferred) for name in "ab"])
 
         assert _ids(redelivered) == ["a", "b"]
 

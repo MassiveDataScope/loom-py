@@ -27,6 +27,7 @@ class FakeSqs:
         redrive: The ``RedrivePolicy`` of each queue URL; a queue absent has none.
         refuse: Entry ids a batch answers as failed, with the code ``Throttled``.
         raises: What every batch call raises, when set.
+        lookup_raises: What the dead-letter queue lookup raises, when set.
     """
 
     def __init__(
@@ -35,10 +36,12 @@ class FakeSqs:
         *,
         refuse: frozenset[str] = frozenset(),
         raises: Exception | None = None,
+        lookup_raises: Exception | None = None,
     ) -> None:
         self._redrive = redrive or {}
         self._refuse = refuse
         self._raises = raises
+        self._lookup_raises = lookup_raises
         self.calls: Counter[str] = Counter()
         self.batches: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.sent: list[dict[str, Any]] = []
@@ -67,6 +70,8 @@ class FakeSqs:
 
     def get_queue_attributes(self, QueueUrl: str, AttributeNames: list[str]) -> dict[str, Any]:  # noqa: N803
         self.calls["get_queue_attributes"] += 1
+        if self._lookup_raises is not None:
+            raise self._lookup_raises
         policy = self._redrive.get(QueueUrl)
         return {} if policy is None else {"Attributes": {"RedrivePolicy": json.dumps(policy)}}
 

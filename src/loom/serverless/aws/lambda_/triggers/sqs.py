@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from loom.core.errors import MalformedJobMessage, UnknownJob
-from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import (
     Deferred,
@@ -26,13 +25,12 @@ from loom.core.job.outcome import (
     Succeeded,
     failure_log_fields,
 )
-from loom.core.job.policy import DEFAULT_RETRY
-from loom.core.job.settlement import JobSettlement
+from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
-from loom.jobs.aws import FIFO_SUFFIX
 from loom.jobs.aws.queue import SqsRecord
 from loom.serverless.aws.lambda_._jobs import (
     TIMEOUT_SAFETY_MARGIN_MS,
+    QueueConsumer,
     Read,
     fail_in_span,
     remaining_ms,
@@ -83,8 +81,7 @@ class SQSBatch:
         application: The composed, open application.
         jobs: The jobs by the name an envelope gives them.
         host: Runs the batch's jobs on the application's loop.
-        settings: The options and retry policy the function's jobs run under.
-        settlement: Settles each message by its outcome.
+        consumer: The policies its jobs run under, and what settles their messages.
         source: How a message body becomes jobs.
     """
 
@@ -93,54 +90,42 @@ class SQSBatch:
         application: Application,
         jobs: Mapping[str, type[Job[Any]]],
         host: LoopHost,
-        settings: JobSettings,
-        settlement: JobSettlement[SqsRecord],
+        consumer: QueueConsumer,
         source: QueueSource = _JOB_ENVELOPES,
     ) -> None:
         self._application = application
         self._jobs = jobs
         self._host = host
-        self._settings = settings
-        self._settlement = settlement
+        self._consumer = consumer
         self._source = source
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
-        records: list[Any] = event["Records"]
-        fifo = bool(records) and _is_fifo(records[0])
+        records = [SqsRecord.from_event(raw) for raw in event["Records"]]
+        fifo = bool(records) and records[0].is_fifo
         settled: list[tuple[SqsRecord, JobOutcome]] = []
-        reported: set[str] = set()
-        for index, raw in enumerate(records):
+        failed: list[SqsRecord] = []
+        for index, record in enumerate(records):
             if _out_of_time(context):
-                reported.update(_message_id(unrun) for unrun in records[index:])
+                failed += records[index:]
                 break
-            if not _is_sqs_record(raw):
-                reported.add(_message_id(raw))
+            if not record.is_settleable:
+                failed.append(record)
                 continue
-            record = SqsRecord.from_event(raw)
             outcome = self._host.run(self._arrive(record, context))
             settled.append((record, outcome))
             if fifo and not isinstance(outcome, Succeeded):
-                listed = self._settle(settled)
-                reported |= listed
+                listed = self._consumer.settlement.settle_all(settled)
+                failed += listed
                 settled = []
                 if listed:
-                    reported.update(_message_id(unrun) for unrun in records[index + 1 :])
+                    failed += records[index + 1 :]
                     break
-        reported.update(self._settle(settled))
-        return {
-            "batchItemFailures": [
-                {"itemIdentifier": _message_id(raw)}
-                for raw in records
-                if _message_id(raw) in reported
-            ]
-        }
+        failed += self._consumer.settlement.settle_all(settled)
+        return {"batchItemFailures": [{"itemIdentifier": record.message_id} for record in failed]}
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""
         self._host.close()
-
-    def _settle(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> set[str]:
-        return {record.message_id for record in self._settlement.settle_all(settled)}
 
     async def _arrive(self, record: SqsRecord, context: Any) -> JobOutcome:
         """The outcome of the record's jobs: the first one that did not succeed, else the last."""
@@ -154,14 +139,14 @@ class SQSBatch:
                     job_type,
                     event_id or envelope.task_id or record.message_id,
                     context,
-                    settings=self._settings,
+                    settings=self._consumer.settings,
                     attempt=record.receive_count,
                     deferrals=record.deferrals,
                 )
                 if not isinstance(outcome, Succeeded):
                     break
         except (MalformedJobMessage, UnknownJob) as exc:
-            outcome = Failed(exc, DEFAULT_RETRY.backoff.delay(record.receive_count))
+            outcome = JobRunner.decide(exc, record.receive_count, self._consumer.unserved)
         self._log_outcome(record, outcome)
         return outcome
 
@@ -212,20 +197,6 @@ class SQSBatch:
                     exc_info=error,
                     **failure_log_fields(error),
                 )
-
-
-def _message_id(record: Any) -> str:
-    return str(record.get("messageId", "")) if isinstance(record, Mapping) else ""
-
-
-def _is_sqs_record(raw: Any) -> bool:
-    return isinstance(raw, Mapping) and all(
-        key in raw for key in ("messageId", "receiptHandle", "body")
-    )
-
-
-def _is_fifo(record: Any) -> bool:
-    return isinstance(record, Mapping) and str(record.get("eventSourceARN")).endswith(FIFO_SUFFIX)
 
 
 def _out_of_time(context: Any) -> bool:

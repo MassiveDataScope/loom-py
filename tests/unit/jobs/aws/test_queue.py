@@ -9,7 +9,7 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.config import JobSettings, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
+from loom.core.job.policy import DEFAULT_RETRY, Countdown
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.queue import (
     DEFERRALS_ATTRIBUTE,
@@ -435,3 +435,40 @@ class TestWire:
             "MessageDeduplicationId": "d",
             "MessageAttributes": {"k": {"DataType": "String", "StringValue": "v"}},
         }
+
+
+class TestSqsRecordFromEvent:
+    def test_a_record_reads_its_receive_count_queue_and_fifo_marker(self) -> None:
+        raw = {
+            "messageId": "m",
+            "receiptHandle": "h",
+            "body": "b",
+            "attributes": {"ApproximateReceiveCount": "3"},
+            "eventSourceARN": "arn:aws:sqs:eu-west-1:123456789012:orders.fifo",
+        }
+
+        record = SqsRecord.from_event(raw)
+
+        assert (record.receive_count, record.is_fifo, record.is_settleable) == (3, True, True)
+
+    @pytest.mark.parametrize("raw", ["bad", {"body": "{"}, {"messageId": "m", "body": "b"}])
+    def test_a_record_that_lacks_what_settlement_needs_is_not_settleable(self, raw: Any) -> None:
+        assert SqsRecord.from_event(raw).is_settleable is False
+
+    def test_an_unreadable_record_has_an_empty_id(self) -> None:
+        assert SqsRecord.from_event("bad").message_id == ""
+
+    def test_a_standard_queue_record_is_not_fifo(self) -> None:
+        assert SqsRecord.from_event({"eventSourceARN": "arn:aws:sqs:r:1:orders"}).is_fifo is False
+
+
+class TestUnservedPolicy:
+    def test_a_discard_queue_gives_the_loom_default(self) -> None:
+        queue = _queue(FakeSqs(), policy=DeadLetterPolicy.DISCARD)
+
+        assert queue.unserved_policy() == DEFAULT_RETRY
+
+    def test_a_redrive_queue_limits_attempts_as_its_policy_does(self) -> None:
+        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+
+        assert queue.unserved_policy().max_attempts == 4

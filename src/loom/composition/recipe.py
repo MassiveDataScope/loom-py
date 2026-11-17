@@ -58,9 +58,8 @@ class Recipe:
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
             :class:`~loom.core.stores.StoreRuntime`).
-        states_attempt_limits: Whether the start-up line of job retry policies states
-            each ``max_attempts``; false for an entry point whose queue owns the
-            limit and which logs it where it consumes.
+        logs_job_retries: Whether composition logs the job retry policies; false for
+            an entry point that logs them itself.
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Set by the testing harness; no
@@ -82,7 +81,7 @@ class Recipe:
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
-    states_attempt_limits: bool = True
+    logs_job_retries: bool = True
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
     lenient: bool = False
 

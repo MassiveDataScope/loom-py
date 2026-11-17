@@ -19,6 +19,7 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
+from loom.core.job.policy import RetryPolicy
 
 Invocation = Callable[[JobDelivery], Awaitable[Any]]
 """Runs the job of a delivery and returns its result, or raises what it raised."""
@@ -74,15 +75,25 @@ class JobRunner:
         except JobRejection as signal:
             return Rejected(signal.reason, signal)
         except Exception as exc:
-            return self._failure(delivery, exc)
+            return self.decide(exc, delivery.attempt, delivery.policy)
         return Succeeded(result)
 
     @staticmethod
-    def _failure(delivery: JobDelivery, error: Exception) -> Rejected | Failed:
-        if getattr(error, "retryable", True) and delivery.policy.allows_attempt_after(
-            delivery.attempt
-        ):
-            return Failed(error, delivery.policy.backoff.delay(delivery.attempt))
+    def decide(error: Exception, attempt: int, policy: RetryPolicy) -> Rejected | Failed:
+        """Whether *error* on attempt *attempt* fails it for another try or rejects it for good.
+
+        Args:
+            error: What went wrong.
+            attempt: The attempt number, from 1.
+            policy: The policy that governs the delivery.
+
+        Returns:
+            :class:`~loom.core.job.outcome.Failed` while the error is retryable and
+            the policy allows another attempt, else
+            :class:`~loom.core.job.outcome.Rejected` with the error's class as reason.
+        """
+        if getattr(error, "retryable", True) and policy.allows_attempt_after(attempt):
+            return Failed(error, policy.backoff.delay(attempt))
         return Rejected(type(error).__qualname__, error)
 
     @staticmethod

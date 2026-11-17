@@ -80,17 +80,25 @@
   lost: `retry_final` is removed from `QueueSource`. API calls are grouped by
   action and queue, at most ten entries each; a failed entry lists only its own
   message, and a failed visibility change is logged and never aborts the batch.
-  Settlement uses an SQS client with 1 s connect and read timeouts and one
-  attempt, so it fits the invocation's one-second safety margin. A record never
+  Each settlement call is bounded: an SQS client with a 1 s connect timeout, a
+  1 s read timeout and one attempt. A timeout in the middle of a settlement
+  redelivers the batch: messages may run twice, none is lost. A record never
   run (out of time, or behind a failed message on a FIFO queue) stays in
   `batchItemFailures` without a settlement and is not an attempt of the job,
-  though SQS counts its delivery in `ApproximateReceiveCount`. A message that
-  cannot be read, or names an unknown job, is still retried with the default
-  backoff. A function holds the retry policies its queue implies (the
-  `RedrivePolicy` limit on a `redrive` queue) and no longer rewrites
-  `application.job_settings`; the start-up line `Job retry policies` of a
-  Lambda jobs function omits `max_attempts`, which the consumer's own line
-  `Job retry policies of the consumed queue` states.
+  though SQS counts its delivery in `ApproximateReceiveCount`. A malformed
+  message (`MalformedJobMessage` is no longer retryable) is rejected at once,
+  with the error class as reason; a message naming an unknown job stays
+  retryable, for a deploy that rolls out, but is bounded by the queue's limit
+  (the `RedrivePolicy` `maxReceiveCount` on `redrive`, the default
+  `max_attempts` on `discard`) and then rejected. The queue is read once, at
+  Init: the settlement shares the consumer's queue, so settling a batch makes
+  no metadata call. A function holds the retry policies its queue implies and
+  no longer rewrites `application.job_settings`; a Lambda jobs function logs
+  the one `Job retry policies` line of its consumed jobs, and composition logs
+  none for it (`Recipe.logs_job_retries`). `loom.testing.TEST_QUEUE` is the
+  `sqs.queues` entry that the default queue ARN of a `LambdaEvent` record
+  names: declare it in the test configuration, and a failed record of a test
+  settles instead of logging that no queue matches.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -326,7 +334,8 @@
   | `lambda.functions.<f>.http: [...]` | `lambda.functions.<f>.trigger: {source: http, interfaces: [...]}` |
   | `lambda.functions.<f>.auth` | `lambda.functions.<f>.trigger.auth` |
   | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs, queue: {name: ...}}` |
-  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
+  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
+  | `lambda.functions.<f>.report_batch_item_failures` | Removed: `ReportBatchItemFailures` is always on |
   | `loom.serverless.aws.lambda_.http` | `loom.serverless.aws.lambda_.triggers.http` |
   | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | Removed: the batch always reports its failures |
   | `loom.serverless.aws.lambda_.sqs.SQSHandler` | `loom.serverless.aws.lambda_.LambdaHandler` |
@@ -343,7 +352,8 @@
 - **lambda:** `ReportBatchItemFailures` is mandatory: the deploy manifest always
   declares `report_batch_item_failures: true`, and the key is removed from
   `trigger.queue` (it fails to load as an unknown field), with
-  `QueueMapping.reports_batch_item_failures`, `JobsTrigger.reports_batch_item_failures`
+  `QueueMapping.reports_batch_item_failures`, `JobsTrigger.reports_batch_item_failures`,
+  `EventTrigger.reports_batch_item_failures`
   and `loom.serverless.aws.lambda_.SQSBatchFailedError` (with
   `SQSErrorCode.BATCH_FAILED`). **Migration:** drop the key and enable
   `ReportBatchItemFailures` on the event source mapping.
@@ -1021,8 +1031,8 @@
   `sqs.batch_size`, `sqs.max_concurrent_sends`); a standard queue resends the
   entries SQS refuses once, a FIFO queue stops at its first failure. A
   Lambda `jobs` trigger's `queue` block declares `batch_size`,
-  `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
-  `false` makes the SQS handler fail the whole batch.
+  `batching_window_s` and `max_concurrency`; the handler reports the failed
+  messages alone.
 - **jobs:** fix: `loom-kernel[celery]` now installs a redis-py compatible with
   kombu's Redis transport (`celery[redis]`), instead of pinning `redis<6`,
   with which a Redis broker failed at start with

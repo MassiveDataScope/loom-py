@@ -17,7 +17,7 @@ from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
+from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 
@@ -176,21 +176,33 @@ class SqsRecord:
     receive_count: int = 1
 
     @classmethod
-    def from_event(cls, record: Mapping[str, Any]) -> SqsRecord:
-        """The record of an SQS event's ``Records`` entry."""
+    def from_event(cls, record: Any) -> SqsRecord:
+        """The record of an SQS event's ``Records`` entry; what it lacks is empty."""
+        if not isinstance(record, Mapping):
+            return cls("", "", "")
         system = record.get("attributes", {})
         return cls(
-            message_id=record["messageId"],
-            receipt_handle=record["receiptHandle"],
-            body=record["body"],
+            message_id=str(record.get("messageId", "")),
+            receipt_handle=str(record.get("receiptHandle", "")),
+            body=str(record.get("body", "")),
             group_id=system.get("MessageGroupId"),
             attributes={
                 name: cls._attribute(value)
                 for name, value in record.get("messageAttributes", {}).items()
             },
-            queue_arn=record.get("eventSourceARN", ""),
+            queue_arn=str(record.get("eventSourceARN", "")),
             receive_count=int(system.get("ApproximateReceiveCount", 1)),
         )
+
+    @property
+    def is_settleable(self) -> bool:
+        """Whether it carries the id and handle a settlement needs, and a body to run."""
+        return bool(self.message_id and self.receipt_handle and self.body)
+
+    @property
+    def is_fifo(self) -> bool:
+        """Whether it was received from a FIFO queue."""
+        return self.queue_arn.endswith(FIFO_SUFFIX)
 
     @staticmethod
     def _attribute(written: Mapping[str, Any]) -> dict[str, Any]:
@@ -411,6 +423,19 @@ class SqsQueue:
                 {**retry.sources, "max_attempts": RetrySource.REDRIVE},
             )
         return retries
+
+    def unserved_policy(self) -> RetryPolicy:
+        """The policy of a message that names no job this consumer serves.
+
+        It is the loom default; on a ``redrive`` queue its ``max_attempts`` is the
+        ``maxReceiveCount`` of the ``RedrivePolicy``.
+
+        Raises:
+            SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+        """
+        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+            return DEFAULT_RETRY
+        return replace(DEFAULT_RETRY, max_attempts=self.dead_letter().max_receive_count)
 
     def _read_dead_letter(self) -> DeadLetter:
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:

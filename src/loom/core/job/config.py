@@ -130,17 +130,11 @@ class ResolvedRetry:
             {name: source for name, (_, source) in fields.items()},
         )
 
-    def describe(self, *, attempt_limit: bool = True) -> str:
-        """The policy and where it came from: one source when every field shares it.
-
-        Args:
-            attempt_limit: Whether to state ``max_attempts``; false when the transport
-                that consumes the job owns the limit.
-        """
-        values = asdict(self.policy.backoff)
-        if attempt_limit:
-            values["max_attempts"] = self.policy.max_attempts
-        origins = {self.sources[name] for name in values}
+    def describe(self) -> str:
+        """The policy and where it came from: one source when every field shares it."""
+        backoff = self.policy.backoff
+        values = {**asdict(backoff), "max_attempts": self.policy.max_attempts}
+        origins = set(self.sources.values())
         if len(origins) == 1:
             return f"{_render(values)} ({origins.pop().value})"
         return ", ".join(
@@ -240,16 +234,9 @@ class JobSettings:
         replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
         return JobSettings({**self.jobs, **replaced})
 
-    def describe_retries(self, *, attempt_limit: bool = True) -> list[dict[str, str]]:
-        """Each job's effective retry policy and where it came from, for the start-up log.
-
-        Args:
-            attempt_limit: Whether to state each ``max_attempts``.
-        """
+    def describe_retries(self) -> list[dict[str, str]]:
+        """Each job's effective retry policy and where it came from, for the start-up log."""
         return [
-            {
-                "job": job_type.__qualname__,
-                "retry": options.retry.describe(attempt_limit=attempt_limit),
-            }
+            {"job": job_type.__qualname__, "retry": options.retry.describe()}
             for job_type, options in self.jobs.items()
         ]

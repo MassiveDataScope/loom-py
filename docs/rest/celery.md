@@ -548,14 +548,20 @@ ten entries each.
 - A call that fails for some entries lists only those messages; one that fails
   for all lists all of them, and the failure is logged in one line per call. A
   failed visibility change is logged and never aborts the batch.
-- Settlement calls SQS with 1 s connect and read timeouts and no retries, so
-  it fits the one second the function keeps free at the end of the invocation.
+- Each settlement call is bounded: 1 s to connect, 1 s to read, one attempt. A
+  timeout in the middle of a settlement redelivers the batch: a message may run
+  twice, none is lost.
+- The function reads the queue's `RedrivePolicy` once, at Init, and settling a
+  batch makes no metadata call. It logs one `Job retry policies` line for its
+  jobs.
 - A record the function did not run (the invocation ran out of time, or it
   follows a failed message on a FIFO queue) stays in `batchItemFailures`
   without being settled. It is not an attempt of the job, though SQS counts its
   delivery in `ApproximateReceiveCount`.
-- A message that cannot be read, or names a job the function does not serve, is
-  retried with the default backoff until the queue dead-letters it.
+- A malformed message is rejected at once, with `MalformedJobMessage` as reason.
+  A message naming a job the function does not serve is retried, as a deploy
+  may still be rolling out, but only up to the queue's limit (`maxReceiveCount`
+  on `redrive`, the default `max_attempts` on `discard`); then it is rejected.
 
 **IAM.** The role of a function consuming a queue needs:
 
