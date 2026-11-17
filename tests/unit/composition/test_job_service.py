@@ -208,7 +208,7 @@ class TestInlineTimer:
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
         ((event, fields),) = warnings_logged.calls
         assert event == "Job retry policies"
-        assert "max_attempts=1 (no timer to wait on)" in fields["jobs"][0]["retry"]
+        assert "max_attempts=1 (no redelivery)" in fields["jobs"][0]["retry"]
 
     def test_a_celery_application_has_no_timer(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))

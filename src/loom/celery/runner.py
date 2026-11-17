@@ -29,11 +29,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
-from celery.backends.base import KeyValueStoreBackend  # type: ignore[import-untyped]
-from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
 from loom.celery.errors import WorkerNotOpenError
+from loom.celery.service import CallbackLink
 from loom.core.async_bridge import AsyncBridge
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Acting, current_caller
@@ -48,6 +47,7 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
+from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
@@ -182,6 +182,10 @@ def _make_job_task(
     retries after its delay without spending an attempt (the task carries the
     count in its ``deferrals`` argument), and a rejection raises its error, which
     the worker stores as the failure and acknowledges (``acks_late``) without a retry.
+    Before it raises, the task sends the failure callback task named in its
+    ``failure_callback`` argument, with the error's class and text; that
+    callback is delivered at least once, as a worker that dies between the
+    send and the acknowledgement sends it again.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -216,7 +220,11 @@ def _make_job_task(
     runtime = observability_runtime or ObservabilityRuntime.noop()
     run_timeout = float(timeout) if timeout is not None and timeout > 0 else None
     name = job_type.__qualname__
-    runner = JobRunner(EnvelopeInvocation(factory, executor, runtime), metrics)
+    runner = JobRunner(
+        EnvelopeInvocation(factory, executor, runtime),
+        redelivery=Redelivery.DELAYED,
+        metrics=metrics,
+    )
 
     def _deliver(
         *,
@@ -297,6 +305,7 @@ def _make_job_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
         deferrals: int = 0,
+        failure_callback: str | None = None,
     ) -> Any:
         with active_trace_id(trace_id or None):
             outcome = _deliver(
@@ -307,44 +316,13 @@ def _make_job_task(
                 trace_id=trace_id,
                 deferrals=deferrals,
             )
+            if isinstance(outcome, Rejected) and failure_callback is not None:
+                CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
+                    celery_app, failure_callback, outcome.failure()
+                )
             return _settle(self, outcome, deferrals)
 
     return _job_task
-
-
-def _resolve_error_info(job_id: str, app: Celery) -> dict[str, str]:
-    """Look up the class and message of the error that made a job fail.
-
-    On a key-value result backend (Redis, memcached, cache) the stored result
-    is read as the worker wrote it, so the answer does not depend on the
-    ``result_serializer``: a JSON result holds ``exc_type`` and the error's
-    ``args``, a pickled one the error itself. Reading it through Celery would
-    rebuild the error from its ``args``, and an error whose ``__init__``
-    takes other arguments would come back as a bare ``Exception``. Any other
-    backend answers with the error Celery rebuilds. Falls back to ``Unknown``
-    and an empty message when the backend holds no error.
-
-    Args:
-        job_id: Celery task UUID of the *failed* job.
-        app: The worker application holding the result backend.
-
-    Returns:
-        The ``exc_type`` and ``exc_msg`` arguments of ``on_failure``.
-    """
-    backend = app.backend
-    if isinstance(backend, KeyValueStoreBackend):
-        payload = backend.get(backend.get_key_for_task(job_id))
-        stored = backend.decode(payload)["result"] if payload else None
-    else:
-        stored = AsyncResult(job_id, app=app).result
-    match stored:
-        case {"exc_type": str(exc_type), "exc_message": args}:
-            message = Exception(*args) if isinstance(args, list | tuple) else Exception(args)
-            return {"exc_type": exc_type, "exc_msg": str(message)}
-        case Exception():
-            return {"exc_type": type(stored).__qualname__, "exc_msg": str(stored)}
-        case _:
-            return {"exc_type": "Unknown", "exc_msg": ""}
 
 
 def _make_callback_task(
@@ -358,10 +336,10 @@ def _make_callback_task(
     """Register and return the Celery task calling *callback_type*'s hook for *outcome*.
 
     A success link is mutable: Celery passes the job's return value as the
-    first positional argument. A failure link is immutable: the exception
-    is read from the result backend (:func:`_resolve_error_info`), so a
-    configured backend is required for its ``exc_type`` and ``exc_msg``.
-    The link's ``job_id`` and ``context`` arrive as keyword arguments.
+    first positional argument. A failure callback is sent by the worker that
+    rejects the job, with the error's ``exc_type`` and ``exc_msg`` as keyword
+    arguments, so no result backend is read. The link's ``job_id`` and
+    ``context`` arrive as keyword arguments.
 
     The link's trace and caller are installed where the hook runs: an async
     hook in the coroutine the async bridge runs, through
@@ -384,11 +362,11 @@ def _make_callback_task(
     name = callback_type.__qualname__
     hook_is_async = inspect.iscoroutinefunction(outcome.hook(callback_type))
 
-    def details(job_id: str, job_result: tuple[Any, ...]) -> dict[str, Any]:
+    def details(job_result: tuple[Any, ...], exc_type: str, exc_msg: str) -> dict[str, Any]:
         if outcome is CallbackOutcome.SUCCESS:
             return {"result": job_result[0]}
         Acting.current().refuse_expired()
-        return _resolve_error_info(job_id, celery_app)
+        return {"exc_type": exc_type, "exc_msg": exc_msg}
 
     async def notified(
         job_id: str,
@@ -396,6 +374,8 @@ def _make_callback_task(
         trace_id: str | None,
         identity: dict[str, Any] | None,
         context: dict[str, Any],
+        exc_type: str,
+        exc_msg: str,
     ) -> None:
         with (
             job_context(trace_id, identity),
@@ -405,7 +385,7 @@ def _make_callback_task(
                 factory,
                 callback_type,
                 outcome,
-                **{**context, "job_id": job_id, **details(job_id, job_result)},
+                **{**context, "job_id": job_id, **details(job_result, exc_type, exc_msg)},
             )
 
     @celery_app.task(  # type: ignore[untyped-decorator]
@@ -418,11 +398,13 @@ def _make_callback_task(
         context: dict[str, Any],
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
+        exc_type: str = "Unknown",
+        exc_msg: str = "",
     ) -> None:
         async_runtime.ensure_open()
         if hook_is_async:
             async_runtime.run(
-                notified(job_id, job_result, trace_id, identity, context),
+                notified(job_id, job_result, trace_id, identity, context, exc_type, exc_msg),
                 eager_fallback=_is_eager_request(self),
             )
             return
@@ -430,7 +412,11 @@ def _make_callback_task(
             job_context(trace_id, identity),
             runtime.span(Scope.JOB, name, trace_id=trace_id, id=job_id, callback=outcome.value),
         ):
-            arguments = {**context, "job_id": job_id, **details(job_id, job_result)}
+            arguments = {
+                **context,
+                "job_id": job_id,
+                **details(job_result, exc_type, exc_msg),
+            }
             with ExecutionScope(current_caller(), what=name):
                 reply = outcome.hook(factory.build(callback_type))(**arguments)
                 if reply is not None and inspect.isawaitable(reply):

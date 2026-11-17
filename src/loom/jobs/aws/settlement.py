@@ -47,15 +47,6 @@ class _Plan:
                     plan.rejections.append((record, reason))
                 case Rejected(reason=reason):
                     plan.discards.append((record, reason))
-                case Deferred(delay=delay, reason=reason) if queue.is_fifo:
-                    _log.error(
-                        "SQS FIFO queue takes no per-message delay: the deferral is "
-                        "settled as a failed attempt",
-                        queue=queue.name,
-                        message_id=record.message_id,
-                        reason=reason,
-                    )
-                    plan.retries.append((record, delay))
                 case Deferred(delay=delay):
                     plan.deferrals.append((record, delay))
                 case Failed(delay=delay):

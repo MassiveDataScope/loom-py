@@ -186,26 +186,27 @@ class TestWithoutATimer:
 
         assert handle.wait() == "done"
 
-    async def test_a_job_retry_is_rejected_naming_the_refused_delay(self) -> None:
-        acme = Acme(JobRetry("warming up", 30), timed=False)
+    async def test_a_job_retry_is_rejected_as_one_that_cannot_wait(self) -> None:
+        signal = JobRetry("warming up", 30)
+        acme = Acme(signal, timed=False)
 
         handle = await acme.service.dispatch_now(AcmeJob)
 
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
-        assert isinstance(failed.value.cause, JobDelayRefused)
-        assert failed.value.cause.delay is None
-        assert not any(character.isdigit() for character in str(failed.value.cause))
+        assert failed.value.cause is signal
         assert acme.runs == [(1, 0)]
 
-    async def test_a_zero_delay_job_retry_is_refused_too(self) -> None:
-        acme = Acme(JobRetry("warming up", 0), timed=False)
+    async def test_a_zero_delay_job_retry_is_rejected_too(self) -> None:
+        signal = JobRetry("warming up", 0)
+        acme = Acme(signal, timed=False)
 
         handle = await acme.service.dispatch_now(AcmeJob)
 
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
-        assert isinstance(failed.value.cause, JobDelayRefused)
+        assert failed.value.cause is signal
+        assert acme.runs == [(1, 0)]
 
     async def test_a_failure_on_the_default_policy_runs_once_and_keeps_its_own_error(
         self,

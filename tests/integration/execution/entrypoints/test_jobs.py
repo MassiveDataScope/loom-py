@@ -329,7 +329,8 @@ class TestADispatchWithNoCaller:
             jobs.dispatch_after_commit(AcmeProbeJob)
 
         await executor.execute(AcmeRun(dispatch))
-        sent = app.send_task.call_args.kwargs["kwargs"]
+        sent = {**app.send_task.call_args.kwargs["kwargs"]}
+        del sent["failure_callback"]
         envelope = JobEnvelope(job="AcmeProbeJob", **sent)
 
         with pytest.raises(Unauthenticated):

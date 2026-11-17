@@ -18,7 +18,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import JobOutcome
-from loom.core.job.policy import RetryPolicy
+from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import JobService
@@ -103,11 +103,13 @@ class QueueConsumer:
         settings: The options and retry policies its jobs run under.
         unserved: The retry policy of a message that names no job it serves.
         settlement: Settles each message by what its job came to.
+        runner: Runs and decides each message, knowing what its queue redelivers.
     """
 
     settings: JobSettings
     unserved: RetryPolicy
     settlement: JobSettlement[SqsRecord]
+    runner: JobRunner
 
     @classmethod
     def bind(
@@ -118,7 +120,9 @@ class QueueConsumer:
         The queue's dead-letter policy is read here, with the application's own client
         and its retries: ``GetQueueAttributes`` and ``GetQueueUrl`` once per cold
         start. An invocation never reads queue metadata. The application's own
-        settings are untouched; one line logs the consumer's policies.
+        settings are untouched; one line logs the consumer's policies. A FIFO
+        queue brings a message back unchanged and without a delay (``Redelivery.SAME``);
+        any other waits the delay it is sent with (``Redelivery.DELAYED``).
 
         Raises:
             ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, a job on a
@@ -143,13 +147,21 @@ class QueueConsumer:
         served = list(jobs)
         base = application.job_settings
         settings = base.with_retries(queue.consumed_retries(served, lambda job: base.of(job).retry))
+        redelivery = Redelivery.SAME if queue.is_fifo else Redelivery.DELAYED
         if served:
             _log.info(
                 "Job retry policies",
                 queue=queue_name,
-                jobs=JobSettings({job: settings.of(job) for job in served}).describe_retries(),
+                jobs=JobSettings({job: settings.of(job) for job in served}).describe_retries(
+                    redelivery
+                ),
             )
-        return cls(settings, queue.unserved_policy(), settlement)
+        return cls(
+            settings,
+            queue.unserved_policy(),
+            settlement,
+            job_runner(application, redelivery),
+        )
 
 
 def remaining_ms(context: Any) -> int | None:
@@ -169,8 +181,18 @@ def run_timeout(job_timeout: int | None, context: Any) -> float | None:
     return min(limits) if limits else None
 
 
+def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
+    """The runner of *application*'s jobs on a transport that redelivers as *redelivery*."""
+    kernel = application.kernel
+    return JobRunner(
+        EnvelopeInvocation(kernel.factory, kernel.executor, application.observability),
+        redelivery=redelivery,
+        metrics=kernel.metrics,
+    )
+
+
 async def run_envelope(
-    application: Application,
+    runner: JobRunner,
     envelope: JobEnvelope,
     job_type: type[Job[Any]],
     task_id: str | None,
@@ -183,7 +205,7 @@ async def run_envelope(
     """Run *envelope* as *job_type*, within its timeout and what remains of the invocation.
 
     Args:
-        application: Whose kernel runs the job.
+        runner: Runs the job and decides what its run came to.
         envelope: The message to run.
         job_type: The job it runs as.
         task_id: The transport's id of the message.
@@ -196,11 +218,6 @@ async def run_envelope(
         What the run came to.
     """
     options = settings.of(job_type)
-    runner = JobRunner(
-        EnvelopeInvocation(
-            application.kernel.factory, application.kernel.executor, application.observability
-        )
-    )
     return await runner.run(
         JobDelivery(
             job_type=job_type,

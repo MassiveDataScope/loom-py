@@ -1,9 +1,12 @@
 """Backends the job outcome contract runs against: one driver per transport.
 
 A transport that settles a delivery it is handed joins the settlement
-contract by adding a driver here and its name to ``BACKENDS``. The inline
-service, which starts every job at its first attempt and waits on a timer, has
-its own contract in ``test_inline_contract``, over the same jobs.
+contract by adding a driver here and its name to ``BACKENDS``; one that
+redelivers differently from a delayed message (``Redelivery.SAME`` or
+``Redelivery.NONE``) adds a driver here and its name to ``UNDELAYED_BACKENDS``.
+The inline service starts every job at its first attempt and waits on a timer:
+it cannot be handed an attempt or a number of deferrals, so it has its own
+contract in ``test_inline_contract``, over the same jobs.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
+from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService
 from loom.jobs.aws.queue import (
@@ -49,6 +53,7 @@ from tests.helpers.jobs import JobKernel
 from tests.helpers.sqs import ACCOUNT, URL_BASE, FakeSqs
 
 BACKENDS = ["envelope", "celery", "sqs"]
+UNDELAYED_BACKENDS = ["envelope", "sqs-fifo"]
 
 
 @dataclass(frozen=True)
@@ -73,9 +78,12 @@ class RunnerDriver:
     """Delivers through a :class:`JobRunner` over one way of invoking the job."""
 
     def __init__(
-        self, invocation: Callable[[JobDelivery], Awaitable[Any]], kernel: JobKernel
+        self,
+        invocation: Callable[[JobDelivery], Awaitable[Any]],
+        kernel: JobKernel,
+        redelivery: Redelivery = Redelivery.DELAYED,
     ) -> None:
-        self._runner = JobRunner(invocation)
+        self._runner = JobRunner(invocation, redelivery=redelivery)
         self._kernel = kernel
 
     async def deliver(
@@ -100,27 +108,40 @@ class SqsDriver:
     rejected one; the reason of the others is the outcome's own.
     """
 
-    QUEUE = f"{URL_BASE}/jobs"
-
-    def __init__(self, kernel: JobKernel, client: FakeSqs, settlement: SqsSettlement) -> None:
-        self._runner = JobRunner(kernel.invoke_envelope())
+    def __init__(
+        self,
+        kernel: JobKernel,
+        client: FakeSqs,
+        settlement: SqsSettlement,
+        redelivery: Redelivery,
+        suffix: str,
+    ) -> None:
+        self._runner = JobRunner(kernel.invoke_envelope(), redelivery=redelivery)
         self._kernel = kernel
         self._client = client
         self._settlement = settlement
+        self._suffix = suffix
+
+    @property
+    def queue(self) -> str:
+        return f"{URL_BASE}/jobs{self._suffix}"
 
     @staticmethod
     @contextmanager
-    def open(kernel: JobKernel) -> Iterator[SqsDriver]:
+    def open(kernel: JobKernel, *, fifo: bool = False) -> Iterator[SqsDriver]:
+        suffix = ".fifo" if fifo else ""
+        queue = f"{URL_BASE}/jobs{suffix}"
         policy = {
-            "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq",
+            "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq{suffix}",
             "maxReceiveCount": 3,
         }
-        client = FakeSqs({SqsDriver.QUEUE: policy})
-        config = SQSConfig(queues={"jobs": QueueConfig(url=SqsDriver.QUEUE)})
+        client = FakeSqs({queue: policy})
+        config = SQSConfig(queues={"jobs": QueueConfig(url=queue)})
         with patched_aws_clients(client):
             settlement = SqsSettlement(AwsClients(), config, "jobs")
             settlement.queue.read_dead_letter(client)
-            yield SqsDriver(kernel, client, settlement)
+            redelivery = Redelivery.SAME if fifo else Redelivery.DELAYED
+            yield SqsDriver(kernel, client, settlement, redelivery, suffix)
 
     async def deliver(
         self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
@@ -135,7 +156,7 @@ class SqsDriver:
                 "messageAttributes": {
                     DEFERRALS_ATTRIBUTE: {"dataType": "Number", "stringValue": str(deferrals)}
                 },
-                "eventSourceARN": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs",
+                "eventSourceARN": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs{self._suffix}",
             }
         )
         outcome = await self._runner.run(
@@ -155,8 +176,10 @@ class SqsDriver:
     def _observed(self, outcome: JobOutcome, redelivered: list[SqsRecord]) -> Settlement:
         expected = _settlement(outcome)
         (visibility,) = self._client.entries("change_message_visibility_batch") or [None]
-        (resent,) = self._client.entries("send_message_batch", self.QUEUE) or [None]
-        (dead,) = self._client.entries("send_message_batch", f"{URL_BASE}/jobs-dlq") or [None]
+        (resent,) = self._client.entries("send_message_batch", self.queue) or [None]
+        (dead,) = self._client.entries(
+            "send_message_batch", f"{URL_BASE}/jobs-dlq{self._suffix}"
+        ) or [None]
         if visibility is not None:
             return Settlement("failed", visibility["VisibilityTimeout"], expected.reason)
         if resent is not None:
@@ -249,6 +272,30 @@ def driver(request: pytest.FixtureRequest) -> Iterator[Driver]:
         celery_driver.close()
         return
     yield RunnerDriver(kernel.invoke_envelope(), kernel)
+
+
+@contextmanager
+def _undelayed(backend: str, redelivery: Redelivery) -> Iterator[Driver]:
+    kernel = JobKernel()
+    if backend == "sqs-fifo":
+        with SqsDriver.open(kernel, fifo=True) as sqs:
+            yield sqs
+        return
+    yield RunnerDriver(kernel.invoke_envelope(), kernel, redelivery)
+
+
+@pytest.fixture
+def same_message_driver(request: pytest.FixtureRequest) -> Iterator[Driver]:
+    """A transport that brings the same message back, without a per-message delay."""
+    with _undelayed(request.param, Redelivery.SAME) as driver:
+        yield driver
+
+
+@pytest.fixture
+def no_redelivery_driver() -> Iterator[Driver]:
+    """A transport that never brings a job back."""
+    with _undelayed("envelope", Redelivery.NONE) as driver:
+        yield driver
 
 
 @dataclass

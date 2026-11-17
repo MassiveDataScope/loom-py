@@ -11,7 +11,7 @@ from msgspec import structs
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.job.job import Job
-from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, RetryPolicy
+from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, Redelivery, RetryPolicy
 from loom.core.model import LoomFrozenStruct
 
 
@@ -23,7 +23,6 @@ class RetrySource(StrEnum):
     CLASS = "__retry__"
     LOOM = "loom default"
     REDRIVE = "RedrivePolicy maxReceiveCount"
-    NO_TIMER = "no timer to wait on"
 
 
 class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -45,6 +44,7 @@ class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
 
 
 _NO_RETRY = RetryConfig()
+_NO_REDELIVERY = "no redelivery"
 
 
 class JobDefaults(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -131,23 +131,22 @@ class ResolvedRetry:
             {name: source for name, (_, source) in fields.items()},
         )
 
-    def single_attempt(self) -> ResolvedRetry:
-        """This policy cut to one attempt, for a service that cannot wait between attempts."""
-        return ResolvedRetry(
-            replace(self.policy, max_attempts=1),
-            {**self.sources, "max_attempts": RetrySource.NO_TIMER},
-        )
+    def describe(self, redelivery: Redelivery) -> str:
+        """The policy and where it came from: one source when every field shares it.
 
-    def describe(self) -> str:
-        """The policy and where it came from: one source when every field shares it."""
-        backoff = self.policy.backoff
-        values = {**asdict(backoff), "max_attempts": self.policy.max_attempts}
-        origins = set(self.sources.values())
-        if len(origins) == 1:
-            return f"{_render(values)} ({origins.pop().value})"
-        return ", ".join(
-            f"{name}={value} ({self.sources[name].value})" for name, value in values.items()
-        )
+        Args:
+            redelivery: What the transport does with a job that must run again;
+                a transport that retries nothing shows one attempt.
+        """
+        values = {**asdict(self.policy.backoff), "max_attempts": self.policy.max_attempts}
+        origins = {name: source.value for name, source in self.sources.items()}
+        if not redelivery.retries:
+            values["max_attempts"] = 1
+            origins["max_attempts"] = _NO_REDELIVERY
+        shared = set(origins.values())
+        if len(shared) == 1:
+            return f"{_render(values)} ({shared.pop()})"
+        return ", ".join(f"{name}={value} ({origins[name]})" for name, value in values.items())
 
 
 def _render(values: Mapping[str, Any]) -> str:
@@ -205,11 +204,6 @@ class JobSettings:
     """
 
     jobs: Mapping[type[Job[Any]], JobOptions] = field(default_factory=dict)
-    one_attempt: bool = False
-
-    def without_waiting(self) -> JobSettings:
-        """These settings with every job cut to one attempt, for a service with no timer."""
-        return replace(self, one_attempt=True)
 
     @classmethod
     def from_config(cls, ctx: ConfigContext, jobs: Iterable[type[Job[Any]]]) -> JobSettings:
@@ -240,19 +234,20 @@ class JobSettings:
                 countdown is outside 0 to
                 :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """
-        options = self.jobs.get(job_type) or JobOptions.resolve(job_type)
-        if self.one_attempt:
-            return replace(options, retry=options.retry.single_attempt())
-        return options
+        return self.jobs.get(job_type) or JobOptions.resolve(job_type)
 
     def with_retries(self, retries: Mapping[type[Job[Any]], ResolvedRetry]) -> JobSettings:
         """These settings with the retry policy of each job in *retries* replaced."""
         replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
         return replace(self, jobs={**self.jobs, **replaced})
 
-    def describe_retries(self) -> list[dict[str, str]]:
-        """Each job's effective retry policy and where it came from, for the start-up log."""
+    def describe_retries(self, redelivery: Redelivery) -> list[dict[str, str]]:
+        """Each job's effective retry policy and where it came from, for the start-up log.
+
+        Args:
+            redelivery: What the transport does with a job that must run again.
+        """
         return [
-            {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe()}
+            {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe(redelivery)}
             for job_type in self.jobs
         ]

@@ -254,15 +254,24 @@ class TestSettlementThroughTheHandler:
         assert len(_failed(result)) == 25
         assert [len(entries) for _, _, entries in sqs.batches] == [10, 10, 5]
 
-    def test_a_deferral_on_a_fifo_queue_is_listed_as_a_failure(
+    def test_a_job_retry_on_a_fifo_queue_is_rejected_not_settled_as_a_failed_attempt(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
         record = _record("1", AcmeWaitingJob, fifo=True)
 
         result = serve(fifo=True)({"Records": [record]}, None)
 
-        assert (_failed(result), sqs.calls["send_message_batch"]) == (["1"], 0)
-        assert sqs.calls["change_message_visibility_batch"] == 1
+        assert _failed(result) == []
+        assert sqs.calls["change_message_visibility_batch"] == 0
+        assert sqs.calls["send_message_batch"] == 0
+
+    def test_a_job_retry_on_a_standard_queue_is_deferred_with_its_delay(
+        self, serve: Serve, sqs: FakeSqs
+    ) -> None:
+        result = serve()({"Records": [_record("1", AcmeWaitingJob)]}, None)
+
+        (resent,) = sqs.entries("send_message_batch", _JOBS)
+        assert (_failed(result), resent["DelaySeconds"]) == ([], 30)
 
     def test_a_record_never_run_stays_listed_without_a_call_to_settle_it(
         self, serve: Serve, sqs: FakeSqs

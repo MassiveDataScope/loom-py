@@ -34,13 +34,14 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
-from loom.core.job.policy import Countdown
+from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefused, JobTimer, Step
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.metrics import MetricsAdapter
 
 ResultT = TypeVar("ResultT")
 
@@ -50,7 +51,8 @@ class _PendingDispatch:
     """One inline dispatch, started by the post-commit channel once the unit of work has closed.
 
     A deferred or failed run starts again on the timer, as a copy of this
-    dispatch holding the next delivery, until it succeeds or is rejected.
+    dispatch holding the next delivery, until it succeeds or is rejected. The
+    runner only defers or fails when there is a timer.
     """
 
     delivery: JobDelivery
@@ -116,25 +118,19 @@ class _PendingDispatch:
             case Succeeded(result=result):
                 error = await self._succeeded(result)
             case Deferred(delay=delay):
-                error = self._again(
-                    replace(self.delivery, deferrals=self.delivery.deferrals + 1), delay
-                )
+                self._again(replace(self.delivery, deferrals=self.delivery.deferrals + 1), delay)
+                error = None
             case Failed(delay=delay):
-                error = self._again(
-                    replace(self.delivery, attempt=self.delivery.attempt + 1), delay
-                )
+                self._again(replace(self.delivery, attempt=self.delivery.attempt + 1), delay)
+                error = None
             case Rejected():
                 error = outcome.failure()
         if error is not None:
             await self._failed(error)
 
-    def _again(self, delivery: JobDelivery, delay: Countdown) -> JobDelayRefused | None:
-        """Hand *delivery* to the timer for after *delay*; the refusal when none waits."""
-        try:
-            self.wait(delay, replace(self, delivery=delivery).run)
-        except JobDelayRefused:
-            return JobDelayRefused()
-        return None
+    def _again(self, delivery: JobDelivery, delay: Countdown) -> None:
+        """Hand *delivery* to the timer for after *delay*."""
+        self.wait(delay, replace(self, delivery=delivery).run)
 
     async def _succeeded(self, result: Any) -> Exception | None:
         """Record *result* and call ``on_success``; the callback's error, when it raises."""
@@ -336,8 +332,9 @@ class InlineJobService:
         timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobRetry`
             and a failure backoff. Without one a countdown is refused with
             :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobRetry`` is
-            rejected naming the refused delay, and a failure is rejected at
+            rejected as one that cannot wait, and a failure is rejected at
             its first attempt with its own error.
+        metrics: Receives the job events of each run; none when omitted.
 
     Example::
 
@@ -355,19 +352,20 @@ class InlineJobService:
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
         timer: JobTimer | None = None,
+        metrics: MetricsAdapter | None = None,
     ) -> None:
         self._timer = timer
         self._callbacks = callbacks
         self._factory = factory
         self._executor = executor
-        base = settings or JobSettings()
-        self._settings = base if timer is not None else base.without_waiting()
-        self._runner = JobRunner(self._invoke)
+        self._settings = settings or JobSettings()
+        self._redelivery = Redelivery.DELAYED if timer is not None else Redelivery.NONE
+        self._runner = JobRunner(self._invoke, redelivery=self._redelivery, metrics=metrics)
 
     @property
-    def settings(self) -> JobSettings:
-        """The job settings in force: one attempt for every job when the service has no timer."""
-        return self._settings
+    def redelivery(self) -> Redelivery:
+        """What the service does with a job that must run again: wait on its timer, or nothing."""
+        return self._redelivery
 
     async def _invoke(self, delivery: JobDelivery) -> Any:
         envelope = delivery.envelope

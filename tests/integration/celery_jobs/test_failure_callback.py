@@ -1,4 +1,4 @@
-"""``on_failure`` learns the class and the clean message of the error whatever the serializer."""
+"""``on_failure`` is called once, with the error's class and clean message, on any serializer."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from loom.celery.service import _CallbackLink
+from loom.celery.constants import callback_task_name
 from loom.core.errors import (
     JobTimeoutError,
     PostCommitError,
@@ -33,6 +33,17 @@ class RecordingCallback(JobCallback):
         self.seen.append({"exc_type": exc_type, "exc_msg": exc_msg})
 
 
+class AcmeKeywordError(Exception):
+    """An error its own class cannot rebuild from its arguments."""
+
+    def __init__(self, tenant: str, *, reason: str) -> None:
+        super().__init__(f"{tenant}: {reason}")
+
+
+def keyword_error() -> Exception:
+    return AcmeKeywordError("acme", reason="deleted")
+
+
 def post_commit() -> Exception:
     return PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
 
@@ -45,7 +56,7 @@ def rule_violations() -> Exception:
     return RuleViolations([RuleViolation("name", "required")])
 
 
-class TestFailureCallbackAfterAWorkerStoredTheError:
+class TestFailureCallbackFromTheWorkerThatRejects:
     @pytest.mark.parametrize(
         ("serializer", "make_error"),
         [
@@ -53,9 +64,10 @@ class TestFailureCallbackAfterAWorkerStoredTheError:
             pytest.param("pickle", post_commit, id="post-commit-pickle"),
             pytest.param("json", job_timeout, id="job-timeout-json"),
             pytest.param("json", rule_violations, id="rule-violations-json"),
+            pytest.param("json", keyword_error, id="keyword-error-json"),
         ],
     )
-    def test_gets_the_error_class_and_message(
+    def test_is_called_once_with_the_error_class_and_message(
         self,
         workbench: Callable[[str], Workbench],
         serializer: str,
@@ -66,11 +78,10 @@ class TestFailureCallbackAfterAWorkerStoredTheError:
         RecordingCallback.seen.clear()
         task = bench.job_task(RaisingJob, max_attempts=1)
         bench.failure_callback_task(RecordingCallback)
-        link = _CallbackLink(job_id=bench.task_id, context={}, trace_id=None, identity=None)
-        signature = link.signature(bench.app, RecordingCallback, CallbackOutcome.FAILURE)
+        name = callback_task_name(RecordingCallback, CallbackOutcome.FAILURE)
 
         with bench.worker():
-            task.apply_async(task_id=bench.task_id, link_error=signature)
+            task.apply_async(task_id=bench.task_id, kwargs={"failure_callback": name})
 
         error = RaisingJob.error
         assert RecordingCallback.seen == [

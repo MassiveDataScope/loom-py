@@ -18,7 +18,7 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
-from loom.core.job.policy import Backoff, RetryPolicy
+from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
@@ -55,11 +55,13 @@ def _delivery(
     )
 
 
-def _runner(behaviour: Any, metrics: Metrics | None = None) -> JobRunner:
+def _runner(
+    behaviour: Any, metrics: Metrics | None = None, redelivery: Redelivery = Redelivery.DELAYED
+) -> JobRunner:
     async def invocation(delivery: JobDelivery) -> Any:
         return await behaviour(delivery)
 
-    return JobRunner(invocation, metrics)
+    return JobRunner(invocation, redelivery=redelivery, metrics=metrics)
 
 
 def _returning(value: Any) -> Any:
@@ -187,3 +189,98 @@ class TestJobRunnerEvents:
     async def test_a_runner_without_metrics_runs(self) -> None:
         outcome: JobOutcome = await _runner(_returning(1)).run(_delivery())
         assert outcome == Succeeded(1)
+
+
+class TestJobRunnerRedelivery:
+    async def test_a_transport_that_cannot_wait_rejects_a_job_retry_naming_why(self) -> None:
+        signal = JobRetry("later", 30)
+        for redelivery in (Redelivery.NONE, Redelivery.SAME):
+            outcome = await _runner(_raising(signal), redelivery=redelivery).run(_delivery())
+            assert outcome == Rejected("cannot wait: later", signal)
+
+    async def test_a_transport_that_retries_nothing_rejects_a_failure_at_the_first_attempt(
+        self,
+    ) -> None:
+        error = ValueError("boom")
+        outcome = await _runner(_raising(error), redelivery=Redelivery.NONE).run(_delivery())
+        assert outcome == Rejected("ValueError", error)
+
+    async def test_a_transport_that_brings_the_same_message_back_retries_a_failure(self) -> None:
+        outcome = await _runner(_raising(ValueError("boom")), redelivery=Redelivery.SAME).run(
+            _delivery(attempt=2)
+        )
+        assert isinstance(outcome, Failed)
+        assert outcome.delay.seconds == 8
+
+    async def test_a_transport_that_brings_the_same_message_back_still_ends_on_the_last_attempt(
+        self,
+    ) -> None:
+        outcome = await _runner(_raising(ValueError("boom")), redelivery=Redelivery.SAME).run(
+            _delivery(attempt=3)
+        )
+        assert isinstance(outcome, Rejected)
+
+    @pytest.mark.parametrize("redelivery", list(Redelivery))
+    async def test_a_job_rejection_rejects_whatever_the_transport_redelivers(
+        self, redelivery: Redelivery
+    ) -> None:
+        signal = JobRejection("no such tenant")
+        outcome = await _runner(_raising(signal), redelivery=redelivery).run(_delivery())
+        assert outcome == Rejected("no such tenant", signal)
+
+    async def test_a_rejected_job_retry_emits_the_rejection_not_a_deferral(self) -> None:
+        metrics = Metrics()
+        await _runner(_raising(JobRetry("later", 30)), metrics, redelivery=Redelivery.NONE).run(
+            _delivery()
+        )
+
+        assert [event.kind for event in metrics.events] == [
+            EventKind.JOB_STARTED,
+            EventKind.JOB_REJECTED,
+        ]
+
+
+class TestJobRunnerUnrunnable:
+    def test_a_message_that_cannot_run_fails_while_attempts_are_left(self) -> None:
+        error = ValueError("garbled")
+        outcome = _runner(_returning(1)).unrunnable(error, 1, POLICY)
+        assert isinstance(outcome, Failed)
+        assert outcome.error is error
+        assert outcome.delay.seconds == 4
+
+    def test_a_message_that_cannot_run_is_rejected_on_the_last_attempt(self) -> None:
+        error = ValueError("garbled")
+        assert _runner(_returning(1)).unrunnable(error, 3, POLICY) == Rejected("ValueError", error)
+
+    def test_a_transport_that_retries_nothing_rejects_it_at_once(self) -> None:
+        error = ValueError("garbled")
+        runner = _runner(_returning(1), redelivery=Redelivery.NONE)
+        assert runner.unrunnable(error, 1, POLICY) == Rejected("ValueError", error)
+
+    def test_it_emits_the_event_of_the_outcome_named_by_the_error_class(self) -> None:
+        metrics = Metrics()
+        error = UnretryableError("never")
+        _runner(_returning(1), metrics).unrunnable(error, 1, POLICY)
+
+        [event] = metrics.events
+        assert (event.kind, event.status, event.use_case_name, event.error) == (
+            EventKind.JOB_REJECTED,
+            Status.REJECTED,
+            "UnretryableError",
+            error,
+        )
+
+
+class TestRedelivery:
+    @pytest.mark.parametrize(
+        ("redelivery", "defers", "retries"),
+        [
+            (Redelivery.DELAYED, True, True),
+            (Redelivery.SAME, False, True),
+            (Redelivery.NONE, False, False),
+        ],
+    )
+    def test_what_each_transport_can_do(
+        self, redelivery: Redelivery, defers: bool, retries: bool
+    ) -> None:
+        assert (redelivery.defers, redelivery.retries) == (defers, retries)

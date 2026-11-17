@@ -54,6 +54,26 @@
   to a dead-letter queue directly is moved back with `StartMessageMoveTask`
   and a `DestinationArn` set to the source queue ("Redrive to custom
   destination").
+- **jobs:** the runner knows what its transport can do with a job that must run
+  again, so each transport no longer corrects its decision afterwards.
+  `JobRunner(invocation, *, redelivery, metrics=None)` takes a
+  `loom.core.job.policy.Redelivery`: `DELAYED` (Celery, SQS standard queue,
+  inline with a timer), `SAME` (an SQS FIFO queue: the same message comes back,
+  with no per-message delay) or `NONE` (inline without a timer, as in a Lambda
+  function). A `JobRetry` where the transport cannot wait is `Rejected` with the
+  reason `cannot wait: <reason>`, and a failure is retried only where the
+  transport redelivers it; `JOB_REJECTED` is emitted by the runner, and
+  `JOB_DEFERRED` only for a job that really waits. The static `JobRunner.decide`
+  is the instance method `runner.unrunnable(error, attempt, policy)`, which
+  also emits its event; `JobSettings.without_waiting`, `JobSettings.one_attempt`,
+  `RetrySource.NO_TIMER`, `ResolvedRetry.single_attempt` and
+  `InlineJobService.settings` are removed, and
+  `JobSettings.describe_retries(redelivery)` is the one owner of the policy
+  line, which shows `max_attempts=1 (no redelivery)` for `NONE`. The inline
+  service gets the application's metrics, as Celery and Lambda do. A countdown
+  above zero with no timer is still refused at dispatch with `JobDelayRefused`.
+  **Migration:** pass `redelivery=` to a `JobRunner` built by hand and call
+  `runner.unrunnable` where `JobRunner.decide` was called.
 - **jobs:** a Lambda function consuming an SQS queue settles each message by
   what its job came to, through the `JobSettlement` port
   (`loom.core.job.settlement`) and `loom.jobs.aws.settlement.SqsSettlement`; the
@@ -70,7 +90,7 @@
   | Rejected, `redrive` | sent to the dead-letter queue with the reason | only if its send failed |
   | Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
   | Deferred, standard queue | sent again with `DelaySeconds` and one deferral more | only if its send failed |
-  | Deferred, FIFO queue | refused (a FIFO queue takes no per-message delay), settled as Failed | yes |
+  | `JobRetry`, FIFO queue | Rejected, reason `cannot wait: <reason>`: a FIFO queue takes no per-message delay | as Rejected |
   | Failed | `ChangeMessageVisibility` to the backoff delay | yes |
   | Attempts exhausted | Rejected | as Rejected |
 
@@ -132,8 +152,8 @@
   event source ARN is the consumed queue; any other is logged and listed until
   the queue's own `RedrivePolicy` dead-letters it.
 - **jobs:** a rejected or exhausted Celery job is acknowledged and not
-  retried: the worker stores it as `FAILURE` with the job's own error and runs
-  its callbacks once, and an eager `.get()` raises that error. Loom does no
+  retried: the worker stores it as `FAILURE` with the job's own error and sends
+  its failure callback task once, and an eager `.get()` raises that error. Loom does no
   RabbitMQ dead-lettering on Celery. A deferral (`JobRetry`) now carries its
   `JobRetry` as the retry reason.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
@@ -419,15 +439,19 @@
 ### errors
 
 - **core:** `on_failure` receives the class and message of the error that
-  failed a Celery job on both `result_serializer` values, `json` (the loom
-  default) and `pickle`. On a key-value result backend (Redis, memcached,
-  cache) the callback reads the stored `exc_type` and `args`, or the pickled
-  error, instead of letting Celery rebuild the error from its `args`; an error
-  whose `__init__` takes other arguments, such as
-  `PostCommitError(committed=, failures=)`, no longer arrives as
-  `SystemError` or a bare `Exception`, and its message is no longer doubled
-  or mangled. Another backend still answers with the error Celery rebuilds.
-  `LoomError` also pickles and copies with its own class, `args` and
+  failed a Celery job, whatever `result_serializer` (`json`, the loom default,
+  or `pickle`) and whatever result backend. The dispatch carries the failure
+  callback task name in the job's keyword arguments, not a Celery `link_error`,
+  and the worker that rejects the job sends that task itself with `exc_type` and
+  `exc_msg` taken from the error it raised: nothing is read back from the
+  result backend, so an error whose `__init__` takes other arguments, such as
+  `PostCommitError(committed=, failures=)`, arrives with its own class and its
+  own message. Success keeps the native `link`. The failure callback is
+  delivered at least once: a worker that dies between the send and the
+  acknowledgement of the job repeats it. A failure callback task now takes
+  `exc_type` and `exc_msg` as arguments, so a dispatch made by an older version
+  that still holds a `link_error` calls it with the class `Unknown` until it
+  drains. `LoomError` also pickles and copies with its own class, `args` and
   attributes, slots included, without calling `__init__`; a `failures` entry
   that cannot be pickled still makes the whole error unpicklable.
 - **errors:** `loom.core.errors` is a package split by area (`base`, `domain`,
@@ -1847,18 +1871,19 @@
   (`AsyncioTimer` in an application, closed with it, which cancels the jobs
   still waiting and logs them, by name and task id, in one line) and runs again
   with its attempt and deferrals carried. **Any ordinary exception in an
-  inline job now runs the job up to 3 times** on the default policy, waiting
-  the backoff between attempts; `on_failure` and the failure of the handle
+  inline job with a timer now runs the job up to 3 times** on the default
+  policy, waiting the backoff between attempts; `on_failure` and the failure of the handle
   arrive only after the last attempt. To keep one attempt, set
   `retryable = False` on the error, `jobs.<Job>.retry.max_attempts: 1`, or, in
   tests, move the clock with `ManualTimer.advance`. A zero countdown still runs
   at once. Starting an application with an `AsyncioTimer` logs a warning:
   delayed jobs live in process memory and are lost when it stops, so
-  production uses Celery or SQS. A Lambda function composes no timer: its
-  inline service raises `JobDelayRefused` for a countdown above zero, rejects
-  a job that raises `JobRetry`, naming the delay, and rejects a failing job at
-  its first attempt with its own error; the start-up line "Job retry policies"
-  then reports `max_attempts=1`. That line is logged once the job service is
+  production uses Celery or SQS. A Lambda function composes no timer
+  (`Redelivery.NONE`): its inline service raises `JobDelayRefused` for a
+  countdown above zero, rejects a job that raises `JobRetry` as one that cannot
+  wait, and rejects a failing job at its first attempt with its own error; the
+  start-up line "Job retry policies" then reports
+  `max_attempts=1 (no redelivery)`. That line is logged once the job service is
   built. The Lambda host's start-up line naming the job service is now INFO,
   whatever the service.
 - **jobs:** an inline `JobHandle.wait()` on a failed job raises

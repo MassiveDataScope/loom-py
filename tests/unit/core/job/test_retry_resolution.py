@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.config import JobSettings, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import DEFAULT_RETRY, Backoff, RetryPolicy
+from loom.core.job.policy import DEFAULT_RETRY, Backoff, Redelivery, RetryPolicy
 
 CLASS_BACKOFF = Backoff(first_s=10, factor=3, max_s=600, jitter=False)
 
@@ -121,12 +121,26 @@ class TestRetryResolution:
 class TestRetryDescription:
     def test_a_policy_from_one_layer_names_it_once(self) -> None:
         settings = _settings({}, PlainJob)
-        assert settings.describe_retries() == [
+        assert settings.describe_retries(Redelivery.DELAYED) == [
             {
                 "job": "PlainJob",
                 "retry": "first_s=5 factor=2 max_s=300 jitter=True max_attempts=3 (loom default)",
             }
         ]
+
+    def test_a_transport_that_retries_nothing_shows_one_attempt_and_why(self) -> None:
+        settings = _settings({}, PlainJob)
+        [line] = settings.describe_retries(Redelivery.NONE)
+        assert line["retry"] == (
+            "first_s=5 (loom default), factor=2 (loom default), max_s=300 (loom default), "
+            "jitter=True (loom default), max_attempts=1 (no redelivery)"
+        )
+
+    def test_a_transport_that_brings_the_message_back_keeps_the_policy(self) -> None:
+        settings = _settings({}, PlainJob)
+        assert settings.describe_retries(Redelivery.SAME) == settings.describe_retries(
+            Redelivery.DELAYED
+        )
 
     def test_a_mixed_policy_names_the_layer_of_each_field_as_text(self) -> None:
         settings = _settings(
@@ -136,7 +150,7 @@ class TestRetryDescription:
             },
             ClassBackoffJob,
         )
-        [line] = settings.describe_retries()
+        [line] = settings.describe_retries(Redelivery.DELAYED)
         assert line["retry"] == (
             "first_s=7 (jobs.<Job>.retry), factor=3 (__retry__), max_s=600 (__retry__), "
             "jitter=False (__retry__), max_attempts=5 (jobs.defaults.retry)"

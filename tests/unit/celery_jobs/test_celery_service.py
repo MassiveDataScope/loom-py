@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.celery.service import CeleryJobService
+from loom.celery.service import CallbackLink, CeleryJobService
 from loom.core.engine.events import EventKind
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
@@ -204,17 +204,17 @@ class TestDispatchRoutingDefaults:
 
 
 # ---------------------------------------------------------------------------
-# dispatch_after_commit() — callbacks (link / link_error)
+# dispatch_after_commit() — callbacks (link / failure callback)
 # ---------------------------------------------------------------------------
 
 
 class TestDispatchCallbacks:
-    async def test_no_callbacks_sends_link_none(self) -> None:
+    async def test_no_callbacks_sends_no_link_and_no_failure_callback(self) -> None:
         service, mock_app = _make_service()
         service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["link"] is None
-        assert mock_app.send_task.call_args.kwargs["link_error"] is None
+        assert mock_app.send_task.call_args.kwargs["kwargs"]["failure_callback"] is None
 
     async def test_on_success_produces_non_none_link(self) -> None:
         service, mock_app = _make_service()
@@ -222,11 +222,13 @@ class TestDispatchCallbacks:
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["link"] is not None
 
-    async def test_on_failure_produces_non_none_link_error(self) -> None:
+    async def test_on_failure_carries_the_callback_task_name_and_no_link_error(self) -> None:
         service, mock_app = _make_service()
         service.dispatch_after_commit(_EmailJob, on_failure=_FailureCallback)
         await flush_pending_dispatches()
-        assert mock_app.send_task.call_args.kwargs["link_error"] is not None
+        sent = mock_app.send_task.call_args.kwargs
+        assert sent["kwargs"]["failure_callback"] == "loom.callback_error._FailureCallback"
+        assert "link_error" not in sent
 
 
 class _UndiscoveredCallback(JobCallback):
@@ -252,43 +254,28 @@ class TestUndiscoveredCallback:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("hook", "callback", "task", "immutable"),
-    [
-        ("on_success", _SuccessCallback, "loom.callback._SuccessCallback", False),
-        ("on_failure", _FailureCallback, "loom.callback_error._FailureCallback", True),
-    ],
-    ids=["success", "failure"],
-)
-class TestCallbackLinks:
-    """Each callback rides on a signature naming its outcome's task, and carrying the dispatch."""
+class TestSuccessLink:
+    """The success callback is a mutable signature naming its task and carrying the dispatch."""
 
-    def test_names_the_outcome_task_mutable_only_for_success(
-        self, hook: str, callback: type[JobCallback], task: str, immutable: bool
-    ) -> None:
+    def test_names_the_success_task_and_is_mutable(self) -> None:
         mock_app = MagicMock()
         CeleryJobService(
-            mock_app, callbacks=DispatchableCallbacks([callback])
-        ).dispatch_after_commit(_EmailJob, **{hook: callback})
+            mock_app, callbacks=DispatchableCallbacks([_SuccessCallback])
+        ).dispatch_after_commit(_EmailJob, on_success=_SuccessCallback)
 
-        assert mock_app.signature.call_args.args == (task,)
-        assert mock_app.signature.call_args.kwargs["immutable"] is immutable
+        assert mock_app.signature.call_args.args == ("loom.callback._SuccessCallback",)
+        assert "immutable" not in mock_app.signature.call_args.kwargs
 
     @pytest.mark.parametrize("trace_id", [None, "acme-trace"], ids=["no-trace", "trace"])
-    def test_carries_the_job_id_payload_trace_and_no_caller(
-        self,
-        hook: str,
-        callback: type[JobCallback],
-        task: str,
-        immutable: bool,
-        trace_id: str | None,
-    ) -> None:
+    def test_carries_the_job_id_payload_trace_and_no_caller(self, trace_id: str | None) -> None:
         mock_app = MagicMock()
         token = set_trace_id(trace_id)
         try:
             handle = CeleryJobService(
-                mock_app, callbacks=DispatchableCallbacks([callback])
-            ).dispatch_after_commit(_EmailJob, payload={"order_id": 99}, **{hook: callback})
+                mock_app, callbacks=DispatchableCallbacks([_SuccessCallback])
+            ).dispatch_after_commit(
+                _EmailJob, payload={"order_id": 99}, on_success=_SuccessCallback
+            )
         finally:
             reset_trace_id(token)
 
@@ -298,6 +285,28 @@ class TestCallbackLinks:
             "trace_id": trace_id,
             "identity": None,
         }
+
+
+class TestFailureCallbackSend:
+    """The worker sends the failure callback with the dispatch's link and the error."""
+
+    def test_sends_the_task_with_the_link_the_class_and_the_message(self) -> None:
+        mock_app = MagicMock()
+        link = CallbackLink("job-1", {"order_id": 99}, "acme-trace", None)
+
+        link.send_failure(mock_app, "loom.callback_error.Acme", ValueError("bad input"))
+
+        mock_app.send_task.assert_called_once_with(
+            "loom.callback_error.Acme",
+            kwargs={
+                "job_id": "job-1",
+                "context": {"order_id": 99},
+                "trace_id": "acme-trace",
+                "identity": None,
+                "exc_type": "ValueError",
+                "exc_msg": "bad input",
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

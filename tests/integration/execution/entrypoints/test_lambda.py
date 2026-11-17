@@ -19,10 +19,11 @@ from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
+from loom.core.job.policy import Redelivery
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.serverless.aws.lambda_._jobs import run_envelope
+from loom.serverless.aws.lambda_._jobs import job_runner, run_envelope
 from loom.serverless.aws.lambda_.triggers.http import (
     _route,  # pyright: ignore[reportPrivateUsage]
 )
@@ -59,14 +60,16 @@ class TestLambdaJobsEnvelope:
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
         built: list[AcmeProbeJob] = []
-        kernel = SimpleNamespace(factory=AcmeRecordingFactory(factory, built), executor=executor)
+        kernel = SimpleNamespace(
+            factory=AcmeRecordingFactory(factory, built), executor=executor, metrics=None
+        )
         application = SimpleNamespace(
             kernel=kernel, observability=ObservabilityRuntime.noop(), job_settings=JobSettings()
         )
         envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
 
         await run_envelope(
-            cast(Any, application),
+            job_runner(cast(Any, application), Redelivery.SAME),
             envelope,
             AcmeProbeJob,
             None,

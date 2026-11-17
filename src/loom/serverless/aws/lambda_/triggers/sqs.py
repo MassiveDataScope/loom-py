@@ -25,7 +25,6 @@ from loom.core.job.outcome import (
     Succeeded,
     failure_log_fields,
 )
-from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
 from loom.jobs.aws.queue import SqsRecord
 from loom.serverless.aws.lambda_._jobs import (
@@ -112,7 +111,7 @@ class SQSBatch:
                 failed.append(record)
                 continue
             if record.unreadable:
-                outcome: JobOutcome = JobRunner.decide(
+                outcome: JobOutcome = self._consumer.runner.unrunnable(
                     MalformedJobMessage(record.unreadable),
                     record.receive_count,
                     self._consumer.unserved,
@@ -142,7 +141,7 @@ class SQSBatch:
             for envelope, event_id in self._read(record):
                 job_type = self._job_type(envelope, record)
                 outcome = await run_envelope(
-                    self._application,
+                    self._consumer.runner,
                     envelope,
                     job_type,
                     event_id or envelope.task_id or record.message_id,
@@ -154,7 +153,9 @@ class SQSBatch:
                 if not isinstance(outcome, Succeeded):
                     break
         except (MalformedJobMessage, UnknownJob) as exc:
-            outcome = JobRunner.decide(exc, record.receive_count, self._consumer.unserved)
+            outcome = self._consumer.runner.unrunnable(
+                exc, record.receive_count, self._consumer.unserved
+            )
         self._log_outcome(record, outcome)
         return outcome
 

@@ -4,7 +4,26 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import ClassVar
+
+
+class Redelivery(StrEnum):
+    """What the transport can do with a job that must run again."""
+
+    DELAYED = "delayed"
+    SAME = "same"
+    NONE = "none"
+
+    @property
+    def defers(self) -> bool:
+        """Whether the transport brings the job back after the delay the job asks for."""
+        return self is Redelivery.DELAYED
+
+    @property
+    def retries(self) -> bool:
+        """Whether the transport brings a failed job back for another attempt."""
+        return self is not Redelivery.NONE
 
 
 @dataclass(frozen=True, slots=True)

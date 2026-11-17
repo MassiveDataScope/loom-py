@@ -18,6 +18,7 @@ from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
 from loom.core.job.job import Job
+from loom.core.job.policy import Redelivery
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.job.timer import AsyncioTimer, JobTimer
@@ -61,7 +62,8 @@ class JobBackendContext:
     waits_in_process: bool = True
 
 
-_Built = tuple[JobService, tuple[Resource, ...]]
+_Built = tuple[JobService, tuple[Resource, ...], Redelivery]
+"""A built backend, what it closes, and what it does with a job that must run again."""
 
 
 def _celery_config(ctx: ConfigContext) -> CeleryConfig:
@@ -96,7 +98,7 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
         name="jobs",
         manager=closing(lambda: asyncio.to_thread(service.close)),
     )
-    return service, (closer,)
+    return service, (closer,), Redelivery.DELAYED
 
 
 def _inline(context: JobBackendContext) -> _Built:
@@ -115,8 +117,9 @@ def _inline(context: JobBackendContext) -> _Built:
         settings=context.settings,
         callbacks=context.callbacks,
         timer=timer,
+        metrics=context.metrics,
     )
-    return service, resources
+    return service, resources, service.redelivery
 
 
 def _celery(context: JobBackendContext) -> _Built:
@@ -127,7 +130,7 @@ def _sqs(context: JobBackendContext) -> _Built:
     from loom.jobs.aws.sqs import build_backend
 
     try:
-        return build_backend(context), ()
+        return build_backend(context), (), Redelivery.DELAYED
     except MissingExtraError as exc:
         raise JobBackendError(
             "app.job_service is sqs, but the loom[aws] extra is not installed"
@@ -152,7 +155,7 @@ def _backend(name: str, context: JobBackendContext) -> _Built:
             f"{', '.join(_BUILTIN_JOB_BACKENDS)} or a module:Class reference"
         )
     backend_type = cast(Callable[[JobBackendContext], JobService], import_symbol(name))
-    return backend_type(context), ()
+    return backend_type(context), (), Redelivery.DELAYED
 
 
 def _routed(context: JobBackendContext, default: str) -> _Built:
@@ -162,14 +165,15 @@ def _routed(context: JobBackendContext, default: str) -> _Built:
     celery_cfg = _celery_config(context.config)
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
     served = tuple(job for job in context.jobs if context.settings.of(job).queue not in queues)
-    service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
-    if not queues:
-        return service, resources
-    celery, closers = _celery_backend(context, celery_cfg)
-    return JobRouter(dict.fromkeys(queues, celery), default=service, settings=context.settings), (
-        *resources,
-        *closers,
+    service, resources, redelivery = _backend(
+        default,
+        replace(context, jobs=served),  # NOSONAR(S5655)
     )
+    if not queues:
+        return service, resources, redelivery
+    celery, closers, _ = _celery_backend(context, celery_cfg)
+    router = JobRouter(dict.fromkeys(queues, celery), default=service, settings=context.settings)
+    return router, (*resources, *closers), redelivery
 
 
 def _implicit(context: JobBackendContext) -> _Built:
@@ -264,9 +268,10 @@ def configure_job_service(
         else None,
         waits_in_process=waits_in_process,
     )
-    service, resources = _implicit(context) if backend is None else _routed(context, backend)
+    service, resources, redelivery = (
+        _implicit(context) if backend is None else _routed(context, backend)
+    )
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)
-    in_force = service.settings if isinstance(service, InlineJobService) else settings
-    if logs_retries and in_force.jobs:
-        _log.info("Job retry policies", jobs=in_force.describe_retries())
+    if logs_retries and settings.jobs:
+        _log.info("Job retry policies", jobs=settings.describe_retries(redelivery))
     return resources
