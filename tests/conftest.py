@@ -19,7 +19,7 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
-from tests.helpers.aws import REGION, moto_client
+from tests.helpers.aws import FAKE_KEY, REGION, moto_client
 from tests.helpers.extras import fake_aws_island
 from tests.helpers.sqs import ACCOUNT
 
@@ -54,30 +54,29 @@ def _absent_aws_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def _hermetic_aws(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _absent_aws_file: Path
 ) -> None:
-    """Keep the host's AWS setup out of a test, so no client reaches a real endpoint.
+    """Leave a test no ambient AWS setup, so no client reaches a real endpoint or profile.
 
-    Fake keys and absent config and credentials files leave nothing for the credential
-    chain to find, the metadata service is off and configured endpoint URLs are ignored,
-    which are botocore's own switches. A test that needs an endpoint passes it explicitly.
-    A ``live`` test keeps the environment it was given: it is the one that asks for AWS.
+    Every ``AWS_*``, ``BOTO_*`` and ``MOTO_*`` variable goes, whatever botocore or moto read
+    it for: neither ships a reset of its own. Only the known minimum comes back: absent
+    config and credentials files, fake keys and no metadata service. A test that needs an
+    endpoint, a region or a profile sets it itself. A ``live`` test keeps the environment
+    it was given: it is the one that asks for AWS.
     """
     if request.node.get_closest_marker("live"):
         return
     for name in tuple(os.environ):
-        if name == "AWS_PROFILE" or name.startswith("AWS_ENDPOINT_URL"):
+        if name.startswith(("AWS_", "BOTO_", "MOTO_")):
             monkeypatch.delenv(name)
     monkeypatch.setenv("AWS_CONFIG_FILE", str(_absent_aws_file))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_absent_aws_file))
-    monkeypatch.setenv("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true")
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", FAKE_KEY)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", FAKE_KEY)
 
 
 @pytest.fixture
 def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``."""
-    monkeypatch.delenv("AWS_REGION", raising=False)
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
     monkeypatch.setenv("MOTO_ACCOUNT_ID", ACCOUNT)
     with mock_aws():

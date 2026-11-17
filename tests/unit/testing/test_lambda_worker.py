@@ -29,6 +29,7 @@ from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
 from loom.testing import TEST_QUEUE, LambdaWorker, Override
+from tests.helpers.aws import FAKE_KEY
 
 _JOBS = """
 from loom.core.job.job import Job
@@ -67,25 +68,6 @@ _NOTHING = {"batchItemFailures": []}
 _FIFO_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/loom-orders.fifo"
 
 Config = Callable[..., str]
-
-
-@pytest.fixture(autouse=True)
-def _no_ambient_aws(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for name in (
-        "AWS_DEFAULT_REGION",
-        "AWS_REGION",
-        "AWS_PROFILE",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_SQS",
-        "AWS_USE_FIPS_ENDPOINT",
-        "AWS_USE_DUALSTACK_ENDPOINT",
-        "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
-        "MOTO_ACCOUNT_ID",
-        "AWS_ACCESS_KEY_ID",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
 
 
 @pytest.fixture
@@ -599,7 +581,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             _open(config())
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
 
     def test_a_closed_worker_refuses_to_deliver_or_redeliver(self, config: Config) -> None:
         worker = _open(config())
@@ -661,7 +643,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="bind failed"):
             _open(config())
 
-        assert (closed, "AWS_ACCESS_KEY_ID" in os.environ) == (["adapter"], False)
+        assert (closed, os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY) == (["adapter"], True)
 
     def test_a_base_exception_during_init_still_closes_the_application_and_the_mock(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
@@ -682,7 +664,7 @@ class TestLifecycle:
         with pytest.raises(KeyboardInterrupt):
             _open(config())
 
-        assert (closed, "AWS_ACCESS_KEY_ID" in os.environ) == (["adapter"], False)
+        assert (closed, os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY) == (["adapter"], True)
 
     @pytest.mark.parametrize("failure", ["refusal", "bind"])
     def test_a_failed_init_closes_the_applications_clients_once(
@@ -722,7 +704,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             worker.close()
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
 
     def test_the_mock_stops_even_when_closing_the_function_raises(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
@@ -738,7 +720,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="close failed"):
             worker.close()
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
 
     def test_without_moto_the_error_names_the_extra(
         self, config: Config, monkeypatch: pytest.MonkeyPatch

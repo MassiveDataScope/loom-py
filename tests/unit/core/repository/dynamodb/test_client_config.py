@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 import msgspec
@@ -23,31 +24,38 @@ from .conftest import Product
 _REQUIRED = {"region": "eu-west-1", "table": "products"}
 
 
-def _botocore_config(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str, Any]:
-    """The ``botocore.Config`` keywords the backend of a ``dynamodb`` store asked the island for."""
+BotocoreConfig = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+@pytest.fixture
+def botocore_config(monkeypatch: pytest.MonkeyPatch) -> BotocoreConfig:
+    """The ``botocore.Config`` keywords the backend of a ``dynamodb`` store asks the island for."""
     island = fake_aws_island(monkeypatch)
-    ctx = ConfigContext.from_dict(
-        {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
-    )
-    build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
-    [(service, config)] = island.built
-    assert service == "dynamodb"
-    options: dict[str, Any] = config.client_options()["config"]
-    return options
+
+    def asked_for(section: dict[str, Any]) -> dict[str, Any]:
+        ctx = ConfigContext.from_dict(
+            {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
+        )
+        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+        [(service, config)] = island.built
+        assert service == "dynamodb"
+        options: dict[str, Any] = config.client_options()["config"]
+        return options
+
+    return asked_for
 
 
 class TestDynamoClientConfig:
-    def test_bounded_defaults_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = _botocore_config(monkeypatch, {})
+    def test_bounded_defaults_reach_the_client(self, botocore_config: BotocoreConfig) -> None:
+        config = botocore_config({})
 
         assert config["connect_timeout"] == 2
         assert config["read_timeout"] == 5
         assert config["retries"] == {"total_max_attempts": 3, "mode": "standard"}
         assert config["max_pool_connections"] == 32
 
-    def test_declared_values_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = _botocore_config(
-            monkeypatch,
+    def test_declared_values_reach_the_client(self, botocore_config: BotocoreConfig) -> None:
+        config = botocore_config(
             {
                 "connect_timeout": 1,
                 "read_timeout": 3,
@@ -88,11 +96,8 @@ class TestDynamoClientConfig:
 
     async def test_a_silent_service_fails_within_the_declared_bounds(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         silent_endpoint: str,  # noqa: F811
     ) -> None:
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
         cfg = convert_config(
             {
                 **_REQUIRED,

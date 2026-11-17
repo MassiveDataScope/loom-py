@@ -1,6 +1,6 @@
 """Unit tests for SsmResolver.
 
-boto3 is mocked at the call level (boto3.client / client.get_parameter).
+The AWS island serves a mock client; a few tests read moto's SSM instead.
 The library is assumed to be installed in dev — no library-presence tests.
 """
 

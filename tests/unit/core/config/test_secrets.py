@@ -1,6 +1,6 @@
 """Unit tests for SecretsManagerResolver.
 
-boto3 is mocked at the call level (boto3.client / client.get_secret_value).
+The AWS island serves a mock client; a few tests read moto's Secrets Manager instead.
 """
 
 from __future__ import annotations

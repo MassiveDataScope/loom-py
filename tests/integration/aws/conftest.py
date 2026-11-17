@@ -64,20 +64,11 @@ def aws_url() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _emulator_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Dummy keys for boto3's chain; region and endpoint can only come from ``aws:``."""
+def _emulator_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dummy keys for boto3's chain, over the root's bare environment: region and endpoint
+    can only come from ``aws:``."""
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", _DUMMY_CREDENTIALS["aws_access_key_id"])
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _DUMMY_CREDENTIALS["aws_secret_access_key"])
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
-    for name in (
-        "AWS_PROFILE",
-        "AWS_SESSION_TOKEN",
-        "AWS_ENDPOINT_URL",
-        "AWS_REGION",
-        "AWS_DEFAULT_REGION",
-    ):
-        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

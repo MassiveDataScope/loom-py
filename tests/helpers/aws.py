@@ -13,6 +13,7 @@ from typing import Any
 import boto3
 
 REGION = "us-east-1"
+FAKE_KEY = "testing"
 
 
 @cache
@@ -21,6 +22,6 @@ def moto_client(service: str, region: str = REGION) -> Any:
     return boto3.Session().client(
         service,
         region_name=region,
-        aws_access_key_id="testing",
-        aws_secret_access_key="testing",
+        aws_access_key_id=FAKE_KEY,
+        aws_secret_access_key=FAKE_KEY,
     )
