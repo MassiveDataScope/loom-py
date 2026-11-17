@@ -530,7 +530,7 @@ class TestStorePostCommit:
         ids: list[str] = []
 
         async def dispatch() -> None:
-            ids.append(service.dispatch(EmailJob).job_id)
+            ids.append(service.dispatch_after_commit(EmailJob).job_id)
 
         use_case = _OnDefault(
             stores.write_order(), dispatch, stores.run(_OnAudit(stores.write_entry(), dispatch))

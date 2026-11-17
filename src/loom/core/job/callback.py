@@ -17,7 +17,7 @@ class JobCallback:
 
     Subclass it in a package listed in ``app.packages`` and override the
     hook, or hooks, to run: the scan finds the class, and the dispatcher
-    names it in ``dispatch(Job, on_success=..., on_failure=...)``.  Each hook
+    names it in ``dispatch_after_commit(Job, on_success=..., on_failure=...)``.  Each hook
     may be plain ``def`` or ``async def``.  An abstract intermediate class
     inherits ``JobCallback`` and ``ABC``; it is not collected when it declares
     an abstract method.

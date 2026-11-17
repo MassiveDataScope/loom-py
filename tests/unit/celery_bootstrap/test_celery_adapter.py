@@ -217,9 +217,9 @@ class TestServices:
         container = _application(tmp_path, {}, adapter, acme_callbacks.MODULE).kernel.container
         service = container.resolve(JobService)
 
-        service.dispatch(_PingJob, on_success=AcmePingCallback)
+        service.dispatch_after_commit(_PingJob, on_success=AcmePingCallback)
         with pytest.raises(ValueError, match="_OtherCallback was not discovered"):
-            service.dispatch(_PingJob, on_success=_OtherCallback)
+            service.dispatch_after_commit(_PingJob, on_success=_OtherCallback)
 
     def test_job_and_sql_services_are_resolvable(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])

@@ -25,6 +25,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
+from loom.core.job.policy import Countdown
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class JobService(Protocol):
                 self._jobs = job_service
 
             async def execute(self, cmd: NotifyCmd = Input()) -> None:
-                self._jobs.dispatch(SendEmailJob, payload={"email": cmd.email})
+                self._jobs.dispatch_after_commit(SendEmailJob, payload={"email": cmd.email})
     """
 
     async def run(
@@ -123,7 +124,7 @@ class JobService(Protocol):
         """
         ...
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -134,7 +135,6 @@ class JobService(Protocol):
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
         """Register a Job for deferred execution after the current UoW commits.
 
@@ -148,16 +148,61 @@ class JobService(Protocol):
             on_success: Callback type invoked on job success.
             on_failure: Callback type invoked on job failure.
             queue: Override the job's default ``__queue__``.
-            countdown: Delay in seconds before execution (Celery only).
-            priority: Task priority override (Celery only).
-            eta: Absolute datetime for first execution (Celery only).
+            countdown: Delay in seconds before execution, 0 through 900
+                inclusive. SQS sends it as ``DelaySeconds`` on a standard
+                queue and refuses a delay on a FIFO queue. Celery sends it
+                as the task countdown. Inline validates the bound and
+                currently runs with no delay after flush.
+            priority: Task priority override. Celery honours it. SQS refuses
+                a value other than the job's. Inline ignores it.
 
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
 
         Raises:
             ValueError: When a callback is attached that the scan did not find,
-                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
+        """
+        ...
+
+    async def dispatch_now(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobHandle[ResultT]:
+        """Send the job now, outside any unit of work.
+
+        Celery and SQS send immediately. Inline runs the job immediately
+        (countdown is validated and currently ignored).
+
+        Args:
+            job_type: Concrete Job subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Callback type invoked on job success.
+            on_failure: Callback type invoked on job failure.
+            queue: Override the job's default ``__queue__``.
+            countdown: Delay in seconds before execution, 0 through 900
+                inclusive. Same per-transport behaviour as
+                :meth:`dispatch_after_commit`.
+            priority: Task priority override. Same per-transport behaviour
+                as :meth:`dispatch_after_commit`.
+
+        Returns:
+            A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
+
+        Raises:
+            ValueError: When a callback is attached that the scan did not find,
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
         """
         ...
 
@@ -185,9 +230,9 @@ class InlineJobService:
     """Executes Jobs inline without a broker, for tests and local mode.
 
     Satisfies the :class:`JobService` protocol structurally.  The
-    ``dispatch()`` method respects the post-commit semantics: the job is
-    enqueued on the execution's post-commit channel and runs when the
-    executor drains it, after the UoW has closed (or at the end of an
+    ``dispatch_after_commit()`` method respects the post-commit semantics:
+    the job is enqueued on the execution's post-commit channel and runs when
+    the executor drains it, after the UoW has closed (or at the end of an
     execution without one).  Outside an execution the fallback channel
     holds it until :func:`~loom.core.job.context.flush_pending_dispatches`.
 
@@ -207,7 +252,7 @@ class InlineJobService:
     Example::
 
         service = InlineJobService(factory, executor)
-        handle = service.dispatch(SendEmailJob, payload={"email": "a@b.com"})
+        handle = service.dispatch_after_commit(SendEmailJob, payload={"email": "a@b.com"})
         await flush_pending_dispatches()  # outside an execution only
         result = handle.wait()
     """
@@ -250,7 +295,7 @@ class InlineJobService:
         )
         return result
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -261,12 +306,12 @@ class InlineJobService:
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
         """Queue the Job for post-commit execution and return a handle.
 
-        ``countdown``, ``priority``, and ``eta`` are accepted but ignored —
-        inline execution is always immediate after flush.
+        ``countdown`` is validated through :class:`Countdown` and currently
+        ignored — inline execution is immediate after flush. ``priority``
+        is ignored.
 
         Args:
             job_type: Concrete Job subclass to dispatch.
@@ -275,9 +320,9 @@ class InlineJobService:
             on_success: Callback type invoked after successful execution.
             on_failure: Callback type invoked after failed execution.
             queue: Overrides the job's queue for the returned handle.
-            countdown: Ignored in inline mode.
+            countdown: Delay in seconds, 0 through 900 inclusive; validated
+                and currently ignored.
             priority: Ignored in inline mode.
-            eta: Ignored in inline mode.
 
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
@@ -285,9 +330,108 @@ class InlineJobService:
 
         Raises:
             ValueError: When a callback is attached that the scan did not find,
-                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
         """
-        _ = (countdown, priority, eta)
+        pending, handle = self._pending(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        add_pending_dispatch(pending.run)
+        return handle
+
+    async def dispatch_now(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[Any] | None = None,
+        on_failure: type[Any] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobHandle[ResultT]:
+        """Run the Job immediately and return a settled handle.
+
+        ``countdown`` is validated through :class:`Countdown` and currently
+        ignored. ``priority`` is ignored.
+
+        Args:
+            job_type: Concrete Job subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Callback type invoked after successful execution.
+            on_failure: Callback type invoked after failed execution.
+            queue: Overrides the job's queue for the returned handle.
+            countdown: Delay in seconds, 0 through 900 inclusive; validated
+                and currently ignored.
+            priority: Ignored in inline mode.
+
+        Returns:
+            A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
+            returns the result of the run.
+
+        Raises:
+            ValueError: When a callback is attached that the scan did not find,
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
+        """
+        pending, handle = self._pending(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        await pending.run()
+        return handle
+
+    def _pending(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None,
+        payload: dict[str, Any] | None,
+        on_success: type[Any] | None,
+        on_failure: type[Any] | None,
+        queue: str | None,
+        countdown: int | None,
+        priority: int | None,
+    ) -> tuple[_PendingDispatch, JobHandle[ResultT]]:
+        """Build the pending run and its handle.
+
+        Args:
+            job_type: Concrete Job subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Callback type invoked after successful execution.
+            on_failure: Callback type invoked after failed execution.
+            queue: Overrides the job's queue for the returned handle.
+            countdown: Delay in seconds, 0 through 900 inclusive; validated
+                and currently ignored.
+            priority: Ignored in inline mode.
+
+        Returns:
+            The pending run and a handle sharing its outcome.
+
+        Raises:
+            ValueError: When a callback is attached that the scan did not find,
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
+        """
+        _ = priority
+        options = self._settings.of(job_type)
+        Countdown(options.countdown if countdown is None else countdown)
         payload = payload or {}
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
@@ -304,13 +448,13 @@ class InlineJobService:
             executor=self._executor,
             captured=captured_delegation(),
         )
-        add_pending_dispatch(pending.run)
-        return JobHandle(
+        handle: JobHandle[ResultT] = JobHandle(
             job_id=task_id,
-            queue=queue or self._settings.of(job_type).queue,
+            queue=queue or options.queue,
             dispatched_at=datetime.now(UTC),
             _inline_outcome=outcome,
         )
+        return pending, handle
 
     def dispatch_parallel(
         self,
@@ -336,5 +480,7 @@ class InlineJobService:
             on_all_success,
             on_any_failure,
         )
-        handles = tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
+        handles = tuple(
+            self.dispatch_after_commit(job_type, payload=payload) for job_type, payload in jobs
+        )
         return JobGroup(handles=handles)

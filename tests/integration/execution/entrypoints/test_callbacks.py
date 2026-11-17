@@ -59,7 +59,7 @@ class TestInlineCallbacks:
         jobs = InlineJobService(factory, executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(job, on_success=callback, on_failure=callback)
+            jobs.dispatch_after_commit(job, on_success=callback, on_failure=callback)
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
 
@@ -81,7 +81,7 @@ class TestInlineCallbacks:
         jobs = InlineJobService(factory, executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(
+            jobs.dispatch_after_commit(
                 job, on_success=AcmeSuccessOnlyCallback, on_failure=AcmeSuccessOnlyCallback
             )
 
@@ -96,7 +96,9 @@ class TestInlineCallbacks:
         jobs = InlineJobService(factory, executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback)
+            jobs.dispatch_after_commit(
+                AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
+            )
 
         await executor.execute(AcmeRun(dispatch))
 

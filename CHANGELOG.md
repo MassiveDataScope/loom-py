@@ -22,6 +22,12 @@
   directory inside it that holds `.py` files but no `__init__.py` is refused
   with a `ConfigError` naming it. Replace a manifest `AGENTS` list with
   `app.agents: [globs]`.
+- **jobs:** `JobService.dispatch` is renamed to `dispatch_after_commit`.
+  **Migration:** rename every call; there is no alias.
+- **jobs:** the `eta` parameter is removed from every dispatch API.
+  **Migration:** pass `countdown` in seconds (0 through 900).
+- **jobs:** `countdown` is bounded to 0–900 seconds on every backend (inline,
+  Celery, SQS); 901 or a negative value raises `ValueError`.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -443,7 +449,7 @@
     `execution_closed` warning with the guidance. `executor.run(UseCase)`
     from such a task acts as the same caller in an execution, unit of work,
     post-commit channel and `REQUEST` instances of its own, and
-    `JobService.dispatch` from it goes out at once, detached, carrying the
+    `JobService.dispatch_after_commit` from it goes out at once, detached, carrying the
     caller. Work awaited inside the execution (`gather`, `TaskGroup`,
     `asyncio.to_thread`) is unaffected.
     **Migration:** a background task that needs `REQUEST` bindings runs its

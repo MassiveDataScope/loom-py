@@ -450,10 +450,10 @@ envelope:
 ```python
 class ExportUseCase(UseCase[Export, None]):
     async def execute(self, jobs: JobService = ..., caller: Identity = Caller()) -> None:
-        jobs.dispatch(BuildExportJob, payload={"format": "csv"})
+        jobs.dispatch_after_commit(BuildExportJob, payload={"format": "csv"})
 ```
 
-`dispatch` captures the caller at registration time, the worker republishes it for the
+`dispatch_after_commit` captures the caller at registration time, the worker republishes it for the
 whole task and hands it to the executor, and a job dispatching another job propagates
 the same caller onward.
 

@@ -83,7 +83,7 @@ class TestReadOnlyDispatch:
         jobs, sent = service
 
         async def dispatch() -> None:
-            jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
+            jobs.dispatch_after_commit(EmailJob, payload={"to": "a@b.c"})
 
         async with _READ_ONLY[read_only]():
             attempt = asyncio.gather(dispatch()) if gathered else dispatch()

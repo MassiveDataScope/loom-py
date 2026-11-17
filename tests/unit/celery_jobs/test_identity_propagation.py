@@ -71,7 +71,7 @@ async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
     service = CeleryJobService(app)
     token = set_identity(identity) if identity is not None else None
     try:
-        service.dispatch(_ReportJob, payload={})
+        service.dispatch_after_commit(_ReportJob, payload={})
         await flush_pending_dispatches()
     finally:
         if token is not None:

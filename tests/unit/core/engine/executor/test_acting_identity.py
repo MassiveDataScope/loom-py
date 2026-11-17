@@ -335,7 +335,7 @@ class TestATaskOutlivingItsExecution:
         jobs = InlineJobService(BUILDING, executor)
 
         async def dispatch() -> Identity:
-            handle = jobs.dispatch(AcmeWhoJob)
+            handle = jobs.dispatch_after_commit(AcmeWhoJob)
             await flush_pending_dispatches()
             return cast(Identity, handle.wait())
 

@@ -108,14 +108,14 @@ class TestReservedCallbackArguments:
         jobs = service()
 
         with pytest.raises(ValueError, match=f"cannot hold {key}"):
-            jobs.dispatch(_AcmeJob, payload={key: "acme"}, **{hook: _AcmeCallback})
+            jobs.dispatch_after_commit(_AcmeJob, payload={key: "acme"}, **{hook: _AcmeCallback})
 
     def test_a_dispatch_without_a_callback_accepts_the_key(
         self, service: Callable[[], JobService]
     ) -> None:
         jobs = service()
 
-        jobs.dispatch(_AcmeJob, payload={"job_id": "acme"})
+        jobs.dispatch_after_commit(_AcmeJob, payload={"job_id": "acme"})
 
 
 class TestUndiscoveredCallbacks:
@@ -129,7 +129,7 @@ class TestUndiscoveredCallbacks:
         )
 
         with pytest.raises(ValueError, match="_AcmeUndiscoveredCallback was not discovered"):
-            jobs.dispatch(_AcmeJob, **{hook: _AcmeUndiscoveredCallback})
+            jobs.dispatch_after_commit(_AcmeJob, **{hook: _AcmeUndiscoveredCallback})
 
     def test_a_hand_built_service_accepts_any_class(self) -> None:
         DispatchableCallbacks.any().refuse({}, _AcmeUndiscoveredCallback)

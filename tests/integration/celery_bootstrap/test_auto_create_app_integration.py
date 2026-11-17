@@ -233,7 +233,7 @@ class _DispatchChildJobUseCase(UseCase[_Record, bool]):
             job_type = _CreateRecordInlineJob
             on_success = AcmeRecordSuccessCallback
 
-        self._jobs.dispatch(
+        self._jobs.dispatch_after_commit(
             job_type,
             payload={"name": cmd.name},
             on_success=on_success,

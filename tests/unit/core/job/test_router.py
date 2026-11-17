@@ -33,9 +33,9 @@ class _Backend(InlineJobService):
         self._name = name
         self._seen = seen
 
-    def dispatch(self, job_type: type[Job[Any]], **kwargs: Any) -> JobHandle[Any]:
+    def dispatch_after_commit(self, job_type: type[Job[Any]], **kwargs: Any) -> JobHandle[Any]:
         self._seen.append(f"{self._name}:{job_type.__name__}")
-        return super().dispatch(job_type, **kwargs)
+        return super().dispatch_after_commit(job_type, **kwargs)
 
     def dispatch_parallel(
         self, jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]], **kwargs: Any
@@ -80,7 +80,7 @@ class TestJobRouter:
         queue: str | None,
         expected: str,
     ) -> None:
-        handle = router.dispatch(job_type, queue=queue)
+        handle = router.dispatch_after_commit(job_type, queue=queue)
 
         assert seen == [expected]
         assert handle.queue == (queue or job_type.__queue__)
@@ -128,7 +128,7 @@ class TestJobRouter:
         inline = InlineJobService(MagicMock(), executor)
         router = JobRouter({}, default=inline)
 
-        handle = router.dispatch(_ReportJob)
+        handle = router.dispatch_after_commit(_ReportJob)
         executor.run.assert_not_awaited()
         await flush_pending_dispatches()
 

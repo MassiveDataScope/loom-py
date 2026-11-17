@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import threading
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -121,14 +120,10 @@ def _sqs_config(**knobs: Any) -> dict[str, Any]:
 async def _sent(
     service: JobService, client: SQSClient, job: type[Job[Any]], **options: Any
 ) -> tuple[str, dict[str, Any]]:
-    handle = service.dispatch(job, **options)
+    handle = service.dispatch_after_commit(job, **options)
     await flush_pending_dispatches()
     (request,) = client.requests
     return handle.job_id, request
-
-
-_LATER = timedelta(minutes=20)
-"""An ``eta`` this far ahead, taken from the clock when the test runs."""
 
 
 def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
@@ -164,14 +159,14 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         channel = active_channel()
         assert channel is not None
         channel.enqueue_priority(self.bump)
-        self.service.dispatch(EmailJob)
+        self.service.dispatch_after_commit(EmailJob)
 
 
 def _queued(service: SQSJobService, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
     token = bind_channel(channel)
     try:
         payload = {"customer": "hunter2", "secret": "hunter2"}
-        return [service.dispatch(job, payload=payload).job_id for job in jobs]
+        return [service.dispatch_after_commit(job, payload=payload).job_id for job in jobs]
     finally:
         reset_channel(token)
 
@@ -300,8 +295,6 @@ class TestSqsDispatch:
             (EmailJob, {"on_success": object}, "sqs_callbacks"),
             (EmailJob, {"priority": 5}, "sqs_priority"),
             (EmailJob, {"queue": "reports"}, "sqs_queue_unknown"),
-            (EmailJob, {"countdown": 901}, "sqs_delay_too_long"),
-            (EmailJob, {"eta": _LATER}, "sqs_delay_too_long"),
             (OrderJob, {"payload": {"customer": 1}, "countdown": 5}, "sqs_fifo_delay"),
             (OrderJob, {"payload": {}}, "sqs_group_missing"),
             (OrderJob, {"payload": {"customer": None}}, "sqs_group_missing"),
@@ -318,10 +311,8 @@ class TestSqsDispatch:
         options: dict[str, Any],
         code: str,
     ) -> None:
-        if "eta" in options:
-            options = {**options, "eta": datetime.now(UTC) + options["eta"]}
         with pytest.raises(SQSDispatchError) as raised:
-            service.dispatch(job, **options)
+            service.dispatch_after_commit(job, **options)
         await flush_pending_dispatches()
 
         assert (raised.value.code, raised.value.retryable) == (code, False)
@@ -337,7 +328,7 @@ class TestSqsDispatch:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         service = _compose(tmp_path, _sqs_config(batch=False), SQSClient(_ClientError()), EmailJob)
-        handle = service.dispatch(EmailJob)
+        handle = service.dispatch_after_commit(EmailJob)
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
 
@@ -367,7 +358,9 @@ class TestSqsDispatch:
     ) -> None:
         client = SQSClient(_ClientError() if error else None)
         service = _compose(tmp_path, _sqs_config(batch=batch), client, EmailJob)
-        client.refuse[service.dispatch(EmailJob, payload={"secret": "hunter2"}).job_id] = refusals
+        client.refuse[
+            service.dispatch_after_commit(EmailJob, payload={"secret": "hunter2"}).job_id
+        ] = refusals
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
 
@@ -401,7 +394,7 @@ class TestSqsDispatch:
         self, service: JobService, client: SQSClient
     ) -> None:
         ids = [
-            service.dispatch(job, payload={"customer": n}).job_id
+            service.dispatch_after_commit(job, payload={"customer": n}).job_id
             for n, job in enumerate([EmailJob, OrderJob, EmailJob, OrderJob, EmailJob])
         ]
         await flush_pending_dispatches()
@@ -425,7 +418,9 @@ class TestSqsDispatch:
         self, tmp_path: Path, client: SQSClient, knobs: dict[str, Any], blob: str, sizes: list[int]
     ) -> None:
         service = _compose(tmp_path, _sqs_config(**knobs), client, EmailJob)
-        ids = [service.dispatch(EmailJob, payload={"blob": blob}).job_id for _ in range(7)]
+        ids = [
+            service.dispatch_after_commit(EmailJob, payload={"blob": blob}).job_id for _ in range(7)
+        ]
         await flush_pending_dispatches()
 
         assert [len(chunk) for _, chunk in client.batches] == sizes
@@ -435,8 +430,8 @@ class TestSqsDispatch:
         self, tmp_path: Path, client: SQSClient
     ) -> None:
         service = _compose(tmp_path, _sqs_config(batch=False), client, EmailJob)
-        service.dispatch(EmailJob)
-        service.dispatch(EmailJob)
+        service.dispatch_after_commit(EmailJob)
+        service.dispatch_after_commit(EmailJob)
         await flush_pending_dispatches()
 
         assert (len(client.requests), client.batches) == (2, [])
@@ -450,8 +445,8 @@ class TestSqsDispatch:
         service = _compose(
             tmp_path, _sqs_config(max_concurrent_sends=concurrent), client, EmailJob, OrderJob
         )
-        service.dispatch(EmailJob)
-        service.dispatch(OrderJob, payload={"customer": 1})
+        service.dispatch_after_commit(EmailJob)
+        service.dispatch_after_commit(OrderJob, payload={"customer": 1})
         await flush_pending_dispatches()
 
         assert (client.peak, len(client.requests)) == (concurrent, 2)
@@ -471,7 +466,7 @@ class TestSqsDispatch:
     async def test_an_entry_sqs_refuses_once_is_sent_again(
         self, service: JobService, client: SQSClient
     ) -> None:
-        first, second = (service.dispatch(EmailJob).job_id for _ in range(2))
+        first, second = (service.dispatch_after_commit(EmailJob).job_id for _ in range(2))
         client.refuse[first] = 1
         await flush_pending_dispatches()
 
@@ -481,8 +476,8 @@ class TestSqsDispatch:
     async def test_an_entry_refused_twice_fails_the_batch_naming_job_task_and_code(
         self, service: JobService, client: SQSClient, caplog: pytest.LogCaptureFixture
     ) -> None:
-        refused = service.dispatch(EmailJob).job_id
-        service.dispatch(EmailJob)
+        refused = service.dispatch_after_commit(EmailJob).job_id
+        service.dispatch_after_commit(EmailJob)
         client.refuse[refused] = 2
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
@@ -497,7 +492,10 @@ class TestSqsDispatch:
         self, tmp_path: Path, client: SQSClient, caplog: pytest.LogCaptureFixture
     ) -> None:
         service = _compose(tmp_path, _sqs_config(batch_size=2), client, OrderJob)
-        ids = [service.dispatch(OrderJob, payload={"customer": "c"}).job_id for _ in range(5)]
+        ids = [
+            service.dispatch_after_commit(OrderJob, payload={"customer": "c"}).job_id
+            for _ in range(5)
+        ]
         client.refuse[ids[1]] = 1
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
@@ -516,7 +514,7 @@ class TestSqsDispatch:
     ) -> None:
         client = SQSClient(_ClientError())
         service = _compose(tmp_path, _CONFIG, client, EmailJob)
-        ids = [service.dispatch(EmailJob).job_id for _ in range(2)]
+        ids = [service.dispatch_after_commit(EmailJob).job_id for _ in range(2)]
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
 
@@ -528,9 +526,9 @@ class TestSqsDispatch:
     async def test_a_rolled_back_dispatch_leaves_no_batch_behind(
         self, service: JobService, client: SQSClient
     ) -> None:
-        service.dispatch(EmailJob)
+        service.dispatch_after_commit(EmailJob)
         clear_pending_dispatches()
-        kept = service.dispatch(EmailJob).job_id
+        kept = service.dispatch_after_commit(EmailJob).job_id
         await flush_pending_dispatches()
 
         assert client.batches == [(_URL, [kept])]

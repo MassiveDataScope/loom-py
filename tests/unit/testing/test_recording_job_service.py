@@ -39,7 +39,7 @@ class _Ship(UseCase[Any, None]):
         self.fail = fail
 
     async def execute(self) -> None:
-        self.jobs.dispatch(ShipJob, params={"order": 7}, payload={"note": "fragile"})
+        self.jobs.dispatch_after_commit(ShipJob, params={"order": 7}, payload={"note": "fragile"})
         if self.fail:
             raise RuntimeError("rolled back")
 
@@ -129,7 +129,7 @@ class TestRecordingJobService:
         self, composed: tuple[RecordingJobService, type[Job[str]]], queue: str | None, expected: str
     ) -> None:
         service, moved = composed
-        service.dispatch(moved, queue=queue)
+        service.dispatch_after_commit(moved, queue=queue)
         await flush_pending_dispatches()
 
         assert [(record.job_type, record.queue) for record in service.dispatched] == [
@@ -153,7 +153,7 @@ class TestRecordingJobService:
         jobs: RecordingJobService,
     ) -> None:
         payload, params = {"note": "fragile"}, {"order": 7}
-        jobs.dispatch(ShipJob, payload=payload, params=params)
+        jobs.dispatch_after_commit(ShipJob, payload=payload, params=params)
         payload["note"], params["order"] = "sturdy", 8
 
         await flush_pending_dispatches()

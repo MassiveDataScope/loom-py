@@ -20,7 +20,7 @@ pip install "loom-kernel[celery]"
 | Concept | Purpose |
 |---------|---------|
 | `Job` | Background unit of work — runs asynchronously on a worker |
-| `JobService.dispatch()` | Enqueue a job after the current UoW commits (fire-and-forget) |
+| `JobService.dispatch_after_commit()` | Enqueue a job after the current UoW commits (fire-and-forget) |
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
@@ -87,7 +87,7 @@ see {ref}`rest-per-job-overrides-from-yaml`.
 
 ## Dispatch a job
 
-Use `JobService.dispatch()` inside a use case to enqueue a job after the current
+Use `JobService.dispatch_after_commit()` inside a use case to enqueue a job after the current
 Unit of Work commits. The job is **not sent** if the UoW rolls back — dispatch is
 transactionally safe:
 
@@ -112,7 +112,7 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         cmd: DispatchRestockEmailCommand = Input(),
         product: Product = LoadById(Product, by="product_id"),
     ) -> DispatchRestockEmailResponse:
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={
@@ -126,10 +126,10 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         return DispatchRestockEmailResponse(job_id=handle.job_id, queue=handle.queue)
 ```
 
-`dispatch()` returns a `JobHandle` immediately — the broker call happens after the
+`dispatch_after_commit()` returns a `JobHandle` immediately — the broker call happens after the
 UoW commits. The HTTP response does not wait for the job to complete.
 
-### dispatch() parameters
+### dispatch_after_commit() parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -139,9 +139,8 @@ UoW commits. The HTTP response does not wait for the job to complete.
 | `on_success` | `type[Callback] \| None` | Callback invoked by the broker on success |
 | `on_failure` | `type[Callback] \| None` | Callback invoked by the broker on failure |
 | `queue` | `str \| None` | Override the job's `__queue__` for this dispatch only |
-| `countdown` | `int \| None` | Delay in seconds before execution |
+| `countdown` | `int \| None` | Delay in seconds before execution, 0 through 900 inclusive |
 | `priority` | `int \| None` | Override the job's `__priority__` |
-| `eta` | `datetime \| None` | Absolute datetime for first execution |
 
 ---
 
@@ -169,7 +168,7 @@ class BuildProductSummaryUseCase(UseCase[Product, ProductSummaryResponse]):
 `CeleryJobService` (production). When Celery is configured, it bypasses the broker
 entirely — the job runs in the API process via the same DI container.
 
-Use `dispatch()` for fire-and-forget work; use `run()` when you need the result now.
+Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
 
 ---
 
@@ -180,7 +179,7 @@ A callback is a subclass of `JobCallback` defined in a package listed in
 task for it. Both hooks do nothing until overridden, so override `on_success`,
 `on_failure` or both, each as `def` or `async def`. The DI container builds the
 callback, so it can interact with the application via `ApplicationInvoker`.
-A `dispatch(..., on_success=X)` naming a class the scan did not find is refused
+A `dispatch_after_commit(..., on_success=X)` naming a class the scan did not find is refused
 with a `ValueError`, by every job service the composition builds, before anything is
 sent:
 
@@ -246,10 +245,10 @@ async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ..
 async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
 ```
 
-`**context` contains the raw `payload` dict passed to `dispatch()` — use it to
+`**context` contains the raw `payload` dict passed to `dispatch_after_commit()` — use it to
 recover entity IDs and other parameters the callback needs.
 
-> **Fire-and-forget**: when a job dispatched via `dispatch()` fails, the failure
+> **Fire-and-forget**: when a job dispatched via `dispatch_after_commit()` fails, the failure
 > callback is invoked and the exception is **silenced**. The HTTP layer is not affected.
 > Use `run()` when you need the exception to propagate synchronously.
 
@@ -295,13 +294,13 @@ while an elevation is active raises `NestedElevation`. See
 ADR 0008
 (`docs/architecture/adr/0008-stores-and-units-of-work.md`).
 
-`JobService.dispatch(Job, payload=..., params=...)` is asynchronous: the job is
+`JobService.dispatch_after_commit(Job, payload=..., params=...)` is asynchronous: the job is
 sent after the caller's commit, runs in its own unit of work, possibly in
 another process, and is delivered at least once. It returns a `JobHandle`, not
 the result.
 
 Use `invoke` when the caller needs the result or the two writes must be atomic;
-use `dispatch` for work that can happen later, or that must run as another
+use `dispatch_after_commit` for work that can happen later, or that must run as another
 identity.
 
 ---
@@ -312,8 +311,9 @@ identity.
   owner task; a participant touched from a `gather` child raises
   `ScopeOwnershipError`. Await the calls one after another.
 - Callbacks (`on_success` / `on_failure`, or `on_all_success` /
-  `on_any_failure` on `dispatch_parallel`) with the SQS backend: `dispatch`
-  refuses them with `SQSDispatchError` (code `sqs_callbacks`).
+  `on_any_failure` on `dispatch_parallel`) with the SQS backend:
+  `dispatch_after_commit` refuses them with `SQSDispatchError` (code
+  `sqs_callbacks`).
 - `handle.wait()` with the SQS backend: an SQS `JobHandle` carries no result
   to wait for. Use `run()` or `invoke` when you need the result.
 - Renaming or moving a `Job` class while messages are in flight: the envelope

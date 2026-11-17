@@ -19,7 +19,6 @@ class SQSErrorCode(StrEnum):
     QUEUE_UNKNOWN = "sqs_queue_unknown"
     INVALID_CHARACTER = "sqs_invalid_character"
     MESSAGE_TOO_LARGE = "sqs_message_too_large"
-    DELAY_TOO_LONG = "sqs_delay_too_long"
     FIFO_DELAY = "sqs_fifo_delay"
     GROUP_MISSING = "sqs_group_missing"
 

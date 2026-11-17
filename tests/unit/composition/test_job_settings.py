@@ -51,7 +51,7 @@ async def _sent(application: Application) -> dict[str, Any] | None:
     """The routing ``send_task`` got when *application* dispatched the job; ``None`` if not sent."""
     service = application.kernel.container.resolve(JobService)
     with patch.object(Celery, "send_task", autospec=True) as send_task:
-        service.dispatch(_ReportJob)
+        service.dispatch_after_commit(_ReportJob)
         await flush_pending_dispatches()
     if send_task.call_args is None:
         return None

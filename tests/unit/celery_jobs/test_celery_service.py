@@ -81,26 +81,26 @@ def _clean_pending() -> Generator[None, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# dispatch() — deferred send
+# dispatch_after_commit() — deferred send
 # ---------------------------------------------------------------------------
 
 
 class TestDispatchDeferred:
     def test_dispatch_does_not_call_send_task_immediately(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, payload={"email": "a@b.com"})
+        service.dispatch_after_commit(_EmailJob, payload={"email": "a@b.com"})
         mock_app.send_task.assert_not_called()
 
     async def test_send_task_called_after_flush(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, payload={"email": "a@b.com"})
+        service.dispatch_after_commit(_EmailJob, payload={"email": "a@b.com"})
         await flush_pending_dispatches()
         mock_app.send_task.assert_called_once()
 
     async def test_send_task_emits_transport_span(self) -> None:
         runtime = _make_runtime()
         service = CeleryJobService(MagicMock(), observability_runtime=runtime)
-        service.dispatch(_EmailJob, payload={"email": "a@b.com"})
+        service.dispatch_after_commit(_EmailJob, payload={"email": "a@b.com"})
         await flush_pending_dispatches()
         runtime.span.assert_called_once()
         args, kwargs = runtime.span.call_args
@@ -110,64 +110,64 @@ class TestDispatchDeferred:
 
     async def test_send_task_receives_correct_task_name(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.args[0] == f"{TASK_JOB_PREFIX}.{_EmailJob.__qualname__}"
 
     async def test_send_task_receives_payload_in_kwargs(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, payload={"email": "x@y.com"})
+        service.dispatch_after_commit(_EmailJob, payload={"email": "x@y.com"})
         await flush_pending_dispatches()
         sent_kwargs = mock_app.send_task.call_args.kwargs["kwargs"]
         assert sent_kwargs["payload"] == {"email": "x@y.com"}
 
     async def test_send_task_receives_params_in_kwargs(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, params={"user_id": 7})
+        service.dispatch_after_commit(_EmailJob, params={"user_id": 7})
         await flush_pending_dispatches()
         sent_kwargs = mock_app.send_task.call_args.kwargs["kwargs"]
         assert sent_kwargs["params"] == {"user_id": 7}
 
 
 # ---------------------------------------------------------------------------
-# dispatch() — JobHandle identity
+# dispatch_after_commit() — JobHandle identity
 # ---------------------------------------------------------------------------
 
 
 class TestDispatchHandleIdentity:
     async def test_handle_job_id_matches_send_task_task_id(self) -> None:
         service, mock_app = _make_service()
-        handle = service.dispatch(_EmailJob)
+        handle = service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         sent_task_id = mock_app.send_task.call_args.kwargs["task_id"]
         assert handle.job_id == sent_task_id
 
     def test_handle_queue_uses_job_classvar_by_default(self) -> None:
         service, _ = _make_service()
-        handle = service.dispatch(_EmailJob)
+        handle = service.dispatch_after_commit(_EmailJob)
         assert handle.queue == "email"
 
     async def test_handle_queue_respects_override(self) -> None:
         service, mock_app = _make_service()
-        handle = service.dispatch(_EmailJob, queue="priority")
+        handle = service.dispatch_after_commit(_EmailJob, queue="priority")
         assert handle.queue == "priority"
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["queue"] == "priority"
 
     def test_handle_is_jobhandle_instance(self) -> None:
         service, _ = _make_service()
-        handle = service.dispatch(_EmailJob)
+        handle = service.dispatch_after_commit(_EmailJob)
         assert isinstance(handle, JobHandle)
 
     def test_each_dispatch_generates_unique_job_id(self) -> None:
         service, _ = _make_service()
-        h1 = service.dispatch(_EmailJob)
-        h2 = service.dispatch(_EmailJob)
+        h1 = service.dispatch_after_commit(_EmailJob)
+        h2 = service.dispatch_after_commit(_EmailJob)
         assert h1.job_id != h2.job_id
 
 
 # ---------------------------------------------------------------------------
-# dispatch() — routing ClassVar defaults
+# dispatch_after_commit() — routing ClassVar defaults
 # ---------------------------------------------------------------------------
 
 
@@ -182,51 +182,51 @@ class TestDispatchRoutingDefaults:
     )
     async def test_routing_option_uses_job_classvar(self, expected: int, option: str) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_HeavyJob)
+        service.dispatch_after_commit(_HeavyJob)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs[option] == expected
 
     async def test_countdown_override_takes_precedence(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_HeavyJob, countdown=0)
+        service.dispatch_after_commit(_HeavyJob, countdown=0)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["countdown"] == 0
 
     async def test_priority_override_takes_precedence(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_HeavyJob, priority=1)
+        service.dispatch_after_commit(_HeavyJob, priority=1)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["priority"] == 1
 
     async def test_soft_time_limit_none_when_no_timeout(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["soft_time_limit"] is None
 
 
 # ---------------------------------------------------------------------------
-# dispatch() — callbacks (link / link_error)
+# dispatch_after_commit() — callbacks (link / link_error)
 # ---------------------------------------------------------------------------
 
 
 class TestDispatchCallbacks:
     async def test_no_callbacks_sends_link_none(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["link"] is None
         assert mock_app.send_task.call_args.kwargs["link_error"] is None
 
     async def test_on_success_produces_non_none_link(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, on_success=_SuccessCallback)
+        service.dispatch_after_commit(_EmailJob, on_success=_SuccessCallback)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["link"] is not None
 
     async def test_on_failure_produces_non_none_link_error(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob, on_failure=_FailureCallback)
+        service.dispatch_after_commit(_EmailJob, on_failure=_FailureCallback)
         await flush_pending_dispatches()
         assert mock_app.send_task.call_args.kwargs["link_error"] is not None
 
@@ -243,7 +243,7 @@ class TestUndiscoveredCallback:
         with pytest.raises(
             ValueError, match="_UndiscoveredCallback was not discovered.*app.packages"
         ):
-            service.dispatch(_EmailJob, **{hook: _UndiscoveredCallback})
+            service.dispatch_after_commit(_EmailJob, **{hook: _UndiscoveredCallback})
 
         await flush_pending_dispatches()
         mock_app.send_task.assert_not_called()
@@ -269,9 +269,9 @@ class TestCallbackLinks:
         self, hook: str, callback: type[JobCallback], task: str, immutable: bool
     ) -> None:
         mock_app = MagicMock()
-        CeleryJobService(mock_app, callbacks=DispatchableCallbacks([callback])).dispatch(
-            _EmailJob, **{hook: callback}
-        )
+        CeleryJobService(
+            mock_app, callbacks=DispatchableCallbacks([callback])
+        ).dispatch_after_commit(_EmailJob, **{hook: callback})
 
         assert mock_app.signature.call_args.args == (task,)
         assert mock_app.signature.call_args.kwargs["immutable"] is immutable
@@ -290,7 +290,7 @@ class TestCallbackLinks:
         try:
             handle = CeleryJobService(
                 mock_app, callbacks=DispatchableCallbacks([callback])
-            ).dispatch(_EmailJob, payload={"order_id": 99}, **{hook: callback})
+            ).dispatch_after_commit(_EmailJob, payload={"order_id": 99}, **{hook: callback})
         finally:
             reset_trace_id(token)
 
@@ -356,7 +356,7 @@ class TestDispatchMetrics:
         mock_app = MagicMock()
         metrics = MagicMock()
         service = CeleryJobService(mock_app, metrics=metrics)
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         assert metrics.on_event.call_count == 1
         event = metrics.on_event.call_args.args[0]
         assert event.kind == EventKind.JOB_DISPATCHED
@@ -365,7 +365,7 @@ class TestDispatchMetrics:
     def test_dispatch_no_metrics_does_not_raise(self) -> None:
         mock_app = MagicMock()
         service = CeleryJobService(mock_app, metrics=None)
-        service.dispatch(_EmailJob)  # must not raise
+        service.dispatch_after_commit(_EmailJob)  # must not raise
 
     def test_dispatch_emits_trace_id_in_event(self) -> None:
         mock_app = MagicMock()
@@ -373,7 +373,7 @@ class TestDispatchMetrics:
         service = CeleryJobService(mock_app, metrics=metrics)
         token = set_trace_id("dispatch-trace")
         try:
-            service.dispatch(_EmailJob)
+            service.dispatch_after_commit(_EmailJob)
         finally:
             reset_trace_id(token)
         event = metrics.on_event.call_args.args[0]
@@ -400,14 +400,14 @@ class TestRunNotSupported:
 class TestPendingQueueIsolation:
     async def test_clear_prevents_send_task_after_rollback(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         clear_pending_dispatches()
         await flush_pending_dispatches()
         mock_app.send_task.assert_not_called()
 
     async def test_flush_empties_queue(self) -> None:
         service, mock_app = _make_service()
-        service.dispatch(_EmailJob)
+        service.dispatch_after_commit(_EmailJob)
         await flush_pending_dispatches()
         mock_app.reset_mock()
         await flush_pending_dispatches()

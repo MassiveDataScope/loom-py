@@ -121,7 +121,7 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         channel = active_channel()
         assert channel is not None
         channel.enqueue_priority(self.bump)
-        self.service.dispatch(_EmailJob)
+        self.service.dispatch_after_commit(_EmailJob)
 
 
 class _InlineAfterCommit(UseCase[Any, None]):
