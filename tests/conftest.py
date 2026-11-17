@@ -8,7 +8,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import boto3
 import pytest
+from moto import mock_aws
 from omegaconf import OmegaConf
 
 from loom.core.config import default_resolvers
@@ -38,6 +40,35 @@ def clear_builtin_resolvers() -> Iterator[None]:
     _clear_builtin_resolvers()
     yield
     _clear_builtin_resolvers()
+
+
+AWS_ACCOUNT = "123456789012"
+AWS_REGION = "us-east-1"
+
+
+@pytest.fixture
+def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Serve every AWS service from moto, with fake credentials in ``AWS_REGION``."""
+    for name in ("AWS_PROFILE", "AWS_ENDPOINT_URL", "AWS_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", AWS_REGION)
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", AWS_ACCOUNT)
+    with mock_aws():
+        yield
+
+
+@pytest.fixture
+def ssm(mocked_aws: None) -> Any:
+    """An SSM client of the moto account."""
+    return boto3.client("ssm")
+
+
+@pytest.fixture
+def secretsmanager(mocked_aws: None) -> Any:
+    """A Secrets Manager client of the moto account."""
+    return boto3.client("secretsmanager")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

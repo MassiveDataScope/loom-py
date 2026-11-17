@@ -13,14 +13,13 @@ import pytest
 
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from tests.helpers.persistence import build_backend
 
-from .conftest import FakeClient, Product
+from .conftest import Product
 
 _BLOCK_SECONDS = 0.2
 _REQUEST: contextvars.ContextVar[str] = contextvars.ContextVar("request", default="")
@@ -74,14 +73,13 @@ class TestDynamoExecutorParallelism:
         assert slow_client.seen_requests == ["req-42"]
 
 
-def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> StoreWiring:
-    monkeypatch.setattr(AwsClients, "client", lambda _self, _service, _config=None: client)
+def _wiring() -> StoreWiring:
     ctx = ConfigContext.from_dict(
         {
             "stores": {
                 "default": {
                     "backend": "dynamodb",
-                    "region": "eu-west-1",
+                    "region": "us-east-1",
                     "table": "products",
                     "pool": {"size": 16},
                 }
@@ -107,9 +105,9 @@ def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 class TestDynamoExecutorLifespan:
     async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
-        self, monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, created: list[int]
+        self, dynamodb: Any, created: list[int]
     ) -> None:
-        wiring = _wiring(monkeypatch, fake_client)
+        wiring = _wiring()
         assert wiring.readiness is not None
         answers: list[bool] = []
 
@@ -122,12 +120,11 @@ class TestDynamoExecutorLifespan:
 
     async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
         self,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_client: FakeClient,
+        dynamodb: Any,
         created: list[int],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        wiring = _wiring(monkeypatch, fake_client)
+        wiring = _wiring()
         assert wiring.readiness is not None
         async with wiring.lifespan_init():
             pass
@@ -136,7 +133,7 @@ class TestDynamoExecutorLifespan:
             ready = await wiring.readiness()
 
         assert ready is False
-        [record] = caplog.records
+        [record] = [r for r in caplog.records if r.name == backend_module.__name__]
         assert record.exc_info is not None
         assert record.exc_info[0] is RuntimeError
         assert created == [16]

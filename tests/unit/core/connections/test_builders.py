@@ -7,6 +7,7 @@ checks the same options against the real drivers' signatures.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -44,13 +45,12 @@ class _Recorder:
 
 class TestAwsClientBuilder:
     def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
+        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        profiles = tmp_path / "aws-config"
+        profiles.write_text("[profile dev]\nregion = us-east-1\n", encoding="utf-8")
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(profiles))
         island = import_optional("loom.core.connections.aws.client", extra="aws")
-        session = _Recorder()
-        session.client = _Recorder()  # type: ignore[attr-defined]
-        monkeypatch.setattr(island.boto3, "Session", session)
         config = AwsClientConfig(
             region="eu-west-1",
             url=Dsn("http://localhost:8000"),
@@ -62,14 +62,14 @@ class TestAwsClientBuilder:
             retry_mode="adaptive",
         )
 
-        island.build_aws_client(island.open_session("dev"), "dynamodb", config)
+        session = island.open_session("dev")
+        client = island.build_aws_client(session, "dynamodb", config)
 
-        assert session.kwargs == {"profile_name": "dev"}
-        client_args, client_kwargs = session.client.calls[-1]  # type: ignore[attr-defined]
-        assert client_args == ("dynamodb",)
-        assert client_kwargs["endpoint_url"] == "http://localhost:8000"
-        assert client_kwargs["region_name"] == "eu-west-1"
-        botocore = client_kwargs["config"]
+        assert session.profile_name == "dev"
+        assert client.meta.service_model.service_name == "dynamodb"
+        assert client.meta.endpoint_url == "http://localhost:8000"
+        assert client.meta.region_name == "eu-west-1"
+        botocore = client.meta.config
         bounds = (botocore.connect_timeout, botocore.read_timeout, botocore.max_pool_connections)
         assert bounds == (1, 7, 4)
         assert botocore.retries == {"total_max_attempts": 2, "mode": "adaptive"}

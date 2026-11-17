@@ -51,11 +51,6 @@ def without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
     without_extra(monkeypatch, ["boto3"], [BOTO3_ISLAND])
 
 
-def with_boto3(monkeypatch: pytest.MonkeyPatch, stub: object) -> None:
-    """*stub* stands in for boto3 (the AWS island calls ``stub.Session(...).client(...)``)."""
-    with_stubbed_extra(monkeypatch, {"boto3": stub}, [BOTO3_ISLAND])
-
-
 class AwsClientFactory:
     """Stands in for boto3 behind the AWS island: hands out *client*, records what was asked.
 
@@ -108,6 +103,7 @@ class FakeAwsIsland:
     Args:
         build_seconds: How long each build takes, to widen a race between threads.
         setup: Called with each client built, to script what it answers.
+        serving: Gives the client to hand out for the settings of a build, in place of a mock.
 
     Attributes:
         sessions: The profile of every session opened.
@@ -116,10 +112,14 @@ class FakeAwsIsland:
     """
 
     def __init__(
-        self, build_seconds: float = 0.0, setup: Callable[[MagicMock], None] | None = None
+        self,
+        build_seconds: float = 0.0,
+        setup: Callable[[MagicMock], None] | None = None,
+        serving: Callable[[Any], Any] | None = None,
     ) -> None:
         self._build_seconds = build_seconds
         self._setup = setup
+        self._serving = serving
         self.sessions: list[str | None] = []
         self.built: list[tuple[str, Any]] = []
         self.created: list[MagicMock] = []
@@ -128,9 +128,11 @@ class FakeAwsIsland:
         self.sessions.append(profile)
         return object()
 
-    def build_aws_client(self, session: object, service: str, config: Any) -> MagicMock:
+    def build_aws_client(self, session: object, service: str, config: Any) -> Any:
         time.sleep(self._build_seconds)
         self.built.append((service, config))
+        if self._serving is not None:
+            return self._serving(config)
         client = MagicMock(name=f"{service}-client")
         self.created.append(client)
         if self._setup is not None:
@@ -145,9 +147,10 @@ def fake_aws_island(
     monkeypatch: pytest.MonkeyPatch,
     build_seconds: float = 0.0,
     setup: Callable[[MagicMock], None] | None = None,
+    serving: Callable[[Any], Any] | None = None,
 ) -> FakeAwsIsland:
     """Make :class:`AwsClients` and the Lambda consumer use a :class:`FakeAwsIsland`."""
-    island = FakeAwsIsland(build_seconds, setup)
+    island = FakeAwsIsland(build_seconds, setup, serving)
     monkeypatch.setattr("loom.core.connections.aws.clients.aws_island", lambda: island)
     monkeypatch.setattr("loom.serverless.aws.lambda_._jobs.aws_island", lambda: island)
     return island

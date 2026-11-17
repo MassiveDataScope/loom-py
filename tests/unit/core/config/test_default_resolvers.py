@@ -6,7 +6,6 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from omegaconf import OmegaConf
@@ -20,7 +19,7 @@ from loom.core.config import (
     merge_resolvers,
     with_default_resolvers,
 )
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.extras import fake_aws_island, without_boto3
 
 
 class StubResolver:
@@ -150,13 +149,12 @@ class TestDefaultResolvers:
     def test_no_client_created_without_placeholders(
         self, plain_yaml: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
+        island = fake_aws_island(monkeypatch)
 
         cfg = load_config(plain_yaml, resolvers=default_resolvers())
 
         assert cfg.app.name == "demo"
-        boto3.Session.assert_not_called()
+        assert island.sessions == []
 
     def test_default_secrets_resolver_reports_the_extra_on_access(
         self, secrets_yaml: str, monkeypatch: pytest.MonkeyPatch

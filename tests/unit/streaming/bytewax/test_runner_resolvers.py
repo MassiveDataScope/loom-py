@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +17,7 @@ from bytewax.dataflow import Dataflow  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.streaming.bytewax.runner import StreamingRunner  # noqa: E402
 from loom.streaming.graph._flow import StreamFlow  # noqa: E402
-from tests.helpers.extras import with_boto3, without_boto3  # noqa: E402
+from tests.helpers.extras import fake_aws_island, without_boto3  # noqa: E402
 from tests.unit._resolver_stubs import MappingResolver  # noqa: E402
 from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult  # noqa: E402
 
@@ -89,14 +88,13 @@ class TestFromYaml:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
+        island = fake_aws_island(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "2")
 
         runner = StreamingRunner.from_yaml(bytewax_stream_flow, config_path)
 
         assert runner._runtime.workers_per_process == 2
-        boto3.client.assert_not_called()
+        assert island.sessions == []
 
     def test_user_secrets_resolver_wins_over_the_default(
         self,
@@ -194,8 +192,7 @@ class TestRunWithConfigPath:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
+        island = fake_aws_island(monkeypatch)
         _stub_execution(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "2")
         runner = StreamingRunner()
@@ -203,7 +200,7 @@ class TestRunWithConfigPath:
         runner.run(flow=bytewax_stream_flow, config_path=config_path)
 
         assert runner._runtime.workers_per_process == 2
-        boto3.client.assert_not_called()
+        assert island.sessions == []
 
     def test_user_secrets_resolver_wins_over_the_default(
         self,

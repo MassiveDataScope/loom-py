@@ -24,7 +24,6 @@ from loom.core.stores import SERVER_PROFILE
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import WithOverrides, composition_project
-from tests.helpers.extras import patched_aws_clients
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai.adapters.doubles import (
     AGENT,
@@ -113,10 +112,10 @@ def engines(
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Iterator[Project]:
+def project(tmp_path: Path, mocked_aws: None) -> Iterator[Project]:
     """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts.
 
-    Its SQS client is a stand-in for the test's duration.
+    Its SQS client talks to moto for the test's duration.
     """
     agents = tmp_path / "agents"
     agents.mkdir()
@@ -135,13 +134,12 @@ def project(tmp_path: Path) -> Iterator[Project]:
         **jobs_queue(),
         "lambda": {"functions": {WORKER: {"trigger": jobs_trigger()}}},
     }
-    with patched_aws_clients():
-        yield composition_project(
-            ConfigContext.from_dict(document),
-            app=AppConfig(name="acme-adapters", entry=WORKER, job_service="inline"),
-            code_path=tmp_path,
-            config_root=tmp_path,
-        )
+    yield composition_project(
+        ConfigContext.from_dict(document),
+        app=AppConfig(name="acme-adapters", entry=WORKER, job_service="inline"),
+        code_path=tmp_path,
+        config_root=tmp_path,
+    )
 
 
 def binding(port: type, adapter: object) -> Callable[[LoomContainer], None]:

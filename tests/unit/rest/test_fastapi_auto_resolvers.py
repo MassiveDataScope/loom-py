@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from loom.core.config import ConfigError
 from loom.rest.fastapi.auto import create_app
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.extras import fake_aws_island, without_boto3
 from tests.unit._resolver_stubs import MappingResolver
 from tests.unit.rest._fixture_app import write_project
 
@@ -56,9 +55,8 @@ class TestSecretsPlaceholder:
     def test_no_aws_client_without_placeholders(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
+        island = fake_aws_island(monkeypatch)
         config_path = write_project(tmp_path)
 
         assert create_app(config_path) is not None
-        boto3.client.assert_not_called()
+        assert island.sessions == []

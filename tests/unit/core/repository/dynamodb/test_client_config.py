@@ -22,47 +22,39 @@ from .conftest import Product
 _REQUIRED = {"region": "eu-west-1", "table": "products"}
 
 
-def _build(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str, Any]:
-    seen: dict[str, Any] = {}
-
-    class _Session:
-        def __init__(self, **kwargs: Any) -> None:
-            seen["session"] = kwargs
-
-        def client(self, service: str, **kwargs: Any) -> object:
-            seen.update(kwargs, service=service)
-            return object()
-
-    import boto3  # type: ignore[import-untyped]
-
-    monkeypatch.setattr(boto3, "Session", _Session)
-    ctx = ConfigContext.from_dict(
-        {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
+def _client(section: dict[str, Any]) -> Any:
+    """The client a ``dynamodb`` store of *section* builds, as boto3 holds it."""
+    clients = AwsClients()
+    store = {**_REQUIRED, **section}
+    build_backend(
+        DynamoDBBackend(),
+        ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **store}}}),
+        (),
+        SERVER_PROFILE,
+        aws=clients,
     )
-    build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
-    return seen
+    return clients.client("dynamodb", convert_config(store, DynamoDBRepositoryConfig, strict=True))
 
 
 class TestDynamoClientConfig:
-    def test_bounded_defaults_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = _build(monkeypatch, {})["config"]
+    def test_bounded_defaults_reach_the_client(self, mocked_aws: None) -> None:
+        config = _client({}).meta.config
 
         assert config.connect_timeout == 2
         assert config.read_timeout == 5
         assert config.retries == {"total_max_attempts": 3, "mode": "standard"}
         assert config.max_pool_connections == 32
 
-    def test_declared_values_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        config = _build(
-            monkeypatch,
+    def test_declared_values_reach_the_client(self, mocked_aws: None) -> None:
+        config = _client(
             {
                 "connect_timeout": 1,
                 "read_timeout": 3,
                 "max_attempts": 5,
                 "retry_mode": "adaptive",
                 "pool": {"size": 8},
-            },
-        )["config"]
+            }
+        ).meta.config
 
         assert (config.connect_timeout, config.read_timeout, config.max_pool_connections) == (
             1,

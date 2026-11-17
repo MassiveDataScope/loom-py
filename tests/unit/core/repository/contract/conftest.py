@@ -20,7 +20,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, cast
 
+import boto3
 import pytest
+from moto import mock_aws
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
@@ -36,8 +38,8 @@ from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.dynamodb import create_table
 
-from ..dynamodb._fake import FakeClient
 from ..mongo._fake import FakeMongoClient
 
 _TABLE = "contract_orders"
@@ -233,8 +235,10 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeCon
 
 @asynccontextmanager
 async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
-    client = FakeClient(key_name="id", table_names=(_TABLE,))
-    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
+    with mock_aws():
+        client = boto3.client("dynamodb", region_name="us-east-1")
+        create_table(client, _TABLE)
+        yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
 
 
 @asynccontextmanager

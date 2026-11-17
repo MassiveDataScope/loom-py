@@ -19,7 +19,7 @@ from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import DEFERRALS_ATTRIBUTE, REJECTION_REASON_ATTRIBUTE
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.extras import fake_aws_island
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import (
     WORKER,
@@ -91,7 +91,7 @@ def sqs(request: pytest.FixtureRequest) -> FakeSqs:
 
 
 @pytest.fixture
-def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
+def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iterator[Serve]:
     adapters: list[LambdaAdapter] = []
 
     def build(dead_letter: str = "redrive", *, fifo: bool = False) -> LambdaHandler:
@@ -116,10 +116,10 @@ def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
         adapters.append(adapter)
         return adapter.bind(project.compose(adapter))
 
-    with patched_aws_clients(sqs):
-        yield build
-        for adapter in adapters:
-            adapter.close()
+    fake_aws_island(monkeypatch, serving=lambda _config: sqs)
+    yield build
+    for adapter in adapters:
+        adapter.close()
 
 
 def _record(message_id: str, job: type[Job[Any]], **options: Any) -> dict[str, Any]:

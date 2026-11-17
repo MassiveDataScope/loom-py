@@ -36,7 +36,7 @@ from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
-from tests.helpers.extras import patched_aws_clients, without_boto3
+from tests.helpers.extras import fake_aws_island, without_boto3
 from tests.helpers.jobs import (
     BROKER,
     SQS_FIFO_URL,
@@ -112,7 +112,8 @@ def service(tmp_path: Path, client: SQSClient) -> JobService:
 def _compose(
     tmp_path: Path, config: dict[str, Any], client: Any, *jobs: type[Job[Any]]
 ) -> JobService:
-    with patched_aws_clients(client):
+    with pytest.MonkeyPatch.context() as patch:
+        fake_aws_island(patch, serving=lambda _config: client)
         application = job_project(tmp_path, config, "sqs").compose(JobsAdapter(*jobs))
     return application.kernel.container.resolve(JobService)
 
@@ -247,17 +248,17 @@ class TestSqsDispatch:
         ids=["inherits aws", "overrides aws"],
     )
     def test_the_client_takes_aws_and_sqs_overrides_it(
-        self, tmp_path: Path, sqs: dict[str, Any], region: str
+        self, tmp_path: Path, sqs: dict[str, Any], region: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = {
             "aws": {"region": "eu-west-1"},
             "sqs": {**sqs, "queues": {"emails": {"url": _URL}}},
         }
         project = job_project(tmp_path, config, "sqs")
-        with patched_aws_clients() as clients:
-            project.compose(JobsAdapter(EmailJob))
+        island = fake_aws_island(monkeypatch)
+        project.compose(JobsAdapter(EmailJob))
 
-        assert clients.calls == [("sqs", region)]
+        assert [(service, config.region) for service, config in island.built] == [("sqs", region)]
 
     @pytest.mark.parametrize(
         ("job", "message"),
@@ -267,11 +268,12 @@ class TestSqsDispatch:
         ],
     )
     def test_startup_refuses_a_job_sqs_cannot_place(
-        self, tmp_path: Path, job: type[Job[Any]], message: str
+        self, tmp_path: Path, job: type[Job[Any]], message: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(job)
-        with patched_aws_clients(), pytest.raises(SQSQueueConfigError, match=message):
+        fake_aws_island(monkeypatch)
+        with pytest.raises(SQSQueueConfigError, match=message):
             project.compose(adapter)
 
     async def test_the_jobs_section_gives_the_queue_the_delay_and_the_priority(
@@ -286,11 +288,13 @@ class TestSqsDispatch:
         assert (request["QueueUrl"], request["DelaySeconds"]) == (_URL, 7)
         assert (ReportJob.__queue__, ReportJob.__countdown__) == ("reports", 0)
 
-    def test_jobs_on_celery_queues_need_no_sqs_url(self, tmp_path: Path) -> None:
+    def test_jobs_on_celery_queues_need_no_sqs_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         config = {**_CONFIG, "celery": {**BROKER, "queues": ["default", "reports"]}}
         project = job_project(tmp_path, config, "sqs")
-        with patched_aws_clients():
-            application = project.compose(JobsAdapter(EmailJob, ReportJob))
+        fake_aws_island(monkeypatch)
+        application = project.compose(JobsAdapter(EmailJob, ReportJob))
 
         assert isinstance(application.kernel.container.resolve(JobService), JobRouter)
 
@@ -486,11 +490,12 @@ class TestSqsDispatch:
         [{"batch_size": 0}, {"batch_size": 11}, {"max_concurrent_sends": 0}, {"batch": "yes"}],
     )
     def test_startup_refuses_an_invalid_batch_knob(
-        self, tmp_path: Path, knobs: dict[str, Any]
+        self, tmp_path: Path, knobs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         project = job_project(tmp_path, _sqs_config(**knobs), "sqs")
         adapter = JobsAdapter(EmailJob)
-        with patched_aws_clients(), pytest.raises(ConfigError, match=next(iter(knobs))):
+        fake_aws_island(monkeypatch)
+        with pytest.raises(ConfigError, match=next(iter(knobs))):
             project.compose(adapter)
 
     async def test_an_entry_sqs_refuses_once_is_sent_again(

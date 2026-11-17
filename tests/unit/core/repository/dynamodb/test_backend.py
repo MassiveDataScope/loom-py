@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,45 +18,53 @@ from loom.stores.dynamodb.backend import DynamoDBBackend
 from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.helpers.persistence import build_backend
 
-from .conftest import FakeClient
 
-
-def _wiring(monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, table: str) -> StoreWiring:
-    monkeypatch.setattr(AwsClients, "client", lambda _self, _service, _config=None: fake_client)
+def _wiring(table: str) -> StoreWiring:
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
             "stores": {
-                "default": {"backend": "dynamodb", "region": "eu-west-1", "table": table},
+                "default": {"backend": "dynamodb", "region": "us-east-1", "table": table},
             },
         }
     )
     return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
+def _describing(status: str) -> Callable[[MagicMock], None]:
+    def setup(client: MagicMock) -> None:
+        client.describe_table.return_value = {"Table": {"TableStatus": status}}
+
+    return setup
+
+
 class TestDynamoReadiness:
+    @pytest.mark.asyncio
+    async def test_readiness_is_true_for_an_existing_table(self, dynamodb: Any) -> None:
+        wiring = _wiring("products")
+
+        assert wiring.readiness is not None
+        assert await wiring.readiness() is True
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("status", "expected"),
         [("ACTIVE", True), ("UPDATING", True), ("CREATING", False), ("DELETING", False)],
     )
     async def test_readiness_reflects_the_table_status(
-        self, monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, status: str, expected: bool
+        self, monkeypatch: pytest.MonkeyPatch, status: str, expected: bool
     ) -> None:
-        fake_client.table_status["products"] = status
-        wiring = _wiring(monkeypatch, fake_client, "products")
+        fake_aws_island(monkeypatch, setup=_describing(status))
+        wiring = _wiring("products")
 
         assert wiring.readiness is not None
         assert await wiring.readiness() is expected
 
     @pytest.mark.asyncio
     async def test_readiness_is_false_when_the_table_is_missing(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_client: FakeClient,
-        caplog: pytest.LogCaptureFixture,
+        self, dynamodb: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
-        wiring = _wiring(monkeypatch, fake_client, "missing")
+        wiring = _wiring("missing")
 
         assert wiring.readiness is not None
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):

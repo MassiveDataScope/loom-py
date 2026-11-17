@@ -19,7 +19,7 @@ from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import TEST_QUEUE, LambdaEvent
 from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.extras import fake_aws_island
 from tests.helpers.jobs import SQSClient, sqs_service
 from tests.helpers.sqs import FakeSqs
 
@@ -49,7 +49,9 @@ def sqs() -> FakeSqs:
 
 
 @pytest.fixture
-def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
+def handler(
+    tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[LambdaHandler]:
     project = composition_project(
         ConfigContext.from_dict(
             {
@@ -67,9 +69,9 @@ def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    with patched_aws_clients(sqs):
-        yield adapter.bind(project.compose(adapter))
-        adapter.close()
+    fake_aws_island(monkeypatch, serving=lambda _config: sqs)
+    yield adapter.bind(project.compose(adapter))
+    adapter.close()
 
 
 def _failed(result: dict[str, Any]) -> list[str]:

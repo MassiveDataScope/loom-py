@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated, Any, NoReturn
 
+import boto3
 import pytest
 
 from loom.core.model import BaseModel, Field, Float, Integer, String
-
-from ._fake import FakeClient as FakeClient
+from tests.helpers.dynamodb import create_table
 
 
 class Product(BaseModel):
@@ -32,17 +32,20 @@ def product_model() -> type[Product]:
 
 
 @pytest.fixture
-def fake_client() -> FakeClient:
-    return FakeClient(key_name="id")
+def dynamodb(mocked_aws: None) -> Any:
+    """A DynamoDB client of the moto account with the ``products`` table."""
+    client = boto3.client("dynamodb")
+    create_table(client, "products")
+    return client
 
 
 @pytest.fixture
-def refusing_client(fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch) -> FakeClient:
-    """The fake client with every item call failing the test."""
+def refusing_client(dynamodb: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The client with every item call failing the test."""
 
     def _refuse(**kwargs: Any) -> NoReturn:
         raise AssertionError(f"the client was called with {kwargs}")
 
     for method in ("get_item", "put_item", "delete_item", "transact_write_items"):
-        monkeypatch.setattr(fake_client, method, _refuse)
-    return fake_client
+        monkeypatch.setattr(dynamodb, method, _refuse)
+    return dynamodb

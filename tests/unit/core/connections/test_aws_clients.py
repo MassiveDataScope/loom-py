@@ -12,7 +12,7 @@ from loom.core.config._resolver_utils import build_resolver_client
 from loom.core.connections.aws import AwsClientConfig, AwsClients, AwsPool
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island, patched_aws_clients, without_boto3
+from tests.helpers.extras import FakeAwsIsland, fake_aws_island, without_boto3
 
 _THREADS = 8
 
@@ -177,19 +177,20 @@ class TestClose:
 
 
 class TestRealIslandPath:
-    def test_the_region_and_endpoint_of_the_settings_reach_boto3(self) -> None:
+    def test_the_region_and_endpoint_of_the_settings_reach_boto3(self, mocked_aws: None) -> None:
         settings = AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566"))
 
-        with patched_aws_clients() as factory:
-            AwsClients().client("sqs", settings)
+        client = AwsClients().client("sqs", settings)
 
-        factory.assert_called_once_with("sqs", region_name="eu-west-1")
-        assert factory.options[-1]["endpoint_url"] == "http://localhost:4566"
+        assert client.meta.region_name == "eu-west-1"
+        assert client.meta.endpoint_url == "http://localhost:4566"
 
 
 class TestWithoutAContainer:
-    def test_the_resolver_path_builds_its_client_with_clients_of_its_own(self) -> None:
-        with patched_aws_clients() as factory:
-            build_resolver_client("ssm", "eu-west-3", resolver="SsmResolver", root=None)
+    def test_the_resolver_path_builds_its_client_with_clients_of_its_own(
+        self, mocked_aws: None
+    ) -> None:
+        client = build_resolver_client("ssm", "eu-west-3", resolver="SsmResolver", root=None)
 
-        factory.assert_called_once_with("ssm", region_name="eu-west-3")
+        assert client.meta.service_model.service_name == "ssm"
+        assert client.meta.region_name == "eu-west-3"

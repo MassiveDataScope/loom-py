@@ -2399,7 +2399,7 @@ dev = [
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mangum" },
-    { name = "moto" },
+    { name = "moto", extra = ["dynamodb", "ssm"] },
     { name = "mypy" },
     { name = "omegaconf" },
     { name = "opentelemetry-api" },
@@ -2553,7 +2553,7 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mangum", specifier = ">=0.22,<1.0" },
-    { name = "moto", extras = ["sqs"], specifier = ">=5.2.5,<6.0" },
+    { name = "moto", extras = ["dynamodb", "secretsmanager", "sns", "sqs", "ssm"], specifier = ">=5.2.5,<6.0" },
     { name = "mypy", specifier = ">=1.11.0,<2.0" },
     { name = "omegaconf", specifier = ">=2.3,<2.5" },
     { name = "opentelemetry-api", specifier = ">=1.27,<2.0" },
@@ -2816,6 +2816,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cb/a4/8d60630be6ff222421d281796d4dfd67d2eae66b47525735e57c9e275a27/moto-5.2.5.tar.gz", hash = "sha256:391857257d5dac144334013c2c10e599def5f0562f553e979160140bd7bd9cf6", size = 9249364, upload-time = "2026-10-27T22:46:30.724Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/b8/15e2ce7b6bb125558c81f63c42074a768df15138248cf2e2f1de2b4894eb/moto-5.2.5-py3-none-any.whl", hash = "sha256:eef62cdcf3bfe73e0863743511ba042dfaba04ba3d5ecdcb896a196c693ad528", size = 7205137, upload-time = "2026-10-27T22:46:27.843Z" },
+]
+
+[package.optional-dependencies]
+dynamodb = [
+    { name = "docker" },
+    { name = "py-partiql-parser" },
+]
+ssm = [
+    { name = "pyyaml" },
 ]
 
 [[package]]
@@ -3520,6 +3529,15 @@ memory = [
 ]
 redis = [
     { name = "redis" },
+]
+
+[[package]]
+name = "py-partiql-parser"
+version = "0.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/7a/a0f6bda783eb4df8e3dfd55973a1ac6d368a89178c300e1b5b91cd181e5e/py_partiql_parser-0.6.3.tar.gz", hash = "sha256:09cecf916ce6e3da2c050f0cb6106166de42c33d34a078ec2eb19377ea70389a", size = 17456, upload-time = "2025-10-18T13:56:13.441Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/33/a7cbfccc39056a5cf8126b7aab4c8bafbedd4f0ca68ae40ecb627a2d2cd3/py_partiql_parser-0.6.3-py2.py3-none-any.whl", hash = "sha256:deb0769c3346179d2f590dcbde556f708cdb929059fb654bad75f4cf6e07f582", size = 23752, upload-time = "2025-10-18T13:56:12.256Z" },
 ]
 
 [[package]]

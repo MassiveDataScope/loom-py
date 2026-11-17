@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from loom.celery.bootstrap import bootstrap_worker
 from loom.core.config import ConfigError
 from loom.core.job.job import Job
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.extras import fake_aws_island, without_boto3
 from tests.unit._resolver_stubs import MappingResolver
 
 pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
@@ -67,14 +66,13 @@ class TestBootstrapResolvers:
     def test_no_aws_client_without_placeholders(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
+        island = fake_aws_island(monkeypatch)
         config_path = _write_worker_yaml(tmp_path, "memory://")
 
         result = bootstrap_worker(config_path, jobs=[_SyncJob])
 
         assert result.celery_app.conf.broker_url == "memory://"
-        boto3.client.assert_not_called()
+        assert island.sessions == []
 
     def test_user_secrets_resolver_wins_over_the_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -65,7 +65,6 @@ from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
 from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
-from tests.helpers.extras import patched_aws_clients
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
@@ -476,14 +475,13 @@ World = Callable[..., _World]
 
 
 @pytest.fixture
-def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocked_aws: None) -> Iterator[World]:
     """Builds a server of one era and a Lambda function of one trigger over it, at Init.
 
     The pool's wall clock is patched before anything is built, so every pool
     reads it; the counters are marked once Init is done.
     """
     with contextlib.ExitStack() as stack:
-        stack.enter_context(patched_aws_clients())
 
         def build(era: Era, trigger: Trigger, *, agents: bool = True) -> _World:
             server = stack.enter_context(serving(era))

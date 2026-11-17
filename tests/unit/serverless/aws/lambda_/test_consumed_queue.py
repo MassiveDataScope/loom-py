@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError
 
 from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
@@ -17,7 +17,7 @@ from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import FakeSdkError, fake_aws_island, patched_aws_clients
+from tests.helpers.extras import FakeSdkError, fake_aws_island
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
@@ -29,6 +29,14 @@ _POLICY = {
         "maxReceiveCount": 4,
     }
 }
+
+
+@contextmanager
+def _serving(client: FakeSqs | None) -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as patch:
+        if client is not None:
+            fake_aws_island(patch, serving=lambda _config: client)
+        yield
 
 
 def _bind(
@@ -50,7 +58,7 @@ def _bind(
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[probe[0]])
-    with patched_aws_clients(client) if client is not None else nullcontext():
+    with _serving(client):
         application = project.compose(adapter)
         adapter.bind(application)
         adapter.close()
@@ -136,15 +144,10 @@ class TestConsumedQueue:
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 
     def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mocked_aws: None
     ) -> None:
-        failure = ClientError(
-            {"Error": {"Code": "Throttling", "Message": "slow"}}, "GetQueueAttributes"
-        )
-        client = FakeSqs(_POLICY, lookup_raises=failure)
-
-        with pytest.raises(ConfigError, match=r"queue 'jobs'.*Throttling"):
-            _bind(tmp_path, probe, client)
+        with pytest.raises(ConfigError, match=r"queue 'jobs'.*NonExistentQueue"):
+            _bind(tmp_path, probe, None)
 
     def test_an_error_that_is_not_the_sdks_propagates_unwrapped(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
@@ -173,16 +176,12 @@ class TestConsumedQueue:
     ) -> None:
         retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
 
-        def session(**_: Any) -> Any:
-            class Session:
-                def client(self, service: str, **options: Any) -> FakeSqs:
-                    attempts = options["config"].retries["total_max_attempts"]
-                    return bounded if attempts == 1 else retrying
-
-            return Session()
+        def client_for(config: Any) -> FakeSqs:
+            return bounded if config.max_attempts == 1 else retrying
 
         jobs = {probe[0].__name__: {"queue": "jobs"}}
-        with patch("boto3.Session", side_effect=session):
+        with pytest.MonkeyPatch.context() as patch:
+            fake_aws_island(patch, serving=client_for)
             _bind(tmp_path, probe, None, jobs=jobs)
 
         assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
