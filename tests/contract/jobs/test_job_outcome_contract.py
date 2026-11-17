@@ -8,6 +8,7 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection, JobRetry
 from loom.core.job.policy import Backoff
+from loom.core.use_case import Delivery
 from tests.contract.jobs.conftest import Driver, Settlement
 
 STEADY = Backoff(first_s=4, factor=2, max_s=100, jitter=False)
@@ -60,8 +61,7 @@ class RejectingJob(Job[None]):
 class RecordingJob(Job[None]):
     seen: ClassVar[list[tuple[int, int]]] = []
 
-    async def execute(self) -> None:
-        delivery = JobDelivery.current()
+    async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
         assert delivery is not None
         self.seen.append((delivery.attempt, delivery.deferrals))
 

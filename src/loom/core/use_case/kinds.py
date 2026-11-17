@@ -7,6 +7,7 @@ from loom.core.identity import Identity
 from loom.core.use_case.markers import (
     _AgentMarker,
     _CallerMarker,
+    _DeliveryMarker,
     _ExistsMarker,
     _InputMarker,
     _LoadByIdMarker,
@@ -19,7 +20,14 @@ CALLER = Kind("caller", singleton_safe=False, spelling=_CallerMarker.spelling)
 AGENT = Kind("agent", spelling=_AgentMarker.spelling)
 MCP = Kind("mcp", spelling=_McpMarker.spelling)
 
-_INPUT_MARKERS = (_InputMarker, _QueryMarker, _LoadByIdMarker, _LoadMarker, _ExistsMarker)
+_INPUT_MARKERS = (
+    _InputMarker,
+    _QueryMarker,
+    _DeliveryMarker,
+    _LoadByIdMarker,
+    _LoadMarker,
+    _ExistsMarker,
+)
 
 
 class CallerResolver(ExecutionResolver):

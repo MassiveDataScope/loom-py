@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -14,14 +11,13 @@ if TYPE_CHECKING:
     from loom.core.job.envelope import JobEnvelope
     from loom.core.job.job import Job
 
-_ACTIVE: ContextVar[JobDelivery | None] = ContextVar("loom_job_delivery", default=None)
-
 
 @dataclass(frozen=True, slots=True)
 class JobDelivery:
     """One delivery of a job message to a worker.
 
-    A job reads the delivery it runs under with :meth:`current`.
+    A job declares ``delivery: JobDelivery | None = Delivery()`` on ``execute``
+    to read the delivery it runs under; a job run by a caller gets ``None``.
 
     Attributes:
         job_type: The job to run.
@@ -40,17 +36,3 @@ class JobDelivery:
     deferrals: int
     policy: RetryPolicy
     timeout_s: float | None = None
-
-    @staticmethod
-    def current() -> JobDelivery | None:
-        """The delivery being run in this context, or ``None`` outside a job run."""
-        return _ACTIVE.get()
-
-    @contextmanager
-    def running(self) -> Iterator[None]:
-        """Make this delivery the one :meth:`current` returns, restoring the previous after."""
-        token = _ACTIVE.set(self)
-        try:
-            yield
-        finally:
-            _ACTIVE.reset(token)

@@ -804,7 +804,9 @@
   the first, so `retries: 3` is `max_attempts: 4`), or for every job
   `jobs.defaults.retry`. Raise `JobRetry(reason, delay_s)` to run again later
   without using an attempt and `JobRejection(reason)` to give up; read the
-  attempt with `JobDelivery.current()`.
+  attempt with a `delivery: JobDelivery | None = Delivery()` parameter on
+  `execute` (`loom.core.use_case.Delivery`, a marker like `Caller()`; a job run
+  by another job gets `None`).
 
 
 ## ✨ Features
@@ -953,7 +955,10 @@
   `jobs.<Job>.retry`, `jobs.defaults.retry`, `__retry__` and the loom default
   (`Backoff(5, 2, 300)`, 3 attempts), each partial section inheriting the layer
   below; start-up logs one line with each job's policy and the layer it came
-  from. `JobEnvelope` has an optional `task_id`.
+  from, per field when the layers differ. `JobRetry` and `JobRejection` are
+  logged as `[SIGNAL]` at INFO and reported as `exec_error` with status
+  `deferred` or `rejected`, not as failures. `max_attempts` must be at least 1.
+  `JobEnvelope` has an optional `task_id`.
 
 ### lambda
 

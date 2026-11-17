@@ -349,6 +349,7 @@ select = [
 extend-immutable-calls = [
     "Agent",
     "Caller",
+    "Delivery",
     "Exists",
     "Input",
     "Load",
@@ -357,6 +358,7 @@ extend-immutable-calls = [
     "Query",
     "loom.core.use_case.Agent",
     "loom.core.use_case.Caller",
+    "loom.core.use_case.Delivery",
     "loom.core.use_case.Exists",
     "loom.core.use_case.Input",
     "loom.core.use_case.Load",
@@ -365,6 +367,7 @@ extend-immutable-calls = [
     "loom.core.use_case.Query",
     "loom.core.use_case.markers.Agent",
     "loom.core.use_case.markers.Caller",
+    "loom.core.use_case.markers.Delivery",
     "loom.core.use_case.markers.Exists",
     "loom.core.use_case.markers.Input",
     "loom.core.use_case.markers.Load",

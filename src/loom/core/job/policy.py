@@ -35,11 +35,9 @@ class Backoff:
         jitter: Whether a delay is drawn uniformly from zero to its ceiling.
 
     Raises:
-        ValueError: When *max_s* exceeds the countdown bound, *first_s* is
-            negative or *factor* is below 1.
+        ValueError: When *max_s* is outside 0 to 900, *first_s* is negative
+            or *factor* is below 1.
     """
-
-    GROWTH_STEPS: ClassVar[int] = 64
 
     first_s: int
     factor: float
@@ -47,11 +45,12 @@ class Backoff:
     jitter: bool = True
 
     def __post_init__(self) -> None:
-        Countdown(self.max_s)
+        if not 0 <= self.max_s <= Countdown.MAX_SECONDS:
+            raise ValueError(f"max_s must be 0 to {Countdown.MAX_SECONDS}, not {self.max_s}")
         if self.first_s < 0:
-            raise ValueError(f"backoff first_s cannot be negative, not {self.first_s}")
+            raise ValueError(f"first_s cannot be negative, not {self.first_s}")
         if self.factor < 1:
-            raise ValueError(f"backoff factor must be at least 1, not {self.factor}")
+            raise ValueError(f"factor must be at least 1, not {self.factor}")
 
     def delay(self, attempt: int) -> Countdown:
         """The wait after failed attempt number *attempt*, counting from 1.
@@ -62,9 +61,12 @@ class Backoff:
         Returns:
             The ceiling for that attempt, or a draw from zero to it with jitter.
         """
-        growth = self.factor ** min(max(attempt - 1, 0), self.GROWTH_STEPS)
-        ceiling = int(min(self.max_s, self.first_s * growth))
-        return Countdown(random.randint(0, ceiling) if self.jitter else ceiling)
+        try:
+            ceiling = self.first_s * self.factor ** max(attempt - 1, 0)
+        except OverflowError:
+            ceiling = self.max_s
+        capped = int(min(self.max_s, ceiling))
+        return Countdown(random.randint(0, capped) if self.jitter else capped)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +75,19 @@ class RetryPolicy:
 
     Attributes:
         backoff: The delay after a failure or a deferral.
-        max_attempts: Attempts before a failure is final; ``None`` leaves the
-            limit to the transport.
+        max_attempts: Attempts before a failure is final, at least 1; ``None``
+            leaves the limit to the transport.
+
+    Raises:
+        ValueError: When *max_attempts* is below 1.
     """
 
     backoff: Backoff
     max_attempts: int | None
+
+    def __post_init__(self) -> None:
+        if self.max_attempts is not None and self.max_attempts < 1:
+            raise ValueError(f"max_attempts must be at least 1, not {self.max_attempts}")
 
     def allows_attempt_after(self, attempt: int) -> bool:
         """Whether a failed attempt number *attempt* may be followed by another."""

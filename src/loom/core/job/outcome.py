@@ -52,6 +52,10 @@ class Succeeded:
 
     result: Any
 
+    def failure(self) -> None:
+        """No failure: the run succeeded."""
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class Deferred:
@@ -59,6 +63,10 @@ class Deferred:
 
     delay: Countdown
     reason: str
+
+    def failure(self) -> JobRetry:
+        """The signal that stands for the deferral, for a transport that cannot wait."""
+        return JobRetry(self.reason, self.delay.seconds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +81,10 @@ class Rejected:
     reason: str
     error: Exception | None = None
 
+    def failure(self) -> Exception:
+        """The error that ended the job, or a :class:`JobRejection` with its reason."""
+        return self.error or JobRejection(self.reason)
+
 
 @dataclass(frozen=True, slots=True)
 class Failed:
@@ -80,6 +92,10 @@ class Failed:
 
     error: Exception
     delay: Countdown
+
+    def failure(self) -> Exception:
+        """The error of the failed attempt."""
+        return self.error
 
 
 JobOutcome = Succeeded | Deferred | Rejected | Failed

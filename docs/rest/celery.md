@@ -602,8 +602,9 @@ once; an error whose `retryable` is `False` is rejected at its first attempt.
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
 job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
-A job reads the delivery it runs under with `JobDelivery.current()` (its `attempt`
-and `deferrals`).
+A job reads the delivery it runs under by declaring `delivery: JobDelivery | None =
+Delivery()` on `execute` (its `attempt` and `deferrals`); a job run by another job gets
+`None`.
 
 ```yaml
 jobs:

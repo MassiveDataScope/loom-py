@@ -142,21 +142,16 @@ class TestJobRunnerOutcome:
 
 
 class TestJobRunnerDelivery:
-    async def test_the_job_reads_its_delivery_while_it_runs(self) -> None:
-        seen: list[JobDelivery | None] = []
+    async def test_the_invocation_receives_the_delivery_it_was_run_with(self) -> None:
+        seen: list[JobDelivery] = []
 
         async def behave(delivery: JobDelivery) -> None:
-            seen.append(JobDelivery.current())
+            seen.append(delivery)
 
         delivery = _delivery(attempt=2, deferrals=1)
         await _runner(behave).run(delivery)
 
         assert seen == [delivery]
-        assert JobDelivery.current() is None
-
-    async def test_the_delivery_is_released_when_the_job_fails(self) -> None:
-        await _runner(_raising(ValueError("boom"))).run(_delivery())
-        assert JobDelivery.current() is None
 
 
 class TestJobRunnerEvents:

@@ -6,20 +6,28 @@ A backend joins the contract by adding a driver here and its name to
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
-from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.di.container import LoomContainer
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
-from loom.core.job.service import InlineJobService
+from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.runner import JobRunner
+from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.stores.repository.registration import classify_key
+from loom.core.use_case.factory import UseCaseFactory, main_repository
+from loom.core.use_case.kinds import declare_kinds
 
-BACKENDS = ["inline"]
+BACKENDS = ["inline", "envelope"]
 
 
 @dataclass(frozen=True)
@@ -40,30 +48,54 @@ class Driver(Protocol):
     ) -> Settlement: ...
 
 
-class _ExecuteInPlace:
-    """An executor running the job class itself, as the transports' executors do."""
+class _Kernel:
+    """A real factory and executor, serving the jobs a test delivers."""
 
-    async def run(self, job_type: type[Job[Any]], **_: Any) -> Any:
-        return await job_type().execute()
-
-
-class InlineDriver:
     def __init__(self) -> None:
-        self._service = InlineJobService(MagicMock(), _ExecuteInPlace())  # type: ignore[arg-type]
+        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
+        declare_kinds(container.kinds)
+        self.factory = UseCaseFactory(container)
+        self.executor = RuntimeExecutor(UseCaseCompiler())
+
+    def invoke_directly(self) -> Callable[[JobDelivery], Awaitable[Any]]:
+        async def invoke(delivery: JobDelivery) -> Any:
+            envelope = delivery.envelope
+            return await self.executor.run(
+                delivery.job_type,
+                factory=self.factory,
+                params=envelope.params,
+                payload=envelope.payload,
+                delivery=delivery,
+            )
+
+        return invoke
+
+    def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
+        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
+
+
+class RunnerDriver:
+    """Delivers through a :class:`JobRunner` over one way of invoking the job."""
+
+    def __init__(
+        self, invocation: Callable[[JobDelivery], Awaitable[Any]], kernel: _Kernel
+    ) -> None:
+        self._runner = JobRunner(invocation)
+        self._kernel = kernel
 
     async def deliver(
         self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
     ) -> Settlement:
-        policy = JobSettings().of(job_type).retry.policy
+        self._kernel.factory.register(job_type)
         delivery = JobDelivery(
             job_type=job_type,
             envelope=JobEnvelope(job=job_type.__qualname__),
             task_id="task-1",
             attempt=attempt,
             deferrals=deferrals,
-            policy=policy,
+            policy=JobSettings().of(job_type).retry.policy,
         )
-        return _settlement(await self._service.runner.run(delivery))
+        return _settlement(await self._runner.run(delivery))
 
 
 def _settlement(outcome: JobOutcome) -> Settlement:
@@ -80,4 +112,6 @@ def _settlement(outcome: JobOutcome) -> Settlement:
 
 @pytest.fixture(params=BACKENDS)
 def driver(request: pytest.FixtureRequest) -> Driver:
-    return {"inline": InlineDriver}[request.param]()
+    kernel = _Kernel()
+    invocations = {"inline": kernel.invoke_directly, "envelope": kernel.invoke_envelope}
+    return RunnerDriver(invocations[request.param](), kernel)

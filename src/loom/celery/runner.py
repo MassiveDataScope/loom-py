@@ -44,7 +44,6 @@ from loom.core.job.outcome import (
     Deferred,
     Failed,
     JobOutcome,
-    JobRejection,
     Rejected,
     Succeeded,
 )
@@ -259,8 +258,8 @@ def _make_job_task(
             case Deferred(delay=delay):
                 kwargs = {**task_self.request.kwargs, "deferrals": deferrals + 1}
                 raise task_self.retry(countdown=delay.seconds, kwargs=kwargs)
-            case Rejected(reason=reason, error=error):
-                raise error or JobRejection(reason)
+            case Rejected() as rejected:
+                raise rejected.failure()
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),

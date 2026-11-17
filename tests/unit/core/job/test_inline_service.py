@@ -7,7 +7,6 @@ import pytest
 
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
-from loom.core.job.delivery import JobDelivery
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection, JobRetry, JobSignal
@@ -158,19 +157,13 @@ class TestInProcessJobService:
 
         assert failure_calls == ["ValueError"]
 
-    async def test_the_job_reads_the_delivery_of_its_dispatch(self) -> None:
-        seen: list[JobDelivery | None] = []
-
-        async def run(*_: Any, **__: Any) -> int:
-            seen.append(JobDelivery.current())
-            return 1
-
-        service = InlineJobService(factory=MagicMock(), executor=MagicMock(run=run))
+    async def test_the_executor_gets_the_delivery_of_the_dispatch(self) -> None:
+        executor = MagicMock(run=AsyncMock(return_value=1))
+        service = InlineJobService(factory=MagicMock(), executor=executor)
         handle = service.dispatch(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
-        [delivery] = seen
-        assert delivery is not None
+        delivery = executor.run.await_args.kwargs["delivery"]
         assert (delivery.task_id, delivery.attempt, delivery.deferrals) == (handle.job_id, 1, 0)
         assert delivery.envelope.task_id == handle.job_id
 

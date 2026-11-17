@@ -11,6 +11,7 @@ from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
+    DeliveryBinding,
     ExecutionPlan,
     ExistsStep,
     InputBinding,
@@ -42,6 +43,7 @@ from loom.core.use_case.markers import (
     SourceKind,
     _AgentMarker,
     _CallerMarker,
+    _DeliveryMarker,
     _ExistsMarker,
     _InputMarker,
     _LoadByIdMarker,
@@ -73,6 +75,7 @@ class _SignatureBindings:
     execution_bindings: list[ExecutionBinding] = field(default_factory=list)
     input_binding: InputBinding | None = None
     caller_binding: CallerBinding | None = None
+    delivery_binding: DeliveryBinding | None = None
     query_binding: QueryBinding | None = None
     detected: list[str] = field(default_factory=list)
 
@@ -175,6 +178,7 @@ class UseCaseCompiler:
             rule_steps=rule_steps,
             read_only=bool(getattr(use_case_type, "read_only", False)),
             caller_binding=bindings.caller_binding,
+            delivery_binding=bindings.delivery_binding,
             execution_bindings=tuple(bindings.execution_bindings),
             query_binding=bindings.query_binding,
             primary=primary,
@@ -228,6 +232,10 @@ class UseCaseCompiler:
 
         if isinstance(marker, _CallerMarker):
             self._collect_caller(use_case_type, name, bindings)
+            return
+
+        if isinstance(marker, _DeliveryMarker):
+            self._collect_delivery(use_case_type, name, bindings)
             return
 
         if isinstance(marker, _QueryMarker):
@@ -302,6 +310,19 @@ class UseCaseCompiler:
             )
         bindings.caller_binding = CallerBinding(name=name)
         bindings.detected.append(f"Caller: {name}")
+
+    def _collect_delivery(
+        self,
+        use_case_type: type[Compilable],
+        name: str,
+        bindings: _SignatureBindings,
+    ) -> None:
+        if bindings.delivery_binding is not None:
+            raise CompilationError(
+                f"{use_case_type.__qualname__}.execute: only one Delivery() parameter is allowed"
+            )
+        bindings.delivery_binding = DeliveryBinding(name=name)
+        bindings.detected.append(f"Delivery: {name}")
 
     def _collect_query(
         self,

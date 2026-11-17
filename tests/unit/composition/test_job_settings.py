@@ -137,7 +137,7 @@ class TestJobSettings:
         assert len(lines) == 1
         assert "_ReportJob" in lines[0]
         assert "jobs.<Job>.retry" in lines[0]
-        assert "'max_attempts': 5" in lines[0]
+        assert "max_attempts=5 (jobs.<Job>.retry)" in lines[0]
 
     def test_a_retry_that_breaks_the_backoff_fails_the_composition(self, tmp_path: Path) -> None:
         project = job_project(

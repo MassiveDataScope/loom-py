@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from msgspec import structs
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.job.job import Job
@@ -14,7 +16,7 @@ from loom.core.model import LoomFrozenStruct
 
 
 class RetrySource(StrEnum):
-    """The most specific layer that set a job's retry policy, most specific first."""
+    """A layer a retry field can come from, most specific first."""
 
     JOB_CONFIG = "jobs.<Job>.retry"
     DEFAULTS_CONFIG = "jobs.defaults.retry"
@@ -38,27 +40,6 @@ class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
     max_s: int | None = None
     jitter: bool | None = None
     max_attempts: int | None = None
-
-    def over(self, policy: RetryPolicy) -> RetryPolicy:
-        """*policy* with every field this section sets.
-
-        Raises:
-            ValueError: When the resulting backoff is invalid.
-        """
-        backoff = policy.backoff
-        return RetryPolicy(
-            Backoff(
-                first_s=backoff.first_s if self.first_s is None else self.first_s,
-                factor=backoff.factor if self.factor is None else self.factor,
-                max_s=backoff.max_s if self.max_s is None else self.max_s,
-                jitter=backoff.jitter if self.jitter is None else self.jitter,
-            ),
-            policy.max_attempts if self.max_attempts is None else self.max_attempts,
-        )
-
-    def sets_anything(self) -> bool:
-        """Whether any field is set."""
-        return self != _NO_RETRY
 
 
 _NO_RETRY = RetryConfig()
@@ -101,10 +82,10 @@ _NO_DEFAULTS = JobDefaults()
 
 @dataclass(frozen=True)
 class ResolvedRetry:
-    """A job's effective retry policy and the most specific layer that set it."""
+    """A job's effective retry policy and the layer each of its fields came from."""
 
     policy: RetryPolicy
-    source: RetrySource
+    sources: Mapping[str, RetrySource]
 
     @classmethod
     def resolve(
@@ -115,19 +96,53 @@ class ResolvedRetry:
     ) -> ResolvedRetry:
         """The loom default, under ``__retry__`` of *job_type*, under *defaults*, under *job*.
 
+        Each field takes the value of the most specific layer that sets it.
+
         Raises:
-            ValueError: When a layer makes the backoff invalid.
+            ValueError: When the resulting policy is invalid.
         """
-        policy, source = DEFAULT_RETRY, RetrySource.LOOM
+        fields: dict[str, tuple[Any, RetrySource]] = {
+            name: (value, RetrySource.LOOM)
+            for name, value in (
+                *asdict(DEFAULT_RETRY.backoff).items(),
+                ("max_attempts", DEFAULT_RETRY.max_attempts),
+            )
+        }
         if job_type.__retry__ is not None:
-            policy, source = RetryPolicy(job_type.__retry__, policy.max_attempts), RetrySource.CLASS
-        for layer, layer_source in (
+            fields |= {
+                name: (value, RetrySource.CLASS)
+                for name, value in asdict(job_type.__retry__).items()
+            }
+        for layer, source in (
             (defaults, RetrySource.DEFAULTS_CONFIG),
             (job, RetrySource.JOB_CONFIG),
         ):
-            if layer.sets_anything():
-                policy, source = layer.over(policy), layer_source
-        return cls(policy, source)
+            fields |= {
+                name: (value, source)
+                for name, value in structs.asdict(layer).items()
+                if value is not None
+            }
+        values = {name: value for name, (value, _) in fields.items()}
+        max_attempts = values.pop("max_attempts")
+        return cls(
+            RetryPolicy(Backoff(**values), max_attempts),
+            {name: source for name, (_, source) in fields.items()},
+        )
+
+    def describe(self) -> str:
+        """The policy and where it came from: one source when every field shares it."""
+        backoff = self.policy.backoff
+        values = {**asdict(backoff), "max_attempts": self.policy.max_attempts}
+        origins = set(self.sources.values())
+        if len(origins) == 1:
+            return f"{_render(values)} ({origins.pop().value})"
+        return ", ".join(
+            f"{name}={value} ({self.sources[name].value})" for name, value in values.items()
+        )
+
+
+def _render(values: Mapping[str, Any]) -> str:
+    return " ".join(f"{name}={value}" for name, value in values.items())
 
 
 @dataclass(frozen=True)
@@ -195,17 +210,9 @@ class JobSettings:
         """The options of *job_type* in this application."""
         return self.jobs.get(job_type) or JobOptions.resolve(job_type)
 
-    def describe_retries(self) -> list[dict[str, Any]]:
-        """Each job's effective retry policy and its source, for the start-up log."""
+    def describe_retries(self) -> list[dict[str, str]]:
+        """Each job's effective retry policy and where it came from, for the start-up log."""
         return [
-            {
-                "job": job_type.__qualname__,
-                "first_s": options.retry.policy.backoff.first_s,
-                "factor": options.retry.policy.backoff.factor,
-                "max_s": options.retry.policy.backoff.max_s,
-                "jitter": options.retry.policy.backoff.jitter,
-                "max_attempts": options.retry.policy.max_attempts,
-                "source": options.retry.source,
-            }
+            {"job": job_type.__qualname__, "retry": options.retry.describe()}
             for job_type, options in self.jobs.items()
         ]

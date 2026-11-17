@@ -36,8 +36,16 @@ class TestBackoff:
         assert max(draws) <= 20
         assert len(draws) > 5
 
+    @pytest.mark.parametrize(
+        ("factor", "attempt"),
+        [(1e5, 70), (2.0, 5000), (1e300, 3)],
+    )
+    def test_a_huge_growth_saturates_at_the_cap(self, factor: float, attempt: int) -> None:
+        backoff = Backoff(first_s=5, factor=factor, max_s=300, jitter=False)
+        assert backoff.delay(attempt).seconds == 300
+
     def test_a_cap_above_the_countdown_bound_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="0 to 900"):
+        with pytest.raises(ValueError, match="max_s must be 0 to 900"):
             Backoff(first_s=5, factor=2, max_s=901)
 
     @pytest.mark.parametrize(
@@ -47,11 +55,16 @@ class TestBackoff:
     def test_refuses_a_negative_start_and_a_shrinking_factor(
         self, first_s: int, factor: float
     ) -> None:
-        with pytest.raises(ValueError, match="backoff"):
+        with pytest.raises(ValueError, match="first_s|factor"):
             Backoff(first_s=first_s, factor=factor, max_s=300)
 
 
 class TestRetryPolicy:
+    @pytest.mark.parametrize("max_attempts", [0, -1])
+    def test_refuses_fewer_than_one_attempt(self, max_attempts: int) -> None:
+        with pytest.raises(ValueError, match="max_attempts must be at least 1"):
+            RetryPolicy(Backoff(1, 1, 1), max_attempts)
+
     def test_the_loom_default(self) -> None:
         assert RetryPolicy(Backoff(5, 2, 300, jitter=True), max_attempts=3) == DEFAULT_RETRY
 

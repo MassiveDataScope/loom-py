@@ -28,12 +28,7 @@ from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
-    Deferred,
-    Failed,
     JobOutcome,
-    JobRejection,
-    JobRetry,
-    Rejected,
     Succeeded,
 )
 from loom.core.job.runner import JobRunner
@@ -79,15 +74,10 @@ class _PendingDispatch:
                 reset_identity(token)
 
     async def _settle(self, outcome: JobOutcome) -> None:
-        match outcome:
-            case Succeeded(result=result):
-                error = await self._succeeded(result)
-            case Failed(error=error):
-                pass
-            case Rejected(reason=reason, error=rejection):
-                error = rejection or JobRejection(reason)
-            case Deferred(reason=reason):
-                error = JobRetry(reason)
+        if isinstance(outcome, Succeeded):
+            error = await self._succeeded(outcome.result)
+        else:
+            error = outcome.failure()
         if error is not None:
             await self._failed(error)
 
@@ -262,11 +252,6 @@ class InlineJobService:
         self._settings = settings or JobSettings()
         self._runner = JobRunner(self._invoke)
 
-    @property
-    def runner(self) -> JobRunner:
-        """The runner every dispatched job goes through."""
-        return self._runner
-
     async def _invoke(self, delivery: JobDelivery) -> Any:
         envelope = delivery.envelope
         return await self._executor.run(
@@ -274,6 +259,7 @@ class InlineJobService:
             factory=self._factory,
             params=envelope.params,
             payload=envelope.payload,
+            delivery=delivery,
         )
 
     async def run(

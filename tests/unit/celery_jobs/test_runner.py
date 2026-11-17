@@ -312,9 +312,15 @@ class TestMakeJobTaskExecution:
 
         assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
 
-        executor.run.assert_awaited_once_with(
-            _SyncJob, factory=factory, params={"p": 2}, payload={"value": 5}, identity=None
-        )
+        executor.run.assert_awaited_once()
+        args, kwargs = executor.run.await_args
+        assert args == (_SyncJob,)
+        assert {key: kwargs[key] for key in ("factory", "params", "payload", "identity")} == {
+            "factory": factory,
+            "params": {"p": 2},
+            "payload": {"value": 5},
+            "identity": None,
+        }
 
     def test_job_task_emits_observability_span(self) -> None:
         observability_runtime, span_calls = _mock_observability_runtime()
@@ -339,8 +345,8 @@ class TestMakeJobTaskExecution:
     def test_the_job_reads_its_delivery_with_the_attempt_and_the_policy(self) -> None:
         seen: list[JobDelivery | None] = []
 
-        async def run(*_: object, **__: object) -> int:
-            seen.append(JobDelivery.current())
+        async def run(*_: object, delivery: JobDelivery | None, **__: object) -> int:
+            seen.append(delivery)
             return 1
 
         task_self = _mock_self(retries=1)
@@ -363,9 +369,8 @@ class TestMakeJobTaskExecution:
     def test_the_runner_gets_the_soft_time_limit_as_the_run_timeout(self) -> None:
         seen: list[float | None] = []
 
-        async def run(*_: object, **__: object) -> str:
-            current = JobDelivery.current()
-            seen.append(None if current is None else current.timeout_s)
+        async def run(*_: object, delivery: JobDelivery | None, **__: object) -> str:
+            seen.append(None if delivery is None else delivery.timeout_s)
             return "ok"
 
         task_fn = _make_job_task(

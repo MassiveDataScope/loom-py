@@ -105,6 +105,22 @@ class _CallerMarker(_ExecutionMarker):
         return self.spelling
 
 
+class _DeliveryMarker:
+    """Marks a parameter as the delivery a job runs under.
+
+    The runner passes the :class:`~loom.core.job.delivery.JobDelivery` to the
+    executor, which binds it; an execution given none (a job run by a
+    caller, or a use case) binds ``None``. Carries no configuration.
+
+    Example::
+
+        async def execute(self, delivery: JobDelivery | None = Delivery()) -> None: ...
+    """
+
+    __slots__ = ()
+    spelling: ClassVar[str] = "Delivery()"
+
+
 class _QueryMarker:
     __slots__ = ()
     spelling: ClassVar[str] = "Query()"
@@ -292,6 +308,22 @@ def Caller() -> Any:
             return await self._reports.for_owner(caller.require_subject(), query)
     """
     return _CallerMarker()
+
+
+def Delivery() -> Any:
+    """Factory returning the runtime marker for the job-delivery parameter.
+
+    The executor injects the :class:`~loom.core.job.delivery.JobDelivery` the
+    job was run with: its attempt, its deferrals and its retry policy. It is
+    ``None`` when the execution was not started by a job runner, so a job run
+    by another job sees no delivery of its own.
+
+    Example::
+
+        async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
+            attempt = 1 if delivery is None else delivery.attempt
+    """
+    return _DeliveryMarker()
 
 
 def Query() -> Any:

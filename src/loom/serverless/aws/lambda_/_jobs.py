@@ -13,7 +13,7 @@ from loom.core.checks import CheckScope
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.outcome import Deferred, Failed, JobOutcome, JobRejection, Rejected, Succeeded
+from loom.core.job.outcome import JobOutcome
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService, JobService
@@ -135,25 +135,6 @@ async def run_envelope(
             timeout_s=run_timeout(options.timeout, context),
         )
     )
-
-
-def raise_unless_succeeded(outcome: JobOutcome) -> None:
-    """Raise what ended a run that did not succeed, for a transport that fails the invocation.
-
-    Raises:
-        Exception: The error of a failed or rejected run, as itself.
-        JobRejection: A rejection that carries no error.
-        RuntimeError: A deferral, which an invocation cannot wait for.
-    """
-    match outcome:
-        case Succeeded():
-            return
-        case Failed(error=error):
-            raise error
-        case Rejected(reason=reason, error=error):
-            raise error or JobRejection(reason)
-        case Deferred(reason=reason):
-            raise RuntimeError(f"a Lambda invocation cannot defer a job: {reason}")
 
 
 def fail_in_span(application: Application, error: Exception, name: str, **meta: Any) -> NoReturn:

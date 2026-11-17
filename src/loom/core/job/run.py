@@ -56,4 +56,5 @@ class EnvelopeInvocation:
                 params=envelope.params,
                 payload=envelope.payload or {},
                 identity=caller,
+                delivery=delivery,
             )

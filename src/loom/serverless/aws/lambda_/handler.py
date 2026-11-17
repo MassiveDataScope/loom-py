@@ -25,7 +25,6 @@ from loom.serverless.aws.lambda_._jobs import (
     fail_in_span,
     jobs_recipe,
     open_host,
-    raise_unless_succeeded,
     run_envelope,
 )
 from loom.serverless.aws.lambda_._refusals import (
@@ -318,7 +317,9 @@ class _DirectEvents:
                 outcome = self._host.run(
                     run_envelope(self._application, envelope, self._job_type, span_id, context)
                 )
-                raise_unless_succeeded(outcome)
+                error = outcome.failure()
+                if error is not None:
+                    raise error
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",

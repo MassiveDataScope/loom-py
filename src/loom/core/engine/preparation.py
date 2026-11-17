@@ -15,7 +15,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.observation import StartedExecution
@@ -24,6 +24,9 @@ from loom.core.errors import MissingCaller, RuleViolation, RuleViolations
 from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import CALLER
+
+if TYPE_CHECKING:
+    from loom.core.job.delivery import JobDelivery
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +37,7 @@ class ExecutionInputs:
     payload: dict[str, Any] | None = None
     dependencies: dict[type[Any], Any] | None = None
     load_overrides: dict[type[Any], Any] | None = None
+    delivery: JobDelivery | None = None
 
 
 @dataclass(slots=True)
@@ -119,6 +123,7 @@ class ArgumentBinder:
             _query(plan),
             _params(plan),
             _caller(plan),
+            _delivery(plan),
             self._executions(plan),
             _command(plan),
         )
@@ -282,6 +287,18 @@ def _caller(plan: ExecutionPlan) -> Bind | None:
         if call.identity is None:
             raise MissingCaller(plan.use_case_type.__qualname__, binding.name, CALLER.spelling)
         call.bound[binding.name] = call.identity
+
+    return bind
+
+
+def _delivery(plan: ExecutionPlan) -> Bind | None:
+    """Inject the delivery the execution was started with, or ``None`` when it had none."""
+    binding = plan.delivery_binding
+    if binding is None:
+        return None
+
+    def bind(call: _ExecuteArguments) -> None:
+        call.bound[binding.name] = call.inputs.delivery
 
     return bind
 

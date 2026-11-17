@@ -67,10 +67,7 @@ class JobRunner:
 
     async def _outcome(self, delivery: JobDelivery) -> JobOutcome:
         try:
-            with delivery.running():
-                result = await asyncio.wait_for(
-                    self._invocation(delivery), timeout=delivery.timeout_s
-                )
+            result = await asyncio.wait_for(self._invocation(delivery), timeout=delivery.timeout_s)
         except JobRetry as signal:
             delay = signal.delay or delivery.policy.backoff.delay(delivery.deferrals + 1)
             return Deferred(delay, signal.reason)

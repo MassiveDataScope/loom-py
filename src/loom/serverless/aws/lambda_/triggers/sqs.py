@@ -20,8 +20,6 @@ from loom.core.job.outcome import (
     Deferred,
     Failed,
     JobOutcome,
-    JobRejection,
-    JobRetry,
     Rejected,
     Succeeded,
     failure_log_fields,
@@ -125,14 +123,11 @@ class SQSBatch:
         match outcome:
             case Succeeded():
                 return False
-            case Failed(error=error):
-                _log_failure(record, error, self._source.label, final=False)
-                return True
-            case Rejected(reason=reason, error=error):
-                _log_failure(record, error or JobRejection(reason), self._source.label, final=True)
+            case Rejected() as rejected:
+                _log_failure(record, rejected.failure(), self._source.label, final=True)
                 return self._source.retry_final
-            case Deferred(reason=reason):
-                _log_failure(record, JobRetry(reason), self._source.label, final=False)
+            case Failed() | Deferred():
+                _log_failure(record, outcome.failure(), self._source.label, final=False)
                 return True
 
     def close(self) -> None:
