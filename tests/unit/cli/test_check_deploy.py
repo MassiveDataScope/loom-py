@@ -223,7 +223,10 @@ class TestCheckDeploy:
         assert "loom.logger.W001" in result.output
 
     def test_skip_leaves_out_an_area_for_a_process_serving_no_http(self, tmp_path: Path) -> None:
-        config = _write(tmp_path / "worker.yaml", {"celery": {"broker_url": "memory://"}})
+        config = _write(
+            tmp_path / "worker.yaml",
+            {"app": {"name": "acme"}, "celery": {"broker_url": "memory://"}},
+        )
 
         result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
 

@@ -24,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Final, NewType, TypeVar
+from typing import TYPE_CHECKING, Any, Final, NewType, TypeVar
 
 from loom.core.config import (
     ConfigContext,
@@ -41,6 +41,9 @@ from loom.core.stores.registry import (
     BACKEND_ENTRY_POINT_GROUP,
     resolve_store_backend,
 )
+
+if TYPE_CHECKING:
+    from loom.core.stores.backend import StoreBackend
 
 T = TypeVar("T")
 
@@ -153,6 +156,20 @@ class StoreSpec:
     backend: str
     config: ConfigContext
 
+    @property
+    def backend_path(self) -> str:
+        """Dotted path of the key naming the store's backend, for error messages."""
+        return f"{self.path}.{BACKEND_KEY}"
+
+    def resolve_backend(self) -> StoreBackend:
+        """Build the backend the store names.
+
+        Raises:
+            ConfigError: When no backend is registered under that name, or it
+                needs a module that is not installed.
+        """
+        return resolve_store_backend(self.backend, path=self.backend_path)
+
     @functools.cached_property
     def capabilities(self) -> StoreCapabilities:
         """What the store supports, asked of its backend on first read and kept.
@@ -165,7 +182,7 @@ class StoreSpec:
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
-        backend = resolve_store_backend(self.backend)
+        backend = self.resolve_backend()
         if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
                 f"store backend {self.backend!r} ({type(backend).__qualname__}) serving "
@@ -239,6 +256,19 @@ class StoreCatalog:
                 f"{BACKEND_KEY}: {backend}"
             )
         return spec
+
+    def require_installed(self) -> None:
+        """Fail unless the backend of every declared store can be built.
+
+        A connection-only store has no backend to build and is left out.
+
+        Raises:
+            ConfigError: Naming the first store whose backend is not
+                installed, as :meth:`StoreSpec.resolve_backend`.
+        """
+        for spec in self.specs.values():
+            if spec.backend not in CONNECTION_ONLY_BACKENDS:
+                spec.resolve_backend()
 
     def served_by(self, backend: str, key: StoreKey) -> StoreSpec:
         """Return the store *key* that *backend* serves.

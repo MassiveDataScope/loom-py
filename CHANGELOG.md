@@ -779,8 +779,11 @@
   `ConfigError` naming the modules. `app.agents` lists agent artifact globs
   for applications with or without Python components.
 - **composition:** `Project.check(*paths, config_dir=, environment=, skip=)`
-  loads the configuration as written, resolving no placeholder and requiring
-  no `app.name`, runs the registered deploy checks and returns a
+  loads the configuration as written, resolving no placeholder, applies the
+  structural rules start-up applies (`app.name` required, a `${...}`
+  placeholder counting as present; `app.discovery` refused; the backend of
+  every declared store registered and installed, with the start-up message),
+  runs the registered deploy checks and returns a
   `CheckedProject` (`config`, `environment`, `report`, `skipped`,
   `config_root`, `code_path`, and `discovered`, the scan of `app.packages` as
   written, run once). `loom check --deploy` and `loom deploy manifest`
@@ -792,6 +795,14 @@
   dependency is not installed is left out with all its checks; run `loom check`
   with the same extras you deploy. loom registers `logger`, `repository`,
   `audit` and `rest`.
+- **stores:** a store backend that needs a third-party module that is not
+  installed fails with a `ConfigError` naming `stores.<key>.backend`, the module
+  and the extras of the distribution that require it (`dynamodb` names
+  `loom-kernel[aws]`, `mongo` names `loom-kernel[mongo]`), or only the module
+  when no extra provides it; a missing module of loom itself is re-raised
+  unchanged instead of being reported as a missing extra.
+  `loom.core.plugins.entrypoints.MissingDependency` derives that message from
+  the entry point's distribution metadata.
 
 ### ai
 

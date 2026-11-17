@@ -51,6 +51,42 @@ class AppConfig(msgspec.Struct, kw_only=True):
     packages: list[str] = msgspec.field(default_factory=list)
     agents: list[str] = msgspec.field(default_factory=list)
 
+    @classmethod
+    def reject_misdeclared(cls, ctx: ConfigContext) -> None:
+        """Fail on the ``app`` rules that hold before any key is resolved.
+
+        Args:
+            ctx: The application configuration.
+
+        Raises:
+            ConfigError: When ``app.name`` is missing (a ``${...}`` placeholder
+                counts as written, none is resolved) or the removed ``app.discovery`` is declared.
+        """
+        if ctx.raw(f"{ConfigKey.APP}.name") is None:
+            raise ConfigError(
+                f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
+                "it labels the API, the worker and their metrics"
+            )
+        if ctx.raw("app.discovery") is not None:
+            raise ConfigError("app.discovery is removed; declare app.packages and app.agents")
+
+    @classmethod
+    def from_config(cls, ctx: ConfigContext) -> AppConfig:
+        """Read the ``app`` section of *ctx*, resolving its placeholders.
+
+        Args:
+            ctx: The application configuration.
+
+        Returns:
+            The validated keys.
+
+        Raises:
+            ConfigError: As :meth:`reject_misdeclared`, or when the section
+                does not resolve or fails validation.
+        """
+        cls.reject_misdeclared(ctx)
+        return ctx.section(ConfigKey.APP, cls)
+
 
 @dataclass(frozen=True, kw_only=True)
 class CheckedProject:
@@ -144,14 +180,7 @@ class Project:
         observability = ObservabilityRuntime.from_config(
             observability_config, environment=resolved_environment
         )
-        if not ctx.has(f"{ConfigKey.APP}.name"):
-            raise ConfigError(
-                f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
-                "it labels the API, the worker and their metrics"
-            )
-        if ctx.has("app.discovery"):
-            raise ConfigError("app.discovery is removed; declare app.packages and app.agents")
-        app_cfg = ctx.section(ConfigKey.APP, AppConfig)
+        app_cfg = AppConfig.from_config(ctx)
         config_root = Path(paths[0]).resolve().parent
         return cls(
             config=ctx,
@@ -175,9 +204,11 @@ class Project:
     ) -> CheckedProject:
         """Load the configuration as written and run every deploy check, whatever the environment.
 
-        Composes nothing, connects to nothing, builds no observability, requires
-        no ``app.name`` and resolves no placeholder; loom's checks read keys as
-        written. ``app.code_path`` joins ``sys.path`` and ``checks.modules``
+        Composes nothing, connects to nothing, builds no observability and
+        resolves no placeholder; loom's checks read keys as written. It applies
+        the structural rules start-up applies: the ``app`` rules of
+        :meth:`AppConfig.reject_misdeclared` and the installed backend of every
+        declared store. ``app.code_path`` joins ``sys.path`` and ``checks.modules``
         import from it. The check packages installed under the
         ``loom.deploy_checks`` entry-point group are loaded first.
 
@@ -192,8 +223,10 @@ class Project:
             The loaded configuration with the findings and the silenced ids.
 
         Raises:
-            ConfigError: When the configuration does not load, ``app.code_path``
-                is not a literal path, or the ``checks`` section is invalid.
+            ConfigError: When the configuration does not load, breaks an ``app``
+                rule, declares a store whose backend is unknown or not
+                installed, ``app.code_path`` is not a literal path, or the
+                ``checks`` section is invalid.
         """
         DEPLOY_CHECKS.load_installed()
         resolved_environment = resolve_environment(environment)
@@ -203,6 +236,8 @@ class Project:
         ctx = load_application_config(
             *paths, resolvers=with_default_resolvers(()), environment=resolved_environment
         )
+        AppConfig.reject_misdeclared(ctx)
+        load_catalog(ctx).require_installed()
         config_root = Path(paths[0]).resolve().parent
         raw_code_path = ctx.raw(f"{ConfigKey.APP}.code_path", DEFAULT_CODE_PATH)
         if not isinstance(raw_code_path, str) or "${" in raw_code_path:
@@ -247,7 +282,7 @@ class Project:
                 registered under that name.
         """
         spec = self.catalog.specs.get(key)
-        return resolve_store_backend(default if spec is None else spec.backend)
+        return resolve_store_backend(default) if spec is None else spec.resolve_backend()
 
     def compose(
         self,
