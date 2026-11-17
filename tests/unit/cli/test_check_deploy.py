@@ -212,8 +212,7 @@ class TestCheckDeploy:
         result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
 
         assert result.exit_code == 2
-        assert "loom.rest" in result.output
-        assert "--skip" in result.output
+        assert "loom.rest matches no check set" in result.output
 
     def test_the_report_lists_the_paths_it_checked(self, tmp_path: Path) -> None:
         observability = {"log": {"config": {"renderer": "console"}}}
