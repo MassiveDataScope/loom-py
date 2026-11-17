@@ -93,7 +93,7 @@ class TestDynamoClientsPerStore:
         )
 
         assert [config.region for _service, config in island.built] == ["eu-west-1", "us-east-1"]
-        assert aws.open_clients == 2
+        assert len(island.built) == 2
 
     def test_stores_with_the_same_settings_share_one_client(self, island: FakeAwsIsland) -> None:
         aws = AwsClients(AwsClientConfig())

@@ -13,12 +13,6 @@ from loom.core.connections.aws.loader import aws_island
 class AwsClients:
     """Every boto3 client a process uses, one per service and distinct client settings.
 
-    A client is thread-safe once built, so a lookup of one already built takes
-    no lock. Only the first creation of a client, and of the session it comes
-    from, runs under the lock, because a session must not be shared across
-    threads while clients are built from it. The sessions are one per
-    credentials profile: a single one unless a client names another profile.
-
     Args:
         config: The settings of a client asked for with no settings of its own.
     """
@@ -28,11 +22,6 @@ class AwsClients:
         self._lock = Lock()
         self._clients: dict[Hashable, Any] = {}
         self._sessions: dict[str | None, Any] = {}
-
-    @property
-    def open_clients(self) -> int:
-        """How many clients are built and not yet closed."""
-        return len(self._clients)
 
     def client(self, service: str, config: AwsClientConfig | None = None) -> Any:
         """Return the client of *service* for *config*, built on the first request.
@@ -59,13 +48,23 @@ class AwsClients:
             return built
 
     def close(self) -> None:
-        """Close every client built so far and forget it, and the sessions with them."""
-        with self._lock:
-            clients = tuple(self._clients.values())
-            self._clients.clear()
-            self._sessions.clear()
-        for client in clients:
-            client.close()
+        """Release the connections of every client built so far.
+
+        The clients stay cached and usable: each reconnects on its next call, and a
+        later ``close`` releases it again.
+
+        Raises:
+            ExceptionGroup: When one or more clients failed to close, after every
+                other client was closed.
+        """
+        failures: list[Exception] = []
+        for client in tuple(self._clients.values()):
+            try:
+                client.close()
+            except Exception as failure:
+                failures.append(failure)
+        if failures:
+            raise ExceptionGroup("AWS clients failed to close", failures)
 
     def _build(self, service: str, config: AwsClientConfig) -> Any:
         island = aws_island()

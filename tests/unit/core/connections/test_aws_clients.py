@@ -103,27 +103,74 @@ class TestConcurrentFirstCalls:
         assert all(answer is answers[0] for answer in answers)
 
 
+class _PooledClient:
+    """Holds a pooled connection from its first call until it is closed."""
+
+    def __init__(self) -> None:
+        self.connected = False
+        self.closes = 0
+
+    def call(self) -> None:
+        self.connected = True
+
+    def close(self) -> None:
+        self.connected = False
+        self.closes += 1
+
+
+class _PooledIsland(FakeAwsIsland):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pooled: list[_PooledClient] = []
+
+    def build_aws_client(self, session: object, service: str, config: Any) -> Any:
+        super().build_aws_client(session, service, config)
+        client = _PooledClient()
+        self.pooled.append(client)
+        return client
+
+
 class TestClose:
-    def test_close_closes_every_client_and_empties_the_cache(
-        self, island: FakeAwsIsland, clients: AwsClients
+    @pytest.fixture
+    def pooled(self, monkeypatch: pytest.MonkeyPatch) -> _PooledIsland:
+        island = _PooledIsland()
+        monkeypatch.setattr("loom.core.connections.aws.clients.aws_island", lambda: island)
+        return island
+
+    def test_a_reopened_client_is_the_same_and_the_second_close_releases_its_connection(
+        self, pooled: _PooledIsland, clients: AwsClients
     ) -> None:
-        first, second = clients.client("dynamodb"), clients.client("sqs")
+        client = clients.client("dynamodb")
+        client.call()
 
         clients.close()
+        reopened = clients.client("dynamodb")
+        reopened.call()
+        assert reopened.connected
+        clients.close()
 
-        first.close.assert_called_once_with()
-        second.close.assert_called_once_with()
-        assert clients.open_clients == 0
-        assert clients.client("dynamodb") is not first
+        assert reopened is client
+        assert (client.connected, client.closes) == (False, 2)
+        assert len(pooled.pooled) == 1
 
-    def test_close_forgets_the_sessions_too(
-        self, island: FakeAwsIsland, clients: AwsClients
-    ) -> None:
+    def test_close_keeps_the_sessions(self, island: FakeAwsIsland, clients: AwsClients) -> None:
         clients.client("dynamodb")
         clients.close()
-        clients.client("dynamodb")
+        clients.client("sqs")
 
-        assert island.sessions == [None, None]
+        assert island.sessions == [None]
+
+    def test_every_client_is_closed_even_when_one_fails_and_the_failures_are_grouped(
+        self, island: FakeAwsIsland, clients: AwsClients
+    ) -> None:
+        failing, other = clients.client("dynamodb"), clients.client("sqs")
+        failing.close.side_effect = OSError("boom")
+
+        with pytest.raises(ExceptionGroup) as raised:
+            clients.close()
+
+        other.close.assert_called_once_with()
+        assert raised.value.exceptions == (failing.close.side_effect,)
 
 
 class TestRealIslandPath:

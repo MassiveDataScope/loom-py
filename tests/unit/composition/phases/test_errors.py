@@ -22,6 +22,7 @@ from loom.composition import Application, phases
 from loom.composition.errors import ReservedBindingError
 from loom.composition.project import Project
 from loom.core.bootstrap import BootstrapError
+from loom.core.connections.aws import AwsClientConfig, AwsClients
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
 from loom.core.logger import get_logger
@@ -160,9 +161,10 @@ class TestStartupErrors:
     def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
         recipe = replace(phases.plan(project, adapter), overrides=(binds_unbuildable,))
-        stores = phases.build_stores(project, recipe)
+        aws = AwsClients(AwsClientConfig())
+        stores = phases.build_stores(project, recipe, aws)
         kernel, _sql, _jobs = phases.register(
-            project, recipe, stores, logger=get_logger("tests.acme")
+            project, recipe, stores, aws, logger=get_logger("tests.acme")
         )
         analysis = recipe.analysed(kernel.factory.graph)
 

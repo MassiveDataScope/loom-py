@@ -114,11 +114,11 @@
   `Target.from_config(ctx, path, own=section, **over)` decodes it,
   `AwsClients(config).client("dynamodb")` builds the client with boto3's
   service name, and `AwsClientConfig.inherit(ctx, own, path)` returns the
-  merged mapping. `AwsClients` opens one boto3 session and builds one client
+  merged mapping. `AwsClients` opens one boto3 session per profile and builds one client
   per service and distinct client settings (region, endpoint, profile, pool,
   timeouts, retries), taking a lock only on the first creation of a client;
   the composition registers one as an `APPLICATION` singleton shared by the
-  stores and the job backends and closes it with the application, while the
+  stores and the job backends and releases its connections when the application closes, while the
   config resolvers, the Prefect notifier and the ETL construct their own.
   `aws_island()` takes no argument and names the `aws` extra.
   `written_aws`, `inherit_aws` and `decode_aws` no longer exist and nothing is

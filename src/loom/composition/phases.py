@@ -27,7 +27,7 @@ from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
 from loom.core.di.scope import Scope
@@ -96,14 +96,12 @@ class Stores:
         store_backends: The name of the backend each store's wiring was built by.
         models: The models each store serves.
         wirings: Each store's wiring, its models prepared.
-        aws: The AWS clients the stores and the job backends share.
     """
 
     job_settings: JobSettings
     store_backends: dict[StoreKey, str]
     models: dict[StoreKey, tuple[type[BaseModel], ...]]
     wirings: dict[StoreKey, StoreWiring]
-    aws: AwsClients
 
     @property
     def factories(self) -> dict[StoreKey, UnitOfWorkFactory]:
@@ -148,7 +146,7 @@ def plan(project: Project, adapter: Adapter[object]) -> Recipe:
     return recipe
 
 
-def build_stores(project: Project, recipe: Recipe) -> Stores:
+def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     """Read each job's settings, then build and prepare every store the discovered models use.
 
     The stores share one cursor codec, built only when
@@ -157,6 +155,7 @@ def build_stores(project: Project, recipe: Recipe) -> Stores:
     Args:
         project: What the application composes from.
         recipe: What it composes.
+        aws: The application's AWS clients, which the store backends take their clients from.
 
     Returns:
         The job settings and the stores.
@@ -180,7 +179,6 @@ def build_stores(project: Project, recipe: Recipe) -> Stores:
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
     cursor_codec = recipe.build_cursor_codec(ctx)
-    aws = AwsClients(AwsClientConfig.from_config(ctx, ConfigKey.AWS))
     wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
         runtime = StoreRuntime(
@@ -199,7 +197,6 @@ def build_stores(project: Project, recipe: Recipe) -> Stores:
         store_backends={key: backends[key].name for key in stores},
         models=stores,
         wirings=wirings,
-        aws=aws,
     )
 
 
@@ -207,6 +204,7 @@ def register(
     project: Project,
     recipe: Recipe,
     stores: Stores,
+    aws: AwsClients,
     *,
     logger: LoggerPort,
 ) -> tuple[KernelRuntime, SqlWiring, tuple[Resource, ...]]:
@@ -226,6 +224,8 @@ def register(
         project: What the application composes from.
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
+        aws: The application's AWS clients, registered in the container and
+            given to the job backends.
         logger: Where the container and the compilation log.
 
     Returns:
@@ -279,7 +279,7 @@ def register(
         for wiring in stores.wirings.values():
             wiring.repo_registration_module(container)
         container.register_instance(RepositoryCatalog, RepositoryCatalog(container, stores.models))
-        container.register(AwsClients, lambda: stores.aws, scope=Scope.APPLICATION)
+        container.register(AwsClients, lambda: aws, scope=Scope.APPLICATION)
         cache(container)
         if sink is not None:
             container.register_instance(ElevationSink, sink)
@@ -297,7 +297,7 @@ def register(
         jobs=recipe.discovered.jobs,
         callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,
-        aws=stores.aws,
+        aws=aws,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

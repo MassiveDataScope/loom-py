@@ -22,7 +22,6 @@ from loom.composition import (
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.aws import AwsClients
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -250,36 +249,46 @@ class TestServices:
         assert closed
 
 
-class TestForkSafety:
+class TestAwsClientsLifecycle:
     @pytest.fixture
     def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
         return fake_aws_island(monkeypatch)
 
-    async def test_the_parent_check_builds_no_aws_client_and_calls_none(
-        self, tmp_path: Path, island: FakeAwsIsland
-    ) -> None:
+    @staticmethod
+    def _dynamodb_application(tmp_path: Path) -> Application:
         stores = {
             "stores": {"default": {"backend": "dynamodb", "region": "eu-west-1", "table": "t"}}
         }
-        application = _application(tmp_path, stores, CeleryAdapter(jobs=[_PingJob]))
-        clients = application.kernel.container.resolve(AwsClients)
-        composed = clients.open_clients
+        return _application(tmp_path, stores, CeleryAdapter(jobs=[_PingJob]))
+
+    async def test_the_parent_check_builds_no_further_aws_client_and_calls_none(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = self._dynamodb_application(tmp_path)
+        composed = len(island.built)
 
         await application.check()
 
-        assert clients.open_clients == composed
         assert len(island.built) == composed
-        for client in island.created:
-            assert client.method_calls == []
+        assert all(client.method_calls == [] for client in island.created)
 
-    async def test_a_worker_without_aws_holds_no_client_across_check_and_close(
+    async def test_a_worker_without_aws_builds_no_client_across_check_and_close(
         self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
         application = _application(tmp_path, {}, CeleryAdapter(jobs=[_PingJob]))
-        clients = application.kernel.container.resolve(AwsClients)
 
         await application.check()
         async with application.running(check=False):
             pass
 
-        assert (clients.open_clients, island.built) == (0, [])
+        assert island.built == []
+
+    async def test_running_the_application_releases_the_aws_clients_on_exit(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = self._dynamodb_application(tmp_path)
+
+        async with application.running():
+            assert [client.close.call_count for client in island.created] == [0]
+
+        assert [client.close.call_count for client in island.created] == [1]

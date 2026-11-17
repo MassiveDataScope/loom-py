@@ -128,11 +128,7 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         return convert_section(cls.inherit(ctx, own or {}, path) | over, path, cls)
 
     def client_key(self) -> tuple[Hashable, ...]:
-        """Return the settings that change the client built from these, as a hashable key.
-
-        A subclass adds fields no client reads, so two configurations that build
-        the same client have the same key.
-        """
+        """Return the settings that change the client built from these, as a hashable key."""
         return (
             self.region,
             self.url,

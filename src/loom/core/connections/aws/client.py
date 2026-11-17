@@ -26,11 +26,6 @@ __all__ = ["build_aws_client", "open_session"]
 def open_session(profile: str | None) -> Any:
     """Open one boto3 session.
 
-    boto3's shared default session is not safe to use concurrently and a
-    session must not be shared across threads while clients are built from it
-    (boto3 "Session" guide): the caller builds every client of the session
-    under one lock.
-
     Args:
         profile: Named AWS profile; ``None`` uses the default credential chain.
 
@@ -42,9 +37,6 @@ def open_session(profile: str | None) -> Any:
 
 def build_aws_client(session: Any, service: str, config: AwsClientConfig) -> Any:
     """Build one low-level boto3 client for *service* on *session* from *config*.
-
-    A client, once built, is safe to share across threads (boto3 "Clients"
-    guide): build it once and reuse it.
 
     Args:
         session: A session of :func:`open_session`.

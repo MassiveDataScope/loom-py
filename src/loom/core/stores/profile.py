@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.stores.catalog import StoreKey
 
 if TYPE_CHECKING:
@@ -120,7 +120,7 @@ class StoreRuntime:
     catalog: StoreCatalog = field(kw_only=True)
     store: StoreKey = field(kw_only=True)
     cursor_codec: CursorCodec = field(kw_only=True)
-    aws: AwsClients = field(kw_only=True, default_factory=lambda: AwsClients(AwsClientConfig()))
+    aws: AwsClients = field(kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(
