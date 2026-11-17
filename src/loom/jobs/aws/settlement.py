@@ -12,13 +12,7 @@ from loom.core.connections.aws import AwsClients, aws_error_code
 from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
 from loom.core.job.policy import Countdown
 from loom.core.logger import get_logger
-from loom.jobs.aws.queue import (
-    BatchResult,
-    DeadLetterPolicy,
-    SqsQueue,
-    SqsQueues,
-    SqsRecord,
-)
+from loom.jobs.aws.queue import BatchResult, DeadLetterPolicy, SqsQueue, SqsRecord
 
 if TYPE_CHECKING:
     from loom.jobs.aws.sqs import SQSConfig
@@ -70,67 +64,67 @@ class _Plan:
 
 
 class SqsSettlement:
-    """Settles Lambda-received SQS messages by what their job runs came to.
+    """Settles the messages a Lambda function received from the queue it consumes.
 
     Loom never deletes a message: Lambda deletes every one the batch does not report.
 
     Args:
         clients: The application's AWS clients.
         config: The ``sqs`` section.
+        queue_name: The key of ``sqs.queues`` the function consumes.
     """
 
-    def __init__(self, clients: AwsClients, config: SQSConfig) -> None:
+    def __init__(self, clients: AwsClients, config: SQSConfig, queue_name: str) -> None:
         self._clients = clients
         self._config = config
-        self._queues: SqsQueues | None = None
+        self._queue_name = queue_name
+        self._queue: SqsQueue | None = None
 
     @property
-    def queues(self) -> SqsQueues:
-        """The configured queues, built once over a client bound to ``SETTLEMENT_TIMEOUT_S``."""
-        if self._queues is None:
+    def queue(self) -> SqsQueue:
+        """The consumed queue, over a client bound to ``SETTLEMENT_TIMEOUT_S``; built once."""
+        if self._queue is None:
             bounded = msgspec.structs.replace(
                 self._config,
                 connect_timeout=SETTLEMENT_TIMEOUT_S,
                 read_timeout=SETTLEMENT_TIMEOUT_S,
                 max_attempts=1,
             )
-            self._queues = SqsQueues(self._clients.client("sqs", bounded), self._config.queues)
-        return self._queues
+            self._queue = SqsQueue(
+                self._clients.client("sqs", bounded),
+                self._queue_name,
+                self._config.queues[self._queue_name],
+            )
+        return self._queue
 
     def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
-        """Settle every message by its outcome, one batch call per action and queue.
+        """Settle every message by its outcome, one batch call per action.
 
         Args:
             settled: Each message that ran and what its run came to.
 
         Returns:
-            The messages to report as failed: every failed one, and every rejection
-            or deferral whose send did not go through.
+            The messages to report as failed: every failed one, a message of another
+            queue, and every rejection or deferral whose send did not go through.
         """
-        by_queue: dict[str, list[tuple[SqsRecord, JobOutcome]]] = {}
-        for item in settled:
-            if not isinstance(item[1], Succeeded):
-                by_queue.setdefault(item[0].queue_arn, []).append(item)
-        redelivered: list[SqsRecord] = []
-        for arn, group in by_queue.items():
-            redelivered += self._settle_queue(arn, group)
-        return redelivered
-
-    def _settle_queue(
-        self, arn: str, group: Sequence[tuple[SqsRecord, JobOutcome]]
-    ) -> list[SqsRecord]:
-        try:
-            queue = self.queues.at(arn)
-        except Exception:
-            _log.exception("SQS settlement cannot reach the queue", queue_arn=arn)
-            return [record for record, _ in group]
-        plan = _Plan.of(queue, group)
-        if plan.rejections and not queue.has_dead_letter:
+        group = [item for item in settled if not isinstance(item[1], Succeeded)]
+        if not group:
+            return []
+        queue = self.queue
+        strays = [record for record, _ in group if not queue.is_at(record.queue_arn)]
+        for arn in {record.queue_arn for record in strays}:
             _log.error(
-                "SQS settlement has not read the dead-letter queue of this queue at Init",
+                "SQS settlement cannot reach the queue: it is not the one this function consumes",
+                queue_arn=arn,
                 queue=queue.name,
             )
-            return [record for record, _ in group]
+        group = [item for item in group if queue.is_at(item[0].queue_arn)]
+        return strays + self._settle_queue(queue, group)
+
+    def _settle_queue(
+        self, queue: SqsQueue, group: Sequence[tuple[SqsRecord, JobOutcome]]
+    ) -> list[SqsRecord]:
+        plan = _Plan.of(queue, group)
         for record, reason in plan.discards:
             _log.error(
                 "SQS message discarded: its queue has no dead-letter queue",

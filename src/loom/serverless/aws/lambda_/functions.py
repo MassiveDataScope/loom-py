@@ -70,6 +70,7 @@ class JobsTrigger(
     """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
 
     queue: QueueMapping | None = None
+    """The queue it consumes; ``None`` is refused when the configuration loads."""
 
 
 class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -184,6 +185,10 @@ def _served(where: str, trigger: Trigger) -> list[str]:
         return [repr(interface) for interface in trigger.interfaces]
     if isinstance(trigger, EventTrigger):
         _check_event_trigger(where, trigger)
+    elif trigger.queue is None:
+        raise ConfigError(
+            f"{where}: a jobs function must declare trigger.queue, the sqs.queues entry it consumes"
+        )
     _check_batching(where, trigger.queue)
     return [] if trigger.queue is None else [f"queue {trigger.queue.name!r}"]
 

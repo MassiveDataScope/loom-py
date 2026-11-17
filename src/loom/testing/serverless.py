@@ -33,7 +33,11 @@ TEST_QUEUE: Final = {
     "url": f"https://sqs.{_REGION}.amazonaws.com/000000000000/loom-jobs",
     "dead_letter": "discard",
 }
-"""The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names."""
+"""The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names.
+
+It is the standard queue ``loom-jobs``: a record built with ``group_id`` names
+``loom-jobs.fifo``, which it does not cover; pass ``queue_arn=`` for that.
+"""
 
 
 class S3ObjectSpec(TypedDict):

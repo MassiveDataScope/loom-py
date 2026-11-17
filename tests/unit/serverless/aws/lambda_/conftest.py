@@ -83,12 +83,12 @@ def loops(probe: tuple[type[Job[None]], Probe]) -> list[asyncio.AbstractEventLoo
 
 
 @pytest.fixture
-def project(tmp_path: Path, no_aws_clients: None) -> Project:
+def project(tmp_path: Path, no_aws_clients: None, request: pytest.FixtureRequest) -> Project:
+    """The jobs function ``worker``; its queue is FIFO in a test parametrized ``fifo=True``."""
     document = with_worker({"app": {"name": "lambda-sqs"}}, batch_size=5)
-    document["sqs"]["queues"]["jobs_fifo"] = {
-        "url": f"{queue_url('jobs')}.fifo",
-        "dead_letter": "discard",
-    }
+    params = request.node.callspec.params if hasattr(request.node, "callspec") else {}
+    if params.get("fifo"):
+        document["sqs"]["queues"]["jobs"]["url"] = f"{queue_url('jobs')}.fifo"
     return composition_project(
         ConfigContext.from_dict(document),
         app=AppConfig(name="lambda-sqs", entry=WORKER),

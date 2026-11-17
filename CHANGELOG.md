@@ -103,13 +103,13 @@
   matches. Settling calls SQS, so a test patches the AWS client
   (`docs/rest/testing.md`). A record whose `ApproximateReceiveCount` is not a
   positive integer or whose `loom.deferrals` is not a non-negative one is
-  malformed, and only it is rejected. The dead-letter policy is read at Init,
-  never during an invocation, with the application's own SQS client and its
-  retries: that of the consumed queue, or of every `redrive` queue of
-  `sqs.queues` for a function declaring none; a botocore error names the queue
-  and stops start-up. The queue of a message is resolved by its event source
-  ARN; one that matches no primed queue is logged and listed until the queue's
-  own `RedrivePolicy` dead-letters it.
+  malformed, and only it is rejected. The dead-letter policy of the consumed
+  queue is read at Init, never during an invocation, with the application's own
+  SQS client and its retries: `GetQueueAttributes` and `GetQueueUrl`, once per
+  cold start; a botocore error, or a `RedrivePolicy` that is missing or
+  unreadable, names the queue and stops start-up. A record settles only if its
+  event source ARN is the consumed queue; any other is logged and listed until
+  the queue's own `RedrivePolicy` dead-letters it.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -360,6 +360,10 @@
   `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
   `LambdaUnservedConfigError` and `S3Object` only.
 
+- **lambda:** a `jobs` trigger must declare `trigger.queue`, naming the
+  `sqs.queues` entry it consumes: without it the configuration is refused at
+  load, naming the function, and `loom deploy manifest` refuses it too.
+  **Migration:** add `queue: {name: <queue>}` to the trigger.
 - **lambda:** `ReportBatchItemFailures` is mandatory: the deploy manifest always
   declares `report_batch_item_failures: true`, and the key is removed from
   `trigger.queue` (it fails to load as an unknown field), with

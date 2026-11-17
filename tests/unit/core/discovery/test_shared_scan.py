@@ -49,6 +49,8 @@ _LAMBDA = (
     "    worker:\n"
     "      trigger:\n"
     "        source: jobs\n"
+    "        queue:\n"
+    "          name: jobs\n"
     "    notify:\n"
     "      trigger:\n"
     "        source: eventbridge\n"

@@ -476,7 +476,9 @@ class TestTriggerBoundaries:
     ) -> None:
         payload = {"number": "7", "note": "parity"}
 
-        serve({"source": "jobs"}, name="worker")(LambdaEvent.jobs(ImportInvoice, payload), None)
+        serve({"source": "jobs", "queue": _QUEUE}, name="worker")(
+            LambdaEvent.jobs(ImportInvoice, payload), None
+        )
         serve(_events())(LambdaEvent.eventbridge(payload), None)
 
         (from_queue, _), (from_event, _) = ran

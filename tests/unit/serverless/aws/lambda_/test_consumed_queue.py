@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -38,10 +39,8 @@ def _bind(
     queue: dict[str, Any] | None = None,
     jobs: dict[str, Any] | None = None,
     unmapped: bool = False,
-    named: bool = True,
 ) -> Application:
-    mapping = {"batch_size": 5} if named else {}
-    document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, **mapping)
+    document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
     document["aws"] = {"region": "eu-west-1"}
     document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
     project = composition_project(
@@ -169,9 +168,8 @@ class TestConsumedQueue:
         with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
             _bind(tmp_path, probe, None)
 
-    @pytest.mark.parametrize("named", [True, False])
     def test_the_policy_is_read_at_start_up_with_the_retrying_client_only(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], named: bool
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
     ) -> None:
         retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
 
@@ -185,14 +183,35 @@ class TestConsumedQueue:
 
         jobs = {probe[0].__name__: {"queue": "jobs"}}
         with patch("boto3.Session", side_effect=session):
-            _bind(tmp_path, probe, None, jobs=jobs, named=named)
+            _bind(tmp_path, probe, None, jobs=jobs)
 
         assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
 
-    def test_a_function_declaring_no_queue_tolerates_a_redrive_queue_without_a_policy(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    @pytest.mark.parametrize(
+        "policy",
+        [
+            "not json",
+            json.dumps({"maxReceiveCount": 4}),
+            json.dumps({"deadLetterTargetArn": "arn", "maxReceiveCount": 4}),
+            json.dumps(
+                {
+                    "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d",
+                    "maxReceiveCount": "x",
+                }
+            ),
+        ],
+        ids=["bad-json", "no-target", "bad-target", "bad-count"],
+    )
+    def test_a_redrive_policy_loom_cannot_read_fails_start_up_naming_the_queue(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], policy: str
     ) -> None:
-        _bind(tmp_path, probe, FakeSqs(), named=False)
+        client = FakeSqs()
+        client.get_queue_attributes = lambda **_: {  # type: ignore[method-assign]
+            "Attributes": {"RedrivePolicy": policy}
+        }
+
+        with pytest.raises(SQSQueueConfigError, match=r"queue 'jobs' has a RedrivePolicy"):
+            _bind(tmp_path, probe, client)
 
     def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]

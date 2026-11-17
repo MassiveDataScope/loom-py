@@ -551,19 +551,20 @@ ten entries each.
 - Each settlement call is bounded: 1 s to connect, 1 s to read, one attempt. A
   timeout in the middle of a settlement redelivers the batch: a message may run
   twice, none is lost.
+- A `jobs` function must declare `trigger.queue`: the configuration is refused
+  without it, and `loom deploy manifest` with it.
 - The function reads the dead-letter policy of the queue it consumes once, at
-  Init, with the application's own SQS client and its retries; a botocore error
-  names the queue and stops start-up. A function declaring no queue reads that
-  of every `redrive` queue of `sqs.queues`, and tolerates one without a
-  `RedrivePolicy`. An invocation never reads queue metadata. The function logs
-  one `Job retry policies` line for its jobs.
+  Init, with the application's own SQS client and its retries: two calls
+  (`GetQueueAttributes` and `GetQueueUrl`) once per cold start. A botocore error,
+  or a `RedrivePolicy` missing or unreadable, names the queue and stops start-up.
+  An invocation never reads queue metadata. The function logs one
+  `Job retry policies` line for its jobs.
 - A record the function did not run (the invocation ran out of time, or it
   follows a failed message on a FIFO queue) stays in `batchItemFailures`
   without being settled. It is not an attempt of the job, though SQS counts its
   delivery in `ApproximateReceiveCount`.
-- The queue of a message is resolved by the record's event source ARN against
-  `sqs.queues`. A record whose ARN matches no entry, or whose dead-letter queue
-  was not read at Init, is logged as an ERROR and listed in
+- A record settles only if its event source ARN is the queue the function
+  consumes. Any other ARN is logged as an ERROR and listed in
   `batchItemFailures` until the queue's own `RedrivePolicy` dead-letters it.
 - A message whose `ApproximateReceiveCount` is not a positive integer or whose
   `loom.deferrals` is not a non-negative one is malformed: only that message is

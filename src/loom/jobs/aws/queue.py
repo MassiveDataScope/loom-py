@@ -198,7 +198,10 @@ class SqsRecord:
                 for name, value in (record.get("messageAttributes") or {}).items()
             }
         except (AttributeError, KeyError, TypeError, ValueError):
-            return cls(**fields, unreadable="the message attributes are not readable")
+            return cls(
+                **fields,
+                unreadable="the message attributes are not readable (each needs a dataType)",
+            )
         for name, written, minimum, reason in (
             (
                 "receive_count",
@@ -214,12 +217,11 @@ class SqsRecord:
             ),
         ):
             try:
-                value = int(written)
+                fields[name] = int(written)
             except (TypeError, ValueError):
-                value = minimum - 1
-            if value < minimum:
                 return cls(**fields, unreadable=reason)
-            fields[name] = value
+            if fields[name] < minimum:
+                return cls(**fields, unreadable=reason)
         return cls(**fields)
 
     @property
@@ -340,6 +342,18 @@ class SqsQueue:
     def queue_name(self) -> str:
         """The queue's name in AWS, the last segment of its URL path."""
         return self.url.rstrip("/").split("/")[-1]
+
+    def is_at(self, event_source_arn: str) -> bool:
+        """Whether *event_source_arn* names this queue, by region, account and queue name.
+
+        A URL that names no region matches any.
+        """
+        parts = event_source_arn.split(":")
+        if len(parts) != 6:
+            return False
+        _, _, _, region, account, name = parts
+        same_region = self.region in (None, region)
+        return same_region and (self.account_id, self.queue_name) == (account, name)
 
     def send(self, message: OutgoingMessage) -> None:
         """Send *message* with ``SendMessage``.
@@ -496,13 +510,20 @@ class SqsQueue:
                 "a dead-letter queue to it, or set dead_letter: discard (then max_attempts "
                 "decides when a job is rejected)"
             )
-        policy = json.loads(written)
-        _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
+        try:
+            policy = json.loads(written)
+            _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
+            limit = int(policy["maxReceiveCount"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise SQSQueueConfigError(
+                f"queue {self.name!r} has a RedrivePolicy loom cannot read "
+                f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
+            ) from exc
         url = client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
         target = SqsQueue(
             self._client, name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
         )
-        self._dead_letter = DeadLetter(target, int(policy["maxReceiveCount"]))
+        self._dead_letter = DeadLetter(target, limit)
         return self._dead_letter
 
     def _batches(
@@ -538,9 +559,6 @@ class SqsQueues:
     def __init__(self, client: Any, queues: Mapping[str, QueueConfig]) -> None:
         self._by_name = {name: SqsQueue(client, name, config) for name, config in queues.items()}
 
-    def __iter__(self) -> Iterator[SqsQueue]:
-        return iter(self._by_name.values())
-
     def named(self, name: str) -> SqsQueue:
         """The queue *name* of ``sqs.queues``.
 
@@ -563,10 +581,8 @@ class SqsQueues:
         Raises:
             SQSDispatchError: When no queue of ``sqs.queues`` matches.
         """
-        _, _, _, region, account, name = event_source_arn.split(":")
         for queue in self._by_name.values():
-            same_region = queue.region in (None, region)
-            if same_region and (queue.account_id, queue.queue_name) == (account, name):
+            if queue.is_at(event_source_arn):
                 return queue
         raise SQSDispatchError(
             f"no queue of sqs.queues is {event_source_arn}", code=SQSErrorCode.QUEUE_UNKNOWN

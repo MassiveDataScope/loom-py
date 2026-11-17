@@ -45,6 +45,7 @@ from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
 from loom.testing import LambdaTestClient  # noqa: E402
+from tests.helpers.extras import patched_aws_clients
 from tests.integration.ai.freeze import measure, probe  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
 from tests.integration.ai.freeze.t06_app.shared import AGENT, RAISED  # noqa: E402
@@ -304,7 +305,10 @@ class TestRowColdInit:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: Trigger
     ) -> None:
         with serving("modern") as server, serving("modern") as spare:
-            handler = _function_with_a_spare_server(tmp_path, monkeypatch, server, spare, trigger)
+            with patched_aws_clients():
+                handler = _function_with_a_spare_server(
+                    tmp_path, monkeypatch, server, spare, trigger
+                )
             try:
                 assert server.log
                 assert (spare.log, spare.connects) == ([], 0)

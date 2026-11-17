@@ -206,17 +206,26 @@ def test_a_message_naming_an_unknown_job_is_retried() -> None:
     assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
 ```
 
-A handler settles each record by what its job came to, so a failed record is
-reported only after the handler resolved its queue by the record's
-`queue_arn`. The default ARN of a `LambdaEvent` record names the queue in
-`loom.testing.TEST_QUEUE` (the non-FIFO queue: a record built with `group_id`
-names `loom-jobs.fifo`, so pass `queue_arn=` for it); declare it in the test
-configuration
-(`sqs: {queues: {jobs: ...}}`) so a failure settles instead of logging that no
-queue matches. Settling calls SQS, so **patch the AWS client** in the test (for
-instance `unittest.mock.patch("boto3.Session")`): without a patch the test makes
-real AWS calls. A malformed message is rejected and is not in
-`batchItemFailures`.
+A `jobs` function declares the queue it consumes (`trigger.queue`), and it
+settles each record by what its job came to, so the test configuration maps
+that queue and the record names it. `loom.testing.TEST_QUEUE` is the
+`sqs.queues` entry that the default ARN of a `LambdaEvent` record names
+(`loom-jobs`; a record built with `group_id` names `loom-jobs.fifo`, which it
+does not cover: pass `queue_arn=` for it):
+
+```yaml
+sqs:
+  queues:
+    jobs: {url: https://sqs.us-east-1.amazonaws.com/000000000000/loom-jobs, dead_letter: discard}
+lambda:
+  functions:
+    worker: {trigger: {source: jobs, queue: {name: jobs}}}
+```
+
+Binding the function builds its SQS client and, for a `redrive` queue, reads
+its policy: **patch the AWS client** in the test (for instance
+`unittest.mock.patch("boto3.Session")`), or it makes real AWS calls. A
+malformed message is rejected and is not in `batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 

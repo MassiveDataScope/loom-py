@@ -317,7 +317,8 @@ class TestProjectScan:
             pytest.param(lambda: CeleryAdapter(), _CELERY, id="celery"),
             pytest.param(
                 lambda: LambdaAdapter(function="worker"),
-                "lambda:\n  functions:\n    worker:\n      trigger:\n        source: jobs\n",
+                "lambda:\n  functions:\n    worker:\n      trigger:\n        source: jobs\n"
+                "        queue:\n          name: jobs\n",
                 id="lambda-jobs",
             ),
             pytest.param(

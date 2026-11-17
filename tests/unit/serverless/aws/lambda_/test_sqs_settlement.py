@@ -94,20 +94,18 @@ def sqs(request: pytest.FixtureRequest) -> FakeSqs:
 def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
     adapters: list[LambdaAdapter] = []
 
-    def build(dead_letter: str = "redrive", *, named: bool = True) -> LambdaHandler:
+    def build(dead_letter: str = "redrive", *, fifo: bool = False) -> LambdaHandler:
         document = with_worker(
             {
                 "app": {"name": "lambda-sqs"},
                 "jobs": {job.__name__: {"queue": "jobs"} for job in _JOB_TYPES},
             },
-            **({"batch_size": 5} if named else {}),
+            batch_size=5,
         )
-        if not named:
-            document["aws"] = {"region": "eu-west-1"}
-            document["sqs"] = {"queues": {"jobs": {"url": _JOBS}}}
-        queues = document["sqs"]["queues"]
-        queues["jobs"]["dead_letter"] = dead_letter
-        queues["jobs_fifo"] = {"url": f"{_JOBS}.fifo", "dead_letter": "discard"}
+        queue = document["sqs"]["queues"]["jobs"]
+        queue["dead_letter"] = "discard" if fifo else dead_letter
+        if fifo:
+            queue["url"] = f"{_JOBS}.fifo"
         project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="lambda-sqs", entry=WORKER),
@@ -261,7 +259,7 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         record = _record("1", AcmeWaitingJob, fifo=True)
 
-        result = serve()({"Records": [record]}, None)
+        result = serve(fifo=True)({"Records": [record]}, None)
 
         assert (_failed(result), sqs.calls["send_message_batch"]) == (["1"], 0)
         assert sqs.calls["change_message_visibility_batch"] == 1
@@ -356,11 +354,10 @@ class TestSettlementThroughTheHandler:
 
         assert (_failed(result), sqs.batches) == ([], [])
 
-    @pytest.mark.parametrize("named", [True, False])
     def test_settling_never_reads_queue_metadata_even_when_asked_to(
-        self, serve: Serve, sqs: FakeSqs, named: bool
+        self, serve: Serve, sqs: FakeSqs
     ) -> None:
-        handler = serve(named=named)
+        handler = serve()
         sqs.lookup_raises = RuntimeError("no metadata call during an invocation")
         records = [_record("1", AcmeRejectingJob), _record("2", AcmeFailingJob)]
 

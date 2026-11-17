@@ -191,8 +191,8 @@ class LambdaAdapter:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
         recipe, declared = jobs_recipe(project, self._jobs, self._use_cases, self._metrics)
         if not isinstance(trigger, EventTrigger):
-            queue = None if trigger.queue is None else trigger.queue.name
-            return recipe, functools.partial(_bind_jobs, declared, queue)
+            assert trigger.queue is not None
+            return recipe, functools.partial(_bind_jobs, declared, trigger.queue.name)
         job_type = trigger_job(name, trigger, declared)
         if trigger.queued:
             return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
@@ -201,14 +201,12 @@ class LambdaAdapter:
 
 def _bind_jobs(
     declared: Mapping[str, type[Job[Any]]],
-    queue_name: str | None,
+    queue_name: str,
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a ``jobs`` function: a final failure is rejected."""
     served = [
-        job
-        for job in declared.values()
-        if queue_name is None or application.job_settings.of(job).queue == queue_name
+        job for job in declared.values() if application.job_settings.of(job).queue == queue_name
     ]
     consumer = QueueConsumer.bind(application, queue_name, served)
     return SQSBatch(application, declared, open_host(application), consumer)

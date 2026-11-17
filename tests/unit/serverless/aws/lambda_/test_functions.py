@@ -74,6 +74,12 @@ class TestFunctionDeclarations:
         with pytest.raises(ConfigError, match="unknown field `report_batch_item_failures`"):
             _declared(document)
 
+    def test_a_jobs_function_without_a_queue_block_is_refused_naming_the_function(self) -> None:
+        with pytest.raises(
+            ConfigError, match=r"lambda\.functions\.worker\.trigger: a jobs function must declare"
+        ):
+            _declared({"source": "jobs"})
+
     def test_a_queue_block_without_a_name_is_refused(self) -> None:
         with pytest.raises(
             ConfigError, match=r"missing required field `name` - at `.*trigger\.queue`"

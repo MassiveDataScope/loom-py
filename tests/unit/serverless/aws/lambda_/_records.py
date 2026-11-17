@@ -31,13 +31,9 @@ def with_worker(document: dict[str, Any], **mapping: Any) -> dict[str, Any]:
 
     The queue of the block is mapped by ``sqs.queues``, as a consumer needs.
     """
-    trigger: dict[str, Any] = {"source": "jobs"}
-    queues: dict[str, Any] = {}
-    if mapping:
-        trigger["queue"] = {"name": "jobs", **mapping}
-        queues = consumed_queues("jobs")
+    trigger = {"source": "jobs", "queue": {"name": "jobs", **mapping}}
     worker = {"trigger": trigger}
-    return queues | document | {"lambda": {"functions": {WORKER: worker}}}
+    return consumed_queues("jobs") | document | {"lambda": {"functions": {WORKER: worker}}}
 
 
 def make_record(

@@ -55,7 +55,11 @@ def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
             {
                 "aws": {"region": "us-east-1"},
                 "sqs": {"queues": {"jobs": TEST_QUEUE}},
-                "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
+                "lambda": {
+                    "functions": {
+                        "worker": {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}}
+                    }
+                },
             }
         ),
         app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),

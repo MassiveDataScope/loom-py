@@ -383,7 +383,7 @@ class TestDeployManifest:
             (
                 _set("lambda.functions.worker.trigger.queue", _DELETE),
                 (),
-                "worker.trigger.queue.name must name the queue",
+                "worker.trigger: a jobs function must declare trigger.queue",
             ),
             (
                 _set("lambda.functions.worker.trigger.queue.name", "unknown"),

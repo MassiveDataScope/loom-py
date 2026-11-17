@@ -64,7 +64,12 @@ class Settling:
 def settling() -> Iterator[Callable[..., Settling]]:
     with ExitStack() as stack:
 
-        def build(dead_letter: str = "redrive", prime: bool = True, **options: Any) -> Settling:
+        def build(
+            dead_letter: str = "redrive",
+            prime: bool = True,
+            consumes: str = "jobs",
+            **options: Any,
+        ) -> Settling:
             client = FakeSqs(_POLICY, **options)
             factory = stack.enter_context(patched_aws_clients(client))
             config = SQSConfig(
@@ -75,11 +80,9 @@ def settling() -> Iterator[Callable[..., Settling]]:
                     ),
                 }
             )
-            settlement = SqsSettlement(AwsClients(), config)
-            if prime:
-                for queue in settlement.queues:
-                    if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
-                        queue.read_dead_letter(client)
+            settlement = SqsSettlement(AwsClients(), config, consumes)
+            if prime and settlement.queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+                settlement.queue.read_dead_letter(client)
             return Settling(client, settlement, factory)
 
         yield build
@@ -155,7 +158,7 @@ class TestSqsSettlement:
     def test_a_deferral_on_a_fifo_queue_is_refused_and_settled_as_a_failed_attempt(
         self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
     ) -> None:
-        sqs = settling()
+        sqs = settling(consumes="ordered")
 
         redelivered = sqs.settle_all(
             [(_record("a", arn=_FIFO_ARN), Deferred(Countdown(30), "warming up"))]
@@ -226,6 +229,38 @@ class TestSqsSettlement:
         assert _ids(redelivered) == ["a", "b"]
         assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
         assert not _logged(caplog, "SQS settlement entries failed")
+
+    def test_dead_letter_sends_go_through_the_bounded_client_and_the_init_client_sends_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
+
+        def session(**_: Any) -> Any:
+            class Session:
+                def client(self, service: str, **options: Any) -> FakeSqs:
+                    attempts = options["config"].retries["total_max_attempts"]
+                    return bounded if attempts == 1 else retrying
+
+            return Session()
+
+        monkeypatch.setattr("boto3.Session", session)
+        clients = AwsClients()
+        config = SQSConfig(queues={"jobs": QueueConfig(url=_SOURCE)})
+        settlement = SqsSettlement(clients, config, "jobs")
+        settlement.queue.read_dead_letter(clients.client("sqs", config))
+
+        redelivered = settlement.settle_all([(_record("a"), Rejected("no"))])
+
+        assert (
+            redelivered,
+            retrying.batches,
+            len(bounded.entries("send_message_batch", _DEAD)),
+        ) == (
+            [],
+            [],
+            1,
+        )
+        assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
 
     def test_a_dead_letter_queue_not_read_at_init_lists_the_rejections_without_a_call(
         self, settling: Callable[..., Settling]

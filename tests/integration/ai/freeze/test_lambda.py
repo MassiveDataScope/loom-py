@@ -65,6 +65,8 @@ from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
 from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
+from tests.helpers.extras import patched_aws_clients
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
 from tests.integration.ai.freeze.t06_app.clerk_jobs import AskClerkJob  # noqa: E402
@@ -398,7 +400,8 @@ def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) 
         jwt_auth = {"secret_path": str(secret), "algorithms": ["HS256"], "audience": _AUDIENCE}
         config["app"]["rest"] = {"auth": {"jwt": jwt_auth}}
     else:
-        config["lambda"] = {"functions": {"worker": {"trigger": {"source": "jobs"}}}}
+        config.update(jobs_queue())
+        config["lambda"] = {"functions": {"worker": {"trigger": jobs_trigger()}}}
     path = tmp_path / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(path)
@@ -480,6 +483,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
     reads it; the counters are marked once Init is done.
     """
     with contextlib.ExitStack() as stack:
+        stack.enter_context(patched_aws_clients())
 
         def build(era: Era, trigger: Trigger, *, agents: bool = True) -> _World:
             server = stack.enter_context(serving(era))

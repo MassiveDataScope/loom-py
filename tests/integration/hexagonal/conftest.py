@@ -222,7 +222,7 @@ def acme_config() -> dict[str, Any]:
         "lambda": {
             "functions": {
                 API_FUNCTION: {"trigger": api},
-                WORKER_FUNCTION: {"trigger": {"source": "jobs"}},
+                WORKER_FUNCTION: {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}},
             }
         },
         "celery": {

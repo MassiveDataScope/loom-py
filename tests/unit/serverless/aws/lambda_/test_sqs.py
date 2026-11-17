@@ -196,10 +196,9 @@ from loom.core.job.job import Job
 class Probe(Job[None]):
     def execute(self) -> None:
         pass
+trigger = {"source": "jobs", "queue": {"name": "q"}}
 project = Project(
-    config=ConfigContext.from_dict(
-        {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
-    ),
+    config=ConfigContext.from_dict({"lambda": {"functions": {"worker": {"trigger": trigger}}}}),
     environment=Environment.TEST,
     code_path=Path.cwd(),
     config_root=Path.cwd(),
