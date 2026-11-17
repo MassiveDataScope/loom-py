@@ -104,18 +104,26 @@ def client() -> SQSClient:
     return SQSClient()
 
 
+Compose = Callable[..., JobService]
+
+
 @pytest.fixture
-def service(tmp_path: Path, client: SQSClient) -> JobService:
-    return _compose(tmp_path, _CONFIG, client, EmailJob, OrderJob)
+def compose(monkeypatch: pytest.MonkeyPatch) -> Compose:
+    """Compose the jobs over a service whose SQS client is *client*."""
 
-
-def _compose(
-    tmp_path: Path, config: dict[str, Any], client: Any, *jobs: type[Job[Any]]
-) -> JobService:
-    with pytest.MonkeyPatch.context() as patch:
-        fake_aws_island(patch, serving=lambda _config: client)
+    def build(
+        tmp_path: Path, config: dict[str, Any], client: Any, *jobs: type[Job[Any]]
+    ) -> JobService:
+        fake_aws_island(monkeypatch, serving=lambda _config: client)
         application = job_project(tmp_path, config, "sqs").compose(JobsAdapter(*jobs))
-    return application.kernel.container.resolve(JobService)
+        return application.kernel.container.resolve(JobService)
+
+    return build
+
+
+@pytest.fixture
+def service(tmp_path: Path, client: SQSClient, compose: Compose) -> JobService:
+    return compose(tmp_path, _CONFIG, client, EmailJob, OrderJob)
 
 
 def _sqs_config(**knobs: Any) -> dict[str, Any]:
@@ -277,11 +285,11 @@ class TestSqsDispatch:
             project.compose(adapter)
 
     async def test_the_jobs_section_gives_the_queue_the_delay_and_the_priority(
-        self, tmp_path: Path, client: SQSClient
+        self, tmp_path: Path, client: SQSClient, compose: Compose
     ) -> None:
         """``reports`` has no URL: the job starts and is sent only because its section moves it."""
         section = {"ReportJob": {"queue": "emails", "countdown": 7, "priority": 3}}
-        service = _compose(tmp_path, {**_CONFIG, "jobs": section}, client, ReportJob)
+        service = compose(tmp_path, {**_CONFIG, "jobs": section}, client, ReportJob)
 
         _, request = await _sent(service, client, ReportJob, priority=3)
 
@@ -343,9 +351,9 @@ class TestSqsDispatch:
             service.dispatch_parallel(jobs, on_all_success=callback)
 
     async def test_a_failed_send_names_job_task_queue_and_code(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, compose: Compose
     ) -> None:
-        service = _compose(tmp_path, _sqs_config(batch=False), SQSClient(_ClientError()), EmailJob)
+        service = compose(tmp_path, _sqs_config(batch=False), SQSClient(_ClientError()), EmailJob)
         handle = service.dispatch_after_commit(EmailJob)
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()
@@ -373,9 +381,10 @@ class TestSqsDispatch:
         batch: bool,
         error: bool,
         refusals: int,
+        compose: Compose,
     ) -> None:
         client = SQSClient(_ClientError() if error else None)
-        service = _compose(tmp_path, _sqs_config(batch=batch), client, EmailJob)
+        service = compose(tmp_path, _sqs_config(batch=batch), client, EmailJob)
         client.refuse[
             service.dispatch_after_commit(EmailJob, payload={"secret": "hunter2"}).job_id
         ] = refusals
@@ -425,10 +434,10 @@ class TestSqsDispatch:
 
     @pytest.mark.parametrize("batch", [True, False])
     async def test_a_dispatch_only_application_makes_no_metadata_call(
-        self, tmp_path: Path, batch: bool
+        self, tmp_path: Path, batch: bool, compose: Compose
     ) -> None:
         fake = FakeSqs()
-        service = _compose(tmp_path, _sqs_config(batch=batch), fake, EmailJob, OrderJob)
+        service = compose(tmp_path, _sqs_config(batch=batch), fake, EmailJob, OrderJob)
 
         for n in range(3):
             service.dispatch_after_commit(EmailJob)
@@ -449,9 +458,15 @@ class TestSqsDispatch:
         ids=["by batch_size", "up to ten", "by total bytes"],
     )
     async def test_a_queue_is_sent_in_chunks_bounded_by_count_and_bytes(
-        self, tmp_path: Path, client: SQSClient, knobs: dict[str, Any], blob: str, sizes: list[int]
+        self,
+        tmp_path: Path,
+        client: SQSClient,
+        knobs: dict[str, Any],
+        blob: str,
+        sizes: list[int],
+        compose: Compose,
     ) -> None:
-        service = _compose(tmp_path, _sqs_config(**knobs), client, EmailJob)
+        service = compose(tmp_path, _sqs_config(**knobs), client, EmailJob)
         ids = [
             service.dispatch_after_commit(EmailJob, payload={"blob": blob}).job_id for _ in range(7)
         ]
@@ -461,9 +476,9 @@ class TestSqsDispatch:
         assert [task for _, chunk in client.batches for task in chunk] == ids
 
     async def test_batch_false_sends_each_job_with_its_own_send_message(
-        self, tmp_path: Path, client: SQSClient
+        self, tmp_path: Path, client: SQSClient, compose: Compose
     ) -> None:
-        service = _compose(tmp_path, _sqs_config(batch=False), client, EmailJob)
+        service = compose(tmp_path, _sqs_config(batch=False), client, EmailJob)
         service.dispatch_after_commit(EmailJob)
         service.dispatch_after_commit(EmailJob)
         await flush_pending_dispatches()
@@ -473,10 +488,10 @@ class TestSqsDispatch:
 
     @pytest.mark.parametrize("concurrent", [1, 2])
     async def test_max_concurrent_sends_bounds_the_queues_sent_at_once(
-        self, tmp_path: Path, concurrent: int
+        self, tmp_path: Path, concurrent: int, compose: Compose
     ) -> None:
         client = SQSClient(overlap=0.5)
-        service = _compose(
+        service = compose(
             tmp_path, _sqs_config(max_concurrent_sends=concurrent), client, EmailJob, OrderJob
         )
         service.dispatch_after_commit(EmailJob)
@@ -524,9 +539,9 @@ class TestSqsDispatch:
         assert _failed_sends(caplog) == [("loom.job.EmailJob", refused, "emails", "InternalError")]
 
     async def test_a_fifo_queue_resends_nothing_and_holds_back_what_would_overtake(
-        self, tmp_path: Path, client: SQSClient, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, client: SQSClient, caplog: pytest.LogCaptureFixture, compose: Compose
     ) -> None:
-        service = _compose(tmp_path, _sqs_config(batch_size=2), client, OrderJob)
+        service = compose(tmp_path, _sqs_config(batch_size=2), client, OrderJob)
         ids = [
             service.dispatch_after_commit(OrderJob, payload={"customer": "c"}).job_id
             for _ in range(5)
@@ -545,10 +560,10 @@ class TestSqsDispatch:
         ]
 
     async def test_a_failed_batch_call_is_not_sent_again(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, compose: Compose
     ) -> None:
         client = SQSClient(_ClientError())
-        service = _compose(tmp_path, _CONFIG, client, EmailJob)
+        service = compose(tmp_path, _CONFIG, client, EmailJob)
         ids = [service.dispatch_after_commit(EmailJob).job_id for _ in range(2)]
         with pytest.raises(PostCommitError) as raised:
             await flush_pending_dispatches()

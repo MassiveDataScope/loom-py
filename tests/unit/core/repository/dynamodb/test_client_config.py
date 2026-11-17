@@ -14,6 +14,7 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.extras import fake_aws_island
 from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
@@ -22,46 +23,46 @@ from .conftest import Product
 _REQUIRED = {"region": "eu-west-1", "table": "products"}
 
 
-def _client(section: dict[str, Any]) -> Any:
-    """The client a ``dynamodb`` store of *section* builds, as boto3 holds it."""
-    clients = AwsClients()
-    store = {**_REQUIRED, **section}
-    build_backend(
-        DynamoDBBackend(),
-        ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **store}}}),
-        (),
-        SERVER_PROFILE,
-        aws=clients,
+def _botocore_config(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str, Any]:
+    """The ``botocore.Config`` keywords the backend of a ``dynamodb`` store asked the island for."""
+    island = fake_aws_island(monkeypatch)
+    ctx = ConfigContext.from_dict(
+        {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
     )
-    return clients.client("dynamodb", convert_config(store, DynamoDBRepositoryConfig, strict=True))
+    build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+    [(service, config)] = island.built
+    assert service == "dynamodb"
+    options: dict[str, Any] = config.client_options()["config"]
+    return options
 
 
 class TestDynamoClientConfig:
-    def test_bounded_defaults_reach_the_client(self, mocked_aws: None) -> None:
-        config = _client({}).meta.config
+    def test_bounded_defaults_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = _botocore_config(monkeypatch, {})
 
-        assert config.connect_timeout == 2
-        assert config.read_timeout == 5
-        assert config.retries == {"total_max_attempts": 3, "mode": "standard"}
-        assert config.max_pool_connections == 32
+        assert config["connect_timeout"] == 2
+        assert config["read_timeout"] == 5
+        assert config["retries"] == {"total_max_attempts": 3, "mode": "standard"}
+        assert config["max_pool_connections"] == 32
 
-    def test_declared_values_reach_the_client(self, mocked_aws: None) -> None:
-        config = _client(
+    def test_declared_values_reach_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = _botocore_config(
+            monkeypatch,
             {
                 "connect_timeout": 1,
                 "read_timeout": 3,
                 "max_attempts": 5,
                 "retry_mode": "adaptive",
                 "pool": {"size": 8},
-            }
-        ).meta.config
-
-        assert (config.connect_timeout, config.read_timeout, config.max_pool_connections) == (
-            1,
-            3,
-            8,
+            },
         )
-        assert config.retries == {"total_max_attempts": 5, "mode": "adaptive"}
+
+        assert (
+            config["connect_timeout"],
+            config["read_timeout"],
+            config["max_pool_connections"],
+        ) == (1, 3, 8)
+        assert config["retries"] == {"total_max_attempts": 5, "mode": "adaptive"}
 
     @pytest.mark.parametrize(
         ("section", "named"),

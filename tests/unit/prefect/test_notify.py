@@ -17,7 +17,7 @@ from loom.prefect.notify import (
 )
 from loom.prefect.notify import _sns as sns_module
 from tests.helpers.aws import moto_client
-from tests.helpers.extras import fake_aws_island, serving_client
+from tests.helpers.extras import fake_aws_island
 
 _TOPIC = "arn:aws:sns:eu-west-1:123456789012:etl-failures"
 
@@ -210,9 +210,9 @@ class TestSnsNotifier:
             "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
         )
 
-    def test_default_client_uses_the_topic_region(self) -> None:
-        with serving_client() as island:
-            SnsNotifier(topic_arn=_TOPIC)
+    def test_default_client_uses_the_topic_region(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        island = fake_aws_island(monkeypatch)
+        SnsNotifier(topic_arn=_TOPIC)
         assert [(service, config.region) for service, config in island.built] == [
             ("sns", "eu-west-1")
         ]

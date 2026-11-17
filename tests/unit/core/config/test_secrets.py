@@ -17,7 +17,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.secrets import SecretsManagerResolver
 from tests.helpers.aws import moto_client
-from tests.helpers.extras import BOTO3_ISLAND, serving_client
+from tests.helpers.extras import BOTO3_ISLAND, FakeAwsIsland, fake_aws_island
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -26,6 +26,11 @@ def mock_client() -> MagicMock:
     client = MagicMock()
     client.get_secret_value.return_value = {"SecretString": "mysecret"}
     return client
+
+
+@pytest.fixture
+def island(mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+    return fake_aws_island(monkeypatch, serving=lambda _config: mock_client)
 
 
 # ---------------------------------------------------------------------------
@@ -47,20 +52,24 @@ class TestSecretsManagerResolverIdentity:
 
 
 class TestSecretsManagerResolverResolve:
-    def test_returns_secret_string_value(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client):
-            result = SecretsManagerResolver().resolve("/prod/token")
+    def test_returns_secret_string_value(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        result = SecretsManagerResolver().resolve("/prod/token")
         assert result == "mysecret"
 
-    def test_calls_secretsmanager_with_secret_id(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client):
-            SecretsManagerResolver().resolve("/prod/token")
+    def test_calls_secretsmanager_with_secret_id(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        SecretsManagerResolver().resolve("/prod/token")
         mock_client.get_secret_value.assert_called_once_with(SecretId="/prod/token")
 
-    def test_raises_config_error_on_binary_secret(self, mock_client: MagicMock) -> None:
+    def test_raises_config_error_on_binary_secret(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
         mock_client.get_secret_value.return_value = {"SecretBinary": b"bytes"}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/prod/token")
 
 
@@ -71,21 +80,22 @@ class TestSecretsManagerResolverResolve:
 
 class TestSecretsManagerResolverEnvVarExpansion:
     def test_expands_env_var_in_path(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         monkeypatch.setenv("ENVIRONMENT", "prod")
-        with serving_client(mock_client):
-            SecretsManagerResolver().resolve("/myapp/%ENVIRONMENT%/token")
+        SecretsManagerResolver().resolve("/myapp/%ENVIRONMENT%/token")
         mock_client.get_secret_value.assert_called_once_with(SecretId="/myapp/prod/token")
 
-    def test_raises_on_missing_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_raises_on_missing_env_var(
+        self, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
+    ) -> None:
         monkeypatch.delenv("MISSING_VAR", raising=False)
         resolver = SecretsManagerResolver()
-        with serving_client(), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/path/%MISSING_VAR%/token")
 
     def test_percent_syntax_parses_from_omegaconf_yaml(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         """Regression: {VAR} syntax broke OmegaConf ANTLR grammar; %VAR% must not."""
         from omegaconf import OmegaConf
@@ -93,9 +103,8 @@ class TestSecretsManagerResolverEnvVarExpansion:
         monkeypatch.setenv("ENV", "prod")
         resolver = SecretsManagerResolver()
         OmegaConf.register_new_resolver("secrets", resolver.resolve, replace=True)
-        with serving_client(mock_client):
-            cfg = OmegaConf.create({"val": "${secrets:/app/%ENV%/token}"})
-            _ = cfg.val
+        cfg = OmegaConf.create({"val": "${secrets:/app/%ENV%/token}"})
+        _ = cfg.val
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/prod/token")
 
 
@@ -105,50 +114,48 @@ class TestSecretsManagerResolverEnvVarExpansion:
 
 
 class TestSecretsManagerResolverDotNotation:
-    def test_plain_path_returns_string(self, mock_client: MagicMock) -> None:
+    def test_plain_path_returns_string(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "mysecret"}
-        with serving_client(mock_client):
-            result = SecretsManagerResolver().resolve("/prod/token")
+        result = SecretsManagerResolver().resolve("/prod/token")
         assert result == "mysecret"
 
-    def test_single_key_navigation(self, mock_client: MagicMock) -> None:
+    def test_single_key_navigation(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"host": "db.internal"})
         }
-        with serving_client(mock_client):
-            result = SecretsManagerResolver().resolve("/prod/db.host")
+        result = SecretsManagerResolver().resolve("/prod/db.host")
         assert result == "db.internal"
         mock_client.get_secret_value.assert_called_once_with(SecretId="/prod/db")
 
-    def test_nested_key_navigation(self, mock_client: MagicMock) -> None:
+    def test_nested_key_navigation(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"conn": {"host": "internal"}})
         }
-        with serving_client(mock_client):
-            result = SecretsManagerResolver().resolve("/prod/cfg.conn.host")
+        result = SecretsManagerResolver().resolve("/prod/cfg.conn.host")
         assert result == "internal"
 
-    def test_raises_on_invalid_json(self, mock_client: MagicMock) -> None:
+    def test_raises_on_invalid_json(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "not-json-at-all"}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/prod/db.host")
 
-    def test_raises_on_missing_json_key(self, mock_client: MagicMock) -> None:
+    def test_raises_on_missing_json_key(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/prod/db.missing_key")
 
     def test_env_var_expansion_then_dot_navigation(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         monkeypatch.setenv("ENV", "prod")
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"host": "prod-db"})
         }
-        with serving_client(mock_client):
-            result = SecretsManagerResolver().resolve("/app/%ENV%/db.host")
+        result = SecretsManagerResolver().resolve("/app/%ENV%/db.host")
         assert result == "prod-db"
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/prod/db")
 
@@ -159,24 +166,23 @@ class TestSecretsManagerResolverDotNotation:
 
 
 class TestSecretsManagerResolverClientLifecycle:
-    def test_client_created_once_across_multiple_resolves(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            resolver = SecretsManagerResolver()
-            resolver.resolve("/key/one")
-            resolver.resolve("/key/two")
-        assert len(mock_factory.built) == 1
+    def test_client_created_once_across_multiple_resolves(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        resolver = SecretsManagerResolver()
+        resolver.resolve("/key/one")
+        resolver.resolve("/key/two")
+        assert len(island.built) == 1
 
-    def test_region_forwarded_to_boto3(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            SecretsManagerResolver("eu-west-1").resolve("/some/secret")
-        assert [(service, config.region) for service, config in mock_factory.built] == [
+    def test_region_forwarded_to_boto3(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        SecretsManagerResolver("eu-west-1").resolve("/some/secret")
+        assert [(service, config.region) for service, config in island.built] == [
             ("secretsmanager", "eu-west-1")
         ]
 
-    def test_region_none_by_default(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            SecretsManagerResolver().resolve("/some/secret")
-        assert [(service, config.region) for service, config in mock_factory.built] == [
+    def test_region_none_by_default(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        SecretsManagerResolver().resolve("/some/secret")
+        assert [(service, config.region) for service, config in island.built] == [
             ("secretsmanager", None)
         ]
 
@@ -188,15 +194,12 @@ class TestSecretsManagerResolverClientLifecycle:
 
 class TestSecretsManagerResolverLogging:
     def test_info_log_emitted_with_path(
-        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"host": "db.internal"})
         }
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.secrets"):
             SecretsManagerResolver().resolve("/prod/db.host")
         messages = [r.message for r in caplog.records]
         assert any("/prod/db" in msg for msg in messages), (
@@ -204,13 +207,10 @@ class TestSecretsManagerResolverLogging:
         )
 
     def test_log_never_contains_secret_value(
-        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "mysecret"}
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.secrets"):
             SecretsManagerResolver().resolve("/prod/token")
         messages = [r.message for r in caplog.records]
         assert all("mysecret" not in msg for msg in messages), (
@@ -222,12 +222,10 @@ class TestSecretsManagerResolverLogging:
         mock_client: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
         monkeypatch.setenv("STAGE", "prod")
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.secrets"):
             SecretsManagerResolver().resolve("/app/%STAGE%/db")
         messages = [r.message for r in caplog.records]
         assert any("/app/%STAGE%/db" in msg for msg in messages), messages
@@ -246,12 +244,13 @@ class TestSecretsManagerResolverUnexpandedKey:
     EXPANDED = "/app/super-secret/db"
 
     def test_log_carries_unexpanded_key_and_client_gets_expanded_path(
-        self, my_env: None, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self,
+        my_env: None,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.secrets"):
             SecretsManagerResolver().resolve(self.KEY)
         messages = [r.message for r in caplog.records]
         assert all("super-secret" not in msg for msg in messages), messages
@@ -259,12 +258,12 @@ class TestSecretsManagerResolverUnexpandedKey:
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
 
     def test_fetch_error_carries_unexpanded_key_and_chains_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         cause = Exception(f"ResourceNotFoundException: {self.EXPANDED}")
         mock_client.get_secret_value.side_effect = cause
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(self.KEY)
         text = str(info.value)
         assert self.KEY in text
@@ -272,11 +271,11 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert info.value.__cause__ is cause
 
     def test_binary_secret_error_carries_unexpanded_key(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretBinary": b"bytes"}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(self.KEY)
         text = str(info.value)
         assert self.KEY in text
@@ -287,14 +286,12 @@ class TestSecretsManagerResolverUnexpandedKey:
         mock_client: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
         """Splitting before expansion keeps a dotted env value out of navigation."""
         monkeypatch.setenv("DOTTED_ENV", "db.prod-secret")
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.secrets"):
             value = SecretsManagerResolver().resolve("/app/svc/%DOTTED_ENV%")
         assert value == json.dumps({"host": "db"})
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/svc/db.prod-secret")
@@ -302,26 +299,24 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db-1"})}
-        with serving_client(mock_client):
-            value = SecretsManagerResolver().resolve(f"{self.KEY}.host")
+        value = SecretsManagerResolver().resolve(f"{self.KEY}.host")
         assert value == "db-1"
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
 
     def test_fetch_error_message_carries_aws_error_code_not_expanded_path(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         cause = BotocoreClientError(
             f"An error occurred: {self.EXPANDED}",
             {"Error": {"Code": "AccessDeniedException", "Message": self.EXPANDED}},
         )
         mock_client.get_secret_value.side_effect = cause
-        with serving_client(mock_client):
-            resolver = SecretsManagerResolver()
-            with pytest.raises(ConfigError) as info:
-                resolver.resolve(self.KEY)
+        resolver = SecretsManagerResolver()
+        with pytest.raises(ConfigError) as info:
+            resolver.resolve(self.KEY)
         text = str(info.value)
         assert "AccessDeniedException" in text
         assert self.EXPANDED not in text
@@ -329,21 +324,20 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert info.value.__cause__ is cause
 
     def test_fetch_error_message_falls_back_to_type_name(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.side_effect = TimeoutError("boom")
-        with serving_client(mock_client):
-            resolver = SecretsManagerResolver()
-            with pytest.raises(ConfigError) as info:
-                resolver.resolve(self.KEY)
+        resolver = SecretsManagerResolver()
+        with pytest.raises(ConfigError) as info:
+            resolver.resolve(self.KEY)
         assert "TimeoutError" in str(info.value)
 
     def test_invalid_json_error_carries_unexpanded_key_without_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "not-json-at-all"}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.host")
         text = str(info.value)
         assert self.KEY in text
@@ -352,11 +346,11 @@ class TestSecretsManagerResolverUnexpandedKey:
         assert info.value.__cause__ is None
 
     def test_missing_json_key_error_carries_unexpanded_key_without_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.missing_key")
         text = str(info.value)
         assert self.KEY in text
@@ -370,17 +364,19 @@ class TestSecretsManagerResolverUnexpandedKey:
 
 
 class TestSecretsManagerResolverErrors:
-    def test_raises_config_error_on_api_exception(self, mock_client: MagicMock) -> None:
+    def test_raises_config_error_on_api_exception(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
         mock_client.get_secret_value.side_effect = Exception("AccessDenied")
         resolver = SecretsManagerResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/missing/secret")
 
-    def test_raises_config_error_on_empty_key(self) -> None:
+    def test_raises_config_error_on_empty_key(self, island: FakeAwsIsland) -> None:
         resolver = SecretsManagerResolver()
-        with serving_client() as mock_factory, pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("")
-        assert mock_factory.built == []
+        assert island.built == []
 
     def test_raises_config_error_when_boto3_not_installed(self) -> None:
         resolver = SecretsManagerResolver()

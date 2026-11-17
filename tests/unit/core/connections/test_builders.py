@@ -48,7 +48,11 @@ class TestAwsClientBuilder:
         self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         profiles = tmp_path / "aws-config"
-        profiles.write_text("[profile dev]\nregion = us-east-1\n", encoding="utf-8")
+        profiles.write_text(
+            "[profile dev]\nregion = us-east-1\n"
+            "aws_access_key_id = testing\naws_secret_access_key = testing\n",
+            encoding="utf-8",
+        )
         monkeypatch.setenv("AWS_CONFIG_FILE", str(profiles))
         island = import_optional("loom.core.connections.aws.client", extra="aws")
         config = AwsClientConfig(

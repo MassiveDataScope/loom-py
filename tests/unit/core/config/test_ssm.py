@@ -16,7 +16,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.ssm import SsmResolver
 from tests.helpers.aws import moto_client
-from tests.helpers.extras import serving_client
+from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -25,6 +25,11 @@ def mock_client() -> MagicMock:
     client = MagicMock()
     client.get_parameter.return_value = {"Parameter": {"Value": "secret123"}}
     return client
+
+
+@pytest.fixture
+def island(mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+    return fake_aws_island(monkeypatch, serving=lambda _config: mock_client)
 
 
 class TestSsmResolverIdentity:
@@ -36,9 +41,8 @@ class TestSsmResolverIdentity:
 
 
 class TestSsmResolverResolve:
-    def test_returns_parameter_value(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client):
-            result = SsmResolver().resolve("/prod/token")
+    def test_returns_parameter_value(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        result = SsmResolver().resolve("/prod/token")
         assert result == "secret123"
 
     @pytest.mark.parametrize(
@@ -48,47 +52,47 @@ class TestSsmResolverResolve:
             pytest.param("/prod/plain/key", id="no_braces_passes_key_unchanged"),
         ],
     )
-    def test_passes_the_key_unchanged(self, key: str, mock_client: MagicMock) -> None:
-        with serving_client(mock_client):
-            SsmResolver().resolve(key)
+    def test_passes_the_key_unchanged(
+        self, key: str, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        SsmResolver().resolve(key)
         mock_client.get_parameter.assert_called_once_with(Name=key, WithDecryption=True)
 
-    def test_with_decryption_false(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client):
-            SsmResolver(with_decryption=False).resolve("/prod/token")
+    def test_with_decryption_false(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        SsmResolver(with_decryption=False).resolve("/prod/token")
         mock_client.get_parameter.assert_called_once_with(Name="/prod/token", WithDecryption=False)
 
 
 class TestSsmResolverEnvVarExpansion:
     def test_expands_single_env_var(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         monkeypatch.setenv("ENVIRONMENT", "prod")
-        with serving_client(mock_client):
-            SsmResolver().resolve("/myapp/%ENVIRONMENT%/token")
+        SsmResolver().resolve("/myapp/%ENVIRONMENT%/token")
         mock_client.get_parameter.assert_called_once_with(
             Name="/myapp/prod/token", WithDecryption=True
         )
 
     def test_expands_multiple_env_vars(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         monkeypatch.setenv("REGION", "eu-west-1")
         monkeypatch.setenv("ENV", "prod")
-        with serving_client(mock_client):
-            SsmResolver().resolve("/%REGION%/%ENV%/key")
+        SsmResolver().resolve("/%REGION%/%ENV%/key")
         mock_client.get_parameter.assert_called_once_with(
             Name="/eu-west-1/prod/key", WithDecryption=True
         )
 
-    def test_raises_on_missing_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_raises_on_missing_env_var(
+        self, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
+    ) -> None:
         monkeypatch.delenv("MISSING_VAR", raising=False)
         resolver = SsmResolver()
-        with serving_client(), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/path/%MISSING_VAR%/token")
 
     def test_percent_syntax_parses_from_omegaconf_yaml(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         """Regression: {VAR} syntax broke OmegaConf ANTLR grammar; %VAR% must not."""
         from omegaconf import OmegaConf
@@ -96,69 +100,64 @@ class TestSsmResolverEnvVarExpansion:
         monkeypatch.setenv("ENV", "prod")
         resolver = SsmResolver()
         OmegaConf.register_new_resolver("ssm", resolver.resolve, replace=True)
-        with serving_client(mock_client):
-            cfg = OmegaConf.create({"token": "${ssm:/app/%ENV%/token}"})
-            _ = cfg.token
+        cfg = OmegaConf.create({"token": "${ssm:/app/%ENV%/token}"})
+        _ = cfg.token
         mock_client.get_parameter.assert_called_once_with(
             Name="/app/prod/token", WithDecryption=True
         )
 
 
 class TestSsmResolverClientLifecycle:
-    def test_client_created_once_across_multiple_resolves(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            resolver = SsmResolver()
-            resolver.resolve("/key/one")
-            resolver.resolve("/key/two")
-        assert len(mock_factory.built) == 1
+    def test_client_created_once_across_multiple_resolves(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        resolver = SsmResolver()
+        resolver.resolve("/key/one")
+        resolver.resolve("/key/two")
+        assert len(island.built) == 1
 
-    def test_region_forwarded_to_boto3(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            SsmResolver("eu-west-1").resolve("/some/key")
-        assert [(service, config.region) for service, config in mock_factory.built] == [
+    def test_region_forwarded_to_boto3(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        SsmResolver("eu-west-1").resolve("/some/key")
+        assert [(service, config.region) for service, config in island.built] == [
             ("ssm", "eu-west-1")
         ]
 
-    def test_region_none_by_default(self, mock_client: MagicMock) -> None:
-        with serving_client(mock_client) as mock_factory:
-            SsmResolver().resolve("/some/key")
-        assert [(service, config.region) for service, config in mock_factory.built] == [
-            ("ssm", None)
-        ]
+    def test_region_none_by_default(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
+        SsmResolver().resolve("/some/key")
+        assert [(service, config.region) for service, config in island.built] == [("ssm", None)]
 
 
 class TestSsmResolverErrors:
-    def test_raises_config_error_on_ssm_exception(self, mock_client: MagicMock) -> None:
+    def test_raises_config_error_on_ssm_exception(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
         mock_client.get_parameter.side_effect = Exception("ParameterNotFound")
         resolver = SsmResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve("/missing/param")
 
 
 class TestSsmResolverDotNotation:
-    def test_plain_path_returns_string(self, mock_client: MagicMock) -> None:
+    def test_plain_path_returns_string(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "secret123"}}
-        with serving_client(mock_client):
-            result = SsmResolver().resolve("/prod/token")
+        result = SsmResolver().resolve("/prod/token")
         assert result == "secret123"
 
-    def test_single_key_navigation(self, mock_client: MagicMock) -> None:
+    def test_single_key_navigation(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_parameter.return_value = {
             "Parameter": {"Value": '{"host": "mydb.internal", "port": 5432}'}
         }
-        with serving_client(mock_client):
-            result = SsmResolver().resolve("/prod/db_config.host")
+        result = SsmResolver().resolve("/prod/db_config.host")
         assert result == "mydb.internal"
         mock_client.get_parameter.assert_called_once_with(
             Name="/prod/db_config", WithDecryption=True
         )
 
-    def test_nested_key_navigation(self, mock_client: MagicMock) -> None:
+    def test_nested_key_navigation(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         mock_client.get_parameter.return_value = {
             "Parameter": {"Value": '{"connection": {"host": "db.internal"}}'}
         }
-        with serving_client(mock_client):
-            result = SsmResolver().resolve("/prod/db.connection.host")
+        result = SsmResolver().resolve("/prod/db.connection.host")
         assert result == "db.internal"
 
     @pytest.mark.parametrize(
@@ -173,20 +172,19 @@ class TestSsmResolverDotNotation:
         ],
     )
     def test_raises_config_error_on_unusable_json(
-        self, value: str, key: str, mock_client: MagicMock
+        self, value: str, key: str, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": value}}
         resolver = SsmResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError):
+        with pytest.raises(ConfigError):
             resolver.resolve(key)
 
     def test_env_var_expansion_then_dot_navigation(
-        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+        self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
         monkeypatch.setenv("ENV", "prod")
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "prod-db"}'}}
-        with serving_client(mock_client):
-            result = SsmResolver().resolve("/myapp/%ENV%/db_config.host")
+        result = SsmResolver().resolve("/myapp/%ENV%/db_config.host")
         assert result == "prod-db"
         mock_client.get_parameter.assert_called_once_with(
             Name="/myapp/prod/db_config", WithDecryption=True
@@ -195,13 +193,10 @@ class TestSsmResolverDotNotation:
 
 class TestSsmResolverLogging:
     def test_info_log_emitted_with_ssm_path(
-        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db.internal"}'}}
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.ssm"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
             SsmResolver().resolve("/prod/db_config.host")
         messages = [r.message for r in caplog.records]
         assert any("/prod/db_config" in msg for msg in messages), (
@@ -217,13 +212,11 @@ class TestSsmResolverLogging:
         mock_client: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
         monkeypatch.setenv("STAGE", "prod")
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "some-value"}}
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.ssm"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
             SsmResolver().resolve("/app/%STAGE%/db")
         messages = [r.message for r in caplog.records]
         assert any("/app/%STAGE%/db" in msg for msg in messages), (
@@ -241,12 +234,13 @@ class TestSsmResolverUnexpandedKey:
     EXPANDED = "/app/super-secret/db"
 
     def test_log_carries_unexpanded_key_and_client_gets_expanded_path(
-        self, my_env: None, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+        self,
+        my_env: None,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.ssm"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
             SsmResolver().resolve(self.KEY)
         messages = [r.message for r in caplog.records]
         assert all("super-secret" not in msg for msg in messages), messages
@@ -254,12 +248,12 @@ class TestSsmResolverUnexpandedKey:
         mock_client.get_parameter.assert_called_once_with(Name=self.EXPANDED, WithDecryption=True)
 
     def test_fetch_error_carries_unexpanded_key_and_chains_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         cause = Exception(f"ParameterNotFound: {self.EXPANDED}")
         mock_client.get_parameter.side_effect = cause
         resolver = SsmResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(self.KEY)
         text = str(info.value)
         assert self.KEY in text
@@ -271,14 +265,12 @@ class TestSsmResolverUnexpandedKey:
         mock_client: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        island: FakeAwsIsland,
     ) -> None:
         """Splitting before expansion keeps a dotted env value out of navigation."""
         monkeypatch.setenv("DOTTED_ENV", "db.prod-secret")
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db"}'}}
-        with (
-            caplog.at_level(logging.INFO, logger="loom.core.config.ssm"),
-            serving_client(mock_client),
-        ):
+        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
             value = SsmResolver().resolve("/app/svc/%DOTTED_ENV%")
         assert value == '{"host": "db"}'
         mock_client.get_parameter.assert_called_once_with(
@@ -288,26 +280,24 @@ class TestSsmResolverUnexpandedKey:
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db-1"}'}}
-        with serving_client(mock_client):
-            value = SsmResolver().resolve(f"{self.KEY}.host")
+        value = SsmResolver().resolve(f"{self.KEY}.host")
         assert value == "db-1"
         mock_client.get_parameter.assert_called_once_with(Name=self.EXPANDED, WithDecryption=True)
 
     def test_fetch_error_message_carries_aws_error_code_not_expanded_path(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         cause = BotocoreClientError(
             f"An error occurred: {self.EXPANDED}",
             {"Error": {"Code": "AccessDeniedException", "Message": self.EXPANDED}},
         )
         mock_client.get_parameter.side_effect = cause
-        with serving_client(mock_client):
-            resolver = SsmResolver()
-            with pytest.raises(ConfigError) as info:
-                resolver.resolve(self.KEY)
+        resolver = SsmResolver()
+        with pytest.raises(ConfigError) as info:
+            resolver.resolve(self.KEY)
         text = str(info.value)
         assert "AccessDeniedException" in text
         assert self.EXPANDED not in text
@@ -315,21 +305,20 @@ class TestSsmResolverUnexpandedKey:
         assert info.value.__cause__ is cause
 
     def test_fetch_error_message_falls_back_to_type_name(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.side_effect = TimeoutError("boom")
-        with serving_client(mock_client):
-            resolver = SsmResolver()
-            with pytest.raises(ConfigError) as info:
-                resolver.resolve(self.KEY)
+        resolver = SsmResolver()
+        with pytest.raises(ConfigError) as info:
+            resolver.resolve(self.KEY)
         assert "TimeoutError" in str(info.value)
 
     def test_invalid_json_error_carries_unexpanded_key_without_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "not-json-at-all"}}
         resolver = SsmResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.host")
         text = str(info.value)
         assert self.KEY in text
@@ -338,11 +327,11 @@ class TestSsmResolverUnexpandedKey:
         assert info.value.__cause__ is None
 
     def test_missing_json_key_error_carries_unexpanded_key_without_cause(
-        self, my_env: None, mock_client: MagicMock
+        self, my_env: None, mock_client: MagicMock, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db"}'}}
         resolver = SsmResolver()
-        with serving_client(mock_client), pytest.raises(ConfigError) as info:
+        with pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.missing_key")
         text = str(info.value)
         assert self.KEY in text

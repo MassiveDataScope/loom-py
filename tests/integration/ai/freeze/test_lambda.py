@@ -475,7 +475,7 @@ World = Callable[..., _World]
 
 
 @pytest.fixture
-def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws: None) -> Iterator[World]:
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws_clients: None) -> Iterator[World]:
     """Builds a server of one era and a Lambda function of one trigger over it, at Init.
 
     The pool's wall clock is patched before anything is built, so every pool

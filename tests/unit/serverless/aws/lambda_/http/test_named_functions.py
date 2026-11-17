@@ -282,7 +282,7 @@ class TestNamedFunctions:
         assert isinstance(serve(project(entry, {})), built)
 
     def test_an_sqs_entry_serves_the_jobs(
-        self, project: Callable[..., str], serve: Callable[..., Any], no_aws: None
+        self, project: Callable[..., str], serve: Callable[..., Any], no_aws_clients: None
     ) -> None:
         worker = {"trigger": jobs_trigger()}
         path = project("worker", {"worker": worker}, _manifest_discovery, _jobs_queue)

@@ -112,7 +112,7 @@ def engines(
 
 
 @pytest.fixture
-def project(tmp_path: Path, no_aws: None) -> Iterator[Project]:
+def project(tmp_path: Path, no_aws_clients: None) -> Iterator[Project]:
     """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts.
 
     Its SQS client is a stand-in for the test's duration.

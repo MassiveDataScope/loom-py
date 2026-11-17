@@ -21,7 +21,6 @@ from enum import StrEnum
 from typing import Any, cast
 
 import pytest
-from moto import mock_aws
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
@@ -195,6 +194,7 @@ class BackendCase:
         unit_of_work: Builds a unit of work bound to the repository's store.
         fail_commit: Arms a failure that surfaces from ``commit``, not the
             body. Called inside the unit of work after the first write.
+        fixtures: Fixtures the backend's store needs while the repository is open.
     """
 
     name: str
@@ -204,6 +204,7 @@ class BackendCase:
     transactions: bool
     unit_of_work: Callable[[Any], UnitOfWork]
     fail_commit: Callable[[Any], Awaitable[None]] | None = None
+    fixtures: tuple[str, ...] = ()
 
 
 @asynccontextmanager
@@ -235,10 +236,9 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeCon
 
 @asynccontextmanager
 async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
-    with mock_aws():
-        client = moto_client("dynamodb")
-        create_table(client, _TABLE)
-        yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
+    client = moto_client("dynamodb")
+    create_table(client, _TABLE)
+    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
 
 
 @asynccontextmanager
@@ -309,6 +309,7 @@ def _dynamodb_case() -> BackendCase:
         capabilities=frozenset(capabilities_of(RepositoryDynamoDB)),
         transactions=False,
         unit_of_work=lambda _repository: DynamoUnitOfWork(),
+        fixtures=("mocked_aws",),
     )
 
 
@@ -358,7 +359,9 @@ def case(request: pytest.FixtureRequest) -> BackendCase:
 
 
 @pytest.fixture
-async def repository(case: BackendCase) -> AsyncIterator[Any]:
+async def repository(case: BackendCase, request: pytest.FixtureRequest) -> AsyncIterator[Any]:
+    for name in case.fixtures:
+        request.getfixturevalue(name)
     async with case.repository_factory() as repo:
         yield repo
 

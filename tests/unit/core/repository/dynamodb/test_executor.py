@@ -129,11 +129,12 @@ class TestDynamoExecutorLifespan:
         async with wiring.lifespan_init():
             pass
 
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
             ready = await wiring.readiness()
 
         assert ready is False
-        [record] = [r for r in caplog.records if r.name == backend_module.__name__]
+        [record] = caplog.records
         assert record.exc_info is not None
         assert record.exc_info[0] is RuntimeError
         assert created == [16]

@@ -301,7 +301,11 @@ class TestRowColdInit:
 
     @_TRIGGERS
     def test_a_server_only_an_unreachable_agent_uses_gets_no_request(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: Trigger, no_aws: None
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        trigger: Trigger,
+        no_aws_clients: None,
     ) -> None:
         with serving("modern") as server, serving("modern") as spare:
             handler = _function_with_a_spare_server(tmp_path, monkeypatch, server, spare, trigger)

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -31,38 +30,40 @@ _POLICY = {
 }
 
 
-@contextmanager
-def _serving(client: FakeSqs | None) -> Iterator[None]:
-    with pytest.MonkeyPatch.context() as patch:
+Bind = Callable[..., Application]
+
+
+@pytest.fixture
+def bind(monkeypatch: pytest.MonkeyPatch) -> Bind:
+    """Compose, bind and close a jobs function over *client*; a ``None`` client leaves AWS as is."""
+
+    def build(
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        client: FakeSqs | None,
+        *,
+        queue: dict[str, Any] | None = None,
+        jobs: dict[str, Any] | None = None,
+        unmapped: bool = False,
+    ) -> Application:
+        document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
+        document["aws"] = {"region": "eu-west-1"}
+        document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
+        project = composition_project(
+            ConfigContext.from_dict(document),
+            app=AppConfig(name="lambda-sqs", entry=WORKER),
+            code_path=tmp_path,
+            config_root=tmp_path,
+        )
+        adapter = LambdaAdapter(jobs=[probe[0]])
         if client is not None:
-            fake_aws_island(patch, serving=lambda _config: client)
-        yield
-
-
-def _bind(
-    tmp_path: Path,
-    probe: tuple[type[Job[None]], Probe],
-    client: FakeSqs | None,
-    *,
-    queue: dict[str, Any] | None = None,
-    jobs: dict[str, Any] | None = None,
-    unmapped: bool = False,
-) -> Application:
-    document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
-    document["aws"] = {"region": "eu-west-1"}
-    document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
-    project = composition_project(
-        ConfigContext.from_dict(document),
-        app=AppConfig(name="lambda-sqs", entry=WORKER),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-    adapter = LambdaAdapter(jobs=[probe[0]])
-    with _serving(client):
+            fake_aws_island(monkeypatch, serving=lambda _config: client)
         application = project.compose(adapter)
         adapter.bind(application)
         adapter.close()
-    return application
+        return application
+
+    return build
 
 
 def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
@@ -75,57 +76,57 @@ def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]
 
 class TestConsumedQueue:
     def test_a_redrive_queue_with_a_policy_binds_after_one_read_of_it(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         client = FakeSqs(_POLICY)
 
-        _bind(tmp_path, probe, client)
+        bind(tmp_path, probe, client)
 
         assert client.calls["get_queue_attributes"] == 1
 
     def test_a_redrive_queue_without_a_policy_fails_start_up_naming_the_queue(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         with pytest.raises(SQSQueueConfigError) as raised:
-            _bind(tmp_path, probe, FakeSqs())
+            bind(tmp_path, probe, FakeSqs())
 
         assert "'jobs'" in str(raised.value)
         assert "dead_letter: discard" in str(raised.value)
 
     def test_max_attempts_on_a_job_of_a_redrive_queue_fails_start_up(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
 
         with pytest.raises(
             ConfigError, match=r"declares jobs\.<Job>\.retry\.max_attempts.*maxReceiveCount"
         ):
-            _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+            bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
     def test_a_job_of_another_queue_is_not_checked_against_this_one(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "elsewhere", "retry": {"max_attempts": 7}}}
 
-        _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+        bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
     def test_a_discard_queue_takes_max_attempts_and_asks_sqs_nothing(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         client = FakeSqs()
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
 
-        _bind(tmp_path, probe, client, queue={"dead_letter": "discard"}, jobs=jobs)
+        bind(tmp_path, probe, client, queue={"dead_letter": "discard"}, jobs=jobs)
 
         assert client.metadata_calls == 0
 
     def test_the_consumer_policy_leaves_the_applications_settings_untouched(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         jobs = {"defaults": {"retry": {"max_attempts": 9}}}
         jobs[probe[0].__name__] = {"queue": "jobs"}
 
-        application = _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+        application = bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
         assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 9
 
@@ -134,34 +135,36 @@ class TestConsumedQueue:
         tmp_path: Path,
         probe: tuple[type[Job[None]], Probe],
         caplog: pytest.LogCaptureFixture,
+        bind: Bind,
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs"}}
 
-        _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+        bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
         (logged,) = _logged(caplog, "Job retry policies")
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
 
     def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mocked_aws: None
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mocked_aws: None, bind: Bind
     ) -> None:
         with pytest.raises(ConfigError, match=r"queue 'jobs'.*NonExistentQueue"):
-            _bind(tmp_path, probe, None)
+            bind(tmp_path, probe, None)
 
     def test_an_error_that_is_not_the_sdks_propagates_unwrapped(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         client = FakeSqs(_POLICY, lookup_raises=TypeError("a bug"))
 
         with pytest.raises(TypeError, match="a bug"):
-            _bind(tmp_path, probe, client)
+            bind(tmp_path, probe, client)
 
     def test_a_fake_sdk_error_at_init_fails_naming_the_queue_through_the_fake_island(
         self,
         tmp_path: Path,
         probe: tuple[type[Job[None]], Probe],
         monkeypatch: pytest.MonkeyPatch,
+        bind: Bind,
     ) -> None:
         def refuse(client: MagicMock) -> None:
             client.get_queue_attributes.side_effect = FakeSdkError("throttled")
@@ -169,10 +172,14 @@ class TestConsumedQueue:
         fake_aws_island(monkeypatch, setup=refuse)
 
         with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
-            _bind(tmp_path, probe, None)
+            bind(tmp_path, probe, None)
 
     def test_the_policy_is_read_at_start_up_with_the_retrying_client_only(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        bind: Bind,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
 
@@ -180,9 +187,8 @@ class TestConsumedQueue:
             return bounded if config.max_attempts == 1 else retrying
 
         jobs = {probe[0].__name__: {"queue": "jobs"}}
-        with pytest.MonkeyPatch.context() as patch:
-            fake_aws_island(patch, serving=client_for)
-            _bind(tmp_path, probe, None, jobs=jobs)
+        fake_aws_island(monkeypatch, serving=client_for)
+        bind(tmp_path, probe, None, jobs=jobs)
 
         assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
 
@@ -206,7 +212,7 @@ class TestConsumedQueue:
         ids=["bad-json", "no-target", "bad-target", "bad-count", "target-not-text", "zero-count"],
     )
     def test_a_redrive_policy_loom_cannot_read_fails_start_up_naming_the_queue(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], policy: str
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], policy: str, bind: Bind
     ) -> None:
         client = FakeSqs()
         client.get_queue_attributes = lambda **_: {  # type: ignore[method-assign]
@@ -214,10 +220,10 @@ class TestConsumedQueue:
         }
 
         with pytest.raises(SQSQueueConfigError, match=r"queue 'jobs' has a RedrivePolicy"):
-            _bind(tmp_path, probe, client)
+            bind(tmp_path, probe, client)
 
     def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
-        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], bind: Bind
     ) -> None:
         with pytest.raises(ConfigError, match=r"sqs\.queues\.jobs is missing"):
-            _bind(tmp_path, probe, FakeSqs(), unmapped=True)
+            bind(tmp_path, probe, FakeSqs(), unmapped=True)

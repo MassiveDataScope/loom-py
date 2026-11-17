@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 from tests.helpers.aws import REGION, moto_client
 from tests.helpers.extras import fake_aws_island
+from tests.helpers.sqs import ACCOUNT
 
 pytest_plugins = ["tests.helpers.delegation"]
 
@@ -43,25 +45,47 @@ def clear_builtin_resolvers() -> Iterator[None]:
     _clear_builtin_resolvers()
 
 
-AWS_ACCOUNT = "123456789012"
-AWS_REGION = REGION
+@pytest.fixture(scope="session")
+def _absent_aws_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("aws") / "absent"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_aws(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _absent_aws_file: Path
+) -> None:
+    """Keep the host's AWS setup out of a test, so no client reaches a real endpoint.
+
+    Fake keys and absent config and credentials files leave nothing for the credential
+    chain to find, the metadata service is off and configured endpoint URLs are ignored,
+    which are botocore's own switches. A test that needs an endpoint passes it explicitly.
+    A ``live`` test keeps the environment it was given: it is the one that asks for AWS.
+    """
+    if request.node.get_closest_marker("live"):
+        return
+    for name in tuple(os.environ):
+        if name == "AWS_PROFILE" or name.startswith("AWS_ENDPOINT_URL"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(_absent_aws_file))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_absent_aws_file))
+    monkeypatch.setenv("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
 
 
 @pytest.fixture
 def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Serve every AWS service from moto, with fake credentials in ``AWS_REGION``."""
-    for name in ("AWS_PROFILE", "AWS_ENDPOINT_URL", "AWS_REGION"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
-    monkeypatch.setenv("AWS_DEFAULT_REGION", AWS_REGION)
-    monkeypatch.setenv("MOTO_ACCOUNT_ID", AWS_ACCOUNT)
+    """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``."""
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", ACCOUNT)
     with mock_aws():
         yield
 
 
 @pytest.fixture
-def no_aws(monkeypatch: pytest.MonkeyPatch) -> None:
+def no_aws_clients(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hand every AWS client loom builds out as a mock: nothing reaches AWS or moto."""
     fake_aws_island(monkeypatch)
 
