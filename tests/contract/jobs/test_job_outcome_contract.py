@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
+
+import pytest
 
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection, JobRetry
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
-from tests.contract.jobs.conftest import Driver, Settlement
+from tests.contract.jobs.conftest import Driver, InlineDriver, Settlement
 
 STEADY = Backoff(first_s=4, factor=2, max_s=100, jitter=False)
 
@@ -114,3 +116,57 @@ class TestJobOutcomeContract:
         RecordingJob.seen.clear()
         await driver.deliver(RecordingJob, attempt=2, deferrals=3)
         assert RecordingJob.seen == [(2, 3)]
+
+
+class SeenRetryingJob(Job[None]):
+    __retry__ = STEADY
+    seen: ClassVar[list[tuple[int, int]]] = []
+
+    async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
+        assert delivery is not None
+        self.seen.append((delivery.attempt, delivery.deferrals))
+        raise JobRetry("tenant warming up", 30)
+
+
+class SeenFailingJob(Job[None]):
+    __retry__ = STEADY
+    seen: ClassVar[list[tuple[int, int]]] = []
+
+    async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
+        assert delivery is not None
+        self.seen.append((delivery.attempt, delivery.deferrals))
+        raise AcmeError("boom")
+
+
+class TestInlineFollowUp:
+    async def test_a_deferral_runs_again_on_the_timer_with_one_more_deferral(
+        self, inline_driver: InlineDriver
+    ) -> None:
+        SeenRetryingJob.seen.clear()
+        await inline_driver.deliver(SeenRetryingJob)
+        await inline_driver.timer.advance(29)
+        assert SeenRetryingJob.seen == [(1, 0)]
+
+        await inline_driver.timer.advance(1)
+
+        assert SeenRetryingJob.seen == [(1, 0), (1, 1)]
+
+    async def test_a_failure_with_attempts_left_runs_again_as_the_next_attempt(
+        self, inline_driver: InlineDriver
+    ) -> None:
+        SeenFailingJob.seen.clear()
+        await inline_driver.deliver(SeenFailingJob)
+        await inline_driver.timer.advance(3)
+        assert SeenFailingJob.seen == [(1, 0)]
+
+        await inline_driver.timer.advance(1)
+
+        assert SeenFailingJob.seen == [(1, 0), (2, 0)]
+
+    @pytest.mark.parametrize("job", [SucceedingJob, RejectingJob, UnretryableJob])
+    async def test_a_settled_job_leaves_nothing_on_the_timer(
+        self, inline_driver: InlineDriver, job: type[Job[Any]]
+    ) -> None:
+        await inline_driver.deliver(job)
+
+        assert inline_driver.timer.pending == 0

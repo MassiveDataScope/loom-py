@@ -170,6 +170,16 @@ entirely — the job runs in the API process via the same DI container.
 
 Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
 
+### Delays inline
+
+`InlineJobService` honours `countdown`, `JobRetry` and failure backoff: a
+delayed job waits in the memory of the process on a `JobTimer` and runs again
+with its attempt and deferrals carried. Exhausted attempts reject the job and
+call `on_failure`. A job delayed this way is lost when the process stops (the
+timer logs how many in one line at shutdown), so the service logs a warning at
+start-up: use Celery or SQS in production. A Lambda function composes no
+timer: its inline service refuses any delay above zero with `JobDelayRefused`.
+
 ---
 
 ## Callbacks

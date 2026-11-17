@@ -12,7 +12,7 @@ from loom.core.job.context import clear_pending_dispatches, flush_pending_dispat
 from loom.core.job.policy import Countdown
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
-from loom.testing.jobs import RecordingJobService
+from loom.testing.jobs import ManualTimer, RecordingJobService
 from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
 
 pytestmark = pytest.mark.timeout(10)
@@ -25,7 +25,7 @@ def service(request: pytest.FixtureRequest) -> Iterator[JobService]:
         case "inline":
             executor = MagicMock()
             executor.run = AsyncMock(return_value="ran")
-            built = InlineJobService(MagicMock(), executor)
+            built = InlineJobService(MagicMock(), executor, timer=ManualTimer())
         case "celery":
             built = CeleryJobService(MagicMock())
         case "sqs":

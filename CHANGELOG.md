@@ -29,8 +29,7 @@
 - **jobs:** `countdown` is bounded to 0 to 900 s on every backend. A countdown
   outside that bound, including negatives, raises `ValueError` on SQS, Celery,
   inline and `dispatch_now`, not `SQSDispatchError`. `SQSErrorCode.DELAY_TOO_LONG`
-  is removed. Inline validates the bound but still runs without delay until
-  the job timer lands.
+  is removed.
 - **jobs:** each `sqs.queues.<name>` is a mapping `{url, dead_letter}`, not a
   URL string; a string entry, or a `sqs.queues` that is no mapping, is refused
   at load, naming the mapping. `dead_letter` is `redrive` (default) or
@@ -1047,6 +1046,11 @@
 
 ### testing
 
+- **testing:** `ManualTimer` replaces the timer of the inline job service:
+  `Override.instance(JobTimer, ManualTimer())`. A dispatch with a countdown,
+  a `JobRetry` or a failure backoff waits until `await timer.advance(seconds)`
+  moves the clock past it, then runs, in order, with the steps it schedules.
+  Nothing sleeps.
 - **testing:** `loom.testing.Override.repository(Model, double)` and
   `Override.instance(Key, value)`; `HttpTestHarness(overrides=[...])` and
   `LambdaTestClient(..., overrides=[...])` compose once, and
@@ -1731,6 +1735,18 @@
 
 ### jobs
 
+- **jobs:** the inline job service honours `countdown`, `JobRetry` and failure
+  backoff, which it used to ignore: a delayed job waits on a `JobTimer`
+  (`AsyncioTimer` in an application, closed with it, which cancels the jobs
+  still waiting and logs how many in one line) and runs again with its
+  attempt and deferrals carried; exhausted attempts reject the job and call
+  `on_failure`. A zero countdown still runs at once. Starting the inline
+  service logs a warning: delayed jobs live in process memory and are lost
+  when it stops, so production uses Celery or SQS. A Lambda function composes
+  no timer: its inline service raises `JobDelayRefused` for a countdown above
+  zero, and fails a job that raises `JobRetry` or fails with attempts left,
+  naming the delay. **Migration:** a job that relied on inline ignoring a
+  retry now runs more than once.
 - **jobs:** an inline `JobHandle.wait()` on a failed job raises
   `JobFailedError` carrying the job's exception as `cause`, as on Celery;
   it used to raise `IndexError`. Waiting before the dispatch has run raises

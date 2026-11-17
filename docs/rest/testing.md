@@ -247,6 +247,28 @@ copied at dispatch. `run()` executes a job in process. It also works without
 configuration, as `RecordingJobService()`; it then records dispatches made
 outside an execution on `flush_pending_dispatches()` and cannot `run()`.
 
+### Delayed inline jobs
+
+The inline job service waits on a `JobTimer`. A test replaces it with a
+`ManualTimer`, which never sleeps and runs a step only when the test moves its
+clock:
+
+```python
+from loom.core.job.timer import JobTimer
+from loom.testing import ManualTimer, Override
+
+timer = ManualTimer()
+harness = HttpTestHarness(overrides=[Override.instance(JobTimer, timer)])
+
+# a dispatch with countdown=60, a JobRetry or a failure backoff now waits
+await timer.advance(59)  # nothing runs
+await timer.advance(1)  # the job runs, then any step it scheduled within the move
+```
+
+`advance(seconds)` runs, in order of time, every step whose time has come,
+including the steps those steps schedule inside the move; `pending` counts
+the steps still waiting.
+
 ### Beyond the process
 
 `sam local invoke` runs the built function in the Lambda container, for what

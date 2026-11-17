@@ -22,10 +22,12 @@ from loom.core.job.job import Job
 from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
+from loom.core.job.service import InlineJobService
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
+from loom.testing.jobs import ManualTimer
 
 BACKENDS = ["inline", "envelope"]
 
@@ -57,37 +59,9 @@ class _Kernel:
         self.factory = UseCaseFactory(container)
         self.executor = RuntimeExecutor(UseCaseCompiler())
 
-    def invoke_directly(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        async def invoke(delivery: JobDelivery) -> Any:
-            envelope = delivery.envelope
-            return await self.executor.run(
-                delivery.job_type,
-                factory=self.factory,
-                params=envelope.params,
-                payload=envelope.payload,
-                delivery=delivery,
-            )
-
-        return invoke
-
-    def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
-
-
-class RunnerDriver:
-    """Delivers through a :class:`JobRunner` over one way of invoking the job."""
-
-    def __init__(
-        self, invocation: Callable[[JobDelivery], Awaitable[Any]], kernel: _Kernel
-    ) -> None:
-        self._runner = JobRunner(invocation)
-        self._kernel = kernel
-
-    async def deliver(
-        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
-    ) -> Settlement:
-        self._kernel.factory.register(job_type)
-        delivery = JobDelivery(
+    def delivery(self, job_type: type[Job[Any]], *, attempt: int, deferrals: int) -> JobDelivery:
+        self.factory.register(job_type)
+        return JobDelivery(
             job_type=job_type,
             envelope=JobEnvelope(job=job_type.__qualname__),
             task_id="task-1",
@@ -95,7 +69,38 @@ class RunnerDriver:
             deferrals=deferrals,
             policy=JobSettings().of(job_type).retry.policy,
         )
+
+    def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
+        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
+
+
+class RunnerDriver:
+    """Delivers through a :class:`JobRunner` over the envelope invocation of the transports."""
+
+    def __init__(self, kernel: _Kernel) -> None:
+        self._runner = JobRunner(kernel.invoke_envelope())
+        self._kernel = kernel
+
+    async def deliver(
+        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
+    ) -> Settlement:
+        delivery = self._kernel.delivery(job_type, attempt=attempt, deferrals=deferrals)
         return _settlement(await self._runner.run(delivery))
+
+
+class InlineDriver:
+    """Delivers through the real :class:`InlineJobService`, its follow-ups on a manual timer."""
+
+    def __init__(self, kernel: _Kernel) -> None:
+        self.timer = ManualTimer()
+        self._service = InlineJobService(kernel.factory, kernel.executor, timer=self.timer)
+        self._kernel = kernel
+
+    async def deliver(
+        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
+    ) -> Settlement:
+        delivery = self._kernel.delivery(job_type, attempt=attempt, deferrals=deferrals)
+        return _settlement(await self._service.deliver(delivery))
 
 
 def _settlement(outcome: JobOutcome) -> Settlement:
@@ -110,8 +115,13 @@ def _settlement(outcome: JobOutcome) -> Settlement:
             return Settlement("failed", delay.seconds, type(error).__qualname__)
 
 
+@pytest.fixture
+def inline_driver() -> InlineDriver:
+    return InlineDriver(_Kernel())
+
+
 @pytest.fixture(params=BACKENDS)
 def driver(request: pytest.FixtureRequest) -> Driver:
-    kernel = _Kernel()
-    invocations = {"inline": kernel.invoke_directly, "envelope": kernel.invoke_envelope}
-    return RunnerDriver(invocations[request.param](), kernel)
+    if request.param == "inline":
+        return request.getfixturevalue("inline_driver")  # type: ignore[no-any-return]
+    return RunnerDriver(_Kernel())
