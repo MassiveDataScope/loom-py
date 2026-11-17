@@ -13,7 +13,7 @@ import pytest
 
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
@@ -75,7 +75,7 @@ class TestDynamoExecutorParallelism:
 
 
 def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> StoreWiring:
-    monkeypatch.setattr(AwsClientConfig, "build_client", lambda _self, _service: client)
+    monkeypatch.setattr(AwsClients, "client", lambda _self, _service, _config=None: client)
     ctx = ConfigContext.from_dict(
         {
             "stores": {

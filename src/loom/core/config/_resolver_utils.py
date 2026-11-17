@@ -12,7 +12,7 @@ from typing import Any, cast
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClientConfig, AwsClients
 from loom.core.plugins.optional import MissingExtraError
 
 _CLIENT = ("client",)
@@ -56,7 +56,7 @@ def build_resolver_client(service: str, region: str | None, *, resolver: str, ro
     ctx = ConfigContext.from_dict({ConfigKey.AWS: written})
     config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, **overrides)
     try:
-        return config.build_client(service)
+        return AwsClients(config).client(service)
     except MissingExtraError as exc:
         raise ConfigError(
             f"boto3 is required for {resolver}. Install it with: pip install loom-kernel[aws]"

@@ -22,6 +22,7 @@ from loom.composition import (
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.connections.aws import AwsClients
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -33,6 +34,7 @@ from loom.core.use_case.use_case import UseCase
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.composition import composition_project
+from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -246,3 +248,38 @@ class TestServices:
             assert closed == []
 
         assert closed
+
+
+class TestForkSafety:
+    @pytest.fixture
+    def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+        return fake_aws_island(monkeypatch)
+
+    async def test_the_parent_check_builds_no_aws_client_and_calls_none(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        stores = {
+            "stores": {"default": {"backend": "dynamodb", "region": "eu-west-1", "table": "t"}}
+        }
+        application = _application(tmp_path, stores, CeleryAdapter(jobs=[_PingJob]))
+        clients = application.kernel.container.resolve(AwsClients)
+        composed = clients.open_clients
+
+        await application.check()
+
+        assert clients.open_clients == composed
+        assert len(island.built) == composed
+        for client in island.created:
+            assert client.method_calls == []
+
+    async def test_a_worker_without_aws_holds_no_client_across_check_and_close(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = _application(tmp_path, {}, CeleryAdapter(jobs=[_PingJob]))
+        clients = application.kernel.container.resolve(AwsClients)
+
+        await application.check()
+        async with application.running(check=False):
+            pass
+
+        assert (clients.open_clients, island.built) == (0, [])

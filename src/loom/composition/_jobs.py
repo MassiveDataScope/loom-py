@@ -13,6 +13,7 @@ from loom.composition.errors import JobBackendError
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.connections.aws import AwsClients
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
@@ -37,10 +38,12 @@ class JobBackendContext:
     ``jobs`` are the discovered jobs this backend serves: those on
     ``celery.queues`` go to Celery instead. ``callbacks`` holds the discovered
     job callbacks a dispatch may name. ``settings`` hold each job's
-    queue, retries, countdown, timeout and priority in this application.
+    queue, retries, countdown, timeout and priority in this application. ``aws``
+    holds the application's AWS clients, closed with it.
     """
 
     config: ConfigContext
+    aws: AwsClients
     factory: UseCaseFactory
     executor: RuntimeExecutor
     metrics: MetricsAdapter | None
@@ -184,6 +187,7 @@ def configure_job_service(
     jobs: tuple[type[Job[Any]], ...] = (),
     callbacks: tuple[type[JobCallback], ...] = (),
     settings: JobSettings,
+    aws: AwsClients,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -204,6 +208,7 @@ def configure_job_service(
         jobs: The discovered jobs.
         callbacks: The discovered job callbacks.
         settings: Each job's settings in this application.
+        aws: The application's AWS clients, which the SQS backend takes its client from.
 
     Returns:
         One resource per built backend that owns something to close.
@@ -218,6 +223,7 @@ def configure_job_service(
         return ()
     context = JobBackendContext(
         config=ctx,
+        aws=aws,
         factory=result.factory,
         executor=result.executor,
         metrics=result.metrics,

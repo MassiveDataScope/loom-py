@@ -11,6 +11,7 @@ island was imported. Both helpers therefore evict the island as well: the next
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -67,12 +68,12 @@ class AwsClientFactory:
         self.calls: list[tuple[str, str | None]] = []
         self.options: list[dict[str, Any]] = []
 
-    def session(self, *, profile_name: str | None = None, region_name: str | None = None) -> Any:
+    def session(self, *, profile_name: str | None = None) -> Any:
         factory = self
 
         class _Session:
             def client(self, service: str, **options: Any) -> Any:
-                factory.calls.append((service, region_name))
+                factory.calls.append((service, options.get("region_name")))
                 factory.options.append(options)
                 return factory.client
 
@@ -95,3 +96,40 @@ def patched_aws_clients(client: Any = None) -> Iterator[AwsClientFactory]:
     factory = AwsClientFactory(client if client is not None else MagicMock())
     with patch("boto3.Session", side_effect=factory.session):
         yield factory
+
+
+class FakeAwsIsland:
+    """Stands in for the AWS island behind :class:`AwsClients`: a new mock client per build.
+
+    Args:
+        build_seconds: How long each build takes, to widen a race between threads.
+
+    Attributes:
+        sessions: The profile of every session opened.
+        built: The service and settings of every client built, in order.
+        created: Every client built, in order.
+    """
+
+    def __init__(self, build_seconds: float = 0.0) -> None:
+        self._build_seconds = build_seconds
+        self.sessions: list[str | None] = []
+        self.built: list[tuple[str, Any]] = []
+        self.created: list[MagicMock] = []
+
+    def open_session(self, profile: str | None) -> object:
+        self.sessions.append(profile)
+        return object()
+
+    def build_aws_client(self, session: object, service: str, config: Any) -> MagicMock:
+        time.sleep(self._build_seconds)
+        self.built.append((service, config))
+        client = MagicMock(name=f"{service}-client")
+        self.created.append(client)
+        return client
+
+
+def fake_aws_island(monkeypatch: pytest.MonkeyPatch, build_seconds: float = 0.0) -> FakeAwsIsland:
+    """Make :class:`AwsClients` build its clients through a :class:`FakeAwsIsland`."""
+    island = FakeAwsIsland(build_seconds)
+    monkeypatch.setattr("loom.core.connections.aws.clients.aws_island", lambda: island)
+    return island

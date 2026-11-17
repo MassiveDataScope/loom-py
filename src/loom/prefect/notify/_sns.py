@@ -9,7 +9,7 @@ from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[impor
 
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClientConfig, AwsClients
 from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify
@@ -47,7 +47,7 @@ class SnsNotifier:
             region = topic_arn.split(":")[3]
             ctx = ConfigContext.from_dict({ConfigKey.AWS: aws})
             config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, region=region)
-            client = config.build_client("sns")
+            client = AwsClients(config).client("sns")
         self._client = client
 
     def notify(self, event: NotifyEvent) -> None:

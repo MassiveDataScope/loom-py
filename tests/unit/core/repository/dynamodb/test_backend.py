@@ -8,17 +8,18 @@ import pytest
 
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClientConfig, AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
+from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.helpers.persistence import build_backend
 
 from .conftest import FakeClient
 
 
 def _wiring(monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, table: str) -> StoreWiring:
-    monkeypatch.setattr(AwsClientConfig, "build_client", lambda _self, _service: fake_client)
+    monkeypatch.setattr(AwsClients, "client", lambda _self, _service, _config=None: fake_client)
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
@@ -60,3 +61,46 @@ class TestDynamoReadiness:
 
         assert "readiness" in caplog.text
         assert "missing" in caplog.text
+
+
+class TestDynamoClientsPerStore:
+    @pytest.fixture
+    def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+        return fake_aws_island(monkeypatch)
+
+    @staticmethod
+    def _build_stores(aws: AwsClients, stores: dict[str, dict[str, str]]) -> None:
+        ctx = ConfigContext.from_dict(
+            {
+                "app": {"name": "demo"},
+                "stores": {
+                    name: {"backend": "dynamodb", "table": "t", **settings}
+                    for name, settings in stores.items()
+                },
+            }
+        )
+        for name in stores:
+            build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE, store=name, aws=aws)
+
+    def test_stores_with_different_settings_get_different_clients(
+        self, island: FakeAwsIsland
+    ) -> None:
+        aws = AwsClients(AwsClientConfig())
+
+        self._build_stores(
+            aws,
+            {"orders": {"region": "eu-west-1"}, "audit": {"region": "us-east-1"}},
+        )
+
+        assert [config.region for _service, config in island.built] == ["eu-west-1", "us-east-1"]
+        assert aws.open_clients == 2
+
+    def test_stores_with_the_same_settings_share_one_client(self, island: FakeAwsIsland) -> None:
+        aws = AwsClients(AwsClientConfig())
+
+        self._build_stores(
+            aws,
+            {"orders": {"region": "eu-west-1"}, "audit": {"region": "eu-west-1", "table": "u"}},
+        )
+
+        assert len(island.built) == 1

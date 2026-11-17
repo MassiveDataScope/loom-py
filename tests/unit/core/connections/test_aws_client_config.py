@@ -1,4 +1,4 @@
-"""``AwsClientConfig.from_config`` and ``build_client``, the one way to an AWS client."""
+"""``AwsClientConfig.from_config`` and ``client_key``, what decides which AWS client is built."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.aws import AwsClientConfig
-from loom.core.plugins.optional import MissingExtraError
-from tests.helpers.extras import patched_aws_clients, without_boto3
+from loom.core.connections.aws import AwsClientConfig, AwsPool
+from loom.core.model.redaction import Dsn
 
 _AWS = {"region": "eu-west-3", "url": "http://localhost:4566", "read_timeout": 9}
 
@@ -61,22 +60,28 @@ class TestAwsClientConfigFromConfig:
         assert (type(config), config.table) == (Product, "orders")
 
 
-class TestAwsClientConfigBuildClient:
-    @pytest.mark.parametrize("service", ["dynamodb", "sqs", "s3"])
-    def test_the_client_is_built_for_the_boto3_service_in_the_region_of_the_settings(
-        self, service: str
+class TestAwsClientConfigClientKey:
+    def test_a_subclass_with_the_same_client_settings_has_the_same_key(self) -> None:
+        class Product(AwsClientConfig, frozen=True, kw_only=True):
+            table: str = "t"
+
+        assert Product(table="a").client_key() == Product(table="b").client_key()
+        assert Product().client_key() == AwsClientConfig().client_key()
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            AwsClientConfig(region="eu-west-1"),
+            AwsClientConfig(url=Dsn("http://localhost:4566")),
+            AwsClientConfig(profile="dev"),
+            AwsClientConfig(pool=AwsPool(size=2)),
+            AwsClientConfig(connect_timeout=9),
+            AwsClientConfig(read_timeout=9),
+            AwsClientConfig(max_attempts=9),
+            AwsClientConfig(retry_mode="adaptive"),
+        ],
+    )
+    def test_every_setting_that_changes_the_client_changes_the_key(
+        self, other: AwsClientConfig
     ) -> None:
-        with patched_aws_clients() as clients:
-            AwsClientConfig(region="eu-west-1").build_client(service)
-
-        clients.assert_called_once_with(service, region_name="eu-west-1")
-
-    def test_a_missing_boto3_names_the_aws_extra(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        without_boto3(monkeypatch)
-
-        with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
-            AwsClientConfig().build_client("s3")
-
-    def test_options_the_settings_decide_are_refused(self) -> None:
-        with pytest.raises(ValueError, match="read_timeout"):
-            AwsClientConfig().build_client("dynamodb", read_timeout=60)
+        assert other.client_key() != AwsClientConfig().client_key()

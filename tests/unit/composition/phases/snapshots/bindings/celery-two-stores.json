@@ -20,6 +20,11 @@
       "resolved": "AppInvoker",
       "scope": "APPLICATION"
     },
+    "AwsClients": {
+      "provider": "register.<locals>.<lambda>",
+      "resolved": "AwsClients",
+      "scope": "APPLICATION"
+    },
     "CachedCalls": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "_UnconfiguredCalls",
