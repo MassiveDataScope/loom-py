@@ -255,8 +255,6 @@ class TestSingleProcessPools:
 
 
 class _PingJob(Job[int]):
-    __retries__ = 0
-
     def execute(self) -> int:
         return 1
 

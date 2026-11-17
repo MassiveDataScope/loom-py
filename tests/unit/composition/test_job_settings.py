@@ -120,3 +120,29 @@ class TestJobSettings:
 
         with pytest.raises(ConfigError, match="_ReportJob"):
             project.compose(adapter)
+
+    def test_start_up_logs_one_line_with_each_jobs_effective_retry_policy(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        project = job_project(
+            tmp_path, {"jobs": {"_ReportJob": {"retry": {"max_attempts": 5}}}}, "inline"
+        )
+
+        with caplog.at_level("INFO"):
+            project.compose(JobsAdapter(_ReportJob))
+
+        lines = [
+            record.getMessage() for record in caplog.records if "retry policies" in str(record.msg)
+        ]
+        assert len(lines) == 1
+        assert "_ReportJob" in lines[0]
+        assert "jobs.<Job>.retry" in lines[0]
+        assert "'max_attempts': 5" in lines[0]
+
+    def test_a_retry_that_breaks_the_backoff_fails_the_composition(self, tmp_path: Path) -> None:
+        project = job_project(
+            tmp_path, {"jobs": {"_ReportJob": {"retry": {"max_s": 1000}}}}, "inline"
+        )
+
+        with pytest.raises(ConfigError, match=r"_ReportJob\.retry"):
+            project.compose(JobsAdapter(_ReportJob))

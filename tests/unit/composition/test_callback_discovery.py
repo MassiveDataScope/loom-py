@@ -26,8 +26,6 @@ _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
 
 
 class _AcmeJob(Job[int]):
-    __retries__ = 0
-
     def execute(self) -> int:
         return 1
 

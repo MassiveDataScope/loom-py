@@ -24,7 +24,6 @@ from loom.core.tracing import reset_trace_id, set_trace_id
 
 class _EmailJob(Job[None]):
     __queue__ = "email"
-    __retries__ = 2
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -36,7 +35,6 @@ class _EmailJob(Job[None]):
 
 class _HeavyJob(Job[int]):
     __queue__ = "heavy"
-    __retries__ = 0
     __countdown__ = 10
     __timeout__ = 300
     __priority__ = 5

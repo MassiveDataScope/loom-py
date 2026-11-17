@@ -55,7 +55,7 @@ class SendRestockEmailJob(Job[bool]):
     """Send a restock notification email. Returns True when email was sent."""
 
     __queue__ = "notifications"
-    __retries__ = 2
+    __retry__ = Backoff(first_s=10, factor=3, max_s=600)
     __timeout__ = 30  # soft time limit in seconds
 
     async def execute(
@@ -75,7 +75,7 @@ class SendRestockEmailJob(Job[bool]):
 | ClassVar | Type | Default | Description |
 |----------|------|---------|-------------|
 | `__queue__` | `str` | `"default"` | Target Celery queue |
-| `__retries__` | `int` | `3` | Max automatic retries on failure |
+| `__retry__` | `Backoff \| None` | `None` | Delay between attempts; `None` takes the loom default `Backoff(5, 2, 300)` |
 | `__countdown__` | `int` | `0` | Delay in seconds before first execution |
 | `__timeout__` | `int \| None` | `None` | Soft time limit in seconds |
 | `__priority__` | `int` | `0` | Task priority (broker-dependent) |
@@ -327,16 +327,16 @@ In `config/worker.yaml`:
 jobs:
   SendRestockEmailJob:
     queue: notifications
-    retries: 2
+    retry: {max_attempts: 4}
     timeout: 30
 
   BuildProductSummaryJob:
     queue: analytics
-    retries: 1
+    retry: {first_s: 1, max_attempts: 2}
 
   SyncProductToErpJob:
     queue: erp
-    retries: 3
+    retry: {factor: 1.5, jitter: false}
     countdown: 5
     priority: 5
 ```
@@ -344,10 +344,35 @@ jobs:
 | Field | Job ClassVar | Description |
 |-------|-------------|-------------|
 | `queue` | `__queue__` | Target Celery queue |
-| `retries` | `__retries__` | Max automatic retries |
+| `retry` | `__retry__` | Retry policy, see below |
 | `countdown` | `__countdown__` | Delay in seconds before execution |
 | `timeout` | `__timeout__` | Soft time limit in seconds |
 | `priority` | `__priority__` | Task priority |
+
+### Retry policy
+
+A job is attempted at most `max_attempts` times (3 by default). After a failed
+attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
+seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
+uniformly from zero to that value. A job may raise `JobRetry(reason, delay_s=None)`
+to run again later without using an attempt, or `JobRejection(reason)` to give up at
+once; an error whose `retryable` is `False` is rejected at its first attempt.
+
+The most specific layer wins, and a section that sets only some fields inherits the
+rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
+job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
+A job reads the delivery it runs under with `JobDelivery.current()` (its `attempt`
+and `deferrals`).
+
+```yaml
+jobs:
+  defaults:
+    retry: {max_attempts: 5}
+  SyncProductToErpJob:
+    retry: {first_s: 30}
+```
+
+Start-up logs one line with each job's effective policy and the layer it came from.
 
 ---
 

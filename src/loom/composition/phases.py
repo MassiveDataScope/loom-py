@@ -281,6 +281,8 @@ def register(
             metrics=recipe.metrics,
             coordinator=coordinator,
         ).install(container)
+    if stores.job_settings.jobs:
+        logger.info("Job retry policies", jobs=stores.job_settings.describe_retries())
     job_resources = configure_job_service(
         ctx,
         kernel,

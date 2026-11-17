@@ -13,7 +13,7 @@ from loom.celery.config import (
     create_celery_app,
 )
 from loom.core.config.convert import convert_config
-from loom.core.job.config import JobConfig
+from loom.core.job.config import JobConfig, RetryConfig
 from loom.core.model.redaction import Dsn
 
 # ---------------------------------------------------------------------------
@@ -87,24 +87,24 @@ class TestCeleryRuntimeConfig:
 
 
 class TestJobConfig:
-    def test_all_fields_default_to_none(self) -> None:
+    def test_all_fields_default_to_unset(self) -> None:
         cfg = JobConfig()
         assert cfg.queue is None
-        assert cfg.retries is None
+        assert cfg.retry == RetryConfig()
         assert cfg.countdown is None
         assert cfg.timeout is None
         assert cfg.priority is None
 
     def test_partial_config(self) -> None:
-        cfg = JobConfig(queue="heavy", retries=5)
+        cfg = JobConfig(queue="heavy", retry=RetryConfig(max_attempts=5))
         assert cfg.queue == "heavy"
-        assert cfg.retries == 5
+        assert cfg.retry.max_attempts == 5
         assert cfg.timeout is None
 
     def test_msgspec_convert_partial(self) -> None:
         cfg = msgspec.convert({"queue": "prices"}, JobConfig, strict=False)
         assert cfg.queue == "prices"
-        assert cfg.retries is None
+        assert cfg.retry == RetryConfig()
 
 
 # ---------------------------------------------------------------------------

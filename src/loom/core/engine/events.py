@@ -20,8 +20,9 @@ class EventKind(StrEnum):
     JOB_DISPATCHED = "job_dispatched"
     JOB_STARTED = "job_started"
     JOB_SUCCEEDED = "job_succeeded"
-    JOB_RETRYING = "job_retrying"
-    JOB_EXHAUSTED = "job_exhausted"
+    JOB_DEFERRED = "job_deferred"
+    JOB_FAILED = "job_failed"
+    JOB_REJECTED = "job_rejected"
 
 
 class Status(StrEnum):
@@ -30,8 +31,8 @@ class Status(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     RULE_FAILURE = "rule_failure"
-    RETRYING = "retrying"
-    EXHAUSTED = "exhausted"
+    DEFERRED = "deferred"
+    REJECTED = "rejected"
 
 
 class Phase(StrEnum):

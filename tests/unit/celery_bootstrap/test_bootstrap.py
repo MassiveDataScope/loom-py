@@ -30,7 +30,6 @@ from loom.core.use_case.registry import UseCaseRegistry
 
 class _SyncJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -210,12 +209,12 @@ class TestBootstrapWorkerTaskRegistration:
         assert isinstance(result, WorkerBootstrapResult)
 
     def test_registers_each_task_with_the_applications_job_config(self, tmp_path: Any) -> None:
-        """The task's retries and time limit come from ``jobs:``; the ClassVars stay as declared."""
-        result = self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7, "timeout": 9}}})
+        """The task's time limit comes from ``jobs:``; the ClassVars stay as declared."""
+        result = self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"timeout": 9}}})
 
         task = result.celery_app.tasks[wire_job_name(_SyncJob.__qualname__)]
-        assert (task.max_retries, task.soft_time_limit) == (7, 9)
-        assert (_SyncJob.__retries__, _SyncJob.__timeout__) == (0, None)
+        assert task.soft_time_limit == 9
+        assert _SyncJob.__timeout__ is None
 
     def test_pure_job_bootstrap_without_database_section(self, tmp_path: Any) -> None:
         """Database config is optional for jobs that do not access repositories."""
