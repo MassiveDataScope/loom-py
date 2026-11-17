@@ -10,7 +10,6 @@ Needs the ``testing-aws`` extra (moto). Usage::
 
 from __future__ import annotations
 
-import re
 import uuid
 from collections.abc import Sequence
 from types import TracebackType
@@ -24,7 +23,7 @@ from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
 from loom.core.plugins.optional import import_optional
-from loom.jobs.aws.queue import DeadLetterPolicy, OutgoingMessage, SqsQueue
+from loom.jobs.aws.queue import DeadLetterPolicy, OutgoingMessage, QueueConfig, SqsQueue
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.functions import JobsTrigger, served_trigger
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
@@ -64,9 +63,11 @@ class LambdaWorker:
 
     Raises:
         MissingExtraError: When moto is not installed, naming the ``testing-aws`` extra.
-        ConfigError: When *function* is no jobs function, its queue is not mapped, or moto
-            creates the queue at another URL than the configured one (another region,
-            account, host or scheme): the message names both and the way out.
+        ConfigError: When *function* is no jobs function, its queue is not mapped or its URL
+            is no AWS SQS one, the application's ``sqs`` client goes to an endpoint moto
+            does not answer (``aws.url``, ``AWS_ENDPOINT_URL``), or moto holds no queue
+            at the configured URL (another region or account): the message names what
+            differs and the way out. Nothing is sent to an endpoint other than moto.
     """
 
     def __init__(
@@ -86,26 +87,42 @@ class LambdaWorker:
         entry = sqs_config.queues.get(trigger.queue.name)
         if entry is None:
             raise ConfigError(f"sqs.queues.{trigger.queue.name} is missing")
+        self._queue = SqsQueue(None, trigger.queue.name, entry)
+        if self._queue.region is None:
+            raise ConfigError(
+                f"queue URL {entry.url} is not an AWS SQS URL "
+                "(https://sqs.<region>.amazonaws.com/<account>/<queue>): "
+                "use loom.testing.TEST_QUEUE or a URL of that shape"
+            )
+        self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
         self._closed = False
+        self._aws: AwsClients | None = None
         self._adapter = LambdaAdapter(function=function)
         self._mock = island.start()
         try:
             self.application: Application = project.compose(
                 OverrideAdapter(self._adapter, tuple(overrides))
             )
-            self.sqs = self.application.kernel.container.resolve(AwsClients).client(
-                "sqs", sqs_config
-            )
+            self._aws = self.application.kernel.container.resolve(AwsClients)
+            self.sqs = self._aws.client("sqs", sqs_config)
+            if not island.intercepts(self.sqs.meta.endpoint_url):
+                raise ConfigError(
+                    f"the application's sqs client goes to {self.sqs.meta.endpoint_url}, not to "
+                    "AWS, so moto would not answer it and LambdaWorker would send to that "
+                    "endpoint: remove aws.url and sqs.url from the configuration, "
+                    "AWS_ENDPOINT_URL and AWS_ENDPOINT_URL_SQS from the environment, and any "
+                    "endpoint_url of the AWS profile"
+                )
             self.queue_url, self.dead_letter_url = island.declare_queue(
                 self.sqs,
-                entry.url.rstrip("/").rsplit("/", 1)[-1],
+                self._queue.queue_name,
                 redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
                 max_receive_count=_MAX_RECEIVE_COUNT,
             )
-            if self.queue_url.rstrip("/") != entry.url.rstrip("/"):
-                raise ConfigError(self._made_another_queue(entry.url, self.queue_url))
-            self._queue = SqsQueue(self.sqs, trigger.queue.name, entry)
-            self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
+            if not island.holds(
+                self._queue.account_id, str(self._queue.region), self._queue.queue_name
+            ):
+                raise ConfigError(self._elsewhere(entry.url))
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
             )
@@ -197,7 +214,11 @@ class LambdaWorker:
         try:
             self._adapter.close()
         finally:
-            self._mock.stop()
+            try:
+                if self._aws is not None:
+                    self._aws.close()
+            finally:
+                self._mock.stop()
 
     def __enter__(self) -> LambdaWorker:
         return self
@@ -210,21 +231,20 @@ class LambdaWorker:
     ) -> None:
         self.close()
 
-    @staticmethod
-    def _made_another_queue(configured: str, made: str) -> str:
-        shape = re.compile(r"^(?P<scheme>[^:]+)://(?P<host>[^/]+)/(?P<account>[^/]+)/(?P<name>.+)$")
-        wanted, got = shape.match(configured), shape.match(made)
-        differs = (
-            [
-                f"{part} {wanted[part]!r} against moto's {got[part]!r}"
-                for part in ("scheme", "host", "account", "name")
-                if wanted[part] != got[part]
-            ]
-            if wanted and got
-            else []
-        )
+    def _elsewhere(self, configured: str) -> str:
+        """Why moto holds no queue at the configured URL, from the URL it made instead."""
+        made = SqsQueue(None, self._queue.name, QueueConfig(url=self.queue_url))
+        differs = [
+            f"{fact} {wanted!r} against {got!r}"
+            for fact, wanted, got in (
+                ("region", self._queue.region, made.region),
+                ("account", self._queue.account_id, made.account_id),
+            )
+            if wanted != got
+        ]
         return (
-            f"moto made the queue {made}, not the configured {configured}"
+            f"moto holds no queue {self._queue.queue_name!r} of account {self._queue.account_id} "
+            f"in {self._queue.region} for the configured {configured}: it made {self.queue_url}"
             + (f" ({'; '.join(differs)})" if differs else "")
             + ": set aws.region or AWS_DEFAULT_REGION to the URL's region, MOTO_ACCOUNT_ID to "
             "its account, or use loom.testing.TEST_QUEUE"

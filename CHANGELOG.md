@@ -109,8 +109,11 @@
   environment and creates the queue through the application's own `sqs` client:
   the region resolves as for the application (`aws.region`, a profile,
   `AWS_DEFAULT_REGION`) and moto's account is `MOTO_ACCOUNT_ID`, else
-  `123456789012`; when moto makes the queue at another URL than the configured
-  one, a `ConfigError` names both and the way out. `worker.deliver(job, payload)` sends the job with
+  `123456789012`; when moto holds no queue at the configured URL, a `ConfigError`
+  names the URL it made, what differs and the way out. When the `sqs` client
+  goes to another endpoint than AWS (`aws.url`, `AWS_ENDPOINT_URL*`, a profile
+  `endpoint_url`), construction is refused before any call, so a live
+  endpoint such as LocalStack is never touched. `worker.deliver(job, payload)` sends the job with
   the envelope and the queue placement `SQSJobService` uses, receives it (a real
   receipt handle and `ApproximateReceiveCount`) and invokes the function;
   `worker.redeliver()` does so for what the queue shows, up to the trigger's

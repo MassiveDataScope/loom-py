@@ -188,6 +188,7 @@ queued and a `jobs` event already is a record, so neither has `via_sqs`. Every S
 `group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
 should retry:
 
+The package `acme_mail` has an empty `src/acme_mail/__init__.py` and
 `src/acme_mail/jobs.py`:
 
 ```python
@@ -275,10 +276,14 @@ queue and, for `dead_letter: redrive`, its dead-letter queue with a real
 function over it. It sets no environment: botocore resolves the region as it
 does for the application (`aws.region`, a profile of `~/.aws/config`,
 `AWS_DEFAULT_REGION`), and moto's account is `MOTO_ACCOUNT_ID`, or
-`123456789012`. The queue must come out at the configured URL: when moto makes
-another one (another region, account, host or scheme), construction raises a
-`ConfigError` naming both URLs, what differs, and the way out. With no region at
-all, botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+`123456789012`. The queue must exist, in moto, at the configured URL: when moto holds none
+there (another region or account), construction raises a `ConfigError` naming
+the URL it made instead, what differs and the way out. A URL that is not an AWS
+SQS one is refused the same way. Nothing is ever sent to another endpoint: when
+the application's `sqs` client goes anywhere but AWS (`aws.url` or `sqs.url`,
+`AWS_ENDPOINT_URL` or `AWS_ENDPOINT_URL_SQS`, or an `endpoint_url` of the AWS
+profile), construction is refused before any call. With no region at all,
+botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
 entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
 built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
 `aws.region: us-east-1` in the configuration works as it is. A user's own

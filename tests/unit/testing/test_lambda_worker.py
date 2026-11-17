@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import importlib
+import json
 import os
+import socket
 import sys
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -16,12 +20,14 @@ import yaml
 from moto import mock_aws
 
 from loom.core.config import ConfigError
+from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.plugins.optional import MissingExtraError
+from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
-from loom.testing import TEST_QUEUE, LambdaWorker
+from loom.testing import TEST_QUEUE, LambdaWorker, Override
 
 _JOBS = """
 from loom.core.job.job import Job
@@ -64,7 +70,15 @@ Config = Callable[..., str]
 
 @pytest.fixture(autouse=True)
 def _no_ambient_aws(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for name in ("AWS_DEFAULT_REGION", "AWS_REGION", "MOTO_ACCOUNT_ID", "AWS_ACCESS_KEY_ID"):
+    for name in (
+        "AWS_DEFAULT_REGION",
+        "AWS_REGION",
+        "AWS_PROFILE",
+        "AWS_ENDPOINT_URL",
+        "AWS_ENDPOINT_URL_SQS",
+        "MOTO_ACCOUNT_ID",
+        "AWS_ACCESS_KEY_ID",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
@@ -87,6 +101,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
         job_service: str = "inline",
         function: dict[str, Any] | None = None,
         mapped: bool = True,
+        endpoint: str | None = None,
     ) -> str:
         queue: dict[str, Any] = {
             "name": "jobs",
@@ -104,8 +119,11 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
                 }
             },
         }
-        if region:
-            document["aws"] = {"region": region}
+        if region or endpoint:
+            document["aws"] = {
+                **({"region": region} if region else {}),
+                **({"url": endpoint} if endpoint else {}),
+            }
         path = tmp_path / "config.yaml"
         path.write_text(yaml.safe_dump(document))
         return str(path)
@@ -295,26 +313,54 @@ class TestWhereTheQueueLives:
             assert (w.queue_url, result) == (url, _NOTHING)
 
     @pytest.mark.parametrize(
-        ("url", "region", "differs"),
+        ("url", "region", "made", "differs"),
         [
-            ("https://sqs.us-east-1.amazonaws.com/111122223333/orders", "us-east-1", "account"),
-            ("http://localhost:4566/123456789012/orders", "us-east-1", "host"),
-            (TEST_QUEUE["url"], "eu-west-1", "host"),
+            (
+                "https://sqs.us-east-1.amazonaws.com/111122223333/orders",
+                "us-east-1",
+                "https://sqs.us-east-1.amazonaws.com/123456789012/orders",
+                "account '111122223333' against '123456789012'",
+            ),
+            (
+                TEST_QUEUE["url"],
+                "eu-west-1",
+                "https://sqs.eu-west-1.amazonaws.com/123456789012/loom-jobs",
+                "region 'us-east-1' against 'eu-west-1'",
+            ),
         ],
-        ids=["account", "host", "configured-region"],
+        ids=["account", "configured-region"],
     )
-    def test_a_queue_moto_would_make_elsewhere_is_refused_naming_both_urls_and_the_way_out(
-        self, config: Config, url: str, region: str, differs: str
+    def test_a_queue_moto_makes_elsewhere_is_refused_with_what_differs_and_the_way_out(
+        self, config: Config, url: str, region: str, made: str, differs: str
     ) -> None:
+        name = url.rsplit("/", 1)[-1]
+        account = url.rsplit("/", 2)[-2]
+        where = "us-east-1"
+        expected = (
+            f"moto holds no queue {name!r} of account {account} in {where} for the configured "
+            f"{url}: it made {made} ({differs}): set aws.region or AWS_DEFAULT_REGION to the "
+            "URL's region, MOTO_ACCOUNT_ID to its account, or use loom.testing.TEST_QUEUE"
+        )
+
         with pytest.raises(ConfigError) as refused:
             _open(config(url=url, region=region))
 
-        message = str(refused.value)
-        assert url in message
-        assert differs in message
-        assert "AWS_DEFAULT_REGION" in message
-        assert "MOTO_ACCOUNT_ID" in message
-        assert "TEST_QUEUE" in message
+        assert str(refused.value) == expected
+
+    @pytest.mark.parametrize("url", ["http://localhost:4566/123456789012/orders", "orders"])
+    def test_a_url_that_is_not_an_aws_sqs_one_is_refused_before_any_call(
+        self, config: Config, url: str
+    ) -> None:
+        expected = (
+            f"queue URL {url} is not an AWS SQS URL "
+            "(https://sqs.<region>.amazonaws.com/<account>/<queue>): "
+            "use loom.testing.TEST_QUEUE or a URL of that shape"
+        )
+
+        with pytest.raises(ConfigError) as refused:
+            _open(config(url=url))
+
+        assert str(refused.value) == expected
 
     def test_a_region_of_the_aws_profile_other_than_the_urls_is_refused(
         self, config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -323,7 +369,7 @@ class TestWhereTheQueueLives:
         profile.write_text("[default]\nregion = ap-south-1\n")
         monkeypatch.setenv("AWS_CONFIG_FILE", str(profile))
 
-        with pytest.raises(ConfigError, match="ap-south-1"):
+        with pytest.raises(ConfigError, match=r"region 'us-east-1' against 'ap-south-1'"):
             _open(config(region=None))
 
     def test_a_queue_the_function_names_but_the_configuration_does_not_map_is_refused(
@@ -345,6 +391,103 @@ class TestWhereTheQueueLives:
 
         with _open(config(job_service="sqs", region=None)) as worker:
             assert worker.deliver(_job("SendEmailJob"), params={"marker": "ok"}) == _NOTHING
+
+
+class _Endpoint(http.server.BaseHTTPRequestHandler):
+    requests: list[str] = []
+
+    def do_POST(self) -> None:
+        self.requests.append(self.path)
+        self.send_response(500)
+        self.end_headers()
+
+    do_GET = do_POST
+
+    def log_message(self, *_: Any) -> None:
+        return None
+
+
+_ENDPOINT_REFUSAL = (
+    "the application's sqs client goes to {endpoint}, not to AWS, so moto would not answer it "
+    "and LambdaWorker would send to that endpoint: remove aws.url and sqs.url from the "
+    "configuration, AWS_ENDPOINT_URL and AWS_ENDPOINT_URL_SQS from the environment, and any "
+    "endpoint_url of the AWS profile"
+)
+
+
+class TestNothingReachesAnotherEndpoint:
+    @pytest.fixture(autouse=True)
+    def _no_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(*_: Any, **__: Any) -> None:
+            raise AssertionError("a connection was attempted")
+
+        monkeypatch.setattr(socket.socket, "connect", refuse)
+
+    @pytest.mark.parametrize("source", ["aws.url", "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_SQS"])
+    def test_an_endpoint_override_is_refused_before_any_call(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        endpoint = "http://localhost:4566"
+        if source == "aws.url":
+            path = config(endpoint=endpoint)
+        else:
+            monkeypatch.setenv(source, endpoint)
+            path = config()
+
+        with pytest.raises(ConfigError) as refused:
+            _open(path)
+
+        assert str(refused.value) == _ENDPOINT_REFUSAL.format(endpoint=endpoint)
+
+    def test_a_live_endpoint_receives_nothing(self, config: Config) -> None:
+        _Endpoint.requests = []
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Endpoint)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        endpoint = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            thread.start()
+            with pytest.raises(ConfigError):
+                _open(config(endpoint=endpoint))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert _Endpoint.requests == []
+
+
+class TestApplication:
+    def test_the_sqs_client_is_the_applications_own(self, config: Config) -> None:
+        with _open(config()) as worker:
+            aws = worker.application.kernel.container.resolve(AwsClients)
+            sqs_config = SQSConfig.load(worker.application.config)
+
+            assert aws.client("sqs", sqs_config) is worker.sqs
+
+    def test_overrides_reach_the_application(self, config: Config) -> None:
+        marker = object()
+        key = type("Marker", (), {})
+
+        with LambdaWorker(
+            config(),
+            function="worker",
+            environment="test",
+            overrides=[Override.instance(key, marker)],
+        ) as worker:
+            assert worker.application.kernel.container.resolve(key) is marker
+
+    def test_the_dead_letter_policy_allows_three_receives(self, config: Config) -> None:
+        with _open(config("redrive")) as worker:
+            got = worker.sqs.get_queue_attributes(
+                QueueUrl=worker.queue_url, AttributeNames=["RedrivePolicy"]
+            )["Attributes"]["RedrivePolicy"]
+
+        assert json.loads(got)["maxReceiveCount"] == 3
+
+    def test_a_fifo_url_makes_a_fifo_queue(self, config: Config) -> None:
+        with _open(config(url=_FIFO_URL)) as worker:
+            got = worker.sqs.get_queue_attributes(QueueUrl=worker.queue_url, AttributeNames=["All"])
+
+        assert got["Attributes"]["FifoQueue"] == "true"
 
 
 class TestLifecycle:
@@ -405,6 +548,46 @@ class TestLifecycle:
             _open(config())
 
         assert (closed, "AWS_ACCESS_KEY_ID" in os.environ) == (["adapter"], False)
+
+    @pytest.mark.parametrize("failure", ["refusal", "bind"])
+    def test_a_failed_init_closes_the_applications_clients_once(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, failure: str
+    ) -> None:
+        closed: list[str] = []
+        original = AwsClients.close
+
+        def close(clients: AwsClients) -> None:
+            closed.append("clients")
+            original(clients)
+
+        def bind(*_: Any) -> None:
+            raise RuntimeError("bind failed")
+
+        monkeypatch.setattr(AwsClients, "close", close)
+        if failure == "bind":
+            monkeypatch.setattr(LambdaAdapter, "bind", bind)
+        path = config(region="eu-west-1") if failure == "refusal" else config()
+
+        with pytest.raises((ConfigError, RuntimeError)):
+            _open(path)
+
+        assert closed == ["clients"]
+
+    def test_the_mock_stops_even_when_closing_the_clients_raises(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        worker = _open(config())
+        original = AwsClients.close
+
+        def close_then_fail(clients: AwsClients) -> None:
+            original(clients)
+            raise RuntimeError("clients failed")
+
+        monkeypatch.setattr(AwsClients, "close", close_then_fail)
+        with pytest.raises(RuntimeError, match="clients failed"):
+            worker.close()
+
+        assert "AWS_ACCESS_KEY_ID" not in os.environ
 
     def test_the_mock_stops_even_when_closing_the_function_raises(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
