@@ -184,12 +184,11 @@ An EventBridge, S3, SNS or schedule event is a `QueueableEvent`: its
 `.via_sqs(message_id=, group_id=, queue_arn=)` is the one SQS record the queue
 in between delivers, `group_id` makes that queue FIFO, and an SNS message is
 queued as the SNS envelope the subscription stores. An HTTP request is never
-queued and a `jobs` event already is a record, so neither has `via_sqs`. Every SQS record also takes `message_id`,
-`group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
-should retry:
-
-The package `acme_mail` has an empty `src/acme_mail/__init__.py` and
-`src/acme_mail/jobs.py`:
+queued and a `jobs` event already is a record, so neither has `via_sqs`. Every
+SQS record also takes `message_id`, `group_id` and `queue_arn`. A handler fed SQS
+records returns the ones SQS should retry. The sample below tests a `jobs`
+function end to end. The package `acme_mail` has an empty
+`src/acme_mail/__init__.py` and `src/acme_mail/jobs.py`:
 
 ```python
 from loom.core.job.job import Job
@@ -210,6 +209,13 @@ class SendEmailJob(Job[None]):
     def execute(self, to: str) -> None:
         if smtp.down:
             raise ConnectionError("smtp is down")
+```
+
+For plain `pytest` to find the package, add to `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 ```
 
 `config.yaml`:
@@ -276,14 +282,16 @@ queue and, for `dead_letter: redrive`, its dead-letter queue with a real
 function over it. It sets no environment: botocore resolves the region as it
 does for the application (`aws.region`, a profile of `~/.aws/config`,
 `AWS_DEFAULT_REGION`), and moto's account is `MOTO_ACCOUNT_ID`, or
-`123456789012`. The queue must exist, in moto, at the configured URL: when moto holds none
-there (another region or account), construction raises a `ConfigError` naming
-the URL it made instead, what differs and the way out. A URL that is not an AWS
-SQS one is refused the same way. Nothing is ever sent to another endpoint: when
-the application's `sqs` client goes anywhere but AWS (`aws.url` or `sqs.url`,
-`AWS_ENDPOINT_URL` or `AWS_ENDPOINT_URL_SQS`, or an `endpoint_url` of the AWS
-profile), construction is refused before any call. With no region at all,
-botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+`123456789012`. The queue moto makes must be where the configuration says: when its region or
+account differs from the configured URL's, construction raises a `ConfigError`
+naming the URL it made, what differs and the way out. A URL that is not an AWS
+SQS one is refused the same way. Nothing is ever sent to the network: the
+application's `sqs` client carries a last `before-send` handler that refuses any
+request moto did not answer, so an endpoint override (`aws.url`, `sqs.url`,
+`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SQS`, a profile `endpoint_url`) or a
+dualstack endpoint fails with a `ConfigError` naming the endpoint; a FIPS
+endpoint gets moto's own 404. With no region at all, botocore's own
+`NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
 entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
 built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
 `aws.region: us-east-1` in the configuration works as it is. A user's own

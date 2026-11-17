@@ -91,6 +91,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
             "core/connections/aws/client.py",
             "stores/dynamodb/repository.py",  # error types
             "prefect/notify/_sns.py",  # error types
+            "testing/_moto.py",  # the response of a request nobody answered
         }
     ),
     "clickhouse_connect": frozenset(

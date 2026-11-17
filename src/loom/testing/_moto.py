@@ -5,13 +5,18 @@ The ``testing-aws`` extra brings moto and boto3 to it.
 
 from __future__ import annotations
 
+import io
 import json
+from collections.abc import Iterator
 from typing import Any
 
+from botocore.awsrequest import AWSResponse  # type: ignore[import-untyped]
 from moto import mock_aws
-from moto.sqs.models import sqs_backends
 
-__all__ = ["declare_queue", "holds", "start"]
+UNANSWERED = "LoomUnansweredRequest"
+"""The error code of :func:`unanswered`."""
+
+__all__ = ["UNANSWERED", "declare_queue", "start", "unanswered"]
 
 
 def start() -> Any:
@@ -60,6 +65,18 @@ def declare_queue(
     return url, dead_url
 
 
-def holds(account: str, region: str, name: str) -> bool:
-    """Whether the mock holds the SQS queue *name* of *account* in *region*."""
-    return name in sqs_backends[account][region].queues
+class _Body(io.BytesIO):
+    def stream(self, **_: Any) -> Iterator[bytes]:
+        yield self.getvalue()
+
+
+def unanswered(request: Any, message: str) -> Any:
+    """The response of a request nobody answered: a client error that carries *message*.
+
+    A handler of ``before-send`` returns it; botocore uses the first response any handler
+    gave, so it reaches the caller only when moto's own handler gave none.
+    """
+    body = json.dumps({"__type": UNANSWERED, "message": message}).encode()
+    return AWSResponse(
+        request.url, 400, {"Content-Type": "application/x-amz-json-1.0"}, _Body(body)
+    )

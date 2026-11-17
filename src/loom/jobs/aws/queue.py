@@ -62,6 +62,22 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
         """Whether the URL names a FIFO queue."""
         return self.url.endswith(FIFO_SUFFIX)
 
+    @property
+    def region(self) -> str | None:
+        """The region in the URL's host; ``None`` for an endpoint that names none."""
+        found = _URL_REGION.match(self.url)
+        return None if found is None else found.group(1)
+
+    @property
+    def account_id(self) -> str:
+        """The AWS account owning the queue, the first segment of its URL path."""
+        return self.url.rstrip("/").split("/")[-2]
+
+    @property
+    def queue_name(self) -> str:
+        """The queue's name in AWS, the last segment of its URL path."""
+        return self.url.rstrip("/").split("/")[-1]
+
     @classmethod
     def refuse_misshapen(cls, written: Any, path: str) -> None:
         """Refuse ``sqs.queues`` that is no mapping, or an entry written as a bare URL.
@@ -303,6 +319,7 @@ class SqsQueue:
 
     def __init__(self, client: Any, name: str, config: QueueConfig) -> None:
         self._client = client
+        self._config = config
         self.name = name
         self.url = config.url
         self.is_fifo = config.is_fifo
@@ -331,18 +348,17 @@ class SqsQueue:
     @property
     def region(self) -> str | None:
         """The region in the URL's host; ``None`` for an endpoint that names none."""
-        found = _URL_REGION.match(self.url)
-        return None if found is None else found.group(1)
+        return self._config.region
 
     @property
     def account_id(self) -> str:
         """The AWS account owning the queue, the first segment of its URL path."""
-        return self.url.rstrip("/").split("/")[-2]
+        return self._config.account_id
 
     @property
     def queue_name(self) -> str:
         """The queue's name in AWS, the last segment of its URL path."""
-        return self.url.rstrip("/").split("/")[-1]
+        return self._config.queue_name
 
     def placement(
         self,

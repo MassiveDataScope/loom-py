@@ -14,7 +14,6 @@ import uuid
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Any
-from urllib.parse import urlparse
 
 from loom.composition import Application, Project
 from loom.core.config import ConfigError
@@ -33,8 +32,6 @@ from loom.testing.overrides import Override, OverrideAdapter
 _ISLAND = "loom.testing._moto"
 _EXTRA = "testing-aws"
 _MAX_RECEIVE_COUNT = 3
-_AWS_DOMAINS = (".amazonaws.com", ".amazonaws.com.cn")
-"""The hosts moto answers: it intercepts requests to AWS endpoints and to nothing else."""
 _RECEIVE_LIMIT = 10
 """The most messages one ``ReceiveMessage`` returns."""
 
@@ -67,11 +64,10 @@ class LambdaWorker:
     Raises:
         MissingExtraError: When moto is not installed, naming the ``testing-aws`` extra.
         ConfigError: When *function* is no jobs function, its queue is not mapped or its URL
-            is no AWS SQS one, the application's ``sqs`` client goes to a host that is not
-            AWS's (``aws.url``, ``AWS_ENDPOINT_URL``, a profile ``endpoint_url``: moto
-            answers only AWS endpoints), or moto holds no queue at the configured URL
-            (another region or account): the message names what differs and the way out.
-            Nothing is sent to an endpoint other than moto.
+            is no AWS SQS one, a request of the application's ``sqs`` client goes
+            unanswered by moto (an endpoint override, FIPS, dualstack: nothing is ever sent
+            to the network), or the queue moto makes is of another region or account than
+            the configured URL: the message names what differs and the way out.
     """
 
     def __init__(
@@ -91,15 +87,16 @@ class LambdaWorker:
         entry = sqs_config.queues.get(trigger.queue.name)
         if entry is None:
             raise ConfigError(f"sqs.queues.{trigger.queue.name} is missing")
-        self._queue = SqsQueue(None, trigger.queue.name, entry)
-        if self._queue.region is None:
+        if entry.region is None:
             raise ConfigError(
                 f"queue URL {entry.url} is not an AWS SQS URL "
                 "(https://sqs.<region>.amazonaws.com/<account>/<queue>): "
                 "use loom.testing.TEST_QUEUE or a URL of that shape"
             )
         self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
+        self._island = island
         self._closed = False
+        self._bound = False
         self._aws: AwsClients | None = None
         self._adapter = LambdaAdapter(function=function)
         self._mock = island.start()
@@ -109,29 +106,15 @@ class LambdaWorker:
             )
             self._aws = self.application.kernel.container.resolve(AwsClients)
             self.sqs = self._aws.client("sqs", sqs_config)
-            if not (urlparse(self.sqs.meta.endpoint_url).hostname or "").endswith(_AWS_DOMAINS):
-                raise ConfigError(
-                    f"the application's sqs client goes to {self.sqs.meta.endpoint_url}, not to "
-                    "AWS, so moto would not answer it and LambdaWorker would send to that "
-                    "endpoint: remove aws.url and sqs.url from the configuration, "
-                    "AWS_ENDPOINT_URL and AWS_ENDPOINT_URL_SQS from the environment, and any "
-                    "endpoint_url of the AWS profile"
-                )
-            self.queue_url, self.dead_letter_url = island.declare_queue(
-                self.sqs,
-                self._queue.queue_name,
-                redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
-                max_receive_count=_MAX_RECEIVE_COUNT,
-            )
-            if not island.holds(
-                self._queue.account_id, str(self._queue.region), self._queue.queue_name
-            ):
-                raise ConfigError(self._elsewhere(entry.url))
+            self.sqs.meta.events.register_last("before-send", self._unanswered)
+            self.queue_url, self.dead_letter_url = self._declare(island, entry)
+            self._queue = SqsQueue(self.sqs, trigger.queue.name, entry)
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
             )
             self._queue_arn: str = arn["Attributes"]["QueueArn"]
             self._handler = self._adapter.bind(self.application)
+            self._bound = True
         except BaseException:
             self.close()
             raise
@@ -219,7 +202,7 @@ class LambdaWorker:
             self._adapter.close()
         finally:
             try:
-                if self._aws is not None:
+                if not self._bound and self._aws is not None:
                     self._aws.close()
             finally:
                 self._mock.stop()
@@ -235,24 +218,52 @@ class LambdaWorker:
     ) -> None:
         self.close()
 
-    def _elsewhere(self, configured: str) -> str:
-        """Why moto holds no queue at the configured URL, from the URL it made instead."""
-        made = SqsQueue(None, self._queue.name, QueueConfig(url=self.queue_url))
+    def _unanswered(self, request: Any, **_: Any) -> Any:
+        """A ``before-send`` handler that runs after moto's: what moto did not answer is refused."""
+        endpoint = self.sqs.meta.endpoint_url
+        return self._island.unanswered(
+            request,
+            f"moto did not answer the request to {endpoint}, so it would have left the "
+            "process: remove aws.url and sqs.url from the configuration, AWS_ENDPOINT_URL, "
+            "AWS_ENDPOINT_URL_SQS, AWS_USE_FIPS_ENDPOINT and AWS_USE_DUALSTACK_ENDPOINT from "
+            "the environment, and any endpoint_url of the AWS profile",
+        )
+
+    def _declare(self, island: Any, entry: QueueConfig) -> tuple[str, str | None]:
+        """Create the queue and its dead-letter queue, and check they are where *entry* says.
+
+        Raises:
+            ConfigError: When a request went unanswered, or the queue made is of another
+                region or account than the configured URL.
+        """
+        try:
+            queue_url, dead_letter_url = island.declare_queue(
+                self.sqs,
+                entry.queue_name,
+                redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
+                max_receive_count=_MAX_RECEIVE_COUNT,
+            )
+        except self.sqs.exceptions.ClientError as exc:
+            error = exc.response["Error"]
+            if error["Code"] == island.UNANSWERED:
+                raise ConfigError(error["Message"]) from exc
+            raise
+        made = QueueConfig(url=queue_url)
         differs = [
             f"{fact} {wanted!r} against {got!r}"
             for fact, wanted, got in (
-                ("region", self._queue.region, made.region),
-                ("account", self._queue.account_id, made.account_id),
+                ("region", entry.region, self.sqs.meta.region_name),
+                ("account", entry.account_id, made.account_id),
             )
             if wanted != got
         ]
-        return (
-            f"moto holds no queue {self._queue.queue_name!r} of account {self._queue.account_id} "
-            f"in {self._queue.region} for the configured {configured}: it made {self.queue_url}"
-            + (f" ({'; '.join(differs)})" if differs else "")
-            + ": set aws.region or AWS_DEFAULT_REGION to the URL's region, MOTO_ACCOUNT_ID to "
-            "its account, or use loom.testing.TEST_QUEUE"
-        )
+        if differs:
+            raise ConfigError(
+                f"moto made the queue {queue_url} for the configured {entry.url} "
+                f"({'; '.join(differs)}): set aws.region or AWS_DEFAULT_REGION to the URL's "
+                "region, MOTO_ACCOUNT_ID to its account, or use loom.testing.TEST_QUEUE"
+            )
+        return queue_url, dead_letter_url
 
     def _record(self, message: dict[str, Any]) -> dict[str, Any]:
         attributes = {
