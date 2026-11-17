@@ -227,7 +227,7 @@
   grammar (`loom.core.config.resolver.referenced`; an escaped `\${secrets:...}`
   is no longer listed, `${secrets:a,b}` names `a`), the resolvers' `.reference()`
   methods are gone and `FunctionManifest.event` is a `dict` with the same keys
-  the removed `Route`, `HttpEvent`, `QueueEvent`, `OnFailure` and `DirectEvent`
+  the removed `Route`, `HttpEvent` and `SqsEvent`
   structs encoded. The JSON does not change. `omegaconf` is bound to `<2.4`:
   the manifest reads its generated grammar (`loom.core.config._interpolations`).
   **Migration:** call `served_routes(source)` without building the interface
