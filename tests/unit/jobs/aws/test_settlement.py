@@ -296,6 +296,19 @@ class TestSqsSettlement:
 
         assert (_ids(redelivered), sqs.client.batches) == (["a"], [])
 
+    def test_a_foreign_arn_is_logged_once_however_many_records_come_from_it(
+        self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sqs = settling()
+        foreign = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:elsewhere"
+        stray = [(_record(name, arn=foreign), Rejected("no")) for name in "ab"]
+
+        redelivered = sqs.settle_all(stray)
+
+        errors = _logged(caplog, queue_arn=foreign)
+        assert (_ids(redelivered), len(errors)) == (["a", "b"], 1)
+        assert "not the one this function consumes" in str(errors[0]["event"])
+
     def test_the_calls_are_grouped_by_action_in_batches_of_ten_and_nothing_is_deleted(
         self, settling: Callable[..., Settling]
     ) -> None:

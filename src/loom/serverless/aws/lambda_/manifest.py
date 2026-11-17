@@ -155,7 +155,8 @@ def _queue_event(
     ``raw_message_delivery: false``, which its subscription must keep.
     """
     queue = trigger.queue
-    if queue is None or queue.name not in queues:
+    assert queue is not None
+    if queue.name not in queues:
         declared = ", ".join(sorted(queues)) or "none"
         raise ConfigError(
             f"lambda.functions.{name}.trigger.queue.name must name the queue it consumes, a key "

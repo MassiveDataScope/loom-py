@@ -552,7 +552,7 @@ ten entries each.
   timeout in the middle of a settlement redelivers the batch: a message may run
   twice, none is lost.
 - A `jobs` function must declare `trigger.queue`: the configuration is refused
-  without it, and `loom deploy manifest` with it.
+  without it, and `loom deploy manifest` refuses it too.
 - The function reads the dead-letter policy of the queue it consumes once, at
   Init, with the application's own SQS client and its retries: two calls
   (`GetQueueAttributes` and `GetQueueUrl`) once per cold start. A botocore error,

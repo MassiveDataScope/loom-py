@@ -26,11 +26,13 @@ if TYPE_CHECKING:
 __all__ = ["TEST_QUEUE", "EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
 
 _REGION: Final = "us-east-1"
-_ARN: Final = f"{_REGION}:000000000000"
+_ACCOUNT: Final = "123456789012"
+"""The account of every ARN a test event carries: the one moto answers for."""
+_ARN: Final = f"{_REGION}:{_ACCOUNT}"
 _TIME: Final = "2026-01-01T00:00:00Z"
 
 TEST_QUEUE: Final = {
-    "url": f"https://sqs.{_REGION}.amazonaws.com/000000000000/loom-jobs",
+    "url": f"https://sqs.{_REGION}.amazonaws.com/{_ACCOUNT}/loom-jobs",
     "dead_letter": "discard",
 }
 """The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names.
@@ -122,7 +124,7 @@ class LambdaEvent(dict[str, Any]):
             "id": event_id or str(uuid.uuid4()),
             "detail-type": "loom.test",
             "source": "loom.test",
-            "account": "000000000000",
+            "account": _ACCOUNT,
             "time": _TIME,
             "region": _REGION,
             "resources": [],

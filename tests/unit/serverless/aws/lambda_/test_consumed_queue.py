@@ -199,8 +199,12 @@ class TestConsumedQueue:
                     "maxReceiveCount": "x",
                 }
             ),
+            json.dumps({"deadLetterTargetArn": 7, "maxReceiveCount": 4}),
+            json.dumps(
+                {"deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d", "maxReceiveCount": 0}
+            ),
         ],
-        ids=["bad-json", "no-target", "bad-target", "bad-count"],
+        ids=["bad-json", "no-target", "bad-target", "bad-count", "target-not-text", "zero-count"],
     )
     def test_a_redrive_policy_loom_cannot_read_fails_start_up_naming_the_queue(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], policy: str

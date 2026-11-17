@@ -282,58 +282,53 @@ class TestRecord:
 
 class TestQueues:
     @pytest.fixture
-    def queues(self) -> tuple[SqsQueues, FakeSqs]:
-        client = FakeSqs()
-        return (
-            SqsQueues(
-                client,
-                {
-                    "jobs": QueueConfig(url=_SOURCE),
-                    "orders": QueueConfig(url=queue_url("orders.fifo")),
-                    "other": QueueConfig(
-                        url="https://sqs.eu-west-1.amazonaws.com/999999999999/jobs"
-                    ),
-                },
-            ),
-            client,
-        )
+    def queues(self) -> SqsQueues:
+        return SqsQueues(FakeSqs(), {"jobs": QueueConfig(url=_SOURCE)})
 
-    @pytest.mark.parametrize(
-        ("arn", "name"),
-        [
-            (f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs", "jobs"),
-            (f"arn:aws:sqs:eu-west-1:{ACCOUNT}:orders.fifo", "orders"),
-            ("arn:aws:sqs:eu-west-1:999999999999:jobs", "other"),
-        ],
-    )
-    def test_an_event_source_arn_matches_account_and_queue_name(
-        self, queues: tuple[SqsQueues, FakeSqs], arn: str, name: str
-    ) -> None:
-        assert queues[0].at(arn).name == name
-
-    @pytest.mark.parametrize(
-        "arn",
-        [
-            f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown",
-            "arn:aws:sqs:eu-west-1:111111111111:jobs",
-            f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs",
-        ],
-    )
-    def test_an_arn_of_no_configured_queue_is_refused(
-        self, queues: tuple[SqsQueues, FakeSqs], arn: str
-    ) -> None:
-        with pytest.raises(SQSDispatchError, match="no queue of sqs.queues"):
-            queues[0].at(arn)
-
-    def test_an_unmapped_name_is_refused(self, queues: tuple[SqsQueues, FakeSqs]) -> None:
+    def test_an_unmapped_name_is_refused(self, queues: SqsQueues) -> None:
         with pytest.raises(SQSDispatchError, match="maps no URL for queue 'missing'"):
-            queues[0].named("missing")
+            queues.named("missing")
 
-    def test_finding_a_queue_calls_nothing(self, queues: tuple[SqsQueues, FakeSqs]) -> None:
-        queues[0].named("jobs")
-        queues[0].at(f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs")
+    def test_finding_a_queue_calls_nothing(self) -> None:
+        client = FakeSqs()
 
-        assert queues[1].calls == {}
+        SqsQueues(client, {"jobs": QueueConfig(url=_SOURCE)}).named("jobs")
+
+        assert client.calls == {}
+
+
+class TestQueueArn:
+    @pytest.mark.parametrize(
+        ("url", "arn", "matches"),
+        [
+            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs", True),
+            (queue_url("orders.fifo"), f"arn:aws:sqs:eu-west-1:{ACCOUNT}:orders.fifo", True),
+            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown", False),
+            (_SOURCE, "arn:aws:sqs:eu-west-1:111111111111:jobs", False),
+            (_SOURCE, f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs", False),
+            (
+                f"http://localhost:4566/{ACCOUNT}/jobs",
+                f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs",
+                True,
+            ),
+            (_SOURCE, "not-an-arn", False),
+            (_SOURCE, "", False),
+        ],
+        ids=[
+            "same-queue",
+            "fifo",
+            "other-name",
+            "other-account",
+            "other-region",
+            "url-without-region",
+            "not-an-arn",
+            "empty",
+        ],
+    )
+    def test_an_event_source_arn_names_the_queue_by_region_account_and_name(
+        self, url: str, arn: str, matches: bool
+    ) -> None:
+        assert _queue(FakeSqs(), url=url).is_at(arn) is matches
 
 
 class TestConfig:

@@ -100,8 +100,14 @@
   names (`loom-jobs`, never the FIFO `loom-jobs.fifo` of a record built with
   `group_id`: pass `queue_arn=` for that): declare it in the test configuration,
   and a failed record of a test settles instead of logging that no queue
-  matches. Settling calls SQS, so a test patches the AWS client
-  (`docs/rest/testing.md`). A record whose `ApproximateReceiveCount` is not a
+  matches. `loom.testing.LambdaWorker` composes and binds a jobs function over
+  moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it creates the
+  queue the function consumes, with a dead-letter queue and a real
+  `RedrivePolicy` for a `redrive` queue, and exposes `sqs` (a boto3 client of the
+  mock), `queue_url` and `dead_letter_url`, so a test needs no region, no
+  credentials and no patch of boto3 (`docs/rest/testing.md`). The default account
+  of test events and of `TEST_QUEUE` is now `123456789012`, the one moto answers
+  for, and composition leaves an `AwsClients` an override bound. A record whose `ApproximateReceiveCount` is not a
   positive integer or whose `loom.deferrals` is not a non-negative one is
   malformed, and only it is rejected. The dead-letter policy of the consumed
   queue is read at Init, never during an invocation, with the application's own
@@ -339,9 +345,9 @@
   | Before | Now |
   |---|---|
   | `LambdaHTTPAdapter()` | `LambdaAdapter()` |
-  | `LambdaSQSAdapter(jobs=...)` | `LambdaAdapter(jobs=...)` on a function with `trigger: {source: jobs}` |
+  | `LambdaSQSAdapter(jobs=...)` | `LambdaAdapter(jobs=...)` on a function with `trigger: {source: jobs, queue: {name: ...}}` |
   | `app.entry: lambda_http` | `app.entry: lambda` |
-  | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs}` |
+  | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs, queue: {name: ...}}` |
   | `lambda.functions.<f>.http: [...]` | `lambda.functions.<f>.trigger: {source: http, interfaces: [...]}` |
   | `lambda.functions.<f>.auth` | `lambda.functions.<f>.trigger.auth` |
   | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs, queue: {name: ...}}` |

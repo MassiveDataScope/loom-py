@@ -279,7 +279,8 @@ def register(
         for wiring in stores.wirings.values():
             wiring.repo_registration_module(container)
         container.register_instance(RepositoryCatalog, RepositoryCatalog(container, stores.models))
-        container.register(AwsClients, lambda: aws, scope=Scope.APPLICATION)
+        if not container.is_registered(AwsClients):
+            container.register(AwsClients, lambda: aws, scope=Scope.APPLICATION)
         cache(container)
         if sink is not None:
             container.register_instance(ElevationSink, sink)

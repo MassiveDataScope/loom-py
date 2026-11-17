@@ -189,19 +189,15 @@ queued and a `jobs` event already is a record, so neither has `via_sqs`. Every S
 should retry:
 
 ```python
-from loom.composition import create_app
-from loom.testing import LambdaEvent
+from loom.testing import LambdaEvent, LambdaWorker
 
 def test_a_message_naming_an_unknown_job_is_retried() -> None:
-    handler = create_app("config.yaml", environment="test")  # app.entry: worker
-    try:
+    with LambdaWorker("config.yaml", function="worker", environment="test") as worker:
         records = [
             *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
             *LambdaEvent.sqs_record('{"job": "Missing"}', message_id="2")["Records"],
         ]
-        result = handler({"Records": records}, None)
-    finally:
-        handler.close()
+        result = worker({"Records": records}, None)
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
 ```
@@ -216,16 +212,21 @@ does not cover: pass `queue_arn=` for it):
 ```yaml
 sqs:
   queues:
-    jobs: {url: https://sqs.us-east-1.amazonaws.com/000000000000/loom-jobs, dead_letter: discard}
+    jobs: {url: https://sqs.us-east-1.amazonaws.com/123456789012/loom-jobs, dead_letter: discard}
 lambda:
   functions:
     worker: {trigger: {source: jobs, queue: {name: jobs}}}
 ```
 
-Binding the function builds its SQS client and, for a `redrive` queue, reads
-its policy: **patch the AWS client** in the test (for instance
-`unittest.mock.patch("boto3.Session")`), or it makes real AWS calls. A
-malformed message is rejected and is not in `batchItemFailures`.
+`LambdaWorker` needs the `testing-aws` extra (moto). It starts moto's AWS
+mock, creates the queue the function consumes, with a dead-letter queue and a
+real `RedrivePolicy` when the entry says `dead_letter: redrive`, and binds the
+function over it: no region, no credentials and no patch of boto3, and nothing
+leaves the process. `worker.sqs` is a boto3 `sqs` client of the mock, and
+`worker.queue_url` and `worker.dead_letter_url` name the queues, so a test
+reads what the function left in them (`receive_message`). Closing the worker
+stops moto. A message that cannot be read is rejected and is not in
+`batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 

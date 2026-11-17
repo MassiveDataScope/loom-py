@@ -111,15 +111,20 @@ class SqsSettlement:
         if not group:
             return []
         queue = self.queue
-        strays = [record for record, _ in group if not queue.is_at(record.queue_arn)]
+        consumed: list[tuple[SqsRecord, JobOutcome]] = []
+        strays: list[SqsRecord] = []
+        for item in group:
+            if queue.is_at(item[0].queue_arn):
+                consumed.append(item)
+            else:
+                strays.append(item[0])
         for arn in {record.queue_arn for record in strays}:
             _log.error(
                 "SQS settlement cannot reach the queue: it is not the one this function consumes",
                 queue_arn=arn,
                 queue=queue.name,
             )
-        group = [item for item in group if queue.is_at(item[0].queue_arn)]
-        return strays + self._settle_queue(queue, group)
+        return strays + self._settle_queue(queue, consumed)
 
     def _settle_queue(
         self, queue: SqsQueue, group: Sequence[tuple[SqsRecord, JobOutcome]]

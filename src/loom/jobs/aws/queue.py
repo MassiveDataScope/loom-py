@@ -411,11 +411,6 @@ class SqsQueue:
             [record.rejected(reason, fifo=target.is_fifo) for record, reason in rejections]
         )
 
-    @property
-    def has_dead_letter(self) -> bool:
-        """Whether its dead-letter queue has been read."""
-        return self._dead_letter is not None
-
     def dead_letter(self) -> DeadLetter:
         """The dead-letter queue :meth:`read_dead_letter` kept.
 
@@ -514,7 +509,9 @@ class SqsQueue:
             policy = json.loads(written)
             _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
             limit = int(policy["maxReceiveCount"])
-        except (ValueError, KeyError, TypeError) as exc:
+            if limit < 1:
+                raise ValueError("maxReceiveCount must be at least 1")
+        except (AttributeError, ValueError, KeyError, TypeError) as exc:
             raise SQSQueueConfigError(
                 f"queue {self.name!r} has a RedrivePolicy loom cannot read "
                 f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
@@ -571,22 +568,6 @@ class SqsQueues:
                 f"sqs.queues maps no URL for queue {name!r}", code=SQSErrorCode.QUEUE_UNKNOWN
             )
         return queue
-
-    def at(self, event_source_arn: str) -> SqsQueue:
-        """The configured queue an event source ARN names.
-
-        A queue matches by region, account and queue name; a URL that names no
-        region matches any.
-
-        Raises:
-            SQSDispatchError: When no queue of ``sqs.queues`` matches.
-        """
-        for queue in self._by_name.values():
-            if queue.is_at(event_source_arn):
-                return queue
-        raise SQSDispatchError(
-            f"no queue of sqs.queues is {event_source_arn}", code=SQSErrorCode.QUEUE_UNKNOWN
-        )
 
 
 __all__ = [
