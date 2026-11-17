@@ -22,7 +22,7 @@ from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
     Read,
-    consumer_policies,
+    check_consumed_queue,
     fail_in_span,
     jobs_recipe,
     open_host,
@@ -211,7 +211,7 @@ def _bind_jobs(
         served = [
             job for job in declared.values() if application.job_settings.of(job).queue == queue_name
         ]
-        consumer_policies(application, queue_name, served)
+        check_consumed_queue(application, queue_name, served)
     return SQSBatch(application, declared, open_host(application), report_failures=report_failures)
 
 
@@ -223,7 +223,7 @@ def _bind_queued_events(
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
     assert trigger.queue is not None
-    consumer_policies(application, trigger.queue.name, [job_type])
+    check_consumed_queue(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),

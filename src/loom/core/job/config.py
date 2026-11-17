@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -22,6 +22,7 @@ class RetrySource(StrEnum):
     DEFAULTS_CONFIG = "jobs.defaults.retry"
     CLASS = "__retry__"
     LOOM = "loom default"
+    REDRIVE = "RedrivePolicy maxReceiveCount"
 
 
 class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -227,6 +228,11 @@ class JobSettings:
                 :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """
         return self.jobs.get(job_type) or JobOptions.resolve(job_type)
+
+    def with_retries(self, retries: Mapping[type[Job[Any]], ResolvedRetry]) -> JobSettings:
+        """These settings with the retry policy of each job in *retries* replaced."""
+        replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
+        return JobSettings({**self.jobs, **replaced})
 
     def describe_retries(self) -> list[dict[str, str]]:
         """Each job's effective retry policy and where it came from, for the start-up log."""

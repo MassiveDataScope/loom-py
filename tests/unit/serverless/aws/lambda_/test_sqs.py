@@ -46,7 +46,7 @@ class _OtherJobService:
 
 @pytest.fixture
 def whole_batch_handler(
-    tmp_path: Path, probe: tuple[type[Job[None]], Any]
+    tmp_path: Path, probe: tuple[type[Job[None]], Any], no_aws_clients: None
 ) -> Iterator[LambdaHandler]:
     project = composition_project(
         ConfigContext.from_dict(with_worker({}, report_batch_item_failures=False)),

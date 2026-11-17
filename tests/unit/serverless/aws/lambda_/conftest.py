@@ -33,8 +33,8 @@ from tests.unit.serverless.aws.lambda_._records import (
 __all__ = ["event_loops"]
 
 
-@pytest.fixture(autouse=True)
-def _no_aws_calls() -> Iterator[None]:
+@pytest.fixture
+def no_aws_clients() -> Iterator[None]:
     """A consumer of a queue builds its SQS client at Init; here it is a mock, never AWS."""
     with patched_aws_clients():
         yield

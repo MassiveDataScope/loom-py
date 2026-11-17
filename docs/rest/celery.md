@@ -505,23 +505,22 @@ lambda:
 
 #### Dead letters and attempts
 
-`dead_letter` decides what becomes of a message whose job is rejected for good
-and who owns the attempt limit:
+`dead_letter` names the queue's dead-letter policy and who owns the attempt
+limit:
 
-| `dead_letter` | A rejected message | The attempt limit |
+| `dead_letter` | Dead-letter queue | The attempt limit |
 |---|---|---|
-| `redrive` (default) | is sent to the queue's dead-letter queue, with the reason (cut to 256 characters) in the `loom.rejection_reason` message attribute and the original attributes copied; on a FIFO dead-letter queue it keeps its group id and gets a new deduplication id | the `maxReceiveCount` of the queue's `RedrivePolicy`; a job consumed from the queue may not declare `max_attempts` |
-| `discard` | is dropped with an ERROR log and a metric | `max_attempts` of the job (loom default 3) |
+| `redrive` (default) | the one in the queue's `RedrivePolicy` | the `maxReceiveCount` of that policy; a job consumed from the queue may not declare `max_attempts` in its own `jobs.<Job>.retry` |
+| `discard` | none | `max_attempts` of the job (loom default 3) |
 
 - A function consuming a `redrive` queue reads the queue's `RedrivePolicy`
   once, at Init. Without one, startup fails naming the queue and both options:
   attach a dead-letter queue, or set `dead_letter: discard`.
-- Declaring `max_attempts` (`jobs.<Job>.retry` or `jobs.defaults.retry`) for a
-  job consumed from a `redrive` queue fails startup naming the rule.
-- loom never calls `DeleteMessage`: Lambda deletes every record the
-  invocation does not report as failed.
-- Every batch call carries at most ten entries, and a failed entry is reported
-  alone; none aborts the others.
+- `jobs.defaults.retry.max_attempts` does not apply to jobs consumed from a
+  `redrive` queue: `maxReceiveCount` wins. Startup logs the effective policy of
+  the jobs of the consumed queue.
+- A function consuming a queue that `sqs.queues` does not map fails startup
+  naming `sqs.queues.<name>`.
 
 **IAM.** The role of a function consuming a queue needs:
 
@@ -532,9 +531,9 @@ and who owns the attempt limit:
 
 The producer role needs `sqs:SendMessage` on the queues it dispatches to.
 
-**Moving dead letters back.** A message loom sends to the dead-letter queue
-did not arrive through the `RedrivePolicy`, so it has no source queue recorded.
-In LocalStack 4.14, `StartMessageMoveTask` without a `DestinationArn` fails on
+**Moving dead letters back.** A message sent to a dead-letter queue directly,
+not by SQS through the `RedrivePolicy`, has no source queue recorded. In
+LocalStack 4.14, `StartMessageMoveTask` without a `DestinationArn` fails on
 it, and with `DestinationArn` set to the source queue it moves it back. In the
 console, choose "Redrive to custom destination", not "Redrive to source queue";
 with the API or CLI, always pass `DestinationArn`.

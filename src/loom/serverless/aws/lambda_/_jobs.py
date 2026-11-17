@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import CheckScope
+from loom.core.config import ConfigError
 from loom.core.connections.aws import AwsClients
 from loom.core.discovery.worker import resolve_worker_components
+from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import JobOutcome
-from loom.core.job.policy import RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService, JobService
@@ -92,23 +93,35 @@ def open_host(application: Application) -> LoopHost:
     return host
 
 
-def consumer_policies(
+def check_consumed_queue(
     application: Application, queue_name: str, jobs: Iterable[type[Job[Any]]]
-) -> dict[type[Job[Any]], RetryPolicy]:
-    """The policy of each of *jobs* consumed from the queue *queue_name*, at Init.
+) -> None:
+    """Check the queue *queue_name* at Init and give *jobs* the retry policy it implies.
 
-    Only a consumer asks SQS about its queue: the dead-letter queue and the
-    attempt limit of its ``RedrivePolicy``.
+    Only a consumer asks SQS about its queue. The application's job settings
+    then hold each job's effective policy, and one line logs them.
 
     Raises:
-        SQSDispatchError: When ``sqs.queues`` maps no URL for *queue_name*.
+        ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, or a job on a
+            ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``.
         SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
-        ConfigError: When a job on a ``redrive`` queue declares ``max_attempts``.
     """
     config = SQSConfig.load(application.config)
+    if queue_name not in config.queues:
+        raise ConfigError(f"sqs.queues.{queue_name} is missing: a function consumes that queue")
     client = application.kernel.container.resolve(AwsClients).client("sqs", config)
     queue = SqsQueues(client, config.queues).named(queue_name)
-    return queue.retry_policies(jobs, lambda job: application.job_settings.of(job).retry)
+    settings = application.job_settings
+    retries = queue.consumed_retries(jobs, lambda job: settings.of(job).retry)
+    application.job_settings = settings.with_retries(retries)
+    consumed = JobSettings(
+        {job: application.job_settings.of(job) for job in retries},
+    )
+    _log.info(
+        "Job retry policies of the consumed queue",
+        queue=queue_name,
+        jobs=consumed.describe_retries(),
+    )
 
 
 def remaining_ms(context: Any) -> int | None:

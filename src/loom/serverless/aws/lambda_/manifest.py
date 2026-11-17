@@ -90,7 +90,7 @@ def build_manifest(project: Project, function: str | None = None) -> DeployManif
     if not declared.functions:
         raise ConfigError("lambda.functions declares no function to deploy")
     written = ctx.raw("sqs.queues", {})
-    QueueConfig.refuse_urls(written, "sqs.queues")
+    QueueConfig.refuse_misshapen(written, "sqs.queues")
     queues = convert_section(written, "sqs.queues", dict[str, QueueConfig])
     for queue, config in queues.items():
         _literal(f"sqs.queues.{queue}.url", config.url)

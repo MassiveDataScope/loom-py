@@ -84,7 +84,7 @@ _SYSTEM = {"subject": "svc:importer"}
 
 
 @pytest.fixture
-def serve(tmp_path: Path) -> Iterator[Serve]:
+def serve(tmp_path: Path, no_aws_clients: None) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
     adapters: list[LambdaAdapter] = []
 

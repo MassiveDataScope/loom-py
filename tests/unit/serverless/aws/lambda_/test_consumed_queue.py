@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig
+from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
@@ -34,9 +34,10 @@ def _bind(
     *,
     queue: dict[str, Any] | None = None,
     jobs: dict[str, Any] | None = None,
-) -> None:
+    unmapped: bool = False,
+) -> Application:
     document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
-    document["sqs"] = {"queues": {"jobs": {"url": _JOBS, **(queue or {})}}}
+    document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
     project = composition_project(
         ConfigContext.from_dict(document),
         app=AppConfig(name="lambda-sqs", entry=WORKER),
@@ -48,6 +49,7 @@ def _bind(
         application = project.compose(adapter)
         adapter.bind(application)
         adapter.close()
+    return application
 
 
 class TestConsumedQueue:
@@ -74,7 +76,9 @@ class TestConsumedQueue:
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
 
-        with pytest.raises(ConfigError, match="declares max_attempts.*maxReceiveCount"):
+        with pytest.raises(
+            ConfigError, match=r"declares jobs\.<Job>\.retry\.max_attempts.*maxReceiveCount"
+        ):
             _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
     def test_a_job_of_another_queue_is_not_checked_against_this_one(
@@ -93,3 +97,38 @@ class TestConsumedQueue:
         _bind(tmp_path, probe, client, queue={"dead_letter": "discard"}, jobs=jobs)
 
         assert client.metadata_calls == 0
+
+    def test_the_defaults_layer_max_attempts_gives_way_to_max_receive_count(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        jobs = {"defaults": {"retry": {"max_attempts": 9}}}
+        jobs[probe[0].__name__] = {"queue": "jobs"}
+
+        application = _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+
+        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 4
+
+    def test_the_effective_policy_of_a_redrive_consumer_is_logged(
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        jobs = {probe[0].__name__: {"queue": "jobs"}}
+
+        _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
+
+        (logged,) = [
+            record.msg
+            for record in caplog.records
+            if isinstance(record.msg, dict)
+            and record.msg.get("event") == "Job retry policies of the consumed queue"
+        ]
+        assert logged["queue"] == "jobs"
+        assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
+
+    def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        with pytest.raises(ConfigError, match=r"sqs\.queues\.jobs is missing"):
+            _bind(tmp_path, probe, FakeSqs(), unmapped=True)

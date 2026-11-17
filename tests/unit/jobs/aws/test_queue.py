@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.job.config import JobSettings
+from loom.core.job.config import JobSettings, RetrySource
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
@@ -295,7 +294,11 @@ class TestQueues:
 
     @pytest.mark.parametrize(
         "arn",
-        [f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown", "arn:aws:sqs:eu-west-1:111111111111:jobs"],
+        [
+            f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown",
+            "arn:aws:sqs:eu-west-1:111111111111:jobs",
+            f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs",
+        ],
     )
     def test_an_arn_of_no_configured_queue_is_refused(
         self, queues: tuple[SqsQueues, FakeSqs], arn: str
@@ -343,6 +346,13 @@ class TestConfig:
             f"{{url: {_SOURCE}, dead_letter: redrive|discard}}"
         )
 
+    @pytest.mark.parametrize("queues", ["https://sqs.eu-west-1.amazonaws.com/1/q", ["a", "b"]])
+    def test_queues_that_are_no_mapping_are_refused_naming_the_expected_shape(
+        self, queues: Any
+    ) -> None:
+        with pytest.raises(ConfigError, match=r"sqs\.queues must be a mapping of queue name to"):
+            SQSConfig.load(ConfigContext.from_dict({"sqs": {"queues": queues}}))
+
     def test_an_unknown_dead_letter_policy_is_refused(self) -> None:
         document = {"sqs": {"queues": {"jobs": {"url": _SOURCE, "dead_letter": "bin"}}}}
 
@@ -361,28 +371,30 @@ class TestAttemptLimit:
         settings = self._settings()
         queue = _queue(FakeSqs({_SOURCE: _POLICY}))
 
-        policies = queue.retry_policies([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
-        assert policies[EmailJob].max_attempts == 4
+        assert retries[EmailJob].policy.max_attempts == 4
+        assert retries[EmailJob].sources["max_attempts"] is RetrySource.REDRIVE
 
     def test_declaring_max_attempts_for_a_job_on_a_redrive_queue_is_refused(self) -> None:
         settings = self._settings(EmailJob={"retry": {"max_attempts": 5}})
         queue = _queue(FakeSqs({_SOURCE: _POLICY}))
 
         with pytest.raises(ConfigError) as raised:
-            queue.retry_policies([ReportJob, EmailJob], lambda job: settings.of(job).retry)
+            queue.consumed_retries([ReportJob, EmailJob], lambda job: settings.of(job).retry)
 
         message = str(raised.value)
-        assert "EmailJob declares max_attempts in jobs.<Job>.retry" in message
+        assert "EmailJob declares jobs.<Job>.retry.max_attempts" in message
         assert "maxReceiveCount (4)" in message
         assert "dead_letter: discard" in message
 
-    def test_the_defaults_layer_declaring_max_attempts_is_refused_too(self) -> None:
+    def test_the_defaults_layer_does_not_apply_to_a_redrive_queue(self) -> None:
         settings = self._settings(defaults={"retry": {"max_attempts": 2}})
         queue = _queue(FakeSqs({_SOURCE: _POLICY}))
 
-        with pytest.raises(ConfigError, match=r"jobs\.defaults\.retry"):
-            queue.retry_policies([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
+
+        assert retries[EmailJob].policy.max_attempts == 4
 
     @pytest.mark.parametrize(("declared", "expected"), [(None, 3), (5, 5)])
     def test_a_discard_queue_uses_max_attempts_and_asks_sqs_nothing(
@@ -393,20 +405,20 @@ class TestAttemptLimit:
         client = FakeSqs({_SOURCE: _POLICY})
         queue = _queue(client, policy=DeadLetterPolicy.DISCARD)
 
-        policies = queue.retry_policies([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
-        assert policies[EmailJob].max_attempts == expected
+        assert retries[EmailJob].policy.max_attempts == expected
         assert client.metadata_calls == 0
 
     def test_a_redrive_queue_without_a_policy_is_refused(self) -> None:
         settings = self._settings()
 
         with pytest.raises(SQSQueueConfigError, match="RedrivePolicy"):
-            _queue(FakeSqs()).retry_policies([EmailJob], lambda job: settings.of(job).retry)
+            _queue(FakeSqs()).consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
 
 class TestWire:
-    def test_a_request_and_its_batch_entry_carry_the_same_fields(self) -> None:
+    def test_a_request_carries_every_field_the_message_sets(self) -> None:
         message = OutgoingMessage(
             "m1",
             "b",
@@ -416,5 +428,10 @@ class TestWire:
             attributes={"k": {"DataType": "String", "StringValue": "v"}},
         )
 
-        assert message.entry() == {"Id": "m1", **message.request()}
-        assert json.loads(json.dumps(message.request()))["DelaySeconds"] == 5
+        assert message.request() == {
+            "MessageBody": "b",
+            "DelaySeconds": 5,
+            "MessageGroupId": "g",
+            "MessageDeduplicationId": "d",
+            "MessageAttributes": {"k": {"DataType": "String", "StringValue": "v"}},
+        }

@@ -38,7 +38,6 @@ from loom.jobs.aws.queue import (
     QueueConfig,
     SqsQueue,
     SqsQueues,
-    chunked,
 )
 
 if TYPE_CHECKING:
@@ -79,7 +78,7 @@ class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
             ConfigError: When the section is invalid, or a queue is written as a bare URL.
         """
         written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
-        QueueConfig.refuse_urls(written.get("queues", {}), "sqs.queues")
+        QueueConfig.refuse_misshapen(written.get("queues", {}), "sqs.queues")
         return cls.from_config(ctx, ConfigKey.SQS, own=written)
 
 
@@ -210,7 +209,9 @@ class _PendingSQSBatch:
         queue = sends[0].queue
         failed: list[_Failure] = []
         async with limit:
-            for chunk in chunked(sends, self.config.batch_size, weight=lambda send: send.size):
+            for chunk in SqsQueue.chunks(
+                sends, self.config.batch_size, weight=lambda send: send.size
+            ):
                 if queue.is_fifo and failed:
                     failed += [(send, _NOT_SENT) for send in chunk]
                 else:

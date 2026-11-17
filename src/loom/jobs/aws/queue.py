@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -16,7 +17,7 @@ from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown, RetryPolicy
+from loom.core.job.policy import Countdown
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 
@@ -32,8 +33,7 @@ REJECTION_REASON_ATTRIBUTE = "loom.rejection_reason"
 REASON_MAX_CHARS = 256
 """The longest rejection reason kept; a longer one is cut."""
 
-MessageAttributes = Mapping[str, Mapping[str, Any]]
-"""Message attributes as the SQS API takes them: name to ``DataType`` and its value."""
+_URL_REGION = re.compile(r"https?://sqs\.([a-z0-9-]+)\.")
 
 
 class DeadLetterPolicy(StrEnum):
@@ -62,16 +62,21 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
         return self.url.endswith(FIFO_SUFFIX)
 
     @classmethod
-    def refuse_urls(cls, written: Mapping[str, Any], path: str) -> None:
-        """Refuse an entry written as a bare URL, the shape ``sqs.queues`` had before.
+    def refuse_misshapen(cls, written: Any, path: str) -> None:
+        """Refuse ``sqs.queues`` that is no mapping, or an entry written as a bare URL.
 
         Args:
             written: ``sqs.queues`` as written.
             path: Its dotted path, for the message.
 
         Raises:
-            ConfigError: Naming the mapping an entry is written as now.
+            ConfigError: Naming the mapping the section and each entry are written as.
         """
+        if not isinstance(written, Mapping):
+            raise ConfigError(
+                f"{path} must be a mapping of queue name to {{url, dead_letter: redrive|discard}}, "
+                f"not {type(written).__name__}"
+            )
         for name, entry in written.items():
             if isinstance(entry, str):
                 raise ConfigError(
@@ -109,25 +114,6 @@ class BatchResult:
         )
 
 
-def chunked(
-    items: Sequence[_T],
-    size: int = MAX_BATCH_ENTRIES,
-    weight: Callable[[_T], int] | None = None,
-) -> Iterator[list[_T]]:
-    """*items* in order, at most *size* entries and ``MAX_BATCH_BYTES`` of *weight* a chunk."""
-    chunk: list[_T] = []
-    total = 0
-    for item in items:
-        item_weight = 0 if weight is None else weight(item)
-        if chunk and (len(chunk) == size or total + item_weight > MAX_BATCH_BYTES):
-            yield chunk
-            chunk, total = [], 0
-        chunk.append(item)
-        total += item_weight
-    if chunk:
-        yield chunk
-
-
 @dataclass(frozen=True, slots=True)
 class OutgoingMessage:
     """One message to send; ``id`` names its entry in a batch.
@@ -146,7 +132,7 @@ class OutgoingMessage:
     delay: Countdown = Countdown(0)
     group_id: str | None = None
     dedup_id: str | None = None
-    attributes: MessageAttributes = field(default_factory=dict)
+    attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     @property
     def size(self) -> int:
@@ -154,7 +140,7 @@ class OutgoingMessage:
         return len(self.body.encode())
 
     def request(self) -> dict[str, Any]:
-        """The ``SendMessage`` parameters but the queue URL."""
+        """The ``SendMessage`` parameters but the queue URL, as the SQS API takes them."""
         request: dict[str, Any] = {"MessageBody": self.body}
         if self.delay.seconds:
             request["DelaySeconds"] = self.delay.seconds
@@ -165,10 +151,6 @@ class OutgoingMessage:
         if self.attributes:
             request["MessageAttributes"] = dict(self.attributes)
         return request
-
-    def entry(self) -> dict[str, Any]:
-        """The ``SendMessageBatch`` entry."""
-        return {"Id": self.id, **self.request()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +169,7 @@ class SqsRecord:
     receipt_handle: str
     body: str
     group_id: str | None = None
-    attributes: MessageAttributes = field(default_factory=dict)
+    attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_event(cls, record: Mapping[str, Any]) -> SqsRecord:
@@ -232,8 +214,10 @@ class SqsRecord:
     def rejected(self, reason: str, *, fifo: bool) -> OutgoingMessage:
         """The same body and attributes, with *reason* cut to ``REASON_MAX_CHARS``.
 
-        A FIFO queue gets the group id and a new deduplication id, so the
-        message is not dropped as a duplicate of the one that failed.
+        Args:
+            reason: Why the message is rejected.
+            fifo: Whether the target queue is FIFO: it gets the group id and a new
+                deduplication id.
         """
         rejection = {
             REJECTION_REASON_ATTRIBUTE: {
@@ -266,11 +250,6 @@ class DeadLetter:
 class SqsQueue:
     """One SQS queue: sends, and the batched settlement of what a consumer received.
 
-    Every batch method calls SQS in chunks of at most ten entries and returns
-    each entry's outcome; none raises for a failed entry or a failed call.
-    There is no way to delete a message: Lambda deletes what the invocation
-    does not report as failed.
-
     Args:
         client: The boto3 ``sqs`` client.
         name: The queue's name in ``sqs.queues``, for messages.
@@ -284,6 +263,31 @@ class SqsQueue:
         self.is_fifo = config.is_fifo
         self.dead_letter_policy = config.dead_letter
         self._dead_letter: DeadLetter | None = None
+
+    @staticmethod
+    def chunks(
+        items: Sequence[_T],
+        size: int = MAX_BATCH_ENTRIES,
+        weight: Callable[[_T], int] | None = None,
+    ) -> Iterator[list[_T]]:
+        """*items* in order, at most *size* entries and ``MAX_BATCH_BYTES`` of *weight* a chunk."""
+        chunk: list[_T] = []
+        total = 0
+        for item in items:
+            item_weight = 0 if weight is None else weight(item)
+            if chunk and (len(chunk) == size or total + item_weight > MAX_BATCH_BYTES):
+                yield chunk
+                chunk, total = [], 0
+            chunk.append(item)
+            total += item_weight
+        if chunk:
+            yield chunk
+
+    @property
+    def region(self) -> str | None:
+        """The region in the URL's host; ``None`` for an endpoint that names none."""
+        found = _URL_REGION.match(self.url)
+        return None if found is None else found.group(1)
 
     @property
     def account_id(self) -> str:
@@ -308,8 +312,8 @@ class SqsQueue:
         return self._batches(
             self._client.send_message_batch,
             [
-                [message.entry() for message in chunk]
-                for chunk in chunked(messages, weight=lambda message: message.size)
+                [{"Id": message.id, **message.request()} for message in chunk]
+                for chunk in self.chunks(messages, weight=lambda message: message.size)
             ],
         )
 
@@ -323,7 +327,9 @@ class SqsQueue:
             }
             for record, delay in delays
         ]
-        return self._batches(self._client.change_message_visibility_batch, list(chunked(entries)))
+        return self._batches(
+            self._client.change_message_visibility_batch, list(self.chunks(entries))
+        )
 
     def defer_batch(self, deferrals: Sequence[tuple[SqsRecord, Countdown]]) -> BatchResult:
         """Send each record again with its delay and one deferral more.
@@ -360,39 +366,44 @@ class SqsQueue:
             self._dead_letter = self._read_dead_letter()
         return self._dead_letter
 
-    def retry_policies(
+    def consumed_retries(
         self, jobs: Iterable[type[Job[Any]]], resolved: Callable[[type[Job[Any]]], ResolvedRetry]
-    ) -> dict[type[Job[Any]], RetryPolicy]:
-        """The policy each of *jobs* has when consumed from this queue.
+    ) -> dict[type[Job[Any]], ResolvedRetry]:
+        """The retry policy each of *jobs* has when consumed from this queue.
 
-        With ``discard`` it is the one resolved, ``max_attempts`` included. With
-        ``redrive`` the attempt limit is the ``maxReceiveCount`` of the
-        ``RedrivePolicy``, so a job may not declare ``max_attempts``.
+        With ``discard`` it is the one resolved. With ``redrive`` its
+        ``max_attempts`` is the ``maxReceiveCount`` of the ``RedrivePolicy``.
 
         Args:
             jobs: The jobs consumed from this queue.
             resolved: Each job's resolved retry layers.
 
+        Returns:
+            Each job's policy and where each of its fields came from.
+
         Raises:
-            ConfigError: When a job on a ``redrive`` queue declares ``max_attempts``.
+            ConfigError: When a job on a ``redrive`` queue has ``max_attempts`` in its own
+                ``jobs.<Job>.retry``.
             SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
         """
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
-            return {job: resolved(job).policy for job in jobs}
+            return {job: resolved(job) for job in jobs}
         limit = self.dead_letter().max_receive_count
-        policies: dict[type[Job[Any]], RetryPolicy] = {}
+        retries: dict[type[Job[Any]], ResolvedRetry] = {}
         for job in jobs:
             retry = resolved(job)
-            declared = retry.sources["max_attempts"]
-            if declared is not RetrySource.LOOM:
+            if retry.sources["max_attempts"] is RetrySource.JOB_CONFIG:
                 raise ConfigError(
-                    f"{job.__qualname__} declares max_attempts in {declared.value}, but queue "
+                    f"{job.__qualname__} declares jobs.<Job>.retry.max_attempts, but queue "
                     f"{self.name!r} is dead_letter: redrive, where the attempt limit is the "
                     f"RedrivePolicy maxReceiveCount ({limit}): remove max_attempts or set "
                     "the queue to dead_letter: discard"
                 )
-            policies[job] = replace(retry.policy, max_attempts=limit)
-        return policies
+            retries[job] = ResolvedRetry(
+                replace(retry.policy, max_attempts=limit),
+                {**retry.sources, "max_attempts": RetrySource.REDRIVE},
+            )
+        return retries
 
     def _read_dead_letter(self) -> DeadLetter:
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
@@ -464,14 +475,18 @@ class SqsQueues:
         return queue
 
     def at(self, event_source_arn: str) -> SqsQueue:
-        """The configured queue an event source ARN names, matched by account and queue name.
+        """The configured queue an event source ARN names.
+
+        A queue matches by region, account and queue name; a URL that names no
+        region matches any.
 
         Raises:
-            SQSDispatchError: When no queue of ``sqs.queues`` has that account and name.
+            SQSDispatchError: When no queue of ``sqs.queues`` matches.
         """
-        _, _, _, _, account, name = event_source_arn.split(":")
+        _, _, _, region, account, name = event_source_arn.split(":")
         for queue in self._by_name.values():
-            if (queue.account_id, queue.queue_name) == (account, name):
+            same_region = queue.region in (None, region)
+            if same_region and (queue.account_id, queue.queue_name) == (account, name):
                 return queue
         raise SQSDispatchError(
             f"no queue of sqs.queues is {event_source_arn}", code=SQSErrorCode.QUEUE_UNKNOWN
@@ -487,5 +502,4 @@ __all__ = [
     "SqsQueue",
     "SqsQueues",
     "SqsRecord",
-    "chunked",
 ]
