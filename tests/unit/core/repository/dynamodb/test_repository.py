@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-import boto3
 import msgspec
 import pytest
 
@@ -11,7 +10,8 @@ from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository import OnConflict
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from tests.helpers.dynamodb import create_table, record_transactions, stored_items
+from tests.helpers.aws import moto_client
+from tests.helpers.dynamodb import create_table, stored_items
 
 from .conftest import Product, ProductCreate, ProductUpdate
 
@@ -100,7 +100,9 @@ class TestDynamoRepositoryRoundTrip:
         with pytest.raises(UnsupportedQuery, match="exists_by\\('name'\\)"):
             await repo.exists_by("name", "Nut")
 
-    async def test_update_conditional_failure_returns_none(self, dynamodb: Any) -> None:
+    async def test_update_conditional_failure_returns_none(
+        self, dynamodb: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Item vanishes between the read and the conditional write (concurrent delete);
         # the anti-resurrection condition fails, which maps to "no longer exists" (None).
         repo = _repo(dynamodb)
@@ -113,7 +115,7 @@ class TestDynamoRepositoryRoundTrip:
             dynamodb.delete_item(TableName="products", Key={"id": {"N": "1"}})
             return response
 
-        dynamodb.get_item = _get_then_delete  # type: ignore[method-assign]
+        monkeypatch.setattr(dynamodb, "get_item", _get_then_delete)
 
         assert await repo.update(1, ProductUpdate(name="Gadget")) is None
 
@@ -140,7 +142,7 @@ _BADGE_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
 
 @pytest.fixture
 def badges(mocked_aws: None) -> Any:
-    client = boto3.client("dynamodb")
+    client = moto_client("dynamodb")
     create_table(client, "badges", key_type="S")
     return client
 
@@ -213,9 +215,8 @@ class TestDynamoUuidPrimaryKey:
 
 class TestDynamoCreateMany:
     async def test_error_writes_every_item_in_input_order_one_transaction_per_hundred(
-        self, dynamodb: Any
+        self, dynamodb: Any, transactions: list[int]
     ) -> None:
-        transactions = record_transactions(dynamodb)
         keys = list(range(250, 0, -1))
 
         created = await _repo(dynamodb).create_many([ProductCreate(id=key) for key in keys])
@@ -225,9 +226,8 @@ class TestDynamoCreateMany:
         assert len(stored_items(dynamodb, "products")) == 250
 
     async def test_error_on_an_existing_key_raises_conflict_and_cancels_only_its_chunk(
-        self, dynamodb: Any
+        self, dynamodb: Any, transactions: list[int]
     ) -> None:
-        transactions = record_transactions(dynamodb)
         repo = _repo(dynamodb)
         await repo.create(ProductCreate(id=500))
         batch = [ProductCreate(id=key) for key in range(1, 101)] + [
@@ -251,8 +251,9 @@ class TestDynamoCreateMany:
 
         assert stored_items(dynamodb, "products") == {}
 
-    async def test_ignore_writes_one_put_per_item_and_no_transaction(self, dynamodb: Any) -> None:
-        transactions = record_transactions(dynamodb)
+    async def test_ignore_writes_one_put_per_item_and_no_transaction(
+        self, dynamodb: Any, transactions: list[int]
+    ) -> None:
         created = await _repo(dynamodb).create_many(
             [ProductCreate(id=key) for key in range(150)], on_conflict=OnConflict.IGNORE
         )

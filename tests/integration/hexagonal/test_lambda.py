@@ -35,8 +35,8 @@ CONSUMED = {"batchItemFailures": []}
 
 
 @pytest.fixture
-def lambda_worker(compose: Compose, mocked_aws: None) -> Iterator[LambdaHandler]:
-    """The ``acme-worker`` Lambda function, closed when the test ends, over moto's SQS."""
+def lambda_worker(compose: Compose, no_aws: None) -> Iterator[LambdaHandler]:
+    """The ``acme-worker`` Lambda function, closed when the test ends, over a stand-in SQS."""
     yield compose("lambda-jobs")[1]
 
 

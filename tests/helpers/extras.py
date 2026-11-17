@@ -93,6 +93,14 @@ def patched_aws_clients(client: Any = None) -> Iterator[AwsClientFactory]:
         yield factory
 
 
+@contextmanager
+def serving_client(client: Any = None) -> Iterator[FakeAwsIsland]:
+    """Make every client the AWS island builds *client* (a ``MagicMock`` by default)."""
+    served = client if client is not None else MagicMock()
+    with pytest.MonkeyPatch.context() as patcher:
+        yield fake_aws_island(patcher, serving=lambda _config: served)
+
+
 class FakeSdkError(Exception):
     """The error a :class:`FakeAwsIsland` reports as the SDK's own."""
 

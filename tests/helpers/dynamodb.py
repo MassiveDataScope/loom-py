@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 KEY = "id"
@@ -23,7 +25,8 @@ def stored_items(client: Any, table: str) -> dict[str, dict[str, Any]]:
     return {str(next(iter(item[KEY].values()))): item for page in pages for item in page["Items"]}
 
 
-def record_transactions(client: Any) -> list[int]:
+@contextmanager
+def record_transactions(client: Any) -> Iterator[list[int]]:
     """Record the size of every ``TransactWriteItems`` *client* commits, in order."""
     sizes: list[int] = []
     sent: list[int] = []
@@ -36,6 +39,12 @@ def record_transactions(client: Any) -> list[int]:
         if "Error" not in parsed:
             sizes.append(size)
 
-    client.meta.events.register("before-parameter-build.dynamodb.TransactWriteItems", remember_size)
-    client.meta.events.register("after-call.dynamodb.TransactWriteItems", keep_committed)
-    return sizes
+    before = "before-parameter-build.dynamodb.TransactWriteItems"
+    after = "after-call.dynamodb.TransactWriteItems"
+    client.meta.events.register(before, remember_size)
+    client.meta.events.register(after, keep_committed)
+    try:
+        yield sizes
+    finally:
+        client.meta.events.unregister(before, remember_size)
+        client.meta.events.unregister(after, keep_committed)

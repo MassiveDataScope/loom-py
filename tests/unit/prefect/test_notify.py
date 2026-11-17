@@ -6,8 +6,8 @@ import json
 from typing import Any
 from unittest.mock import MagicMock
 
-import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 from loom.prefect.notify import (
     NotifyEvent,
@@ -16,6 +16,8 @@ from loom.prefect.notify import (
     build_notifiers,
 )
 from loom.prefect.notify import _sns as sns_module
+from tests.helpers.aws import moto_client
+from tests.helpers.extras import fake_aws_island, serving_client
 
 _TOPIC = "arn:aws:sns:eu-west-1:123456789012:etl-failures"
 
@@ -148,12 +150,92 @@ class TestBuildNotifiers:
         assert len(notifiers) == 2
 
 
+def _sent(client: MagicMock) -> dict[str, str]:
+    return client.publish.call_args.kwargs
+
+
+class TestSnsNotifier:
+    def test_publishes_on_failure(self) -> None:
+        client = MagicMock()
+        SnsNotifier(topic_arn=_TOPIC, client=client).notify(_make_event(state="Failed"))
+        client.publish.assert_called_once_with(
+            TopicArn=_TOPIC,
+            Subject="[Failed] etl-x",
+            Message=(
+                "etl-x -> Failed\n"
+                "run: run-1\n"
+                "correlation: corr-1\n"
+                "\n"
+                "boom\n"
+                "\n"
+                "Open in Prefect: https://prefect/runs/1"
+            ),
+        )
+
+    def test_does_not_publish_on_completion_by_default(self) -> None:
+        client = MagicMock()
+        SnsNotifier(topic_arn=_TOPIC, client=client).notify(_make_event(state="Completed"))
+        client.publish.assert_not_called()
+
+    def test_publishes_on_completion_when_enabled(self) -> None:
+        client = MagicMock()
+        notifier = SnsNotifier(topic_arn=_TOPIC, on_completion=True, client=client)
+        notifier.notify(_make_event(state="Completed"))
+        assert _sent(client)["Subject"] == "[Completed] etl-x"
+
+    def test_subject_is_cut_to_99_characters(self) -> None:
+        client = MagicMock()
+        notifier = SnsNotifier(topic_arn=_TOPIC, client=client)
+        notifier.notify(_make_event(flow_name="f" * 150))
+        assert _sent(client)["Subject"] == ("[Failed] " + "f" * 150)[:99]
+
+    def test_message_keeps_the_end_of_a_huge_error(self) -> None:
+        client = MagicMock()
+        notifier = SnsNotifier(topic_arn=_TOPIC, client=client)
+        notifier.notify(_make_event(message="Traceback\n" + "x" * 100_000 + "ValueError: end"))
+        message = _sent(client)["Message"]
+        assert "Traceback" not in message
+        assert "x" * 59_985 + "ValueError: end\n" in message
+        assert len(message) < 60_100
+
+    def test_swallows_and_logs_a_client_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        log = MagicMock()
+        monkeypatch.setattr(sns_module, "_log", log)
+        client = MagicMock()
+        client.publish.side_effect = ClientError(
+            {"Error": {"Code": "AuthorizationError"}}, "Publish"
+        )
+        SnsNotifier(topic_arn=_TOPIC, client=client).notify(_make_event(state="Failed"))
+        log.warning.assert_called_once_with(
+            "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
+        )
+
+    def test_default_client_uses_the_topic_region(self) -> None:
+        with serving_client() as island:
+            SnsNotifier(topic_arn=_TOPIC)
+        assert [(service, config.region) for service, config in island.built] == [
+            ("sns", "eu-west-1")
+        ]
+
+
+class TestBuildSnsNotifier:
+    def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_aws_island(monkeypatch)
+        block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
+        (notifier,) = build_notifiers(block)
+        assert isinstance(notifier, SnsNotifier)
+
+    @pytest.mark.parametrize("topic_arn", ["", "   ", None])
+    def test_skips_sns_when_topic_arn_empty(self, topic_arn: str | None) -> None:
+        assert build_notifiers([{"kind": "sns", "topic_arn": topic_arn}]) == ()
+
+
 class _Topic:
     """The SNS topic ``_TOPIC`` on moto, with an SQS queue subscribed to read what it published."""
 
     def __init__(self) -> None:
-        sns = boto3.client("sns", region_name="eu-west-1")
-        self._sqs = boto3.client("sqs", region_name="eu-west-1")
+        sns = moto_client("sns", "eu-west-1")
+        self._sqs = moto_client("sqs", "eu-west-1")
         sns.create_topic(Name="etl-failures")
         self._queue = self._sqs.create_queue(QueueName="published")["QueueUrl"]
         arn = self._sqs.get_queue_attributes(QueueUrl=self._queue, AttributeNames=["QueueArn"])
@@ -164,79 +246,27 @@ class _Topic:
         return [json.loads(message["Body"]) for message in received.get("Messages", [])]
 
 
-@pytest.fixture
-def topic(mocked_aws: None) -> _Topic:
-    return _Topic()
+class TestSnsNotifierOnMoto:
+    """The real request shape: a publish captured by a queue subscribed to a moto topic."""
 
+    def test_a_failure_is_published_to_the_topic_of_its_arn_region(self, mocked_aws: None) -> None:
+        topic = _Topic()
 
-class TestSnsNotifier:
-    def test_publishes_on_failure(self, topic: _Topic) -> None:
         SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
 
         [published] = topic.published()
         assert published["TopicArn"] == _TOPIC
         assert published["Subject"] == "[Failed] etl-x"
-        assert published["Message"] == (
-            "etl-x -> Failed\n"
-            "run: run-1\n"
-            "correlation: corr-1\n"
-            "\n"
-            "boom\n"
-            "\n"
-            "Open in Prefect: https://prefect/runs/1"
-        )
+        assert "Open in Prefect: https://prefect/runs/1" in published["Message"]
 
-    def test_does_not_publish_on_completion_by_default(self, topic: _Topic) -> None:
-        SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Completed"))
-
-        assert topic.published() == []
-
-    def test_publishes_on_completion_when_enabled(self, topic: _Topic) -> None:
-        notifier = SnsNotifier(topic_arn=_TOPIC, on_completion=True)
-        notifier.notify(_make_event(state="Completed"))
-
-        [published] = topic.published()
-        assert published["Subject"] == "[Completed] etl-x"
-
-    def test_subject_is_cut_to_99_characters(self, topic: _Topic) -> None:
-        notifier = SnsNotifier(topic_arn=_TOPIC)
-        notifier.notify(_make_event(flow_name="f" * 150))
-
-        [published] = topic.published()
-        assert published["Subject"] == ("[Failed] " + "f" * 150)[:99]
-
-    def test_message_keeps_the_end_of_a_huge_error(self, topic: _Topic) -> None:
-        notifier = SnsNotifier(topic_arn=_TOPIC)
-        notifier.notify(_make_event(message="Traceback\n" + "x" * 100_000 + "ValueError: end"))
-
-        [published] = topic.published()
-        message = published["Message"]
-        assert "Traceback" not in message
-        assert "x" * 59_985 + "ValueError: end\n" in message
-        assert len(message) < 60_100
-
-    def test_swallows_and_logs_a_client_error(
+    def test_a_publish_to_a_missing_topic_is_swallowed_and_logged(
         self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         log = MagicMock()
         monkeypatch.setattr(sns_module, "_log", log)
+
         SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
+
         log.warning.assert_called_once_with(
             "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
         )
-
-    def test_default_client_uses_the_topic_region(self, topic: _Topic) -> None:
-        SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
-
-        assert len(topic.published()) == 1
-
-
-class TestBuildSnsNotifier:
-    def test_builds_sns_notifier_from_yaml_block(self, mocked_aws: None) -> None:
-        block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
-        (notifier,) = build_notifiers(block)
-        assert isinstance(notifier, SnsNotifier)
-
-    @pytest.mark.parametrize("topic_arn", ["", "   ", None])
-    def test_skips_sns_when_topic_arn_empty(self, topic_arn: str | None) -> None:
-        assert build_notifiers([{"kind": "sns", "topic_arn": topic_arn}]) == ()

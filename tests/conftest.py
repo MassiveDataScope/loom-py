@@ -8,7 +8,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import boto3
 import pytest
 from moto import mock_aws
 from omegaconf import OmegaConf
@@ -19,6 +18,8 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
+from tests.helpers.aws import REGION, moto_client
+from tests.helpers.extras import fake_aws_island
 
 pytest_plugins = ["tests.helpers.delegation"]
 
@@ -43,7 +44,7 @@ def clear_builtin_resolvers() -> Iterator[None]:
 
 
 AWS_ACCOUNT = "123456789012"
-AWS_REGION = "us-east-1"
+AWS_REGION = REGION
 
 
 @pytest.fixture
@@ -60,15 +61,21 @@ def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture
+def no_aws(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hand every AWS client loom builds out as a mock: nothing reaches AWS or moto."""
+    fake_aws_island(monkeypatch)
+
+
+@pytest.fixture
 def ssm(mocked_aws: None) -> Any:
     """An SSM client of the moto account."""
-    return boto3.client("ssm")
+    return moto_client("ssm")
 
 
 @pytest.fixture
 def secretsmanager(mocked_aws: None) -> Any:
     """A Secrets Manager client of the moto account."""
-    return boto3.client("secretsmanager")
+    return moto_client("secretsmanager")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
