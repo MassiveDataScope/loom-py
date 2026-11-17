@@ -26,13 +26,13 @@ if TYPE_CHECKING:
 __all__ = ["TEST_QUEUE", "EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
 
 _REGION: Final = "us-east-1"
-_ACCOUNT: Final = "123456789012"
-"""The account of every ARN a test event carries: the one moto answers for."""
-_ARN: Final = f"{_REGION}:{_ACCOUNT}"
+_ARN: Final = f"{_REGION}:000000000000"
+_SQS_ARN: Final = f"{_REGION}:123456789012"
+"""The region and account of the queue of an SQS test record: the account moto answers for."""
 _TIME: Final = "2026-01-01T00:00:00Z"
 
 TEST_QUEUE: Final = {
-    "url": f"https://sqs.{_REGION}.amazonaws.com/{_ACCOUNT}/loom-jobs",
+    "url": f"https://sqs.{_REGION}.amazonaws.com/123456789012/loom-jobs",
     "dead_letter": "discard",
 }
 """The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names.
@@ -124,7 +124,7 @@ class LambdaEvent(dict[str, Any]):
             "id": event_id or str(uuid.uuid4()),
             "detail-type": "loom.test",
             "source": "loom.test",
-            "account": _ACCOUNT,
+            "account": "000000000000",
             "time": _TIME,
             "region": _REGION,
             "resources": [],
@@ -206,7 +206,9 @@ def _sqs_record(
     attributes = {"ApproximateReceiveCount": "1", "SentTimestamp": "0"}
     if group_id is not None:
         attributes["MessageGroupId"] = group_id
-    default_arn = f"arn:aws:sqs:{_ARN}:loom-jobs" + (FIFO_SUFFIX if group_id is not None else "")
+    default_arn = f"arn:aws:sqs:{_SQS_ARN}:loom-jobs" + (
+        FIFO_SUFFIX if group_id is not None else ""
+    )
     return {
         "messageId": message_id or str(uuid.uuid4()),
         "receiptHandle": "test-receipt",

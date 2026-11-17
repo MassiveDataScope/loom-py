@@ -105,9 +105,13 @@
   queue the function consumes, with a dead-letter queue and a real
   `RedrivePolicy` for a `redrive` queue, and exposes `sqs` (a boto3 client of the
   mock), `queue_url` and `dead_letter_url`, so a test needs no region, no
-  credentials and no patch of boto3 (`docs/rest/testing.md`). The default account
-  of test events and of `TEST_QUEUE` is now `123456789012`, the one moto answers
-  for, and composition leaves an `AwsClients` an override bound. A record whose `ApproximateReceiveCount` is not a
+  credentials and no patch of boto3 (`docs/rest/testing.md`). `worker.deliver(job,
+  payload)` sends the job as `SQSJobService` does, receives it (a real receipt
+  handle and `ApproximateReceiveCount`) and invokes the function;
+  `worker.redeliver()` does so for what the queue shows, so a failure comes back
+  and is counted. The account of the SQS ARN of test records and of `TEST_QUEUE`
+  is now `123456789012`, the one moto answers for (the other test events keep
+  `000000000000`), and composition leaves an `AwsClients` an override bound. A record whose `ApproximateReceiveCount` is not a
   positive integer or whose `loom.deferrals` is not a non-negative one is
   malformed, and only it is rejected. The dead-letter policy of the consumed
   queue is read at Init, never during an invocation, with the application's own

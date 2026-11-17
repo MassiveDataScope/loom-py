@@ -189,17 +189,13 @@ queued and a `jobs` event already is a record, so neither has `via_sqs`. Every S
 should retry:
 
 ```python
-from loom.testing import LambdaEvent, LambdaWorker
+from loom.testing import LambdaWorker
 
-def test_a_message_naming_an_unknown_job_is_retried() -> None:
+def test_a_failed_email_is_reported_and_comes_back() -> None:
     with LambdaWorker("config.yaml", function="worker", environment="test") as worker:
-        records = [
-            *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
-            *LambdaEvent.sqs_record('{"job": "Missing"}', message_id="2")["Records"],
-        ]
-        result = worker({"Records": records}, None)
-
-    assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
+        result = worker.deliver(SendEmailJob, {"to": "ada@example.com"})
+        assert result == {"batchItemFailures": [{"itemIdentifier": ...}]}  # smtp was down
+        assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran and succeeded
 ```
 
 A `jobs` function declares the queue it consumes (`trigger.queue`), and it
@@ -218,7 +214,17 @@ lambda:
     worker: {trigger: {source: jobs, queue: {name: jobs}}}
 ```
 
-`LambdaWorker` needs the `testing-aws` extra (moto). It starts moto's AWS
+`LambdaWorker.deliver(job_type, payload, params=, identity=)` writes the job on
+the queue as `SQSJobService` does, receives it and invokes the function with
+the record, which carries the real receipt handle and `ApproximateReceiveCount`
+of that delivery; it returns the handler's result and, as Lambda does, deletes
+the messages the result does not report. `redeliver()` does the same with
+whatever the queue shows: a failed message comes back once its visibility
+timeout, set from the job's backoff, ends (a `Backoff(first_s=0, ...)` makes it
+immediate), counted as a new attempt. Calling the worker, `worker(event, None)`,
+passes a raw event, whose receipt handle is not in the queue: moto rejects the
+visibility change or send that settles it, and loom logs that and reports the
+message. `LambdaWorker` needs the `testing-aws` extra (moto). It starts moto's AWS
 mock, creates the queue the function consumes, with a dead-letter queue and a
 real `RedrivePolicy` when the entry says `dead_letter: redrive`, and binds the
 function over it: no region, no credentials and no patch of boto3, and nothing

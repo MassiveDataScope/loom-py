@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -10,8 +11,9 @@ from typing import Any
 import pytest
 import yaml
 
+from loom.core.job.job import Job
 from loom.core.plugins.optional import MissingExtraError
-from loom.testing import TEST_QUEUE, LambdaEvent, LambdaWorker
+from loom.testing import TEST_QUEUE, LambdaWorker
 
 _JOBS = """
 from loom.core.job.job import Job
@@ -24,8 +26,16 @@ class SendEmailJob(Job[None]):
     def execute(self, marker: str) -> None:
         if marker == "fail":
             raise ValueError("smtp is down")
+
+
+class FlakyEmailJob(Job[None]):
+    __retry__ = Backoff(first_s=0, factor=1, max_s=0, jitter=False)
+
+    def execute(self) -> None:
+        raise ValueError("smtp is down")
 """
 _REJECTION = "loom.rejection_reason"
+_NOTHING = {"batchItemFailures": []}
 
 Config = Callable[[str], str]
 
@@ -57,27 +67,9 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
             sys.modules.pop(name)
 
 
-def _delivered(worker: LambdaWorker, body: str) -> dict[str, Any]:
-    """Send *body* to the queue and receive it, as the event source mapping would."""
-    worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody=body)
-    received = worker.sqs.receive_message(
-        QueueUrl=worker.queue_url,
-        VisibilityTimeout=0,
-        AttributeNames=["All"],
-        MessageAttributeNames=["All"],
-    )["Messages"][0]
-    arn = worker.sqs.get_queue_attributes(QueueUrl=worker.queue_url, AttributeNames=["QueueArn"])
-    record: dict[str, Any] = LambdaEvent.sqs_record(
-        received["Body"],
-        message_id=received["MessageId"],
-        queue_arn=arn["Attributes"]["QueueArn"],
-    )["Records"][0]
-    record["receiptHandle"] = received["ReceiptHandle"]
-    return record
-
-
-def _job(marker: str) -> str:
-    return f'{{"job": "SendEmailJob", "params": {{"marker": "{marker}"}}}}'
+def _job(name: str) -> type[Job[None]]:
+    job: type[Job[None]] = getattr(importlib.import_module("acme_mail.jobs"), name)
+    return job
 
 
 def _messages(worker: LambdaWorker, url: str | None) -> list[dict[str, Any]]:
@@ -90,40 +82,56 @@ def _messages(worker: LambdaWorker, url: str | None) -> list[dict[str, Any]]:
 
 
 class TestLambdaWorker:
-    def test_a_job_that_succeeds_reports_nothing(self, config: Config) -> None:
+    def test_a_job_that_succeeds_reports_nothing_and_leaves_the_queue_empty(
+        self, config: Config
+    ) -> None:
         with LambdaWorker(config("discard"), function="worker", environment="test") as worker:
-            record = _delivered(worker, _job("ok"))
+            result = worker.deliver(_job("SendEmailJob"), params={"marker": "ok"})
 
-            result = worker({"Records": [record]}, None)
-
-        assert result == {"batchItemFailures": []}
+            assert (result, _messages(worker, worker.queue_url)) == (_NOTHING, [])
 
     def test_a_job_that_fails_is_reported_and_stays_invisible_for_its_backoff(
         self, config: Config
     ) -> None:
         with LambdaWorker(config("discard"), function="worker", environment="test") as worker:
-            record = _delivered(worker, _job("fail"))
+            result = worker.deliver(_job("SendEmailJob"), params={"marker": "fail"})
 
-            result = worker({"Records": [record]}, None)
+            assert len(result["batchItemFailures"]) == 1
+            assert (worker.redeliver(), _messages(worker, worker.queue_url)) == (_NOTHING, [])
 
-            assert result == {"batchItemFailures": [{"itemIdentifier": record["messageId"]}]}
+    def test_a_failure_that_comes_back_is_rejected_when_the_attempts_run_out(
+        self, config: Config
+    ) -> None:
+        with LambdaWorker(config("discard"), function="worker", environment="test") as worker:
+            first = worker.deliver(_job("FlakyEmailJob"))
+            second = worker.redeliver()
+            third = worker.redeliver()
+
+            assert [len(r["batchItemFailures"]) for r in (first, second, third)] == [1, 1, 0]
             assert _messages(worker, worker.queue_url) == []
 
     def test_a_rejection_on_a_redrive_queue_lands_in_the_dead_letter_queue(
         self, config: Config
     ) -> None:
         with LambdaWorker(config("redrive"), function="worker", environment="test") as worker:
-            record = _delivered(worker, "{")
-
-            result = worker({"Records": [record]}, None)
+            worker.deliver(_job("FlakyEmailJob"))
+            worker.redeliver()
+            worker.redeliver()
 
             (dead,) = _messages(worker, worker.dead_letter_url)
             reason = dead["MessageAttributes"][_REJECTION]["StringValue"]
-        assert (result, dead["Body"], reason) == (
-            {"batchItemFailures": []},
-            "{",
-            "MalformedJobMessage",
-        )
+        assert reason == "ValueError"
+
+    def test_a_message_that_cannot_be_read_is_rejected_to_the_dead_letter_queue(
+        self, config: Config
+    ) -> None:
+        with LambdaWorker(config("redrive"), function="worker", environment="test") as worker:
+            worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody="{")
+
+            result = worker.redeliver()
+
+            (dead,) = _messages(worker, worker.dead_letter_url)
+        assert (result, dead["Body"]) == (_NOTHING, "{")
 
     def test_a_discard_queue_has_no_dead_letter_queue(self, config: Config) -> None:
         with LambdaWorker(config("discard"), function="worker", environment="test") as worker:
