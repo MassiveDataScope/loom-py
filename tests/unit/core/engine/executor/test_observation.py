@@ -246,7 +246,7 @@ class TestBuildFailure:
         factory.register(AcmeOnFailure)
         service = InlineJobService(factory, make_executor(logger=logger))
 
-        service.dispatch(AcmeBrokenJob, on_failure=on_failure)
+        service.dispatch_after_commit(AcmeBrokenJob, on_failure=on_failure)
         await flush_pending_dispatches()
 
         assert [event for event, _ in logger.errors] == ["[FAIL] AcmeBrokenJob"]

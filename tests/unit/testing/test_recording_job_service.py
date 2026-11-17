@@ -39,7 +39,7 @@ class _Ship(UseCase[Any, None]):
         self.fail = fail
 
     async def execute(self) -> None:
-        self.jobs.dispatch(ShipJob, params={"order": 7}, payload={"note": "fragile"})
+        self.jobs.dispatch_after_commit(ShipJob, params={"order": 7}, payload={"note": "fragile"})
         if self.fail:
             raise RuntimeError("rolled back")
 
@@ -90,6 +90,7 @@ class TestRecordingJobService:
                 payload={"note": "fragile"},
                 params={"order": 7},
                 queue="shipping",
+                countdown=0,
                 identity=_ALICE,
             )
         ]
@@ -129,7 +130,7 @@ class TestRecordingJobService:
         self, composed: tuple[RecordingJobService, type[Job[str]]], queue: str | None, expected: str
     ) -> None:
         service, moved = composed
-        service.dispatch(moved, queue=queue)
+        service.dispatch_after_commit(moved, queue=queue)
         await flush_pending_dispatches()
 
         assert [(record.job_type, record.queue) for record in service.dispatched] == [
@@ -153,7 +154,7 @@ class TestRecordingJobService:
         jobs: RecordingJobService,
     ) -> None:
         payload, params = {"note": "fragile"}, {"order": 7}
-        jobs.dispatch(ShipJob, payload=payload, params=params)
+        jobs.dispatch_after_commit(ShipJob, payload=payload, params=params)
         payload["note"], params["order"] = "sturdy", 8
 
         await flush_pending_dispatches()
@@ -162,3 +163,59 @@ class TestRecordingJobService:
             {"note": "fragile"},
             {"order": 7},
         )
+
+
+class TestRecordedCountdown:
+    @pytest.mark.parametrize(
+        ("declared", "given", "expected"),
+        [(0, None, 0), (12, None, 12), (12, 4, 4)],
+        ids=["default", "class countdown", "call countdown"],
+    )
+    async def test_dispatch_after_commit_records_the_effective_countdown(
+        self, declared: int, given: int | None, expected: int
+    ) -> None:
+        class TimedJob(Job[None]):
+            __countdown__ = declared
+
+            def execute(self) -> None:
+                return None
+
+        service = RecordingJobService()
+        options = {} if given is None else {"countdown": given}
+        service.dispatch_after_commit(TimedJob, **options)
+        await flush_pending_dispatches()
+
+        assert [record.countdown for record in service.dispatched] == [expected]
+
+    async def test_dispatch_now_records_the_class_countdown(self) -> None:
+        class TimedJob(Job[None]):
+            __countdown__ = 9
+
+            def execute(self) -> None:
+                return None
+
+        service = RecordingJobService()
+        await service.dispatch_now(TimedJob)
+
+        assert service.dispatched[0].countdown == 9
+
+    async def test_a_configured_countdown_overrides_the_class(self, tmp_path: Path) -> None:
+        class TimedJob(Job[None]):
+            __countdown__ = 3
+
+            def execute(self) -> None:
+                return None
+
+        project = job_project(
+            tmp_path,
+            {"jobs": {"TimedJob": {"countdown": 7}}},
+            "loom.testing:RecordingJobService",
+        )
+        application = project.compose(JobsAdapter(TimedJob))
+        service = application.kernel.container.resolve(JobService)
+        assert isinstance(service, RecordingJobService)
+        service.dispatch_after_commit(TimedJob)
+        await flush_pending_dispatches()
+        await service.dispatch_now(TimedJob, countdown=2)
+
+        assert [record.countdown for record in service.dispatched] == [7, 2]

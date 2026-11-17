@@ -961,7 +961,7 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
             BuildProductSummaryUseCase,
             params={"product_id": int(product_id)},
         )
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={"product_id": int(product_id), "recipient_email": cmd.recipient_email},

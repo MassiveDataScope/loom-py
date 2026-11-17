@@ -230,7 +230,7 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         self._jobs = job_service
 
     async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> DispatchRestockEmailResponse:
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={"product_id": int(product_id), "recipient_email": cmd.recipient_email},
@@ -274,7 +274,7 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
 
     async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> RestockWorkflowResponse:
         summary = await self._app.invoke(BuildProductSummaryUseCase, params={"product_id": int(product_id)})
-        handle = self._jobs.dispatch(SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...})
+        handle = self._jobs.dispatch_after_commit(SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...})
         return RestockWorkflowResponse(summary=summary.summary, restock_job_id=handle.job_id, queue=handle.queue)
 ```
 

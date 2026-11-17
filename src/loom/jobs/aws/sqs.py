@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
-import math
 import threading
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
@@ -26,6 +25,7 @@ from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.envelope import encode_job_message, wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
+from loom.core.job.policy import Countdown
 from loom.core.job.service import InlineJobService
 from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 
 ResultT = TypeVar("ResultT")
 
-MAX_DELAY_SECONDS = 900
 MAX_MESSAGE_BYTES = 256 * 1024
 MAX_BATCH_ENTRIES = 10
 MAX_BATCH_BYTES = 1024 * 1024
@@ -288,7 +287,7 @@ class SQSJobService:
     ) -> ResultT:
         return await self._inline.run(job_type, params=params, payload=payload)
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -299,9 +298,87 @@ class SQSJobService:
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
         """Validate and encode now, so a refusal comes before the commit; send after it."""
+        send, handle = self._message(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        if self._config.batch:
+            pending_publish_group(self, self._new_batch).sends.append(send)
+        else:
+            add_pending_publish(send)
+        return handle
+
+    async def dispatch_now(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobHandle[ResultT]:
+        """Validate, encode and send the job now, even inside a use case.
+
+        The job can run before the caller's writes commit and is not undone
+        if they roll back. Inline runs the job inside the caller's
+        transaction. Work that depends on the caller's writes uses
+        :meth:`dispatch_after_commit`.
+        """
+        send, handle = self._message(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        await send()
+        return handle
+
+    def _message(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None,
+        payload: dict[str, Any] | None,
+        on_success: type[JobCallback] | None,
+        on_failure: type[JobCallback] | None,
+        queue: str | None,
+        countdown: int | None,
+        priority: int | None,
+    ) -> tuple[_PendingSQSSend, JobHandle[ResultT]]:
+        """Validate, encode and place the message.
+
+        Args:
+            job_type: Concrete Job subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Must be ``None``; SQS jobs take no callbacks.
+            on_failure: Must be ``None``; SQS jobs take no callbacks.
+            queue: Override the job's queue for this dispatch only.
+            countdown: Delay in seconds, 0 through 900 inclusive.
+            priority: Must match the job's priority; SQS queues have none.
+
+        Returns:
+            The pending send and a handle sharing its task id.
+
+        Raises:
+            ValueError: When *countdown* is outside 0..900 inclusive.
+            SQSDispatchError: When SQS cannot carry the message.
+        """
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
         options = self._settings.of(job_type)
@@ -334,15 +411,11 @@ class SQSJobService:
                 f"at most {MAX_MESSAGE_BYTES}",
                 code=SQSErrorCode.MESSAGE_TOO_LARGE,
             )
-        delay = _delay(options.countdown if countdown is None else countdown, eta)
+        delay = Countdown(options.countdown if countdown is None else countdown).seconds
         request = {"QueueUrl": url, "MessageBody": body.decode()}
         request |= _placement(job_type, url, payload, task_id, delay)
         task_name = wire_job_name(job_type.__qualname__)
         send = _PendingSQSSend(self._client, task_name, task_id, eff_queue, len(body), request)
-        if self._config.batch:
-            pending_publish_group(self, self._new_batch).sends.append(send)
-        else:
-            add_pending_publish(send)
         self._metrics.on_event(
             RuntimeEvent(
                 kind=EventKind.JOB_DISPATCHED,
@@ -350,7 +423,10 @@ class SQSJobService:
                 trace_id=trace_id,
             )
         )
-        return JobHandle(job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC))
+        handle: JobHandle[ResultT] = JobHandle(
+            job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC)
+        )
+        return send, handle
 
     def dispatch_parallel(
         self,
@@ -362,21 +438,10 @@ class SQSJobService:
         if on_all_success is not None or on_any_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
         return JobGroup(
-            handles=tuple(self.dispatch(job_type, payload=body) for job_type, body in jobs)
+            handles=tuple(
+                self.dispatch_after_commit(job_type, payload=body) for job_type, body in jobs
+            )
         )
-
-
-def _delay(countdown: int, eta: datetime | None) -> int:
-    if eta is not None:
-        seconds = math.ceil((eta.astimezone(UTC) - datetime.now(UTC)).total_seconds())
-    else:
-        seconds = countdown
-    if seconds > MAX_DELAY_SECONDS:
-        raise SQSDispatchError(
-            f"SQS delays a message at most {MAX_DELAY_SECONDS} s, not {seconds}",
-            code=SQSErrorCode.DELAY_TOO_LONG,
-        )
-    return max(seconds, 0)
 
 
 def _placement(

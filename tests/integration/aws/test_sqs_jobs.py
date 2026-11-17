@@ -55,7 +55,7 @@ class Dispatch(UseCase[Any, str]):
 
     async def execute(self, job: str, marker: str, customer: str, fail: bool) -> str:
         job_type = WelcomeJob if job == "WelcomeJob" else OrderJob
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             job_type, params={"marker": marker}, payload={"customer": customer}
         )
         if fail:
@@ -72,7 +72,7 @@ class DispatchMany(UseCase[Any, list[str]]):
     async def execute(self, job: str, count: int) -> list[str]:
         job_type = WelcomeJob if job == "WelcomeJob" else OrderJob
         return [
-            self._jobs.dispatch(
+            self._jobs.dispatch_after_commit(
                 job_type, params={"marker": str(n)}, payload={"customer": "c-7"}
             ).job_id
             for n in range(count)

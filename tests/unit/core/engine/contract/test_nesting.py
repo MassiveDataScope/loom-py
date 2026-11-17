@@ -43,7 +43,7 @@ class TestNestedExecutionOwnership:
         class _Outer(UseCase[Any, str]):
             async def execute(self, value: str) -> str:
                 inner = await executor.execute(Dispatching(broker), params={"value": "inner"})
-                broker.dispatch("outer")
+                broker.dispatch_after_commit("outer")
                 return inner
 
         await executor.execute(_Outer(), params={"value": "x"})

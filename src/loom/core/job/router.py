@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.errors import MixedJobBackendsError
@@ -53,7 +52,7 @@ class JobRouter:
         """Execute the job in-process through the default backend."""
         return await self._default.run(job_type, params=params, payload=payload)
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -64,10 +63,9 @@ class JobRouter:
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Dispatch through the backend of the effective queue."""
-        return self._backend_for(job_type, queue).dispatch(
+        """Dispatch through the backend of the effective queue after the commit."""
+        return self._backend_for(job_type, queue).dispatch_after_commit(
             job_type,
             params=params,
             payload=payload,
@@ -76,7 +74,30 @@ class JobRouter:
             queue=queue,
             countdown=countdown,
             priority=priority,
-            eta=eta,
+        )
+
+    async def dispatch_now(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobHandle[ResultT]:
+        """Dispatch through the backend of the effective queue now."""
+        return await self._backend_for(job_type, queue).dispatch_now(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
 
     def dispatch_parallel(
@@ -104,7 +125,7 @@ class JobRouter:
             raise MixedJobBackendsError()
         return JobGroup(
             handles=tuple(
-                backend.dispatch(job_type, payload=payload)
+                backend.dispatch_after_commit(job_type, payload=payload)
                 for backend, (job_type, payload) in zip(backends, jobs, strict=True)
             )
         )

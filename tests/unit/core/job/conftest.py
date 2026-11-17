@@ -13,7 +13,7 @@ from loom.core.job.context import clear_pending_dispatches
 def _reset_pending_dispatches() -> Generator[None, None, None]:
     """Clear the pending dispatch queue before and after every job test.
 
-    Sync tests that call ``dispatch()`` modify ``_pending`` in the main
+    Sync tests that call ``dispatch_after_commit()`` modify ``_pending`` in the main
     thread's context directly.  Without cleanup, these entries accumulate and
     are inherited by subsequent async tasks via context copy, causing
     cross-test contamination.

@@ -116,7 +116,9 @@ class TestSqsEvents:
         deadline = time.time() + 60
         try:
             with acting_as(_ALICE, until=deadline):
-                service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
+                service.dispatch_after_commit(
+                    MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails"
+                )
                 await flush_pending_dispatches()
         finally:
             clear_pending_dispatches()

@@ -100,10 +100,10 @@ class TestJobBackends:
         service = _service(tmp_path, _ROUTED, "inline")
 
         with (
-            patch.object(CeleryJobService, "dispatch", autospec=True) as celery,
-            patch.object(InlineJobService, "dispatch", autospec=True) as inline,
+            patch.object(CeleryJobService, "dispatch_after_commit", autospec=True) as celery,
+            patch.object(InlineJobService, "dispatch_after_commit", autospec=True) as inline,
         ):
-            service.dispatch(EmailJob, queue=queue)
+            service.dispatch_after_commit(EmailJob, queue=queue)
 
         reached = {CeleryJobService: celery, InlineJobService: inline}
         assert [backend for backend, mock in reached.items() if mock.called] == [expected]

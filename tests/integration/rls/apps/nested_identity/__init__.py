@@ -170,7 +170,7 @@ class ElevateThenDispatch(UseCase[notes.Note, Any]):
 
     async def execute(self) -> Any:
         await elevate("editor", DECISION, at=Scope.of(U1))
-        return self._jobs.dispatch(ProbeJob)
+        return self._jobs.dispatch_after_commit(ProbeJob)
 
 
 class RunOrDispatchJob(UseCase[notes.Note, Any]):
@@ -179,5 +179,5 @@ class RunOrDispatchJob(UseCase[notes.Note, Any]):
 
     async def execute(self, dispatch: bool) -> Any:
         if dispatch:
-            return self._jobs.dispatch(WhoAmIJob)
+            return self._jobs.dispatch_after_commit(WhoAmIJob)
         return await self._jobs.run(WhoAmIJob)

@@ -4,9 +4,9 @@ Dispatches Jobs to the broker post-commit by enqueuing a sync callable on
 the post-commit channel of the current execution
 (:mod:`loom.core.engine.post_commit`, through
 :func:`~loom.core.job.context.add_pending_publish`).  No broker call is
-made inside :meth:`~CeleryJobService.dispatch`; the actual ``send_task``
-runs when the executor drains the channel after the Unit of Work has
-closed, or at the end of an execution without one.
+made inside :meth:`~CeleryJobService.dispatch_after_commit`; the actual
+``send_task`` runs when the executor drains the channel after the Unit of
+Work has closed, or at the end of an execution without one.
 
 Usage::
 
@@ -19,7 +19,7 @@ Usage::
             self._jobs = jobs
 
         async def execute(self, cmd: NotifyCmd = Input()) -> None:
-            self._jobs.dispatch(SendEmailJob, payload={"email": cmd.email})
+            self._jobs.dispatch_after_commit(SendEmailJob, payload={"email": cmd.email})
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
+from loom.core.job.policy import Countdown
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.tracing import get_trace_id
@@ -70,7 +71,6 @@ class _PendingCeleryDispatch:
     queue: str
     countdown: int
     priority: int
-    eta: datetime | None
     soft_time_limit: int | None
     link: Any | None
     link_error: Any | None
@@ -99,7 +99,6 @@ class _PendingCeleryDispatch:
                 queue=self.queue,
                 countdown=self.countdown,
                 priority=self.priority,
-                eta=self.eta,
                 soft_time_limit=self.soft_time_limit,
                 link=self.link,
                 link_error=self.link_error,
@@ -173,7 +172,7 @@ class CeleryJobService:
     Example::
 
         service = CeleryJobService(celery_app, factory=factory, executor=executor)
-        handle = service.dispatch(SendEmailJob, payload={"user_id": 1})
+        handle = service.dispatch_after_commit(SendEmailJob, payload={"user_id": 1})
     """
 
     def __init__(
@@ -212,7 +211,7 @@ class CeleryJobService:
         construction time.  This is the case when the service is built by
         :func:`~loom.rest.fastapi.auto.create_app`.
 
-        Use :meth:`dispatch` for fire-and-forget broker delivery.
+        Use :meth:`dispatch_after_commit` for fire-and-forget broker delivery.
 
         Args:
             job_type: Concrete ``Job`` subclass to run.
@@ -239,7 +238,7 @@ class CeleryJobService:
         )
         return result
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -250,7 +249,6 @@ class CeleryJobService:
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
         """Register a Job for deferred dispatch to the Celery broker.
 
@@ -273,11 +271,9 @@ class CeleryJobService:
             on_success: Callback type invoked by the broker on task success.
             on_failure: Callback type invoked by the broker on task failure.
             queue: Override the job's queue for this dispatch only.
-            countdown: Delay in seconds before first execution.  Defaults
-                to the job's countdown.
+            countdown: Delay in seconds before first execution, 0 through
+                900 inclusive. Defaults to the job's countdown.
             priority: Task priority.  Defaults to the job's priority.
-            eta: Absolute datetime for first execution.  Mutually exclusive
-                with ``countdown`` in Celery semantics.
 
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` whose ``job_id``
@@ -285,7 +281,105 @@ class CeleryJobService:
 
         Raises:
             ValueError: When a callback is attached that the scan did not find,
-                or *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
+        """
+        pending, handle = self._pending(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        add_pending_publish(pending)
+        return handle
+
+    async def dispatch_now(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobHandle[ResultT]:
+        """Send the job to the Celery broker now, even inside a use case.
+
+        The job can run before the caller's writes commit and is not undone
+        if they roll back. Inline runs the job inside the caller's
+        transaction. Work that depends on the caller's writes uses
+        :meth:`dispatch_after_commit`.
+
+        Args:
+            job_type: Concrete ``Job`` subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Callback type invoked by the broker on task success.
+            on_failure: Callback type invoked by the broker on task failure.
+            queue: Override the job's queue for this dispatch only.
+            countdown: Delay in seconds before first execution, 0 through
+                900 inclusive. Defaults to the job's countdown.
+            priority: Task priority.  Defaults to the job's priority.
+
+        Returns:
+            A :class:`~loom.core.job.handle.JobHandle` whose ``job_id``
+            matches the ``task_id`` passed to ``send_task``.
+
+        Raises:
+            ValueError: When a callback is attached that the scan did not find,
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
+        """
+        pending, handle = self._pending(
+            job_type,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
+        )
+        pending()
+        return handle
+
+    def _pending(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None,
+        payload: dict[str, Any] | None,
+        on_success: type[JobCallback] | None,
+        on_failure: type[JobCallback] | None,
+        queue: str | None,
+        countdown: int | None,
+        priority: int | None,
+    ) -> tuple[_PendingCeleryDispatch, JobHandle[ResultT]]:
+        """Build the pending send and its handle.
+
+        Args:
+            job_type: Concrete ``Job`` subclass to dispatch.
+            params: Primitive params for the execute signature.
+            payload: Raw dict for ``Input()`` command construction.
+            on_success: Callback type invoked by the broker on task success.
+            on_failure: Callback type invoked by the broker on task failure.
+            queue: Override the job's queue for this dispatch only.
+            countdown: Delay in seconds, 0 through 900 inclusive.
+            priority: Task priority override.
+
+        Returns:
+            The pending ``send_task`` and a handle sharing its task id.
+
+        Raises:
+            ValueError: When a callback is attached that the scan did not find,
+                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
+                or *countdown* is outside 0..900 inclusive.
         """
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
@@ -294,10 +388,9 @@ class CeleryJobService:
         self._callbacks.refuse(payload, on_success, on_failure)
         options = self._settings.of(job_type)
         eff_queue = queue or options.queue
-        eff_countdown = countdown if countdown is not None else options.countdown
+        eff_countdown = Countdown(options.countdown if countdown is None else countdown).seconds
         eff_priority = priority if priority is not None else options.priority
         callback_link = _CallbackLink(task_id, payload, trace_id, identity)
-
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
             task_name=wire_job_name(job_type.__qualname__),
@@ -309,7 +402,6 @@ class CeleryJobService:
             queue=eff_queue,
             countdown=eff_countdown,
             priority=eff_priority,
-            eta=eta,
             soft_time_limit=options.timeout,
             link=None
             if on_success is None
@@ -319,7 +411,6 @@ class CeleryJobService:
             else callback_link.signature(self._app, on_failure, CallbackOutcome.FAILURE),
             observability_runtime=self._observability_runtime,
         )
-        add_pending_publish(pending)
         self._metrics.on_event(
             RuntimeEvent(
                 kind=EventKind.JOB_DISPATCHED,
@@ -327,12 +418,12 @@ class CeleryJobService:
                 trace_id=trace_id,
             )
         )
-
-        return JobHandle(
+        handle: JobHandle[ResultT] = JobHandle(
             job_id=task_id,
             queue=eff_queue,
             dispatched_at=datetime.now(UTC),
         )
+        return pending, handle
 
     def dispatch_parallel(
         self,
@@ -343,8 +434,8 @@ class CeleryJobService:
     ) -> JobGroup:
         """Dispatch multiple Jobs and return a group handle.
 
-        Each job is dispatched independently via :meth:`dispatch` and
-        will be executed in parallel by the available workers once the
+        Each job is dispatched independently via :meth:`dispatch_after_commit`
+        and will be executed in parallel by the available workers once the
         Unit of Work commits.
 
         ``on_all_success`` and ``on_any_failure`` require native Celery
@@ -373,6 +464,7 @@ class CeleryJobService:
                 "Pass None for both callback arguments."
             )
         handles = tuple(
-            self.dispatch(job_type, payload=job_payload) for job_type, job_payload in jobs
+            self.dispatch_after_commit(job_type, payload=job_payload)
+            for job_type, job_payload in jobs
         )
         return JobGroup(handles=handles)

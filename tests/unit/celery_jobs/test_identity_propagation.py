@@ -2,7 +2,7 @@
 
 A context variable does not cross a process boundary, so the identity travels
 inside the job envelope. These tests pin both ends of that wire contract: what
-``dispatch`` puts in, what the worker takes out, and what happens to an envelope
+``dispatch_after_commit`` puts in, what the worker takes out, and what happens to an envelope
 minted before the contract existed.
 """
 
@@ -70,7 +70,7 @@ async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
     service = CeleryJobService(app)
     token = set_identity(identity) if identity is not None else None
     try:
-        service.dispatch(_ReportJob, payload={})
+        service.dispatch_after_commit(_ReportJob, payload={})
         await flush_pending_dispatches()
     finally:
         if token is not None:

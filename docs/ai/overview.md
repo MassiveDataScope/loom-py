@@ -213,7 +213,7 @@ What `stores.default.backend: none` means:
 - Discovered models are accepted but **not compiled**, and they get no
   repository. Declaring them under `none` is harmless and pointless.
 - The rest of the `stores.default` section is ignored, silently.
-- Deferred job dispatch does not fire. `JobService.dispatch` queues the call to
+- Deferred job dispatch does not fire. `JobService.dispatch_after_commit` queues the call to
   run after the unit of work commits, and with no unit of work nothing flushes
   the queue, so a job dispatched from a use case is dropped without an error.
   An agents-only application that needs background jobs keeps a real backend.

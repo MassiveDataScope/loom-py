@@ -11,7 +11,7 @@ from msgspec import structs
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.job.job import Job
-from loom.core.job.policy import DEFAULT_RETRY, Backoff, RetryPolicy
+from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, RetryPolicy
 from loom.core.model import LoomFrozenStruct
 
 
@@ -166,11 +166,21 @@ class JobOptions:
 
         Raises:
             ValueError: When a retry layer makes the backoff invalid.
+            ConfigError: When the effective countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """
+        seconds = job_type.__countdown__ if config.countdown is None else config.countdown
+        try:
+            countdown = Countdown(seconds).seconds
+        except ValueError as exc:
+            raise ConfigError(
+                f"{job_type.__name__} countdown is {seconds}; "
+                f"a countdown is 0 to {Countdown.MAX_SECONDS} seconds"
+            ) from exc
         return cls(
             queue=job_type.__queue__ if config.queue is None else config.queue,
             retry=ResolvedRetry.resolve(job_type, defaults.retry, config.retry),
-            countdown=job_type.__countdown__ if config.countdown is None else config.countdown,
+            countdown=countdown,
             timeout=job_type.__timeout__ if config.timeout is None else config.timeout,
             priority=job_type.__priority__ if config.priority is None else config.priority,
         )
@@ -192,8 +202,10 @@ class JobSettings:
         """Resolve each of *jobs* against its ``jobs.<Job>`` section in *ctx*.
 
         Raises:
-            ConfigError: When a section is present but invalid, or a retry
-                layer makes a job's backoff invalid.
+            ConfigError: When a section is present but invalid, a retry layer
+                makes a job's backoff invalid, or a job's effective countdown is
+                outside 0 to :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS`
+                seconds.
         """
         defaults = ctx.section_or_default(f"{ConfigKey.JOBS}.defaults", JobDefaults, _NO_DEFAULTS)
         resolved: dict[type[Job[Any]], JobOptions] = {}
@@ -207,7 +219,13 @@ class JobSettings:
         return cls(resolved)
 
     def of(self, job_type: type[Job[Any]]) -> JobOptions:
-        """The options of *job_type* in this application."""
+        """The options of *job_type* in this application.
+
+        Raises:
+            ConfigError: When *job_type* is not in this application and its
+                countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
+        """
         return self.jobs.get(job_type) or JobOptions.resolve(job_type)
 
     def describe_retries(self) -> list[dict[str, str]]:

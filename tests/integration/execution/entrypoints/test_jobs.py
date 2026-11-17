@@ -84,7 +84,7 @@ class TestInlineJobService:
         handles: list[JobHandle[AcmeProbeJob]] = []
 
         async def dispatch() -> None:
-            handles.append(jobs.dispatch(AcmeProbeJob))
+            handles.append(jobs.dispatch_after_commit(AcmeProbeJob))
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
 
@@ -156,7 +156,7 @@ class TestAQueuedDispatch:
     ) -> JobHandle[Any]:
         """Alice's dispatch, with a callback for each outcome, queued until a flush."""
         with acting_as(ALICE):
-            return InlineJobService(factory, executor).dispatch(
+            return InlineJobService(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
             )
 
@@ -168,7 +168,9 @@ class TestAQueuedDispatch:
         kept: list[Callable[[], Awaitable[None]]] = []
         monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
         with acting_as(ALICE):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_success=AcmeCallback)
+            InlineJobService(factory, executor).dispatch_after_commit(
+                AcmeProbeJob, on_success=AcmeCallback
+            )
         return kept
 
     async def test_runs_as_its_dispatcher_within_the_deadline(
@@ -205,7 +207,7 @@ class TestAQueuedDispatch:
         """Alice acting again with a fresh window does not extend the dispatch's delegation."""
         soon = time.time() + 5
         with acting_as(ALICE, until=soon):
-            InlineJobService(factory, executor).dispatch(
+            InlineJobService(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
             )
         monkeypatch.setattr(time, "time", lambda: soon + 1)
@@ -222,7 +224,9 @@ class TestAQueuedDispatch:
     ) -> None:
         """Alice's expired dispatch stays expired inside work that started her afresh."""
         with acting_as(ALICE, until=time.time() - 1):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_failure=AcmeCallback)
+            InlineJobService(factory, executor).dispatch_after_commit(
+                AcmeProbeJob, on_failure=AcmeCallback
+            )
         released = asyncio.Event()
 
         async def flush_later() -> None:
@@ -271,7 +275,9 @@ class TestADispatchWithNoCaller:
         kept: list[Callable[[], Awaitable[None]]] = []
         monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
         with acting_as(ANONYMOUS):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_failure=AcmeCallback)
+            InlineJobService(factory, executor).dispatch_after_commit(
+                AcmeProbeJob, on_failure=AcmeCallback
+            )
 
         await kept[0]()
 
@@ -287,7 +293,9 @@ class TestADispatchWithNoCaller:
         """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
         kept: list[Callable[[], Awaitable[None]]] = []
         monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
-        InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_success=AcmeCallback)
+        InlineJobService(factory, executor).dispatch_after_commit(
+            AcmeProbeJob, on_success=AcmeCallback
+        )
 
         with ExecutionScope(ALICE), pytest.raises(IdentityFixed):
             await kept[0]()
@@ -305,7 +313,7 @@ class TestADispatchWithNoCaller:
                 failures.append(exc_type)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob, on_failure=AcmeFailureNoted)
+            jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeFailureNoted)
 
         await executor.execute(AcmeRun(dispatch))
 
@@ -318,7 +326,7 @@ class TestADispatchWithNoCaller:
         jobs = CeleryJobService(app, factory=factory, executor=executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob)
+            jobs.dispatch_after_commit(AcmeProbeJob)
 
         await executor.execute(AcmeRun(dispatch))
         sent = app.send_task.call_args.kwargs["kwargs"]

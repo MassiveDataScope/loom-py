@@ -71,8 +71,9 @@ _LEFT_OPEN_MESSAGE = (
     "An execution was left open or misused inside NoExecution; the execution context was closed."
 )
 _BACKGROUND_WORK = (
-    "Run a use case (executor.run(UseCase)) or dispatch a job (JobService.dispatch) from "
-    "the task: they act as the same caller, in resources of their own."
+    "Run a use case (executor.run(UseCase)) or dispatch a job "
+    "(JobService.dispatch_after_commit) from the task: they act as the same caller, "
+    "in resources of their own."
 )
 _ENDED_MESSAGE = (
     "The execution this task or thread copied its context from has ended: its resources "

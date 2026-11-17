@@ -147,7 +147,9 @@ class TestCeleryJobTask:
         )
 
         async def dispatch() -> None:
-            service.dispatch(AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback)
+            service.dispatch_after_commit(
+                AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
+            )
 
         before = time.time()
         await executor.execute(AcmeRun(dispatch), identity=BOB)

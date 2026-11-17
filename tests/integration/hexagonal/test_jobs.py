@@ -40,7 +40,7 @@ async def _dispatched_by(application: Application, caller: Identity | None) -> J
     service = application.kernel.container.resolve(JobService)
     token = set_identity(caller)
     try:
-        handle = service.dispatch(TrackShipmentJob, params=PARAMS)
+        handle = service.dispatch_after_commit(TrackShipmentJob, params=PARAMS)
     finally:
         reset_identity(token)
     await flush_pending_dispatches()

@@ -93,9 +93,9 @@ class TestJobServiceFromContext:
         adapter = CeleryAdapter(jobs=[_AcmeJob])
         service = project.compose(adapter).kernel.container.resolve(JobService)
 
-        service.dispatch(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
+        service.dispatch_after_commit(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
         with pytest.raises(ValueError, match="_AcmeOtherCallback was not discovered"):
-            service.dispatch(_AcmeJob, on_success=_AcmeOtherCallback)
+            service.dispatch_after_commit(_AcmeJob, on_success=_AcmeOtherCallback)
 
 
 class TestLambdaJobCallbacks:
@@ -107,9 +107,9 @@ class TestLambdaJobCallbacks:
         application = project.compose(adapter)
         service = application.kernel.container.resolve(JobService)
 
-        service.dispatch(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
+        service.dispatch_after_commit(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
         with pytest.raises(ValueError, match="_AcmeOtherCallback was not discovered"):
-            service.dispatch(_AcmeJob, on_success=_AcmeOtherCallback)
+            service.dispatch_after_commit(_AcmeJob, on_success=_AcmeOtherCallback)
         adapter.close()
 
     def test_a_lambda_callback_with_an_unbound_dependency_is_refused_at_compose(

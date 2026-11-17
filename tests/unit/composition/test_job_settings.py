@@ -51,7 +51,7 @@ async def _sent(application: Application) -> dict[str, Any] | None:
     """The routing ``send_task`` got when *application* dispatched the job; ``None`` if not sent."""
     service = application.kernel.container.resolve(JobService)
     with patch.object(Celery, "send_task", autospec=True) as send_task:
-        service.dispatch(_ReportJob)
+        service.dispatch_after_commit(_ReportJob)
         await flush_pending_dispatches()
     if send_task.call_args is None:
         return None
@@ -145,4 +145,23 @@ class TestJobSettings:
         )
 
         with pytest.raises(ConfigError, match=r"_ReportJob\.retry"):
+            project.compose(JobsAdapter(_ReportJob))
+
+class TestCountdownBoundAtCompose:
+    def test_a_declared_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        class LateJob(Job[None]):
+            __countdown__ = 901
+
+            def execute(self) -> None:
+                return None
+
+        project = job_project(tmp_path, {}, "inline")
+
+        with pytest.raises(ConfigError, match="LateJob"):
+            project.compose(JobsAdapter(LateJob))
+
+    def test_a_configured_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        project = job_project(tmp_path, {"jobs": {"_ReportJob": {"countdown": 901}}}, "inline")
+
+        with pytest.raises(ConfigError, match="_ReportJob"):
             project.compose(JobsAdapter(_ReportJob))
