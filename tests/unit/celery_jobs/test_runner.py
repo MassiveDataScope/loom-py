@@ -232,6 +232,7 @@ class TestMakeJobTaskRegistration:
         "option",
         [
             pytest.param("acks_late", id="acks_late_is_true"),
+            pytest.param("acks_on_failure_or_timeout", id="acks_on_failure_or_timeout_is_true"),
             pytest.param("reject_on_worker_lost", id="reject_on_worker_lost_is_true"),
         ],
     )

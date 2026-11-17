@@ -61,6 +61,14 @@ class LoomError(Exception):
         self.code: StrEnum = code
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle the error without calling ``__init__``, so a subclass may take any arguments.
+
+        Returns:
+            The class and arguments to rebuild the error and the state to restore.
+        """
+        return (type(self).__new__, (type(self), *self.args), self.__dict__)
+
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
         return {}

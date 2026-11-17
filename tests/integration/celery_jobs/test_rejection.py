@@ -7,7 +7,7 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
-from celery import Celery, signals  # type: ignore[import-untyped]
+from celery import Celery, current_app, signals  # type: ignore[import-untyped]
 from celery.contrib.testing.worker import start_worker  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 from celery.worker.request import Request  # type: ignore[import-untyped]
@@ -16,7 +16,7 @@ from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
 from loom.core.job.config import JobSettings
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection
-from tests.contract.jobs.conftest import _Kernel
+from tests.contract.jobs.conftest import JobKernel
 
 QUEUE = "rejections"
 SETTLE_TIMEOUT_S = 10.0
@@ -32,9 +32,10 @@ class RejectedJob(Job[None]):
 
 @pytest.fixture
 def job_app() -> Generator[tuple[Celery, Any]]:
+    previous = current_app._get_current_object()
     app = Celery(broker="memory://", backend="cache+memory://")
-    app.conf.update(task_default_queue=QUEUE)
-    kernel = _Kernel()
+    app.conf.update(task_default_queue=QUEUE, worker_hijack_root_logger=False)
+    kernel = JobKernel()
     kernel.factory.register(RejectedJob)
     runtime = _CeleryAsyncRuntime()
     runtime.initialize()
@@ -44,18 +45,27 @@ def job_app() -> Generator[tuple[Celery, Any]]:
     RejectedJob.runs.clear()
     yield app, task
     runtime.shutdown()
+    previous.set_current()
+    previous.set_default()
 
 
 class TestEagerRejection:
     def test_the_result_raises_the_jobs_own_error(self, job_app: tuple[Celery, Any]) -> None:
         app, task = job_app
+        errbacks: list[str] = []
+
+        @app.task(name="on-error", shared=False)
+        def on_error(*_: Any) -> None:
+            errbacks.append("fired")
+
         app.conf.task_always_eager = True
 
-        result = task.apply()
+        result = task.apply(link_error=on_error.si())
 
         assert result.failed()
         with pytest.raises(JobRejection, match="tenant deleted"):
             result.get()
+        assert errbacks == ["fired"]
 
 
 class TestWorkerRejection:

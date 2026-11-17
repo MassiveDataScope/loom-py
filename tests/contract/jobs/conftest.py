@@ -60,7 +60,7 @@ class Driver(Protocol):
     ) -> Settlement: ...
 
 
-class _Kernel:
+class JobKernel:
     """A real factory and executor, serving the jobs a test delivers."""
 
     def __init__(self) -> None:
@@ -90,7 +90,7 @@ class RunnerDriver:
     """Delivers through a :class:`JobRunner` over one way of invoking the job."""
 
     def __init__(
-        self, invocation: Callable[[JobDelivery], Awaitable[Any]], kernel: _Kernel
+        self, invocation: Callable[[JobDelivery], Awaitable[Any]], kernel: JobKernel
     ) -> None:
         self._runner = JobRunner(invocation)
         self._kernel = kernel
@@ -125,7 +125,7 @@ def _settlement(outcome: JobOutcome) -> Settlement:
 class CeleryDriver:
     """Delivers through the Celery task a worker runs, the way its request carries the attempt."""
 
-    def __init__(self, kernel: _Kernel) -> None:
+    def __init__(self, kernel: JobKernel) -> None:
         self._kernel = kernel
         self._runtime = _CeleryAsyncRuntime()
         self._runtime.initialize()
@@ -180,7 +180,7 @@ class CeleryDriver:
 
 @pytest.fixture(params=BACKENDS)
 def driver(request: pytest.FixtureRequest) -> Generator[Driver]:
-    kernel = _Kernel()
+    kernel = JobKernel()
     if request.param == "celery":
         celery_driver = CeleryDriver(kernel)
         yield celery_driver

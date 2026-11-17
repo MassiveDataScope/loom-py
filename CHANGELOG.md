@@ -3364,6 +3364,13 @@ by version; each release's own list is in its GitHub Release notes.
 
 ### core
 
+- **core:** every `LoomError` survives pickling with its own class and fields.
+  An error whose `__init__` takes other arguments than its message, such as
+  `PostCommitError(committed=, failures=)`, could not be rebuilt, so Celery
+  stored it as its parent `SystemError` and `on_failure` received
+  `exc_type="SystemError"`. The error is now rebuilt without calling
+  `__init__`, keeping its `args` and attributes; `failures` is kept as is, so
+  a failure that cannot be pickled still makes the whole error unpicklable.
 - **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
   primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
   handed the raw key to boto3's `TypeSerializer`, which raised

@@ -283,6 +283,7 @@ def _make_job_task(
         shared=False,
         bind=True,
         acks_late=True,
+        acks_on_failure_or_timeout=True,
         reject_on_worker_lost=True,
         max_retries=None,
         soft_time_limit=timeout,
