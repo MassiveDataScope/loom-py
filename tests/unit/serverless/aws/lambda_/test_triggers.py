@@ -372,18 +372,27 @@ _EVENTS_ARN = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:events"
 _DEAD = queue_url("events-dlq")
 
 
-def _queued(event: QueueableEvent, message_id: str) -> LambdaEvent:
-    return event.via_sqs(message_id=message_id, queue_arn=_EVENTS_ARN)
+@pytest.fixture
+def queued() -> Callable[[QueueableEvent, str], LambdaEvent]:
+    """Delivers an event as the one SQS record of the ``events`` queue its function consumes."""
+
+    def deliver(event: QueueableEvent, message_id: str) -> LambdaEvent:
+        return event.via_sqs(message_id=message_id, queue_arn=_EVENTS_ARN)
+
+    return deliver
 
 
 class TestQueued:
     def test_a_failed_message_is_reported_alone(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
         handler = serve(_events(queue=_QUEUE, identity=_IDENTITY))
         records = [
-            *_queued(LambdaEvent.eventbridge({"number": "1"}), "m1")["Records"],
-            *_queued(LambdaEvent.eventbridge({"number": "fail"}), "m2")["Records"],
+            *queued(LambdaEvent.eventbridge({"number": "1"}), "m1")["Records"],
+            *queued(LambdaEvent.eventbridge({"number": "fail"}), "m2")["Records"],
         ]
 
         result = handler({"Records": records}, None)
@@ -393,10 +402,14 @@ class TestQueued:
         assert {caller.mechanism for _, caller in ran} == {f"lambda:{_FUNCTION}:eventbridge"}
 
     def test_a_final_failure_is_rejected_to_the_dead_letter_queue_not_reported(
-        self, serve: Serve, ran: list[tuple[Any, Identity]], sqs: FakeSqs
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        sqs: FakeSqs,
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
         handler = serve(_events(queue=_QUEUE), dead_letter="redrive")
-        event = _queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
+        event = queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
 
         result = handler(event, None)
 
@@ -406,19 +419,22 @@ class TestQueued:
         assert [invoice.number for invoice, _ in ran] == ["final"]
 
     def test_a_final_failure_on_a_discard_queue_is_dropped_not_reported(
-        self, serve: Serve, sqs: FakeSqs
+        self, serve: Serve, sqs: FakeSqs, queued: Callable[[QueueableEvent, str], LambdaEvent]
     ) -> None:
         handler = serve(_events(queue=_QUEUE))
-        event = _queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
+        event = queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
 
         assert (handler(event, None), sqs.batches) == ({"batchItemFailures": []}, [])
 
     def test_an_sns_message_runs_from_its_envelope(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
         handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
 
-        result = handler(_queued(LambdaEvent.sns({"number": "7"}), "m1"), None)
+        result = handler(queued(LambdaEvent.sns({"number": "7"}), "m1"), None)
 
         assert (result, [invoice for invoice, _ in ran]) == (
             {"batchItemFailures": []},

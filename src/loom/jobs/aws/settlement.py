@@ -86,11 +86,7 @@ class SqsSettlement:
 
     @property
     def queues(self) -> SqsQueues:
-        """The configured queues, built once.
-
-        They send and settle through a client bound to ``SETTLEMENT_TIMEOUT_S`` and read
-        queue metadata through the application's own client, with its retries.
-        """
+        """The configured queues, built once over a client bound to ``SETTLEMENT_TIMEOUT_S``."""
         if self._queues is None:
             bounded = msgspec.structs.replace(
                 self._config,
@@ -98,11 +94,7 @@ class SqsSettlement:
                 read_timeout=SETTLEMENT_TIMEOUT_S,
                 max_attempts=1,
             )
-            self._queues = SqsQueues(
-                self._clients.client("sqs", bounded),
-                self._config.queues,
-                self._clients.client("sqs", self._config),
-            )
+            self._queues = SqsQueues(self._clients.client("sqs", bounded), self._config.queues)
         return self._queues
 
     def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
@@ -133,6 +125,12 @@ class SqsSettlement:
             _log.exception("SQS settlement cannot reach the queue", queue_arn=arn)
             return [record for record, _ in group]
         plan = _Plan.of(queue, group)
+        if plan.rejections and not queue.has_dead_letter:
+            _log.error(
+                "SQS settlement has not read the dead-letter queue of this queue at Init",
+                queue=queue.name,
+            )
+            return [record for record, _ in group]
         for record, reason in plan.discards:
             _log.error(
                 "SQS message discarded: its queue has no dead-letter queue",

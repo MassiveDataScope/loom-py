@@ -97,15 +97,19 @@
   the one `Job retry policies` line of its consumed jobs, and composition logs
   none for it (`Recipe.logs_job_retries`). `loom.testing.TEST_QUEUE` is the
   `sqs.queues` entry that the default queue ARN of a `LambdaEvent` record
-  names: declare it in the test configuration, and a failed record of a test
-  settles instead of logging that no queue matches. Settling calls SQS, so a
-  test patches the AWS client (`docs/rest/testing.md`). A record whose
-  `ApproximateReceiveCount` or `loom.deferrals` is not a number is malformed,
-  and only it is rejected. The RedrivePolicy is read at Init with the
-  application's own SQS client; a queue that cannot be read stops start-up
-  with a `ConfigError` naming it. A jobs function that declares no queue logs
-  a WARNING at Init: its rejections are listed until the queue's own
-  `RedrivePolicy` dead-letters them.
+  names (`loom-jobs`, never the FIFO `loom-jobs.fifo` of a record built with
+  `group_id`: pass `queue_arn=` for that): declare it in the test configuration,
+  and a failed record of a test settles instead of logging that no queue
+  matches. Settling calls SQS, so a test patches the AWS client
+  (`docs/rest/testing.md`). A record whose `ApproximateReceiveCount` is not a
+  positive integer or whose `loom.deferrals` is not a non-negative one is
+  malformed, and only it is rejected. The dead-letter policy is read at Init,
+  never during an invocation, with the application's own SQS client and its
+  retries: that of the consumed queue, or of every `redrive` queue of
+  `sqs.queues` for a function declaring none; a botocore error names the queue
+  and stops start-up. The queue of a message is resolved by its event source
+  ARN; one that matches no primed queue is logged and listed until the queue's
+  own `RedrivePolicy` dead-letters it.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker

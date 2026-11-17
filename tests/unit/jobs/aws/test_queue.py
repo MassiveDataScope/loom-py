@@ -224,8 +224,9 @@ class TestDefer:
     def test_each_deferral_counts_on_from_the_message_attribute(self) -> None:
         client = FakeSqs()
         counted = {DEFERRALS_ATTRIBUTE: {"DataType": "Number", "StringValue": "4"}}
+        record = SqsRecord("m1", "h1", "b", attributes=counted, deferrals=4)
 
-        _queue(client).defer_batch([(SqsRecord("m1", "h1", "b", attributes=counted), Countdown(0))])
+        _queue(client).defer_batch([(record, Countdown(0))])
 
         entry = client.batches[0][2][0]
         assert entry["MessageAttributes"][DEFERRALS_ATTRIBUTE]["StringValue"] == "5"
@@ -450,6 +451,44 @@ class TestSqsRecordFromEvent:
         record = SqsRecord.from_event(raw)
 
         assert (record.receive_count, record.is_fifo, record.is_settleable) == (3, True, True)
+
+    @pytest.mark.parametrize(
+        ("changes", "reason"),
+        [
+            ({"attributes": {"ApproximateReceiveCount": "x"}}, "ApproximateReceiveCount"),
+            ({"attributes": {"ApproximateReceiveCount": "0"}}, "ApproximateReceiveCount"),
+            ({"attributes": {"ApproximateReceiveCount": None}}, "ApproximateReceiveCount"),
+            (
+                {"messageAttributes": {DEFERRALS_ATTRIBUTE: {"stringValue": "x", "dataType": "N"}}},
+                DEFERRALS_ATTRIBUTE,
+            ),
+            (
+                {
+                    "messageAttributes": {
+                        DEFERRALS_ATTRIBUTE: {"stringValue": "-1", "dataType": "N"}
+                    }
+                },
+                "non-negative integer",
+            ),
+            ({"messageAttributes": {DEFERRALS_ATTRIBUTE: {"stringValue": "1"}}}, "attributes"),
+            ({"messageAttributes": {"a": None}}, "attributes"),
+            ({"attributes": ["not", "a", "mapping"]}, "attributes"),
+        ],
+    )
+    def test_a_record_with_counts_it_cannot_read_says_why(
+        self, changes: dict[str, Any], reason: str
+    ) -> None:
+        raw = {"messageId": "m", "receiptHandle": "h", "body": "b", **changes}
+
+        record = SqsRecord.from_event(raw)
+
+        assert reason in record.unreadable
+        assert record.is_settleable
+
+    def test_a_record_with_readable_counts_is_not_unreadable(self) -> None:
+        raw = {"messageId": "m", "receiptHandle": "h", "body": "b", "messageAttributes": None}
+
+        assert SqsRecord.from_event(raw).unreadable == ""
 
     @pytest.mark.parametrize("raw", ["bad", {"body": "{"}, {"messageId": "m", "body": "b"}])
     def test_a_record_that_lacks_what_settlement_needs_is_not_settleable(self, raw: Any) -> None:

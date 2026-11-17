@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigError
-from loom.core.connections.aws import AwsClients
+from loom.core.connections.aws import AwsClients, aws_island
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
@@ -26,7 +26,8 @@ from loom.core.job.settlement import JobSettlement
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
-from loom.jobs.aws.queue import SqsRecord
+from loom.jobs.aws.errors import SQSQueueConfigError
+from loom.jobs.aws.queue import DeadLetterPolicy, SqsQueue, SqsRecord
 from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
@@ -112,52 +113,59 @@ class QueueConsumer:
     unserved: RetryPolicy
     settlement: JobSettlement[SqsRecord]
 
+    @staticmethod
+    def _prime(queue: SqsQueue, client: Any, *, required: bool) -> None:
+        try:
+            queue.read_dead_letter(client)
+        except SQSQueueConfigError:
+            if required:
+                raise
+        except aws_island().sdk_errors() as exc:
+            raise ConfigError(
+                f"cannot read queue {queue.name!r} of sqs.queues at Init: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
     @classmethod
     def bind(
         cls, application: Application, queue_name: str | None, jobs: Iterable[type[Job[Any]]]
     ) -> QueueConsumer:
         """Check the queue *queue_name* at Init, and fix the policies *jobs* run under.
 
-        Only a consumer asks SQS about its queue, once: the settlement shares the
-        queue it reads. A function declaring no queue asks nothing until a message
-        needs settling. The application's own settings are untouched; one line
-        logs the consumer's policies.
+        The dead-letter policy of the queue it consumes is read here, through the
+        application's own client and its retries, and never during an invocation.
+        A function declaring no queue reads those of every ``redrive`` queue of
+        ``sqs.queues``, and tolerates one without a ``RedrivePolicy``. The
+        application's own settings are untouched; one line logs the consumer's
+        policies.
 
         Raises:
             ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, a job on a
                 ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``, or
-                the queue cannot be read, naming it.
+                the queue cannot be read (a botocore error), naming it.
             SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
         """
         config = SQSConfig.load(application.config)
-        settlement = SqsSettlement(application.kernel.container.resolve(AwsClients), config)
+        clients = application.kernel.container.resolve(AwsClients)
+        settlement = SqsSettlement(clients, config)
         served = list(jobs)
         base = application.job_settings
         settings, unserved = base, DEFAULT_RETRY
+        if queue_name is not None and queue_name not in config.queues:
+            raise ConfigError(f"sqs.queues.{queue_name} is missing: a function consumes that queue")
         if queue_name is not None:
-            if queue_name not in config.queues:
-                raise ConfigError(
-                    f"sqs.queues.{queue_name} is missing: a function consumes that queue"
-                )
-            try:
-                queue = settlement.queues.named(queue_name)
-                settings = base.with_retries(
-                    queue.consumed_retries(served, lambda job: base.of(job).retry)
-                )
-                unserved = queue.unserved_policy()
-            except ConfigError:
-                raise
-            except Exception as exc:
-                raise ConfigError(
-                    f"cannot read queue {queue_name!r} of sqs.queues at Init: "
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
+            primed = [settlement.queues.named(queue_name)]
         else:
-            _log.warning(
-                "this jobs function declares no queue of sqs.queues: a message loom rejects "
-                "is reported to its queue, not dead-lettered, until the queue's own "
-                "RedrivePolicy does"
+            primed = list(settlement.queues) if config.queues else []
+        for queue in primed:
+            if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+                cls._prime(queue, clients.client("sqs", config), required=queue_name is not None)
+        if queue_name is not None:
+            queue = settlement.queues.named(queue_name)
+            settings = base.with_retries(
+                queue.consumed_retries(served, lambda job: base.of(job).retry)
             )
+            unserved = queue.unserved_policy()
         if served:
             _log.info(
                 "Job retry policies",

@@ -111,9 +111,15 @@ class SQSBatch:
             if not record.is_settleable:
                 failed.append(record)
                 continue
-            outcome = self._host.run(self._arrive(record, context))
-            if outcome is None:
-                continue
+            if record.unreadable:
+                outcome: JobOutcome = JobRunner.decide(
+                    MalformedJobMessage(record.unreadable),
+                    record.receive_count,
+                    self._consumer.unserved,
+                )
+                self._log_outcome(record, outcome)
+            else:
+                outcome = self._host.run(self._arrive(record, context))
             settled.append((record, outcome))
             if fifo and not isinstance(outcome, Succeeded):
                 listed = self._consumer.settlement.settle_all(settled)
@@ -129,14 +135,10 @@ class SQSBatch:
         """Close the application and its loop; a second call does nothing."""
         self._host.close()
 
-    async def _arrive(self, record: SqsRecord, context: Any) -> JobOutcome | None:
-        """The outcome of the record's jobs: the first that did not succeed, else the last.
-
-        ``None`` when its body holds no job.
-        """
-        outcome: JobOutcome | None = None
+    async def _arrive(self, record: SqsRecord, context: Any) -> JobOutcome:
+        """The outcome of the record's jobs: the first one that did not succeed, else the last."""
+        outcome: JobOutcome = Succeeded(None)
         try:
-            record.require_readable()
             for envelope, event_id in self._read(record):
                 job_type = self._job_type(envelope, record)
                 outcome = await run_envelope(
@@ -153,8 +155,7 @@ class SQSBatch:
                     break
         except (MalformedJobMessage, UnknownJob) as exc:
             outcome = JobRunner.decide(exc, record.receive_count, self._consumer.unserved)
-        if outcome is not None:
-            self._log_outcome(record, outcome)
+        self._log_outcome(record, outcome)
         return outcome
 
     def _read(self, record: SqsRecord) -> Sequence[tuple[JobEnvelope, str | None]]:

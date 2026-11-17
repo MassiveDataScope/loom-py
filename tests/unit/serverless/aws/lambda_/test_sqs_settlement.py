@@ -94,14 +94,17 @@ def sqs(request: pytest.FixtureRequest) -> FakeSqs:
 def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
     adapters: list[LambdaAdapter] = []
 
-    def build(dead_letter: str = "redrive") -> LambdaHandler:
+    def build(dead_letter: str = "redrive", *, named: bool = True) -> LambdaHandler:
         document = with_worker(
             {
                 "app": {"name": "lambda-sqs"},
                 "jobs": {job.__name__: {"queue": "jobs"} for job in _JOB_TYPES},
             },
-            batch_size=5,
+            **({"batch_size": 5} if named else {}),
         )
+        if not named:
+            document["aws"] = {"region": "eu-west-1"}
+            document["sqs"] = {"queues": {"jobs": {"url": _JOBS}}}
         queues = document["sqs"]["queues"]
         queues["jobs"]["dead_letter"] = dead_letter
         queues["jobs_fifo"] = {"url": f"{_JOBS}.fifo", "dead_letter": "discard"}
@@ -322,13 +325,16 @@ class TestSettlementThroughTheHandler:
         assert bound == (1, 1)
         assert (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"]) == bound
 
-    @pytest.mark.parametrize("unreadable", ["deferrals", "receive_count"])
-    def test_a_record_with_a_non_numeric_attribute_alone_is_rejected(
-        self, serve: Serve, sqs: FakeSqs, unreadable: str
+    @pytest.mark.parametrize(
+        ("deferrals", "receive_count"),
+        [("x", "1"), ("-1", "1"), (None, "x"), (None, "0")],
+        ids=["non-numeric deferrals", "negative deferrals", "non-numeric count", "zero count"],
+    )
+    def test_a_record_with_a_count_it_cannot_read_alone_is_rejected(
+        self, serve: Serve, sqs: FakeSqs, deferrals: str | None, receive_count: str
     ) -> None:
-        bad = _record("bad", AcmeOkJob, deferrals="x" if unreadable == "deferrals" else None)
-        if unreadable == "receive_count":
-            bad["attributes"]["ApproximateReceiveCount"] = "x"
+        bad = _record("bad", AcmeOkJob, deferrals=deferrals)
+        bad["attributes"]["ApproximateReceiveCount"] = receive_count
         records = [_record("ok", AcmeOkJob), bad, _record("reject", AcmeRejectingJob)]
 
         result = serve()({"Records": records}, None)
@@ -349,3 +355,16 @@ class TestSettlementThroughTheHandler:
         result = serve(dead_letter="discard")({"Records": [record]}, None)
 
         assert (_failed(result), sqs.batches) == ([], [])
+
+    @pytest.mark.parametrize("named", [True, False])
+    def test_settling_never_reads_queue_metadata_even_when_asked_to(
+        self, serve: Serve, sqs: FakeSqs, named: bool
+    ) -> None:
+        handler = serve(named=named)
+        sqs.lookup_raises = RuntimeError("no metadata call during an invocation")
+        records = [_record("1", AcmeRejectingJob), _record("2", AcmeFailingJob)]
+
+        result = handler({"Records": records}, None)
+
+        assert _failed(result) == ["2"]
+        assert [entry["Id"] for entry in sqs.entries("send_message_batch", _DEAD)] == ["1"]

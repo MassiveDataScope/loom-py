@@ -41,7 +41,7 @@ class FakeSqs:
         self._redrive = redrive or {}
         self._refuse = refuse
         self._raises = raises
-        self._lookup_raises = lookup_raises
+        self.lookup_raises = lookup_raises
         self.calls: Counter[str] = Counter()
         self.batches: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.sent: list[dict[str, Any]] = []
@@ -70,8 +70,8 @@ class FakeSqs:
 
     def get_queue_attributes(self, QueueUrl: str, AttributeNames: list[str]) -> dict[str, Any]:  # noqa: N803
         self.calls["get_queue_attributes"] += 1
-        if self._lookup_raises is not None:
-            raise self._lookup_raises
+        if self.lookup_raises is not None:
+            raise self.lookup_raises
         policy = self._redrive.get(QueueUrl)
         return {} if policy is None else {"Attributes": {"RedrivePolicy": json.dumps(policy)}}
 

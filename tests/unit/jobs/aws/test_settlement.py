@@ -64,7 +64,7 @@ class Settling:
 def settling() -> Iterator[Callable[..., Settling]]:
     with ExitStack() as stack:
 
-        def build(dead_letter: str = "redrive", **options: Any) -> Settling:
+        def build(dead_letter: str = "redrive", prime: bool = True, **options: Any) -> Settling:
             client = FakeSqs(_POLICY, **options)
             factory = stack.enter_context(patched_aws_clients(client))
             config = SQSConfig(
@@ -75,7 +75,12 @@ def settling() -> Iterator[Callable[..., Settling]]:
                     ),
                 }
             )
-            return Settling(client, SqsSettlement(AwsClients(), config), factory)
+            settlement = SqsSettlement(AwsClients(), config)
+            if prime:
+                for queue in settlement.queues:
+                    if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+                        queue.read_dead_letter(client)
+            return Settling(client, settlement, factory)
 
         yield build
 
@@ -99,7 +104,7 @@ class TestSqsSettlement:
     def test_a_succeeded_message_costs_no_call_and_builds_no_client(
         self, settling: Callable[..., Settling]
     ) -> None:
-        sqs = settling()
+        sqs = settling(prime=False)
 
         redelivered = sqs.settle_all([(_record("a"), Succeeded(None))])
 
@@ -204,16 +209,33 @@ class TestSqsSettlement:
 
         assert _ids(redelivered) == ["a", "b"]
 
-    def test_a_dead_letter_lookup_that_raises_reports_the_rejections_in_one_log_line(
-        self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
+    def test_a_reject_that_raises_reports_the_rejections_in_one_log_line(
+        self,
+        settling: Callable[..., Settling],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        sqs = settling(lookup_raises=RuntimeError("down"))
+        def refuse(*_: Any) -> None:
+            raise RuntimeError("down")
+
+        monkeypatch.setattr(SqsQueue, "reject_batch", refuse)
+        sqs = settling()
 
         redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "ab"])
 
         assert _ids(redelivered) == ["a", "b"]
         assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
         assert not _logged(caplog, "SQS settlement entries failed")
+
+    def test_a_dead_letter_queue_not_read_at_init_lists_the_rejections_without_a_call(
+        self, settling: Callable[..., Settling]
+    ) -> None:
+        sqs = settling(prime=False)
+        sqs.client.lookup_raises = RuntimeError("must not be asked")
+
+        redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "ab"])
+
+        assert (_ids(redelivered), sqs.client.batches) == (["a", "b"], [])
 
     def test_a_resend_that_raises_reports_the_deferrals(
         self, settling: Callable[..., Settling], monkeypatch: pytest.MonkeyPatch
@@ -263,16 +285,6 @@ class TestSqsSettlement:
         ]
         deleted = (sqs.client.calls["delete_message"], sqs.client.calls["delete_message_batch"])
         assert deleted == (0, 0)
-
-    def test_metadata_is_read_with_the_retrying_client_and_settling_uses_the_bounded_one(
-        self, settling: Callable[..., Settling]
-    ) -> None:
-        sqs = settling()
-
-        sqs.settle_all([(_record("a"), Rejected("no"))])
-
-        attempts = [o["config"].retries["total_max_attempts"] for o in sqs.factory.options]
-        assert sorted(attempts) == [1, 3]
 
     def test_the_client_it_asks_for_fits_the_safety_margin(
         self, settling: Callable[..., Settling]

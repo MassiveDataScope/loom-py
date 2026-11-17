@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
+from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
 from loom.core.connections.aws.config import AwsClientConfig
 from loom.core.model.redaction import reveal_for_driver
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 
     _conforms: AwsIsland = _self
 
-__all__ = ["build_aws_client", "open_session"]
+__all__ = ["build_aws_client", "open_session", "sdk_errors"]
 
 
 def open_session(profile: str | None) -> Any:
@@ -49,3 +50,8 @@ def build_aws_client(session: Any, service: str, config: AwsClientConfig) -> Any
     options = reveal_for_driver(config.client_options())
     botocore = Config(**options["config"])
     return session.client(service, **{**options, "config": botocore}, region_name=config.region)
+
+
+def sdk_errors() -> tuple[type[Exception], ...]:
+    """The errors the SDK raises for a failed call: its own, and the service's answer."""
+    return (BotoCoreError, ClientError)

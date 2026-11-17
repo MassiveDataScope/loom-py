@@ -209,7 +209,9 @@ def test_a_message_naming_an_unknown_job_is_retried() -> None:
 A handler settles each record by what its job came to, so a failed record is
 reported only after the handler resolved its queue by the record's
 `queue_arn`. The default ARN of a `LambdaEvent` record names the queue in
-`loom.testing.TEST_QUEUE`; declare it in the test configuration
+`loom.testing.TEST_QUEUE` (the non-FIFO queue: a record built with `group_id`
+names `loom-jobs.fifo`, so pass `queue_arn=` for it); declare it in the test
+configuration
 (`sqs: {queues: {jobs: ...}}`) so a failure settles instead of logging that no
 queue matches. Settling calls SQS, so **patch the AWS client** in the test (for
 instance `unittest.mock.patch("boto3.Session")`): without a patch the test makes

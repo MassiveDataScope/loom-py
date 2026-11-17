@@ -135,7 +135,10 @@ class SqsDriver:
         client = FakeSqs({SqsDriver.QUEUE: policy})
         config = SQSConfig(queues={"jobs": QueueConfig(url=SqsDriver.QUEUE)})
         with patched_aws_clients(client):
-            yield SqsDriver(kernel, client, SqsSettlement(AwsClients(), config))
+            settlement = SqsSettlement(AwsClients(), config)
+            for queue in settlement.queues:
+                queue.read_dead_letter(client)
+            yield SqsDriver(kernel, client, settlement)
 
     async def deliver(
         self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
