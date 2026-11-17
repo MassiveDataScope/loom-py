@@ -34,7 +34,6 @@ class _DoubleSyncJob(Job[int]):
     """Simple sync job with no infrastructure dependencies."""
 
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -47,7 +46,6 @@ class _UpperJob(Job[str]):
     """Sync job that upper-cases a string — no dependencies."""
 
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0

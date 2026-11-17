@@ -794,6 +794,26 @@
   source = Project.load("config/base.yaml")
   application = source.compose(adapter)
   ```
+- **jobs:** one retry model replaces `__retries__`. `Job.__retries__`,
+  `JobConfig.retries` and the `jobs.<Job>.retries` key are removed (a
+  configuration that still sets `retries` fails composition),
+  `loom.core.job.outcome.is_retryable` is removed, and
+  `loom.core.job.run.run_job` is replaced by
+  `loom.core.job.run.EnvelopeInvocation` driven by `JobRunner`. The event kinds
+  `JOB_RETRYING` and `JOB_EXHAUSTED` are now `JOB_FAILED` (an attempt failed and
+  another follows) and `JOB_REJECTED` (the job will not run again), `JOB_DEFERRED`
+  is new, and `Status.RETRYING` and `Status.EXHAUSTED` are now `Status.DEFERRED`
+  and `Status.REJECTED`. A Celery task registers with `max_retries=None`
+  and takes a `deferrals` argument; a task name and its other arguments are
+  unchanged. **Migration:** replace `__retries__ = 3` with
+  `__retry__ = Backoff(first_s=5, factor=2, max_s=300)` for the delay, and set the
+  attempt limit in YAML: `jobs.<Job>.retry: {max_attempts: 4}` (attempts include
+  the first, so `retries: 3` is `max_attempts: 4`), or for every job
+  `jobs.defaults.retry`. Raise `JobRetry(reason, delay_s)` to run again later
+  without using an attempt and `JobRejection(reason)` to give up; read the
+  attempt with a `delivery: JobDelivery | None = Delivery()` parameter on
+  `execute` (`loom.core.use_case.Delivery`, a marker like `Caller()`; a job run
+  by another job gets `None`).
 
 
 ## ✨ Features
@@ -933,6 +953,19 @@
   started them as fresh interpreters that had neither the tasks Loom registers
   at start-up nor its lifecycle signals, so every job failed with
   `NotRegistered`. This also affects 11.0.0.
+- **jobs:** `JobRunner` is the one place that decides whether a job run
+  succeeded, defers (`JobRetry`), fails (retried after the job's `Backoff`, full
+  jitter, capped at 900 s) or is rejected (`JobRejection`, an error whose
+  `retryable` is `False`, or attempts exhausted: the reason is the error class),
+  and it emits `job_started`, `job_succeeded`, `job_deferred`, `job_failed` and
+  `job_rejected` to the metrics adapter it is given. The retry policy resolves from
+  `jobs.<Job>.retry`, `jobs.defaults.retry`, `__retry__` and the loom default
+  (`Backoff(5, 2, 300)`, 3 attempts), each partial section inheriting the layer
+  below; start-up logs one line with each job's policy and the layer it came
+  from, per field when the layers differ. `JobRetry` and `JobRejection` are
+  logged as `[SIGNAL]` at INFO and reported as `exec_error` with status
+  `deferred` or `rejected`, not as failures. `max_attempts` must be at least 1.
+  `JobEnvelope` has an optional `task_id`.
 
 ### lambda
 
@@ -1713,6 +1746,10 @@
   `apply_job_overrides`, `read_job_config`, `resolve_binding` and
   `validate_bindings` are removed, and an invalid or unknown `jobs.<Job>` key
   fails composition.
+- **jobs:** a job whose error is not `retryable=False` is attempted up to 3
+  times (the loom default) on Celery; `__retries__` defaulted to no retry. Set
+  `jobs.defaults.retry.max_attempts: 1` to keep one attempt. The Celery
+  countdown is now the job's backoff, capped at 900 s, instead of `2 ** retries`.
 
 ### stores
 

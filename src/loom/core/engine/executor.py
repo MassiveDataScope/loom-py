@@ -25,6 +25,7 @@ from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_on
 from loom.core.use_case.kinds import AGENT, MCP
 
 if TYPE_CHECKING:
+    from loom.core.job.delivery import JobDelivery
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
@@ -181,6 +182,7 @@ class RuntimeExecutor:
         load_overrides: dict[type[Any], Any] | None = None,
         read_only: bool = False,
         identity: Identity | None = None,
+        delivery: JobDelivery | None = None,
     ) -> Any:
         """Build ``use_case_type`` inside a new execution and execute it there.
 
@@ -204,6 +206,8 @@ class RuntimeExecutor:
             load_overrides: Pre-loaded entities by type, bypassing repo calls.
             read_only: When ``True``, no unit of work is opened.
             identity: Verified caller for this execution, as for :meth:`execute`.
+            delivery: The job delivery a ``Delivery()`` parameter receives; none
+                binds ``None``.
 
         Returns:
             The result produced by ``execute()``.
@@ -222,7 +226,7 @@ class RuntimeExecutor:
             use_case_type,
             build,
             use_case_type,
-            ExecutionInputs(params, payload, dependencies, load_overrides),
+            ExecutionInputs(params, payload, dependencies, load_overrides, delivery),
             identity,
             read_only,
         )

@@ -5,15 +5,17 @@ Shared by the ``jobs`` function, the queued event triggers and the direct ones.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import CheckScope
 from loom.core.discovery.worker import resolve_worker_components
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.run import run_job
+from loom.core.job.outcome import JobOutcome
+from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
@@ -109,18 +111,29 @@ async def run_envelope(
     job_type: type[Job[Any]],
     span_id: str | None,
     context: Any,
-) -> None:
-    """Run *envelope* as *job_type*, within its timeout and what remains of the invocation."""
-    await asyncio.wait_for(
-        run_job(
-            envelope,
-            job_type,
-            factory=application.kernel.factory,
-            executor=application.kernel.executor,
-            observability=application.observability,
-            message_id=span_id,
-        ),
-        timeout=run_timeout(application.job_settings.of(job_type).timeout, context),
+) -> JobOutcome:
+    """Run *envelope* as *job_type*, within its timeout and what remains of the invocation.
+
+    Returns:
+        What the run came to. The delivery is the first attempt: the queue
+        owns the count of redeliveries.
+    """
+    options = application.job_settings.of(job_type)
+    runner = JobRunner(
+        EnvelopeInvocation(
+            application.kernel.factory, application.kernel.executor, application.observability
+        )
+    )
+    return await runner.run(
+        JobDelivery(
+            job_type=job_type,
+            envelope=envelope,
+            task_id=span_id,
+            attempt=1,
+            deferrals=0,
+            policy=options.retry.policy,
+            timeout_s=run_timeout(options.timeout, context),
+        )
     )
 
 

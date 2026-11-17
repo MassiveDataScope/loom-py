@@ -42,7 +42,6 @@ _SQLITE = "sqlite+aiosqlite:///:memory:"
 
 class _PingJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
 
     def execute(self) -> int:
         return 1

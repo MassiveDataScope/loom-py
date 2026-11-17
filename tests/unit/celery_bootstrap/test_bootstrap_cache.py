@@ -25,7 +25,6 @@ from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 class _NoopJob(Job[None]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0

@@ -16,7 +16,14 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
-from loom.core.job.outcome import failure_log_fields, is_retryable
+from loom.core.job.outcome import (
+    Deferred,
+    Failed,
+    JobOutcome,
+    Rejected,
+    Succeeded,
+    failure_log_fields,
+)
 from loom.core.logger import get_logger
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.serverless.aws.lambda_._jobs import (
@@ -100,29 +107,42 @@ class SQSBatch:
         for index, record in enumerate(records):
             if _out_of_time(context):
                 return failures + _failed(records[index:])
-            if self._failed_and_retryable(record, context):
+            if self._listed(record, context):
                 if fifo:
                     return failures + _failed(records[index:])
                 failures += _failed([record])
         return failures
 
-    def _failed_and_retryable(self, record: Any, context: Any) -> bool:
+    def _listed(self, record: Any, context: Any) -> bool:
+        """Whether *record* is reported to the queue to be delivered again."""
         try:
-            self._host.run(self._run(record, context))
+            outcome = self._host.run(self._run(record, context))
         except Exception as exc:
-            _log_failure(record, exc, self._source.label)
-            return self._source.retry_final or is_retryable(exc)
-        return False
+            _log_failure(record, exc, self._source.label, final=False)
+            return True
+        match outcome:
+            case Succeeded():
+                return False
+            case Rejected() as rejected:
+                _log_failure(record, rejected.failure(), self._source.label, final=True)
+                return self._source.retry_final
+            case Failed() | Deferred():
+                _log_failure(record, outcome.failure(), self._source.label, final=False)
+                return True
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""
         self._host.close()
 
-    async def _run(self, record: Any, context: Any) -> None:
+    async def _run(self, record: Any, context: Any) -> JobOutcome:
+        outcome: JobOutcome = Succeeded(None)
         for envelope, span_id in self._decode(record):
             job_type = self._job_type(envelope, record)
             span_id = span_id or _message_id(record)
-            await run_envelope(self._application, envelope, job_type, span_id, context)
+            outcome = await run_envelope(self._application, envelope, job_type, span_id, context)
+            if not isinstance(outcome, Succeeded):
+                return outcome
+        return outcome
 
     def _decode(self, record: Any) -> Sequence[tuple[JobEnvelope, str | None]]:
         label = self._source.label or MALFORMED_JOB
@@ -173,11 +193,12 @@ def _job_label(record: Any) -> str:
     return MALFORMED_JOB
 
 
-def _log_failure(record: Any, exc: Exception, label: str | None) -> None:
+def _log_failure(record: Any, exc: Exception, label: str | None, *, final: bool) -> None:
     _log.exception(
-        "SQS job failed" if is_retryable(exc) else "SQS job failed finally",
+        "SQS job failed finally" if final else "SQS job failed",
         job=label or _job_label(record),
         message_id=_message_id(record),
         error_class=type(exc).__name__,
+        exc_info=exc,
         **failure_log_fields(exc),
     )

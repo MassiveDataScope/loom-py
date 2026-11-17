@@ -27,9 +27,12 @@ from loom.core.errors import (
     UnitOfWorkInsideScope,
 )
 from loom.core.job.callback import CallbackOutcome
-from loom.core.job.config import JobSettings
+from loom.core.job.config import JobConfig, JobOptions, JobSettings, RetryConfig
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
+from loom.core.job.outcome import JobRejection, JobRetry
+from loom.core.job.policy import Backoff
 from loom.core.observability.event import Scope
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
@@ -38,6 +41,20 @@ from loom.core.tracing import get_trace_id
 from tests.helpers.spans import build_recorder, hex_trace
 
 _SETTINGS = JobSettings()
+
+
+def _settings_with_attempts(max_attempts: int) -> JobSettings:
+    config = JobConfig(retry=RetryConfig(max_attempts=max_attempts))
+    return JobSettings({_SyncJob: JobOptions.resolve(_SyncJob, config)})
+
+
+def _executor_returning(value: object) -> MagicMock:
+    return MagicMock(run=AsyncMock(return_value=value))
+
+
+def _executor_raising(error: Exception) -> MagicMock:
+    return MagicMock(run=AsyncMock(side_effect=error))
+
 
 _WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 
@@ -48,7 +65,7 @@ _WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 
 class _SyncJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 2
+    __retry__ = Backoff(first_s=3, factor=3, max_s=300, jitter=False)
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -59,7 +76,6 @@ class _SyncJob(Job[int]):
 
 class _AsyncJob(Job[str]):
     __queue__ = "heavy"
-    __retries__ = 1
     __countdown__ = 0
     __timeout__ = 300
     __priority__ = 0
@@ -228,14 +244,14 @@ class TestMakeJobTaskRegistration:
         _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
         assert registered_kwargs[option] is True
 
-    def test_max_retries_uses_job_classvar(self) -> None:
+    def test_the_task_leaves_the_attempt_limit_to_the_runner(self) -> None:
         app = MagicMock()
         registered_kwargs: dict[str, object] = {}
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
         _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs["max_retries"] == _SyncJob.__retries__
+        assert registered_kwargs["max_retries"] is None
 
     def test_soft_time_limit_uses_job_classvar(self) -> None:
         app = MagicMock()
@@ -267,47 +283,53 @@ def _mock_self(retries: int = 0, max_retries: int = 0) -> MagicMock:
 class TestMakeJobTaskExecution:
     def test_job_task_calls_async_runtime_run(self) -> None:
         """Every job (sync or async) is submitted to the async runtime."""
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=10)
+        runtime = _executing_runtime()
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(10),
+            runtime,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self(), payload={"value": 5})
         runtime.run.assert_called_once()
         _, kwargs = runtime.run.call_args
-        assert kwargs["timeout"] is None
+        assert kwargs["eager_fallback"] is False
 
     def test_job_task_hands_the_executor_every_input_of_the_envelope(self) -> None:
         """A8: the task hands the job type and its factory to the executor, which builds it."""
         factory = _mock_factory(_SyncJob())
-        executor = MagicMock()
-        executor.run = AsyncMock(return_value=7)
-        submitted: list[Coroutine[Any, Any, Any]] = []
-        runtime = MagicMock()
-        runtime.run = MagicMock(side_effect=lambda coro, **_: submitted.append(coro) or 7)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, executor, runtime, settings=_SETTINGS
-        )
-
-        assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
-
-        assert asyncio.run(submitted[0]) == 7
-        executor.run.assert_awaited_once_with(
-            _SyncJob, factory=factory, params={"p": 2}, payload={"value": 5}, identity=None
-        )
-
-    def test_job_task_emits_observability_span(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _executing_runtime()
-        observability_runtime, span_calls = _mock_observability_runtime()
+        executor = _executor_returning(7)
         task_fn = _make_job_task(
             _mock_celery_app(),
             _SyncJob,
             factory,
-            MagicMock(run=AsyncMock(return_value=10)),
-            runtime,
+            executor,
+            _executing_runtime(),
+            settings=_SETTINGS,
+        )
+
+        assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
+
+        executor.run.assert_awaited_once()
+        args, kwargs = executor.run.await_args
+        assert args == (_SyncJob,)
+        assert {key: kwargs[key] for key in ("factory", "params", "payload", "identity")} == {
+            "factory": factory,
+            "params": {"p": 2},
+            "payload": {"value": 5},
+            "identity": None,
+        }
+
+    def test_job_task_emits_observability_span(self) -> None:
+        observability_runtime, span_calls = _mock_observability_runtime()
+        task_fn = _make_job_task(
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(10),
+            _executing_runtime(),
             observability_runtime=observability_runtime,
             settings=_SETTINGS,
         )
@@ -320,35 +342,68 @@ class TestMakeJobTaskExecution:
         assert kwargs["trace_id"] is None
         assert span_calls
 
-    def test_async_job_also_calls_async_runtime_run(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-        executor = MagicMock()
-        runtime = _mock_runtime(return_value="ok")
+    def test_the_job_reads_its_delivery_with_the_attempt_and_the_policy(self) -> None:
+        seen: list[JobDelivery | None] = []
+
+        async def run(*_: object, delivery: JobDelivery | None, **__: object) -> int:
+            seen.append(delivery)
+            return 1
+
+        task_self = _mock_self(retries=1)
+        task_self.request.id = "task-9"
         task_fn = _make_job_task(
-            _mock_celery_app(), _AsyncJob, factory, executor, runtime, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            MagicMock(run=run),
+            _executing_runtime(),
+            settings=_SETTINGS,
+        )
+        task_fn(task_self, deferrals=0)
+
+        [delivery] = seen
+        assert delivery is not None
+        assert (delivery.task_id, delivery.attempt, delivery.deferrals) == ("task-9", 2, 0)
+        assert delivery.policy.backoff == _SyncJob.__retry__
+
+    def test_the_runner_gets_the_soft_time_limit_as_the_run_timeout(self) -> None:
+        seen: list[float | None] = []
+
+        async def run(*_: object, delivery: JobDelivery | None, **__: object) -> str:
+            seen.append(None if delivery is None else delivery.timeout_s)
+            return "ok"
+
+        task_fn = _make_job_task(
+            _mock_celery_app(),
+            _AsyncJob,
+            _mock_factory(MagicMock()),
+            MagicMock(run=run),
+            _executing_runtime(),
+            settings=_SETTINGS,
         )
         task_fn(_mock_self(), payload={"msg": "hello"})
-        runtime.run.assert_called_once()
-        _, kwargs = runtime.run.call_args
-        assert kwargs["timeout"] == pytest.approx(300.0)
+        assert seen == [pytest.approx(300.0)]
 
-    def test_task_returns_async_runtime_result(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=42)
+    def test_task_returns_the_result_of_the_job(self) -> None:
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(42),
+            _executing_runtime(),
+            settings=_SETTINGS,
         )
-        result = task_fn(_mock_self(), payload={"value": 4})
-        assert result == 42
+        assert task_fn(_mock_self(), payload={"value": 4}) == 42
 
     def test_job_task_marks_eager_fallback_for_eager_requests(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=10)
+        runtime = _executing_runtime()
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(10),
+            runtime,
+            settings=_SETTINGS,
         )
         task_self = _mock_self()
         task_self.request.is_eager = True
@@ -361,72 +416,65 @@ class TestMakeJobTaskExecution:
 
 
 # ---------------------------------------------------------------------------
-# _make_job_task — retry logic
+# _make_job_task — settlement of the runner's outcome
 # ---------------------------------------------------------------------------
 
 
+def _failing_task(
+    error: Exception,
+    *,
+    metrics: MagicMock | None = None,
+    settings: JobSettings = _SETTINGS,
+) -> Any:
+    return _make_job_task(
+        _mock_celery_app(),
+        _SyncJob,
+        _mock_factory(MagicMock()),
+        _executor_raising(error),
+        _executing_runtime(),
+        metrics,
+        settings=settings,
+    )
+
+
+def _retrying_self(retries: int = 0) -> MagicMock:
+    task_self = _mock_self(retries=retries)
+    task_self.retry = MagicMock(side_effect=_RetryError)
+    task_self.request.kwargs = {"payload": {"value": 1}}
+    return task_self
+
+
 class TestMakeJobTaskRetry:
-    def test_retries_when_below_max(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-
-        mock_self = MagicMock()
-        mock_self.request.retries = 0
-        mock_self.max_retries = 2
-
-        class RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=RetryError)
-
-        runtime = _mock_runtime(error=ValueError("err"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
-        with pytest.raises(RetryError):
-            raw_fn(mock_self, payload={"value": 1})
-        mock_self.retry.assert_called_once()
+    def test_a_failure_with_attempts_left_retries_after_the_backoff(self) -> None:
+        task_self = _retrying_self(retries=0)
+        with pytest.raises(_RetryError):
+            _failing_task(ValueError("err"))(task_self, payload={"value": 1})
+        task_self.retry.assert_called_once()
+        assert task_self.retry.call_args.kwargs["countdown"] == 3
 
     def test_post_commit_error_is_not_retried(self) -> None:
         """US1 s3: the transaction committed, so a retry would run the job twice."""
-        instance = MagicMock()
-        factory = _mock_factory(instance)
         metrics = MagicMock()
-        mock_self = _mock_self(retries=0, max_retries=2)
+        task_self = _retrying_self()
         error = PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
 
-        runtime = _mock_runtime(error=error)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
         with pytest.raises(PostCommitError):
-            task_fn(mock_self, payload={"value": 1})
+            _failing_task(error, metrics=metrics)(task_self, payload={"value": 1})
 
-        mock_self.retry.assert_not_called()
+        task_self.retry.assert_not_called()
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_RETRYING not in kinds
-        assert EventKind.JOB_EXHAUSTED in kinds
+        assert EventKind.JOB_FAILED not in kinds
+        assert EventKind.JOB_REJECTED in kinds
 
     def test_post_commit_error_without_a_commit_is_retried(self) -> None:
         """A1: nothing committed, so re-running the job cannot duplicate a write."""
-        factory = _mock_factory(MagicMock())
-        mock_self = _mock_self(retries=0, max_retries=2)
-
-        class RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=RetryError)
+        task_self = _retrying_self()
         error = PostCommitError(committed=False, failures=(ConnectionError("broker down"),))
 
-        runtime = _mock_runtime(error=error)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        with pytest.raises(RetryError):
-            task_fn(mock_self, payload={"value": 1})
+        with pytest.raises(_RetryError):
+            _failing_task(error)(task_self, payload={"value": 1})
 
-        mock_self.retry.assert_called_once()
+        task_self.retry.assert_called_once()
 
     @pytest.mark.parametrize(
         "error",
@@ -440,83 +488,72 @@ class TestMakeJobTaskRetry:
     )
     def test_a_non_retryable_invocation_error_is_not_retried(self, error: Exception) -> None:
         """A store already committed, or the job has a programming error: a retry cannot help."""
-        mock_self = _mock_self(retries=0, max_retries=2)
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(MagicMock()),
-            MagicMock(),
-            _mock_runtime(error=error),
-            settings=_SETTINGS,
-        )
+        task_self = _retrying_self()
         with pytest.raises(type(error)):
-            task_fn(mock_self, payload={"value": 1})
+            _failing_task(error)(task_self, payload={"value": 1})
 
-        mock_self.retry.assert_not_called()
+        task_self.retry.assert_not_called()
 
-    def test_retry_countdown_uses_exponential_backoff(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
+    def test_retry_countdown_grows_with_the_attempt(self) -> None:
+        task_self = _retrying_self(retries=2)
+        with pytest.raises(_RetryError):
+            _failing_task(ValueError("err"), settings=_settings_with_attempts(5))(
+                task_self, payload={"value": 1}
+            )
+        assert task_self.retry.call_args.kwargs["countdown"] == 27
 
-        mock_self = MagicMock()
-        mock_self.request.retries = 2  # third attempt → backoff^2
-        mock_self.max_retries = 5
+    def test_a_job_retry_defers_without_spending_an_attempt(self) -> None:
+        task_self = _retrying_self(retries=2)
+        with pytest.raises(_RetryError):
+            _failing_task(JobRetry("not yet", 7))(task_self, payload={"value": 1}, deferrals=2)
+        kwargs = task_self.retry.call_args.kwargs
+        assert kwargs["countdown"] == 7
+        assert kwargs["kwargs"] == {"payload": {"value": 1}, "deferrals": 3}
 
-        class RetryError(Exception):
-            pass
+    def test_deferrals_do_not_exhaust_the_attempts(self) -> None:
+        task_self = _retrying_self(retries=5)
+        with pytest.raises(_RetryError):
+            _failing_task(ValueError("err"))(task_self, payload={"value": 1}, deferrals=5)
+        task_self.retry.assert_called_once()
 
-        mock_self.retry = MagicMock(side_effect=RetryError)
-
-        runtime = _mock_runtime(error=ValueError("err"))
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            factory,
-            MagicMock(),
-            runtime,
-            backoff=3,
-            settings=_SETTINGS,
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
-        with pytest.raises(RetryError):
-            raw_fn(mock_self, payload={"value": 1})
-        _, kwargs = mock_self.retry.call_args
-        # backoff=3, retries=2 → countdown = 3**2 = 9
-        assert kwargs["countdown"] == 9
+    def test_a_job_rejection_raises_without_retrying(self) -> None:
+        task_self = _retrying_self()
+        with pytest.raises(JobRejection, match="never"):
+            _failing_task(JobRejection("never"))(task_self, payload={"value": 1})
+        task_self.retry.assert_not_called()
 
     def test_job_started_event_emitted_before_execution(self) -> None:
-        """JOB_STARTED must arrive before the async runtime is called."""
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
+        """JOB_STARTED must arrive before the job runs."""
         metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
+        order: list[str] = []
+        metrics.on_event.side_effect = lambda event: order.append(event.kind)
+
+        async def run(*_: object, **__: object) -> int:
+            order.append("executed")
+            return 0
+
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            MagicMock(run=run),
+            _executing_runtime(),
+            metrics,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self())
-        first_event = metrics.on_event.call_args_list[0].args[0]
-        assert first_event.kind == EventKind.JOB_STARTED
-        runtime.run.assert_called_once()
+        assert order[:2] == [EventKind.JOB_STARTED, "executed"]
 
-    def test_job_succeeded_event_emitted_on_success(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
+    def test_job_succeeded_event_emitted_on_success_with_a_duration(self) -> None:
         metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        task_fn(_mock_self())
-        kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_SUCCEEDED in kinds
-
-    def test_job_succeeded_event_has_duration_ms(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(0),
+            _executing_runtime(),
+            metrics,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self())
         succeeded = next(
@@ -528,12 +565,15 @@ class TestMakeJobTaskRetry:
         assert succeeded.duration_ms >= 0
 
     def test_job_started_event_carries_trace_id(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
         metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(_SyncJob()),
+            _executor_returning(0),
+            _executing_runtime(),
+            metrics,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self(), trace_id="tid-999")
         started = next(
@@ -555,7 +595,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(run=AsyncMock(return_value=0)),
+            _executor_returning(0),
             _executing_runtime(),
             None,
             recorder.runtime,
@@ -577,7 +617,7 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(run=AsyncMock(return_value=0)),
+            _executor_returning(0),
             _executing_runtime(),
             None,
             recorder.runtime,
@@ -618,28 +658,17 @@ class TestMakeJobTaskRetry:
     @pytest.mark.parametrize(
         ("retries", "expected_error", "expected_kind"),
         [
-            (0, _RetryError, EventKind.JOB_RETRYING),
-            (2, ValueError, EventKind.JOB_EXHAUSTED),
+            (0, _RetryError, EventKind.JOB_FAILED),
+            (2, ValueError, EventKind.JOB_REJECTED),
         ],
     )
     def test_failure_events_of_a_trace_less_job_also_carry_none(
         self, retries: int, expected_error: type[Exception], expected_kind: EventKind
     ) -> None:
         metrics = MagicMock()
-        mock_self = _mock_self(retries=retries, max_retries=2)
-        mock_self.retry = MagicMock(side_effect=_RetryError)
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(_SyncJob()),
-            MagicMock(),
-            _mock_runtime(error=ValueError("err")),
-            metrics,
-            settings=_SETTINGS,
-        )
-
+        task_self = _retrying_self(retries=retries)
         with pytest.raises(expected_error):
-            task_fn(mock_self, payload={"value": 1})
+            _failing_task(ValueError("err"), metrics=metrics)(task_self, payload={"value": 1})
 
         events = [c.args[0] for c in metrics.on_event.call_args_list]
         assert expected_kind in [e.kind for e in events]
@@ -666,77 +695,36 @@ class TestMakeJobTaskRetry:
         assert get_trace_id() is None, "the trace context is restored when the task returns"
 
     def test_no_metrics_does_not_raise(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
             _mock_celery_app(),
             _SyncJob,
-            factory,
-            MagicMock(),
-            runtime,
+            _mock_factory(_SyncJob()),
+            _executor_returning(0),
+            _executing_runtime(),
             metrics=None,
             settings=_SETTINGS,
         )
-        task_fn(_mock_self())  # must not raise
+        task_fn(_mock_self())
 
-    def test_raises_original_exc_when_retries_exhausted(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-
-        mock_self = MagicMock()
-        mock_self.request.retries = 2
-        mock_self.max_retries = 2
-
-        runtime = _mock_runtime(error=ValueError("final"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
+    def test_raises_original_exc_when_attempts_are_exhausted(self) -> None:
+        task_self = _retrying_self(retries=2)
         with pytest.raises(ValueError, match="final"):
-            raw_fn(mock_self, payload={"value": 1})
-        mock_self.retry.assert_not_called()
+            _failing_task(ValueError("final"))(task_self, payload={"value": 1})
+        task_self.retry.assert_not_called()
 
-    def test_job_retrying_event_emitted_on_retry(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
+    def test_job_failed_event_emitted_when_an_attempt_remains(self) -> None:
         metrics = MagicMock()
-        mock_self = MagicMock()
-        mock_self.request.retries = 0
-        mock_self.request.is_eager = False
-        mock_self.max_retries = 2
-        mock_self.app.conf.task_always_eager = False
-
-        class _RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=_RetryError)
-        runtime = _mock_runtime(error=ValueError("boom"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
         with pytest.raises(_RetryError):
-            task_fn(mock_self)
+            _failing_task(ValueError("boom"), metrics=metrics)(_retrying_self())
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_RETRYING in kinds
+        assert EventKind.JOB_FAILED in kinds
 
-    def test_job_exhausted_event_emitted_when_retries_exhausted(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
+    def test_job_rejected_event_emitted_when_attempts_are_exhausted(self) -> None:
         metrics = MagicMock()
-        mock_self = MagicMock()
-        mock_self.request.retries = 2
-        mock_self.max_retries = 2
-        mock_self.request.is_eager = False
-        mock_self.app.conf.task_always_eager = False
-        runtime = _mock_runtime(error=ValueError("final"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
         with pytest.raises(ValueError):
-            task_fn(mock_self)
+            _failing_task(ValueError("final"), metrics=metrics)(_retrying_self(retries=2))
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_EXHAUSTED in kinds
+        assert EventKind.JOB_REJECTED in kinds
 
 
 # ---------------------------------------------------------------------------
@@ -888,8 +876,6 @@ class TestMakeCallbackTask:
 class _TwinJob(Job[int]):
     """Registered on two applications under the same task name."""
 
-    __retries__ = 0
-
     def execute(self) -> int:
         return 0
 
@@ -927,8 +913,8 @@ class TestTwoApplicationsInOneProcess:
                 app,
                 _TwinJob,
                 _mock_factory(_TwinJob()),
-                MagicMock(),
-                _mock_runtime(return_value=answer),
+                _executor_returning(answer),
+                _executing_runtime(),
                 settings=_SETTINGS,
             )
         name = f"{TASK_JOB_PREFIX}.{_TwinJob.__qualname__}"

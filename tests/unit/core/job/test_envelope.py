@@ -5,8 +5,19 @@ from __future__ import annotations
 import pytest
 
 from loom.core.errors import MalformedJobMessage, PostCommitError, UnknownJob
-from loom.core.job.envelope import JobEnvelope, decode_job_envelope, wire_job_name
+from loom.core.job.envelope import (
+    JobEnvelope,
+    decode_job_envelope,
+    encode_job_message,
+    wire_job_name,
+)
+from loom.core.job.job import Job
 from loom.core.job.outcome import failure_log_fields
+
+
+class _AnyJob(Job[None]):
+    def execute(self) -> None:
+        return None
 
 
 class TestJobEnvelope:
@@ -32,3 +43,14 @@ class TestJobEnvelope:
 
     def test_ordinary_failure_log_fields(self) -> None:
         assert failure_log_fields(ValueError("failed")) == {}
+
+
+class TestJobEnvelopeTaskId:
+    def test_a_message_without_a_task_id_decodes_to_none(self) -> None:
+        assert decode_job_envelope('{"job": "Task"}').task_id is None
+
+    def test_a_task_id_survives_the_wire(self) -> None:
+        body = encode_job_message(
+            _AnyJob, payload=None, params=None, identity=None, task_id="task-7"
+        )
+        assert decode_job_envelope(body.decode()).task_id == "task-7"

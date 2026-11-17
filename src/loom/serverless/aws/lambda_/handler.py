@@ -314,9 +314,12 @@ class _DirectEvents:
         """
         try:
             for envelope, span_id in self._envelopes(event):
-                self._host.run(
+                outcome = self._host.run(
                     run_envelope(self._application, envelope, self._job_type, span_id, context)
                 )
+                error = outcome.failure()
+                if error is not None:
+                    raise error
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",

@@ -45,8 +45,6 @@ _RAN: list[tuple[Any, Identity]] = []
 
 
 class ImportInvoice(Job[None]):
-    __retries__ = 0
-
     def execute(self, invoice: Invoice = Input()) -> None:
         _RAN.append((invoice, current_identity()))
         if invoice.number == "fail":
@@ -56,8 +54,6 @@ class ImportInvoice(Job[None]):
 
 
 class ImportObject(Job[None]):
-    __retries__ = 0
-
     def execute(self, found: S3Object = Input()) -> None:
         _RAN.append((found, current_identity()))
         if found.key.startswith("fail"):

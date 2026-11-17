@@ -1,7 +1,7 @@
 """The inline job service, an inline dispatch and the job runner build inside the execution.
 
 The job runner is the transport-neutral body the Celery worker and the Lambda
-``jobs`` handler share (``loom.core.job.run.run_job``).
+``jobs`` handler share (``loom.core.job.run.EnvelopeInvocation``).
 """
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_de
 from loom.core.identity.wire import encode_identity
 from loom.core.job import service
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
-from loom.core.job.run import run_job
+from loom.core.job.policy import DEFAULT_RETRY
+from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.service import InlineJobService
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
@@ -46,14 +48,15 @@ from .doubles import (
 async def run_envelope(
     envelope: JobEnvelope, factory: UseCaseFactory, executor: RuntimeExecutor
 ) -> Any:
-    return await run_job(
-        envelope,
-        AcmeProbeJob,
-        factory=factory,
-        executor=executor,
-        observability=ObservabilityRuntime.noop(),
-        message_id=None,
+    delivery = JobDelivery(
+        job_type=AcmeProbeJob,
+        envelope=envelope,
+        task_id=None,
+        attempt=1,
+        deferrals=0,
+        policy=DEFAULT_RETRY,
     )
+    return await EnvelopeInvocation(factory, executor, ObservabilityRuntime.noop())(delivery)
 
 
 class TestInlineJobService:

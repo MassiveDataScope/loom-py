@@ -41,7 +41,6 @@ CALLER = Identity(
 
 class _ReportJob(Job[str]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0

@@ -25,9 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
@@ -35,15 +34,21 @@ from celery.result import AsyncResult  # type: ignore[import-untyped]
 from loom.celery.constants import callback_task_name
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
-from loom.core.engine.events import EventKind, RuntimeEvent, Status
-from loom.core.engine.metrics import NoMetrics
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.config import JobSettings
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
-from loom.core.job.outcome import is_retryable
-from loom.core.job.run import run_job
+from loom.core.job.outcome import (
+    Deferred,
+    Failed,
+    JobOutcome,
+    Rejected,
+    Succeeded,
+)
+from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -163,15 +168,18 @@ def _make_job_task(
     async_runtime: _CeleryAsyncRuntime,
     metrics: MetricsAdapter | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
-    backoff: int = 2,
     *,
     settings: JobSettings,
 ) -> Any:
     """Register and return a Celery task that executes *job_type* on the worker.
 
     The returned task is bound (``bind=True``) so it can access retry
-    context via ``self``.  Exponential back-off uses ``backoff ** retries``
-    seconds (default ``2 ** 0 = 1``, ``2 ** 1 = 2``, …).
+    context via ``self``.  Each run goes through a
+    :class:`~loom.core.job.runner.JobRunner`, which decides whether it
+    succeeded, defers, fails or is rejected; the task only maps that outcome
+    to Celery: a failure retries after the policy's backoff, a deferral
+    retries after its delay without spending an attempt (the task carries the
+    count in its ``deferrals`` argument), and a rejection raises its error.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -192,12 +200,11 @@ def _make_job_task(
         job_type: Concrete :class:`~loom.core.job.job.Job` subclass.
         factory: Used to build the Job instance via DI.
         executor: RuntimeExecutor driving the compiled ExecutionPlan.
-        metrics: Optional metrics adapter.  Emits ``JOB_STARTED``,
-            ``JOB_SUCCEEDED``, ``JOB_RETRYING``, and ``JOB_EXHAUSTED``
-            events during task execution in the worker process.
-        backoff: Base for exponential retry delay (seconds).  Defaults to 2.
+        metrics: Optional metrics adapter.  Receives the job events the
+            runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
+            ``JOB_DEFERRED``, ``JOB_FAILED`` and ``JOB_REJECTED``).
         settings: The application's job settings, which give the task its
-            retries and time limit.
+            retry policy and time limit.
 
     Returns:
         The registered Celery task object.
@@ -207,63 +214,52 @@ def _make_job_task(
     runtime = observability_runtime or ObservabilityRuntime.noop()
     run_timeout = float(timeout) if timeout is not None and timeout > 0 else None
     name = job_type.__qualname__
-    sink = NoMetrics() if metrics is None else metrics
+    runner = JobRunner(EnvelopeInvocation(factory, executor, runtime), metrics)
 
-    def _execute_job(
+    def _deliver(
         *,
         task_self: Any,
         payload: dict[str, Any] | None,
         params: dict[str, Any] | None,
         identity: dict[str, Any] | None,
         trace_id: str | None,
-    ) -> Any:
-        """Build the job instance and run it under the job span."""
-        return async_runtime.run(
-            run_job(
-                JobEnvelope(
-                    job=name,
-                    payload=payload,
-                    params=params,
-                    trace_id=trace_id,
-                    identity=identity,
-                ),
-                job_type,
-                factory=factory,
-                executor=executor,
-                observability=runtime,
-                message_id=getattr(getattr(task_self, "request", None), "id", None),
-            ),
-            timeout=run_timeout,
-            eager_fallback=_is_eager_request(task_self),
-        )
-
-    def _handle_job_failure(
-        *, task_self: Any, exc: Exception, trace_id: str | None, started: float
-    ) -> NoReturn:
-        """Retry the task when the failure allows it, otherwise let it die."""
-        if is_retryable(exc) and task_self.request.retries < task_self.max_retries:
-            countdown = backoff**task_self.request.retries
-            sink.on_event(
-                RuntimeEvent(
-                    kind=EventKind.JOB_RETRYING,
-                    use_case_name=name,
-                    trace_id=trace_id,
-                    status=Status.RETRYING,
-                    error=exc,
-                )
-            )
-            raise task_self.retry(exc=exc, countdown=countdown) from exc
-        sink.on_event(
-            RuntimeEvent(
-                kind=EventKind.JOB_EXHAUSTED,
-                use_case_name=name,
+        deferrals: int,
+    ) -> JobOutcome:
+        """Run one delivery of the job through the runner."""
+        task_id = getattr(getattr(task_self, "request", None), "id", None)
+        delivery = JobDelivery(
+            job_type=job_type,
+            envelope=JobEnvelope(
+                job=name,
+                payload=payload,
+                params=params,
                 trace_id=trace_id,
-                duration_ms=(time.monotonic() - started) * 1000,
-                status=Status.EXHAUSTED,
-                error=exc,
-            )
+                identity=identity,
+                task_id=task_id,
+            ),
+            task_id=task_id,
+            attempt=task_self.request.retries - deferrals + 1,
+            deferrals=deferrals,
+            policy=options.retry.policy,
+            timeout_s=run_timeout,
         )
-        raise exc
+        outcome: JobOutcome = async_runtime.run(
+            runner.run(delivery), eager_fallback=_is_eager_request(task_self)
+        )
+        return outcome
+
+    def _settle(task_self: Any, outcome: JobOutcome, deferrals: int) -> Any:
+        """Map the outcome to Celery: return the result, retry, or raise the rejection."""
+        match outcome:
+            case Succeeded(result=result):
+                return result
+            case Failed(error=error, delay=delay):
+                raise task_self.retry(exc=error, countdown=delay.seconds) from error
+            case Deferred(delay=delay):
+                kwargs = {**task_self.request.kwargs, "deferrals": deferrals + 1}
+                raise task_self.retry(countdown=delay.seconds, kwargs=kwargs)
+            case Rejected() as rejected:
+                raise rejected.failure()
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),
@@ -271,7 +267,7 @@ def _make_job_task(
         bind=True,
         acks_late=True,
         reject_on_worker_lost=True,
-        max_retries=options.retries,
+        max_retries=None,
         soft_time_limit=timeout,
     )
     def _job_task(
@@ -281,32 +277,18 @@ def _make_job_task(
         params: dict[str, Any] | None = None,
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
+        deferrals: int = 0,
     ) -> Any:
         with active_trace_id(trace_id or None):
-            sink.on_event(
-                RuntimeEvent(kind=EventKind.JOB_STARTED, use_case_name=name, trace_id=trace_id)
+            outcome = _deliver(
+                task_self=self,
+                payload=payload,
+                params=params,
+                identity=identity,
+                trace_id=trace_id,
+                deferrals=deferrals,
             )
-            t0 = time.monotonic()
-            try:
-                result = _execute_job(
-                    task_self=self,
-                    payload=payload,
-                    params=params,
-                    identity=identity,
-                    trace_id=trace_id,
-                )
-            except Exception as exc:
-                _handle_job_failure(task_self=self, exc=exc, trace_id=trace_id, started=t0)
-            sink.on_event(
-                RuntimeEvent(
-                    kind=EventKind.JOB_SUCCEEDED,
-                    use_case_name=name,
-                    trace_id=trace_id,
-                    duration_ms=(time.monotonic() - t0) * 1000,
-                    status=Status.SUCCESS,
-                )
-            )
-            return result
+            return _settle(self, outcome, deferrals)
 
     return _job_task
 

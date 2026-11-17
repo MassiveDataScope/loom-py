@@ -23,8 +23,15 @@ from loom.core.job.callback import (
 )
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
+from loom.core.job.delivery import JobDelivery
+from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
+from loom.core.job.outcome import (
+    JobOutcome,
+    Succeeded,
+)
+from loom.core.job.runner import JobRunner
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -37,54 +44,73 @@ ResultT = TypeVar("ResultT")
 class _PendingDispatch:
     """One inline dispatch, run by the post-commit channel once the unit of work has closed."""
 
-    job_type: type[Job[Any]]
-    task_id: str
-    payload: dict[str, Any]
-    params: dict[str, Any] | None
+    delivery: JobDelivery
+    runner: JobRunner = field(repr=False)
     on_success: type[Any] | None
     on_failure: type[Any] | None
     outcome: InlineOutcome
     factory: UseCaseFactory
-    executor: RuntimeExecutor = field(repr=False)
     captured: Delegation = NO_DELEGATION
     """The dispatcher's caller and deadline (:func:`~loom.core.identity.captured_delegation`)."""
+
+    @property
+    def task_id(self) -> str:
+        """The id of the dispatch, which its handle and callbacks carry."""
+        return str(self.delivery.task_id)
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """The payload the job runs with."""
+        return self.delivery.envelope.payload or {}
 
     async def run(self) -> None:
         """Run the job, then its callback, as the dispatcher, within the captured delegation."""
         resumed = Acting.current().resumed(self.captured)
         token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
         try:
-            result: Any = await self.executor.run(
-                self.job_type,
-                factory=self.factory,
-                params=self.params,
-                payload=self.payload,
-            )
-            self.outcome.succeed(result)
-            if self.on_success is not None:
-                await notify(
-                    self.factory,
-                    self.on_success,
-                    CallbackOutcome.SUCCESS,
-                    job_id=self.task_id,
-                    result=result,
-                    **self.payload,
-                )
-        except Exception as exc:
-            self.outcome.fail(exc)
-            if self.on_failure is not None:
-                await notify(
-                    self.factory,
-                    self.on_failure,
-                    CallbackOutcome.FAILURE,
-                    job_id=self.task_id,
-                    exc_type=type(exc).__qualname__,
-                    exc_msg=str(exc),
-                    **self.payload,
-                )
+            await self._settle(await self.runner.run(self.delivery))
         finally:
             if token is not None:
                 reset_identity(token)
+
+    async def _settle(self, outcome: JobOutcome) -> None:
+        if isinstance(outcome, Succeeded):
+            error = await self._succeeded(outcome.result)
+        else:
+            error = outcome.failure()
+        if error is not None:
+            await self._failed(error)
+
+    async def _succeeded(self, result: Any) -> Exception | None:
+        """Record *result* and call ``on_success``; the callback's error, when it raises."""
+        self.outcome.succeed(result)
+        if self.on_success is None:
+            return None
+        try:
+            await notify(
+                self.factory,
+                self.on_success,
+                CallbackOutcome.SUCCESS,
+                job_id=self.task_id,
+                result=result,
+                **self.payload,
+            )
+        except Exception as exc:
+            return exc
+        return None
+
+    async def _failed(self, error: Exception) -> None:
+        self.outcome.fail(error)
+        if self.on_failure is not None:
+            await notify(
+                self.factory,
+                self.on_failure,
+                CallbackOutcome.FAILURE,
+                job_id=self.task_id,
+                exc_type=type(error).__qualname__,
+                exc_msg=str(error),
+                **self.payload,
+            )
 
 
 class JobService(Protocol):
@@ -224,6 +250,17 @@ class InlineJobService:
         self._factory = factory
         self._executor = executor
         self._settings = settings or JobSettings()
+        self._runner = JobRunner(self._invoke)
+
+    async def _invoke(self, delivery: JobDelivery) -> Any:
+        envelope = delivery.envelope
+        return await self._executor.run(
+            delivery.job_type,
+            factory=self._factory,
+            params=envelope.params,
+            payload=envelope.payload,
+            delivery=delivery,
+        )
 
     async def run(
         self,
@@ -292,22 +329,33 @@ class InlineJobService:
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
         outcome = InlineOutcome()
-        pending = _PendingDispatch(
-            job_type=job_type,
-            task_id=task_id,
+        options = self._settings.of(job_type)
+        envelope = JobEnvelope(
+            job=wire_job_name(job_type.__qualname__),
             payload=payload,
             params=params,
+            task_id=task_id,
+        )
+        pending = _PendingDispatch(
+            delivery=JobDelivery(
+                job_type=job_type,
+                envelope=envelope,
+                task_id=task_id,
+                attempt=1,
+                deferrals=0,
+                policy=options.retry.policy,
+            ),
+            runner=self._runner,
             on_success=on_success,
             on_failure=on_failure,
             outcome=outcome,
             factory=self._factory,
-            executor=self._executor,
             captured=captured_delegation(),
         )
         add_pending_dispatch(pending.run)
         return JobHandle(
             job_id=task_id,
-            queue=queue or self._settings.of(job_type).queue,
+            queue=queue or options.queue,
             dispatched_at=datetime.now(UTC),
             _inline_outcome=outcome,
         )

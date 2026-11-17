@@ -113,7 +113,6 @@ class _ExistsRecordByNameUseCase(UseCase[_Record, bool]):
 
 class _CreateRecordViaUseCaseJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -128,7 +127,6 @@ class _CreateRecordViaUseCaseJob(Job[int]):
 
 class _GetRecordViaLoadByIdJob(Job[str]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -143,7 +141,6 @@ class _GetRecordViaLoadByIdJob(Job[str]):
 
 class _RenameRecordViaLoadByIdJob(Job[str]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -162,7 +159,6 @@ class _RenameRecordViaLoadByIdJob(Job[str]):
 
 class _LoadRecordByNameJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -177,7 +173,6 @@ class _LoadRecordByNameJob(Job[int]):
 
 class _ExistsRecordByNameJob(Job[bool]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -192,7 +187,6 @@ class _ExistsRecordByNameJob(Job[bool]):
 
 class _CreateRecordInlineJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -207,7 +201,6 @@ class _CreateRecordInlineJob(Job[int]):
 
 class _AlwaysFailJob(Job[None]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -244,7 +237,6 @@ class _DispatchChildJobUseCase(UseCase[_Record, bool]):
 
 class _DispatchChildJobOrchestratorJob(Job[bool]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0

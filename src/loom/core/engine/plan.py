@@ -106,6 +106,17 @@ class CallerBinding:
 
 
 @dataclass(frozen=True)
+class DeliveryBinding:
+    """The job-delivery parameter marked with ``Delivery()``.
+
+    Args:
+        name: Parameter name as declared in the signature.
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
 class AgentBinding:
     """One ``Agent(name)`` marker parameter declared in ``execute``.
 
@@ -346,6 +357,7 @@ class ExecutionPlan:
     rule_steps: tuple[CommandStep, ...]
     read_only: bool = False
     caller_binding: CallerBinding | None = None
+    delivery_binding: DeliveryBinding | None = None
     execution_bindings: tuple[ExecutionBinding, ...] = ()
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE

@@ -28,8 +28,6 @@ _ALICE = Identity(subject="alice", roles=("buyer",), mechanism="jwt")
 
 
 class MarkJob(Job[None]):
-    __retries__ = 0
-
     def execute(self, marker: str) -> None:
         _SEEN.append((marker, current_identity().subject))
         if marker == "fail":

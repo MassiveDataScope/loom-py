@@ -22,7 +22,7 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
-from loom.core.job.outcome import failure_log_fields
+from loom.core.job.outcome import JobRetry, JobSignal, failure_log_fields
 from loom.core.logger import LoggerPort
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
@@ -168,7 +168,7 @@ class StartedExecution:
         """Report the execution's failure: ``[FAIL]`` and ``EXEC_ERROR``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
         error_kind = self._error_kind(error)
-        status = Status.RULE_FAILURE if isinstance(error, RuleViolations) else Status.FAILURE
+        status = self._status(error)
         self.log_failure(error, status, error_kind, duration_ms=elapsed_ms)
         self.metrics.on_event(
             RuntimeEvent(
@@ -188,6 +188,16 @@ class StartedExecution:
         self, error: BaseException, status: Status, error_kind: Phase, **timing: Any
     ) -> None:
         """Log the terminal ``[FAIL]``: a broken rule is a warning, anything else an error."""
+        if isinstance(error, JobSignal):
+            self.logger.info(
+                f"[SIGNAL] {self.use_case_name}",
+                usecase=self.use_case_name,
+                **timing,
+                status=status,
+                signal=type(error).__name__,
+                reason=str(error),
+            )
+            return
         message = f"[FAIL] {self.use_case_name}"
         fields: dict[str, Any] = {
             "usecase": self.use_case_name,
@@ -206,6 +216,16 @@ class StartedExecution:
             self.logger.warning(message, **fields)
             return
         self.logger.error(message, **fields, **failure_log_fields(error), error=str(error))
+
+    @staticmethod
+    def _status(error: BaseException) -> Status:
+        if isinstance(error, RuleViolations):
+            return Status.RULE_FAILURE
+        if isinstance(error, JobRetry):
+            return Status.DEFERRED
+        if isinstance(error, JobSignal):
+            return Status.REJECTED
+        return Status.FAILURE
 
     def _error_kind(self, error: BaseException) -> Phase:
         if isinstance(error, asyncio.CancelledError):

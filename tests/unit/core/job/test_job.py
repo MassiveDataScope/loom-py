@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.job.job import Job
+from loom.core.job.policy import Backoff
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.rule import RuleFn
 
@@ -27,7 +28,7 @@ class SyncJob(Job[str]):
 
 class CustomQueueJob(Job[None]):
     __queue__ = "heavy"
-    __retries__ = 5
+    __retry__ = Backoff(first_s=10, factor=3, max_s=600)
     __countdown__ = 10
     __timeout__ = 600
     __priority__ = 3
@@ -56,14 +57,14 @@ class TestJob:
 
     def test_default_classvars_on_async_job(self) -> None:
         assert AsyncJob.__queue__ == "default"
-        assert AsyncJob.__retries__ == 0
+        assert AsyncJob.__retry__ is None
         assert AsyncJob.__countdown__ == 0
         assert AsyncJob.__timeout__ is None
         assert AsyncJob.__priority__ == 0
 
     def test_custom_classvars_on_subclass(self) -> None:
         assert CustomQueueJob.__queue__ == "heavy"
-        assert CustomQueueJob.__retries__ == 5
+        assert CustomQueueJob.__retry__ == Backoff(first_s=10, factor=3, max_s=600)
         assert CustomQueueJob.__countdown__ == 10
         assert CustomQueueJob.__timeout__ == 600
         assert CustomQueueJob.__priority__ == 3

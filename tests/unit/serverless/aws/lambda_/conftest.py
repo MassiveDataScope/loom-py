@@ -37,8 +37,6 @@ def probe() -> tuple[type[Job[None]], Probe]:
     state = Probe()
 
     class ProbeJob(Job[None]):
-        __retries__ = 0
-
         def execute(self, marker: str) -> None:
             state.seen.append((marker, current_identity().subject, get_trace_id()))
             state.loops.append(asyncio.get_running_loop())
