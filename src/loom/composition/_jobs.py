@@ -264,4 +264,7 @@ def configure_job_service(
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)
+    in_force = service.settings if isinstance(service, InlineJobService) else settings
+    if in_force.jobs:
+        _log.info("Job retry policies", jobs=in_force.describe_retries())
     return resources

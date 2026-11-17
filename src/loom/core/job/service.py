@@ -132,8 +132,8 @@ class _PendingDispatch:
         """Hand *delivery* to the timer for after *delay*; the refusal when none waits."""
         try:
             self.wait(delay, replace(self, delivery=delivery).run)
-        except JobDelayRefused as refusal:
-            return refusal
+        except JobDelayRefused:
+            return JobDelayRefused()
         return None
 
     async def _succeeded(self, result: Any) -> Exception | None:
@@ -360,8 +360,14 @@ class InlineJobService:
         self._callbacks = callbacks
         self._factory = factory
         self._executor = executor
-        self._settings = settings or JobSettings()
+        base = settings or JobSettings()
+        self._settings = base if timer is not None else base.without_waiting()
         self._runner = JobRunner(self._invoke)
+
+    @property
+    def settings(self) -> JobSettings:
+        """The job settings in force: one attempt for every job when the service has no timer."""
+        return self._settings
 
     async def _invoke(self, delivery: JobDelivery) -> Any:
         envelope = delivery.envelope
@@ -541,9 +547,6 @@ class InlineJobService:
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
         outcome = InlineOutcome()
-        policy = options.retry.policy
-        if self._timer is None:
-            policy = replace(policy, max_attempts=1)
         envelope = JobEnvelope(
             job=wire_job_name(job_type.__qualname__),
             payload=payload,
@@ -557,7 +560,7 @@ class InlineJobService:
                 task_id=task_id,
                 attempt=1,
                 deferrals=0,
-                policy=policy,
+                policy=options.retry.policy,
             ),
             runner=self._runner,
             timer=self._timer,

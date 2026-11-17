@@ -23,6 +23,7 @@ class RetrySource(StrEnum):
     CLASS = "__retry__"
     LOOM = "loom default"
     REDRIVE = "RedrivePolicy maxReceiveCount"
+    NO_TIMER = "no timer to wait on"
 
 
 class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -130,6 +131,13 @@ class ResolvedRetry:
             {name: source for name, (_, source) in fields.items()},
         )
 
+    def single_attempt(self) -> ResolvedRetry:
+        """This policy cut to one attempt, for a service that cannot wait between attempts."""
+        return ResolvedRetry(
+            replace(self.policy, max_attempts=1),
+            {**self.sources, "max_attempts": RetrySource.NO_TIMER},
+        )
+
     def describe(self) -> str:
         """The policy and where it came from: one source when every field shares it."""
         backoff = self.policy.backoff
@@ -197,6 +205,11 @@ class JobSettings:
     """
 
     jobs: Mapping[type[Job[Any]], JobOptions] = field(default_factory=dict)
+    one_attempt: bool = False
+
+    def without_waiting(self) -> JobSettings:
+        """These settings with every job cut to one attempt, for a service with no timer."""
+        return replace(self, one_attempt=True)
 
     @classmethod
     def from_config(cls, ctx: ConfigContext, jobs: Iterable[type[Job[Any]]]) -> JobSettings:
@@ -227,16 +240,19 @@ class JobSettings:
                 countdown is outside 0 to
                 :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """
-        return self.jobs.get(job_type) or JobOptions.resolve(job_type)
+        options = self.jobs.get(job_type) or JobOptions.resolve(job_type)
+        if self.one_attempt:
+            return replace(options, retry=options.retry.single_attempt())
+        return options
 
     def with_retries(self, retries: Mapping[type[Job[Any]], ResolvedRetry]) -> JobSettings:
         """These settings with the retry policy of each job in *retries* replaced."""
         replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
-        return JobSettings({**self.jobs, **replaced})
+        return replace(self, jobs={**self.jobs, **replaced})
 
     def describe_retries(self) -> list[dict[str, str]]:
         """Each job's effective retry policy and where it came from, for the start-up log."""
         return [
-            {"job": job_type.__qualname__, "retry": options.retry.describe()}
-            for job_type, options in self.jobs.items()
+            {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe()}
+            for job_type in self.jobs
         ]

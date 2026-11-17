@@ -66,9 +66,27 @@ class DeferringThenFailingJob(Job[None]):
         raise AcmeError("boom")
 
 
+class FailingThenRetryingJob(Job[None]):
+    __retry__ = STEADY
+    seen: ClassVar[list[tuple[int, int]]] = []
+
+    async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
+        assert delivery is not None
+        self.seen.append((delivery.attempt, delivery.deferrals))
+        if delivery.attempt < 3:
+            raise AcmeError("boom")
+        raise JobRetry("tenant warming up", 5)
+
+
 @pytest.fixture(autouse=True)
 def _clear_seen() -> None:
-    for job in (SeenFailingJob, SeenRetryingJob, SeenOwnDelayJob, DeferringThenFailingJob):
+    for job in (
+        SeenFailingJob,
+        SeenRetryingJob,
+        SeenOwnDelayJob,
+        DeferringThenFailingJob,
+        FailingThenRetryingJob,
+    ):
         job.seen.clear()
 
 
@@ -161,3 +179,14 @@ class TestInlineContract:
             handle.wait()
         assert isinstance(failed.value.cause, JobRejection)
         assert failed.value.cause.reason == "tenant deleted"
+
+    async def test_a_job_retry_is_deferred_even_on_the_last_attempt(self, inline: Inline) -> None:
+        await inline.service.dispatch_now(FailingThenRetryingJob)
+        await inline.timer.advance(4 + 8)
+        assert FailingThenRetryingJob.seen == [(1, 0), (2, 0), (3, 0)]
+        assert inline.timer.pending == 1
+        await inline.timer.advance(4)
+        assert len(FailingThenRetryingJob.seen) == 3
+        await inline.timer.advance(1)
+
+        assert FailingThenRetryingJob.seen[-1] == (3, 1)

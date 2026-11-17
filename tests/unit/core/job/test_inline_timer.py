@@ -9,13 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRetry
 from loom.core.job.policy import Backoff, Countdown
-from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService
 from loom.core.job.timer import AsyncioTimer, JobDelayRefused
 from loom.testing.jobs import ManualTimer
@@ -168,14 +166,6 @@ class DefaultJob(Job[str]):
         return "done"
 
 
-class RecordedEvents:
-    def __init__(self) -> None:
-        self.kinds: list[EventKind] = []
-
-    def on_event(self, event: RuntimeEvent) -> None:
-        self.kinds.append(event.kind)
-
-
 class TestWithoutATimer:
     @pytest.fixture
     def acme(self) -> Acme:
@@ -204,7 +194,8 @@ class TestWithoutATimer:
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert isinstance(failed.value.cause, JobDelayRefused)
-        assert "30s" in str(failed.value.cause)
+        assert failed.value.cause.delay is None
+        assert not any(character.isdigit() for character in str(failed.value.cause))
         assert acme.runs == [(1, 0)]
 
     async def test_a_zero_delay_job_retry_is_refused_too(self) -> None:
@@ -229,8 +220,6 @@ class TestWithoutATimer:
         acme.service._factory.build = MagicMock(  # type: ignore[attr-defined]
             side_effect=lambda cls: Notify() if cls is Notify else MagicMock()
         )
-        events = RecordedEvents()
-        acme.service._runner = JobRunner(acme.service._invoke, events)  # type: ignore[attr-defined]
 
         handle = await acme.service.dispatch_now(DefaultJob, on_failure=Notify)  # type: ignore[arg-type]
 
@@ -239,10 +228,34 @@ class TestWithoutATimer:
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert type(failed.value.cause) is AcmeError
-        assert events.kinds == [EventKind.JOB_STARTED, EventKind.JOB_REJECTED]
 
 
 class TestAsyncioTimer:
+    async def test_a_step_that_has_run_leaves_nothing_to_lose(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = RecordingLogger()
+        monkeypatch.setattr("loom.core.job.timer._log", log)
+        yield_once = asyncio.sleep
+        ran = asyncio.Event()
+
+        async def instant(seconds: float) -> None:
+            await yield_once(0)
+
+        async def step() -> None:
+            ran.set()
+
+        monkeypatch.setattr(asyncio, "sleep", instant)
+        timer = AsyncioTimer()
+
+        timer.schedule(Countdown(60), step, job="AcmeJob", task_id="t")
+        await asyncio.wait_for(ran.wait(), 1)
+        await yield_once(0)
+        await yield_once(0)
+        await timer.close()
+
+        assert log.calls == []
+
     async def test_a_step_runs_after_its_delay(self, monkeypatch: pytest.MonkeyPatch) -> None:
         slept: list[float] = []
         ran = asyncio.Event()

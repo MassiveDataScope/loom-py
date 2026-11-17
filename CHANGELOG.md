@@ -1750,8 +1750,10 @@
   production uses Celery or SQS. A Lambda function composes no timer: its
   inline service raises `JobDelayRefused` for a countdown above zero, rejects
   a job that raises `JobRetry`, naming the delay, and rejects a failing job at
-  its first attempt with its own error. The Lambda host's start-up line naming
-  the job service is now INFO, whatever the service.
+  its first attempt with its own error; the start-up line "Job retry policies"
+  then reports `max_attempts=1`. That line is logged once the job service is
+  built. The Lambda host's start-up line naming the job service is now INFO,
+  whatever the service.
 - **jobs:** an inline `JobHandle.wait()` on a failed job raises
   `JobFailedError` carrying the job's exception as `cause`, as on Celery;
   it used to raise `IndexError`. Waiting before the dispatch has run raises

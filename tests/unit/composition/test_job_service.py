@@ -163,9 +163,10 @@ class TestInlineTimer:
         application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
 
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
-        assert len(warnings_logged.calls) == 1
-        assert "wait in process memory" in warnings_logged.calls[0][0]
-        assert "Celery or SQS" in warnings_logged.calls[0][0]
+        warning, policies = warnings_logged.calls
+        assert "wait in process memory" in warning[0]
+        assert "Celery or SQS" in warning[0]
+        assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
     async def test_a_countdown_waits_on_the_timer_of_the_application(self, tmp_path: Path) -> None:
         application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
@@ -194,7 +195,7 @@ class TestInlineTimer:
 
         assert timer.pending == 1
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
-        assert warnings_logged.calls == []
+        assert [event for event, _ in warnings_logged.calls] == ["Job retry policies"]
 
     async def test_lambda_composes_no_timer_and_refuses_a_delay(
         self, tmp_path: Path, warnings_logged: RecordingLogger
@@ -205,7 +206,9 @@ class TestInlineTimer:
         with pytest.raises(JobDelayRefused):
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
-        assert warnings_logged.calls == []
+        ((event, fields),) = warnings_logged.calls
+        assert event == "Job retry policies"
+        assert "max_attempts=1 (no timer to wait on)" in fields["jobs"][0]["retry"]
 
     def test_a_celery_application_has_no_timer(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
