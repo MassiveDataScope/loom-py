@@ -66,7 +66,7 @@ def celery_app() -> Celery:
 
 
 FAILURE = {"exc_type": "LookupError", "exc_msg": "acme"}
-"""What the worker that rejects a job sends its failure callback task."""
+"""What a worker sends the failure callback task when a job task ends with an error."""
 
 
 @pytest.fixture

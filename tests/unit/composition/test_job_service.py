@@ -245,3 +245,12 @@ class TestRetryPolicyLog:
         (line,) = warnings_logged.named("Job retry policies")
         assert line["transport"] == "inline"
         assert [entry["job"] for entry in line["jobs"]] == ["AcmePingJob"]
+
+    def test_an_app_whose_jobs_all_go_to_celery_logs_no_inline_line(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
+
+        job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmeEmailJob))
+
+        assert warnings_logged.named("Job retry policies") == []

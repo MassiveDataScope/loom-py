@@ -13,8 +13,7 @@ from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection
 from tests.integration.celery_jobs.conftest import JSON, Workbench
-from tests.integration.celery_jobs.doubles import REJECTION, RejectedJob
-from tests.integration.celery_jobs.test_failure_callback import FAILURE_CALLBACK
+from tests.integration.celery_jobs.doubles import FAILURE_CALLBACK, REJECTION, RejectedJob
 
 
 class TestEagerRejection:
