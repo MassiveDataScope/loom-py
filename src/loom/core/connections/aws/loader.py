@@ -20,7 +20,9 @@ _ISLAND = "loom.core.connections.aws.client"
 class AwsIsland(Protocol):
     """What :mod:`loom.core.connections.aws.client` publishes."""
 
-    def build_aws_client(self, service: str, config: AwsClientConfig, **extra: Any) -> Any: ...
+    def open_session(self, profile: str | None) -> Any: ...
+
+    def build_aws_client(self, session: Any, service: str, config: AwsClientConfig) -> Any: ...
 
 
 def aws_island() -> AwsIsland:

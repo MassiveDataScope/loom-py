@@ -112,13 +112,20 @@
   a product section and `build_aws_client("dynamodb", config)` (or
   `aws_island(extra=...).build_aws_client`) built the client. Now:
   `Target.from_config(ctx, path, own=section, **over)` decodes it,
-  `config.build_client("dynamodb")` builds the client with boto3's service
-  name, and `AwsClientConfig.inherit(ctx, own, path)` returns the merged
-  mapping. `aws_island()` takes no argument and names the `aws` extra.
+  `AwsClients(config).client("dynamodb")` builds the client with boto3's
+  service name, and `AwsClientConfig.inherit(ctx, own, path)` returns the
+  merged mapping. `AwsClients` opens one boto3 session per profile and builds one client
+  per service and distinct client settings (region, endpoint, profile, pool,
+  timeouts, retries), taking a lock only on the first creation of a client;
+  the composition registers one as an `APPLICATION` singleton shared by the
+  stores and the job backends and releases its connections when the application closes, while the
+  config resolvers, the Prefect notifier and the ETL construct their own.
+  `aws_island()` takes no argument and names the `aws` extra.
   `written_aws`, `inherit_aws` and `decode_aws` no longer exist and nothing is
   re-exported. **Migration:** replace those calls with the methods above;
-  `loom.core.connections.aws.client.build_aws_client` stays the island's
-  builder but only `AwsClientConfig.build_client` calls it.
+  `loom.core.connections.aws.client.build_aws_client(session, service, config)`
+  is the island's builder, called only by `AwsClients`, and its `**extra`
+  options are gone.
 - **aws:** the `dynamodb` and `sqs` extras are replaced by one `aws` extra
   that installs boto3 for every AWS service; `config-ssm` and `prefect` keep
   their own boto3 requirement. **Migration:** install `loom-kernel[aws]`

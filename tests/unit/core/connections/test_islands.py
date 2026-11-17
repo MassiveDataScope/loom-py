@@ -61,7 +61,7 @@ class TestAwsConnectionIsland:
             max_attempts=2,
         )
 
-        client = island.build_aws_client("dynamodb", config)
+        client = island.build_aws_client(island.open_session(None), "dynamodb", config)
 
         assert client.meta.endpoint_url == "http://localhost:8000"
         botocore = client.meta.config

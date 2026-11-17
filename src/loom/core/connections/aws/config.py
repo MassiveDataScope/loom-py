@@ -2,8 +2,8 @@
 
 The DynamoDB repository (a ``dynamodb`` store), the ETL DynamoDB sources
 (``storage.dynamodb``), the ``secrets`` and ``ssm`` resolvers and the SNS
-notifier build their clients from :class:`AwsClientConfig` through the one
-builder of :mod:`loom.core.connections.aws.client`.
+notifier build their clients from :class:`AwsClientConfig` through
+:class:`~loom.core.connections.aws.clients.AwsClients`.
 
 Every bound is finite by default: botocore waits 60 s for a read, longer than
 a typical serverless invocation, so a hung call would consume the whole
@@ -12,14 +12,13 @@ invocation instead of failing with an error.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 import msgspec
 
 from loom.core.connections._base import ConnectionPool, ConnectionSettings, omit_none
-from loom.core.connections.aws.loader import aws_island
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import PositiveInt
 
@@ -128,21 +127,18 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
 
         return convert_section(cls.inherit(ctx, own or {}, path) | over, path, cls)
 
-    def build_client(self, service: str, **options: Any) -> Any:
-        """Build one boto3 client for *service* from these settings.
-
-        Args:
-            service: The boto3 service name.
-            **options: Further ``Session.client`` options of the caller's context.
-
-        Returns:
-            The client; typed ``Any`` because boto3 ships no stubs.
-
-        Raises:
-            MissingExtraError: When boto3 is not installed, naming the ``aws`` extra.
-            ValueError: When *options* names an option these settings decide.
-        """
-        return aws_island().build_aws_client(service, self, **options)
+    def client_key(self) -> tuple[Hashable, ...]:
+        """Return the settings that change the client built from these, as a hashable key."""
+        return (
+            self.region,
+            self.url,
+            self.profile,
+            self.pool.size,
+            self.connect_timeout,
+            self.read_timeout,
+            self.max_attempts,
+            self.retry_mode,
+        )
 
     def client_options(self) -> dict[str, Any]:
         """Return the ``Session.client`` options, ``config`` as ``botocore.Config`` keywords.

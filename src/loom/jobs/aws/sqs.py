@@ -95,7 +95,7 @@ def build_backend(context: JobBackendContext) -> SQSJobService:
     written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
     config = SQSConfig.from_config(ctx, ConfigKey.SQS, own=written)
     check_queues(config.queues, context.jobs, context.settings)
-    client = config.build_client("sqs")
+    client = context.aws.client("sqs", config)
     return SQSJobService(
         client,
         config,

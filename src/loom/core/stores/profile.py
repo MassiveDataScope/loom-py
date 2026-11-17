@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from loom.core.connections.aws import AwsClients
 from loom.core.stores.catalog import StoreKey
 
 if TYPE_CHECKING:
@@ -109,6 +110,8 @@ class StoreRuntime:
         cursor_codec: The application's one cursor codec, which the host
             builds once and every store it composes registers; disabled when
             ``stores.settings.cursors`` is absent, and for a connection-only host.
+        aws: The application's AWS clients, which a backend asks for its client
+            instead of building one; the host closes them with the application.
     """
 
     profile: RuntimeProfile
@@ -117,6 +120,7 @@ class StoreRuntime:
     catalog: StoreCatalog = field(kw_only=True)
     store: StoreKey = field(kw_only=True)
     cursor_codec: CursorCodec = field(kw_only=True)
+    aws: AwsClients = field(kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

@@ -43,7 +43,7 @@ class _Recorder:
 
 
 class TestAwsClientBuilder:
-    def test_aws_builder_uses_a_session_of_its_own_and_every_bound(
+    def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -62,24 +62,17 @@ class TestAwsClientBuilder:
             retry_mode="adaptive",
         )
 
-        island.build_aws_client("dynamodb", config)
+        island.build_aws_client(island.open_session("dev"), "dynamodb", config)
 
-        assert session.kwargs == {"profile_name": "dev", "region_name": "eu-west-1"}
+        assert session.kwargs == {"profile_name": "dev"}
         client_args, client_kwargs = session.client.calls[-1]  # type: ignore[attr-defined]
         assert client_args == ("dynamodb",)
         assert client_kwargs["endpoint_url"] == "http://localhost:8000"
+        assert client_kwargs["region_name"] == "eu-west-1"
         botocore = client_kwargs["config"]
         bounds = (botocore.connect_timeout, botocore.read_timeout, botocore.max_pool_connections)
         assert bounds == (1, 7, 4)
         assert botocore.retries == {"total_max_attempts": 2, "mode": "adaptive"}
-
-    def test_aws_builder_refuses_an_extra_the_config_decides(self) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="aws")
-
-        with pytest.raises(ValueError, match="read_timeout"):
-            island.build_aws_client("dynamodb", AwsClientConfig(), read_timeout=60)
-        with pytest.raises(ValueError, match="region_name"):
-            island.build_aws_client("dynamodb", AwsClientConfig(), region_name="us-east-1")
 
 
 class TestMongoClientBuilder:

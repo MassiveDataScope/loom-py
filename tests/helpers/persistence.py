@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext
+from loom.core.connections.aws import AwsClients
 from loom.core.model import BaseModel
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -30,6 +31,7 @@ def build_backend(
     pool_metrics: PoolMetricsSink | None = None,
     connection_only: bool = False,
     store: StoreKey = DEFAULT_STORE,
+    aws: AwsClients | None = None,
 ) -> StoreWiring:
     """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
     runtime = StoreRuntime(
@@ -39,6 +41,7 @@ def build_backend(
         catalog=load_catalog(ctx),
         store=store,
         cursor_codec=CursorCodec.from_context(ctx),
+        aws=AwsClients() if aws is None else aws,
     )
     return backend.build(ctx, models, runtime)
 

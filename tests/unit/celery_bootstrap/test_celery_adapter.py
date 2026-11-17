@@ -33,6 +33,7 @@ from loom.core.use_case.use_case import UseCase
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.composition import composition_project
+from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -246,3 +247,48 @@ class TestServices:
             assert closed == []
 
         assert closed
+
+
+class TestAwsClientsLifecycle:
+    @pytest.fixture
+    def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+        return fake_aws_island(monkeypatch)
+
+    @staticmethod
+    def _dynamodb_application(tmp_path: Path) -> Application:
+        stores = {
+            "stores": {"default": {"backend": "dynamodb", "region": "eu-west-1", "table": "t"}}
+        }
+        return _application(tmp_path, stores, CeleryAdapter(jobs=[_PingJob]))
+
+    async def test_the_parent_check_builds_no_further_aws_client_and_calls_none(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = self._dynamodb_application(tmp_path)
+        composed = len(island.built)
+
+        await application.check()
+
+        assert len(island.built) == composed
+        assert all(client.method_calls == [] for client in island.created)
+
+    async def test_a_worker_without_aws_builds_no_client_across_check_and_close(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = _application(tmp_path, {}, CeleryAdapter(jobs=[_PingJob]))
+
+        await application.check()
+        async with application.running(check=False):
+            pass
+
+        assert island.built == []
+
+    async def test_running_the_application_releases_the_aws_clients_on_exit(
+        self, tmp_path: Path, island: FakeAwsIsland
+    ) -> None:
+        application = self._dynamodb_application(tmp_path)
+
+        async with application.running():
+            assert [client.close.call_count for client in island.created] == [0]
+
+        assert [client.close.call_count for client in island.created] == [1]

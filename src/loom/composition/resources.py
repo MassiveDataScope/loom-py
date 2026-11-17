@@ -18,12 +18,14 @@ _Exit = Callable[
 class ResourceKind(StrEnum):
     """What a resource is. The order of the members is the order of opening.
 
-    The cache gateways only need closing, so they open first and close last;
+    The AWS clients and the cache gateways only need closing, so they open first
+    and close last, the clients after everything that calls AWS;
     the Celery producer opens next and closes after the stores, agents and SQL;
     the SQL registry opens before the agent runtime, which may query it; the
     stores open last, after their startup checks.
     """
 
+    AWS = "aws"
     CACHE = "cache"
     CELERY = "celery"
     SQL = "sql"

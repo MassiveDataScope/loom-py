@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClientConfig, AwsClients
 from loom.core.connections.mongo import MongoConnection, mongo_island
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.backends.polars._reader import PolarsSourceReader
@@ -120,7 +120,7 @@ def _build_dynamodb_client(config: AwsClientConfig) -> Any:
     Raises:
         MissingExtraError: When the ``aws`` extra is not installed.
     """
-    return config.build_client("dynamodb")
+    return AwsClients().client("dynamodb", config)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:

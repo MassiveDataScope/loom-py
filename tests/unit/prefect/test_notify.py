@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from loom.core.connections import AwsClientConfig
+from loom.core.connections.aws import AwsClients
 from loom.prefect.notify import (
     NotifyEvent,
     SlackNotifier,
@@ -217,7 +217,7 @@ class TestSnsNotifier:
 
 class TestBuildSnsNotifier:
     def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(AwsClientConfig, "build_client", MagicMock())
+        monkeypatch.setattr(AwsClients, "client", MagicMock())
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

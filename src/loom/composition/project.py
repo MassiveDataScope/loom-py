@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from loom.core.config import (
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.config.overrides import load_application_config
+from loom.core.connections.aws import AwsClients
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
@@ -339,9 +341,10 @@ class Project:
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, adapter))
-        stores = clock.lap("build_stores", phases.build_stores(self, recipe))
+        aws = AwsClients()
+        stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, logger=logger)
+            "register", phases.register(self, recipe, stores, aws, logger=logger)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -361,6 +364,11 @@ class Project:
             ai=ai,
             job_settings=stores.job_settings,
             resources=(
+                Resource(
+                    kind=ResourceKind.AWS,
+                    name="clients",
+                    manager=closing(lambda: asyncio.to_thread(aws.close)),
+                ),
                 *job_resources,
                 *(
                     Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
