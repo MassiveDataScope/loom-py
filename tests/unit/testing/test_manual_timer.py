@@ -19,7 +19,7 @@ class TestManualTimer:
         async def step() -> None:
             ran.append("a")
 
-        timer.schedule(Countdown(60), step)
+        timer.schedule(Countdown(60), step, job="AcmeJob", task_id="t")
         await timer.advance(59)
         assert (ran, timer.pending) == ([], 1)
         await timer.advance(1)
@@ -36,9 +36,9 @@ class TestManualTimer:
 
             return run
 
-        timer.schedule(Countdown(30), step("late"))
-        timer.schedule(Countdown(10), step("first"))
-        timer.schedule(Countdown(10), step("second"))
+        timer.schedule(Countdown(30), step("late"), job="J", task_id="t")
+        timer.schedule(Countdown(10), step("first"), job="J", task_id="t")
+        timer.schedule(Countdown(10), step("second"), job="J", task_id="t")
         await timer.advance(60)
 
         assert ran == ["first", "second", "late"]
@@ -54,9 +54,9 @@ class TestManualTimer:
 
         async def first() -> None:
             ran.append(1)
-            timer.schedule(Countdown(20), again)
+            timer.schedule(Countdown(20), again, job="J", task_id="t")
 
-        timer.schedule(Countdown(10), first)
+        timer.schedule(Countdown(10), first, job="J", task_id="t")
         await timer.advance(29)
         assert ran == [1]
         await timer.advance(1)
@@ -71,7 +71,7 @@ class TestManualTimer:
             ran.append(1)
 
         await timer.advance(50)
-        timer.schedule(Countdown(10), step)
+        timer.schedule(Countdown(10), step, job="J", task_id="t")
         await timer.advance(9)
         assert ran == []
         await timer.advance(1)

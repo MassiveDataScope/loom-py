@@ -1,7 +1,9 @@
 """Backends the job outcome contract runs against: one driver per transport.
 
-A backend joins the contract by adding a driver here and its name to
-``BACKENDS``; the contract itself never changes.
+A transport that settles a delivery it is handed joins the settlement
+contract by adding a driver here. The inline service, which starts every job
+at its first attempt and waits on a timer, has its own contract in
+``test_inline_contract``, over the same jobs.
 """
 
 from __future__ import annotations
@@ -28,8 +30,6 @@ from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.testing.jobs import ManualTimer
-
-BACKENDS = ["inline", "envelope"]
 
 
 @dataclass(frozen=True)
@@ -88,21 +88,6 @@ class RunnerDriver:
         return _settlement(await self._runner.run(delivery))
 
 
-class InlineDriver:
-    """Delivers through the real :class:`InlineJobService`, its follow-ups on a manual timer."""
-
-    def __init__(self, kernel: _Kernel) -> None:
-        self.timer = ManualTimer()
-        self._service = InlineJobService(kernel.factory, kernel.executor, timer=self.timer)
-        self._kernel = kernel
-
-    async def deliver(
-        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
-    ) -> Settlement:
-        delivery = self._kernel.delivery(job_type, attempt=attempt, deferrals=deferrals)
-        return _settlement(await self._service.deliver(delivery))
-
-
 def _settlement(outcome: JobOutcome) -> Settlement:
     match outcome:
         case Succeeded(result=result):
@@ -115,13 +100,21 @@ def _settlement(outcome: JobOutcome) -> Settlement:
             return Settlement("failed", delay.seconds, type(error).__qualname__)
 
 
+@dataclass
+class Inline:
+    """The real inline job service on a manual timer, over a real factory and executor."""
+
+    service: InlineJobService
+    timer: ManualTimer
+
+
 @pytest.fixture
-def inline_driver() -> InlineDriver:
-    return InlineDriver(_Kernel())
+def inline() -> Inline:
+    kernel = _Kernel()
+    timer = ManualTimer()
+    return Inline(InlineJobService(kernel.factory, kernel.executor, timer=timer), timer)
 
 
-@pytest.fixture(params=BACKENDS)
-def driver(request: pytest.FixtureRequest) -> Driver:
-    if request.param == "inline":
-        return request.getfixturevalue("inline_driver")  # type: ignore[no-any-return]
+@pytest.fixture
+def driver() -> Driver:
     return RunnerDriver(_Kernel())

@@ -194,6 +194,7 @@ class TestInlineTimer:
 
         assert timer.pending == 1
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+        assert warnings_logged.calls == []
 
     async def test_lambda_composes_no_timer_and_refuses_a_delay(
         self, tmp_path: Path, warnings_logged: RecordingLogger

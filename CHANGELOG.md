@@ -1738,15 +1738,20 @@
 - **jobs:** the inline job service honours `countdown`, `JobRetry` and failure
   backoff, which it used to ignore: a delayed job waits on a `JobTimer`
   (`AsyncioTimer` in an application, closed with it, which cancels the jobs
-  still waiting and logs how many in one line) and runs again with its
-  attempt and deferrals carried; exhausted attempts reject the job and call
-  `on_failure`. A zero countdown still runs at once. Starting the inline
-  service logs a warning: delayed jobs live in process memory and are lost
-  when it stops, so production uses Celery or SQS. A Lambda function composes
-  no timer: its inline service raises `JobDelayRefused` for a countdown above
-  zero, and fails a job that raises `JobRetry` or fails with attempts left,
-  naming the delay. **Migration:** a job that relied on inline ignoring a
-  retry now runs more than once.
+  still waiting and logs them, by name and task id, in one line) and runs again
+  with its attempt and deferrals carried. **Any ordinary exception in an
+  inline job now runs the job up to 3 times** on the default policy, waiting
+  the backoff between attempts; `on_failure` and the failure of the handle
+  arrive only after the last attempt. To keep one attempt, set
+  `retryable = False` on the error, `jobs.<Job>.retry.max_attempts: 1`, or, in
+  tests, move the clock with `ManualTimer.advance`. A zero countdown still runs
+  at once. Starting an application with an `AsyncioTimer` logs a warning:
+  delayed jobs live in process memory and are lost when it stops, so
+  production uses Celery or SQS. A Lambda function composes no timer: its
+  inline service raises `JobDelayRefused` for a countdown above zero, rejects
+  a job that raises `JobRetry`, naming the delay, and rejects a failing job at
+  its first attempt with its own error. The Lambda host's start-up line naming
+  the job service is now INFO, whatever the service.
 - **jobs:** an inline `JobHandle.wait()` on a failed job raises
   `JobFailedError` carrying the job's exception as `cause`, as on Celery;
   it used to raise `IndexError`. Waiting before the dispatch has run raises

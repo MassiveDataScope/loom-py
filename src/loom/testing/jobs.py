@@ -65,13 +65,16 @@ class ManualTimer:
         """How many steps are waiting for the clock."""
         return len(self._steps)
 
-    def schedule(self, delay: Countdown, step: Step) -> None:
+    def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
         """Hold *step* until the clock has moved *delay* seconds from now.
 
         Args:
             delay: How long the step waits.
             step: What runs afterwards.
+            job: Ignored.
+            task_id: Ignored.
         """
+        _ = (job, task_id)
         heapq.heappush(self._steps, (self._now + delay.seconds, next(self._order), step))
 
     async def advance(self, seconds: int) -> None:

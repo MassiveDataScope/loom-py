@@ -24,8 +24,8 @@ class JobDelayRefused(RuntimeError):
 
     def __init__(self, delay: Countdown) -> None:
         super().__init__(
-            f"cannot wait {delay.seconds}s: this job service has no timer, so a countdown, "
-            "a JobRetry or a failure backoff cannot be honoured; use Celery or SQS"
+            f"cannot wait {delay.seconds}s: this job service has no timer, so a countdown "
+            "or a JobRetry cannot be honoured; use Celery or SQS"
         )
         self.delay = delay
 
@@ -33,12 +33,14 @@ class JobDelayRefused(RuntimeError):
 class JobTimer(Protocol):
     """Runs a step once a delay is over; the inline job service waits on it."""
 
-    def schedule(self, delay: Countdown, step: Step) -> None:
+    def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
         """Run *step* after *delay*; return at once.
 
         Args:
             delay: How long to wait.
             step: What to run afterwards.
+            job: The qualified name of the job the step runs.
+            task_id: The id of the job's dispatch.
         """
         ...
 
@@ -51,18 +53,20 @@ class AsyncioTimer:
     """
 
     def __init__(self) -> None:
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: dict[asyncio.Task[None], str] = {}
 
-    def schedule(self, delay: Countdown, step: Step) -> None:
+    def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
         """Run *step* on the running loop after *delay*.
 
         Args:
             delay: How long to wait.
             step: What to run afterwards.
+            job: The qualified name of the job the step runs.
+            task_id: The id of the job's dispatch.
         """
         task = asyncio.get_running_loop().create_task(self._after(delay, step))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._tasks[task] = f"{job}:{task_id}"
+        task.add_done_callback(self._tasks.pop)
 
     @staticmethod
     async def _after(delay: Countdown, step: Step) -> None:
@@ -74,9 +78,9 @@ class AsyncioTimer:
 
     async def close(self) -> None:
         """Cancel every pending step and log the jobs lost with them."""
-        lost = tuple(self._tasks)
+        lost = dict(self._tasks)
         for task in lost:
             task.cancel()
         await asyncio.gather(*lost, return_exceptions=True)
         if lost:
-            _log.warning("Delayed jobs lost at shutdown", jobs=len(lost))
+            _log.warning("Delayed jobs lost at shutdown", jobs=list(lost.values()))

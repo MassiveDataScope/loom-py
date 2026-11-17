@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
@@ -36,7 +36,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Countdown
 from loom.core.job.runner import JobRunner
-from loom.core.job.timer import JobDelayRefused, JobTimer
+from loom.core.job.timer import JobDelayRefused, JobTimer, Step
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ class _PendingDispatch:
 
     delivery: JobDelivery
     runner: JobRunner = field(repr=False)
-    timer: Callable[[Countdown], JobTimer] = field(repr=False)
+    timer: JobTimer | None = field(repr=False)
     on_success: type[Any] | None
     on_failure: type[Any] | None
     countdown: Countdown
@@ -83,38 +83,44 @@ class _PendingDispatch:
         if self.countdown.seconds == 0:
             await self.run()
         else:
-            self.timer(self.countdown).schedule(self.countdown, self.after_countdown)
+            self.wait(self.countdown, self.run)
 
-    async def after_countdown(self) -> None:
-        """Run the job once its countdown is over."""
-        await self.run()
+    def wait(self, delay: Countdown, step: Step) -> None:
+        """Run *step* once *delay* is over.
 
-    async def run(self) -> JobOutcome:
-        """Run the job, then settle it, as the dispatcher, within the captured delegation.
+        Args:
+            delay: How long to wait.
+            step: What to run afterwards.
 
-        Returns:
-            What this run came to.
+        Raises:
+            JobDelayRefused: When no timer waits for it.
         """
+        if self.timer is None:
+            raise JobDelayRefused(delay)
+        self.timer.schedule(
+            delay, step, job=self.delivery.job_type.__qualname__, task_id=self.task_id
+        )
+
+    async def run(self) -> None:
+        """Run the job, then settle it, as the dispatcher, within the captured delegation."""
         resumed = Acting.current().resumed(self.captured)
         token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
         try:
-            outcome = await self.runner.run(self.delivery)
-            await self._settle(outcome)
+            await self._settle(await self.runner.run(self.delivery))
         finally:
             if token is not None:
                 reset_identity(token)
-        return outcome
 
     async def _settle(self, outcome: JobOutcome) -> None:
         match outcome:
             case Succeeded(result=result):
                 error = await self._succeeded(result)
             case Deferred(delay=delay):
-                error = await self._again(
+                error = self._again(
                     replace(self.delivery, deferrals=self.delivery.deferrals + 1), delay
                 )
             case Failed(delay=delay):
-                error = await self._again(
+                error = self._again(
                     replace(self.delivery, attempt=self.delivery.attempt + 1), delay
                 )
             case Rejected():
@@ -122,10 +128,10 @@ class _PendingDispatch:
         if error is not None:
             await self._failed(error)
 
-    async def _again(self, delivery: JobDelivery, delay: Countdown) -> JobDelayRefused | None:
-        """Start *delivery* once *delay* is over; the refusal when no timer waits for it."""
+    def _again(self, delivery: JobDelivery, delay: Countdown) -> JobDelayRefused | None:
+        """Hand *delivery* to the timer for after *delay*; the refusal when none waits."""
         try:
-            await replace(self, delivery=delivery, countdown=delay).start()
+            self.wait(delay, replace(self, delivery=delivery).run)
         except JobDelayRefused as refusal:
             return refusal
         return None
@@ -328,8 +334,10 @@ class InlineJobService:
         settings: The application's job settings; the ClassVars when omitted.
         callbacks: The callbacks a dispatch may attach; any class when omitted.
         timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobRetry`
-            and a failure backoff. Without one the service refuses every delay
-            above zero with :class:`~loom.core.job.timer.JobDelayRefused`.
+            and a failure backoff. Without one a countdown is refused with
+            :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobRetry`` is
+            rejected naming the refused delay, and a failure is rejected at
+            its first attempt with its own error.
 
     Example::
 
@@ -491,36 +499,6 @@ class InlineJobService:
         await pending.start()
         return handle
 
-    def _timer_for(self, delay: Countdown) -> JobTimer:
-        if self._timer is None:
-            raise JobDelayRefused(delay)
-        return self._timer
-
-    async def deliver(self, delivery: JobDelivery) -> JobOutcome:
-        """Run one *delivery* as a dispatch runs, and schedule what follows it.
-
-        A deferred or failed run starts again on the timer; a rejected one has
-        no callback to call. Nothing observes the result but the returned outcome.
-
-        Args:
-            delivery: The message, its attempt, its deferrals and its policy.
-
-        Returns:
-            What this run came to.
-        """
-        pending = _PendingDispatch(
-            delivery=delivery,
-            runner=self._runner,
-            timer=self._timer_for,
-            on_success=None,
-            on_failure=None,
-            countdown=Countdown(0),
-            outcome=InlineOutcome(),
-            factory=self._factory,
-            captured=captured_delegation(),
-        )
-        return await pending.run()
-
     def _pending(
         self,
         job_type: type[Job[ResultT]],
@@ -557,13 +535,15 @@ class InlineJobService:
         _ = priority
         options = self._settings.of(job_type)
         delay = Countdown(options.countdown if countdown is None else countdown)
-        if delay.seconds:
-            self._timer_for(delay)
+        if delay.seconds and self._timer is None:
+            raise JobDelayRefused(delay)
         payload = payload or {}
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
         outcome = InlineOutcome()
-        options = self._settings.of(job_type)
+        policy = options.retry.policy
+        if self._timer is None:
+            policy = replace(policy, max_attempts=1)
         envelope = JobEnvelope(
             job=wire_job_name(job_type.__qualname__),
             payload=payload,
@@ -577,10 +557,10 @@ class InlineJobService:
                 task_id=task_id,
                 attempt=1,
                 deferrals=0,
-                policy=options.retry.policy,
+                policy=policy,
             ),
             runner=self._runner,
-            timer=self._timer_for,
+            timer=self._timer,
             on_success=on_success,
             on_failure=on_failure,
             countdown=delay,

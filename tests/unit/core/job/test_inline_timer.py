@@ -9,11 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRetry
 from loom.core.job.policy import Backoff, Countdown
+from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService
 from loom.core.job.timer import AsyncioTimer, JobDelayRefused
 from loom.testing.jobs import ManualTimer
@@ -140,6 +142,17 @@ class TestRetries:
             handle.wait()
         assert str(failed.value.cause) == "three"
 
+    async def test_a_job_retry_without_delay_goes_through_the_timer_not_the_stack(self) -> None:
+        acme = Acme(*[JobRetry("spin", 0)] * 5, "done")
+
+        await acme.service.dispatch_now(AcmeJob)
+
+        assert acme.runs == [(1, 0)]
+        assert acme.timer.pending == 1
+        await acme.timer.advance(0)
+        assert len(acme.runs) == 6
+        assert acme.timer.pending == 0
+
     async def test_a_waiting_job_leaves_its_handle_unsettled(self) -> None:
         acme = Acme(AcmeError("one"), "done")
 
@@ -150,10 +163,23 @@ class TestRetries:
             handle.wait(timeout=0.01)
 
 
+class DefaultJob(Job[str]):
+    async def execute(self) -> str:
+        return "done"
+
+
+class RecordedEvents:
+    def __init__(self) -> None:
+        self.kinds: list[EventKind] = []
+
+    def on_event(self, event: RuntimeEvent) -> None:
+        self.kinds.append(event.kind)
+
+
 class TestWithoutATimer:
     @pytest.fixture
     def acme(self) -> Acme:
-        return Acme(JobRetry("warming up", 30), timed=False)
+        return Acme(AcmeError("boom"), timed=False)
 
     def test_dispatch_after_commit_refuses_a_countdown(self, acme: Acme) -> None:
         with pytest.raises(JobDelayRefused, match="60s"):
@@ -163,30 +189,57 @@ class TestWithoutATimer:
         with pytest.raises(JobDelayRefused, match="60s"):
             await acme.service.dispatch_now(AcmeJob, countdown=60)
 
-    async def test_a_job_retry_fails_the_job_with_the_refusal(self, acme: Acme) -> None:
-        handle = await acme.service.dispatch_now(AcmeJob)
-
-        with pytest.raises(JobFailedError) as failed:
-            handle.wait()
-        assert isinstance(failed.value.cause, JobDelayRefused)
-
-    async def test_a_failure_backoff_fails_the_job_with_the_refusal(self, acme: Acme) -> None:
-        acme.executor.run.side_effect = AcmeError("boom")
-
-        handle = await acme.service.dispatch_now(AcmeJob)
-
-        with pytest.raises(JobFailedError) as failed:
-            handle.wait()
-        assert isinstance(failed.value.cause, JobDelayRefused)
-        assert acme.runs == [(1, 0)]
-
-    async def test_a_zero_countdown_still_runs(self, acme: Acme) -> None:
-        acme.executor.run.side_effect = None
-        acme.executor.run.return_value = "done"
+    async def test_a_zero_countdown_still_runs(self) -> None:
+        acme = Acme("done", timed=False)
 
         handle = await acme.service.dispatch_now(AcmeJob, countdown=0)
 
         assert handle.wait() == "done"
+
+    async def test_a_job_retry_is_rejected_naming_the_refused_delay(self) -> None:
+        acme = Acme(JobRetry("warming up", 30), timed=False)
+
+        handle = await acme.service.dispatch_now(AcmeJob)
+
+        with pytest.raises(JobFailedError) as failed:
+            handle.wait()
+        assert isinstance(failed.value.cause, JobDelayRefused)
+        assert "30s" in str(failed.value.cause)
+        assert acme.runs == [(1, 0)]
+
+    async def test_a_zero_delay_job_retry_is_refused_too(self) -> None:
+        acme = Acme(JobRetry("warming up", 0), timed=False)
+
+        handle = await acme.service.dispatch_now(AcmeJob)
+
+        with pytest.raises(JobFailedError) as failed:
+            handle.wait()
+        assert isinstance(failed.value.cause, JobDelayRefused)
+
+    async def test_a_failure_on_the_default_policy_runs_once_and_keeps_its_own_error(
+        self,
+    ) -> None:
+        notified: list[str] = []
+
+        class Notify:
+            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+                notified.append(exc_type)
+
+        acme = Acme(AcmeError("db down"), timed=False)
+        acme.service._factory.build = MagicMock(  # type: ignore[attr-defined]
+            side_effect=lambda cls: Notify() if cls is Notify else MagicMock()
+        )
+        events = RecordedEvents()
+        acme.service._runner = JobRunner(acme.service._invoke, events)  # type: ignore[attr-defined]
+
+        handle = await acme.service.dispatch_now(DefaultJob, on_failure=Notify)  # type: ignore[arg-type]
+
+        assert acme.runs == [(1, 0)]
+        assert notified == ["AcmeError"]
+        with pytest.raises(JobFailedError) as failed:
+            handle.wait()
+        assert type(failed.value.cause) is AcmeError
+        assert events.kinds == [EventKind.JOB_STARTED, EventKind.JOB_REJECTED]
 
 
 class TestAsyncioTimer:
@@ -203,7 +256,7 @@ class TestAsyncioTimer:
         monkeypatch.setattr(asyncio, "sleep", instant)
         timer = AsyncioTimer()
 
-        timer.schedule(Countdown(60), step)
+        timer.schedule(Countdown(60), step, job="AcmeJob", task_id="t")
         await asyncio.wait_for(ran.wait(), 1)
 
         assert slept == [60]
@@ -221,13 +274,17 @@ class TestAsyncioTimer:
             ran.append(1)
 
         for _ in range(3):
-            timer.schedule(Countdown(900), step)
+            timer.schedule(Countdown(900), step, job="AcmeJob", task_id=f"t{len(ran)}")
+            ran.append(0)
+        ran.clear()
         pending = tuple(timer._tasks)
         await timer.close()
 
         assert ran == []
         assert all(task.cancelled() for task in pending)
-        assert log.calls == [("Delayed jobs lost at shutdown", {"jobs": 3})]
+        assert log.calls == [
+            ("Delayed jobs lost at shutdown", {"jobs": ["AcmeJob:t0", "AcmeJob:t1", "AcmeJob:t2"]})
+        ]
 
     async def test_close_with_nothing_pending_logs_nothing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -238,3 +295,18 @@ class TestAsyncioTimer:
         await AsyncioTimer().close()
 
         assert log.calls == []
+
+    async def test_each_timer_owns_its_tasks(self) -> None:
+        first, second = AsyncioTimer(), AsyncioTimer()
+
+        async def step() -> None:
+            return None
+
+        first.schedule(Countdown(900), step, job="AcmeJob", task_id="a")
+        second.schedule(Countdown(900), step, job="AcmeJob", task_id="b")
+        (kept,) = second._tasks
+        await first.close()
+
+        assert not kept.done()
+        await second.close()
+        assert kept.cancelled()

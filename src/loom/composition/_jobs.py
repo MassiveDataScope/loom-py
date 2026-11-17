@@ -26,13 +26,13 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
 
-_log = get_logger(__name__)
-
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.use_case.factory import UseCaseFactory
+
+_log = get_logger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -105,7 +105,6 @@ def _inline(context: JobBackendContext) -> _Built:
     if timer is None and context.waits_in_process:
         timer = AsyncioTimer()
         resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
-    if timer is not None:
         _log.warning(
             "Inline jobs wait in process memory: a delayed job is lost when the process "
             "stops; use Celery or SQS in production"

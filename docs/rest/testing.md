@@ -265,6 +265,9 @@ await timer.advance(59)  # nothing runs
 await timer.advance(1)  # the job runs, then any step it scheduled within the move
 ```
 
+Bind the timer at composition, as above: a later `overriding` does not reach a
+service that is already built.
+
 `advance(seconds)` runs, in order of time, every step whose time has come,
 including the steps those steps schedule inside the move; `pending` counts
 the steps still waiting.
