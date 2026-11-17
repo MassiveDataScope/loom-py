@@ -19,6 +19,8 @@ from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from tests.helpers.extras import patched_aws_clients
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
 
@@ -68,6 +70,10 @@ def serve() -> Iterator[Callable[..., Any]]:
     yield compose
     for close in closes:
         close()
+
+
+def _jobs_queue(config: dict[str, Any], _root: Path) -> None:
+    config.update(jobs_queue())
 
 
 def _module_of(config: dict[str, Any]) -> str:
@@ -279,8 +285,11 @@ class TestNamedFunctions:
     def test_an_sqs_entry_serves_the_jobs(
         self, project: Callable[..., str], serve: Callable[..., Any]
     ) -> None:
-        worker = {"trigger": {"source": "jobs"}}
-        handler = serve(project("worker", {"worker": worker}, _manifest_discovery))
+        worker = {"trigger": jobs_trigger()}
+        path = project("worker", {"worker": worker}, _manifest_discovery, _jobs_queue)
+
+        with patched_aws_clients():
+            handler = serve(path)
 
         assert handler({"Records": []}, None) == {"batchItemFailures": []}
 

@@ -33,9 +33,13 @@ class TestJobEnvelope:
         with pytest.raises(MalformedJobMessage):
             decode_job_envelope(body)
 
-    @pytest.mark.parametrize("error", [MalformedJobMessage("{"), UnknownJob("missing")])
-    def test_poison_errors_are_retryable(self, error: Exception) -> None:
-        assert error.retryable is True  # type: ignore[attr-defined]
+    @pytest.mark.parametrize(
+        ("error", "retryable"), [(MalformedJobMessage("{"), False), (UnknownJob("missing"), True)]
+    )
+    def test_a_malformed_message_is_rejected_and_an_unknown_job_retried(
+        self, error: Exception, retryable: bool
+    ) -> None:
+        assert error.retryable is retryable  # type: ignore[attr-defined]
 
     def test_post_commit_failure_log_fields(self) -> None:
         error = PostCommitError(committed=True, failures=(ValueError("failed"),))

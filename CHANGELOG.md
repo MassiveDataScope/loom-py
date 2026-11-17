@@ -55,6 +55,83 @@
   to a dead-letter queue directly is moved back with `StartMessageMoveTask`
   and a `DestinationArn` set to the source queue ("Redrive to custom
   destination").
+- **jobs:** a Lambda function consuming an SQS queue settles each message by
+  what its job came to, through the `JobSettlement` port
+  (`loom.core.job.settlement`) and `loom.jobs.aws.settlement.SqsSettlement`; the
+  trigger only builds each delivery, runs it and hands the outcomes over. The
+  attempt is the record's `ApproximateReceiveCount` and the deferrals its
+  `loom.deferrals` attribute (a Lambda job always ran as attempt 1 before), and
+  the envelope's `task_id`, which SQS dispatch now fills, is the delivery's
+  `task_id`. A success makes no call to SQS and no message is ever deleted by
+  loom: Lambda deletes every record not in `batchItemFailures`.
+
+  | Outcome | Action | In `batchItemFailures` |
+  |---|---|---|
+  | Succeeded | none | no |
+  | Rejected, `redrive` | sent to the dead-letter queue with the reason | only if its send failed |
+  | Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
+  | Deferred, standard queue | sent again with `DelaySeconds` and one deferral more | only if its send failed |
+  | Deferred, FIFO queue | refused (a FIFO queue takes no per-message delay), settled as Failed | yes |
+  | Failed | `ChangeMessageVisibility` to the backoff delay | yes |
+  | Attempts exhausted | Rejected | as Rejected |
+
+  A final failure is rejected at once, so it goes to the dead-letter queue
+  instead of burning `maxReceiveCount` or, with `retry_final` unset, being
+  lost: `retry_final` is removed from `QueueSource`. API calls are grouped by
+  action and queue, at most ten entries each; a failed entry lists only its own
+  message, and a failed visibility change is logged and never aborts the batch.
+  Each settlement call is bounded: an SQS client with a 1 s connect timeout, a
+  1 s read timeout and one attempt. A timeout in the middle of a settlement
+  redelivers the batch: messages may run twice, none is lost. A record never
+  run (out of time, or behind a failed message on a FIFO queue) stays in
+  `batchItemFailures` without a settlement and is not an attempt of the job,
+  though SQS counts its delivery in `ApproximateReceiveCount`. A malformed
+  message (`MalformedJobMessage` is no longer retryable) is rejected at once,
+  with the error class as reason; a message naming an unknown job stays
+  retryable, for a deploy that rolls out, but is bounded by the queue's limit
+  (the `RedrivePolicy` `maxReceiveCount` on `redrive`, the default
+  `max_attempts` on `discard`) and then rejected. The queue is read once, at
+  Init: the settlement shares the consumer's queue, so settling a batch makes
+  no metadata call. A function holds the retry policies its queue implies and
+  no longer rewrites `application.job_settings`; a Lambda jobs function logs
+  the one `Job retry policies` line of its consumed jobs, and composition logs
+  none for it (`Recipe.logs_job_retries`). `loom.testing.TEST_QUEUE` is the
+  `sqs.queues` entry that the default queue ARN of a `LambdaEvent` record
+  names (`loom-jobs`, never the FIFO `loom-jobs.fifo` of a record built with
+  `group_id`: pass `queue_arn=` for that): declare it in the test configuration,
+  and a failed record of a test settles instead of logging that no queue
+  matches. `loom.testing.LambdaWorker` composes and binds a jobs function over
+  moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it enters
+  `mock_aws()` itself, creates the queue the function consumes where the
+  configuration says (the URL's region, account and name) and, for a `redrive`
+  queue, a dead-letter queue with a real `RedrivePolicy`, and exposes `sqs` (a
+  boto3 client of the mock), `queue_url` and `dead_letter_url`. It sets no
+  environment and creates the queue through the application's own `sqs` client:
+  the region resolves as for the application (`aws.region`, a profile,
+  `AWS_DEFAULT_REGION`) and moto's account is `MOTO_ACCOUNT_ID`, else
+  `123456789012`; when the queue moto makes is of another region or account
+  than the configured URL, a `ConfigError` names the URL it made, what differs
+  and the way out. The application's `sqs` client carries a last `before-send`
+  handler that refuses any request moto did not answer (`aws.url`,
+  `AWS_ENDPOINT_URL*`, a profile `endpoint_url`, a dualstack endpoint), so
+  nothing reaches the network and a live endpoint such as LocalStack is never
+  touched. `QueueConfig` gives the `region`, `account_id` and `queue_name` of
+  its URL. `worker.deliver(job, payload)` sends the job with
+  the envelope and the queue placement `SQSJobService` uses, receives it (a real
+  receipt handle and `ApproximateReceiveCount`) and invokes the function;
+  `worker.redeliver()` does so for what the queue shows, up to the trigger's
+  `batch_size`, so a failure comes back and is counted
+  (`docs/rest/testing.md`). The account of the SQS ARN of test records and of
+  `TEST_QUEUE` is now `123456789012`, the one moto answers for (the other test
+  events keep `000000000000`). A record whose `ApproximateReceiveCount` is not a
+  positive integer or whose `loom.deferrals` is not a non-negative one is
+  malformed, and only it is rejected. The dead-letter policy of the consumed
+  queue is read at Init, never during an invocation, with the application's own
+  SQS client and its retries: `GetQueueAttributes` and `GetQueueUrl`, once per
+  cold start; a botocore error, or a `RedrivePolicy` that is missing or
+  unreadable, names the queue and stops start-up. A record settles only if its
+  event source ARN is the consumed queue; any other is logged and listed until
+  the queue's own `RedrivePolicy` dead-letters it.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -284,15 +361,16 @@
   | Before | Now |
   |---|---|
   | `LambdaHTTPAdapter()` | `LambdaAdapter()` |
-  | `LambdaSQSAdapter(jobs=...)` | `LambdaAdapter(jobs=...)` on a function with `trigger: {source: jobs}` |
+  | `LambdaSQSAdapter(jobs=...)` | `LambdaAdapter(jobs=...)` on a function with `trigger: {source: jobs, queue: {name: ...}}` |
   | `app.entry: lambda_http` | `app.entry: lambda` |
-  | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs}` |
+  | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs, queue: {name: ...}}` |
   | `lambda.functions.<f>.http: [...]` | `lambda.functions.<f>.trigger: {source: http, interfaces: [...]}` |
   | `lambda.functions.<f>.auth` | `lambda.functions.<f>.trigger.auth` |
   | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs, queue: {name: ...}}` |
-  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
+  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
+  | `lambda.functions.<f>.report_batch_item_failures` | Removed: `ReportBatchItemFailures` is always on |
   | `loom.serverless.aws.lambda_.http` | `loom.serverless.aws.lambda_.triggers.http` |
-  | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.SQSBatchFailedError` |
+  | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | Removed: the batch always reports its failures |
   | `loom.serverless.aws.lambda_.sqs.SQSHandler` | `loom.serverless.aws.lambda_.LambdaHandler` |
   | `loom.serverless.aws.lambda_.LambdaHTTPHandler` | `LambdaHandler`; the class is internal |
   | `loom.serverless.aws.lambda_.sqs.DuplicateJobName` | `loom.core.discovery.worker.DuplicateJobName` |
@@ -302,7 +380,20 @@
   | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
   `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
-  `LambdaUnservedConfigError`, `S3Object` and `SQSBatchFailedError` only.
+  `LambdaUnservedConfigError` and `S3Object` only.
+
+- **lambda:** a `jobs` trigger must declare `trigger.queue`, naming the
+  `sqs.queues` entry it consumes: without it the configuration is refused at
+  load, naming the function, and `loom deploy manifest` refuses it too.
+  **Migration:** add `queue: {name: <queue>}` to the trigger.
+- **lambda:** `ReportBatchItemFailures` is mandatory: the deploy manifest always
+  declares `report_batch_item_failures: true`, and the key is removed from
+  `trigger.queue` (it fails to load as an unknown field), with
+  `QueueMapping.reports_batch_item_failures`, `JobsTrigger.reports_batch_item_failures`,
+  `EventTrigger.reports_batch_item_failures`
+  and `loom.serverless.aws.lambda_.SQSBatchFailedError` (with
+  `SQSErrorCode.BATCH_FAILED`). **Migration:** drop the key and enable
+  `ReportBatchItemFailures` on the event source mapping.
 
 ### config
 
@@ -340,7 +431,6 @@
   | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
   | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
   | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.jobs.aws.errors` |
-  | `loom.serverless.aws.lambda_.triggers.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.errors` (also `loom.serverless.aws.lambda_`) |
   | `loom.rest.auth.abc.AuthenticationUnavailable` | `loom.rest.auth.errors` (also `loom.rest.auth`) |
   | `loom.etl.backends._format_registry.UnsupportedFormatError` | `loom.etl.runner.errors` (also `loom.etl`) |
 
@@ -360,8 +450,8 @@
 - **errors:** every error belongs to a family. `BoundaryValidationError` and
   `UnsupportedFormatError` are `DomainError`s (still `ValueError`s);
   `JobTimeoutError`, `JobFailedError`, `MixedJobBackendsError`,
-  `PostCommitError`, `UnsupportedBoundaryType`, `SQSDispatchError` and
-  `SQSBatchFailedError` are `SystemError`s. HTTP statuses do not change. A
+  `PostCommitError`, `UnsupportedBoundaryType` and `SQSDispatchError` are
+  `SystemError`s. HTTP statuses do not change. A
   `DomainError` is never retryable: Celery and the SQS consumers consume a
   job that raises one instead of requeuing it, and the streaming boundary
   files a `BoundaryValidationError` as a business error. `UnsupportedQuery`
@@ -978,8 +1068,8 @@
   `sqs.batch_size`, `sqs.max_concurrent_sends`); a standard queue resends the
   entries SQS refuses once, a FIFO queue stops at its first failure. A
   Lambda `jobs` trigger's `queue` block declares `batch_size`,
-  `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
-  `false` makes the SQS handler fail the whole batch.
+  `batching_window_s` and `max_concurrency`; the handler reports the failed
+  messages alone.
 - **jobs:** fix: `loom-kernel[celery]` now installs a redis-py compatible with
   kombu's Redis transport (`celery[redis]`), instead of pinning `redis<6`,
   with which a Redis broker failed at start with

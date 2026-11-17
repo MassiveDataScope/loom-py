@@ -7,10 +7,9 @@ from loom.core.errors.codes import ErrorCode
 
 
 class MalformedJobMessage(SystemError):
-    """A job message violates the envelope contract.
+    """A job message violates the envelope contract: it is rejected, never retried."""
 
-    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
-    """
+    retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.MALFORMED_JOB_MESSAGE)
@@ -19,7 +18,7 @@ class MalformedJobMessage(SystemError):
 class UnknownJob(SystemError):
     """A message names a job absent from this application's registry.
 
-    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
+    Retryable on purpose: another version of the function, during a deploy, may know it.
     """
 
     def __init__(self, name: str) -> None:

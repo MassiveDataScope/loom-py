@@ -19,6 +19,7 @@ from loom.core.config import ConfigContext
 from loom.core.environment import Environment
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import composition_project
+from tests.helpers.lambda_jobs import jobs_trigger
 
 _JWT = {"secret_path": "${secrets:/acme/jwt}", "audience": "acme-api", "issuer": "acme-idp"}
 _DOCUMENT = {
@@ -83,9 +84,7 @@ class TestLambdaHttpParity:
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "app.yaml"
-        path.write_text(
-            yaml.safe_dump(_lambda_with({"trigger": {"source": "jobs"}})), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump(_lambda_with({"trigger": jobs_trigger()})), encoding="utf-8")
 
         checked = Project.check(str(path), environment="test")
 

@@ -14,7 +14,6 @@ class SQSErrorCode(StrEnum):
 
     SEND_FAILED = "sqs_send_failed"
     BATCH_PARTIAL_FAILURE = "sqs_batch_partial_failure"
-    BATCH_FAILED = "sqs_batch_failed"
     CALLBACKS = "sqs_callbacks"
     PRIORITY = "sqs_priority"
     QUEUE_UNKNOWN = "sqs_queue_unknown"

@@ -158,8 +158,8 @@ Status: Proposed.
 
 The seven classes rebase without changing any status (done 2026-11, with
 `DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
-a business error; `SQSDispatchError` and `SQSBatchFailedError` are
-`SystemError`s; `UnsupportedQuery(reason, *, backend=None, model=None)` names
+a business error; `SQSDispatchError` is a
+`SystemError`; `UnsupportedQuery(reason, *, backend=None, model=None)` names
 the model and the reason, never the backend):
 
 - `BoundaryValidationError` → `DomainError`, keeping `ValueError`;
@@ -198,7 +198,6 @@ the catalogue and `__init__` re-exports every class.
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
 | `SQSDispatchError` | `jobs/aws/sqs.py` | `jobs/aws/errors.py` | Raised by the SQS job service only; core keeps no AWS vocabulary |
-| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `serverless/aws/lambda_/errors.py` | Raised by the Lambda adapter only |
 | `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/auth/errors.py` | Raised by authenticators, which stay free of FastAPI; `rest/auth/abc.py` and `loom.rest.auth` re-export it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |

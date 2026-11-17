@@ -24,6 +24,8 @@ class AwsIsland(Protocol):
 
     def build_aws_client(self, session: Any, service: str, config: AwsClientConfig) -> Any: ...
 
+    def sdk_errors(self) -> tuple[type[Exception], ...]: ...
+
 
 def aws_island() -> AwsIsland:
     """Load the AWS island.

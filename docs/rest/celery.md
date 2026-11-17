@@ -484,7 +484,6 @@ lambda:
           batch_size: 100
           batching_window_s: 5
           max_concurrency: 50
-          report_batch_item_failures: true
 ```
 
 - `name` is a key of `sqs.queues`.
@@ -498,9 +497,9 @@ lambda:
   `BatchSize`, `MaximumBatchingWindowInSeconds` and
   [`ScalingConfig.MaximumConcurrency`](https://docs.aws.amazon.com/lambda/latest/api/API_ScalingConfig.html).
   loom validates them for the deployment but does not apply them.
-- `report_batch_item_failures` (default `true`) must match the mapping's
-  `ReportBatchItemFailures`: `false` makes the handler raise
-  `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
+- The event source mapping must enable `ReportBatchItemFailures`: the deploy
+  manifest always says so, and there is no setting to turn it off. The handler
+  returns the messages the queue must deliver again in `batchItemFailures`.
 - An http function, and a direct event trigger, refuse the `queue:` block.
 
 #### Dead letters and attempts
@@ -521,6 +520,59 @@ limit:
   the jobs of the consumed queue.
 - A function consuming a queue that `sqs.queues` does not map fails startup
   naming `sqs.queues.<name>`.
+
+#### Settlement
+
+The function settles each message by what its job came to. The decision is
+per message; only the calls to SQS are grouped, by action and queue, at most
+ten entries each.
+
+| Outcome | Action | In `batchItemFailures` |
+|---|---|---|
+| Succeeded | none | no |
+| Rejected (`JobRejection`, an error that cannot succeed, or attempts exhausted), `redrive` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.rejection_reason` attribute | only if that send failed |
+| Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
+| Deferred (`JobRetry`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.deferrals` plus one | only if that send failed |
+| Deferred, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
+| Failed | `ChangeMessageVisibilityBatch` to the backoff delay | yes |
+
+- A success makes no call to SQS, and loom never calls `DeleteMessage`: Lambda
+  deletes every record not in `batchItemFailures`.
+- `JobRetry` re-sends the message instead of changing its visibility, so a
+  deferral never counts toward `maxReceiveCount`; a job that keeps asking to
+  wait is never dead-lettered.
+- The attempt a job reads is the record's `ApproximateReceiveCount`, and its
+  deferrals are the `loom.deferrals` attribute. A failure on the last attempt
+  is rejected: a `redrive` queue receives it from loom instead of from SQS
+  after one more delivery.
+- A call that fails for some entries lists only those messages; one that fails
+  for all lists all of them, and the failure is logged in one line per call. A
+  failed visibility change is logged and never aborts the batch.
+- Each settlement call is bounded: 1 s to connect, 1 s to read, one attempt. A
+  timeout in the middle of a settlement redelivers the batch: a message may run
+  twice, none is lost.
+- A `jobs` function must declare `trigger.queue`: the configuration is refused
+  without it, and `loom deploy manifest` refuses it too.
+- The function reads the dead-letter policy of the queue it consumes once, at
+  Init, with the application's own SQS client and its retries: two calls
+  (`GetQueueAttributes` and `GetQueueUrl`) once per cold start. A botocore error,
+  or a `RedrivePolicy` missing or unreadable, names the queue and stops start-up.
+  An invocation never reads queue metadata. The function logs one
+  `Job retry policies` line for its jobs.
+- A record the function did not run (the invocation ran out of time, or it
+  follows a failed message on a FIFO queue) stays in `batchItemFailures`
+  without being settled. It is not an attempt of the job, though SQS counts its
+  delivery in `ApproximateReceiveCount`.
+- A record settles only if its event source ARN is the queue the function
+  consumes. Any other ARN is logged as an ERROR and listed in
+  `batchItemFailures` until the queue's own `RedrivePolicy` dead-letters it.
+- A message whose `ApproximateReceiveCount` is not a positive integer or whose
+  `loom.deferrals` is not a non-negative one is malformed: only that message is
+  rejected.
+- A malformed message is rejected at once, with `MalformedJobMessage` as reason.
+  A message naming a job the function does not serve is retried, as a deploy
+  may still be rolling out, but only up to the queue's limit (`maxReceiveCount`
+  on `redrive`, the default `max_attempts` on `discard`); then it is rejected.
 
 **IAM.** The role of a function consuming a queue needs:
 

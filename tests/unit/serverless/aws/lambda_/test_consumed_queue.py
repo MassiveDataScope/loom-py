@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
 from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
@@ -13,7 +17,7 @@ from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.extras import FakeSdkError, fake_aws_island, patched_aws_clients
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
@@ -30,13 +34,14 @@ _POLICY = {
 def _bind(
     tmp_path: Path,
     probe: tuple[type[Job[None]], Probe],
-    client: FakeSqs,
+    client: FakeSqs | None,
     *,
     queue: dict[str, Any] | None = None,
     jobs: dict[str, Any] | None = None,
     unmapped: bool = False,
 ) -> Application:
     document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
+    document["aws"] = {"region": "eu-west-1"}
     document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
     project = composition_project(
         ConfigContext.from_dict(document),
@@ -45,11 +50,19 @@ def _bind(
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[probe[0]])
-    with patched_aws_clients(client):
+    with patched_aws_clients(client) if client is not None else nullcontext():
         application = project.compose(adapter)
         adapter.bind(application)
         adapter.close()
     return application
+
+
+def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
 
 
 class TestConsumedQueue:
@@ -98,7 +111,7 @@ class TestConsumedQueue:
 
         assert client.metadata_calls == 0
 
-    def test_the_defaults_layer_max_attempts_gives_way_to_max_receive_count(
+    def test_the_consumer_policy_leaves_the_applications_settings_untouched(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
     ) -> None:
         jobs = {"defaults": {"retry": {"max_attempts": 9}}}
@@ -106,9 +119,9 @@ class TestConsumedQueue:
 
         application = _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 4
+        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 9
 
-    def test_the_effective_policy_of_a_redrive_consumer_is_logged(
+    def test_the_consumer_logs_the_one_policy_line_of_its_jobs(
         self,
         tmp_path: Path,
         probe: tuple[type[Job[None]], Probe],
@@ -118,14 +131,91 @@ class TestConsumedQueue:
 
         _bind(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        (logged,) = [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict)
-            and record.msg.get("event") == "Job retry policies of the consumed queue"
-        ]
+        (logged,) = _logged(caplog, "Job retry policies")
         assert logged["queue"] == "jobs"
         assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged["jobs"][0]["retry"]
+
+    def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        failure = ClientError(
+            {"Error": {"Code": "Throttling", "Message": "slow"}}, "GetQueueAttributes"
+        )
+        client = FakeSqs(_POLICY, lookup_raises=failure)
+
+        with pytest.raises(ConfigError, match=r"queue 'jobs'.*Throttling"):
+            _bind(tmp_path, probe, client)
+
+    def test_an_error_that_is_not_the_sdks_propagates_unwrapped(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        client = FakeSqs(_POLICY, lookup_raises=TypeError("a bug"))
+
+        with pytest.raises(TypeError, match="a bug"):
+            _bind(tmp_path, probe, client)
+
+    def test_a_fake_sdk_error_at_init_fails_naming_the_queue_through_the_fake_island(
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def refuse(client: MagicMock) -> None:
+            client.get_queue_attributes.side_effect = FakeSdkError("throttled")
+
+        fake_aws_island(monkeypatch, setup=refuse)
+
+        with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
+            _bind(tmp_path, probe, None)
+
+    def test_the_policy_is_read_at_start_up_with_the_retrying_client_only(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]
+    ) -> None:
+        retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
+
+        def session(**_: Any) -> Any:
+            class Session:
+                def client(self, service: str, **options: Any) -> FakeSqs:
+                    attempts = options["config"].retries["total_max_attempts"]
+                    return bounded if attempts == 1 else retrying
+
+            return Session()
+
+        jobs = {probe[0].__name__: {"queue": "jobs"}}
+        with patch("boto3.Session", side_effect=session):
+            _bind(tmp_path, probe, None, jobs=jobs)
+
+        assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
+
+    @pytest.mark.parametrize(
+        "policy",
+        [
+            "not json",
+            json.dumps({"maxReceiveCount": 4}),
+            json.dumps({"deadLetterTargetArn": "arn", "maxReceiveCount": 4}),
+            json.dumps(
+                {
+                    "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d",
+                    "maxReceiveCount": "x",
+                }
+            ),
+            json.dumps({"deadLetterTargetArn": 7, "maxReceiveCount": 4}),
+            json.dumps(
+                {"deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d", "maxReceiveCount": 0}
+            ),
+        ],
+        ids=["bad-json", "no-target", "bad-target", "bad-count", "target-not-text", "zero-count"],
+    )
+    def test_a_redrive_policy_loom_cannot_read_fails_start_up_naming_the_queue(
+        self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], policy: str
+    ) -> None:
+        client = FakeSqs()
+        client.get_queue_attributes = lambda **_: {  # type: ignore[method-assign]
+            "Attributes": {"RedrivePolicy": policy}
+        }
+
+        with pytest.raises(SQSQueueConfigError, match=r"queue 'jobs' has a RedrivePolicy"):
+            _bind(tmp_path, probe, client)
 
     def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe]

@@ -4,7 +4,7 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
@@ -19,7 +19,6 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
-from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -32,7 +31,6 @@ from loom.serverless.aws.lambda_ import (
     LambdaAdapter,
     LambdaHandler,
     LambdaUnservedConfigError,
-    SQSBatchFailedError,
 )
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import RecordedLoops
@@ -42,21 +40,6 @@ from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, wi
 
 class _OtherJobService:
     """A job service the log must name: neither inline nor Celery."""
-
-
-@pytest.fixture
-def whole_batch_handler(
-    tmp_path: Path, probe: tuple[type[Job[None]], Any], no_aws_clients: None
-) -> Iterator[LambdaHandler]:
-    project = composition_project(
-        ConfigContext.from_dict(with_worker({}, report_batch_item_failures=False)),
-        app=AppConfig(name="lambda-sqs", entry=WORKER),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-    adapter = LambdaAdapter(jobs=[probe[0]])
-    yield adapter.bind(project.compose(adapter))
-    adapter.close()
 
 
 def _add_broken_resource(application: Application) -> None:
@@ -122,20 +105,22 @@ class TestSqsHandler:
         with pytest.raises(ConfigError, match="needs batching_window_s"):
             adapter.recipe(project)
 
-    @pytest.mark.parametrize("fifo", [False, True])
-    def test_without_batch_item_failures_a_failed_record_fails_the_whole_batch(
-        self, whole_batch_handler: LambdaHandler, record: RecordFactory, fifo: bool
+    @pytest.mark.parametrize("missing", ["messageId", "receiptHandle"])
+    def test_a_record_that_cannot_be_settled_is_reported_and_never_run(
+        self,
+        handler: LambdaHandler,
+        record: RecordFactory,
+        seen: list[tuple[str, str | None, str | None]],
+        missing: str,
     ) -> None:
-        records = [record("1", "a", fifo=fifo), record("2", "fail", fifo=fifo)]
-        with pytest.raises(SQSBatchFailedError, match="1 of 2 SQS records failed"):
-            whole_batch_handler({"Records": records}, None)
+        runnable = record("1", "a")
+        del runnable[missing]
 
-    def test_without_batch_item_failures_a_batch_that_ran_returns_no_report(
-        self, whole_batch_handler: LambdaHandler, record: RecordFactory
-    ) -> None:
-        assert whole_batch_handler({"Records": [record("1", "a")]}, None) == {}
+        result = handler({"Records": [runnable]}, None)
 
-    def test_malformed_body_fails_only_that_standard_record(
+        assert (len(result["batchItemFailures"]), seen) == (1, [])
+
+    def test_a_malformed_body_is_rejected_at_once_and_not_reported(
         self,
         handler: LambdaHandler,
         record: RecordFactory,
@@ -144,7 +129,7 @@ class TestSqsHandler:
         bad = record("1", "a")
         bad["body"] = "{"
         result = handler({"Records": [bad, record("2", "b")]}, None)
-        assert result["batchItemFailures"] == [{"itemIdentifier": "1"}]
+        assert result["batchItemFailures"] == []
         assert [item[0] for item in seen] == ["b"]
 
     def test_message_group_attribute_does_not_enable_fifo_rule(
@@ -211,10 +196,9 @@ from loom.core.job.job import Job
 class Probe(Job[None]):
     def execute(self) -> None:
         pass
+trigger = {"source": "jobs", "queue": {"name": "q"}}
 project = Project(
-    config=ConfigContext.from_dict(
-        {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
-    ),
+    config=ConfigContext.from_dict({"lambda": {"functions": {"worker": {"trigger": trigger}}}}),
     environment=Environment.TEST,
     code_path=Path.cwd(),
     config_root=Path.cwd(),
@@ -290,16 +274,25 @@ print([name for name in loaded if name in sys.modules])
             ["a", marker] if fifo and expected else ["a", marker, "c"]
         )
 
-    @pytest.mark.parametrize("fifo", [False, True])
-    @pytest.mark.parametrize("poison", ["body", "job"])
-    def test_poison_message_retries_and_logs_typed_error(
+    @pytest.mark.parametrize(
+        ("poison", "fifo", "expected", "ran"),
+        [
+            ("body", False, [], ["a", "c"]),
+            ("body", True, [], ["a", "c"]),
+            ("job", False, ["2"], ["a", "c"]),
+            ("job", True, ["2", "3"], ["a"]),
+        ],
+    )
+    def test_a_malformed_message_is_rejected_and_an_unknown_job_retried(
         self,
         handler: LambdaHandler,
         record: RecordFactory,
         seen: list[tuple[str, str | None, str | None]],
         caplog: pytest.LogCaptureFixture,
-        fifo: bool,
         poison: str,
+        fifo: bool,
+        expected: list[str],
+        ran: list[str],
     ) -> None:
         bad = record("2", "bad", fifo=fifo)
         if poison == "body":
@@ -310,9 +303,8 @@ print([name for name in loaded if name in sys.modules])
             bad["body"] = json.dumps(body)
         records = [record("1", "a", fifo=fifo), bad, record("3", "c", fifo=fifo)]
         result = handler({"Records": records}, None)
-        expected = ["2", "3"] if fifo else ["2"]
         assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in expected]
-        assert [item[0] for item in seen] == (["a"] if fifo else ["a", "c"])
+        assert [item[0] for item in seen] == ran
         error_class = "MalformedJobMessage" if poison == "body" else "UnknownJob"
         assert any(error_class in message for message in caplog.messages)
 
@@ -483,7 +475,7 @@ print([name for name in loaded if name in sys.modules])
         ("kind", "expected"),
         [
             ("unknown", [{"itemIdentifier": "1"}]),
-            ("malformed", [{"itemIdentifier": "1"}]),
+            ("malformed", []),
             ("null_payload", []),
             ("missing_id", [{"itemIdentifier": ""}]),
             ("non_mapping", [{"itemIdentifier": ""}]),
@@ -511,10 +503,6 @@ print([name for name in loaded if name in sys.modules])
             item = "bad"
         result = handler({"Records": [item]}, None)
         assert result["batchItemFailures"] == expected
-
-    @pytest.mark.parametrize("error", [MalformedJobMessage("{"), UnknownJob("MissingJob")])
-    def test_poison_errors_remain_retryable(self, error: Exception) -> None:
-        assert error.retryable is True  # type: ignore[attr-defined]
 
     @pytest.mark.parametrize(
         ("jobs", "failed"),

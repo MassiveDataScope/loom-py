@@ -184,27 +184,136 @@ An EventBridge, S3, SNS or schedule event is a `QueueableEvent`: its
 `.via_sqs(message_id=, group_id=, queue_arn=)` is the one SQS record the queue
 in between delivers, `group_id` makes that queue FIFO, and an SNS message is
 queued as the SNS envelope the subscription stores. An HTTP request is never
-queued and a `jobs` event already is a record, so neither has `via_sqs`. Every SQS record also takes `message_id`,
-`group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
-should retry:
+queued and a `jobs` event already is a record, so neither has `via_sqs`. Every
+SQS record also takes `message_id`, `group_id` and `queue_arn`. A handler fed SQS
+records returns the ones SQS should retry. The sample below tests a `jobs`
+function end to end. The package `acme_mail` has an empty
+`src/acme_mail/__init__.py` and `src/acme_mail/jobs.py`:
 
 ```python
-from loom.composition import create_app
-from loom.testing import LambdaEvent
+from loom.core.job.job import Job
+from loom.core.job.policy import Backoff
 
-def test_a_poison_message_is_retried() -> None:
-    handler = create_app("config.yaml", environment="test")  # app.entry: worker
-    try:
-        records = [
-            *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
-            *LambdaEvent.sqs_record("{", message_id="2")["Records"],
-        ]
-        result = handler({"Records": records}, None)
-    finally:
-        handler.close()
 
-    assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
+class Smtp:
+    down = False
+
+
+smtp = Smtp()
+
+
+class SendEmailJob(Job[None]):
+    __queue__ = "jobs"
+    __retry__ = Backoff(first_s=0, factor=1, max_s=0, jitter=False)
+
+    def execute(self, to: str) -> None:
+        if smtp.down:
+            raise ConnectionError("smtp is down")
 ```
+
+For plain `pytest` to find the package, add to `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+```
+
+`config.yaml`:
+
+```yaml
+app: {name: acme-mail, job_service: sqs, packages: [acme_mail]}
+sqs:
+  queues:
+    jobs: {url: "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs", dead_letter: discard}
+lambda:
+  functions:
+    worker: {trigger: {source: jobs, queue: {name: jobs}}}
+```
+
+`conftest.py`:
+
+```python
+import pytest
+from moto import mock_aws
+
+from acme_mail.jobs import smtp
+from loom.testing import LambdaWorker
+
+
+@pytest.fixture
+def aws(monkeypatch):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", "111122223333")
+    with mock_aws():
+        yield
+
+
+@pytest.fixture
+def worker(aws):
+    with LambdaWorker("config.yaml", function="worker", environment="test") as w:
+        yield w
+
+
+@pytest.fixture
+def mail():
+    smtp.down = False
+    return smtp
+```
+
+`test_mail.py`:
+
+```python
+from acme_mail.jobs import SendEmailJob
+
+
+def test_a_failed_email_is_reported_and_comes_back(worker, mail):
+    mail.down = True
+    first = worker.deliver(SendEmailJob, params={"to": "ada@example.com"})
+    assert len(first["batchItemFailures"]) == 1
+    mail.down = False
+    assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran: Backoff(first_s=0)
+```
+
+A `jobs` function declares the queue it consumes (`trigger.queue`), and it
+settles each record by what its job came to. `LambdaWorker` needs the
+`testing-aws` extra (moto). It enters moto's `mock_aws()` itself, creates that
+queue and, for `dead_letter: redrive`, its dead-letter queue with a real
+`RedrivePolicy`, through the application's own `sqs` client, and binds the
+function over it. It sets no environment: botocore resolves the region as it
+does for the application (`aws.region`, a profile of `~/.aws/config`,
+`AWS_DEFAULT_REGION`), and moto's account is `MOTO_ACCOUNT_ID`, or
+`123456789012`. The queue moto makes must be where the configuration says: when its region or
+account differs from the configured URL's, construction raises a `ConfigError`
+naming the URL it made, what differs and the way out. A URL that is not an AWS
+SQS one is refused the same way. Nothing the `sqs` client sends ever leaves the
+process: the application's `sqs` client carries a last `before-send` handler that refuses any
+request moto did not answer, so an endpoint override (`aws.url`, `sqs.url`,
+`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SQS`, a profile `endpoint_url`) or a
+dualstack endpoint fails with a `ConfigError` naming the endpoint; a FIPS
+endpoint gets moto's own 404. Clients of other services follow plain moto
+semantics: only the `sqs` client is guarded. A named profile (`aws.profile`)
+skips moto's fake environment credentials, so the profile must carry its own.
+With no region at all, botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
+built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
+`aws.region: us-east-1` in the configuration works as it is. A user's own
+`mock_aws()` outside is joined, and closing the worker leaves it running.
+
+`worker.deliver(job_type, payload, params=, identity=)` sends the job as
+`SQSJobService` does (its envelope, and the queue's own FIFO placement), receives
+it and invokes the function with a record that carries the real receipt handle
+and `ApproximateReceiveCount` of that delivery. It returns the handler's result
+and, as Lambda does, deletes the messages the result does not report.
+`worker.redeliver()` does the same with what the queue shows, up to the
+trigger's `batch_size` (10 at most), and invokes nothing when nothing is
+visible: a failed message comes back once its visibility timeout, set from the
+job's backoff, ends, counted as a new attempt. `worker(event, None)` passes a
+raw event, whose receipt handle is not in the queue: moto refuses the call that
+settles it, and loom logs that and reports the message. `worker.sqs` is a boto3
+`sqs` client of the mock, and `worker.queue_url` and `worker.dead_letter_url`
+name the queues, so a test reads what the function left in them. Workers on the
+same queue share it, so nested workers see each other's messages. A message that
+cannot be read is rejected and is not in `batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 

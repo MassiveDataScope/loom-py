@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import uuid
@@ -17,7 +18,7 @@ from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
+from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 
@@ -60,6 +61,22 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
     def is_fifo(self) -> bool:
         """Whether the URL names a FIFO queue."""
         return self.url.endswith(FIFO_SUFFIX)
+
+    @property
+    def region(self) -> str | None:
+        """The region in the URL's host; ``None`` for an endpoint that names none."""
+        found = _URL_REGION.match(self.url)
+        return None if found is None else found.group(1)
+
+    @property
+    def account_id(self) -> str:
+        """The AWS account owning the queue, the first segment of its URL path."""
+        return self.url.rstrip("/").split("/")[-2]
+
+    @property
+    def queue_name(self) -> str:
+        """The queue's name in AWS, the last segment of its URL path."""
+        return self.url.rstrip("/").split("/")[-1]
 
     @classmethod
     def refuse_misshapen(cls, written: Any, path: str) -> None:
@@ -163,6 +180,10 @@ class SqsRecord:
         body: The message body.
         group_id: ``MessageGroupId`` when the queue is FIFO.
         attributes: The message attributes, in the shape the SQS API takes.
+        queue_arn: The ARN of the queue it was received from.
+        receive_count: ``ApproximateReceiveCount``: how many times SQS delivered it.
+        deferrals: How many times the job asked to run again; zero for a message never deferred.
+        unreadable: Why loom cannot read its counts; empty when it can.
     """
 
     message_id: str
@@ -170,20 +191,65 @@ class SqsRecord:
     body: str
     group_id: str | None = None
     attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    queue_arn: str = ""
+    receive_count: int = 1
+    deferrals: int = 0
+    unreadable: str = ""
 
     @classmethod
-    def from_event(cls, record: Mapping[str, Any]) -> SqsRecord:
-        """The record of an SQS event's ``Records`` entry."""
-        return cls(
-            message_id=record["messageId"],
-            receipt_handle=record["receiptHandle"],
-            body=record["body"],
-            group_id=record.get("attributes", {}).get("MessageGroupId"),
-            attributes={
+    def from_event(cls, record: Any) -> SqsRecord:
+        """The record of an SQS event's ``Records`` entry; what it lacks is empty."""
+        if not isinstance(record, Mapping):
+            return cls("", "", "")
+        fields: dict[str, Any] = {
+            "message_id": str(record.get("messageId", "")),
+            "receipt_handle": str(record.get("receiptHandle", "")),
+            "body": str(record.get("body", "")),
+            "queue_arn": str(record.get("eventSourceARN", "")),
+        }
+        try:
+            system = record.get("attributes") or {}
+            fields["group_id"] = system.get("MessageGroupId")
+            fields["attributes"] = {
                 name: cls._attribute(value)
-                for name, value in record.get("messageAttributes", {}).items()
-            },
-        )
+                for name, value in (record.get("messageAttributes") or {}).items()
+            }
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return cls(
+                **fields,
+                unreadable="the message attributes are not readable (each needs a dataType)",
+            )
+        for name, written, minimum, reason in (
+            (
+                "receive_count",
+                system.get("ApproximateReceiveCount", 1),
+                1,
+                "ApproximateReceiveCount is not a positive integer",
+            ),
+            (
+                "deferrals",
+                fields["attributes"].get(DEFERRALS_ATTRIBUTE, {}).get("StringValue", 0),
+                0,
+                f"{DEFERRALS_ATTRIBUTE} is not a non-negative integer",
+            ),
+        ):
+            try:
+                fields[name] = int(written)
+            except (TypeError, ValueError):
+                return cls(**fields, unreadable=reason)
+            if fields[name] < minimum:
+                return cls(**fields, unreadable=reason)
+        return cls(**fields)
+
+    @property
+    def is_settleable(self) -> bool:
+        """Whether it carries the id and handle a settlement needs, and a body to run."""
+        return bool(self.message_id and self.receipt_handle and self.body)
+
+    @property
+    def is_fifo(self) -> bool:
+        """Whether it was received from a FIFO queue."""
+        return self.queue_arn.endswith(FIFO_SUFFIX)
 
     @staticmethod
     def _attribute(written: Mapping[str, Any]) -> dict[str, Any]:
@@ -193,11 +259,6 @@ class SqsRecord:
         if written.get("binaryValue") is not None:
             attribute["BinaryValue"] = base64.b64decode(written["binaryValue"])
         return attribute
-
-    @property
-    def deferrals(self) -> int:
-        """How many times the job asked to run again; zero for a message never deferred."""
-        return int(self.attributes.get(DEFERRALS_ATTRIBUTE, {}).get("StringValue", 0))
 
     def resent(self, delay: Countdown) -> OutgoingMessage:
         """The same body and attributes, to become visible after *delay*, one deferral more."""
@@ -258,6 +319,7 @@ class SqsQueue:
 
     def __init__(self, client: Any, name: str, config: QueueConfig) -> None:
         self._client = client
+        self._config = config
         self.name = name
         self.url = config.url
         self.is_fifo = config.is_fifo
@@ -286,18 +348,71 @@ class SqsQueue:
     @property
     def region(self) -> str | None:
         """The region in the URL's host; ``None`` for an endpoint that names none."""
-        found = _URL_REGION.match(self.url)
-        return None if found is None else found.group(1)
+        return self._config.region
 
     @property
     def account_id(self) -> str:
         """The AWS account owning the queue, the first segment of its URL path."""
-        return self.url.rstrip("/").split("/")[-2]
+        return self._config.account_id
 
     @property
     def queue_name(self) -> str:
         """The queue's name in AWS, the last segment of its URL path."""
-        return self.url.rstrip("/").split("/")[-1]
+        return self._config.queue_name
+
+    def placement(
+        self,
+        job_type: type[Job[Any]],
+        payload: Mapping[str, Any],
+        task_id: str,
+        delay: Countdown,
+    ) -> dict[str, Any]:
+        """Where a job's message goes: the delay on a standard queue; ids on a FIFO one.
+
+        A FIFO queue takes the hash of the payload field ``__group_by__`` names as its
+        ``MessageGroupId`` and the task id as its ``MessageDeduplicationId``.
+
+        Args:
+            job_type: The job the message runs.
+            payload: Its payload.
+            task_id: The message's task id.
+            delay: Seconds before it becomes visible.
+
+        Returns:
+            The :class:`OutgoingMessage` fields that place it.
+
+        Raises:
+            SQSDispatchError: When a FIFO queue is given a delay, or the payload has no
+                value for ``__group_by__``.
+        """
+        if not self.is_fifo:
+            return {"delay": delay}
+        if delay.seconds:
+            raise SQSDispatchError(
+                "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
+            )
+        group_by = job_type.__group_by__
+        group = None if group_by is None else payload.get(group_by)
+        if group is None:
+            raise SQSDispatchError(
+                f"{job_type.__qualname__} payload has no {group_by!r} value for its "
+                "FIFO MessageGroupId",
+                code=SQSErrorCode.GROUP_MISSING,
+            )
+        group_id = hashlib.sha256(str(group).encode()).hexdigest()
+        return {"group_id": group_id, "dedup_id": task_id}
+
+    def is_at(self, event_source_arn: str) -> bool:
+        """Whether *event_source_arn* names this queue, by region, account and queue name.
+
+        A URL that names no region matches any.
+        """
+        parts = event_source_arn.split(":")
+        if len(parts) != 6:
+            return False
+        _, _, _, region, account, name = parts
+        same_region = self.region in (None, region)
+        return same_region and (self.account_id, self.queue_name) == (account, name)
 
     def send(self, message: OutgoingMessage) -> None:
         """Send *message* with ``SendMessage``.
@@ -356,14 +471,18 @@ class SqsQueue:
         )
 
     def dead_letter(self) -> DeadLetter:
-        """The dead-letter queue of the ``RedrivePolicy``, read once and kept.
+        """The dead-letter queue :meth:`read_dead_letter` kept.
 
         Raises:
-            SQSQueueConfigError: When the queue is ``dead_letter: discard`` or its
-                ``RedrivePolicy`` is missing.
+            SQSQueueConfigError: When the queue is ``dead_letter: discard``, or its
+                dead-letter queue was not read at start-up.
         """
+        self._refuse_discard()
         if self._dead_letter is None:
-            self._dead_letter = self._read_dead_letter()
+            raise SQSQueueConfigError(
+                f"queue {self.name!r} has not read its dead-letter queue: call "
+                "read_dead_letter(client) at start-up, never during an invocation"
+            )
         return self._dead_letter
 
     def consumed_retries(
@@ -405,12 +524,37 @@ class SqsQueue:
             )
         return retries
 
-    def _read_dead_letter(self) -> DeadLetter:
+    def unserved_policy(self) -> RetryPolicy:
+        """The policy of a message that names no job this consumer serves.
+
+        It is the loom default; on a ``redrive`` queue its ``max_attempts`` is the
+        ``maxReceiveCount`` of the ``RedrivePolicy``.
+
+        Raises:
+            SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+        """
+        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+            return DEFAULT_RETRY
+        return replace(DEFAULT_RETRY, max_attempts=self.dead_letter().max_receive_count)
+
+    def _refuse_discard(self) -> None:
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
             raise SQSQueueConfigError(
                 f"queue {self.name!r} is dead_letter: discard: it has no dead-letter queue"
             )
-        attributes = self._client.get_queue_attributes(
+
+    def read_dead_letter(self, client: Any) -> DeadLetter:
+        """Read the ``RedrivePolicy`` and the dead-letter queue's URL through *client*.
+
+        Args:
+            client: The boto3 ``sqs`` client that makes the metadata calls.
+
+        Raises:
+            SQSQueueConfigError: When the queue is ``dead_letter: discard`` or its
+                ``RedrivePolicy`` is missing.
+        """
+        self._refuse_discard()
+        attributes = client.get_queue_attributes(
             QueueUrl=self.url, AttributeNames=["RedrivePolicy"]
         )
         written = attributes.get("Attributes", {}).get("RedrivePolicy")
@@ -420,13 +564,23 @@ class SqsQueue:
                 "a dead-letter queue to it, or set dead_letter: discard (then max_attempts "
                 "decides when a job is rejected)"
             )
-        policy = json.loads(written)
-        _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
-        url = self._client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
+        try:
+            policy = json.loads(written)
+            _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
+            limit = int(policy["maxReceiveCount"])
+            if limit < 1:
+                raise ValueError("maxReceiveCount must be at least 1")
+        except (AttributeError, ValueError, KeyError, TypeError) as exc:
+            raise SQSQueueConfigError(
+                f"queue {self.name!r} has a RedrivePolicy loom cannot read "
+                f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
+            ) from exc
+        url = client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
         target = SqsQueue(
             self._client, name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
         )
-        return DeadLetter(target, int(policy["maxReceiveCount"]))
+        self._dead_letter = DeadLetter(target, limit)
+        return self._dead_letter
 
     def _batches(
         self, call: Callable[..., Any], chunks: Sequence[Sequence[dict[str, Any]]]
@@ -454,7 +608,7 @@ class SqsQueues:
     Building one, or asking it for a queue, makes no call to SQS.
 
     Args:
-        client: The boto3 ``sqs`` client every queue uses.
+        client: The boto3 ``sqs`` client every queue sends and settles with.
         queues: ``sqs.queues``, by name.
     """
 
@@ -473,24 +627,6 @@ class SqsQueues:
                 f"sqs.queues maps no URL for queue {name!r}", code=SQSErrorCode.QUEUE_UNKNOWN
             )
         return queue
-
-    def at(self, event_source_arn: str) -> SqsQueue:
-        """The configured queue an event source ARN names.
-
-        A queue matches by region, account and queue name; a URL that names no
-        region matches any.
-
-        Raises:
-            SQSDispatchError: When no queue of ``sqs.queues`` matches.
-        """
-        _, _, _, region, account, name = event_source_arn.split(":")
-        for queue in self._by_name.values():
-            same_region = queue.region in (None, region)
-            if same_region and (queue.account_id, queue.queue_name) == (account, name):
-                return queue
-        raise SQSDispatchError(
-            f"no queue of sqs.queues is {event_source_arn}", code=SQSErrorCode.QUEUE_UNKNOWN
-        )
 
 
 __all__ = [

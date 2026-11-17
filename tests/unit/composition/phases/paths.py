@@ -25,6 +25,7 @@ from loom.core.environment import Environment
 from loom.testing.in_memory import InMemoryRepository
 from tests.helpers.composition import composition_project
 from tests.helpers.jobs import BROKER
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.composition.phases.components import (
     AcmeInterface,
     AcmeJob,
@@ -89,7 +90,7 @@ def lambda_jobs(
 ) -> LoomContainer:
     from loom.serverless.aws.lambda_ import LambdaAdapter
 
-    document = {"lambda": {"functions": {_WORKER: {"trigger": {"source": "jobs"}}}}}
+    document = {**jobs_queue(), "lambda": {"functions": {_WORKER: {"trigger": jobs_trigger()}}}}
     return _composed(composition, document, _WORKER, LambdaAdapter(), tmp_path, monkeypatch)
 
 

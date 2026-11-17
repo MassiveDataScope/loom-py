@@ -27,6 +27,7 @@ class FakeSqs:
         redrive: The ``RedrivePolicy`` of each queue URL; a queue absent has none.
         refuse: Entry ids a batch answers as failed, with the code ``Throttled``.
         raises: What every batch call raises, when set.
+        lookup_raises: What the dead-letter queue lookup raises, when set.
     """
 
     def __init__(
@@ -35,10 +36,12 @@ class FakeSqs:
         *,
         refuse: frozenset[str] = frozenset(),
         raises: Exception | None = None,
+        lookup_raises: Exception | None = None,
     ) -> None:
         self._redrive = redrive or {}
         self._refuse = refuse
         self._raises = raises
+        self.lookup_raises = lookup_raises
         self.calls: Counter[str] = Counter()
         self.batches: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.sent: list[dict[str, Any]] = []
@@ -58,8 +61,17 @@ class FakeSqs:
     ) -> dict[str, Any]:
         return self._batch("change_message_visibility_batch", QueueUrl, Entries)
 
+    def delete_message(self, **request: Any) -> dict[str, Any]:
+        self.calls["delete_message"] += 1
+        return {}
+
+    def delete_message_batch(self, QueueUrl: str, Entries: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: N803
+        return self._batch("delete_message_batch", QueueUrl, Entries)
+
     def get_queue_attributes(self, QueueUrl: str, AttributeNames: list[str]) -> dict[str, Any]:  # noqa: N803
         self.calls["get_queue_attributes"] += 1
+        if self.lookup_raises is not None:
+            raise self.lookup_raises
         policy = self._redrive.get(QueueUrl)
         return {} if policy is None else {"Attributes": {"RedrivePolicy": json.dumps(policy)}}
 
@@ -83,6 +95,15 @@ class FakeSqs:
 
     def close(self) -> None:
         self.calls["close"] += 1
+
+    def entries(self, method: str, url: str | None = None) -> list[dict[str, Any]]:
+        """Every entry *method* carried, in order; of the queue at *url* when given."""
+        return [
+            entry
+            for called, target, batch in self.batches
+            if called == method and url in (None, target)
+            for entry in batch
+        ]
 
     @property
     def metadata_calls(self) -> int:

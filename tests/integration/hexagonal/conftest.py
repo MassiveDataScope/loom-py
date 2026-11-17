@@ -210,10 +210,19 @@ def acme_config() -> dict[str, Any]:
             },
         },
         "stores": {"default": {"backend": "none"}},
+        "aws": {"region": "us-east-1"},
+        "sqs": {
+            "queues": {
+                "jobs": {
+                    "url": "https://sqs.us-east-1.amazonaws.com/123456789012/loom-jobs",
+                    "dead_letter": "discard",
+                }
+            }
+        },
         "lambda": {
             "functions": {
                 API_FUNCTION: {"trigger": api},
-                WORKER_FUNCTION: {"trigger": {"source": "jobs"}},
+                WORKER_FUNCTION: {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}},
             }
         },
         "celery": {

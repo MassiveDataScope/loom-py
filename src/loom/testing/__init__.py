@@ -12,12 +12,13 @@ from loom.testing.runner import (
     SqlGrantHandleDouble,
     UseCaseTest,
 )
-from loom.testing.serverless import LambdaEvent
+from loom.testing.serverless import TEST_QUEUE, LambdaEvent
 
 if TYPE_CHECKING:
     from loom.testing.http_harness import HttpTestHarness
     from loom.testing.jwt_auth import JwtTestAuth, jwt_test_auth
     from loom.testing.lambda_http import LambdaTestClient
+    from loom.testing.lambda_jobs import LambdaWorker
     from loom.testing.repository_harness import (
         RepositoryIntegrationHarness,
         ScenarioDict,
@@ -33,8 +34,10 @@ __all__ = [
     "HttpTestHarness",
     "InMemoryRepository",
     "JwtTestAuth",
+    "TEST_QUEUE",
     "LambdaEvent",
     "LambdaTestClient",
+    "LambdaWorker",
     "McpHandleDouble",
     "Override",
     "RecordingJobService",
@@ -61,6 +64,8 @@ def __getattr__(name: str) -> Any:
         return _http_test_harness()
     if name == "LambdaTestClient":
         return _lambda_test_client()
+    if name == "LambdaWorker":
+        return importlib.import_module("loom.testing.lambda_jobs").LambdaWorker
     if name in _JWT_EXPORTS:
         return getattr(importlib.import_module("loom.testing.jwt_auth"), name)
     if name in _REPOSITORY_HARNESS_EXPORTS:

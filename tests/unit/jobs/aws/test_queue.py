@@ -9,7 +9,7 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.config import JobSettings, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
+from loom.core.job.policy import DEFAULT_RETRY, Countdown
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.queue import (
     DEFERRALS_ATTRIBUTE,
@@ -57,6 +57,14 @@ def _queue(
     return SqsQueue(client, "jobs", QueueConfig(url=url, dead_letter=policy))
 
 
+def _primed(
+    client: FakeSqs, *, url: str = _SOURCE, policy: DeadLetterPolicy = DeadLetterPolicy.REDRIVE
+) -> SqsQueue:
+    queue = _queue(client, url=url, policy=policy)
+    queue.read_dead_letter(client)
+    return queue
+
+
 def _operations(queue: SqsQueue) -> dict[str, Any]:
     """Each batch operation on 25 records, by the client method it calls."""
     records = _records(25)
@@ -77,7 +85,7 @@ class TestBatches:
     )
     def test_25_entries_go_in_three_calls_of_at_most_ten(self, operation: str) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
-        result = _operations(_queue(client))[operation]()
+        result = _operations(_primed(client))[operation]()
 
         assert [len(entries) for _, _, entries in client.batches] == [10, 10, 5]
         assert len(result.succeeded) == 25
@@ -138,7 +146,7 @@ class TestReject:
         owner = {"DataType": "String", "StringValue": "acme"}
         record = SqsRecord("m1", "h1", "the-body", attributes={"owner": owner})
 
-        _queue(client).reject_batch([(record, "bad payload")])
+        _primed(client).reject_batch([(record, "bad payload")])
 
         ((_, url, (entry,)),) = client.batches
         assert url == _DEAD
@@ -152,7 +160,7 @@ class TestReject:
     def test_a_long_reason_is_cut(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
 
-        _queue(client).reject_batch([(SqsRecord("m1", "h1", "b"), "r" * 1000)])
+        _primed(client).reject_batch([(SqsRecord("m1", "h1", "b"), "r" * 1000)])
 
         reason = client.batches[0][2][0]["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]
         assert reason["StringValue"] == "r" * REASON_MAX_CHARS
@@ -161,8 +169,10 @@ class TestReject:
         client = FakeSqs({_SOURCE: _FIFO_POLICY})
         record = SqsRecord("m1", "h1", "b", group_id="group-7")
 
-        _queue(client).reject_batch([(record, "no"), (SqsRecord("m2", "h2", "b", "group-7"), "no")])
-        _queue(client).reject_batch([(record, "no")])
+        _primed(client).reject_batch(
+            [(record, "no"), (SqsRecord("m2", "h2", "b", "group-7"), "no")]
+        )
+        _primed(client).reject_batch([(record, "no")])
 
         first, second, third = (entry for _, _, entries in client.batches for entry in entries)
         assert client.batches[0][1] == _FIFO_DEAD
@@ -173,7 +183,7 @@ class TestReject:
 
     def test_the_dead_letter_queue_is_read_once_for_many_rejections(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
-        queue = _queue(client)
+        queue = _primed(client)
 
         for _ in range(5):
             queue.reject_batch([(record, "no") for record in _records(12)])
@@ -186,12 +196,20 @@ class TestReject:
         queue = _queue(FakeSqs())
 
         with pytest.raises(SQSQueueConfigError) as raised:
-            queue.dead_letter()
+            queue.read_dead_letter(FakeSqs())
 
         message = str(raised.value)
         assert "'jobs'" in message
         assert "RedrivePolicy" in message
         assert "dead_letter: discard" in message
+
+    def test_a_dead_letter_queue_not_read_at_start_up_is_never_read_lazily(self) -> None:
+        client = FakeSqs({_SOURCE: _POLICY})
+
+        with pytest.raises(SQSQueueConfigError, match="'jobs'.*at start-up"):
+            _queue(client).reject_batch([(SqsRecord("m1", "h1", "b"), "no")])
+
+        assert client.metadata_calls == 0
 
     def test_a_discard_queue_has_no_dead_letter_queue_to_reject_to(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
@@ -224,8 +242,9 @@ class TestDefer:
     def test_each_deferral_counts_on_from_the_message_attribute(self) -> None:
         client = FakeSqs()
         counted = {DEFERRALS_ATTRIBUTE: {"DataType": "Number", "StringValue": "4"}}
+        record = SqsRecord("m1", "h1", "b", attributes=counted, deferrals=4)
 
-        _queue(client).defer_batch([(SqsRecord("m1", "h1", "b", attributes=counted), Countdown(0))])
+        _queue(client).defer_batch([(record, Countdown(0))])
 
         entry = client.batches[0][2][0]
         assert entry["MessageAttributes"][DEFERRALS_ATTRIBUTE]["StringValue"] == "5"
@@ -263,58 +282,53 @@ class TestRecord:
 
 class TestQueues:
     @pytest.fixture
-    def queues(self) -> tuple[SqsQueues, FakeSqs]:
-        client = FakeSqs()
-        return (
-            SqsQueues(
-                client,
-                {
-                    "jobs": QueueConfig(url=_SOURCE),
-                    "orders": QueueConfig(url=queue_url("orders.fifo")),
-                    "other": QueueConfig(
-                        url="https://sqs.eu-west-1.amazonaws.com/999999999999/jobs"
-                    ),
-                },
-            ),
-            client,
-        )
+    def queues(self) -> SqsQueues:
+        return SqsQueues(FakeSqs(), {"jobs": QueueConfig(url=_SOURCE)})
 
-    @pytest.mark.parametrize(
-        ("arn", "name"),
-        [
-            (f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs", "jobs"),
-            (f"arn:aws:sqs:eu-west-1:{ACCOUNT}:orders.fifo", "orders"),
-            ("arn:aws:sqs:eu-west-1:999999999999:jobs", "other"),
-        ],
-    )
-    def test_an_event_source_arn_matches_account_and_queue_name(
-        self, queues: tuple[SqsQueues, FakeSqs], arn: str, name: str
-    ) -> None:
-        assert queues[0].at(arn).name == name
-
-    @pytest.mark.parametrize(
-        "arn",
-        [
-            f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown",
-            "arn:aws:sqs:eu-west-1:111111111111:jobs",
-            f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs",
-        ],
-    )
-    def test_an_arn_of_no_configured_queue_is_refused(
-        self, queues: tuple[SqsQueues, FakeSqs], arn: str
-    ) -> None:
-        with pytest.raises(SQSDispatchError, match="no queue of sqs.queues"):
-            queues[0].at(arn)
-
-    def test_an_unmapped_name_is_refused(self, queues: tuple[SqsQueues, FakeSqs]) -> None:
+    def test_an_unmapped_name_is_refused(self, queues: SqsQueues) -> None:
         with pytest.raises(SQSDispatchError, match="maps no URL for queue 'missing'"):
-            queues[0].named("missing")
+            queues.named("missing")
 
-    def test_finding_a_queue_calls_nothing(self, queues: tuple[SqsQueues, FakeSqs]) -> None:
-        queues[0].named("jobs")
-        queues[0].at(f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs")
+    def test_finding_a_queue_calls_nothing(self) -> None:
+        client = FakeSqs()
 
-        assert queues[1].calls == {}
+        SqsQueues(client, {"jobs": QueueConfig(url=_SOURCE)}).named("jobs")
+
+        assert client.calls == {}
+
+
+class TestQueueArn:
+    @pytest.mark.parametrize(
+        ("url", "arn", "matches"),
+        [
+            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs", True),
+            (queue_url("orders.fifo"), f"arn:aws:sqs:eu-west-1:{ACCOUNT}:orders.fifo", True),
+            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown", False),
+            (_SOURCE, "arn:aws:sqs:eu-west-1:111111111111:jobs", False),
+            (_SOURCE, f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs", False),
+            (
+                f"http://localhost:4566/{ACCOUNT}/jobs",
+                f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs",
+                True,
+            ),
+            (_SOURCE, "not-an-arn", False),
+            (_SOURCE, "", False),
+        ],
+        ids=[
+            "same-queue",
+            "fifo",
+            "other-name",
+            "other-account",
+            "other-region",
+            "url-without-region",
+            "not-an-arn",
+            "empty",
+        ],
+    )
+    def test_an_event_source_arn_names_the_queue_by_region_account_and_name(
+        self, url: str, arn: str, matches: bool
+    ) -> None:
+        assert _queue(FakeSqs(), url=url).is_at(arn) is matches
 
 
 class TestConfig:
@@ -369,7 +383,7 @@ class TestAttemptLimit:
 
     def test_a_redrive_queue_limits_attempts_to_its_max_receive_count(self) -> None:
         settings = self._settings()
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
@@ -378,7 +392,7 @@ class TestAttemptLimit:
 
     def test_declaring_max_attempts_for_a_job_on_a_redrive_queue_is_refused(self) -> None:
         settings = self._settings(EmailJob={"retry": {"max_attempts": 5}})
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         with pytest.raises(ConfigError) as raised:
             queue.consumed_retries([ReportJob, EmailJob], lambda job: settings.of(job).retry)
@@ -390,7 +404,7 @@ class TestAttemptLimit:
 
     def test_the_defaults_layer_does_not_apply_to_a_redrive_queue(self) -> None:
         settings = self._settings(defaults={"retry": {"max_attempts": 2}})
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
@@ -414,7 +428,7 @@ class TestAttemptLimit:
         settings = self._settings()
 
         with pytest.raises(SQSQueueConfigError, match="RedrivePolicy"):
-            _queue(FakeSqs()).consumed_retries([EmailJob], lambda job: settings.of(job).retry)
+            _primed(FakeSqs()).consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
 
 class TestWire:
@@ -435,3 +449,78 @@ class TestWire:
             "MessageDeduplicationId": "d",
             "MessageAttributes": {"k": {"DataType": "String", "StringValue": "v"}},
         }
+
+
+class TestSqsRecordFromEvent:
+    def test_a_record_reads_its_receive_count_queue_and_fifo_marker(self) -> None:
+        raw = {
+            "messageId": "m",
+            "receiptHandle": "h",
+            "body": "b",
+            "attributes": {"ApproximateReceiveCount": "3"},
+            "eventSourceARN": "arn:aws:sqs:eu-west-1:123456789012:orders.fifo",
+        }
+
+        record = SqsRecord.from_event(raw)
+
+        assert (record.receive_count, record.is_fifo, record.is_settleable) == (3, True, True)
+
+    @pytest.mark.parametrize(
+        ("changes", "reason"),
+        [
+            ({"attributes": {"ApproximateReceiveCount": "x"}}, "ApproximateReceiveCount"),
+            ({"attributes": {"ApproximateReceiveCount": "0"}}, "ApproximateReceiveCount"),
+            ({"attributes": {"ApproximateReceiveCount": None}}, "ApproximateReceiveCount"),
+            (
+                {"messageAttributes": {DEFERRALS_ATTRIBUTE: {"stringValue": "x", "dataType": "N"}}},
+                DEFERRALS_ATTRIBUTE,
+            ),
+            (
+                {
+                    "messageAttributes": {
+                        DEFERRALS_ATTRIBUTE: {"stringValue": "-1", "dataType": "N"}
+                    }
+                },
+                "non-negative integer",
+            ),
+            ({"messageAttributes": {DEFERRALS_ATTRIBUTE: {"stringValue": "1"}}}, "attributes"),
+            ({"messageAttributes": {"a": None}}, "attributes"),
+            ({"attributes": ["not", "a", "mapping"]}, "attributes"),
+        ],
+    )
+    def test_a_record_with_counts_it_cannot_read_says_why(
+        self, changes: dict[str, Any], reason: str
+    ) -> None:
+        raw = {"messageId": "m", "receiptHandle": "h", "body": "b", **changes}
+
+        record = SqsRecord.from_event(raw)
+
+        assert reason in record.unreadable
+        assert record.is_settleable
+
+    def test_a_record_with_readable_counts_is_not_unreadable(self) -> None:
+        raw = {"messageId": "m", "receiptHandle": "h", "body": "b", "messageAttributes": None}
+
+        assert SqsRecord.from_event(raw).unreadable == ""
+
+    @pytest.mark.parametrize("raw", ["bad", {"body": "{"}, {"messageId": "m", "body": "b"}])
+    def test_a_record_that_lacks_what_settlement_needs_is_not_settleable(self, raw: Any) -> None:
+        assert SqsRecord.from_event(raw).is_settleable is False
+
+    def test_an_unreadable_record_has_an_empty_id(self) -> None:
+        assert SqsRecord.from_event("bad").message_id == ""
+
+    def test_a_standard_queue_record_is_not_fifo(self) -> None:
+        assert SqsRecord.from_event({"eventSourceARN": "arn:aws:sqs:r:1:orders"}).is_fifo is False
+
+
+class TestUnservedPolicy:
+    def test_a_discard_queue_gives_the_loom_default(self) -> None:
+        queue = _queue(FakeSqs(), policy=DeadLetterPolicy.DISCARD)
+
+        assert queue.unserved_policy() == DEFAULT_RETRY
+
+    def test_a_redrive_queue_limits_attempts_as_its_policy_does(self) -> None:
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
+
+        assert queue.unserved_policy().max_attempts == 4

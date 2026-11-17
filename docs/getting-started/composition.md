@@ -58,7 +58,7 @@ A `trigger` takes the keys of its `source` only:
 | `source` | Invoked by | Keys |
 |---|---|---|
 | `http` | API Gateway | `interfaces`, `auth` |
-| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`: a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
+| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue` (required): a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency` |
 | `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or through a queue | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); through a queue the `queue` block of `jobs` |
 
 An HTTP function serves only the interfaces it lists, a Python `RestInterface`
@@ -155,12 +155,13 @@ fetches its `SubscribeURL`. The failure log names the function, job and
 error, never the payload.
 
 A `queue:` block reads each message body as the source delivers it to the
-queue it names and reports each failed message, a failure that is not
-retryable included, so the queue retries it and then sends it to its
-dead-letter queue. The block takes the keys of a `jobs` trigger's `queue`; the
-retry keys apply to a direct trigger only. A `jobs` function consumes a
-message whose job fails for good, as before. An SNS subscription to that queue
-must not use raw message delivery.
+queue it names. A message whose job can still succeed is reported and
+retried; one that fails for good, or cannot be read, is rejected: sent to the
+queue's dead-letter queue on `redrive`, dropped with an ERROR log on `discard`,
+and not reported. The block takes the keys of a `jobs` trigger's `queue`; the
+retry keys apply to a direct trigger only. A `jobs` function settles its
+messages the same way. An SNS subscription to that queue must not use raw
+message delivery.
 
 The rule or pattern, bucket and prefix, topic or schedule expression that
 send the events are not loom configuration: the deployment creates them.

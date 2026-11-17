@@ -130,11 +130,16 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
             "app": {"name": "loom-it-sqs", "job_service": "sqs"},
             "sqs": {
                 "queues": {
-                    "emails": {"url": queues.standard.url},
-                    "orders": {"url": queues.fifo.url},
+                    "emails": {"url": queues.standard.url, "dead_letter": "discard"},
+                    "orders": {"url": queues.fifo.url, "dead_letter": "discard"},
                 }
             },
-            "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
+            "lambda": {
+                "functions": {
+                    "worker": {"trigger": {"source": "jobs", "queue": {"name": "emails"}}},
+                    "fifo_worker": {"trigger": {"source": "jobs", "queue": {"name": "orders"}}},
+                }
+            },
         }
     )
 
@@ -234,7 +239,8 @@ class TestSqsJobs:
         event = LambdaEvent.sqs_record(
             message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
         )
-        adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
+        function = "fifo_worker" if job_type is OrderJob else "worker"
+        adapter = LambdaAdapter(function=function, jobs=[WelcomeJob, OrderJob])
         consumer = Project.load(
             str(config_path), environment="test", code_path=str(tmp_path)
         ).compose(adapter)

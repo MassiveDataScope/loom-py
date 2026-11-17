@@ -2367,6 +2367,10 @@ testing = [
     { name = "httpx" },
     { name = "pytest" },
 ]
+testing-aws = [
+    { name = "boto3" },
+    { name = "moto" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2395,6 +2399,7 @@ dev = [
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mangum" },
+    { name = "moto" },
     { name = "mypy" },
     { name = "omegaconf" },
     { name = "opentelemetry-api" },
@@ -2439,6 +2444,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'config-ssm'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'prefect'", specifier = ">=1.35" },
+    { name = "boto3", marker = "extra == 'testing-aws'", specifier = ">=1.35" },
     { name = "bytewax", marker = "python_full_version < '3.13' and extra == 'streaming'", specifier = ">=0.21" },
     { name = "celery", extras = ["redis"], marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.9.2,<1.0" },
@@ -2461,6 +2467,7 @@ requires-dist = [
     { name = "kombu", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.0,<6" },
     { name = "mangum", marker = "extra == 'lambda'", specifier = ">=0.22,<1.0" },
+    { name = "moto", extras = ["sqs"], marker = "extra == 'testing-aws'", specifier = ">=5.2.5,<6.0" },
     { name = "msgspec", specifier = ">=0.18,<1.0" },
     { name = "omegaconf", specifier = ">=2.3,<2.5" },
     { name = "omegaconf", marker = "extra == 'cache'", specifier = ">=2.3,<2.5" },
@@ -2517,7 +2524,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'rest'", specifier = ">=0.21,<1.0" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'streaming'", specifier = ">=0.21,<1.0" },
 ]
-provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "aws", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing"]
+provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "aws", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing", "testing-aws"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2546,6 +2553,7 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mangum", specifier = ">=0.22,<1.0" },
+    { name = "moto", extras = ["sqs"], specifier = ">=5.2.5,<6.0" },
     { name = "mypy", specifier = ">=1.11.0,<2.0" },
     { name = "omegaconf", specifier = ">=2.3,<2.5" },
     { name = "opentelemetry-api", specifier = ">=1.27,<2.0" },
@@ -2790,6 +2798,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "moto"
+version = "5.2.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "botocore" },
+    { name = "cryptography" },
+    { name = "requests" },
+    { name = "responses" },
+    { name = "werkzeug" },
+    { name = "xmltodict" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cb/a4/8d60630be6ff222421d281796d4dfd67d2eae66b47525735e57c9e275a27/moto-5.2.5.tar.gz", hash = "sha256:391857257d5dac144334013c2c10e599def5f0562f553e979160140bd7bd9cf6", size = 9249364, upload-time = "2026-10-27T22:46:30.724Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/b8/15e2ce7b6bb125558c81f63c42074a768df15138248cf2e2f1de2b4894eb/moto-5.2.5-py3-none-any.whl", hash = "sha256:eef62cdcf3bfe73e0863743511ba042dfaba04ba3d5ecdcb896a196c693ad528", size = 7205137, upload-time = "2026-10-27T22:46:27.843Z" },
 ]
 
 [[package]]
@@ -4405,6 +4431,20 @@ wheels = [
 ]
 
 [[package]]
+name = "responses"
+version = "0.26.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/47/f216a33221db8eff328987661cf18371afee89c62a62b434b963d6b509c9/responses-0.26.3.tar.gz", hash = "sha256:b0c11ca8131b8b227b8d5108e6ed39772222bd5aab030ed430e8f99057c4c409", size = 86335, upload-time = "2026-08-26T19:17:24.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/86/ca7958de70cb0752350575e98229368a3a2f746a2942034b3364e17312bb/responses-0.26.3-py3-none-any.whl", hash = "sha256:74474f799334ac4f37d93b6437ecc3bb1bb5c77a8d31780a338643be2dce0af8", size = 36289, upload-time = "2026-08-26T19:17:23.176Z" },
+]
+
+[[package]]
 name = "rfc3339-validator"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -5388,6 +5428,18 @@ wheels = [
 ]
 
 [[package]]
+name = "werkzeug"
+version = "3.1.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a4/34/4dd12fc8bb7d61c91467ec3efe415ffa7d5456f799954b40c5bbaeae470e/werkzeug-3.1.9.tar.gz", hash = "sha256:55ca7c70a75689be937aa27f8ff4b018f06ff4838fc73045560bf0f5a1291060", size = 940188, upload-time = "2026-09-27T18:33:41.637Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/38/df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/werkzeug-3.1.9-py3-none-any.whl", hash = "sha256:6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab", size = 228700, upload-time = "2026-09-27T18:33:39.685Z" },
+]
+
+[[package]]
 name = "whenever"
 version = "0.10.5"
 source = { registry = "https://pypi.org/simple" }
@@ -5555,6 +5607,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/d9/7cfd5a312760ac4dd8bf0184a6ee9e43c33e47f3dadc303032ce012b8fa3/wrapt-1.17.3-cp314-cp314t-win_amd64.whl", hash = "sha256:73d496de46cd2cdbdbcce4ae4bcdb4afb6a11234a1df9c085249d55166b95116", size = 41334, upload-time = "2025-08-12T05:53:14.178Z" },
     { url = "https://files.pythonhosted.org/packages/46/78/10ad9781128ed2f99dbc474f43283b13fea8ba58723e98844367531c18e9/wrapt-1.17.3-cp314-cp314t-win_arm64.whl", hash = "sha256:f38e60678850c42461d4202739f9bf1e3a737c7ad283638251e79cc49effb6b6", size = 38471, upload-time = "2025-08-12T05:52:57.784Z" },
     { url = "https://files.pythonhosted.org/packages/1f/f6/a933bd70f98e9cf3e08167fc5cd7aaaca49147e48411c0bd5ae701bb2194/wrapt-1.17.3-py3-none-any.whl", hash = "sha256:7171ae35d2c33d326ac19dd8facb1e82e5fd04ef8c6c0e394d7af55a55051c22", size = 23591, upload-time = "2025-08-12T05:53:20.674Z" },
+]
+
+[[package]]
+name = "xmltodict"
+version = "1.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/70/80f3b7c10d2630aa66414bf23d210386700aa390547278c789afa994fd7e/xmltodict-1.0.4.tar.gz", hash = "sha256:6d94c9f834dd9e44514162799d344d815a3a4faec913717a9ecbfa5be1bb8e61", size = 26124, upload-time = "2026-02-22T02:21:22.074Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/34/98a2f52245f4d47be93b580dae5f9861ef58977d73a79eb47c58f1ad1f3a/xmltodict-1.0.4-py3-none-any.whl", hash = "sha256:a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a", size = 13580, upload-time = "2026-02-22T02:21:21.039Z" },
 ]
 
 [[package]]

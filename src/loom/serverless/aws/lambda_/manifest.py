@@ -155,7 +155,8 @@ def _queue_event(
     ``raw_message_delivery: false``, which its subscription must keep.
     """
     queue = trigger.queue
-    if queue is None or queue.name not in queues:
+    assert queue is not None
+    if queue.name not in queues:
         declared = ", ".join(sorted(queues)) or "none"
         raise ConfigError(
             f"lambda.functions.{name}.trigger.queue.name must name the queue it consumes, a key "
@@ -163,7 +164,7 @@ def _queue_event(
         )
     event: dict[str, Any] = {"queue": queue.name}
     event.update({key: getattr(queue, key) for key in _MAPPING_KEYS})
-    event["report_batch_item_failures"] = queue.reports_batch_item_failures
+    event["report_batch_item_failures"] = True
     event["dead_letter_required"] = True
     if isinstance(trigger, EventTrigger):
         written = msgspec.to_builtins(trigger)

@@ -65,7 +65,16 @@ class TestLambdaJobsEnvelope:
         )
         envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
 
-        await run_envelope(cast(Any, application), envelope, AcmeProbeJob, None, None)
+        await run_envelope(
+            cast(Any, application),
+            envelope,
+            AcmeProbeJob,
+            None,
+            None,
+            settings=application.job_settings,
+            attempt=1,
+            deferrals=0,
+        )
 
         [job] = built
         assert job.session.caller == ALICE
