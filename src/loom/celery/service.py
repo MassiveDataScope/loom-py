@@ -312,8 +312,7 @@ class CeleryJobService:
         """Send the job to the Celery broker now, even inside a use case.
 
         The job can run before the caller's writes commit and is not undone
-        if they roll back. Inline runs the job inside the caller's
-        transaction. Work that depends on the caller's writes uses
+        if they roll back. Work that depends on the caller's writes uses
         :meth:`dispatch_after_commit`.
 
         Args:

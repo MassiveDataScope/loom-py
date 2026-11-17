@@ -147,6 +147,7 @@ class TestJobSettings:
         with pytest.raises(ConfigError, match=r"_ReportJob\.retry"):
             project.compose(JobsAdapter(_ReportJob))
 
+
 class TestCountdownBoundAtCompose:
     def test_a_declared_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
         class LateJob(Job[None]):

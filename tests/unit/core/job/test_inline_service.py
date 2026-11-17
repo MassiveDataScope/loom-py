@@ -160,7 +160,7 @@ class TestInProcessJobService:
     async def test_the_executor_gets_the_delivery_of_the_dispatch(self) -> None:
         executor = MagicMock(run=AsyncMock(return_value=1))
         service = InlineJobService(factory=MagicMock(), executor=executor)
-        handle = service.dispatch(DoubleJob, payload={"value": 1})
+        handle = service.dispatch_after_commit(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
         delivery = executor.run.await_args.kwargs["delivery"]
@@ -177,7 +177,7 @@ class TestInProcessJobService:
     ) -> None:
         executor = MagicMock(run=AsyncMock(side_effect=signal))
         service = InlineJobService(factory=MagicMock(), executor=executor)
-        handle = service.dispatch(DoubleJob, payload={"value": 1})
+        handle = service.dispatch_after_commit(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
         with pytest.raises(JobFailedError) as raised:
