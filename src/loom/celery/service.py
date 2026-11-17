@@ -172,8 +172,9 @@ class CeleryJobService:
 
     A success callback is wired as the native Celery ``link`` signature. A
     failure callback travels as its task name in the job's keyword arguments:
-    the worker that rejects the job sends it with the error's class and text,
-    so no result backend is read for them. It is delivered at least once.
+    the worker sends it, on every terminal failure of the job task, with the
+    error's class and text, so no result backend is read for them. It is
+    delivered at least once.
 
     When *factory* and *executor* are provided, :meth:`run` executes the
     job in-process (same as :class:`~loom.core.job.service.InlineJobService`)
@@ -291,7 +292,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the worker that rejects the job.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds before first execution, 0 through
                 900 inclusive. Defaults to the job's countdown.
@@ -342,7 +344,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the worker that rejects the job.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds before first execution, 0 through
                 900 inclusive. Defaults to the job's countdown.
@@ -389,7 +392,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the worker that rejects the job.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds, 0 through 900 inclusive.
             priority: Task priority override.

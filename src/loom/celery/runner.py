@@ -186,8 +186,8 @@ def _make_job_task(
     retries after its delay without spending an attempt (the task carries the
     count in its ``deferrals`` argument), and a rejection raises its error, which
     the worker stores as the failure and acknowledges (``acks_late``) without a retry.
-    Every other error that ends the task (a rejection, a worker that could not
-    open its application, a soft time limit) first sends the failure callback
+    Any error that ends the task (one the runner rejected, a worker that could
+    not open its application, a soft time limit) first sends the failure callback
     task named in its ``failure_callback`` argument, with the error's class and
     text; a ``Retry``, ``Reject`` or ``Ignore`` sends nothing. The callback is
     delivered at least once, as a worker that dies between the send and the
@@ -347,8 +347,8 @@ def _make_callback_task(
     """Register and return the Celery task calling *callback_type*'s hook for *outcome*.
 
     A success link is mutable: Celery passes the job's return value as the
-    first positional argument. A failure callback is sent by the worker that
-    rejects the job, with the error's ``exc_type`` and ``exc_msg`` as keyword
+    first positional argument. A failure callback is sent by the worker on every
+    terminal failure of the job task, with the error's ``exc_type`` and ``exc_msg`` as keyword
     arguments, so no result backend is read. The link's ``job_id`` and
     ``context`` arrive as keyword arguments.
 

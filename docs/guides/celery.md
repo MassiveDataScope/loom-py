@@ -137,7 +137,7 @@ UoW commits. The HTTP response does not wait for the job to complete.
 | `params` | `dict \| None` | Path/query params for `execute()` signature |
 | `payload` | `dict \| None` | JSON body passed as `Input()` command |
 | `on_success` | `type[Callback] \| None` | Callback invoked by the broker on success |
-| `on_failure` | `type[Callback] \| None` | Callback invoked by the worker that rejects the job |
+| `on_failure` | `type[Callback] \| None` | Callback invoked by the worker on every terminal failure of the job task |
 | `queue` | `str \| None` | Override the job's `__queue__` for this dispatch only |
 | `countdown` | `int \| None` | Delay in seconds before execution, 0 through 900 inclusive |
 | `priority` | `int \| None` | Override the job's `__priority__` |
@@ -270,6 +270,9 @@ recover entity IDs and other parameters the callback needs.
 > least once*: a worker that dies between the send and the acknowledgement of the job repeats
 > it. A hard kill (hard time limit, out of memory, `SIGKILL`) cannot notify. Deploy workers before
 > dispatchers: a worker older than the dispatcher refuses the `failure_callback` argument.
+>
+> The soft time limit equals the job's timeout, which the runner already enforces on the event
+> loop, so Celery's own soft limit fires only when a job blocks that loop.
 
 ---
 

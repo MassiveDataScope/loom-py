@@ -24,6 +24,7 @@ from loom.composition.resources import ResourceKind
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.job.timer import AsyncioTimer, JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
@@ -217,6 +218,13 @@ class TestInlineTimer:
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
 
 
+class AcmeEmailJob(Job[int]):
+    __queue__ = "emails"
+
+    def execute(self) -> int:
+        return 1
+
+
 class TestRetryPolicyLog:
     """The line is logged where a runner applies the policy; a producer applies none."""
 
@@ -226,3 +234,14 @@ class TestRetryPolicyLog:
         job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
         assert warnings_logged.named("Job retry policies") == []
+
+    def test_an_inline_line_lists_only_the_jobs_the_inline_runner_serves(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
+
+        job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmePingJob, AcmeEmailJob))
+
+        (line,) = warnings_logged.named("Job retry policies")
+        assert line["transport"] == "inline"
+        assert [entry["job"] for entry in line["jobs"]] == ["AcmePingJob"]

@@ -3,73 +3,56 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-from loom.celery.constants import callback_task_name
 from loom.core.errors import (
     JobTimeoutError,
     PostCommitError,
     RuleViolation,
     RuleViolations,
 )
-from loom.core.job.callback import CallbackOutcome
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
+    FAILURE_CALLBACK,
     REJECTION,
+    SOFT_LIMIT,
+    AcmeKeywordError,
+    BridgeDownJob,
     FlakyJob,
+    IgnoringTaskJob,
     NotOpenJob,
     RaisingJob,
-    RecordingCallback,
     RejectedJob,
+    RejectingTaskJob,
     SoftLimitJob,
     SucceedingJob,
 )
-
-FAILURE_CALLBACK = callback_task_name(RecordingCallback, CallbackOutcome.FAILURE)
-
-
-class AcmeKeywordError(Exception):
-    """An error its own class cannot rebuild from its arguments."""
-
-    def __init__(self, tenant: str, *, reason: str) -> None:
-        super().__init__(f"{tenant}: {reason}")
-
-
-def keyword_error() -> Exception:
-    return AcmeKeywordError("acme", reason="deleted")
-
-
-def post_commit() -> Exception:
-    return PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
-
-
-def job_timeout() -> Exception:
-    return JobTimeoutError("job-1", 2.0)
-
-
-def rule_violations() -> Exception:
-    return RuleViolations([RuleViolation("name", "required")])
 
 
 class TestFailureCallbackAcrossSerializers:
     @pytest.mark.parametrize("served", ["json", "pickle"], indirect=True)
     @pytest.mark.parametrize(
-        "make_error",
-        [post_commit, job_timeout, rule_violations, keyword_error],
-        ids=["post-commit", "job-timeout", "rule-violations", "keyword-error"],
+        "error",
+        [
+            pytest.param(
+                PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
+                id="post-commit",
+            ),
+            pytest.param(JobTimeoutError("job-1", 2.0), id="job-timeout"),
+            pytest.param(RuleViolations([RuleViolation("name", "required")]), id="rule-violations"),
+            pytest.param(AcmeKeywordError("acme", reason="deleted"), id="keyword-error"),
+        ],
     )
     def test_a_rejected_job_notifies_once_with_the_error_class_and_message(
-        self, served: Workbench, make_error: Callable[[], Exception]
+        self, served: Workbench, error: Exception
     ) -> None:
-        RaisingJob.error = make_error()
+        RaisingJob.error = error
 
         task_id = served.send(served.tasks[RaisingJob], failure_callback=FAILURE_CALLBACK)
         stored, calls = served.settle(task_id, notified=1)
 
-        error = RaisingJob.error
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
             (type(error).__qualname__, str(error))
@@ -101,7 +84,27 @@ class TestFailureCallbackFromTheWorker:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [call["exc_type"] for call in calls] == ["SoftTimeLimitExceeded"]
+        assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
+            ("SoftTimeLimitExceeded", str(SOFT_LIMIT))
+        ]
+
+    def test_a_bridge_error_notifies_once_with_the_bridge_message(self, served: Workbench) -> None:
+        task_id = served.send(served.tasks[BridgeDownJob], failure_callback=FAILURE_CALLBACK)
+        stored, calls = served.settle(task_id, notified=1)
+
+        assert stored.state == "FAILURE"
+        assert [call["exc_type"] for call in calls] == ["RuntimeError"]
+        assert "async bridge is not initialized" in calls[0]["exc_msg"]
+
+    @pytest.mark.parametrize("job", [RejectingTaskJob, IgnoringTaskJob])
+    def test_a_task_rejected_or_ignored_by_celery_notifies_no_one(
+        self, served: Workbench, job: type[RejectingTaskJob | IgnoringTaskJob]
+    ) -> None:
+        task_id = served.send(served.tasks[job], failure_callback=FAILURE_CALLBACK)
+        sentinel = served.send(served.tasks[SucceedingJob])
+        served.settle(sentinel, notified=0)
+
+        assert served.calls(task_id) == []
 
     def test_a_failure_that_is_retried_notifies_no_one(self, served: Workbench) -> None:
         FlakyJob.attempts = 0

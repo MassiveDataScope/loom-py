@@ -117,11 +117,11 @@ def _inline(context: JobBackendContext) -> _Built:
         timer=timer,
         metrics=context.metrics,
     )
-    if context.settings.jobs:
+    if context.jobs:
         _log.info(
             "Job retry policies",
             transport="inline",
-            jobs=context.settings.describe_retries(service.redelivery),
+            jobs=context.settings.describe_retries(service.redelivery, context.jobs),
         )
     return service, resources
 

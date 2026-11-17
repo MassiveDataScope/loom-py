@@ -244,15 +244,15 @@ class JobSettings:
         return replace(self, jobs={**self.jobs, **replaced})
 
     def describe_retries(
-        self, redelivery: Redelivery, jobs: Iterable[type[Job[Any]]] | None = None
+        self, redelivery: Redelivery, jobs: Iterable[type[Job[Any]]]
     ) -> list[dict[str, str]]:
         """Each job's effective retry policy and where it came from, for the start-up log.
 
         Args:
             redelivery: What the transport does with a job that must run again.
-            jobs: The jobs to describe; every job of these settings when omitted.
+            jobs: The jobs the runner serves.
         """
         return [
             {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe(redelivery)}
-            for job_type in (self.jobs if jobs is None else jobs)
+            for job_type in jobs
         ]

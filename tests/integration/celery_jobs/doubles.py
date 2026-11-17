@@ -7,8 +7,9 @@ from typing import Any, ClassVar
 
 from billiard.exceptions import SoftTimeLimitExceeded  # type: ignore[import-untyped]
 
+from loom.celery.constants import callback_task_name
 from loom.celery.runner import _CeleryAsyncRuntime
-from loom.core.job.callback import JobCallback
+from loom.core.job.callback import CallbackOutcome, JobCallback
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection
 from loom.core.job.policy import Backoff
@@ -66,12 +67,47 @@ class SoftLimitJob(Job[None]):
         return None
 
 
-class SoftLimitRuntime(_CeleryAsyncRuntime):
-    """A runtime whose bridge raises the soft time limit, as Celery's signal handler does."""
+class BridgeDownJob(Job[None]):
+    """Runs on a worker whose async bridge was never initialised."""
+
+    async def execute(self) -> None:
+        return None
+
+
+class RejectingTaskJob(Job[None]):
+    """Its task is rejected by Celery from outside the runner."""
+
+    async def execute(self) -> None:
+        return None
+
+
+class IgnoringTaskJob(Job[None]):
+    """Its task is ignored by Celery from outside the runner."""
+
+    async def execute(self) -> None:
+        return None
+
+
+class AcmeKeywordError(Exception):
+    """An error its own class cannot rebuild from its arguments."""
+
+    def __init__(self, tenant: str, *, reason: str) -> None:
+        super().__init__(f"{tenant}: {reason}")
+
+
+SOFT_LIMIT = SoftTimeLimitExceeded(30)
+
+
+class FailingRuntime(_CeleryAsyncRuntime):
+    """A runtime whose bridge raises *error*, as Celery's own machinery would from outside."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
 
     def run(self, coro: Any, *, timeout: float | None = None, eager_fallback: bool) -> Any:
         coro.close()
-        raise SoftTimeLimitExceeded()
+        raise self.error
 
 
 class RecordingCallback(JobCallback):
@@ -89,3 +125,6 @@ class RecordingCallback(JobCallback):
             self.seen.append(
                 {"job_id": job_id, "hook": "on_failure", "exc_type": exc_type, "exc_msg": exc_msg}
             )
+
+
+FAILURE_CALLBACK = callback_task_name(RecordingCallback, CallbackOutcome.FAILURE)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 import uuid
 from collections.abc import Callable, Generator
@@ -13,6 +12,7 @@ from typing import Any
 import pytest
 from celery import Celery, _state, signals  # type: ignore[import-untyped]
 from celery.contrib.testing.worker import start_worker  # type: ignore[import-untyped]
+from celery.exceptions import Ignore, Reject  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task, _make_job_task
@@ -22,13 +22,17 @@ from loom.core.job.job import Job
 from tests.helpers.jobs import JobKernel
 from tests.integration.celery_jobs.doubles import (
     QUEUE,
+    SOFT_LIMIT,
+    BridgeDownJob,
+    FailingRuntime,
     FlakyJob,
+    IgnoringTaskJob,
     NotOpenJob,
     RaisingJob,
     RecordingCallback,
     RejectedJob,
+    RejectingTaskJob,
     SoftLimitJob,
-    SoftLimitRuntime,
     SucceedingJob,
 )
 
@@ -43,7 +47,6 @@ WORKER_SIGNALS = (
 SETTLE_TIMEOUT_S = 10.0
 POLL_S = 0.02
 BROKER_POLL_S = 0.05
-WAKE_DELAY_S = 0.05
 REPEAT_GRACE_S = 0.2
 
 
@@ -102,22 +105,18 @@ class Workbench:
 
     @contextmanager
     def worker(self) -> Generator[None]:
-        """Run a solo-pool worker for everything registered so far.
-
-        The worker looks at its shutdown flag only when its loop wakes, every two seconds
-        while idle; a message sent as the block ends wakes it at once.
-        """
+        """Run a solo-pool worker for everything registered so far, stopped by remote control."""
         with start_worker(
             self.app,
             pool="solo",
             perform_ping_check=False,
             loglevel="CRITICAL",
             queues=[self.queue],
-        ):
+        ) as worker:
             try:
                 yield
             finally:
-                threading.Timer(WAKE_DELAY_S, lambda: self.app.send_task("celery.ping")).start()
+                self.app.control.shutdown(destination=[worker.hostname])
 
     def send(self, task: Any, **kwargs: Any) -> str:
         """Send *task* under a task id of its own, with *kwargs*; return the id."""
@@ -130,21 +129,29 @@ class Workbench:
 
         Returns:
             The stored result and every callback call recorded for the job.
+
+        Raises:
+            TimeoutError: When the job does not end, or the callbacks do not arrive, in time.
         """
         stored = AsyncResult(task_id, app=self.app)
-        self._wait_until(stored.ready)
-        self._wait_until(lambda: len(self._seen(task_id)) >= notified)
+        self._wait_until(stored.ready, f"job {task_id} to end")
+        self._wait_until(
+            lambda: len(self.calls(task_id)) >= notified, f"{notified} callback(s) for {task_id}"
+        )
         time.sleep(REPEAT_GRACE_S)
-        return stored, self._seen(task_id)
+        return stored, self.calls(task_id)
 
     @staticmethod
-    def _seen(task_id: str) -> list[dict[str, Any]]:
+    def calls(task_id: str) -> list[dict[str, Any]]:
+        """Every callback call recorded for the job *task_id*."""
         return [call for call in RecordingCallback.seen if call["job_id"] == task_id]
 
     @staticmethod
-    def _wait_until(condition: Callable[[], bool]) -> None:
+    def _wait_until(condition: Callable[[], bool], what: str) -> None:
         deadline = time.monotonic() + SETTLE_TIMEOUT_S
-        while not condition() and time.monotonic() < deadline:
+        while not condition():
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out after {SETTLE_TIMEOUT_S:g}s waiting for {what}")
             time.sleep(POLL_S)
 
 
@@ -188,21 +195,6 @@ def workbench() -> Generator[Callable[[str], Workbench]]:
                 signal.sender_receivers_cache.clear()
 
 
-@contextmanager
-def _serving_the_doubles(bench: Workbench) -> Generator[Workbench]:
-    unopened = _CeleryAsyncRuntime()
-    unopened.refuse(ConnectionError("database down"))
-    bench.job_task(RaisingJob, max_attempts=1)
-    bench.job_task(RejectedJob)
-    bench.job_task(SucceedingJob)
-    bench.job_task(FlakyJob)
-    bench.job_task(NotOpenJob, runtime=unopened)
-    bench.job_task(SoftLimitJob, runtime=SoftLimitRuntime())
-    bench.callback_tasks(RecordingCallback)
-    with bench.worker():
-        yield bench
-
-
 @pytest.fixture(scope="package")
 def served(
     request: pytest.FixtureRequest, workbench: Callable[[str], Workbench]
@@ -212,7 +204,20 @@ def served(
     A test names the serializer with ``parametrize("served", [...], indirect=True)``; the
     workers are never up together, as they would share one in-memory broker.
     """
-    with _serving_the_doubles(workbench(request.param)) as bench:
+    bench = workbench(request.param)
+    unopened = _CeleryAsyncRuntime()
+    unopened.refuse(ConnectionError("database down"))
+    bench.job_task(RaisingJob, max_attempts=1)
+    bench.job_task(RejectedJob)
+    bench.job_task(SucceedingJob)
+    bench.job_task(FlakyJob)
+    bench.job_task(NotOpenJob, runtime=unopened)
+    bench.job_task(BridgeDownJob, runtime=_CeleryAsyncRuntime())
+    bench.job_task(SoftLimitJob, runtime=FailingRuntime(SOFT_LIMIT))
+    bench.job_task(RejectingTaskJob, runtime=FailingRuntime(Reject("refused", requeue=False)))
+    bench.job_task(IgnoringTaskJob, runtime=FailingRuntime(Ignore()))
+    bench.callback_tasks(RecordingCallback)
+    with bench.worker():
         yield bench
 
 
