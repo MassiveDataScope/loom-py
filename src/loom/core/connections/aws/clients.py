@@ -11,24 +11,19 @@ from loom.core.connections.aws.loader import aws_island
 
 
 class AwsClients:
-    """Every boto3 client a process uses, one per service and distinct client settings.
+    """Every boto3 client a process uses, one per service and distinct client settings."""
 
-    Args:
-        config: The settings of a client asked for with no settings of its own.
-    """
-
-    def __init__(self, config: AwsClientConfig) -> None:
-        self._config = config
+    def __init__(self) -> None:
         self._lock = Lock()
         self._clients: dict[Hashable, Any] = {}
         self._sessions: dict[str | None, Any] = {}
 
-    def client(self, service: str, config: AwsClientConfig | None = None) -> Any:
+    def client(self, service: str, config: AwsClientConfig) -> Any:
         """Return the client of *service* for *config*, built on the first request.
 
         Args:
             service: The boto3 service name.
-            config: Settings of this client; ``None`` takes the ones this object was given.
+            config: Settings of the client.
 
         Returns:
             The client; typed ``Any`` because boto3 ships no stubs.
@@ -36,15 +31,14 @@ class AwsClients:
         Raises:
             MissingExtraError: When boto3 is not installed, naming the ``aws`` extra.
         """
-        settings = self._config if config is None else config
-        key = (service, settings.client_key())
+        key = (service, config.client_key())
         built = self._clients.get(key)
         if built is not None:
             return built
         with self._lock:
             built = self._clients.get(key)
             if built is None:
-                built = self._clients[key] = self._build(service, settings)
+                built = self._clients[key] = self._build(service, config)
             return built
 
     def close(self) -> None:

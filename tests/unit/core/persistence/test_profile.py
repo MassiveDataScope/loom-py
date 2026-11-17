@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog
 from loom.core.stores.profile import (
     SERVER_PROFILE,
@@ -68,7 +68,7 @@ class TestServerProfile:
             catalog=StoreCatalog(specs={}),
             store=DEFAULT_STORE,
             cursor_codec=CursorCodec.disabled(),
-            aws=AwsClients(AwsClientConfig()),
+            aws=AwsClients(),
         )
 
         assert runtime.pool_metrics is None

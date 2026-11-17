@@ -22,25 +22,28 @@ def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
     return fake_aws_island(monkeypatch)
 
 
+_CONFIG = AwsClientConfig(region="eu-west-1")
+
+
 @pytest.fixture
 def clients() -> AwsClients:
-    return AwsClients(AwsClientConfig(region="eu-west-1"))
+    return AwsClients()
 
 
 class TestClientCache:
     def test_the_same_service_and_settings_give_the_same_client(
         self, island: FakeAwsIsland, clients: AwsClients
     ) -> None:
-        first = clients.client("dynamodb")
+        first = clients.client("dynamodb", _CONFIG)
 
-        assert clients.client("dynamodb") is first
+        assert clients.client("dynamodb", _CONFIG) is first
         assert clients.client("dynamodb", AwsClientConfig(region="eu-west-1")) is first
         assert len(island.built) == 1
 
     def test_another_service_gives_another_client(
         self, island: FakeAwsIsland, clients: AwsClients
     ) -> None:
-        assert clients.client("dynamodb") is not clients.client("sqs")
+        assert clients.client("dynamodb", _CONFIG) is not clients.client("sqs", _CONFIG)
 
     @pytest.mark.parametrize(
         "other",
@@ -54,7 +57,7 @@ class TestClientCache:
     def test_other_settings_give_another_client(
         self, island: FakeAwsIsland, clients: AwsClients, other: AwsClientConfig
     ) -> None:
-        assert clients.client("dynamodb", other) is not clients.client("dynamodb")
+        assert clients.client("dynamodb", other) is not clients.client("dynamodb", _CONFIG)
 
     def test_a_subclass_of_the_settings_shares_the_client_of_its_base(
         self, island: FakeAwsIsland, clients: AwsClients
@@ -69,8 +72,8 @@ class TestClientCache:
     def test_one_session_serves_every_client_of_a_profile(
         self, island: FakeAwsIsland, clients: AwsClients
     ) -> None:
-        clients.client("dynamodb")
-        clients.client("sqs")
+        clients.client("dynamodb", _CONFIG)
+        clients.client("sqs", _CONFIG)
         clients.client("sqs", AwsClientConfig(region="us-east-1"))
         clients.client("sns", AwsClientConfig(profile="dev"))
 
@@ -82,7 +85,7 @@ class TestClientCache:
         without_boto3(monkeypatch)
 
         with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
-            clients.client("s3")
+            clients.client("s3", _CONFIG)
 
 
 class TestConcurrentFirstCalls:
@@ -94,7 +97,7 @@ class TestConcurrentFirstCalls:
 
         def ask(_: int) -> Any:
             start.wait()
-            return clients.client("dynamodb")
+            return clients.client("dynamodb", _CONFIG)
 
         with ThreadPoolExecutor(_THREADS) as pool:
             answers = list(pool.map(ask, range(_THREADS)))
@@ -140,11 +143,11 @@ class TestClose:
     def test_a_reopened_client_is_the_same_and_the_second_close_releases_its_connection(
         self, pooled: _PooledIsland, clients: AwsClients
     ) -> None:
-        client = clients.client("dynamodb")
+        client = clients.client("dynamodb", _CONFIG)
         client.call()
 
         clients.close()
-        reopened = clients.client("dynamodb")
+        reopened = clients.client("dynamodb", _CONFIG)
         reopened.call()
         assert reopened.connected
         clients.close()
@@ -154,16 +157,16 @@ class TestClose:
         assert len(pooled.pooled) == 1
 
     def test_close_keeps_the_sessions(self, island: FakeAwsIsland, clients: AwsClients) -> None:
-        clients.client("dynamodb")
+        clients.client("dynamodb", _CONFIG)
         clients.close()
-        clients.client("sqs")
+        clients.client("sqs", _CONFIG)
 
         assert island.sessions == [None]
 
     def test_every_client_is_closed_even_when_one_fails_and_the_failures_are_grouped(
         self, island: FakeAwsIsland, clients: AwsClients
     ) -> None:
-        failing, other = clients.client("dynamodb"), clients.client("sqs")
+        failing, other = clients.client("dynamodb", _CONFIG), clients.client("sqs", _CONFIG)
         failing.close.side_effect = OSError("boom")
 
         with pytest.raises(ExceptionGroup) as raised:
@@ -178,7 +181,7 @@ class TestRealIslandPath:
         settings = AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566"))
 
         with patched_aws_clients() as factory:
-            AwsClients(settings).client("sqs")
+            AwsClients().client("sqs", settings)
 
         factory.assert_called_once_with("sqs", region_name="eu-west-1")
         assert factory.options[-1]["endpoint_url"] == "http://localhost:4566"

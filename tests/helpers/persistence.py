@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.model import BaseModel
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -41,7 +41,7 @@ def build_backend(
         catalog=load_catalog(ctx),
         store=store,
         cursor_codec=CursorCodec.from_context(ctx),
-        aws=AwsClients(AwsClientConfig()) if aws is None else aws,
+        aws=AwsClients() if aws is None else aws,
     )
     return backend.build(ctx, models, runtime)
 

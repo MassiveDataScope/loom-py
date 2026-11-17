@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreKey, load_catalog
 from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
@@ -21,7 +21,7 @@ class TestBackendStoreLookup:
             catalog=load_catalog(ctx),
             store=StoreKey("events"),
             cursor_codec=CursorCodec.disabled(),
-            aws=AwsClients(AwsClientConfig()),
+            aws=AwsClients(),
         )
         backend = resolve_store_backend(name)
 

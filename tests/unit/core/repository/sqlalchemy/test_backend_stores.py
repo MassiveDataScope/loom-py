@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
@@ -67,7 +67,7 @@ def _build(
         catalog=load_catalog(ctx),
         store=store,
         cursor_codec=CursorCodec.from_context(ctx),
-        aws=AwsClients(AwsClientConfig()),
+        aws=AwsClients(),
     )
     return SQLAlchemyBackend().build(ctx, models, runtime)
 
@@ -135,7 +135,7 @@ class TestBackendStores:
                 catalog=load_catalog(ctx),
                 store=store,
                 cursor_codec=codec,
-                aws=AwsClients(AwsClientConfig()),
+                aws=AwsClients(),
             )
             SQLAlchemyBackend().build(ctx, (), runtime).repo_registration_module(container)
 

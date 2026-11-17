@@ -8,7 +8,7 @@ import pytest
 
 import loom.stores.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
@@ -85,7 +85,7 @@ class TestDynamoClientsPerStore:
     def test_stores_with_different_settings_get_different_clients(
         self, island: FakeAwsIsland
     ) -> None:
-        aws = AwsClients(AwsClientConfig())
+        aws = AwsClients()
 
         self._build_stores(
             aws,
@@ -96,7 +96,7 @@ class TestDynamoClientsPerStore:
         assert len(island.built) == 2
 
     def test_stores_with_the_same_settings_share_one_client(self, island: FakeAwsIsland) -> None:
-        aws = AwsClients(AwsClientConfig())
+        aws = AwsClients()
 
         self._build_stores(
             aws,

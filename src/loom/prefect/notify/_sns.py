@@ -47,7 +47,7 @@ class SnsNotifier:
             region = topic_arn.split(":")[3]
             ctx = ConfigContext.from_dict({ConfigKey.AWS: aws})
             config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, region=region)
-            client = AwsClients(config).client("sns")
+            client = AwsClients().client("sns", config)
         self._client = client
 
     def notify(self, event: NotifyEvent) -> None:

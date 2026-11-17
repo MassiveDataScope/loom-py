@@ -26,7 +26,7 @@ from loom.core.config import (
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.config.overrides import load_application_config
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
@@ -341,7 +341,7 @@ class Project:
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, adapter))
-        aws = AwsClients(AwsClientConfig())
+        aws = AwsClients()
         stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
         kernel, sql, job_resources = clock.lap(
             "register", phases.register(self, recipe, stores, aws, logger=logger)
