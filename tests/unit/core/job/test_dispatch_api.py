@@ -9,6 +9,7 @@ import pytest
 
 from loom.celery.service import CeleryJobService
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
+from loom.core.job.policy import Countdown
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
 from loom.testing.jobs import RecordingJobService
@@ -36,24 +37,24 @@ def service(request: pytest.FixtureRequest) -> Iterator[JobService]:
 
 
 class TestCountdownBound:
-    @pytest.mark.parametrize("seconds", [0, 900])
+    @pytest.mark.parametrize("seconds", [0, Countdown.MAX_SECONDS])
     def test_dispatch_after_commit_accepts_the_bound(
         self, service: JobService, seconds: int
     ) -> None:
         service.dispatch_after_commit(EmailJob, countdown=seconds)
 
-    @pytest.mark.parametrize("seconds", [-1, 901])
+    @pytest.mark.parametrize("seconds", [-1, Countdown.MAX_SECONDS + 1])
     def test_dispatch_after_commit_rejects_outside_the_bound(
         self, service: JobService, seconds: int
     ) -> None:
-        with pytest.raises(ValueError, match="900"):
+        with pytest.raises(ValueError, match=str(Countdown.MAX_SECONDS)):
             service.dispatch_after_commit(EmailJob, countdown=seconds)
 
-    @pytest.mark.parametrize("seconds", [-1, 901])
+    @pytest.mark.parametrize("seconds", [-1, Countdown.MAX_SECONDS + 1])
     async def test_dispatch_now_rejects_outside_the_bound(
         self, service: JobService, seconds: int
     ) -> None:
-        with pytest.raises(ValueError, match="900"):
+        with pytest.raises(ValueError, match=str(Countdown.MAX_SECONDS)):
             await service.dispatch_now(EmailJob, countdown=seconds)
 
 

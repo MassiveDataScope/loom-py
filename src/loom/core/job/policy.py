@@ -3,26 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Countdown:
-    """Delay in seconds before a job runs, bounded to 0..900 inclusive.
-
-    This is the only owner of that bound: dispatch countdown, backoff steps
-    and JobRetry delays all construct a ``Countdown``.
-
-    Args:
-        seconds: Delay in seconds.
+    """A delay in whole seconds, from 0 to 900: the longest any job transport can wait.
 
     Raises:
-        ValueError: When *seconds* is outside 0..900 inclusive.
+        ValueError: When the seconds fall outside the bound.
     """
+
+    MAX_SECONDS: ClassVar[int] = 900
 
     seconds: int
 
     def __post_init__(self) -> None:
-        if self.seconds < 0 or self.seconds > 900:
-            raise ValueError(
-                f"Countdown must be between 0 and 900 seconds inclusive, got {self.seconds}"
-            )
+        if not 0 <= self.seconds <= self.MAX_SECONDS:
+            raise ValueError(f"a countdown is 0 to {self.MAX_SECONDS} seconds, not {self.seconds}")

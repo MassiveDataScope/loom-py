@@ -120,3 +120,23 @@ class TestJobSettings:
 
         with pytest.raises(ConfigError, match="_ReportJob"):
             project.compose(adapter)
+
+
+class TestCountdownBoundAtCompose:
+    def test_a_declared_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        class LateJob(Job[None]):
+            __countdown__ = 901
+
+            def execute(self) -> None:
+                return None
+
+        project = job_project(tmp_path, {}, "inline")
+
+        with pytest.raises(ConfigError, match="LateJob"):
+            project.compose(JobsAdapter(LateJob))
+
+    def test_a_configured_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        project = job_project(tmp_path, {"jobs": {"_ReportJob": {"countdown": 901}}}, "inline")
+
+        with pytest.raises(ConfigError, match="_ReportJob"):
+            project.compose(JobsAdapter(_ReportJob))

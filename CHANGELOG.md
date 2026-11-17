@@ -26,8 +26,11 @@
   **Migration:** rename every call; there is no alias.
 - **jobs:** the `eta` parameter is removed from every dispatch API.
   **Migration:** pass `countdown` in seconds (0 through 900).
-- **jobs:** `countdown` is bounded to 0–900 seconds on every backend (inline,
-  Celery, SQS); 901 or a negative value raises `ValueError`.
+- **jobs:** `countdown` is bounded to 0 to 900 s on every backend. A countdown
+  outside that bound, including negatives, raises `ValueError` on SQS, Celery,
+  inline and `dispatch_now`, not `SQSDispatchError`. `SQSErrorCode.DELAY_TOO_LONG`
+  is removed. Inline validates the bound but still runs without delay until
+  the job timer lands.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
@@ -449,7 +452,7 @@
     `execution_closed` warning with the guidance. `executor.run(UseCase)`
     from such a task acts as the same caller in an execution, unit of work,
     post-commit channel and `REQUEST` instances of its own, and
-    `JobService.dispatch_after_commit` from it goes out at once, detached, carrying the
+    `JobService.dispatch` from it goes out at once, detached, carrying the
     caller. Work awaited inside the execution (`gather`, `TaskGroup`,
     `asyncio.to_thread`) is unaffected.
     **Migration:** a background task that needs `REQUEST` bindings runs its
@@ -905,6 +908,9 @@
 
 ### jobs
 
+- **jobs:** `dispatch_now` sends a job immediately, on every backend, outside
+  the post-commit channel; inline runs it now. The caveat about the caller's
+  writes is in its docstring and docs.
 - **jobs:** `app.job_service` (`inline`, `celery` or `module:Class` built with
   a `JobBackendContext`) names the job backend; queues listed in
   `celery.queues`, but Celery's default queue, go to Celery through the new

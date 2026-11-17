@@ -328,7 +328,13 @@ class SQSJobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Validate, encode and send now, outside any unit of work."""
+        """Validate, encode and send the job now, even inside a use case.
+
+        The job can run before the caller's writes commit and is not undone
+        if they roll back. Inline runs the job inside the caller's
+        transaction. Work that depends on the caller's writes uses
+        :meth:`dispatch_after_commit`.
+        """
         send, handle = self._message(
             job_type,
             params=params,

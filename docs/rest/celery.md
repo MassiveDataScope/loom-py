@@ -323,8 +323,8 @@ identity.
 - Queue URLs or boto3 clients inside a use case: the configuration belongs in
   `sqs.queues` and `aws:`; a use case injects `JobService` and names a queue
   at most.
-- `dispatch` for work the request needs now: it runs after the commit, so the
-  response cannot depend on it. Use `invoke`.
+- `dispatch_after_commit` for work the request needs now: it runs after the
+  commit, so the response cannot depend on it. Use `invoke`.
 - Non-idempotent jobs: delivery is at least once with SQS and with Celery
   (tasks are registered with `acks_late=True`, so a worker lost mid-task
   re-runs it). Make `execute()` safe to repeat, for example keyed by a
@@ -412,11 +412,13 @@ class ShipOrderJob(Job[None]):
 - On a FIFO queue, the SHA-256 of the group field's value is the
   `MessageGroupId` (it meets SQS's limits and keeps the value out of SQS), and
   the task id is the `MessageDeduplicationId`.
-- `dispatch` raises `SQSDispatchError`, before anything is sent, for:
-  callbacks, a `priority` other than the job's, a queue without a URL, a
-  delay over 900 s, any delay on a FIFO queue (FIFO queues take a delay per
-  queue only), a FIFO payload whose group field is missing or null, a body
-  holding a character SQS refuses, or a body over 256 KiB.
+- `dispatch_after_commit` refuses an out-of-bound countdown (above 900 or
+  negative) with `ValueError` before anything is sent. It raises
+  `SQSDispatchError`, before anything is sent, for: callbacks, a `priority`
+  other than the job's, a queue without a URL, any delay on a FIFO queue
+  (FIFO queues take a delay per queue only), a FIFO payload whose group field
+  is missing or null, a body holding a character SQS refuses, or a body over
+  256 KiB.
 - The message is sent after the commit, on the shielded publish lane, so a
   cancellation after the commit does not lose it. A failed send is logged and
   raised as `SQSDispatchError` with the job, task id, queue and AWS error code,

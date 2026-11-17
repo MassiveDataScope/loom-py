@@ -52,14 +52,14 @@ class Metrics:
 
 
 class Broker:
-    """Job service double: ``dispatch`` enqueues a send on the post-commit channel."""
+    """Job service double: ``dispatch_after_commit`` enqueues a send on the post-commit channel."""
 
     def __init__(self, log: Log) -> None:
         self._log = log
         self.sent: list[str] = []
         self.failing: set[str] = set()
 
-    def dispatch(self, job_name: str) -> None:
+    def dispatch_after_commit(self, job_name: str) -> None:
         def send() -> None:
             scope = current_scope()
             open_uow = scope is not None and bool(scope.participants)
@@ -188,7 +188,7 @@ class Dispatching(UseCase[Any, str]):
         self._broker = broker
 
     async def execute(self, value: str) -> str:
-        self._broker.dispatch(value)
+        self._broker.dispatch_after_commit(value)
         return value
 
 
@@ -197,7 +197,7 @@ class DispatchThenFail(UseCase[Any, str]):
         self._broker = broker
 
     async def execute(self, value: str) -> str:
-        self._broker.dispatch(value)
+        self._broker.dispatch_after_commit(value)
         raise RuntimeError("after dispatch")
 
 

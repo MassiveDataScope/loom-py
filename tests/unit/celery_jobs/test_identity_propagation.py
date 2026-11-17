@@ -2,7 +2,7 @@
 
 A context variable does not cross a process boundary, so the identity travels
 inside the job envelope. These tests pin both ends of that wire contract: what
-``dispatch`` puts in, what the worker takes out, and what happens to an envelope
+``dispatch_after_commit`` puts in, what the worker takes out, and what happens to an envelope
 minted before the contract existed.
 """
 

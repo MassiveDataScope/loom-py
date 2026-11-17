@@ -6,8 +6,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.job.job import Job
+from loom.core.job.policy import Countdown
 from loom.core.model import LoomFrozenStruct
 
 
@@ -47,11 +48,24 @@ class JobOptions:
 
     @classmethod
     def resolve(cls, job_type: type[Job[Any]], config: JobConfig = _EMPTY) -> JobOptions:
-        """*config* over the ClassVars of *job_type*: a ``None`` field keeps its ClassVar."""
+        """*config* over the ClassVars of *job_type*: a ``None`` field keeps its ClassVar.
+
+        Raises:
+            ConfigError: When the effective countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
+        """
+        seconds = job_type.__countdown__ if config.countdown is None else config.countdown
+        try:
+            countdown = Countdown(seconds).seconds
+        except ValueError as exc:
+            raise ConfigError(
+                f"{job_type.__name__} countdown is {seconds}; "
+                f"a countdown is 0 to {Countdown.MAX_SECONDS} seconds"
+            ) from exc
         return cls(
             queue=job_type.__queue__ if config.queue is None else config.queue,
             retries=job_type.__retries__ if config.retries is None else config.retries,
-            countdown=job_type.__countdown__ if config.countdown is None else config.countdown,
+            countdown=countdown,
             timeout=job_type.__timeout__ if config.timeout is None else config.timeout,
             priority=job_type.__priority__ if config.priority is None else config.priority,
         )
@@ -73,7 +87,9 @@ class JobSettings:
         """Resolve each of *jobs* against its ``jobs.<Job>`` section in *ctx*.
 
         Raises:
-            ConfigError: When a section is present but invalid.
+            ConfigError: When a section is present but invalid, or a job's
+                effective countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """
         return cls(
             {
@@ -88,5 +104,11 @@ class JobSettings:
         )
 
     def of(self, job_type: type[Job[Any]]) -> JobOptions:
-        """The options of *job_type* in this application."""
+        """The options of *job_type* in this application.
+
+        Raises:
+            ConfigError: When *job_type* is not in this application and its
+                countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
+        """
         return self.jobs.get(job_type) or JobOptions.resolve(job_type)

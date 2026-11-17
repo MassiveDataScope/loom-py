@@ -42,8 +42,9 @@ class _PendingDispatch:
     task_id: str
     payload: dict[str, Any]
     params: dict[str, Any] | None
-    on_success: type[Any] | None
-    on_failure: type[Any] | None
+    on_success: type[JobCallback] | None
+    on_failure: type[JobCallback] | None
+    countdown: Countdown
     outcome: InlineOutcome
     factory: UseCaseFactory
     executor: RuntimeExecutor = field(repr=False)
@@ -178,10 +179,12 @@ class JobService(Protocol):
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Send the job now, outside any unit of work.
+        """Send the job now, even inside a use case.
 
-        Celery and SQS send immediately. Inline runs the job immediately
-        (countdown is validated and currently ignored).
+        The job can run before the caller's writes commit and is not undone
+        if they roll back. Inline runs the job inside the caller's
+        transaction. Work that depends on the caller's writes uses
+        :meth:`dispatch_after_commit`.
 
         Args:
             job_type: Concrete Job subclass to dispatch.
@@ -301,8 +304,8 @@ class InlineJobService:
         *,
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
-        on_success: type[Any] | None = None,
-        on_failure: type[Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
@@ -352,8 +355,8 @@ class InlineJobService:
         *,
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
-        on_success: type[Any] | None = None,
-        on_failure: type[Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
@@ -402,8 +405,8 @@ class InlineJobService:
         *,
         params: dict[str, Any] | None,
         payload: dict[str, Any] | None,
-        on_success: type[Any] | None,
-        on_failure: type[Any] | None,
+        on_success: type[JobCallback] | None,
+        on_failure: type[JobCallback] | None,
         queue: str | None,
         countdown: int | None,
         priority: int | None,
@@ -431,7 +434,7 @@ class InlineJobService:
         """
         _ = priority
         options = self._settings.of(job_type)
-        Countdown(options.countdown if countdown is None else countdown)
+        delay = Countdown(options.countdown if countdown is None else countdown)
         payload = payload or {}
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
@@ -443,6 +446,7 @@ class InlineJobService:
             params=params,
             on_success=on_success,
             on_failure=on_failure,
+            countdown=delay,
             outcome=outcome,
             factory=self._factory,
             executor=self._executor,
@@ -460,8 +464,8 @@ class InlineJobService:
         self,
         jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
         *,
-        on_all_success: type[Any] | None = None,
-        on_any_failure: type[Any] | None = None,
+        on_all_success: type[JobCallback] | None = None,
+        on_any_failure: type[JobCallback] | None = None,
     ) -> JobGroup:
         """Dispatch multiple Jobs and return a group handle.
 

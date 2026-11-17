@@ -39,6 +39,7 @@ class DispatchedJob:
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
+    countdown: int
     identity: Identity | None
     """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
 
@@ -138,7 +139,12 @@ class RecordingJobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Record *job_type* now, outside any unit of work.
+        """Record *job_type* now, even inside a use case.
+
+        The job can run before the caller's writes commit and is not undone
+        if they roll back. Inline runs the job inside the caller's
+        transaction. Work that depends on the caller's writes uses
+        :meth:`dispatch_after_commit`.
 
         Raises:
             ValueError: When a callback is attached that the scan did not find,
@@ -192,7 +198,7 @@ class RecordingJobService:
         """
         _ = priority
         options = self._settings.of(job_type)
-        Countdown(options.countdown if countdown is None else countdown)
+        delay = Countdown(options.countdown if countdown is None else countdown)
         payload = payload or {}
         self._callbacks.refuse(payload, on_success, on_failure)
         record = DispatchedJob(
@@ -200,6 +206,7 @@ class RecordingJobService:
             payload=copy.deepcopy(payload),
             params=copy.deepcopy(params),
             queue=queue or options.queue,
+            countdown=delay.seconds,
             identity=captured_delegation().caller,
         )
         handle: JobHandle[ResultT] = JobHandle(
