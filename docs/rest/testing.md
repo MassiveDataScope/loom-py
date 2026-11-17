@@ -285,13 +285,15 @@ does for the application (`aws.region`, a profile of `~/.aws/config`,
 `123456789012`. The queue moto makes must be where the configuration says: when its region or
 account differs from the configured URL's, construction raises a `ConfigError`
 naming the URL it made, what differs and the way out. A URL that is not an AWS
-SQS one is refused the same way. Nothing is ever sent to the network: the
-application's `sqs` client carries a last `before-send` handler that refuses any
+SQS one is refused the same way. Nothing the `sqs` client sends ever leaves the
+process: the application's `sqs` client carries a last `before-send` handler that refuses any
 request moto did not answer, so an endpoint override (`aws.url`, `sqs.url`,
 `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SQS`, a profile `endpoint_url`) or a
 dualstack endpoint fails with a `ConfigError` naming the endpoint; a FIPS
-endpoint gets moto's own 404. With no region at all, botocore's own
-`NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+endpoint gets moto's own 404. Clients of other services follow plain moto
+semantics: only the `sqs` client is guarded. A named profile (`aws.profile`)
+skips moto's fake environment credentials, so the profile must carry its own.
+With no region at all, botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
 entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
 built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
 `aws.region: us-east-1` in the configuration works as it is. A user's own

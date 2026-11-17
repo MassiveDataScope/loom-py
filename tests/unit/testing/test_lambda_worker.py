@@ -381,6 +381,17 @@ class TestWhereTheQueueLives:
 
         assert str(refused.value) == expected
 
+    def test_the_way_out_names_sqs_region_when_the_sqs_section_sets_one(
+        self, config: Config, tmp_path: Path
+    ) -> None:
+        path = Path(config(region="eu-west-1"))
+        document = yaml.safe_load(path.read_text())
+        document["sqs"]["region"] = "eu-west-1"
+        path.write_text(yaml.safe_dump(document))
+
+        with pytest.raises(ConfigError, match=r"set sqs\.region to the URL's region"):
+            _open(str(path))
+
     def test_a_region_of_the_aws_profile_other_than_the_urls_is_refused(
         self, config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -573,6 +584,32 @@ class TestApplication:
 
 
 class TestLifecycle:
+    def test_a_failed_init_stops_the_mock_even_when_closing_the_clients_raises(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def bind(*_: Any) -> None:
+            raise RuntimeError("bind failed")
+
+        def close(*_: Any) -> None:
+            raise RuntimeError("clients failed")
+
+        monkeypatch.setattr(LambdaAdapter, "bind", bind)
+        monkeypatch.setattr(AwsClients, "close", close)
+
+        with pytest.raises(RuntimeError, match="clients failed"):
+            _open(config())
+
+        assert "AWS_ACCESS_KEY_ID" not in os.environ
+
+    def test_a_closed_worker_refuses_to_deliver_or_redeliver(self, config: Config) -> None:
+        worker = _open(config())
+        worker.close()
+
+        with pytest.raises(RuntimeError, match="the worker is closed"):
+            worker.redeliver()
+        with pytest.raises(RuntimeError, match="the worker is closed"):
+            worker.deliver(_job("SendEmailJob"), params={"marker": "ok"})
+
     def test_a_normal_close_closes_the_applications_clients_once(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
     ) -> None:

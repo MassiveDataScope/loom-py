@@ -71,10 +71,14 @@ class _Body(io.BytesIO):
 
 
 def unanswered(request: Any, message: str) -> Any:
-    """The response of a request nobody answered: a client error that carries *message*.
+    """The client error response for a request no handler answered.
 
-    A handler of ``before-send`` returns it; botocore uses the first response any handler
-    gave, so it reaches the caller only when moto's own handler gave none.
+    Args:
+        request: The prepared request.
+        message: The error message the caller reads.
+
+    Returns:
+        A 400 response of code :data:`UNANSWERED` carrying *message*.
     """
     body = json.dumps({"__type": UNANSWERED, "message": message}).encode()
     return AWSResponse(

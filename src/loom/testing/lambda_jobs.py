@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import Any
 
 from loom.composition import Application, Project
-from loom.core.config import ConfigError
+from loom.core.config import ConfigError, ConfigKey
 from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
 from loom.core.job.envelope import encode_job_message
@@ -65,9 +65,12 @@ class LambdaWorker:
         MissingExtraError: When moto is not installed, naming the ``testing-aws`` extra.
         ConfigError: When *function* is no jobs function, its queue is not mapped or its URL
             is no AWS SQS one, a request of the application's ``sqs`` client goes
-            unanswered by moto (an endpoint override, FIPS, dualstack: nothing is ever sent
-            to the network), or the queue moto makes is of another region or account than
-            the configured URL: the message names what differs and the way out.
+            unanswered by moto (an endpoint override or a dualstack endpoint: nothing is
+            ever sent to the network), or the queue moto makes is of another region or
+            account than the configured URL: the message names what differs and the way
+            out.
+        ClientError: With moto's own 404 when the ``sqs`` client uses a FIPS endpoint,
+            which moto answers but does not implement.
     """
 
     def __init__(
@@ -95,6 +98,11 @@ class LambdaWorker:
             )
         self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
         self._island = island
+        self._region_setting = (
+            "sqs.region"
+            if "region" in (project.config.raw(ConfigKey.SQS) or {})
+            else "aws.region or AWS_DEFAULT_REGION"
+        )
         self._closed = False
         self._bound = False
         self._aws: AwsClients | None = None
@@ -107,7 +115,7 @@ class LambdaWorker:
             self._aws = self.application.kernel.container.resolve(AwsClients)
             self.sqs = self._aws.client("sqs", sqs_config)
             self.sqs.meta.events.register_last("before-send", self._unanswered)
-            self.queue_url, self.dead_letter_url = self._declare(island, entry)
+            self.queue_url, self.dead_letter_url = self._declare(entry)
             self._queue = SqsQueue(self.sqs, trigger.queue.name, entry)
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
@@ -152,7 +160,9 @@ class LambdaWorker:
 
         Raises:
             SQSDispatchError: As the queue's placement refuses a FIFO message.
+            RuntimeError: When the worker is closed.
         """
+        self._refuse_when_closed()
         task_id = str(uuid.uuid4())
         body = encode_job_message(
             job_type, payload=payload, params=params, identity=identity, task_id=task_id
@@ -176,6 +186,7 @@ class LambdaWorker:
         Returns:
             The handler's ``batchItemFailures`` for the batch received; empty when none.
         """
+        self._refuse_when_closed()
         received = self.sqs.receive_message(
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=self._batch_size,
@@ -218,6 +229,10 @@ class LambdaWorker:
     ) -> None:
         self.close()
 
+    def _refuse_when_closed(self) -> None:
+        if self._closed:
+            raise RuntimeError("the worker is closed")
+
     def _unanswered(self, request: Any, **_: Any) -> Any:
         """A ``before-send`` handler that runs after moto's: what moto did not answer is refused."""
         endpoint = self.sqs.meta.endpoint_url
@@ -229,7 +244,7 @@ class LambdaWorker:
             "the environment, and any endpoint_url of the AWS profile",
         )
 
-    def _declare(self, island: Any, entry: QueueConfig) -> tuple[str, str | None]:
+    def _declare(self, entry: QueueConfig) -> tuple[str, str | None]:
         """Create the queue and its dead-letter queue, and check they are where *entry* says.
 
         Raises:
@@ -237,7 +252,7 @@ class LambdaWorker:
                 region or account than the configured URL.
         """
         try:
-            queue_url, dead_letter_url = island.declare_queue(
+            queue_url, dead_letter_url = self._island.declare_queue(
                 self.sqs,
                 entry.queue_name,
                 redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
@@ -245,7 +260,7 @@ class LambdaWorker:
             )
         except self.sqs.exceptions.ClientError as exc:
             error = exc.response["Error"]
-            if error["Code"] == island.UNANSWERED:
+            if error["Code"] == self._island.UNANSWERED:
                 raise ConfigError(error["Message"]) from exc
             raise
         made = QueueConfig(url=queue_url)
@@ -260,7 +275,7 @@ class LambdaWorker:
         if differs:
             raise ConfigError(
                 f"moto made the queue {queue_url} for the configured {entry.url} "
-                f"({'; '.join(differs)}): set aws.region or AWS_DEFAULT_REGION to the URL's "
+                f"({'; '.join(differs)}): set {self._region_setting} to the URL's "
                 "region, MOTO_ACCOUNT_ID to its account, or use loom.testing.TEST_QUEUE"
             )
         return queue_url, dead_letter_url
