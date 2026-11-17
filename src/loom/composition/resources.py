@@ -22,7 +22,8 @@ class ResourceKind(StrEnum):
     and close last, the clients after everything that calls AWS;
     the Celery producer opens next and closes after the stores, agents and SQL;
     the SQL registry opens before the agent runtime, which may query it; the
-    stores open last, after their startup checks.
+    stores open next, after their startup checks, and the job timer last, so it
+    closes first and no delayed job runs against a closed store.
     """
 
     AWS = "aws"
@@ -31,6 +32,7 @@ class ResourceKind(StrEnum):
     SQL = "sql"
     AGENTS = "agents"
     STORE = "store"
+    TIMER = "timer"
 
 
 _ORDER = {kind: position for position, kind in enumerate(ResourceKind)}

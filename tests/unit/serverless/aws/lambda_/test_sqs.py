@@ -579,7 +579,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         adapter.bind(application)
         try:
-            assert any("run inline" in message for message in caplog.messages)
+            assert any("InlineJobService" in message for message in caplog.messages)
         finally:
             adapter.close()
 

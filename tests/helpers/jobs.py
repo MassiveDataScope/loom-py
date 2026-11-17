@@ -138,18 +138,5 @@ class JobKernel:
         self.factory = UseCaseFactory(container)
         self.executor = RuntimeExecutor(UseCaseCompiler())
 
-    def invoke_directly(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        async def invoke(delivery: JobDelivery) -> Any:
-            envelope = delivery.envelope
-            return await self.executor.run(
-                delivery.job_type,
-                factory=self.factory,
-                params=envelope.params,
-                payload=envelope.payload,
-                delivery=delivery,
-            )
-
-        return invoke
-
     def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
         return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())

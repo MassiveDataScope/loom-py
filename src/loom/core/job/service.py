@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
@@ -28,11 +28,15 @@ from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
+    Deferred,
+    Failed,
     JobOutcome,
+    Rejected,
     Succeeded,
 )
 from loom.core.job.policy import Countdown
 from loom.core.job.runner import JobRunner
+from loom.core.job.timer import JobDelayRefused, JobTimer, Step
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -43,10 +47,15 @@ ResultT = TypeVar("ResultT")
 
 @dataclass
 class _PendingDispatch:
-    """One inline dispatch, run by the post-commit channel once the unit of work has closed."""
+    """One inline dispatch, started by the post-commit channel once the unit of work has closed.
+
+    A deferred or failed run starts again on the timer, as a copy of this
+    dispatch holding the next delivery, until it succeeds or is rejected.
+    """
 
     delivery: JobDelivery
     runner: JobRunner = field(repr=False)
+    timer: JobTimer | None = field(repr=False)
     on_success: type[Any] | None
     on_failure: type[Any] | None
     countdown: Countdown
@@ -65,8 +74,35 @@ class _PendingDispatch:
         """The payload the job runs with."""
         return self.delivery.envelope.payload or {}
 
+    async def start(self) -> None:
+        """Run the job now, or once its countdown is over.
+
+        Raises:
+            JobDelayRefused: When the countdown is above zero and no timer waits for it.
+        """
+        if self.countdown.seconds == 0:
+            await self.run()
+        else:
+            self.wait(self.countdown, self.run)
+
+    def wait(self, delay: Countdown, step: Step) -> None:
+        """Run *step* once *delay* is over.
+
+        Args:
+            delay: How long to wait.
+            step: What to run afterwards.
+
+        Raises:
+            JobDelayRefused: When no timer waits for it.
+        """
+        if self.timer is None:
+            raise JobDelayRefused(delay)
+        self.timer.schedule(
+            delay, step, job=self.delivery.job_type.__qualname__, task_id=self.task_id
+        )
+
     async def run(self) -> None:
-        """Run the job, then its callback, as the dispatcher, within the captured delegation."""
+        """Run the job, then settle it, as the dispatcher, within the captured delegation."""
         resumed = Acting.current().resumed(self.captured)
         token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
         try:
@@ -76,12 +112,29 @@ class _PendingDispatch:
                 reset_identity(token)
 
     async def _settle(self, outcome: JobOutcome) -> None:
-        if isinstance(outcome, Succeeded):
-            error = await self._succeeded(outcome.result)
-        else:
-            error = outcome.failure()
+        match outcome:
+            case Succeeded(result=result):
+                error = await self._succeeded(result)
+            case Deferred(delay=delay):
+                error = self._again(
+                    replace(self.delivery, deferrals=self.delivery.deferrals + 1), delay
+                )
+            case Failed(delay=delay):
+                error = self._again(
+                    replace(self.delivery, attempt=self.delivery.attempt + 1), delay
+                )
+            case Rejected():
+                error = outcome.failure()
         if error is not None:
             await self._failed(error)
+
+    def _again(self, delivery: JobDelivery, delay: Countdown) -> JobDelayRefused | None:
+        """Hand *delivery* to the timer for after *delay*; the refusal when none waits."""
+        try:
+            self.wait(delay, replace(self, delivery=delivery).run)
+        except JobDelayRefused:
+            return JobDelayRefused()
+        return None
 
     async def _succeeded(self, result: Any) -> Exception | None:
         """Record *result* and call ``on_success``; the callback's error, when it raises."""
@@ -178,8 +231,8 @@ class JobService(Protocol):
             countdown: Delay in seconds before execution, 0 through 900
                 inclusive. SQS sends it as ``DelaySeconds`` on a standard
                 queue and refuses a delay on a FIFO queue. Celery sends it
-                as the task countdown. Inline validates the bound and
-                currently runs with no delay after flush.
+                as the task countdown. Inline waits on its timer after
+                the flush, and refuses it where it has none (Lambda).
             priority: Task priority override. Celery honours it. SQS refuses
                 a value other than the job's. Inline ignores it.
 
@@ -262,8 +315,11 @@ class InlineJobService:
     ``dispatch_after_commit()`` method respects the post-commit semantics:
     the job is enqueued on the execution's post-commit channel and runs when
     the executor drains it, after the UoW has closed (or at the end of an
-    execution without one).  Outside an execution the fallback channel
-    holds it until :func:`~loom.core.job.context.flush_pending_dispatches`.
+    execution without one). A job with a countdown, a deferral or a failed
+    attempt with attempts left waits on the timer and runs again with its
+    deferrals and attempt carried; a rejection ends it and calls ``on_failure``.
+    Outside an execution the fallback channel holds it until
+    :func:`~loom.core.job.context.flush_pending_dispatches`.
 
     A dispatched job, and its callbacks, act as
     :func:`~loom.core.identity.current_caller` at the time of the dispatch:
@@ -277,6 +333,11 @@ class InlineJobService:
         executor: Used to drive the compiled ExecutionPlan.
         settings: The application's job settings; the ClassVars when omitted.
         callbacks: The callbacks a dispatch may attach; any class when omitted.
+        timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobRetry`
+            and a failure backoff. Without one a countdown is refused with
+            :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobRetry`` is
+            rejected naming the refused delay, and a failure is rejected at
+            its first attempt with its own error.
 
     Example::
 
@@ -293,12 +354,20 @@ class InlineJobService:
         *,
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+        timer: JobTimer | None = None,
     ) -> None:
+        self._timer = timer
         self._callbacks = callbacks
         self._factory = factory
         self._executor = executor
-        self._settings = settings or JobSettings()
+        base = settings or JobSettings()
+        self._settings = base if timer is not None else base.without_waiting()
         self._runner = JobRunner(self._invoke)
+
+    @property
+    def settings(self) -> JobSettings:
+        """The job settings in force: one attempt for every job when the service has no timer."""
+        return self._settings
 
     async def _invoke(self, delivery: JobDelivery) -> Any:
         envelope = delivery.envelope
@@ -349,9 +418,8 @@ class InlineJobService:
     ) -> JobHandle[ResultT]:
         """Queue the Job for post-commit execution and return a handle.
 
-        ``countdown`` is validated through :class:`Countdown` and currently
-        ignored — inline execution is immediate after flush. ``priority``
-        is ignored.
+        A zero ``countdown`` runs the job at the flush; a larger one waits on
+        the timer from the flush. ``priority`` is ignored.
 
         Args:
             job_type: Concrete Job subclass to dispatch.
@@ -360,18 +428,18 @@ class InlineJobService:
             on_success: Callback type invoked after successful execution.
             on_failure: Callback type invoked after failed execution.
             queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive; validated
-                and currently ignored.
+            countdown: Delay in seconds, 0 through 900 inclusive.
             priority: Ignored in inline mode.
 
         Returns:
             A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
-            returns the result once the queue is flushed.
+            returns the result once the queue is flushed and any delay is over.
 
         Raises:
             ValueError: When a callback is attached that the scan did not find,
                 *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
                 or *countdown* is outside 0..900 inclusive.
+            JobDelayRefused: When *countdown* is above zero and the service has no timer.
         """
         pending, handle = self._pending(
             job_type,
@@ -383,7 +451,7 @@ class InlineJobService:
             countdown=countdown,
             priority=priority,
         )
-        add_pending_dispatch(pending.run)
+        add_pending_dispatch(pending.start)
         return handle
 
     async def dispatch_now(
@@ -398,10 +466,11 @@ class InlineJobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Run the Job immediately and return a settled handle.
+        """Run the Job now, or after its countdown, and return its handle.
 
-        ``countdown`` is validated through :class:`Countdown` and currently
-        ignored. ``priority`` is ignored.
+        A zero ``countdown`` runs the job before returning, so the handle is
+        settled unless the job waits to run again. A larger one waits on the
+        timer. ``priority`` is ignored.
 
         Args:
             job_type: Concrete Job subclass to dispatch.
@@ -410,8 +479,7 @@ class InlineJobService:
             on_success: Callback type invoked after successful execution.
             on_failure: Callback type invoked after failed execution.
             queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive; validated
-                and currently ignored.
+            countdown: Delay in seconds, 0 through 900 inclusive.
             priority: Ignored in inline mode.
 
         Returns:
@@ -422,6 +490,7 @@ class InlineJobService:
             ValueError: When a callback is attached that the scan did not find,
                 *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
                 or *countdown* is outside 0..900 inclusive.
+            JobDelayRefused: When *countdown* is above zero and the service has no timer.
         """
         pending, handle = self._pending(
             job_type,
@@ -433,7 +502,7 @@ class InlineJobService:
             countdown=countdown,
             priority=priority,
         )
-        await pending.run()
+        await pending.start()
         return handle
 
     def _pending(
@@ -457,8 +526,7 @@ class InlineJobService:
             on_success: Callback type invoked after successful execution.
             on_failure: Callback type invoked after failed execution.
             queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive; validated
-                and currently ignored.
+            countdown: Delay in seconds, 0 through 900 inclusive.
             priority: Ignored in inline mode.
 
         Returns:
@@ -468,15 +536,17 @@ class InlineJobService:
             ValueError: When a callback is attached that the scan did not find,
                 *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
                 or *countdown* is outside 0..900 inclusive.
+            JobDelayRefused: When *countdown* is above zero and the service has no timer.
         """
         _ = priority
         options = self._settings.of(job_type)
         delay = Countdown(options.countdown if countdown is None else countdown)
+        if delay.seconds and self._timer is None:
+            raise JobDelayRefused(delay)
         payload = payload or {}
         self._callbacks.refuse(payload, on_success, on_failure)
         task_id = str(uuid.uuid4())
         outcome = InlineOutcome()
-        options = self._settings.of(job_type)
         envelope = JobEnvelope(
             job=wire_job_name(job_type.__qualname__),
             payload=payload,
@@ -493,6 +563,7 @@ class InlineJobService:
                 policy=options.retry.policy,
             ),
             runner=self._runner,
+            timer=self._timer,
             on_success=on_success,
             on_failure=on_failure,
             countdown=delay,

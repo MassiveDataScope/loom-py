@@ -1,7 +1,9 @@
 """Backends the job outcome contract runs against: one driver per transport.
 
-A backend joins the contract by adding a driver here and its name to
-``BACKENDS``; the contract itself never changes.
+A transport that settles a delivery it is handed joins the settlement
+contract by adding a driver here and its name to ``BACKENDS``. The inline
+service, which starts every job at its first attempt and waits on a timer, has
+its own contract in ``test_inline_contract``, over the same jobs.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from loom.core.job.outcome import (
     Succeeded,
 )
 from loom.core.job.runner import JobRunner
+from loom.core.job.service import InlineJobService
 from loom.jobs.aws.queue import (
     DEFERRALS_ATTRIBUTE,
     REJECTION_REASON_ATTRIBUTE,
@@ -42,9 +45,10 @@ from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from tests.helpers.extras import patched_aws_clients
 from tests.helpers.jobs import JobKernel
+from loom.testing.jobs import ManualTimer
 from tests.helpers.sqs import ACCOUNT, URL_BASE, FakeSqs
 
-BACKENDS = ["inline", "envelope", "celery", "sqs"]
+BACKENDS = ["envelope", "celery", "sqs"]
 
 
 @dataclass(frozen=True)
@@ -319,5 +323,19 @@ def driver(request: pytest.FixtureRequest) -> Iterator[Driver]:
         yield celery_driver
         celery_driver.close()
         return
-    invocations = {"inline": kernel.invoke_directly, "envelope": kernel.invoke_envelope}
-    yield RunnerDriver(invocations[request.param](), kernel)
+    yield RunnerDriver(kernel.invoke_envelope(), kernel)
+
+
+@dataclass
+class Inline:
+    """The real inline job service on a manual timer, over a real factory and executor."""
+
+    service: InlineJobService
+    timer: ManualTimer
+
+
+@pytest.fixture
+def inline() -> Inline:
+    kernel = JobKernel()
+    timer = ManualTimer()
+    return Inline(InlineJobService(kernel.factory, kernel.executor, timer=timer), timer)

@@ -171,11 +171,15 @@ class AcmeBroken(UseCase[Any, None]):
         return None
 
 
+class AcmeUnrecoverableError(LookupError):
+    retryable = False
+
+
 class AcmeBrokenJob(Job[None]):
-    """Its constructor fails."""
+    """Its constructor fails, for good."""
 
     def __init__(self) -> None:
-        raise LookupError("acme job constructor failed")
+        raise AcmeUnrecoverableError("acme job constructor failed")
 
     async def execute(self) -> None:
         return None

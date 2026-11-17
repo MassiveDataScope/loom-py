@@ -289,8 +289,6 @@ def register(
             metrics=recipe.metrics,
             coordinator=coordinator,
         ).install(container)
-    if recipe.logs_job_retries and stores.job_settings.jobs:
-        logger.info("Job retry policies", jobs=stores.job_settings.describe_retries())
     job_resources = configure_job_service(
         ctx,
         kernel,
@@ -300,6 +298,8 @@ def register(
         callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,
         aws=aws,
+        waits_in_process=recipe.profile.waits_in_process,
+        logs_retries=recipe.logs_job_retries,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

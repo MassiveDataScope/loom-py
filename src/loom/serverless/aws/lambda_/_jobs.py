@@ -21,7 +21,7 @@ from loom.core.job.outcome import JobOutcome
 from loom.core.job.policy import RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.job.service import InlineJobService, JobService
+from loom.core.job.service import JobService
 from loom.core.job.settlement import JobSettlement
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
@@ -88,13 +88,10 @@ def open_host(application: Application) -> LoopHost:
     service = application.kernel.container.resolve(JobService)
     host = LoopHost(application)
     host.start()
-    if isinstance(service, InlineJobService):
-        _log.info("Lambda dispatched jobs run inline in this invocation without a queue or retries")
-    else:
-        _log.warning(
-            "Lambda dispatched jobs leave this invocation through the configured job service",
-            job_service=type(service).__qualname__,
-        )
+    _log.info(
+        "Lambda dispatched jobs go through the configured job service",
+        job_service=type(service).__qualname__,
+    )
     return host
 
 

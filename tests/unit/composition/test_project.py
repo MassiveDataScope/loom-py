@@ -107,7 +107,11 @@ class TestTransportFreeComposition:
         (ping,) = application.discovered.use_cases
 
         assert not application.is_open
-        assert [r.kind for r in application.resources] == [ResourceKind.AWS, ResourceKind.STORE]
+        assert [r.kind for r in application.resources] == [
+            ResourceKind.AWS,
+            ResourceKind.STORE,
+            ResourceKind.TIMER,
+        ]
         async with application.running():
             repository = application.kernel.container.resolve_repo(record)
             created = await repository.create(_CreateRecord(name="first"))
