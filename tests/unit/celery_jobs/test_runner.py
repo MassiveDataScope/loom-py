@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from celery import Celery
-from celery.exceptions import Reject
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.runner import (
@@ -459,7 +458,7 @@ class TestMakeJobTaskRetry:
         task_self = _retrying_self()
         error = PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
 
-        with pytest.raises(Reject):
+        with pytest.raises(PostCommitError):
             _failing_task(error, metrics=metrics)(task_self, payload={"value": 1})
 
         task_self.retry.assert_not_called()
@@ -490,7 +489,7 @@ class TestMakeJobTaskRetry:
     def test_a_non_retryable_invocation_error_is_not_retried(self, error: Exception) -> None:
         """A store already committed, or the job has a programming error: a retry cannot help."""
         task_self = _retrying_self()
-        with pytest.raises(Reject):
+        with pytest.raises(type(error)):
             _failing_task(error)(task_self, payload={"value": 1})
 
         task_self.retry.assert_not_called()
@@ -517,22 +516,11 @@ class TestMakeJobTaskRetry:
             _failing_task(ValueError("err"))(task_self, payload={"value": 1}, deferrals=5)
         task_self.retry.assert_called_once()
 
-    def test_a_job_rejection_is_not_retried_nor_requeued(self) -> None:
+    def test_a_job_rejection_raises_without_retrying(self) -> None:
         task_self = _retrying_self()
-        with pytest.raises(Reject) as rejection:
+        with pytest.raises(JobRejection, match="never"):
             _failing_task(JobRejection("never"))(task_self, payload={"value": 1})
         task_self.retry.assert_not_called()
-        assert rejection.value.requeue is False
-        assert rejection.value.reason == "never"
-
-    def test_a_rejection_is_recorded_as_a_failure_with_its_error(self) -> None:
-        task_self = _retrying_self()
-        error = JobRejection("never")
-        with pytest.raises(Reject):
-            _failing_task(error)(task_self, payload={"value": 1})
-        task_self.backend.mark_as_failure.assert_called_once_with(
-            task_self.request.id, error, request=task_self.request
-        )
 
     def test_a_deferral_of_a_request_without_kwargs_carries_only_its_deferrals(self) -> None:
         task_self = _retrying_self(retries=0)
@@ -684,7 +672,7 @@ class TestMakeJobTaskRetry:
         ("retries", "expected_error", "expected_kind"),
         [
             (0, _RetryError, EventKind.JOB_FAILED),
-            (2, Reject, EventKind.JOB_REJECTED),
+            (2, ValueError, EventKind.JOB_REJECTED),
         ],
     )
     def test_failure_events_of_a_trace_less_job_also_carry_none(
@@ -731,9 +719,9 @@ class TestMakeJobTaskRetry:
         )
         task_fn(_mock_self())
 
-    def test_rejects_with_the_error_class_when_attempts_are_exhausted(self) -> None:
+    def test_raises_original_exc_when_attempts_are_exhausted(self) -> None:
         task_self = _retrying_self(retries=2)
-        with pytest.raises(Reject, match="ValueError"):
+        with pytest.raises(ValueError, match="final"):
             _failing_task(ValueError("final"))(task_self, payload={"value": 1})
         task_self.retry.assert_not_called()
 
@@ -746,7 +734,7 @@ class TestMakeJobTaskRetry:
 
     def test_job_rejected_event_emitted_when_attempts_are_exhausted(self) -> None:
         metrics = MagicMock()
-        with pytest.raises(Reject):
+        with pytest.raises(ValueError):
             _failing_task(ValueError("final"), metrics=metrics)(_retrying_self(retries=2))
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
         assert EventKind.JOB_REJECTED in kinds

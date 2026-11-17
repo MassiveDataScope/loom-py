@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
-from celery.exceptions import Reject  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
@@ -180,8 +179,8 @@ def _make_job_task(
     succeeded, defers, fails or is rejected; the task only maps that outcome
     to Celery: a failure retries after the policy's backoff, a deferral
     retries after its delay without spending an attempt (the task carries the
-    count in its ``deferrals`` argument), and a rejection is recorded as a
-    failure and raised as a ``Reject`` that does not requeue the message.
+    count in its ``deferrals`` argument), and a rejection raises its error, which
+    the worker stores as the failure and acknowledges (``acks_late``) without a retry.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -251,11 +250,20 @@ def _make_job_task(
         return outcome
 
     def _settle(task_self: Any, outcome: JobOutcome, deferrals: int) -> Any:
-        """Map the outcome to Celery: return the result, retry, or reject without requeue.
+        """Map the outcome to Celery: return the result, retry, or raise the rejection's error.
 
-        Celery records nothing for a ``Reject``, so a rejection first marks the
-        task failed on the result backend, which also fires its ``link_error``
-        callbacks with the rejection's error.
+        Args:
+            task_self: The bound Celery task.
+            outcome: What the runner decided for this delivery.
+            deferrals: Deferrals already spent, carried to the next delivery.
+
+        Returns:
+            The job's result when it succeeded.
+
+        Raises:
+            Retry: When the job failed with attempts left or was deferred.
+            Exception: The error that ended a rejected job, which the worker
+                stores as the task's failure before acknowledging the message.
         """
         match outcome:
             case Succeeded(result=result):
@@ -268,10 +276,7 @@ def _make_job_task(
                     exc=deferred.failure(), countdown=delay.seconds, kwargs=kwargs
                 )
             case Rejected() as rejected:
-                task_self.backend.mark_as_failure(
-                    task_self.request.id, rejected.failure(), request=task_self.request
-                )
-                raise Reject(rejected.reason, requeue=False)
+                raise rejected.failure()
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),

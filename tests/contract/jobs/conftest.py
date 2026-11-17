@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 import pytest
 from celery import Celery  # type: ignore[import-untyped]
-from celery.exceptions import Reject, Retry  # type: ignore[import-untyped]
+from celery.exceptions import Retry  # type: ignore[import-untyped]
 
 from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
 from loom.core.di.container import LoomContainer
@@ -23,7 +23,15 @@ from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
-from loom.core.job.outcome import Deferred, Failed, JobOutcome, JobRetry, Rejected, Succeeded
+from loom.core.job.outcome import (
+    Deferred,
+    Failed,
+    JobOutcome,
+    JobRejection,
+    JobRetry,
+    Rejected,
+    Succeeded,
+)
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -121,7 +129,7 @@ class CeleryDriver:
         self._kernel = kernel
         self._runtime = _CeleryAsyncRuntime()
         self._runtime.initialize()
-        self.app = Celery(broker="memory://", backend="cache+memory://")
+        self._app = Celery(broker="memory://", backend="cache+memory://")
 
     def close(self) -> None:
         self._runtime.shutdown()
@@ -132,21 +140,20 @@ class CeleryDriver:
         *,
         attempt: int = 1,
         deferrals: int = 0,
-        link_error: Any | None = None,
     ) -> Settlement:
         self._kernel.factory.register(job_type)
         task = _make_job_task(
-            self.app,
+            self._app,
             job_type,
             self._kernel.factory,
             self._kernel.executor,
             self._runtime,
             settings=JobSettings(),
         )
-        return await asyncio.to_thread(self._run, task, attempt, deferrals, link_error)
+        return await asyncio.to_thread(self._run, task, attempt, deferrals)
 
     @staticmethod
-    def _run(task: Any, attempt: int, deferrals: int, link_error: Any | None) -> Settlement:
+    def _run(task: Any, attempt: int, deferrals: int) -> Settlement:
         kwargs = {"deferrals": deferrals}
         task.push_request(
             id="task-1",
@@ -154,18 +161,19 @@ class CeleryDriver:
             kwargs=kwargs,
             is_eager=False,
             called_directly=False,
-            errbacks=[link_error] if link_error else None,
         )
         try:
             return Settlement("succeeded", result=task.run(**kwargs))
-        except Reject as rejection:
-            return Settlement("rejected", reason=str(rejection.reason))
         except Retry as retry:
             delay = int(retry.when)
             error = retry.exc
             if isinstance(error, JobRetry):
                 return Settlement("deferred", delay, error.reason)
             return Settlement("failed", delay, type(error).__qualname__)
+        except JobRejection as rejection:
+            return Settlement("rejected", reason=rejection.reason)
+        except Exception as error:
+            return Settlement("rejected", reason=type(error).__qualname__)
         finally:
             task.pop_request()
 
