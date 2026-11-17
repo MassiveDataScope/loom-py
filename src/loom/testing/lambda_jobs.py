@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Any
+from urllib.parse import urlparse
 
 from loom.composition import Application, Project
 from loom.core.config import ConfigError
@@ -32,6 +33,8 @@ from loom.testing.overrides import Override, OverrideAdapter
 _ISLAND = "loom.testing._moto"
 _EXTRA = "testing-aws"
 _MAX_RECEIVE_COUNT = 3
+_AWS_DOMAINS = (".amazonaws.com", ".amazonaws.com.cn")
+"""The hosts moto answers: it intercepts requests to AWS endpoints and to nothing else."""
 _RECEIVE_LIMIT = 10
 """The most messages one ``ReceiveMessage`` returns."""
 
@@ -64,10 +67,11 @@ class LambdaWorker:
     Raises:
         MissingExtraError: When moto is not installed, naming the ``testing-aws`` extra.
         ConfigError: When *function* is no jobs function, its queue is not mapped or its URL
-            is no AWS SQS one, the application's ``sqs`` client goes to an endpoint moto
-            does not answer (``aws.url``, ``AWS_ENDPOINT_URL``), or moto holds no queue
-            at the configured URL (another region or account): the message names what
-            differs and the way out. Nothing is sent to an endpoint other than moto.
+            is no AWS SQS one, the application's ``sqs`` client goes to a host that is not
+            AWS's (``aws.url``, ``AWS_ENDPOINT_URL``, a profile ``endpoint_url``: moto
+            answers only AWS endpoints), or moto holds no queue at the configured URL
+            (another region or account): the message names what differs and the way out.
+            Nothing is sent to an endpoint other than moto.
     """
 
     def __init__(
@@ -105,7 +109,7 @@ class LambdaWorker:
             )
             self._aws = self.application.kernel.container.resolve(AwsClients)
             self.sqs = self._aws.client("sqs", sqs_config)
-            if not island.intercepts(self.sqs.meta.endpoint_url):
+            if not (urlparse(self.sqs.meta.endpoint_url).hostname or "").endswith(_AWS_DOMAINS):
                 raise ConfigError(
                     f"the application's sqs client goes to {self.sqs.meta.endpoint_url}, not to "
                     "AWS, so moto would not answer it and LambdaWorker would send to that "

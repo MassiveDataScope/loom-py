@@ -8,12 +8,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import requests
 from moto import mock_aws
-from moto.core.models import botocore_stubber
 from moto.sqs.models import sqs_backends
 
-__all__ = ["declare_queue", "holds", "intercepts", "start"]
+__all__ = ["declare_queue", "holds", "start"]
 
 
 def start() -> Any:
@@ -60,15 +58,6 @@ def declare_queue(
         attributes["RedrivePolicy"] = json.dumps(policy)
     url = sqs.create_queue(QueueName=name, Attributes=attributes)["QueueUrl"]
     return url, dead_url
-
-
-def intercepts(url: str) -> bool:
-    """Whether the started mock answers a request to *url*, or lets it reach the network."""
-    request = requests.Request("GET", url.rstrip("/") + "/").prepare()
-    try:
-        return botocore_stubber.process_prepared_request(request) is not None
-    except Exception:
-        return True
 
 
 def holds(account: str, region: str, name: str) -> bool:

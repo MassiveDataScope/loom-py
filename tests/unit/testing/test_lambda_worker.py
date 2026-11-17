@@ -439,6 +439,19 @@ class TestNothingReachesAnotherEndpoint:
 
         assert str(refused.value) == _ENDPOINT_REFUSAL.format(endpoint=endpoint)
 
+    def test_an_endpoint_url_of_the_aws_profile_is_refused_before_any_call(
+        self, config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        endpoint = "http://localhost:4566"
+        profile = tmp_path / "aws-config"
+        profile.write_text(f"[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n")
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(profile))
+
+        with pytest.raises(ConfigError) as refused:
+            _open(config(region=None))
+
+        assert str(refused.value) == _ENDPOINT_REFUSAL.format(endpoint=endpoint)
+
     def test_a_live_endpoint_receives_nothing(self, config: Config) -> None:
         _Endpoint.requests = []
         server = http.server.HTTPServer(("127.0.0.1", 0), _Endpoint)
