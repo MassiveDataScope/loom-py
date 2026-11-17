@@ -101,17 +101,22 @@
   `group_id`: pass `queue_arn=` for that): declare it in the test configuration,
   and a failed record of a test settles instead of logging that no queue
   matches. `loom.testing.LambdaWorker` composes and binds a jobs function over
-  moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it creates the
-  queue the function consumes, with a dead-letter queue and a real
-  `RedrivePolicy` for a `redrive` queue, and exposes `sqs` (a boto3 client of the
-  mock), `queue_url` and `dead_letter_url`, so a test needs no region, no
-  credentials and no patch of boto3 (`docs/rest/testing.md`). `worker.deliver(job,
-  payload)` sends the job as `SQSJobService` does, receives it (a real receipt
-  handle and `ApproximateReceiveCount`) and invokes the function;
-  `worker.redeliver()` does so for what the queue shows, so a failure comes back
-  and is counted. The account of the SQS ARN of test records and of `TEST_QUEUE`
-  is now `123456789012`, the one moto answers for (the other test events keep
-  `000000000000`), and composition leaves an `AwsClients` an override bound. A record whose `ApproximateReceiveCount` is not a
+  moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it enters
+  `mock_aws()` itself, creates the queue the function consumes where the
+  configuration says (the URL's region, account and name) and, for a `redrive`
+  queue, a dead-letter queue with a real `RedrivePolicy`, and exposes `sqs` (a
+  boto3 client of the mock), `queue_url` and `dead_letter_url`. It sets no
+  environment: the application reads its region as ever (`aws.region`, else
+  `AWS_DEFAULT_REGION`) and moto's account is `MOTO_ACCOUNT_ID`, else
+  `123456789012`; a queue URL of another account, region or host than those is
+  refused with a `ConfigError`. `worker.deliver(job, payload)` sends the job with
+  the envelope and the queue placement `SQSJobService` uses, receives it (a real
+  receipt handle and `ApproximateReceiveCount`) and invokes the function;
+  `worker.redeliver()` does so for what the queue shows, up to the trigger's
+  `batch_size`, so a failure comes back and is counted
+  (`docs/rest/testing.md`). The account of the SQS ARN of test records and of
+  `TEST_QUEUE` is now `123456789012`, the one moto answers for (the other test
+  events keep `000000000000`). A record whose `ApproximateReceiveCount` is not a
   positive integer or whose `loom.deferrals` is not a non-negative one is
   malformed, and only it is rejected. The dead-letter policy of the consumed
   queue is read at Init, never during an invocation, with the application's own

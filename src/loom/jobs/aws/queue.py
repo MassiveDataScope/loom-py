@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import uuid
@@ -342,6 +343,48 @@ class SqsQueue:
     def queue_name(self) -> str:
         """The queue's name in AWS, the last segment of its URL path."""
         return self.url.rstrip("/").split("/")[-1]
+
+    def placement(
+        self,
+        job_type: type[Job[Any]],
+        payload: Mapping[str, Any],
+        task_id: str,
+        delay: Countdown,
+    ) -> dict[str, Any]:
+        """Where a job's message goes: the delay on a standard queue; ids on a FIFO one.
+
+        A FIFO queue takes the hash of the payload field ``__group_by__`` names as its
+        ``MessageGroupId`` and the task id as its ``MessageDeduplicationId``.
+
+        Args:
+            job_type: The job the message runs.
+            payload: Its payload.
+            task_id: The message's task id.
+            delay: Seconds before it becomes visible.
+
+        Returns:
+            The :class:`OutgoingMessage` fields that place it.
+
+        Raises:
+            SQSDispatchError: When a FIFO queue is given a delay, or the payload has no
+                value for ``__group_by__``.
+        """
+        if not self.is_fifo:
+            return {"delay": delay}
+        if delay.seconds:
+            raise SQSDispatchError(
+                "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
+            )
+        group_by = job_type.__group_by__
+        group = None if group_by is None else payload.get(group_by)
+        if group is None:
+            raise SQSDispatchError(
+                f"{job_type.__qualname__} payload has no {group_by!r} value for its "
+                "FIFO MessageGroupId",
+                code=SQSErrorCode.GROUP_MISSING,
+            )
+        group_id = hashlib.sha256(str(group).encode()).hexdigest()
+        return {"group_id": group_id, "dedup_id": task_id}
 
     def is_at(self, event_source_arn: str) -> bool:
         """Whether *event_source_arn* names this queue, by region, account and queue name.

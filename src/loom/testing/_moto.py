@@ -6,21 +6,27 @@ The ``testing-aws`` extra brings moto and boto3 to it.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from moto import mock_aws
+from moto.core.models import DEFAULT_ACCOUNT_ID
 
-REGION = "us-east-1"
-"""The region of every client a harness builds: moto answers for any."""
+__all__ = ["account_id", "declare_queue", "start"]
 
-__all__ = ["REGION", "declare_queue", "start"]
+
+def account_id() -> str:
+    """The account moto answers for: ``MOTO_ACCOUNT_ID``, else its default."""
+    return os.environ.get("MOTO_ACCOUNT_ID", DEFAULT_ACCOUNT_ID)
 
 
 def start() -> Any:
-    """Start moto's AWS mock, which also sets its dummy credentials until it stops.
+    """Enter moto's AWS mock, which also sets its dummy credentials until it stops.
+
+    Moto counts nested mocks: the mock a user entered outside keeps running when this one stops.
 
     Returns:
-        The started mock; its ``stop()`` ends it.
+        The started mock; its ``stop()`` leaves it once.
     """
     mock = mock_aws()
     mock.start()

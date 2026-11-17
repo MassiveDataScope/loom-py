@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import hashlib
 import threading
 import uuid
 from collections.abc import Mapping, Sequence
@@ -400,7 +399,7 @@ class SQSJobService:
         message = OutgoingMessage(
             id=task_id,
             body=body.decode(),
-            **_placement(job_type, target, payload, task_id, delay),
+            **target.placement(job_type, payload, task_id, delay),
         )
         task_name = wire_job_name(job_type.__qualname__)
         send = _PendingSQSSend(target, task_name, task_id, message)
@@ -430,32 +429,6 @@ class SQSJobService:
                 self.dispatch_after_commit(job_type, payload=body) for job_type, body in jobs
             )
         )
-
-
-def _placement(
-    job_type: type[Job[Any]],
-    queue: SqsQueue,
-    payload: Mapping[str, Any],
-    task_id: str,
-    delay: Countdown,
-) -> dict[str, Any]:
-    """The delay on a standard queue; hashed group and deduplication ids on a FIFO one."""
-    if not queue.is_fifo:
-        return {"delay": delay}
-    if delay.seconds:
-        raise SQSDispatchError(
-            "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
-        )
-    group_by = job_type.__group_by__
-    group = None if group_by is None else payload.get(group_by)
-    if group is None:
-        raise SQSDispatchError(
-            f"{job_type.__qualname__} payload has no {group_by!r} value for its "
-            "FIFO MessageGroupId",
-            code=SQSErrorCode.GROUP_MISSING,
-        )
-    group_id = hashlib.sha256(str(group).encode()).hexdigest()
-    return {"group_id": group_id, "dedup_id": task_id}
 
 
 __all__ = [

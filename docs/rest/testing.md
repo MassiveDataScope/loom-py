@@ -189,50 +189,69 @@ queued and a `jobs` event already is a record, so neither has `via_sqs`. Every S
 should retry:
 
 ```python
+import pytest
+from moto import mock_aws
 from loom.testing import LambdaWorker
 
-def test_a_failed_email_is_reported_and_comes_back() -> None:
-    with LambdaWorker("config.yaml", function="worker", environment="test") as worker:
-        result = worker.deliver(SendEmailJob, {"to": "ada@example.com"})
-        assert result == {"batchItemFailures": [{"itemIdentifier": ...}]}  # smtp was down
-        assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran and succeeded
+@pytest.fixture
+def aws(monkeypatch):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", "111122223333")
+    with mock_aws():
+        yield
+
+@pytest.fixture
+def worker(aws):
+    with LambdaWorker("config.yaml", function="worker", environment="test") as w:
+        yield w
+
+def test_a_failed_email_is_reported_and_comes_back(worker, smtp):
+    smtp.down = True
+    assert len(worker.deliver(SendEmailJob, {"to": "ada@example.com"})["batchItemFailures"]) == 1
+    smtp.down = False
+    assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran: Backoff(first_s=0)
 ```
 
-A `jobs` function declares the queue it consumes (`trigger.queue`), and it
-settles each record by what its job came to, so the test configuration maps
-that queue and the record names it. `loom.testing.TEST_QUEUE` is the
-`sqs.queues` entry that the default ARN of a `LambdaEvent` record names
-(`loom-jobs`; a record built with `group_id` names `loom-jobs.fifo`, which it
-does not cover: pass `queue_arn=` for it):
-
 ```yaml
+app: {job_service: sqs, packages: [acme_mail]}
 sqs:
   queues:
-    jobs: {url: https://sqs.us-east-1.amazonaws.com/123456789012/loom-jobs, dead_letter: discard}
+    jobs: {url: https://sqs.eu-west-1.amazonaws.com/111122223333/jobs, dead_letter: discard}
 lambda:
   functions:
     worker: {trigger: {source: jobs, queue: {name: jobs}}}
 ```
 
-`LambdaWorker.deliver(job_type, payload, params=, identity=)` writes the job on
-the queue as `SQSJobService` does, receives it and invokes the function with
-the record, which carries the real receipt handle and `ApproximateReceiveCount`
-of that delivery; it returns the handler's result and, as Lambda does, deletes
-the messages the result does not report. `redeliver()` does the same with
-whatever the queue shows: a failed message comes back once its visibility
-timeout, set from the job's backoff, ends (a `Backoff(first_s=0, ...)` makes it
-immediate), counted as a new attempt. Calling the worker, `worker(event, None)`,
-passes a raw event, whose receipt handle is not in the queue: moto rejects the
-visibility change or send that settles it, and loom logs that and reports the
-message. `LambdaWorker` needs the `testing-aws` extra (moto). It starts moto's AWS
-mock, creates the queue the function consumes, with a dead-letter queue and a
-real `RedrivePolicy` when the entry says `dead_letter: redrive`, and binds the
-function over it: no region, no credentials and no patch of boto3, and nothing
-leaves the process. `worker.sqs` is a boto3 `sqs` client of the mock, and
-`worker.queue_url` and `worker.dead_letter_url` name the queues, so a test
-reads what the function left in them (`receive_message`). Closing the worker
-stops moto. A message that cannot be read is rejected and is not in
-`batchItemFailures`.
+A `jobs` function declares the queue it consumes (`trigger.queue`), and it
+settles each record by what its job came to. `LambdaWorker` needs the
+`testing-aws` extra (moto). It enters moto's `mock_aws()` itself, creates that
+queue where the configuration says (the URL's region, account and name) and,
+for `dead_letter: redrive`, its dead-letter queue with a real `RedrivePolicy`,
+and binds the function over it. It sets no environment: the application reads
+its region where it always does (`aws.region`, else `AWS_DEFAULT_REGION`), and
+moto's account is `MOTO_ACCOUNT_ID`, or `123456789012`. A queue URL that is not
+an AWS one, or is of another account or region than those, is refused with a
+`ConfigError` naming it. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
+built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
+`aws.region: us-east-1` in the configuration works as it is. A user's own
+`mock_aws()` outside is joined, and closing the worker leaves it running.
+
+`worker.deliver(job_type, payload, params=, identity=)` sends the job as
+`SQSJobService` does (its envelope, and the queue's own FIFO placement), receives
+it and invokes the function with a record that carries the real receipt handle
+and `ApproximateReceiveCount` of that delivery. It returns the handler's result
+and, as Lambda does, deletes the messages the result does not report.
+`worker.redeliver()` does the same with what the queue shows, up to the
+trigger's `batch_size` (10 at most), and invokes nothing when nothing is
+visible: a failed message comes back once its visibility timeout, set from the
+job's backoff, ends, counted as a new attempt. `worker(event, None)` passes a
+raw event, whose receipt handle is not in the queue: moto refuses the call that
+settles it, and loom logs that and reports the message. `worker.sqs` is a boto3
+`sqs` client of the mock, and `worker.queue_url` and `worker.dead_letter_url`
+name the queues, so a test reads what the function left in them. Workers on the
+same queue share it, so nested workers see each other's messages. A message that
+cannot be read is rejected and is not in `batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 
