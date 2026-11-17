@@ -65,7 +65,7 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(None))
 
-        assert type(result.result) is Unauthenticated
+        assert (result.state, result.result.reason) == ("REJECTED", "Unauthenticated")
         assert seen.calls == []
 
     @pytest.mark.parametrize(
@@ -83,7 +83,7 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(BAD_IDENTITIES[bad]))
 
-        assert (result.state, type(result.result)) == ("FAILURE", refusal)
+        assert (result.state, result.result.reason) == ("REJECTED", refusal.__name__)
         assert seen.calls == []
 
 

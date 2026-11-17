@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from collections.abc import Generator
+from typing import Any, ClassVar
+
+import pytest
+from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobRejection, JobRetry
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
-from tests.contract.jobs.conftest import Driver, Settlement
+from tests.contract.jobs.conftest import CeleryDriver, Driver, Settlement, _Kernel
 
 STEADY = Backoff(first_s=4, factor=2, max_s=100, jitter=False)
 
@@ -114,3 +118,29 @@ class TestJobOutcomeContract:
         RecordingJob.seen.clear()
         await driver.deliver(RecordingJob, attempt=2, deferrals=3)
         assert RecordingJob.seen == [(2, 3)]
+
+
+class TestCeleryRejection:
+    @pytest.fixture
+    def celery_driver(self) -> Generator[CeleryDriver]:
+        celery_driver = CeleryDriver(_Kernel())
+        celery_driver.app.conf.update(task_always_eager=True, task_store_eager_result=True)
+        yield celery_driver
+        celery_driver.close()
+
+    async def test_a_rejection_is_stored_as_a_failure_and_fires_the_error_link(
+        self, celery_driver: CeleryDriver
+    ) -> None:
+        fired: list[Any] = []
+        app = celery_driver.app
+
+        @app.task(name="on-error", shared=False)
+        def on_error(*arguments: Any) -> None:
+            fired.append(arguments)
+
+        settled = await celery_driver.deliver(RejectingJob, link_error=on_error.si())
+
+        assert settled == Settlement("rejected", reason="tenant deleted")
+        assert AsyncResult("task-1", app=app).state == "FAILURE"
+        assert isinstance(AsyncResult("task-1", app=app).result, JobRejection)
+        assert len(fired) == 1

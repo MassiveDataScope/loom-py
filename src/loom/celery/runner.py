@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
+from celery.exceptions import Reject  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
@@ -179,7 +180,8 @@ def _make_job_task(
     succeeded, defers, fails or is rejected; the task only maps that outcome
     to Celery: a failure retries after the policy's backoff, a deferral
     retries after its delay without spending an attempt (the task carries the
-    count in its ``deferrals`` argument), and a rejection raises its error.
+    count in its ``deferrals`` argument), and a rejection is recorded as a
+    failure and raised as a ``Reject`` that does not requeue the message.
 
     Both sync and async ``execute()`` methods are driven by the
     :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
@@ -249,17 +251,27 @@ def _make_job_task(
         return outcome
 
     def _settle(task_self: Any, outcome: JobOutcome, deferrals: int) -> Any:
-        """Map the outcome to Celery: return the result, retry, or raise the rejection."""
+        """Map the outcome to Celery: return the result, retry, or reject without requeue.
+
+        Celery records nothing for a ``Reject``, so a rejection first marks the
+        task failed on the result backend, which also fires its ``link_error``
+        callbacks with the rejection's error.
+        """
         match outcome:
             case Succeeded(result=result):
                 return result
             case Failed(error=error, delay=delay):
                 raise task_self.retry(exc=error, countdown=delay.seconds) from error
-            case Deferred(delay=delay):
-                kwargs = {**task_self.request.kwargs, "deferrals": deferrals + 1}
-                raise task_self.retry(countdown=delay.seconds, kwargs=kwargs)
+            case Deferred(delay=delay) as deferred:
+                kwargs = {**(task_self.request.kwargs or {}), "deferrals": deferrals + 1}
+                raise task_self.retry(
+                    exc=deferred.failure(), countdown=delay.seconds, kwargs=kwargs
+                )
             case Rejected() as rejected:
-                raise rejected.failure()
+                task_self.backend.mark_as_failure(
+                    task_self.request.id, rejected.failure(), request=task_self.request
+                )
+                raise Reject(rejected.reason, requeue=False)
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),

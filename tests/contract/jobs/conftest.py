@@ -6,12 +6,16 @@ A backend joins the contract by adding a driver here and its name to
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import pytest
+from celery import Celery  # type: ignore[import-untyped]
+from celery.exceptions import Reject, Retry  # type: ignore[import-untyped]
 
+from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -19,7 +23,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
-from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
+from loom.core.job.outcome import Deferred, Failed, JobOutcome, JobRetry, Rejected, Succeeded
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -27,7 +31,7 @@ from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 
-BACKENDS = ["inline", "envelope"]
+BACKENDS = ["inline", "envelope", "celery"]
 
 
 @dataclass(frozen=True)
@@ -110,8 +114,69 @@ def _settlement(outcome: JobOutcome) -> Settlement:
             return Settlement("failed", delay.seconds, type(error).__qualname__)
 
 
+class CeleryDriver:
+    """Delivers through the Celery task a worker runs, the way its request carries the attempt."""
+
+    def __init__(self, kernel: _Kernel) -> None:
+        self._kernel = kernel
+        self._runtime = _CeleryAsyncRuntime()
+        self._runtime.initialize()
+        self.app = Celery(broker="memory://", backend="cache+memory://")
+
+    def close(self) -> None:
+        self._runtime.shutdown()
+
+    async def deliver(
+        self,
+        job_type: type[Job[Any]],
+        *,
+        attempt: int = 1,
+        deferrals: int = 0,
+        link_error: Any | None = None,
+    ) -> Settlement:
+        self._kernel.factory.register(job_type)
+        task = _make_job_task(
+            self.app,
+            job_type,
+            self._kernel.factory,
+            self._kernel.executor,
+            self._runtime,
+            settings=JobSettings(),
+        )
+        return await asyncio.to_thread(self._run, task, attempt, deferrals, link_error)
+
+    @staticmethod
+    def _run(task: Any, attempt: int, deferrals: int, link_error: Any | None) -> Settlement:
+        kwargs = {"deferrals": deferrals}
+        task.push_request(
+            id="task-1",
+            retries=attempt - 1 + deferrals,
+            kwargs=kwargs,
+            is_eager=False,
+            called_directly=False,
+            errbacks=[link_error] if link_error else None,
+        )
+        try:
+            return Settlement("succeeded", result=task.run(**kwargs))
+        except Reject as rejection:
+            return Settlement("rejected", reason=str(rejection.reason))
+        except Retry as retry:
+            delay = int(retry.when)
+            error = retry.exc
+            if isinstance(error, JobRetry):
+                return Settlement("deferred", delay, error.reason)
+            return Settlement("failed", delay, type(error).__qualname__)
+        finally:
+            task.pop_request()
+
+
 @pytest.fixture(params=BACKENDS)
-def driver(request: pytest.FixtureRequest) -> Driver:
+def driver(request: pytest.FixtureRequest) -> Generator[Driver]:
     kernel = _Kernel()
+    if request.param == "celery":
+        celery_driver = CeleryDriver(kernel)
+        yield celery_driver
+        celery_driver.close()
+        return
     invocations = {"inline": kernel.invoke_directly, "envelope": kernel.invoke_envelope}
-    return RunnerDriver(invocations[request.param](), kernel)
+    yield RunnerDriver(invocations[request.param](), kernel)

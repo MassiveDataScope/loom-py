@@ -55,6 +55,12 @@
   to a dead-letter queue directly is moved back with `StartMessageMoveTask`
   and a `DestinationArn` set to the source queue ("Redrive to custom
   destination").
+- **jobs:** a rejected Celery job is no longer requeued: the task is marked
+  failed on the result backend, its `link_error` callbacks run with the
+  rejection's error, and the task raises `celery.exceptions.Reject` with
+  `requeue=False` instead of re-raising the job's error. Behaviour: a job
+  retried by a deferral (`JobRetry`) now carries its `JobRetry` as the retry
+  reason.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker
