@@ -16,6 +16,7 @@ from loom.core.errors import (
     InsufficientAuthentication,
     JobFailedError,
     JobTimeoutError,
+    LoomError,
     MissingCaller,
     NotFound,
     PostCommitError,
@@ -28,6 +29,15 @@ from loom.core.errors import (
     UnknownJob,
     UnsupportedQuery,
 )
+from loom.core.errors.codes import ErrorCode
+
+
+class SlottedError(LoomError):
+    __slots__ = ("extra",)
+
+    def __init__(self, *, extra: int) -> None:
+        self.extra = extra
+        super().__init__("slotted", code=ErrorCode.SYSTEM_ERROR)
 
 
 class TestErrorPickling:
@@ -55,6 +65,7 @@ class TestErrorPickling:
             pytest.param(DelegationExpired(), id="delegation-expired"),
             pytest.param(IdentityFixed(), id="identity-fixed"),
             pytest.param(Conflict("taken"), id="conflict"),
+            pytest.param(SlottedError(extra=3), id="slotted"),
             pytest.param(SystemError("boom"), id="system-error"),
         ],
     )
@@ -63,4 +74,4 @@ class TestErrorPickling:
 
         assert type(rebuilt) is type(error)
         assert rebuilt.args == error.args
-        assert repr(vars(rebuilt)) == repr(vars(error))
+        assert repr(rebuilt.__getstate__()) == repr(error.__getstate__())

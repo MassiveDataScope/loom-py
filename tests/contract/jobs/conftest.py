@@ -16,9 +16,6 @@ from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import Retry  # type: ignore[import-untyped]
 
 from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
-from loom.core.di.container import LoomContainer
-from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
@@ -32,12 +29,8 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
-from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.stores.repository.registration import classify_key
-from loom.core.use_case.factory import UseCaseFactory, main_repository
-from loom.core.use_case.kinds import declare_kinds
+from tests.helpers.jobs import JobKernel
 
 BACKENDS = ["inline", "envelope", "celery"]
 
@@ -58,32 +51,6 @@ class Driver(Protocol):
     async def deliver(
         self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
     ) -> Settlement: ...
-
-
-class JobKernel:
-    """A real factory and executor, serving the jobs a test delivers."""
-
-    def __init__(self) -> None:
-        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        declare_kinds(container.kinds)
-        self.factory = UseCaseFactory(container)
-        self.executor = RuntimeExecutor(UseCaseCompiler())
-
-    def invoke_directly(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        async def invoke(delivery: JobDelivery) -> Any:
-            envelope = delivery.envelope
-            return await self.executor.run(
-                delivery.job_type,
-                factory=self.factory,
-                params=envelope.params,
-                payload=envelope.payload,
-                delivery=delivery,
-            )
-
-        return invoke
-
-    def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
 
 
 class RunnerDriver:

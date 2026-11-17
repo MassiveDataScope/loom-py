@@ -3364,13 +3364,18 @@ by version; each release's own list is in its GitHub Release notes.
 
 ### core
 
-- **core:** every `LoomError` survives pickling with its own class and fields.
-  An error whose `__init__` takes other arguments than its message, such as
-  `PostCommitError(committed=, failures=)`, could not be rebuilt, so Celery
-  stored it as its parent `SystemError` and `on_failure` received
-  `exc_type="SystemError"`. The error is now rebuilt without calling
-  `__init__`, keeping its `args` and attributes; `failures` is kept as is, so
-  a failure that cannot be pickled still makes the whole error unpicklable.
+- **core:** `on_failure` receives the class and message of the error that
+  failed a Celery job on both `result_serializer` values, `json` (the loom
+  default) and `pickle`. On a key-value result backend (Redis, memcached,
+  cache) the callback reads the stored `exc_type` and `args`, or the pickled
+  error, instead of letting Celery rebuild the error from its `args`; an error
+  whose `__init__` takes other arguments, such as
+  `PostCommitError(committed=, failures=)`, no longer arrives as
+  `SystemError` or a bare `Exception`, and its message is no longer doubled
+  or mangled. Another backend still answers with the error Celery rebuilds.
+  `LoomError` also pickles and copies with its own class, `args` and
+  attributes, slots included, without calling `__init__`; a `failures` entry
+  that cannot be pickled still makes the whole error unpicklable.
 - **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
   primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
   handed the raw key to boto3's `TypeSerializer`, which raised

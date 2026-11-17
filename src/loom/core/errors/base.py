@@ -67,7 +67,17 @@ class LoomError(Exception):
         Returns:
             The class and arguments to rebuild the error and the state to restore.
         """
-        return (type(self).__new__, (type(self), *self.args), self.__dict__)
+        return (type(self).__new__, (type(self), *self.args), self.__getstate__())
+
+    def __setstate__(self, state: Any) -> None:
+        """Restore the attributes :meth:`__reduce__` saved, those in ``__dict__`` and in slots.
+
+        Args:
+            state: The attribute mapping, or that mapping and the slot mapping.
+        """
+        attributes, slots = state if isinstance(state, tuple) else (state, {})
+        for name, value in {**attributes, **slots}.items():
+            setattr(self, name, value)
 
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
