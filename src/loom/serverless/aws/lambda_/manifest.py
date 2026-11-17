@@ -18,6 +18,7 @@ from loom.core.config import ConfigError
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
 from loom.core.config.resolver import fetched_name, referenced
+from loom.jobs.aws.queue import QueueConfig
 from loom.serverless.aws.lambda_.functions import (
     DEFAULT_MAXIMUM_EVENT_AGE_S,
     DEFAULT_MAXIMUM_RETRY_ATTEMPTS,
@@ -33,7 +34,7 @@ from loom.serverless.aws.lambda_.functions import (
 from loom.serverless.aws.lambda_.interfaces import http_function
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
-MANIFEST_VERSION: Final = 2
+MANIFEST_VERSION: Final = 3
 """Version of the manifest's schema; a change a consumer must handle bumps it."""
 
 _HANDLER: Final = re.compile(r"[A-Za-z_][\w.]*\.\w+", re.ASCII)
@@ -59,7 +60,7 @@ class DeployManifest(msgspec.Struct, frozen=True, kw_only=True):
     environment: str
     handler: str
     code_path: str
-    queues: dict[str, str]
+    queues: dict[str, QueueConfig]
     functions: dict[str, FunctionManifest]
 
 
@@ -88,9 +89,11 @@ def build_manifest(project: Project, function: str | None = None) -> DeployManif
         raise ConfigError(f"lambda.handler {handler!r} must be 'module.attribute'")
     if not declared.functions:
         raise ConfigError("lambda.functions declares no function to deploy")
-    queues = convert_section(ctx.raw("sqs.queues", {}), "sqs.queues", dict[str, str])
-    for queue, url in queues.items():
-        _literal(f"sqs.queues.{queue}", url)
+    written = ctx.raw("sqs.queues", {})
+    QueueConfig.refuse_urls(written, "sqs.queues")
+    queues = convert_section(written, "sqs.queues", dict[str, QueueConfig])
+    for queue, config in queues.items():
+        _literal(f"sqs.queues.{queue}.url", config.url)
     check_triggers(project)
     document = ctx.document()
     names = sorted(declared.functions) if function is None else [function]
@@ -119,7 +122,7 @@ def _function(
     document: dict[str, Any],
     functions: Mapping[str, LambdaFunction],
     name: str,
-    queues: Mapping[str, str],
+    queues: Mapping[str, QueueConfig],
 ) -> FunctionManifest:
     function = named_function(functions, name)
     if not _FUNCTION.fullmatch(name):
@@ -143,7 +146,7 @@ def _function(
 
 
 def _queue_event(
-    name: str, trigger: JobsTrigger | EventTrigger, queues: Mapping[str, str]
+    name: str, trigger: JobsTrigger | EventTrigger, queues: Mapping[str, QueueConfig]
 ) -> dict[str, Any]:
     """The key of ``sqs.queues`` the function consumes and its event source mapping.
 

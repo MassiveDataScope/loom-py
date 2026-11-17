@@ -12,13 +12,30 @@ RecordFactory = Callable[..., dict[str, Any]]
 WORKER = "worker"
 
 
+def consumed_queues(*names: str) -> dict[str, Any]:
+    """The ``aws`` and ``sqs`` sections mapping each of *names* to a queue that discards."""
+    queues = {
+        name: {
+            "url": f"https://sqs.eu-west-1.amazonaws.com/123456789012/{name}",
+            "dead_letter": "discard",
+        }
+        for name in names
+    }
+    return {"aws": {"region": "eu-west-1"}, "sqs": {"queues": queues}}
+
+
 def with_worker(document: dict[str, Any], **mapping: Any) -> dict[str, Any]:
-    """*document* declaring the jobs function :data:`WORKER`, its ``queue`` block *mapping*."""
+    """*document* declaring the jobs function :data:`WORKER`, its ``queue`` block *mapping*.
+
+    The queue of the block is mapped by ``sqs.queues``, as a consumer needs.
+    """
     trigger: dict[str, Any] = {"source": "jobs"}
+    queues: dict[str, Any] = {}
     if mapping:
         trigger["queue"] = {"name": "jobs", **mapping}
+        queues = consumed_queues("jobs")
     worker = {"trigger": trigger}
-    return document | {"lambda": {"functions": {WORKER: worker}}}
+    return queues | document | {"lambda": {"functions": {WORKER: worker}}}
 
 
 def make_record(

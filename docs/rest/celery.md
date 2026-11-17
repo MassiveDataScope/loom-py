@@ -395,8 +395,12 @@ aws:
 
 sqs:
   queues:
-    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
-    orders: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
+    default:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+      dead_letter: redrive
+    orders:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
+      dead_letter: discard
 ```
 
 ```python
@@ -406,6 +410,9 @@ class ShipOrderJob(Job[None]):
 ```
 
 - `sqs:` takes the `aws:` client keys, overriding them, plus `queues`.
+- Each queue is a mapping: its `url` and its `dead_letter` policy, `redrive`
+  (default) or `discard`. A queue written as a bare URL is refused at load,
+  naming the mapping.
 - Only the jobs SQS serves need a URL: those on `celery.queues` go to Celery.
 - Startup fails with `SQSQueueConfigError` when a job's queue has no URL, or
   when a job on a FIFO queue (URL ending in `.fifo`) declares no `__group_by__`.
@@ -437,7 +444,8 @@ sqs:
   batch_size: 10
   max_concurrent_sends: 1
   queues:
-    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+    default:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
 ```
 
 - `batch` (default `true`): `false` sends each job with its own `SendMessage`.
@@ -480,6 +488,9 @@ lambda:
 ```
 
 - `name` is a key of `sqs.queues`.
+- At Init the function checks the queue it consumes, and only that one: an
+  application that only dispatches calls neither `GetQueueAttributes` nor
+  `GetQueueUrl`.
 - `batch_size` (1–10000; 10 at most on a FIFO queue; over 10 needs
   `batching_window_s` of at least 1), `batching_window_s` (0–300) and
   `max_concurrency` (2–1000) are the
@@ -491,6 +502,42 @@ lambda:
   `ReportBatchItemFailures`: `false` makes the handler raise
   `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
 - An http function, and a direct event trigger, refuse the `queue:` block.
+
+#### Dead letters and attempts
+
+`dead_letter` decides what becomes of a message whose job is rejected for good
+and who owns the attempt limit:
+
+| `dead_letter` | A rejected message | The attempt limit |
+|---|---|---|
+| `redrive` (default) | is sent to the queue's dead-letter queue, with the reason (cut to 256 characters) in the `loom.rejection_reason` message attribute and the original attributes copied; on a FIFO dead-letter queue it keeps its group id and gets a new deduplication id | the `maxReceiveCount` of the queue's `RedrivePolicy`; a job consumed from the queue may not declare `max_attempts` |
+| `discard` | is dropped with an ERROR log and a metric | `max_attempts` of the job (loom default 3) |
+
+- A function consuming a `redrive` queue reads the queue's `RedrivePolicy`
+  once, at Init. Without one, startup fails naming the queue and both options:
+  attach a dead-letter queue, or set `dead_letter: discard`.
+- Declaring `max_attempts` (`jobs.<Job>.retry` or `jobs.defaults.retry`) for a
+  job consumed from a `redrive` queue fails startup naming the rule.
+- loom never calls `DeleteMessage`: Lambda deletes every record the
+  invocation does not report as failed.
+- Every batch call carries at most ten entries, and a failed entry is reported
+  alone; none aborts the others.
+
+**IAM.** The role of a function consuming a queue needs:
+
+| Action | Resource |
+|---|---|
+| `sqs:ChangeMessageVisibility`, `sqs:SendMessage`, `sqs:GetQueueAttributes` | the source queue |
+| `sqs:SendMessage`, `sqs:GetQueueUrl` | the dead-letter queue |
+
+The producer role needs `sqs:SendMessage` on the queues it dispatches to.
+
+**Moving dead letters back.** A message loom sends to the dead-letter queue
+did not arrive through the `RedrivePolicy`, so it has no source queue recorded.
+In LocalStack 4.14, `StartMessageMoveTask` without a `DestinationArn` fails on
+it, and with `DestinationArn` set to the source queue it moves it back. In the
+console, choose "Redrive to custom destination", not "Redrive to source queue";
+with the API or CLI, always pass `DestinationArn`.
 
 ### Who can run a job
 

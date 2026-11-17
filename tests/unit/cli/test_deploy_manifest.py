@@ -121,7 +121,7 @@ def _config(package: str) -> dict[str, Any]:
             "reports": {"backend": "none"},
             "settings": {"cursors": {"signing": "unsigned"}},
         },
-        "sqs": {"queues": {"jobs": _QUEUE_URL, "alerts": _ALERTS_URL}},
+        "sqs": {"queues": {"jobs": {"url": _QUEUE_URL}, "alerts": {"url": _ALERTS_URL}}},
         "checks": {"silenced": ["loom.cursors.E001"]},
         "lambda": {
             "handler": "entry.handler",
@@ -167,11 +167,14 @@ def _expected() -> dict[str, Any]:
         }
     }
     return {
-        "manifest_version": 2,
+        "manifest_version": 3,
         "environment": "production",
         "handler": "entry.handler",
         "code_path": "src",
-        "queues": {"alerts": _ALERTS_URL, "jobs": _QUEUE_URL},
+        "queues": {
+            "alerts": {"url": _ALERTS_URL, "dead_letter": "redrive"},
+            "jobs": {"url": _QUEUE_URL, "dead_letter": "redrive"},
+        },
         "functions": {
             "admin": {
                 "source": "http",
@@ -366,7 +369,16 @@ class TestDeployManifest:
             (_set("lambda.handler", _DELETE), (), "lambda.handler is missing"),
             (_set("lambda.handler", "${oc.env:HANDLER}"), (), "lambda.handler must be written"),
             (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
-            (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
+            (
+                _set("sqs.queues.jobs.url", "${ssm:/shop/url}"),
+                (),
+                "sqs.queues.jobs.url must be written",
+            ),
+            (
+                _set("sqs.queues.jobs", _QUEUE_URL),
+                (),
+                "sqs.queues.jobs is a URL; write it as a mapping: {url: ",
+            ),
             (_set("lambda.functions", {}), (), "declares no function to deploy"),
             (
                 _set("lambda.functions.worker.trigger.queue", _DELETE),
@@ -422,6 +434,7 @@ class TestDeployManifest:
             "handler-placeholder",
             "handler-malformed",
             "queue-placeholder",
+            "queue-as-bare-url",
             "no-function",
             "no-queue",
             "unknown-queue",
@@ -487,7 +500,7 @@ class TestDeployManifest:
         result = _manifest(project(_set("app.rest.docs_url", "/docs")))
 
         assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout)["manifest_version"] == 2
+        assert json.loads(result.stdout)["manifest_version"] == 3
         assert "environment: production" in result.stderr
         assert "silenced: loom.cursors.E001" in result.stderr
         assert "WARNING loom.rest.W001" in result.stderr

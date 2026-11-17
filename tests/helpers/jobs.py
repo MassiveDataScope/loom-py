@@ -11,6 +11,7 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.stores.profile import WORKER_PROFILE
+from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobService
 from tests.helpers.composition import composition_project
 
@@ -113,5 +114,6 @@ class SQSClient:
 
 def sqs_service(client: SQSClient, **knobs: Any) -> SQSJobService:
     """An ``SQSJobService`` over *client* sending ``emails`` and the FIFO ``orders``."""
-    config = SQSConfig(queues={"emails": SQS_URL, "orders": SQS_FIFO_URL}, **knobs)
+    queues = {"emails": QueueConfig(url=SQS_URL), "orders": QueueConfig(url=SQS_FIFO_URL)}
+    config = SQSConfig(queues=queues, **knobs)
     return SQSJobService(client, config, factory=cast(Any, None), executor=cast(Any, None))

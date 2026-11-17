@@ -34,8 +34,8 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
-from loom.jobs.aws.errors import SQSDispatchError
-from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService, SQSQueueConfigError
+from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
+from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
 from tests.helpers.extras import patched_aws_clients, without_boto3
 from tests.helpers.jobs import (
     BROKER,
@@ -47,6 +47,7 @@ from tests.helpers.jobs import (
     job_project,
     sqs_service,
 )
+from tests.helpers.sqs import FakeSqs
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(10)
@@ -56,7 +57,10 @@ _NEVER_RAN = "PostCommitShieldedActionNeverRan"
 
 _URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
 _SEND_FAILED = "SQS send failed"
-_CONFIG = {"aws": {"region": "eu-west-1"}, "sqs": {"queues": {"emails": _URL, "orders": _FIFO_URL}}}
+_CONFIG = {
+    "aws": {"region": "eu-west-1"},
+    "sqs": {"queues": {"emails": {"url": _URL}, "orders": {"url": _FIFO_URL}}},
+}
 
 
 class OrderJob(Job[None]):
@@ -106,7 +110,7 @@ def service(tmp_path: Path, client: SQSClient) -> JobService:
 
 
 def _compose(
-    tmp_path: Path, config: dict[str, Any], client: SQSClient, *jobs: type[Job[Any]]
+    tmp_path: Path, config: dict[str, Any], client: Any, *jobs: type[Job[Any]]
 ) -> JobService:
     with patched_aws_clients(client):
         application = job_project(tmp_path, config, "sqs").compose(JobsAdapter(*jobs))
@@ -238,7 +242,10 @@ class TestSqsDispatch:
     def test_the_client_takes_aws_and_sqs_overrides_it(
         self, tmp_path: Path, sqs: dict[str, Any], region: str
     ) -> None:
-        config = {"aws": {"region": "eu-west-1"}, "sqs": {**sqs, "queues": {"emails": _URL}}}
+        config = {
+            "aws": {"region": "eu-west-1"},
+            "sqs": {**sqs, "queues": {"emails": {"url": _URL}}},
+        }
         project = job_project(tmp_path, config, "sqs")
         with patched_aws_clients() as clients:
             project.compose(JobsAdapter(EmailJob))
@@ -404,6 +411,22 @@ class TestSqsDispatch:
         assert [(r["MessageGroupId"], r["MessageDeduplicationId"]) for r in fifo] == [
             (hashlib.sha256(str(n).encode()).hexdigest(), ids[n]) for n in (1, 3)
         ]
+
+    @pytest.mark.parametrize("batch", [True, False])
+    async def test_a_dispatch_only_application_makes_no_metadata_call(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        fake = FakeSqs()
+        service = _compose(tmp_path, _sqs_config(batch=batch), fake, EmailJob, OrderJob)
+
+        for n in range(3):
+            service.dispatch_after_commit(EmailJob)
+            service.dispatch_after_commit(OrderJob, payload={"customer": n})
+        await service.dispatch_now(EmailJob)
+        await flush_pending_dispatches()
+
+        assert fake.metadata_calls == 0
+        assert set(fake.calls) <= {"send_message", "send_message_batch"}
 
     @pytest.mark.parametrize(
         ("knobs", "blob", "sizes"),

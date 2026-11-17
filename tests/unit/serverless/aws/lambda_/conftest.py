@@ -20,6 +20,7 @@ from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.composition import composition_project
+from tests.helpers.extras import patched_aws_clients
 from tests.helpers.loops import event_loops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import (
@@ -30,6 +31,13 @@ from tests.unit.serverless.aws.lambda_._records import (
 )
 
 __all__ = ["event_loops"]
+
+
+@pytest.fixture(autouse=True)
+def _no_aws_calls() -> Iterator[None]:
+    """A consumer of a queue builds its SQS client at Init; here it is a mock, never AWS."""
+    with patched_aws_clients():
+        yield
 
 
 @pytest.fixture

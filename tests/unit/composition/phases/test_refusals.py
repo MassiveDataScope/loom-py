@@ -31,7 +31,7 @@ from loom.core.engine.compiler import CompilationError
 from loom.core.environment import Environment
 from loom.core.use_case import UnservedModelError
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore
-from loom.jobs.aws.sqs import SQSQueueConfigError
+from loom.jobs.aws.errors import SQSQueueConfigError
 from tests.helpers.jobs import BROKER
 from tests.unit.composition.phases import paths
 from tests.unit.composition.phases.components import (

@@ -31,6 +31,25 @@
   inline and `dispatch_now`, not `SQSDispatchError`. `SQSErrorCode.DELAY_TOO_LONG`
   is removed. Inline validates the bound but still runs without delay until
   the job timer lands.
+- **jobs:** each `sqs.queues.<name>` is a mapping `{url, dead_letter}`, not a
+  URL string; a string entry is refused at load, naming the mapping.
+  `dead_letter` is `redrive` (default) or `discard`. On a `redrive` queue the
+  attempt limit is the `maxReceiveCount` of the queue's `RedrivePolicy`, and a
+  job it serves may not declare `max_attempts` (start-up fails naming the
+  rule); on a `discard` queue `max_attempts` decides (default 3). A Lambda
+  function consuming a `redrive` queue reads its `RedrivePolicy` once at Init
+  and fails start-up naming the queue when there is none; an application that
+  only dispatches makes no `GetQueueAttributes` or `GetQueueUrl` call.
+  `SQSQueueConfigError` moves to `loom.jobs.aws.errors`; the deploy manifest is
+  `manifest_version: 3`, its `queues` mapping each name to `{url, dead_letter}`.
+  **Migration:** write `<name>: {url: https://..., dead_letter: redrive}` for
+  each queue, and give every `redrive` queue a dead-letter queue.
+- **jobs:** the role of a function consuming an SQS queue needs
+  `sqs:SendMessage` and `sqs:ChangeMessageVisibility` on the queue,
+  `sqs:GetQueueAttributes` on the queue, and `sqs:SendMessage` and
+  `sqs:GetQueueUrl` on its dead-letter queue (see the SQS guide). A message
+  loom sends to the dead-letter queue is redriven with a custom destination:
+  `StartMessageMoveTask` with `DestinationArn` set to the source queue.
 - **jobs:** `loom.core.job.JobCallback` is a base class, not a `Protocol`, and
   its `on_success` and `on_failure` do nothing until overridden (each may be
   `def` or `async def`); `loom.core.job.NullJobCallback` and a worker

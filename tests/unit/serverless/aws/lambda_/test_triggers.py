@@ -23,6 +23,7 @@ from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
 from tests.helpers.composition import composition_project
+from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -98,7 +99,7 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
         if trigger.get("source") in _EVENT_SOURCES:
             trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
-        document = {"lambda": {"functions": {name: function}}}
+        document = consumed_queues("events") | {"lambda": {"functions": {name: function}}}
         project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="events", job_service="inline", entry=name),

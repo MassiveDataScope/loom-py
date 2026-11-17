@@ -128,7 +128,12 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
     return write_config(
         {
             "app": {"name": "loom-it-sqs", "job_service": "sqs"},
-            "sqs": {"queues": {"emails": queues.standard.url, "orders": queues.fifo.url}},
+            "sqs": {
+                "queues": {
+                    "emails": {"url": queues.standard.url},
+                    "orders": {"url": queues.fifo.url},
+                }
+            },
             "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
         }
     )

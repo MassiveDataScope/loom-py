@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum, unique
 
+from loom.core.config import ConfigError
 from loom.core.errors import SystemError
 
 
@@ -23,6 +24,10 @@ class SQSErrorCode(StrEnum):
     GROUP_MISSING = "sqs_group_missing"
 
 
+class SQSQueueConfigError(ConfigError):
+    """A job's queue has no URL, its FIFO queue no ``__group_by__``, or a redrive queue no DLQ."""
+
+
 class SQSDispatchError(SystemError):
     """A message SQS cannot carry, or a send that failed; ``code`` names which."""
 
@@ -32,4 +37,4 @@ class SQSDispatchError(SystemError):
         super().__init__(message, code=code)
 
 
-__all__ = ["SQSDispatchError", "SQSErrorCode"]
+__all__ = ["SQSDispatchError", "SQSErrorCode", "SQSQueueConfigError"]

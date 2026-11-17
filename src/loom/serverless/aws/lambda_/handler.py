@@ -22,6 +22,7 @@ from loom.core.job.outcome import failure_log_fields
 from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
     Read,
+    consumer_policies,
     fail_in_span,
     jobs_recipe,
     open_host,
@@ -191,7 +192,8 @@ class LambdaAdapter:
         recipe, declared = jobs_recipe(project, self._jobs, self._use_cases, self._metrics)
         if not isinstance(trigger, EventTrigger):
             failures = trigger.reports_batch_item_failures
-            return recipe, functools.partial(_bind_jobs, declared, failures)
+            queue = None if trigger.queue is None else trigger.queue.name
+            return recipe, functools.partial(_bind_jobs, declared, failures, queue)
         job_type = trigger_job(name, trigger, declared)
         if trigger.queued:
             return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
@@ -199,9 +201,17 @@ class LambdaAdapter:
 
 
 def _bind_jobs(
-    declared: Mapping[str, type[Job[Any]]], report_failures: bool, application: Application
+    declared: Mapping[str, type[Job[Any]]],
+    report_failures: bool,
+    queue_name: str | None,
+    application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a ``jobs`` function: a final failure is consumed."""
+    if queue_name is not None:
+        served = [
+            job for job in declared.values() if application.job_settings.of(job).queue == queue_name
+        ]
+        consumer_policies(application, queue_name, served)
     return SQSBatch(application, declared, open_host(application), report_failures=report_failures)
 
 
@@ -212,6 +222,8 @@ def _bind_queued_events(
     application: Application,
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
+    assert trigger.queue is not None
+    consumer_policies(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
