@@ -44,6 +44,7 @@ def test_a_rejected_message_lands_in_the_dead_letter_queue_and_moves_back_to_a_d
     sqs.send_message(QueueUrl=source, MessageBody="body")
     received = sqs.receive_message(QueueUrl=source, WaitTimeSeconds=5)["Messages"][0]
     queue = SqsQueue(sqs, "source", QueueConfig(url=source))
+    queue.read_dead_letter(sqs)
 
     result = queue.reject_batch(
         [(SqsRecord(received["MessageId"], received["ReceiptHandle"], received["Body"]), "why")]

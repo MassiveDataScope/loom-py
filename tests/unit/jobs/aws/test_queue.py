@@ -57,6 +57,14 @@ def _queue(
     return SqsQueue(client, "jobs", QueueConfig(url=url, dead_letter=policy))
 
 
+def _primed(
+    client: FakeSqs, *, url: str = _SOURCE, policy: DeadLetterPolicy = DeadLetterPolicy.REDRIVE
+) -> SqsQueue:
+    queue = _queue(client, url=url, policy=policy)
+    queue.read_dead_letter(client)
+    return queue
+
+
 def _operations(queue: SqsQueue) -> dict[str, Any]:
     """Each batch operation on 25 records, by the client method it calls."""
     records = _records(25)
@@ -77,7 +85,7 @@ class TestBatches:
     )
     def test_25_entries_go_in_three_calls_of_at_most_ten(self, operation: str) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
-        result = _operations(_queue(client))[operation]()
+        result = _operations(_primed(client))[operation]()
 
         assert [len(entries) for _, _, entries in client.batches] == [10, 10, 5]
         assert len(result.succeeded) == 25
@@ -138,7 +146,7 @@ class TestReject:
         owner = {"DataType": "String", "StringValue": "acme"}
         record = SqsRecord("m1", "h1", "the-body", attributes={"owner": owner})
 
-        _queue(client).reject_batch([(record, "bad payload")])
+        _primed(client).reject_batch([(record, "bad payload")])
 
         ((_, url, (entry,)),) = client.batches
         assert url == _DEAD
@@ -152,7 +160,7 @@ class TestReject:
     def test_a_long_reason_is_cut(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
 
-        _queue(client).reject_batch([(SqsRecord("m1", "h1", "b"), "r" * 1000)])
+        _primed(client).reject_batch([(SqsRecord("m1", "h1", "b"), "r" * 1000)])
 
         reason = client.batches[0][2][0]["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]
         assert reason["StringValue"] == "r" * REASON_MAX_CHARS
@@ -161,8 +169,10 @@ class TestReject:
         client = FakeSqs({_SOURCE: _FIFO_POLICY})
         record = SqsRecord("m1", "h1", "b", group_id="group-7")
 
-        _queue(client).reject_batch([(record, "no"), (SqsRecord("m2", "h2", "b", "group-7"), "no")])
-        _queue(client).reject_batch([(record, "no")])
+        _primed(client).reject_batch(
+            [(record, "no"), (SqsRecord("m2", "h2", "b", "group-7"), "no")]
+        )
+        _primed(client).reject_batch([(record, "no")])
 
         first, second, third = (entry for _, _, entries in client.batches for entry in entries)
         assert client.batches[0][1] == _FIFO_DEAD
@@ -173,7 +183,7 @@ class TestReject:
 
     def test_the_dead_letter_queue_is_read_once_for_many_rejections(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
-        queue = _queue(client)
+        queue = _primed(client)
 
         for _ in range(5):
             queue.reject_batch([(record, "no") for record in _records(12)])
@@ -186,12 +196,20 @@ class TestReject:
         queue = _queue(FakeSqs())
 
         with pytest.raises(SQSQueueConfigError) as raised:
-            queue.dead_letter()
+            queue.read_dead_letter(FakeSqs())
 
         message = str(raised.value)
         assert "'jobs'" in message
         assert "RedrivePolicy" in message
         assert "dead_letter: discard" in message
+
+    def test_a_dead_letter_queue_not_read_at_start_up_is_never_read_lazily(self) -> None:
+        client = FakeSqs({_SOURCE: _POLICY})
+
+        with pytest.raises(SQSQueueConfigError, match="'jobs'.*at start-up"):
+            _queue(client).reject_batch([(SqsRecord("m1", "h1", "b"), "no")])
+
+        assert client.metadata_calls == 0
 
     def test_a_discard_queue_has_no_dead_letter_queue_to_reject_to(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
@@ -370,7 +388,7 @@ class TestAttemptLimit:
 
     def test_a_redrive_queue_limits_attempts_to_its_max_receive_count(self) -> None:
         settings = self._settings()
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
@@ -379,7 +397,7 @@ class TestAttemptLimit:
 
     def test_declaring_max_attempts_for_a_job_on_a_redrive_queue_is_refused(self) -> None:
         settings = self._settings(EmailJob={"retry": {"max_attempts": 5}})
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         with pytest.raises(ConfigError) as raised:
             queue.consumed_retries([ReportJob, EmailJob], lambda job: settings.of(job).retry)
@@ -391,7 +409,7 @@ class TestAttemptLimit:
 
     def test_the_defaults_layer_does_not_apply_to_a_redrive_queue(self) -> None:
         settings = self._settings(defaults={"retry": {"max_attempts": 2}})
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         retries = queue.consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
@@ -415,7 +433,7 @@ class TestAttemptLimit:
         settings = self._settings()
 
         with pytest.raises(SQSQueueConfigError, match="RedrivePolicy"):
-            _queue(FakeSqs()).consumed_retries([EmailJob], lambda job: settings.of(job).retry)
+            _primed(FakeSqs()).consumed_retries([EmailJob], lambda job: settings.of(job).retry)
 
 
 class TestWire:
@@ -508,6 +526,6 @@ class TestUnservedPolicy:
         assert queue.unserved_policy() == DEFAULT_RETRY
 
     def test_a_redrive_queue_limits_attempts_as_its_policy_does(self) -> None:
-        queue = _queue(FakeSqs({_SOURCE: _POLICY}))
+        queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         assert queue.unserved_policy().max_attempts == 4

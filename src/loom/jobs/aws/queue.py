@@ -403,14 +403,18 @@ class SqsQueue:
         return self._dead_letter is not None
 
     def dead_letter(self) -> DeadLetter:
-        """The dead-letter queue of the ``RedrivePolicy``, read once and kept.
+        """The dead-letter queue :meth:`read_dead_letter` kept.
 
         Raises:
-            SQSQueueConfigError: When the queue is ``dead_letter: discard`` or its
-                ``RedrivePolicy`` is missing.
+            SQSQueueConfigError: When the queue is ``dead_letter: discard``, or its
+                dead-letter queue was not read at start-up.
         """
+        self._refuse_discard()
         if self._dead_letter is None:
-            return self.read_dead_letter(self._client)
+            raise SQSQueueConfigError(
+                f"queue {self.name!r} has not read its dead-letter queue: call "
+                "read_dead_letter(client) at start-up, never during an invocation"
+            )
         return self._dead_letter
 
     def consumed_retries(
@@ -465,6 +469,12 @@ class SqsQueue:
             return DEFAULT_RETRY
         return replace(DEFAULT_RETRY, max_attempts=self.dead_letter().max_receive_count)
 
+    def _refuse_discard(self) -> None:
+        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+            raise SQSQueueConfigError(
+                f"queue {self.name!r} is dead_letter: discard: it has no dead-letter queue"
+            )
+
     def read_dead_letter(self, client: Any) -> DeadLetter:
         """Read the ``RedrivePolicy`` and the dead-letter queue's URL through *client*.
 
@@ -475,10 +485,7 @@ class SqsQueue:
             SQSQueueConfigError: When the queue is ``dead_letter: discard`` or its
                 ``RedrivePolicy`` is missing.
         """
-        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
-            raise SQSQueueConfigError(
-                f"queue {self.name!r} is dead_letter: discard: it has no dead-letter queue"
-            )
+        self._refuse_discard()
         attributes = client.get_queue_attributes(
             QueueUrl=self.url, AttributeNames=["RedrivePolicy"]
         )

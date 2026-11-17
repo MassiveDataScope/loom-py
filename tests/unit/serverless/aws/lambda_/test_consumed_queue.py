@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -16,7 +16,7 @@ from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.extras import FakeSdkError, fake_aws_island, patched_aws_clients
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
@@ -154,6 +154,20 @@ class TestConsumedQueue:
 
         with pytest.raises(TypeError, match="a bug"):
             _bind(tmp_path, probe, client)
+
+    def test_a_fake_sdk_error_at_init_fails_naming_the_queue_through_the_fake_island(
+        self,
+        tmp_path: Path,
+        probe: tuple[type[Job[None]], Probe],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def refuse(client: MagicMock) -> None:
+            client.get_queue_attributes.side_effect = FakeSdkError("throttled")
+
+        fake_aws_island(monkeypatch, setup=refuse)
+
+        with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
+            _bind(tmp_path, probe, None)
 
     @pytest.mark.parametrize("named", [True, False])
     def test_the_policy_is_read_at_start_up_with_the_retrying_client_only(
