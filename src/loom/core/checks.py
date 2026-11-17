@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Final
 import msgspec
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import INTERPOLATION, ConfigKey
+from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigKey
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.plugins.entrypoints import MissingDependency, list_entry_points
 
@@ -67,6 +67,8 @@ SILENCED_KEY: Final = "checks.silenced"
 
 DEPLOY_CHECKS_GROUP: Final = "loom.deploy_checks"
 """Entry-point group whose entries name a configuration path and target its :class:`CheckSet`."""
+
+_HTTP_SOURCE: Final = "http"
 
 MODULES_KEY: Final = "checks.modules"
 """Configuration key listing the modules that register the application's checks."""
@@ -162,6 +164,32 @@ class CheckScope:
         """Return the scope of a process that serves no HTTP."""
         return cls(excluded=frozenset({ConfigKey.APP_REST}))
 
+    @classmethod
+    def declared_by(cls, config: ConfigContext, *, excluded: Iterable[str] = ()) -> CheckScope:
+        """Return the scope of the process *config* declares, for ``loom check``.
+
+        The process serves HTTP, so it requires ``app.rest``, when ``app.entry``
+        is ``fastapi`` or a function of ``lambda.functions`` has an ``http``
+        trigger; start-up requires it for the same configurations.
+
+        Args:
+            config: The configuration, read as written.
+            excluded: Paths the caller leaves out.
+        """
+        functions = config.raw(f"{ConfigKey.LAMBDA}.functions", {})
+        declared = functions.values() if isinstance(functions, dict) else ()
+        http_function = any(
+            isinstance(function, dict)
+            and isinstance(function.get("trigger"), dict)
+            and function["trigger"].get("source") == _HTTP_SOURCE
+            for function in declared
+        )
+        serves = config.raw(f"{ConfigKey.APP}.entry") == FASTAPI_ENTRY or http_function
+        return cls(
+            required=frozenset({ConfigKey.APP_REST}) if serves else frozenset(),
+            excluded=frozenset(excluded),
+        )
+
     def skip_reason(self, path: str, config: ConfigContext) -> SkipReason | None:
         """Say why the checks of *path* do not run.
 
@@ -208,6 +236,17 @@ class CheckSet:
     def items(self) -> tuple[tuple[str, DeployCheck], ...]:
         """Return the registered ids with their checks, in registration order."""
         return tuple(self._checks.items())
+
+    def add_to(self, checks: dict[str, DeployCheck]) -> None:
+        """Merge this set's checks into *checks*.
+
+        Raises:
+            ValueError: When an id is already in *checks*, registered by another set.
+        """
+        for check_id, check in self._checks.items():
+            if check_id in checks:
+                raise ValueError(f"deploy check {check_id!r} is registered by two check sets")
+            checks[check_id] = check
 
 
 DEPLOY_CHECKS: Final = CheckSet()
@@ -312,16 +351,9 @@ class _Selection:
                 skipped.append(SkippedCheck(entry.path, reason))
                 continue
             checked.append(entry.path)
-            cls._add(checks, entry.load())
-        cls._add(checks, application)
+            entry.load().add_to(checks)
+        application.add_to(checks)
         return cls(checks=checks, checked=tuple(checked), skipped=tuple(skipped))
-
-    @staticmethod
-    def _add(checks: dict[str, DeployCheck], check_set: CheckSet) -> None:
-        for check_id, check in check_set.items():
-            if check_id in checks:
-                raise ValueError(f"deploy check {check_id!r} is registered by two check sets")
-            checks[check_id] = check
 
 
 class DeployCheckError(ConfigError):

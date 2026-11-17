@@ -88,8 +88,11 @@
 - **cli:** `loom check --skip` and `loom deploy manifest --skip` take
   configuration paths (`app.rest`), no longer ids or areas (`loom.rest`);
   `loom.rest.E001` and `loom.rest.W001` no longer fire for a configuration
-  that declares no `app.rest`, except for a FastAPI entry, which requires it.
-  **Migration:** replace `--skip loom.rest` with `--skip app.rest`.
+  that declares no `app.rest`, except for one that serves HTTP (`app.entry:
+  fastapi`, or a `lambda.functions` entry with an `http` trigger), which
+  requires it as start-up does; a `--skip` path that matches no check set and
+  no declared key is a usage error (exit 2). **Migration:** replace
+  `--skip loom.rest` with `--skip app.rest`.
 - **core:** `create_kernel` now runs `kernel.factory.verify()` before returning.
   Before: a use case with a missing binding, a dependency cycle or a main
   model with no repository failed at its first invocation. Now: it fails at
@@ -804,7 +807,7 @@
   runs the deploy checks of the configuration paths it declares and returns a
   `CheckedProject` (`config`, `environment`, `report`, `config_root`,
   `code_path`, `project`, the `Project` of the configuration as written, and
-  `discovered`, its scan of `app.packages`, run once). `loom check --deploy`
+  `discovered`, its scan of `app.packages` with the `app.agents` globs, run once). `loom check --deploy`
   and `loom deploy manifest` run through it and share that one scan; the CLI
   also refuses misdeclared lambda triggers, which no `--skip` leaves out.
 - **core:** the entry-point group `loom.deploy_checks` maps a configuration

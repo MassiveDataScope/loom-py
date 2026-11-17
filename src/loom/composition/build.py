@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, TypeVar, overload
 
-from loom.composition.project import FASTAPI_ENTRY, Project
+from loom.composition.project import Project
 from loom.core.config import ConfigError, ConfigResolver
+from loom.core.config.keys import FASTAPI_ENTRY
 from loom.core.environment import Environment
 
 if TYPE_CHECKING:

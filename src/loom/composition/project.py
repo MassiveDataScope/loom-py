@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import msgspec
 
@@ -41,9 +41,6 @@ if TYPE_CHECKING:
 
 
 T = TypeVar("T")
-
-FASTAPI_ENTRY: Final = "fastapi"
-"""Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
 
 class AppConfig(msgspec.Struct, kw_only=True):
@@ -110,6 +107,11 @@ class CheckedProject:
     report: DeployReport
     config_root: Path
     code_path: Path
+
+    def unknown_paths(self, paths: Iterable[str]) -> tuple[str, ...]:
+        """Return the *paths* no installed check set and no declared configuration key matches."""
+        known = {*self.report.checked, *(skipped.path for skipped in self.report.skipped)}
+        return tuple(p for p in paths if p not in known and self.config.raw(p) is None)
 
     @functools.cached_property
     def project(self) -> Project:
@@ -266,11 +268,7 @@ class Project:
                 "non-string value cannot name the directory its check modules import from"
             )
         code_path = add_code_path(raw_code_path, config_root)
-        served = ctx.raw(f"{ConfigKey.APP}.entry") == FASTAPI_ENTRY
-        scope = CheckScope(
-            required=frozenset({ConfigKey.APP_REST}) if served else frozenset(),
-            excluded=frozenset(excluded),
-        )
+        scope = CheckScope.declared_by(ctx, excluded=excluded)
         return CheckedProject(
             config=ctx,
             environment=resolved_environment,

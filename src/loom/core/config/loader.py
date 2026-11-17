@@ -94,6 +94,7 @@ from loom.core.config._includes import (
 )
 from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import INTERPOLATION
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -323,7 +324,7 @@ def _labels(literal: str, pattern: str) -> list[tuple[str, str]]:
     Raises:
         ConfigError: When the entry matches no file or cannot be listed.
     """
-    if "${" in literal:
+    if INTERPOLATION in literal:
         return [(match, literal) for match in expand_include(pattern, literal)]
     return [(match, match) for match in expand_include(pattern, pattern)]
 

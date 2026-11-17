@@ -9,7 +9,12 @@ import yaml
 
 from loom.celery.adapter import CeleryAdapter
 from loom.composition.project import Project
-from loom.core.checks import CheckScope, DeployCheckError, enforce_deploy_checks
+from loom.core.checks import (
+    CheckScope,
+    DeployCheckError,
+    enforce_deploy_checks,
+    run_deploy_checks,
+)
 from loom.core.config import ConfigContext
 from loom.core.environment import Environment
 from loom.rest.fastapi.adapter import FastAPIAdapter
@@ -46,6 +51,45 @@ class TestStartUpAndCheckParity:
         assert started is not None
         assert _ids(checked.report) == _ids(started)
         assert "loom.audit.W001" in _ids(started)
+
+
+_LAMBDA = {
+    "app": {"name": "acme", "entry": "lambda"},
+    "lambda": {"handler": "acme.handler", "functions": {}},
+}
+
+
+def _lambda_with(function: dict[str, object]) -> dict[str, object]:
+    return {**_LAMBDA, "lambda": {"handler": "acme.handler", "functions": {"public": function}}}
+
+
+class TestLambdaHttpParity:
+    def test_check_requires_app_rest_for_a_lambda_http_function_as_start_up_does(
+        self, tmp_path: Path
+    ) -> None:
+        document = _lambda_with({"trigger": {"source": "http", "interfaces": ["x"]}})
+        path = tmp_path / "app.yaml"
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+        checked = Project.check(str(path), environment="test")
+        started = run_deploy_checks(
+            ConfigContext.from_dict(document), scope=CheckScope(required=frozenset({"app.rest"}))
+        )
+
+        assert _ids(checked.report) == _ids(started)
+        assert "loom.rest.E001" in _ids(started)
+
+    def test_a_lambda_without_an_http_function_does_not_require_app_rest(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "app.yaml"
+        path.write_text(
+            yaml.safe_dump(_lambda_with({"trigger": {"source": "jobs"}})), encoding="utf-8"
+        )
+
+        checked = Project.check(str(path), environment="test")
+
+        assert "app.rest (not declared)" in [s.describe() for s in checked.report.skipped]
 
 
 class TestRecipeScopes:

@@ -76,14 +76,24 @@ def check_config(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
     Raises:
         ConfigError: When the configuration does not load, or directories and
             files are mixed.
+        typer.BadParameter: When a *skip* path matches no check set and no
+            declared configuration key.
     """
     if not config:
-        return Project.check(environment=env, excluded=skip)
-    if len(config) == 1 and config[0].is_dir():
-        return Project.check(config_dir=str(config[0]), environment=env, excluded=skip)
-    if any(path.is_dir() for path in config):
+        checked = Project.check(environment=env, excluded=skip)
+    elif len(config) == 1 and config[0].is_dir():
+        checked = Project.check(config_dir=str(config[0]), environment=env, excluded=skip)
+    elif any(path.is_dir() for path in config):
         raise ConfigError("pass one config directory or YAML files, not both")
-    return Project.check(*(str(path) for path in config), environment=env, excluded=skip)
+    else:
+        checked = Project.check(*(str(path) for path in config), environment=env, excluded=skip)
+    unknown = checked.unknown_paths(skip)
+    if unknown:
+        raise typer.BadParameter(
+            f"{', '.join(unknown)} matches no check set and no declared configuration path",
+            param_hint="--skip",
+        )
+    return checked
 
 
 def print_report(checked: CheckedProject, *, err: bool) -> None:

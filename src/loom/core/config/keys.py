@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 INTERPOLATION = "${"
+
+FASTAPI_ENTRY: Final = "fastapi"
+"""Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
 
 class ConfigKey(StrEnum):

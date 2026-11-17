@@ -206,6 +206,15 @@ class TestCheckDeploy:
         assert result.returncode == 0, result.stderr
         assert "skipped: app.rest (not declared)" in result.stdout
 
+    def test_a_skip_path_that_matches_nothing_is_a_usage_error(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
+
+        result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
+
+        assert result.exit_code == 2
+        assert "loom.rest" in result.output
+        assert "--skip" in result.output
+
     def test_the_report_lists_the_paths_it_checked(self, tmp_path: Path) -> None:
         observability = {"log": {"config": {"renderer": "console"}}}
         config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP, "observability": observability})
