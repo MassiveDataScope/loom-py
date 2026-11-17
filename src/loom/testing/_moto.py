@@ -6,18 +6,11 @@ The ``testing-aws`` extra brings moto and boto3 to it.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from moto import mock_aws
-from moto.core.models import DEFAULT_ACCOUNT_ID
 
-__all__ = ["account_id", "declare_queue", "start"]
-
-
-def account_id() -> str:
-    """The account moto answers for: ``MOTO_ACCOUNT_ID``, else its default."""
-    return os.environ.get("MOTO_ACCOUNT_ID", DEFAULT_ACCOUNT_ID)
+__all__ = ["declare_queue", "start"]
 
 
 def start() -> Any:

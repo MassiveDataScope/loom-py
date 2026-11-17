@@ -10,7 +10,7 @@ Needs the ``testing-aws`` extra (moto). Usage::
 
 from __future__ import annotations
 
-import os
+import re
 import uuid
 from collections.abc import Sequence
 from types import TracebackType
@@ -18,7 +18,7 @@ from typing import Any
 
 from loom.composition import Application, Project
 from loom.core.config import ConfigError
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
 from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
@@ -40,14 +40,14 @@ _RECEIVE_LIMIT = 10
 class LambdaWorker:
     """The handler of a Lambda ``jobs`` function, composed over a moto SQS.
 
-    The harness enters moto's AWS mock and creates the queue the function consumes
-    where its ``sqs.queues`` entry says: the URL's region, account and name; for a
-    ``redrive`` queue, with a dead-letter queue and a real ``RedrivePolicy``. It sets
-    and restores no environment: the application finds its region where it always
-    does (``aws.region``, else ``AWS_DEFAULT_REGION``, which a fixture sets as moto
-    documents), and moto's account is ``MOTO_ACCOUNT_ID`` or its default. Inside a
-    user's own ``mock_aws()`` the worker joins it, and closing it leaves that one
-    running.
+    The harness enters moto's AWS mock and creates the queue the function consumes,
+    and for a ``redrive`` queue its dead-letter queue with a real ``RedrivePolicy``,
+    through the application's own ``sqs`` client: botocore resolves the region as it
+    does for the application (``aws.region``, a profile, ``AWS_DEFAULT_REGION``) and
+    moto's account is ``MOTO_ACCOUNT_ID`` or its default. The harness sets and
+    restores no environment, and the queue must come out at the configured URL.
+    Inside a user's own ``mock_aws()`` the worker joins it, and closing it leaves that
+    one running.
 
     Args:
         config: A configuration path, or none for the default config directory.
@@ -64,10 +64,9 @@ class LambdaWorker:
 
     Raises:
         MissingExtraError: When moto is not installed, naming the ``testing-aws`` extra.
-        ConfigError: When *function* is no jobs function, its queue is not mapped, or its
-            URL is not one moto serves: not an AWS host (``localhost:4566``), another
-            account than moto's, or another region than the application reads. Set
-            ``MOTO_ACCOUNT_ID`` or use ``loom.testing.TEST_QUEUE``.
+        ConfigError: When *function* is no jobs function, its queue is not mapped, or moto
+            creates the queue at another URL than the configured one (another region,
+            account, host or scheme): the message names both and the way out.
     """
 
     def __init__(
@@ -87,34 +86,30 @@ class LambdaWorker:
         entry = sqs_config.queues.get(trigger.queue.name)
         if entry is None:
             raise ConfigError(f"sqs.queues.{trigger.queue.name} is missing")
-        self._queue = SqsQueue(None, trigger.queue.name, entry)
-        region = self._queue.region
-        self._refuse_what_moto_cannot_serve(entry.url, island.account_id(), sqs_config.region)
-        self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
         self._closed = False
-        self._clients = AwsClients()
         self._adapter = LambdaAdapter(function=function)
         self._mock = island.start()
         try:
-            self.sqs = self._clients.client("sqs", AwsClientConfig(region=region))
+            self.application: Application = project.compose(
+                OverrideAdapter(self._adapter, tuple(overrides))
+            )
+            self.sqs = self.application.kernel.container.resolve(AwsClients).client(
+                "sqs", sqs_config
+            )
             self.queue_url, self.dead_letter_url = island.declare_queue(
                 self.sqs,
-                self._queue.queue_name,
+                entry.url.rstrip("/").rsplit("/", 1)[-1],
                 redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
                 max_receive_count=_MAX_RECEIVE_COUNT,
             )
             if self.queue_url.rstrip("/") != entry.url.rstrip("/"):
-                raise ConfigError(
-                    f"moto made the queue {self.queue_url}, not the configured {entry.url}: "
-                    "use loom.testing.TEST_QUEUE"
-                )
+                raise ConfigError(self._made_another_queue(entry.url, self.queue_url))
+            self._queue = SqsQueue(self.sqs, trigger.queue.name, entry)
+            self._batch_size = min(trigger.queue.batch_size or _RECEIVE_LIMIT, _RECEIVE_LIMIT)
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
             )
             self._queue_arn: str = arn["Attributes"]["QueueArn"]
-            self.application: Application = project.compose(
-                OverrideAdapter(self._adapter, tuple(overrides))
-            )
             self._handler = self._adapter.bind(self.application)
         except BaseException:
             self.close()
@@ -202,10 +197,7 @@ class LambdaWorker:
         try:
             self._adapter.close()
         finally:
-            try:
-                self._clients.close()
-            finally:
-                self._mock.stop()
+            self._mock.stop()
 
     def __enter__(self) -> LambdaWorker:
         return self
@@ -218,27 +210,25 @@ class LambdaWorker:
     ) -> None:
         self.close()
 
-    def _refuse_what_moto_cannot_serve(
-        self, url: str, moto_account: str, configured: str | None
-    ) -> None:
-        shape = "https://sqs.<region>.amazonaws.com/<account>/<queue>"
-        if self._queue.region is None:
-            raise ConfigError(
-                f"queue URL {url} is not an AWS SQS URL ({shape}): LambdaWorker runs the queue "
-                "in moto; use loom.testing.TEST_QUEUE or a URL of that shape"
-            )
-        if self._queue.account_id != moto_account:
-            raise ConfigError(
-                f"queue URL {url} is of account {self._queue.account_id}, but moto answers for "
-                f"{moto_account}: set MOTO_ACCOUNT_ID to {self._queue.account_id} or use "
-                "loom.testing.TEST_QUEUE"
-            )
-        app_region = configured or os.environ.get("AWS_DEFAULT_REGION")
-        if app_region is not None and app_region != self._queue.region:
-            raise ConfigError(
-                f"the application reads region {app_region!r} but the queue URL {url} is in "
-                f"{self._queue.region!r}: they must name the same region"
-            )
+    @staticmethod
+    def _made_another_queue(configured: str, made: str) -> str:
+        shape = re.compile(r"^(?P<scheme>[^:]+)://(?P<host>[^/]+)/(?P<account>[^/]+)/(?P<name>.+)$")
+        wanted, got = shape.match(configured), shape.match(made)
+        differs = (
+            [
+                f"{part} {wanted[part]!r} against moto's {got[part]!r}"
+                for part in ("scheme", "host", "account", "name")
+                if wanted[part] != got[part]
+            ]
+            if wanted and got
+            else []
+        )
+        return (
+            f"moto made the queue {made}, not the configured {configured}"
+            + (f" ({'; '.join(differs)})" if differs else "")
+            + ": set aws.region or AWS_DEFAULT_REGION to the URL's region, MOTO_ACCOUNT_ID to "
+            "its account, or use loom.testing.TEST_QUEUE"
+        )
 
     def _record(self, message: dict[str, Any]) -> dict[str, Any]:
         attributes = {

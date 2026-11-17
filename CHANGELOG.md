@@ -106,10 +106,11 @@
   configuration says (the URL's region, account and name) and, for a `redrive`
   queue, a dead-letter queue with a real `RedrivePolicy`, and exposes `sqs` (a
   boto3 client of the mock), `queue_url` and `dead_letter_url`. It sets no
-  environment: the application reads its region as ever (`aws.region`, else
+  environment and creates the queue through the application's own `sqs` client:
+  the region resolves as for the application (`aws.region`, a profile,
   `AWS_DEFAULT_REGION`) and moto's account is `MOTO_ACCOUNT_ID`, else
-  `123456789012`; a queue URL of another account, region or host than those is
-  refused with a `ConfigError`. `worker.deliver(job, payload)` sends the job with
+  `123456789012`; when moto makes the queue at another URL than the configured
+  one, a `ConfigError` names both and the way out. `worker.deliver(job, payload)` sends the job with
   the envelope and the queue placement `SQSJobService` uses, receives it (a real
   receipt handle and `ApproximateReceiveCount`) and invokes the function;
   `worker.redeliver()` does so for what the queue shows, up to the trigger's

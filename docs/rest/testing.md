@@ -188,10 +188,50 @@ queued and a `jobs` event already is a record, so neither has `via_sqs`. Every S
 `group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
 should retry:
 
+`src/acme_mail/jobs.py`:
+
+```python
+from loom.core.job.job import Job
+from loom.core.job.policy import Backoff
+
+
+class Smtp:
+    down = False
+
+
+smtp = Smtp()
+
+
+class SendEmailJob(Job[None]):
+    __queue__ = "jobs"
+    __retry__ = Backoff(first_s=0, factor=1, max_s=0, jitter=False)
+
+    def execute(self, to: str) -> None:
+        if smtp.down:
+            raise ConnectionError("smtp is down")
+```
+
+`config.yaml`:
+
+```yaml
+app: {name: acme-mail, job_service: sqs, packages: [acme_mail]}
+sqs:
+  queues:
+    jobs: {url: "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs", dead_letter: discard}
+lambda:
+  functions:
+    worker: {trigger: {source: jobs, queue: {name: jobs}}}
+```
+
+`conftest.py`:
+
 ```python
 import pytest
 from moto import mock_aws
+
+from acme_mail.jobs import smtp
 from loom.testing import LambdaWorker
+
 
 @pytest.fixture
 def aws(monkeypatch):
@@ -200,38 +240,45 @@ def aws(monkeypatch):
     with mock_aws():
         yield
 
+
 @pytest.fixture
 def worker(aws):
     with LambdaWorker("config.yaml", function="worker", environment="test") as w:
         yield w
 
-def test_a_failed_email_is_reported_and_comes_back(worker, smtp):
-    smtp.down = True
-    assert len(worker.deliver(SendEmailJob, {"to": "ada@example.com"})["batchItemFailures"]) == 1
+
+@pytest.fixture
+def mail():
     smtp.down = False
-    assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran: Backoff(first_s=0)
+    return smtp
 ```
 
-```yaml
-app: {job_service: sqs, packages: [acme_mail]}
-sqs:
-  queues:
-    jobs: {url: https://sqs.eu-west-1.amazonaws.com/111122223333/jobs, dead_letter: discard}
-lambda:
-  functions:
-    worker: {trigger: {source: jobs, queue: {name: jobs}}}
+`test_mail.py`:
+
+```python
+from acme_mail.jobs import SendEmailJob
+
+
+def test_a_failed_email_is_reported_and_comes_back(worker, mail):
+    mail.down = True
+    first = worker.deliver(SendEmailJob, params={"to": "ada@example.com"})
+    assert len(first["batchItemFailures"]) == 1
+    mail.down = False
+    assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran: Backoff(first_s=0)
 ```
 
 A `jobs` function declares the queue it consumes (`trigger.queue`), and it
 settles each record by what its job came to. `LambdaWorker` needs the
 `testing-aws` extra (moto). It enters moto's `mock_aws()` itself, creates that
-queue where the configuration says (the URL's region, account and name) and,
-for `dead_letter: redrive`, its dead-letter queue with a real `RedrivePolicy`,
-and binds the function over it. It sets no environment: the application reads
-its region where it always does (`aws.region`, else `AWS_DEFAULT_REGION`), and
-moto's account is `MOTO_ACCOUNT_ID`, or `123456789012`. A queue URL that is not
-an AWS one, or is of another account or region than those, is refused with a
-`ConfigError` naming it. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+queue and, for `dead_letter: redrive`, its dead-letter queue with a real
+`RedrivePolicy`, through the application's own `sqs` client, and binds the
+function over it. It sets no environment: botocore resolves the region as it
+does for the application (`aws.region`, a profile of `~/.aws/config`,
+`AWS_DEFAULT_REGION`), and moto's account is `MOTO_ACCOUNT_ID`, or
+`123456789012`. The queue must come out at the configured URL: when moto makes
+another one (another region, account, host or scheme), construction raises a
+`ConfigError` naming both URLs, what differs, and the way out. With no region at
+all, botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
 entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
 built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
 `aws.region: us-east-1` in the configuration works as it is. A user's own
