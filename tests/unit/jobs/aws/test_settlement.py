@@ -20,8 +20,9 @@ from loom.jobs.aws.queue import (
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws_island import FakeAwsIsland, FakeAwsIslandByAttempts
+from tests.helpers.sqs import FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -66,7 +67,7 @@ def settling(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Settling]:
         **options: Any,
     ) -> Settling:
         client = FakeSqs(_POLICY, **options)
-        island = fake_aws_island(monkeypatch, serving=lambda _config: client)
+        island = FakeAwsIsland(client=client).install(monkeypatch)
         config = SQSConfig(
             queues={
                 "jobs": QueueConfig(url=_SOURCE, dead_letter=DeadLetterPolicy(dead_letter)),
@@ -228,10 +229,7 @@ class TestSqsSettlement:
     ) -> None:
         retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
 
-        fake_aws_island(
-            monkeypatch,
-            serving=lambda config: bounded if config.max_attempts == 1 else retrying,
-        )
+        FakeAwsIslandByAttempts(single_attempt=bounded, retrying=retrying).install(monkeypatch)
         clients = AwsClients()
         config = SQSConfig(queues={"jobs": QueueConfig(url=_SOURCE)})
         settlement = SqsSettlement(clients, config, "jobs")

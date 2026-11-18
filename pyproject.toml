@@ -472,7 +472,7 @@ pythonpath = [
 ]
 # `slow` tests are deselected by default, as CI's fast lane does; CI runs them in its
 # slow lane with an explicit `-m`. Run them locally with `-m slow`, or everything with `-m ""`.
-addopts = "-ra --log-disable=aiosqlite -m 'not slow' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
+addopts = "-ra --log-disable=aiosqlite -m 'not slow and not live' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 asyncio_mode = "auto"
 timeout = 300
 log_cli = true

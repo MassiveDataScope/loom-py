@@ -7,9 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,8 +15,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.secrets import SecretsManagerResolver
 from tests.helpers.aws import moto_client
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
-from tests.helpers.extras import BOTO3_ISLAND
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -31,7 +28,7 @@ def mock_client() -> MagicMock:
 
 @pytest.fixture
 def island(mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-    return fake_aws_island(monkeypatch, serving=lambda _config: mock_client)
+    return FakeAwsIsland(client=mock_client).install(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
@@ -379,35 +376,32 @@ class TestSecretsManagerResolverErrors:
             resolver.resolve("")
         assert island.built == []
 
-    def test_raises_config_error_when_boto3_not_installed(self) -> None:
+    def test_raises_config_error_when_boto3_not_installed(self, absent_boto3: None) -> None:
         resolver = SecretsManagerResolver()
-        with (
-            patch.dict(sys.modules, {"boto3": None, BOTO3_ISLAND: None}),
-            pytest.raises(ConfigError, match="boto3 is required"),
-        ):
+        with pytest.raises(ConfigError, match="boto3 is required"):
             resolver.resolve("/some/secret")
 
 
 class TestSecretsManagerResolverOnMoto:
     """The real request shape: secrets stored in moto, read through a real client."""
 
-    def test_a_string_secret_is_read(self, secretsmanager: Any) -> None:
-        secretsmanager.create_secret(Name="/prod/token", SecretString="mysecret")
+    def test_a_string_secret_is_read(self, mocked_aws: None) -> None:
+        moto_client("secretsmanager").create_secret(Name="/prod/token", SecretString="mysecret")
 
         assert SecretsManagerResolver().resolve("/prod/token") == "mysecret"
 
     def test_a_json_key_of_an_expanded_path_is_navigated(
-        self, secretsmanager: Any, monkeypatch: pytest.MonkeyPatch
+        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ENV", "prod")
-        secretsmanager.create_secret(
+        moto_client("secretsmanager").create_secret(
             Name="/app/prod/db", SecretString=json.dumps({"host": "prod-db"})
         )
 
         assert SecretsManagerResolver().resolve("/app/%ENV%/db.host") == "prod-db"
 
-    def test_a_binary_secret_is_refused(self, secretsmanager: Any) -> None:
-        secretsmanager.create_secret(Name="/prod/token", SecretBinary=b"bytes")
+    def test_a_binary_secret_is_refused(self, mocked_aws: None) -> None:
+        moto_client("secretsmanager").create_secret(Name="/prod/token", SecretBinary=b"bytes")
 
         with pytest.raises(ConfigError, match="binary"):
             SecretsManagerResolver().resolve("/prod/token")

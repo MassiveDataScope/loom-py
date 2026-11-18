@@ -7,7 +7,6 @@ checks the same options against the real drivers' signatures.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +22,6 @@ from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
-from tests.helpers.aws import REGION
 
 
 class _Recorder:
@@ -46,20 +44,13 @@ class _Recorder:
 
 class TestAwsClientBuilder:
     def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
-        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, mocked_aws: None, dev_profile: str
     ) -> None:
-        profiles = tmp_path / "aws-config"
-        profiles.write_text(
-            f"[profile dev]\nregion = {REGION}\n"
-            "aws_access_key_id = testing\naws_secret_access_key = testing\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("AWS_CONFIG_FILE", str(profiles))
         island = import_optional("loom.core.connections.aws.client", extra="aws")
         config = AwsClientConfig(
             region="eu-west-1",
             url=Dsn("http://localhost:8000"),
-            profile="dev",
+            profile=dev_profile,
             pool=AwsPool(size=4),
             connect_timeout=1,
             read_timeout=7,
@@ -67,10 +58,10 @@ class TestAwsClientBuilder:
             retry_mode="adaptive",
         )
 
-        session = island.open_session("dev")
+        session = island.open_session(dev_profile)
         client = island.build_aws_client(session, "dynamodb", config)
 
-        assert session.profile_name == "dev"
+        assert session.profile_name == dev_profile
         assert client.meta.service_model.service_name == "dynamodb"
         assert client.meta.endpoint_url == "http://localhost:8000"
         assert client.meta.region_name == "eu-west-1"

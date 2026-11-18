@@ -6,7 +6,7 @@ from typing import Annotated, Any, NoReturn
 import pytest
 
 from loom.core.model import BaseModel, Field, Float, Integer, String
-from tests.helpers.aws import build_moto_client, moto_client
+from tests.helpers.aws import moto_client
 from tests.helpers.dynamodb import MotoTable
 
 
@@ -35,13 +35,7 @@ def product_model() -> type[Product]:
 @pytest.fixture
 def products_table(mocked_aws: None) -> MotoTable:
     """The ``products`` table of the moto account."""
-    return MotoTable(moto_client("dynamodb"), "products").create()
-
-
-@pytest.fixture
-def dynamodb(products_table: MotoTable) -> Any:
-    """The DynamoDB client of the ``products`` table."""
-    return products_table.client
+    return MotoTable.create(moto_client("dynamodb"), "products")
 
 
 @pytest.fixture
@@ -52,12 +46,15 @@ def transactions(products_table: MotoTable) -> Iterator[list[int]]:
 
 
 @pytest.fixture
-def refusing_client() -> Any:
-    """A client of its own whose every call fails the test before it leaves the client."""
+def refusing_client(mocked_aws: None) -> Iterator[Any]:
+    """The shared DynamoDB client with every call failing the test until the test ends."""
 
     def refuse(model: Any, params: Any, **_: Any) -> NoReturn:
         raise AssertionError(f"{model.name} was called with {params}")
 
-    client = build_moto_client("dynamodb")
+    client = moto_client("dynamodb")
     client.meta.events.register("before-call", refuse)
-    return client
+    try:
+        yield client
+    finally:
+        client.meta.events.unregister("before-call", refuse)

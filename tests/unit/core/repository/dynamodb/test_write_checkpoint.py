@@ -72,9 +72,11 @@ class TestDynamoUndeclaredStoreWrite:
 
 class TestDynamoDeclaredWrite:
     async def test_a_declared_write_is_reported_as_written(
-        self, coordinator: OrderedCommits, dynamodb: Any
+        self, coordinator: OrderedCommits, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            products_table.client, "products", Product
+        )
 
         async with invocation(coordinator) as scope:
             async with scope.frame(Frame(DEFAULT_STORE)):
@@ -91,9 +93,11 @@ class TestDynamoDeclaredWrite:
         ],
     )
     async def test_a_write_to_a_missing_item_is_not_reported_as_written(
-        self, coordinator: OrderedCommits, dynamodb: Any, write: Write
+        self, coordinator: OrderedCommits, write: Write, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            products_table.client, "products", Product
+        )
 
         async with invocation(coordinator) as scope:
             async with scope.frame(Frame(DEFAULT_STORE)):
@@ -103,9 +107,11 @@ class TestDynamoDeclaredWrite:
         assert outcome.stores == (NonTransactional(DEFAULT_STORE, wrote=False),)
 
     async def test_a_write_from_a_gather_child_is_refused(
-        self, coordinator: OrderedCommits, dynamodb: Any, products_table: MotoTable
+        self, coordinator: OrderedCommits, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            products_table.client, "products", Product
+        )
 
         async with invocation(coordinator) as scope, scope.frame(Frame(DEFAULT_STORE)):
             child = asyncio.ensure_future(products.create(ProductCreate(id=1)))
@@ -129,20 +135,22 @@ class TestDynamoFailedWriteCheckpoint:
     )
     async def test_a_failed_write_beside_a_transactional_store_counts_only_if_it_may_have_landed(
         self,
-        dynamodb: Any,
         monkeypatch: pytest.MonkeyPatch,
         unavailable: bool,
         raised: type[Exception],
         wrote: bool,
+        products_table: MotoTable,
     ) -> None:
         audit = PhasedStore(AUDIT, Ledger())
         coordinator = OrderedCommits(
             {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: Factory(audit)}
         )
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            products_table.client, "products", Product
+        )
         await products.create(ProductCreate(id=1))
         if unavailable:
-            monkeypatch.setattr(dynamodb, "put_item", _unavailable)
+            monkeypatch.setattr(products_table.client, "put_item", _unavailable)
         again = ProductCreate(id=1)
 
         async with invocation(coordinator) as scope:
@@ -156,13 +164,15 @@ class TestDynamoFailedWriteCheckpoint:
         assert NonTransactional(DEFAULT_STORE, wrote=wrote) in outcome.stores
 
     async def test_a_cancelled_bulk_transaction_beside_a_transactional_store_is_a_conflict(
-        self, dynamodb: Any
+        self, products_table: MotoTable
     ) -> None:
         audit = PhasedStore(AUDIT, Ledger())
         coordinator = OrderedCommits(
             {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: Factory(audit)}
         )
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
+        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+            products_table.client, "products", Product
+        )
         await products.create(ProductCreate(id=1))
 
         async with invocation(coordinator) as scope:

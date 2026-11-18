@@ -32,8 +32,8 @@ class PriceUpdate(msgspec.Struct, omit_defaults=True):
 
 
 class TestDynamoRepositoryRoundTrip:
-    async def test_create_then_get_by_id_roundtrips(self, dynamodb: Any) -> None:
-        repo = _repo(dynamodb)
+    async def test_create_then_get_by_id_roundtrips(self, products_table: MotoTable) -> None:
+        repo = _repo(products_table.client)
 
         created = await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
 
@@ -41,10 +41,8 @@ class TestDynamoRepositoryRoundTrip:
         fetched = await repo.get_by_id(1)
         assert fetched == Product(id=1, name="Widget", price=9.5)
 
-    async def test_create_encodes_floats_as_decimal(
-        self, dynamodb: Any, products_table: MotoTable
-    ) -> None:
-        repo = _repo(dynamodb)
+    async def test_create_encodes_floats_as_decimal(self, products_table: MotoTable) -> None:
+        repo = _repo(products_table.client)
 
         await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
 
@@ -52,9 +50,9 @@ class TestDynamoRepositoryRoundTrip:
         assert products_table.items_by_id()["1"]["price"] == {"N": "9.5"}
 
     async def test_create_stores_a_field_left_at_its_default(
-        self, dynamodb: Any, products_table: MotoTable
+        self, products_table: MotoTable
     ) -> None:
-        await _repo(dynamodb).create(ProductCreate(id=1))
+        await _repo(products_table.client).create(ProductCreate(id=1))
 
         assert products_table.items_by_id()["1"] == {
             "id": {"N": "1"},
@@ -63,31 +61,33 @@ class TestDynamoRepositoryRoundTrip:
         }
 
     async def test_create_many_stores_a_field_left_at_its_default(
-        self, dynamodb: Any, products_table: MotoTable
+        self, products_table: MotoTable
     ) -> None:
-        await _repo(dynamodb).create_many([ProductCreate(id=1)])
+        await _repo(products_table.client).create_many([ProductCreate(id=1)])
 
         assert products_table.items_by_id()["1"]["name"] == {"S": ""}
 
     async def test_a_plain_struct_stores_its_defaults_on_create(
-        self, dynamodb: Any, products_table: MotoTable
+        self, products_table: MotoTable
     ) -> None:
-        await _repo(dynamodb).create(PlainProductCreate(id=1))
+        await _repo(products_table.client).create(PlainProductCreate(id=1))
 
         assert products_table.items_by_id()["1"] == {"id": {"N": "1"}, "name": {"S": ""}}
 
     async def test_update_keeps_the_fields_the_caller_did_not_send(
-        self, dynamodb: Any, products_table: MotoTable
+        self, products_table: MotoTable
     ) -> None:
-        repo = _repo(dynamodb)
+        repo = _repo(products_table.client)
         await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
 
         await repo.update(1, PriceUpdate(price=1.5))
 
         assert products_table.items_by_id()["1"]["name"] == {"S": "Widget"}
 
-    async def test_get_by_non_key_field_raises_unsupported_query(self, dynamodb: Any) -> None:
-        repo = _repo(dynamodb)
+    async def test_get_by_non_key_field_raises_unsupported_query(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = _repo(products_table.client)
 
         with pytest.raises(UnsupportedQuery, match="get_by\\('name'\\)") as exc_info:
             await repo.get_by("name", "Bolt")
@@ -96,42 +96,44 @@ class TestDynamoRepositoryRoundTrip:
         assert exc_info.value.backend == "dynamodb"
         assert exc_info.value.model == "Product"
 
-    async def test_exists_by_primary_key(self, dynamodb: Any) -> None:
+    async def test_exists_by_primary_key(self, products_table: MotoTable) -> None:
         """The contract suite skips exists_by for DynamoDB (no Countable): pin the key path here."""
-        repo = _repo(dynamodb)
+        repo = _repo(products_table.client)
         await repo.create(ProductCreate(id=3, name="Nut"))
 
         assert await repo.exists_by("id", 3) is True
         assert await repo.exists_by("id", 999) is False
 
-    async def test_exists_by_non_key_field_raises_unsupported_query(self, dynamodb: Any) -> None:
-        repo = _repo(dynamodb)
+    async def test_exists_by_non_key_field_raises_unsupported_query(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = _repo(products_table.client)
 
         with pytest.raises(UnsupportedQuery, match="exists_by\\('name'\\)"):
             await repo.exists_by("name", "Nut")
 
     async def test_update_conditional_failure_returns_none(
-        self, dynamodb: Any, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, products_table: MotoTable
     ) -> None:
         # Item vanishes between the read and the conditional write (concurrent delete);
         # the anti-resurrection condition fails, which maps to "no longer exists" (None).
-        repo = _repo(dynamodb)
+        repo = _repo(products_table.client)
         await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
 
-        original_get = dynamodb.get_item
+        original_get = products_table.client.get_item
 
         def _get_then_delete(**kwargs: object) -> dict[str, object]:
             response = original_get(**kwargs)  # type: ignore[arg-type]
-            dynamodb.delete_item(TableName="products", Key={"id": {"N": "1"}})
+            products_table.client.delete_item(TableName="products", Key={"id": {"N": "1"}})
             return response
 
-        monkeypatch.setattr(dynamodb, "get_item", _get_then_delete)
+        monkeypatch.setattr(products_table.client, "get_item", _get_then_delete)
 
         assert await repo.update(1, ProductUpdate(name="Gadget")) is None
 
-    async def test_entity_name_is_the_model_table_name(self, dynamodb: Any) -> None:
+    async def test_entity_name_is_the_model_table_name(self, products_table: MotoTable) -> None:
         # Single-table design: the DynamoDB table name is shared, the model name is not.
-        repo = RepositoryDynamoDB(client=dynamodb, table_name="shared", model=Product)
+        repo = RepositoryDynamoDB(client=products_table.client, table_name="shared", model=Product)
 
         assert repo.entity_name == "products"
         assert repo.model is Product
@@ -152,7 +154,7 @@ _BADGE_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
 
 @pytest.fixture
 def badges(mocked_aws: None) -> MotoTable:
-    return MotoTable(moto_client("dynamodb"), "badges", key_type="S").create()
+    return MotoTable.create(moto_client("dynamodb"), "badges", key_type="S")
 
 
 def _badge_repo(client: Any) -> RepositoryDynamoDB[AcmeDynamoBadge, UUID]:
@@ -225,20 +227,22 @@ class TestDynamoUuidPrimaryKey:
 
 class TestDynamoCreateMany:
     async def test_error_writes_every_item_in_input_order_one_transaction_per_hundred(
-        self, dynamodb: Any, transactions: list[int], products_table: MotoTable
+        self, transactions: list[int], products_table: MotoTable
     ) -> None:
         keys = list(range(250, 0, -1))
 
-        created = await _repo(dynamodb).create_many([ProductCreate(id=key) for key in keys])
+        created = await _repo(products_table.client).create_many(
+            [ProductCreate(id=key) for key in keys]
+        )
 
         assert [item.id for item in created] == keys
         assert transactions == [100, 100, 50]
         assert len(products_table.items_by_id()) == 250
 
     async def test_error_on_an_existing_key_raises_conflict_and_cancels_only_its_chunk(
-        self, dynamodb: Any, transactions: list[int], products_table: MotoTable
+        self, transactions: list[int], products_table: MotoTable
     ) -> None:
-        repo = _repo(dynamodb)
+        repo = _repo(products_table.client)
         await repo.create(ProductCreate(id=500))
         batch = [ProductCreate(id=key) for key in range(1, 101)] + [
             ProductCreate(id=101),
@@ -252,19 +256,19 @@ class TestDynamoCreateMany:
         assert "101" not in products_table.items_by_id()
 
     async def test_error_on_a_key_repeated_in_the_input_raises_conflict_and_writes_nothing(
-        self, dynamodb: Any, products_table: MotoTable
+        self, products_table: MotoTable
     ) -> None:
         batch = [ProductCreate(id=1), ProductCreate(id=2), ProductCreate(id=1)]
 
         with pytest.raises(Conflict, match="Product with id=1 already exists"):
-            await _repo(dynamodb).create_many(batch)
+            await _repo(products_table.client).create_many(batch)
 
         assert products_table.items_by_id() == {}
 
     async def test_ignore_writes_one_put_per_item_and_no_transaction(
-        self, dynamodb: Any, transactions: list[int]
+        self, transactions: list[int], products_table: MotoTable
     ) -> None:
-        created = await _repo(dynamodb).create_many(
+        created = await _repo(products_table.client).create_many(
             [ProductCreate(id=key) for key in range(150)], on_conflict=OnConflict.IGNORE
         )
 

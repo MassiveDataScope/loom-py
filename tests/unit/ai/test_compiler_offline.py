@@ -27,7 +27,6 @@ CORPUS_DIR = Path(__file__).parent / "fixtures" / "corpus_v1"
 
 _PROVIDER_ENV_VARS: tuple[str, ...] = (
     "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
 )

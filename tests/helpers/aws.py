@@ -14,12 +14,16 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.loaders import Loader
 
+from loom.core.connections.aws import AwsClientConfig
+from loom.core.model.redaction import reveal_for_driver
 from loom.testing._moto import UNANSWERED, unanswered
 
 REGION = "us-east-1"
+ACCOUNT = "123456789012"
 FAKE_KEY = "testing"
 _NOWHERE = Path("/nonexistent/loom-tests-aws")
 
@@ -42,12 +46,26 @@ def scrub_aws_environment(patch: pytest.MonkeyPatch) -> None:
     patch.setattr(Loader, "CUSTOMER_DATA_PATH", str(_NOWHERE / "models"))
 
 
-def build_moto_client(service: str, region: str = REGION) -> Any:
-    """A new client of *service* in *region*, built in the bare environment, for use under moto."""
+def build_moto_client(
+    service: str, region: str = REGION, config: AwsClientConfig | None = None
+) -> Any:
+    """A new client of *service* in *region*, built in the bare environment, for use under moto.
+
+    Args:
+        service: The boto3 service name.
+        region: The region of the client.
+        config: Settings whose bounds the client takes, when given.
+    """
+    options = {} if config is None else reveal_for_driver(config.client_options())
+    bounds = Config(**options["config"]) if options else None
     with pytest.MonkeyPatch.context() as patch:
         scrub_aws_environment(patch)
         return boto3.Session().client(
-            service, region_name=region, aws_access_key_id=FAKE_KEY, aws_secret_access_key=FAKE_KEY
+            service,
+            region_name=region,
+            config=bounds,
+            aws_access_key_id=FAKE_KEY,
+            aws_secret_access_key=FAKE_KEY,
         )
 
 

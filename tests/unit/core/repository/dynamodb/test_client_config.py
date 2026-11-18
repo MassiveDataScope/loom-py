@@ -15,7 +15,7 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from tests.helpers.aws_island import fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
@@ -28,9 +28,8 @@ BotocoreConfig = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 @pytest.fixture
-def botocore_config(monkeypatch: pytest.MonkeyPatch) -> BotocoreConfig:
+def botocore_config(island: FakeAwsIsland) -> BotocoreConfig:
     """The ``botocore.Config`` keywords the backend of a ``dynamodb`` store asks the island for."""
-    island = fake_aws_island(monkeypatch)
 
     def asked_for(section: dict[str, Any]) -> dict[str, Any]:
         ctx = ConfigContext.from_dict(

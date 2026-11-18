@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +15,8 @@ from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from tests.helpers.aws import REGION
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.dynamodb import MotoTable
 from tests.helpers.persistence import build_backend
 
 
@@ -41,7 +41,7 @@ def _describing(status: str) -> Callable[[MagicMock], None]:
 
 class TestDynamoReadiness:
     @pytest.mark.asyncio
-    async def test_readiness_is_true_for_an_existing_table(self, dynamodb: Any) -> None:
+    async def test_readiness_is_true_for_an_existing_table(self, products_table: MotoTable) -> None:
         wiring = _wiring("products")
 
         assert wiring.readiness is not None
@@ -55,7 +55,7 @@ class TestDynamoReadiness:
     async def test_readiness_reflects_the_table_status(
         self, monkeypatch: pytest.MonkeyPatch, status: str, expected: bool
     ) -> None:
-        fake_aws_island(monkeypatch, setup=_describing(status))
+        FakeAwsIsland(setup=_describing(status)).install(monkeypatch)
         wiring = _wiring("products")
 
         assert wiring.readiness is not None
@@ -63,7 +63,7 @@ class TestDynamoReadiness:
 
     @pytest.mark.asyncio
     async def test_readiness_is_false_when_the_table_is_missing(
-        self, dynamodb: Any, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, products_table: MotoTable
     ) -> None:
         wiring = _wiring("missing")
 

@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import BotoCoreError, ClientError
 
 from tests.helpers.extras import BOTO3_ISLAND
 
@@ -20,69 +19,75 @@ class FakeSdkError(Exception):
 
 
 @dataclass(frozen=True)
-class FakeSession:
+class FakeAwsSession:
     """The session a :class:`FakeAwsIsland` opens: it keeps the profile it was opened for."""
 
     profile_name: str | None
 
 
 class FakeAwsIsland:
-    """Stands in for the AWS island behind :class:`AwsClients`: a new mock client per build.
+    """Stands in for the AWS island behind :class:`AwsClients`.
+
+    Every build hands out *client*, or a new ``MagicMock`` when there is none.
 
     Args:
+        client: The one client every build hands out.
+        setup: Called with each mock client built, to script what it answers.
         build_seconds: How long each build takes, to widen a race between threads.
-        setup: Called with each client built, to script what it answers.
-        serving: Gives the client to hand out for the settings of a build, in place of a mock.
-            A served client may be a real one, so the island then reports botocore's errors
-            as the SDK's own, as the real island does.
 
     Attributes:
         sessions: The profile of every session opened.
         built: The service and settings of every client built, in order.
-        created: Every client built, in order.
+        created: Every mock client built, in order.
     """
 
     def __init__(
         self,
-        build_seconds: float = 0.0,
+        client: Any = None,
         setup: Callable[[MagicMock], None] | None = None,
-        serving: Callable[[Any], Any] | None = None,
+        build_seconds: float = 0.0,
     ) -> None:
-        self._build_seconds = build_seconds
+        self._client = client
         self._setup = setup
-        self._serving = serving
+        self._build_seconds = build_seconds
         self.sessions: list[str | None] = []
         self.built: list[tuple[str, Any]] = []
         self.created: list[MagicMock] = []
 
-    def open_session(self, profile: str | None) -> FakeSession:
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+        """Make every ``aws_island()`` of loom answer this island, and return it."""
+        monkeypatch.setitem(sys.modules, BOTO3_ISLAND, self)
+        return self
+
+    def open_session(self, profile: str | None) -> FakeAwsSession:
         self.sessions.append(profile)
-        return FakeSession(profile)
+        return FakeAwsSession(profile)
 
     def build_aws_client(self, session: object, service: str, config: Any) -> Any:
         time.sleep(self._build_seconds)
         self.built.append((service, config))
-        if self._serving is not None:
-            return self._serving(config)
+        return self._new_client(service, config)
+
+    def sdk_errors(self) -> tuple[type[Exception], ...]:
+        return (FakeSdkError,)
+
+    def _new_client(self, service: str, config: Any) -> Any:
+        if self._client is not None:
+            return self._client
         client = MagicMock(name=f"{service}-client")
         self.created.append(client)
         if self._setup is not None:
             self._setup(client)
         return client
 
-    def sdk_errors(self) -> tuple[type[Exception], ...]:
-        if self._serving is None:
-            return (FakeSdkError,)
-        return (FakeSdkError, BotoCoreError, ClientError)
 
+class FakeAwsIslandByAttempts(FakeAwsIsland):
+    """Hands out *single_attempt* to clients built for one attempt and *retrying* to the rest."""
 
-def fake_aws_island(
-    monkeypatch: pytest.MonkeyPatch,
-    build_seconds: float = 0.0,
-    setup: Callable[[MagicMock], None] | None = None,
-    serving: Callable[[Any], Any] | None = None,
-) -> FakeAwsIsland:
-    """Make every ``aws_island()`` of loom answer a :class:`FakeAwsIsland`."""
-    island = FakeAwsIsland(build_seconds, setup, serving)
-    monkeypatch.setitem(sys.modules, BOTO3_ISLAND, island)
-    return island
+    def __init__(self, single_attempt: Any, retrying: Any) -> None:
+        super().__init__()
+        self._single_attempt = single_attempt
+        self._retrying = retrying
+
+    def _new_client(self, service: str, config: Any) -> Any:
+        return self._single_attempt if config.max_attempts == 1 else self._retrying

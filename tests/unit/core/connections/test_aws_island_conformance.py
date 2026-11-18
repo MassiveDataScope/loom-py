@@ -5,27 +5,53 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-import boto3
 import pytest
-from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.loader import AwsIsland
-from loom.core.model.redaction import reveal_for_driver
-from tests.helpers.aws import FAKE_KEY
-from tests.helpers.aws_island import fake_aws_island
-from tests.helpers.aws_island_conformance import AwsIslandConformance
+from tests.helpers.aws import build_moto_client
+from tests.helpers.aws_island import FakeAwsIsland
+
+_SETTINGS = AwsClientConfig(region="eu-west-1", read_timeout=7, max_attempts=2)
 
 
-def _build_moto_client(settings: AwsClientConfig) -> Any:
-    options = reveal_for_driver(settings.client_options())
-    return boto3.Session().client(
-        "sqs",
-        region_name=settings.region,
-        config=Config(**options["config"]),
-        aws_access_key_id=FAKE_KEY,
-        aws_secret_access_key=FAKE_KEY,
-    )
+class _MotoAwsIsland(FakeAwsIsland):
+    """The fake island handing out a moto client built from the settings of each build."""
+
+    def sdk_errors(self) -> tuple[type[Exception], ...]:
+        return (BotoCoreError, ClientError)
+
+    def _new_client(self, service: str, config: Any) -> Any:
+        return build_moto_client(service, config.region, config)
+
+
+class AwsIslandConformance:
+    """The expectations of an AWS island, checked through its public port."""
+
+    def test_a_session_keeps_the_profile_it_was_opened_for(
+        self, aws_island: AwsIsland, dev_profile: str
+    ) -> None:
+        assert aws_island.open_session(dev_profile).profile_name == dev_profile
+
+    def test_a_client_carries_the_region_and_bounds_of_its_settings(
+        self, aws_island: AwsIsland, dev_profile: str
+    ) -> None:
+        session = aws_island.open_session(dev_profile)
+
+        client = aws_island.build_aws_client(session, "sqs", _SETTINGS)
+
+        assert client.meta.region_name == "eu-west-1"
+        assert client.meta.config.read_timeout == 7
+        assert client.meta.config.retries["total_max_attempts"] == 2
+
+    def test_the_sdk_errors_catch_what_a_client_raises(self, aws_island: AwsIsland) -> None:
+        client = aws_island.build_aws_client(aws_island.open_session(None), "sqs", _SETTINGS)
+
+        with pytest.raises(ClientError) as raised:
+            client.get_queue_url(QueueName="missing")
+
+        assert isinstance(raised.value, aws_island.sdk_errors())
 
 
 class TestRealAwsIsland(AwsIslandConformance):
@@ -38,4 +64,4 @@ class TestRealAwsIsland(AwsIslandConformance):
 class TestFakeAwsIsland(AwsIslandConformance):
     @pytest.fixture
     def aws_island(self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch) -> AwsIsland:
-        return fake_aws_island(monkeypatch, serving=_build_moto_client)
+        return _MotoAwsIsland().install(monkeypatch)

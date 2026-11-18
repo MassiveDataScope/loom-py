@@ -16,10 +16,9 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from tests.helpers.aws import REGION
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws import ACCOUNT, REGION
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
-from tests.helpers.sqs import ACCOUNT
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -56,7 +55,7 @@ def store(island: FakeAwsIsland) -> Store:
 def _ssm(
     tmp_path: Path, yaml: str, resolver: SsmResolver, monkeypatch: pytest.MonkeyPatch
 ) -> _Built:
-    island = fake_aws_island(monkeypatch, setup=_answer_with_a_parameter)
+    island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
     path = tmp_path / "config.yaml"
     path.write_text(yaml + "app:\n  token: ${ssm:/app/token}\n", encoding="utf-8")
     ConfigContext(load_config(str(path), resolvers=[resolver])).section("app", dict)
@@ -167,7 +166,7 @@ class TestResolversReadAws:
     def test_the_resolver_fetches_a_key_once_per_configuration(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = fake_aws_island(monkeypatch, setup=_answer_with_a_parameter)
+        island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
         path = tmp_path / "config.yaml"
         path.write_text("a: ${ssm:/k}\nb: ${ssm:/k}\n", encoding="utf-8")
         ctx = ConfigContext(load_config(str(path), resolvers=[SsmResolver()]))
@@ -194,7 +193,7 @@ class TestResolversReadAws:
             f"aws:\n  region: {REGION}\n  url: http://localhost:4566\na: ${{ssm:/k}}\n",
             encoding="utf-8",
         )
-        island = fake_aws_island(monkeypatch, setup=_answer_with_a_parameter)
+        island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
         for path in (first, second):
             ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
         clients = _Built(island)

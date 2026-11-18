@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.dynamodb import MotoTable
 
 
 class AcmeDynamoLine(BaseModel):
@@ -18,8 +17,10 @@ class AcmeDynamoLine(BaseModel):
 
 
 class TestDynamoCompositeKey:
-    def test_a_composite_primary_key_is_refused(self, dynamodb: Any) -> None:
+    def test_a_composite_primary_key_is_refused(self, products_table: MotoTable) -> None:
         with pytest.raises(
             ConfigError, match=r"AcmeDynamoLine has the composite primary key \(order_id, id\)"
         ):
-            RepositoryDynamoDB(client=dynamodb, table_name="lines", model=AcmeDynamoLine)
+            RepositoryDynamoDB(
+                client=products_table.client, table_name="lines", model=AcmeDynamoLine
+            )

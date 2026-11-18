@@ -19,10 +19,9 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
-from tests.helpers.aws import REGION, is_moto_answering, moto_client, scrub_aws_environment
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scrub_aws_environment
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
-from tests.helpers.sqs import ACCOUNT
 
 pytest_plugins = ["tests.helpers.delegation"]
 
@@ -47,17 +46,9 @@ def clear_builtin_resolvers() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_aws(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give a test the bare AWS environment; a ``live`` test keeps its own."""
-    if not request.node.get_closest_marker("live"):
-        scrub_aws_environment(monkeypatch)
-
-
-@pytest.fixture(autouse=True)
-def _no_proxy(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every proxy variable and let every host bypass one; a ``live`` test keeps its own."""
-    if request.node.get_closest_marker("live"):
-        return
+def _bare_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the ambient AWS setup and every proxy variable, and let every host bypass a proxy."""
+    scrub_aws_environment(monkeypatch)
     for name in tuple(os.environ):
         if name.lower().endswith("_proxy"):
             monkeypatch.delenv(name)
@@ -80,9 +71,9 @@ def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture
-def island(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-    """The fake AWS island, with the keywords of an indirect parameter when there is one."""
-    return fake_aws_island(monkeypatch, **getattr(request, "param", {}))
+def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+    """The fake AWS island, handing out a mock client per build."""
+    return FakeAwsIsland().install(monkeypatch)
 
 
 @pytest.fixture
@@ -97,15 +88,16 @@ def absent_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def ssm(mocked_aws: None) -> Any:
-    """An SSM client of the moto account."""
-    return moto_client("ssm")
-
-
-@pytest.fixture
-def secretsmanager(mocked_aws: None) -> Any:
-    """A Secrets Manager client of the moto account."""
-    return moto_client("secretsmanager")
+def dev_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """A config file with the profile ``dev``, fake keys included; returns the profile name."""
+    config = tmp_path / "config"
+    config.write_text(
+        f"[profile dev]\nregion = {REGION}\naws_access_key_id = {FAKE_KEY}\n"
+        f"aws_secret_access_key = {FAKE_KEY}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
+    return "dev"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

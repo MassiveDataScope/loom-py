@@ -7,7 +7,6 @@ The library is assumed to be installed in dev — no library-presence tests.
 from __future__ import annotations
 
 import logging
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +15,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.ssm import SsmResolver
 from tests.helpers.aws import moto_client
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -29,7 +28,7 @@ def mock_client() -> MagicMock:
 
 @pytest.fixture
 def island(mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-    return fake_aws_island(monkeypatch, serving=lambda _config: mock_client)
+    return FakeAwsIsland(client=mock_client).install(monkeypatch)
 
 
 class TestSsmResolverIdentity:
@@ -342,17 +341,19 @@ class TestSsmResolverUnexpandedKey:
 class TestSsmResolverOnMoto:
     """The real request shape: parameters stored in moto's SSM, read through a real client."""
 
-    def test_a_secure_string_is_decrypted_unless_asked_not_to(self, ssm: Any) -> None:
-        ssm.put_parameter(Name="/prod/token", Value="secret123", Type="SecureString")
+    def test_a_secure_string_is_decrypted_unless_asked_not_to(self, mocked_aws: None) -> None:
+        moto_client("ssm").put_parameter(Name="/prod/token", Value="secret123", Type="SecureString")
 
         assert SsmResolver().resolve("/prod/token") == "secret123"
         assert SsmResolver(with_decryption=False).resolve("/prod/token") != "secret123"
 
     def test_a_json_key_of_an_expanded_path_is_navigated(
-        self, ssm: Any, monkeypatch: pytest.MonkeyPatch
+        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ENV", "prod")
-        ssm.put_parameter(Name="/myapp/prod/db", Value='{"host": "prod-db"}', Type="String")
+        moto_client("ssm").put_parameter(
+            Name="/myapp/prod/db", Value='{"host": "prod-db"}', Type="String"
+        )
 
         assert SsmResolver().resolve("/myapp/%ENV%/db.host") == "prod-db"
 

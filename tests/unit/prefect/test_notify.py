@@ -16,9 +16,8 @@ from loom.prefect.notify import (
     build_notifiers,
 )
 from loom.prefect.notify import _sns as sns_module
-from tests.helpers.aws import moto_client
+from tests.helpers.aws import ACCOUNT, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.sqs import ACCOUNT
 
 _TOPIC = f"arn:aws:sns:eu-west-1:{ACCOUNT}:etl-failures"
 

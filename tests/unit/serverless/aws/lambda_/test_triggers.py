@@ -24,8 +24,9 @@ from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
 from loom.testing.serverless import QueueableEvent
+from tests.helpers.aws import ACCOUNT
 from tests.helpers.composition import composition_project
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
 pytestmark = pytest.mark.timeout(30)

@@ -37,7 +37,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
 from tests.helpers.aws import REGION
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.jobs import (
     BROKER,
     SQS_FIFO_URL,
@@ -115,7 +115,7 @@ def compose(monkeypatch: pytest.MonkeyPatch) -> Compose:
     def build(
         tmp_path: Path, config: dict[str, Any], client: Any, *jobs: type[Job[Any]]
     ) -> JobService:
-        fake_aws_island(monkeypatch, serving=lambda _config: client)
+        FakeAwsIsland(client=client).install(monkeypatch)
         application = job_project(tmp_path, config, "sqs").compose(JobsAdapter(*jobs))
         return application.kernel.container.resolve(JobService)
 

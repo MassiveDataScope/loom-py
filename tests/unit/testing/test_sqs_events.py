@@ -18,7 +18,7 @@ from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import TEST_QUEUE, LambdaEvent
 from tests.helpers.aws import REGION
-from tests.helpers.aws_island import fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import SQSClient, sqs_service
@@ -70,7 +70,7 @@ def handler(
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    fake_aws_island(monkeypatch, serving=lambda _config: sqs)
+    FakeAwsIsland(client=sqs).install(monkeypatch)
     yield adapter.bind(project.compose(adapter))
     adapter.close()
 

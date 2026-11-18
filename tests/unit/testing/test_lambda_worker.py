@@ -28,8 +28,7 @@ from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
 from loom.testing import TEST_QUEUE, LambdaWorker, Override
-from tests.helpers.aws import REGION, is_moto_answering
-from tests.helpers.sqs import ACCOUNT
+from tests.helpers.aws import ACCOUNT, REGION, is_moto_answering
 
 _JOBS = """
 from loom.core.job.job import Job

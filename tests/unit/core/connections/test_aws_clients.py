@@ -15,7 +15,7 @@ from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
 from loom.serverless.aws.lambda_ import _jobs
 from tests.helpers.aws import REGION
-from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 
 _THREADS = 8
 
@@ -100,7 +100,7 @@ class TestConcurrentFirstCalls:
     def test_threads_asking_at_once_build_exactly_one_client(
         self, monkeypatch: pytest.MonkeyPatch, clients: AwsClients
     ) -> None:
-        island = fake_aws_island(monkeypatch, build_seconds=0.05)
+        island = FakeAwsIsland(build_seconds=0.05).install(monkeypatch)
         start = Barrier(_THREADS)
 
         def ask(_: int) -> Any:

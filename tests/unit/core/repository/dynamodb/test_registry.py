@@ -12,6 +12,7 @@ from loom.stores.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.dynamodb import MotoTable
 
 from .conftest import Product, ProductCreate
 
@@ -26,14 +27,14 @@ def _container(dynamodb: Any) -> LoomContainer:
 
 
 class TestDynamoRegistry:
-    def test_module_registers_default_builder(self, dynamodb: Any) -> None:
-        container = _container(dynamodb)
+    def test_module_registers_default_builder(self, products_table: MotoTable) -> None:
+        container = _container(products_table.client)
 
         builder = container.resolve(DefaultRepositoryBuilder)
         assert isinstance(builder, DynamoDBDefaultRepositoryBuilder)
 
-    def test_module_registers_capability_bindings(self, dynamodb: Any) -> None:
-        container = _container(dynamodb)
+    def test_module_registers_capability_bindings(self, products_table: MotoTable) -> None:
+        container = _container(products_table.client)
 
         repo = container.resolve(Readable[Product])
         assert isinstance(repo, RepositoryDynamoDB)
@@ -42,9 +43,9 @@ class TestDynamoRegistry:
     @pytest.mark.asyncio
     async def test_registered_repository_persists_through_dynamodb(
         self,
-        dynamodb: Any,
+        products_table: MotoTable,
     ) -> None:
-        container = _container(dynamodb)
+        container = _container(products_table.client)
 
         repo = container.resolve(Creatable[Product])
         created = await repo.create(ProductCreate(id=1, name="Widget", price=2.5))

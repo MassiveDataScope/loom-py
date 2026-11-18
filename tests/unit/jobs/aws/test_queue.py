@@ -23,7 +23,8 @@ from loom.jobs.aws.queue import (
     SqsRecord,
 )
 from loom.jobs.aws.sqs import SQSConfig
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.aws import ACCOUNT
+from tests.helpers.sqs import FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)
 

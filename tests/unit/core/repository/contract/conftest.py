@@ -236,7 +236,7 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeCon
 
 @asynccontextmanager
 async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
-    table = MotoTable(moto_client("dynamodb"), _TABLE).create()
+    table = MotoTable.create(moto_client("dynamodb"), _TABLE)
     yield RepositoryDynamoDB(client=table.client, table_name=_TABLE, model=AcmeContractOrder)
 
 

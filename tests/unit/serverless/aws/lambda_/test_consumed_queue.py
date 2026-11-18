@@ -15,9 +15,10 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.helpers.aws_island import FakeSdkError, fake_aws_island
+from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws_island import FakeAwsIsland, FakeAwsIslandByAttempts, FakeSdkError
 from tests.helpers.composition import composition_project
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
 
@@ -57,7 +58,7 @@ def bind(monkeypatch: pytest.MonkeyPatch) -> Bind:
         )
         adapter = LambdaAdapter(jobs=[probe[0]])
         if client is not None:
-            fake_aws_island(monkeypatch, serving=lambda _config: client)
+            FakeAwsIsland(client=client).install(monkeypatch)
         application = project.compose(adapter)
         adapter.bind(application)
         adapter.close()
@@ -169,7 +170,7 @@ class TestConsumedQueue:
         def refuse(client: MagicMock) -> None:
             client.get_queue_attributes.side_effect = FakeSdkError("throttled")
 
-        fake_aws_island(monkeypatch, setup=refuse)
+        FakeAwsIsland(setup=refuse).install(monkeypatch)
 
         with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
             bind(tmp_path, probe, None)
@@ -183,11 +184,8 @@ class TestConsumedQueue:
     ) -> None:
         retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
 
-        def client_for(config: Any) -> FakeSqs:
-            return bounded if config.max_attempts == 1 else retrying
-
         jobs = {probe[0].__name__: {"queue": "jobs"}}
-        fake_aws_island(monkeypatch, serving=client_for)
+        FakeAwsIslandByAttempts(single_attempt=bounded, retrying=retrying).install(monkeypatch)
         bind(tmp_path, probe, None, jobs=jobs)
 
         assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)

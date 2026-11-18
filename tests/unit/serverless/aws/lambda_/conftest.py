@@ -19,7 +19,7 @@ from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import event_loops
 from tests.helpers.sqs import FakeSqs, queue_url
@@ -43,7 +43,7 @@ def sqs() -> FakeSqs:
 @pytest.fixture
 def island(sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
     """A consumer of a queue builds its SQS client at Init; here it is the fake, never AWS."""
-    return fake_aws_island(monkeypatch, serving=lambda _config: sqs)
+    return FakeAwsIsland(client=sqs).install(monkeypatch)
 
 
 @pytest.fixture

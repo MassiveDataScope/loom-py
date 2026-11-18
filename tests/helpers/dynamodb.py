@@ -12,26 +12,25 @@ KEY = "id"
 class MotoTable:
     """One table keyed by ``id`` on a moto DynamoDB client.
 
-    Args:
-        client: A DynamoDB client under ``mocked_aws``.
+    Attributes:
+        client: The DynamoDB client the table was created on.
         name: The table name.
-        key_type: The type of ``id``, ``"N"`` or ``"S"``.
     """
 
-    def __init__(self, client: Any, name: str, key_type: str = "N") -> None:
+    def __init__(self, client: Any, name: str) -> None:
         self.client = client
         self.name = name
-        self._key_type = key_type
 
-    def create(self) -> MotoTable:
-        """Create the table and return it."""
-        self.client.create_table(
-            TableName=self.name,
+    @classmethod
+    def create(cls, client: Any, name: str, key_type: str = "N") -> MotoTable:
+        """Create the table *name* on *client*, keyed by ``id`` of type *key_type* (N or S)."""
+        client.create_table(
+            TableName=name,
             KeySchema=[{"AttributeName": KEY, "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": KEY, "AttributeType": self._key_type}],
+            AttributeDefinitions=[{"AttributeName": KEY, "AttributeType": key_type}],
             BillingMode="PAY_PER_REQUEST",
         )
-        return self
+        return cls(client, name)
 
     def items_by_id(self) -> dict[str, dict[str, Any]]:
         """Every item in ``AttributeValue`` form, keyed by the text of its ``id``."""

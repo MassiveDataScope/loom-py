@@ -18,6 +18,7 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from tests.helpers.aws import REGION
+from tests.helpers.dynamodb import MotoTable
 from tests.helpers.persistence import build_backend
 
 from .conftest import Product
@@ -106,7 +107,7 @@ def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 class TestDynamoExecutorLifespan:
     async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
-        self, dynamodb: Any, created: list[int]
+        self, created: list[int], products_table: MotoTable
     ) -> None:
         wiring = _wiring()
         assert wiring.readiness is not None
@@ -121,9 +122,9 @@ class TestDynamoExecutorLifespan:
 
     async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
         self,
-        dynamodb: Any,
         created: list[int],
         caplog: pytest.LogCaptureFixture,
+        products_table: MotoTable,
     ) -> None:
         wiring = _wiring()
         assert wiring.readiness is not None

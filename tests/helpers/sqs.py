@@ -6,7 +6,8 @@ import json
 from collections import Counter
 from typing import Any
 
-ACCOUNT = "123456789012"
+from tests.helpers.aws import ACCOUNT
+
 URL_BASE = f"https://sqs.eu-west-1.amazonaws.com/{ACCOUNT}"
 
 
