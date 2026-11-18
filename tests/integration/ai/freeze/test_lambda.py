@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import time
-import urllib.request
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -425,15 +423,6 @@ def _write_agent(directory: Path) -> None:
         "capabilities": [{"kind": "mcp", "server": SERVER, "include": list(TOOLS)}],
     }
     (directory / f"{AGENT}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
-
-
-@pytest.fixture(autouse=True)
-def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A proxy on the machine would make the toolset keep fastmcp's stock transport."""
-    for key in list(os.environ):
-        if key.lower().endswith("_proxy"):
-            monkeypatch.delenv(key)
-    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
 
 
 @pytest.fixture(autouse=True)

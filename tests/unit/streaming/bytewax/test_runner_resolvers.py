@@ -17,7 +17,7 @@ from bytewax.dataflow import Dataflow  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.streaming.bytewax.runner import StreamingRunner  # noqa: E402
 from loom.streaming.graph._flow import StreamFlow  # noqa: E402
-from tests.helpers.extras import fake_aws_island, without_boto3  # noqa: E402
+from tests.helpers.aws_island import FakeAwsIsland  # noqa: E402
 from tests.unit._resolver_stubs import MappingResolver  # noqa: E402
 from tests.unit.streaming.bytewax.cases import AcmeOrder, AcmeResult  # noqa: E402
 
@@ -45,10 +45,6 @@ def _write_streaming_yaml(tmp_path: Path, workers: str) -> str:
     return str(path)
 
 
-def _without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
-    without_boto3(monkeypatch)
-
-
 def _stub_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_prepare_run(plan: object, **kwargs: Any) -> object:
         del plan, kwargs
@@ -74,9 +70,8 @@ class TestFromYaml:
         self,
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        absent_boto3: None,
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
 
         with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
@@ -86,9 +81,8 @@ class TestFromYaml:
         self,
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        island: FakeAwsIsland,
     ) -> None:
-        island = fake_aws_island(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "2")
 
         runner = StreamingRunner.from_yaml(bytewax_stream_flow, config_path)
@@ -100,9 +94,8 @@ class TestFromYaml:
         self,
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        absent_boto3: None,
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
         vault = MappingResolver("secrets", {"/stream/workers": 4})
 
@@ -177,8 +170,8 @@ class TestRunWithConfigPath:
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        absent_boto3: None,
     ) -> None:
-        _without_boto3(monkeypatch)
         _stub_execution(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
         runner = StreamingRunner()
@@ -191,8 +184,8 @@ class TestRunWithConfigPath:
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        island: FakeAwsIsland,
     ) -> None:
-        island = fake_aws_island(monkeypatch)
         _stub_execution(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "2")
         runner = StreamingRunner()
@@ -207,8 +200,8 @@ class TestRunWithConfigPath:
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        absent_boto3: None,
     ) -> None:
-        _without_boto3(monkeypatch)
         _stub_execution(monkeypatch)
         config_path = _write_streaming_yaml(tmp_path, "${secrets:/stream/workers}")
         runner = StreamingRunner()

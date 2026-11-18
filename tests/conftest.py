@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from moto import mock_aws
 from omegaconf import OmegaConf
 
 from loom.core.config import default_resolvers
@@ -18,8 +19,9 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
-from tests.helpers.aws import FAKE_KEY, REGION, moto_client
-from tests.helpers.extras import fake_aws_island
+from tests.helpers.aws import REGION, is_moto_answering, moto_client, scrub_aws_environment
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
+from tests.helpers.extras import BOTO3_ISLAND, without_extra
 from tests.helpers.sqs import ACCOUNT
 
 pytest_plugins = ["tests.helpers.delegation"]
@@ -44,62 +46,54 @@ def clear_builtin_resolvers() -> Iterator[None]:
     _clear_builtin_resolvers()
 
 
-@pytest.fixture(scope="session")
-def _absent_aws_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tmp_path_factory.mktemp("aws") / "absent"
-
-
-_MOTO_VARIABLES = (
-    "TEST_SERVER_MODE",
-    "TEST_PROXY_MODE",
-    "INITIAL_NO_AUTH_ACTION_COUNT",
-)
-_AMBIENT_AWS = ("AWS_", "BOTO_", "MOTO_", *_MOTO_VARIABLES)
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Remove the variables moto reads when it is imported, before any test module imports it."""
-    for name in tuple(os.environ):
-        if name.startswith(_MOTO_VARIABLES):
-            del os.environ[name]
+@pytest.fixture(autouse=True)
+def _hermetic_aws(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give a test the bare AWS environment; a ``live`` test keeps its own."""
+    if not request.node.get_closest_marker("live"):
+        scrub_aws_environment(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_aws(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _absent_aws_file: Path
-) -> None:
-    """Remove the AWS, boto, moto and moto test-mode variables, then set absent config and
-    credentials files, fake keys and no metadata service.
-
-    A ``live`` test keeps the environment it was given.
-    """
+def _no_proxy(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every proxy variable and let every host bypass one; a ``live`` test keeps its own."""
     if request.node.get_closest_marker("live"):
         return
     for name in tuple(os.environ):
-        if name.startswith(_AMBIENT_AWS):
+        if name.lower().endswith("_proxy"):
             monkeypatch.delenv(name)
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(_absent_aws_file))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_absent_aws_file))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", FAKE_KEY)
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", FAKE_KEY)
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
 
 
 @pytest.fixture
 def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``."""
+    """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``.
+
+    Raises:
+        AssertionError: When moto still answers after the test, which means a mock leaked.
+    """
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
     monkeypatch.setenv("MOTO_ACCOUNT_ID", ACCOUNT)
-    from moto import mock_aws
-
     with mock_aws():
         yield
+    assert not is_moto_answering(), "moto still answers after the test: a mock was left running"
 
 
 @pytest.fixture
-def no_aws_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+def island(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+    """The fake AWS island, with the keywords of an indirect parameter when there is one."""
+    return fake_aws_island(monkeypatch, **getattr(request, "param", {}))
+
+
+@pytest.fixture
+def no_aws_clients(island: FakeAwsIsland) -> None:
     """Hand every AWS client loom builds out as a mock: nothing reaches AWS or moto."""
-    fake_aws_island(monkeypatch)
+
+
+@pytest.fixture
+def absent_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ``aws`` extra is absent."""
+    without_extra(monkeypatch, ["boto3"], [BOTO3_ISLAND])
 
 
 @pytest.fixture

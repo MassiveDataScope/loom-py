@@ -32,8 +32,8 @@ from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -249,10 +249,6 @@ class TestServices:
 
 
 class TestAwsClientsLifecycle:
-    @pytest.fixture
-    def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-        return fake_aws_island(monkeypatch)
-
     @staticmethod
     def _dynamodb_application(tmp_path: Path) -> Application:
         stores = {

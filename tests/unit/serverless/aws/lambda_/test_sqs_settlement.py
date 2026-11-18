@@ -18,8 +18,8 @@ from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import DEFERRALS_ATTRIBUTE, REJECTION_REASON_ATTRIBUTE
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from tests.helpers.aws_island import fake_aws_island
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import fake_aws_island
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import (
     WORKER,

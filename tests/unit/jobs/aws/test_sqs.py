@@ -36,7 +36,8 @@ from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
-from tests.helpers.extras import fake_aws_island, without_boto3
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
 from tests.helpers.jobs import (
     BROKER,
     SQS_FIFO_URL,
@@ -252,18 +253,17 @@ class TestSqsDispatch:
 
     @pytest.mark.parametrize(
         ("sqs", "region"),
-        [({}, "eu-west-1"), ({"region": "us-east-1"}, "us-east-1")],
+        [({}, "eu-west-1"), ({"region": REGION}, REGION)],
         ids=["inherits aws", "overrides aws"],
     )
     def test_the_client_takes_aws_and_sqs_overrides_it(
-        self, tmp_path: Path, sqs: dict[str, Any], region: str, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, sqs: dict[str, Any], region: str, island: FakeAwsIsland
     ) -> None:
         config = {
             "aws": {"region": "eu-west-1"},
             "sqs": {**sqs, "queues": {"emails": {"url": _URL}}},
         }
         project = job_project(tmp_path, config, "sqs")
-        island = fake_aws_island(monkeypatch)
         project.compose(JobsAdapter(EmailJob))
 
         assert [(service, config.region) for service, config in island.built] == [("sqs", region)]
@@ -276,11 +276,10 @@ class TestSqsDispatch:
         ],
     )
     def test_startup_refuses_a_job_sqs_cannot_place(
-        self, tmp_path: Path, job: type[Job[Any]], message: str, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, job: type[Job[Any]], message: str, no_aws_clients: None
     ) -> None:
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(job)
-        fake_aws_island(monkeypatch)
         with pytest.raises(SQSQueueConfigError, match=message):
             project.compose(adapter)
 
@@ -297,19 +296,15 @@ class TestSqsDispatch:
         assert (ReportJob.__queue__, ReportJob.__countdown__) == ("reports", 0)
 
     def test_jobs_on_celery_queues_need_no_sqs_url(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, no_aws_clients: None
     ) -> None:
         config = {**_CONFIG, "celery": {**BROKER, "queues": ["default", "reports"]}}
         project = job_project(tmp_path, config, "sqs")
-        fake_aws_island(monkeypatch)
         application = project.compose(JobsAdapter(EmailJob, ReportJob))
 
         assert isinstance(application.kernel.container.resolve(JobService), JobRouter)
 
-    def test_startup_without_the_extra_names_it(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        without_boto3(monkeypatch)
+    def test_startup_without_the_extra_names_it(self, tmp_path: Path, absent_boto3: None) -> None:
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(EmailJob)
         with pytest.raises(JobBackendError, match=r"loom\[aws\] extra is not installed"):
@@ -505,11 +500,10 @@ class TestSqsDispatch:
         [{"batch_size": 0}, {"batch_size": 11}, {"max_concurrent_sends": 0}, {"batch": "yes"}],
     )
     def test_startup_refuses_an_invalid_batch_knob(
-        self, tmp_path: Path, knobs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, knobs: dict[str, Any], no_aws_clients: None
     ) -> None:
         project = job_project(tmp_path, _sqs_config(**knobs), "sqs")
         adapter = JobsAdapter(EmailJob)
-        fake_aws_island(monkeypatch)
         with pytest.raises(ConfigError, match=next(iter(knobs))):
             project.compose(adapter)
 

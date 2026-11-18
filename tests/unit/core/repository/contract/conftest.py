@@ -37,7 +37,7 @@ from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.aws import moto_client
-from tests.helpers.dynamodb import create_table
+from tests.helpers.dynamodb import MotoTable
 
 from ..mongo._fake import FakeMongoClient
 
@@ -236,9 +236,8 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeCon
 
 @asynccontextmanager
 async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
-    client = moto_client("dynamodb")
-    create_table(client, _TABLE)
-    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
+    table = MotoTable(moto_client("dynamodb"), _TABLE).create()
+    yield RepositoryDynamoDB(client=table.client, table_name=_TABLE, model=AcmeContractOrder)
 
 
 @asynccontextmanager

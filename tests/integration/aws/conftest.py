@@ -21,7 +21,7 @@ import yaml
 from botocore.config import Config  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
-from tests.helpers.aws import REGION
+from tests.helpers.aws import REGION, scrub_aws_environment
 
 URL_ENV_VAR = "LOOM_AWS_IT_URL"
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d localstack"
@@ -55,7 +55,9 @@ def aws_url() -> str:
             "and export it"
         )
     try:
-        _client(url, "sqs").list_queues()
+        with pytest.MonkeyPatch.context() as patch:
+            scrub_aws_environment(patch)
+            _client(url, "sqs").list_queues()
     except (BotoCoreError, ClientError) as exc:
         pytest.skip(
             f"the AWS emulator at ${URL_ENV_VAR} is not reachable ({type(exc).__name__});"

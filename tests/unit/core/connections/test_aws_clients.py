@@ -10,16 +10,14 @@ import pytest
 
 from loom.core.config._resolver_utils import build_resolver_client
 from loom.core.connections.aws import AwsClientConfig, AwsClients, AwsPool
+from loom.core.connections.aws.loader import aws_island
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island, without_boto3
+from loom.serverless.aws.lambda_ import _jobs
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError, fake_aws_island
 
 _THREADS = 8
-
-
-@pytest.fixture
-def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-    return fake_aws_island(monkeypatch)
 
 
 _CONFIG = AwsClientConfig(region="eu-west-1")
@@ -28,6 +26,17 @@ _CONFIG = AwsClientConfig(region="eu-west-1")
 @pytest.fixture
 def clients() -> AwsClients:
     return AwsClients()
+
+
+class TestFakeIsland:
+    def test_every_importer_of_the_island_resolves_the_fake(self, island: FakeAwsIsland) -> None:
+        assert aws_island() is island
+        assert _jobs.aws_island() is island
+
+    def test_an_island_of_mock_clients_reports_only_its_own_error(
+        self, island: FakeAwsIsland
+    ) -> None:
+        assert aws_island().sdk_errors() == (FakeSdkError,)
 
 
 class TestClientCache:
@@ -48,7 +57,7 @@ class TestClientCache:
     @pytest.mark.parametrize(
         "other",
         [
-            AwsClientConfig(region="us-east-1"),
+            AwsClientConfig(region=REGION),
             AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566")),
             AwsClientConfig(region="eu-west-1", pool=AwsPool(size=2)),
             AwsClientConfig(region="eu-west-1", read_timeout=30),
@@ -74,15 +83,14 @@ class TestClientCache:
     ) -> None:
         clients.client("dynamodb", _CONFIG)
         clients.client("sqs", _CONFIG)
-        clients.client("sqs", AwsClientConfig(region="us-east-1"))
+        clients.client("sqs", AwsClientConfig(region=REGION))
         clients.client("sns", AwsClientConfig(profile="dev"))
 
         assert island.sessions == [None, "dev"]
 
     def test_a_missing_boto3_names_the_aws_extra(
-        self, clients: AwsClients, monkeypatch: pytest.MonkeyPatch
+        self, clients: AwsClients, absent_boto3: None
     ) -> None:
-        without_boto3(monkeypatch)
 
         with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
             clients.client("s3", _CONFIG)

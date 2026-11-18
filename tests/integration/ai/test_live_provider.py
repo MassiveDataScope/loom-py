@@ -30,7 +30,7 @@ from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import NullDeps, compiled_output
 
-pytestmark = pytest.mark.live
+pytestmark = [pytest.mark.live, pytest.mark.enable_socket]
 
 _SCHEMA: Mapping[str, Any] = {
     "type": "object",

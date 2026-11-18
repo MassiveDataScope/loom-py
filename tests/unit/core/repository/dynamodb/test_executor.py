@@ -17,6 +17,7 @@ from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.aws import REGION
 from tests.helpers.persistence import build_backend
 
 from .conftest import Product
@@ -79,7 +80,7 @@ def _wiring() -> StoreWiring:
             "stores": {
                 "default": {
                     "backend": "dynamodb",
-                    "region": "us-east-1",
+                    "region": REGION,
                     "table": "products",
                     "pool": {"size": 16},
                 }

@@ -272,6 +272,8 @@ dev = [
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-env>=1.8.6,<2.0",
+    "pytest-socket>=0.8.1,<1.0",
     "pyjwt[crypto]>=2.12.0",
     "redis>=5.0.0",
     "ruff>=0.9.0,<1.0",
@@ -470,7 +472,7 @@ pythonpath = [
 ]
 # `slow` tests are deselected by default, as CI's fast lane does; CI runs them in its
 # slow lane with an explicit `-m`. Run them locally with `-m slow`, or everything with `-m ""`.
-addopts = "-ra --log-disable=aiosqlite -m 'not slow'"
+addopts = "-ra --log-disable=aiosqlite -m 'not slow' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 asyncio_mode = "auto"
 timeout = 300
 log_cli = true
@@ -484,6 +486,13 @@ markers = [
     "slow: long-running tests, deselected by default; run them with -m slow",
     "live: tests that call a real model provider; skipped without credentials",
 ]
+
+[tool.pytest_env]
+TEST_SERVER_MODE = { unset = true }
+TEST_SERVER_MODE_ENDPOINT = { unset = true }
+TEST_PROXY_MODE = { unset = true }
+TEST_PROXY_MODE_ENDPOINT = { unset = true }
+INITIAL_NO_AUTH_ACTION_COUNT = { unset = true }
 
 [tool.commitizen]
 name = "cz_conventional_commits"

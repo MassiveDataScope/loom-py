@@ -17,7 +17,7 @@ from loom.core.stores.uow.coordinator import NonTransactional, OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation, invocation_error
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
 from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
-from tests.helpers.dynamodb import stored_items
+from tests.helpers.dynamodb import MotoTable
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 from .conftest import Product, ProductCreate, ProductUpdate
@@ -103,7 +103,7 @@ class TestDynamoDeclaredWrite:
         assert outcome.stores == (NonTransactional(DEFAULT_STORE, wrote=False),)
 
     async def test_a_write_from_a_gather_child_is_refused(
-        self, coordinator: OrderedCommits, dynamodb: Any
+        self, coordinator: OrderedCommits, dynamodb: Any, products_table: MotoTable
     ) -> None:
         products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(dynamodb, "products", Product)
 
@@ -112,7 +112,7 @@ class TestDynamoDeclaredWrite:
             with pytest.raises(ScopeOwnershipError):
                 await child
 
-        assert stored_items(dynamodb, "products") == {}
+        assert products_table.items_by_id() == {}
 
 
 def _unavailable(**kwargs: Any) -> NoReturn:

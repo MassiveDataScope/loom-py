@@ -20,7 +20,7 @@ from loom.jobs.aws.queue import (
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)

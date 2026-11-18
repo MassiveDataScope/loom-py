@@ -15,7 +15,8 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
 from tests.helpers.persistence import build_backend
 
 
@@ -24,7 +25,7 @@ def _wiring(table: str) -> StoreWiring:
         {
             "app": {"name": "demo"},
             "stores": {
-                "default": {"backend": "dynamodb", "region": "us-east-1", "table": table},
+                "default": {"backend": "dynamodb", "region": REGION, "table": table},
             },
         }
     )
@@ -75,10 +76,6 @@ class TestDynamoReadiness:
 
 
 class TestDynamoClientsPerStore:
-    @pytest.fixture
-    def island(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-        return fake_aws_island(monkeypatch)
-
     @staticmethod
     def _build_stores(aws: AwsClients, stores: dict[str, dict[str, str]]) -> None:
         ctx = ConfigContext.from_dict(
@@ -100,10 +97,10 @@ class TestDynamoClientsPerStore:
 
         self._build_stores(
             aws,
-            {"orders": {"region": "eu-west-1"}, "audit": {"region": "us-east-1"}},
+            {"orders": {"region": "eu-west-1"}, "audit": {"region": REGION}},
         )
 
-        assert [config.region for _service, config in island.built] == ["eu-west-1", "us-east-1"]
+        assert [config.region for _service, config in island.built] == ["eu-west-1", REGION]
         assert len(island.built) == 2
 
     def test_stores_with_the_same_settings_share_one_client(self, island: FakeAwsIsland) -> None:

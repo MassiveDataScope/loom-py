@@ -15,7 +15,7 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from tests.helpers.extras import fake_aws_island
+from tests.helpers.aws_island import fake_aws_island
 from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 

@@ -16,7 +16,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.ssm import SsmResolver
 from tests.helpers.aws import moto_client
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
 from tests.unit.core.config.doubles import BotocoreClientError
 
 

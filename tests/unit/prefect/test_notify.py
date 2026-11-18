@@ -17,9 +17,10 @@ from loom.prefect.notify import (
 )
 from loom.prefect.notify import _sns as sns_module
 from tests.helpers.aws import moto_client
-from tests.helpers.extras import fake_aws_island
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.sqs import ACCOUNT
 
-_TOPIC = "arn:aws:sns:eu-west-1:123456789012:etl-failures"
+_TOPIC = f"arn:aws:sns:eu-west-1:{ACCOUNT}:etl-failures"
 
 
 def _make_event(
@@ -210,8 +211,7 @@ class TestSnsNotifier:
             "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
         )
 
-    def test_default_client_uses_the_topic_region(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        island = fake_aws_island(monkeypatch)
+    def test_default_client_uses_the_topic_region(self, island: FakeAwsIsland) -> None:
         SnsNotifier(topic_arn=_TOPIC)
         assert [(service, config.region) for service, config in island.built] == [
             ("sns", "eu-west-1")
@@ -219,8 +219,7 @@ class TestSnsNotifier:
 
 
 class TestBuildSnsNotifier:
-    def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        fake_aws_island(monkeypatch)
+    def test_builds_sns_notifier_from_yaml_block(self, no_aws_clients: None) -> None:
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

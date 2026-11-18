@@ -68,7 +68,6 @@ from tests.integration.ai.freeze.test_lambda import (  # noqa: E402
     _write_project,
 )
 from tests.integration.ai.freeze.test_lambda import _isolated as _isolated  # noqa: E402
-from tests.integration.ai.freeze.test_lambda import _no_proxy as _no_proxy  # noqa: E402
 from tests.integration.ai.freeze.test_lambda import world as world  # noqa: E402
 
 pytestmark = [

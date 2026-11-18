@@ -15,8 +15,8 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
+from tests.helpers.aws_island import FakeSdkError, fake_aws_island
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import FakeSdkError, fake_aws_island
 from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker

@@ -9,7 +9,7 @@ import pytest
 from loom.celery.bootstrap import bootstrap_worker
 from loom.core.config import ConfigError
 from loom.core.job.job import Job
-from tests.helpers.extras import fake_aws_island, without_boto3
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit._resolver_stubs import MappingResolver
 
 pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
@@ -38,10 +38,6 @@ def _write_worker_yaml(tmp_path: Path, broker_url: str) -> str:
     return str(path)
 
 
-def _without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
-    without_boto3(monkeypatch)
-
-
 class TestBootstrapResolvers:
     def test_user_resolver_reaches_the_celery_app(self, tmp_path: Path) -> None:
         config_path = _write_worker_yaml(tmp_path, "${stub:broker}")
@@ -55,18 +51,16 @@ class TestBootstrapResolvers:
         assert result.celery_app.conf.broker_url == "memory://"
 
     def test_secrets_placeholder_without_boto3_names_the_extra(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
 
         with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             bootstrap_worker(config_path, jobs=[_SyncJob])
 
     def test_no_aws_client_without_placeholders(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
-        island = fake_aws_island(monkeypatch)
         config_path = _write_worker_yaml(tmp_path, "memory://")
 
         result = bootstrap_worker(config_path, jobs=[_SyncJob])
@@ -75,9 +69,8 @@ class TestBootstrapResolvers:
         assert island.sessions == []
 
     def test_user_secrets_resolver_wins_over_the_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_worker_yaml(tmp_path, "${secrets:/worker/broker}")
 
         result = bootstrap_worker(

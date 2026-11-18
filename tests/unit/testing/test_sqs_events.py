@@ -17,9 +17,10 @@ from loom.core.job.context import clear_pending_dispatches, flush_pending_dispat
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import TEST_QUEUE, LambdaEvent
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import fake_aws_island
 from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
-from tests.helpers.extras import fake_aws_island
 from tests.helpers.jobs import SQSClient, sqs_service
 from tests.helpers.sqs import FakeSqs
 
@@ -55,7 +56,7 @@ def handler(
     project = composition_project(
         ConfigContext.from_dict(
             {
-                "aws": {"region": "us-east-1"},
+                "aws": {"region": REGION},
                 "sqs": {"queues": {"jobs": TEST_QUEUE}},
                 "lambda": {
                     "functions": {

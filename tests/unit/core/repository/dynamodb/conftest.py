@@ -6,8 +6,8 @@ from typing import Annotated, Any, NoReturn
 import pytest
 
 from loom.core.model import BaseModel, Field, Float, Integer, String
-from tests.helpers.aws import moto_client
-from tests.helpers.dynamodb import create_table, record_transactions
+from tests.helpers.aws import build_moto_client, moto_client
+from tests.helpers.dynamodb import MotoTable
 
 
 class Product(BaseModel):
@@ -33,27 +33,31 @@ def product_model() -> type[Product]:
 
 
 @pytest.fixture
-def dynamodb(mocked_aws: None) -> Any:
-    """A DynamoDB client of the moto account with the ``products`` table."""
-    client = moto_client("dynamodb")
-    create_table(client, "products")
-    return client
+def products_table(mocked_aws: None) -> MotoTable:
+    """The ``products`` table of the moto account."""
+    return MotoTable(moto_client("dynamodb"), "products").create()
 
 
 @pytest.fixture
-def transactions(dynamodb: Any) -> Iterator[list[int]]:
-    """The size of every transaction ``dynamodb`` commits during the test, in order."""
-    with record_transactions(dynamodb) as sizes:
+def dynamodb(products_table: MotoTable) -> Any:
+    """The DynamoDB client of the ``products`` table."""
+    return products_table.client
+
+
+@pytest.fixture
+def transactions(products_table: MotoTable) -> Iterator[list[int]]:
+    """The size of every transaction committed on ``products`` during the test, in order."""
+    with products_table.recording_transactions() as sizes:
         yield sizes
 
 
 @pytest.fixture
-def refusing_client(dynamodb: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """The client with every item call failing the test."""
+def refusing_client() -> Any:
+    """A client of its own whose every call fails the test before it leaves the client."""
 
-    def _refuse(**kwargs: Any) -> NoReturn:
-        raise AssertionError(f"the client was called with {kwargs}")
+    def refuse(model: Any, params: Any, **_: Any) -> NoReturn:
+        raise AssertionError(f"{model.name} was called with {params}")
 
-    for method in ("get_item", "put_item", "delete_item", "transact_write_items"):
-        monkeypatch.setattr(dynamodb, method, _refuse)
-    return dynamodb
+    client = build_moto_client("dynamodb")
+    client.meta.events.register("before-call", refuse)
+    return client

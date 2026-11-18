@@ -23,6 +23,7 @@ from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
+from tests.helpers.aws import REGION
 
 
 class _Recorder:
@@ -49,7 +50,7 @@ class TestAwsClientBuilder:
     ) -> None:
         profiles = tmp_path / "aws-config"
         profiles.write_text(
-            "[profile dev]\nregion = us-east-1\n"
+            f"[profile dev]\nregion = {REGION}\n"
             "aws_access_key_id = testing\naws_secret_access_key = testing\n",
             encoding="utf-8",
         )

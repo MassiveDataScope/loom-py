@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -15,13 +16,15 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland, fake_aws_island
 from tests.helpers.persistence import build_backend
+from tests.helpers.sqs import ACCOUNT
 
 pytestmark = pytest.mark.timeout(10)
 
 _AWS = {"region": "eu-west-3", "url": "http://localhost:4566", "read_timeout": 9}
-_TOPIC = "arn:aws:sns:us-east-1:123456789012:alerts"
+_TOPIC = f"arn:aws:sns:{REGION}:{ACCOUNT}:alerts"
 
 
 def _answer_with_a_parameter(client: MagicMock) -> None:
@@ -36,10 +39,18 @@ class _Built:
         self.options = [reveal_for_driver(config.client_options()) for _, config in island.built]
 
 
-def _store(config: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> _Built:
-    island = fake_aws_island(monkeypatch)
-    build_backend(DynamoDBBackend(), ConfigContext.from_dict(config), (), SERVER_PROFILE)
-    return _Built(island)
+Store = Callable[[dict[str, Any]], _Built]
+
+
+@pytest.fixture
+def store(island: FakeAwsIsland) -> Store:
+    """Build the dynamodb store of a configuration and report what it asked the island for."""
+
+    def build(config: dict[str, Any]) -> _Built:
+        build_backend(DynamoDBBackend(), ConfigContext.from_dict(config), (), SERVER_PROFILE)
+        return _Built(island)
+
+    return build
 
 
 def _ssm(
@@ -75,21 +86,16 @@ class TestAwsSection:
 
 
 class TestDynamoDbAwsInheritance:
-    def test_a_dynamodb_store_inherits_aws(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clients = _store(
-            {"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}},
-            monkeypatch,
-        )
+    def test_a_dynamodb_store_inherits_aws(self, store: Store) -> None:
+        clients = store({"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}})
 
         assert clients.calls == [("dynamodb", "eu-west-3")]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
         assert clients.options[0]["config"]["read_timeout"] == 9
 
-    def test_a_dynamodb_store_overrides_aws_key_by_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
-        clients = _store({"aws": _AWS, "stores": {"default": store}}, monkeypatch)
+    def test_a_dynamodb_store_overrides_aws_key_by_key(self, store: Store) -> None:
+        own = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
+        clients = store({"aws": _AWS, "stores": {"default": own}})
 
         assert clients.calls == [("dynamodb", "eu-west-1")]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
@@ -170,12 +176,11 @@ class TestResolversReadAws:
 
         island.created[0].get_parameter.assert_called_once()
 
-    def test_the_sns_topic_region_overrides_aws(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        island = fake_aws_island(monkeypatch)
+    def test_the_sns_topic_region_overrides_aws(self, island: FakeAwsIsland) -> None:
         SnsNotifier(topic_arn=_TOPIC, aws=_AWS)
         clients = _Built(island)
 
-        assert clients.calls == [("sns", "us-east-1")]
+        assert clients.calls == [("sns", REGION)]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
 
     def test_one_resolver_builds_a_client_per_configuration(
@@ -186,7 +191,7 @@ class TestResolversReadAws:
         second = tmp_path / "second.yaml"
         first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
         second.write_text(
-            "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n",
+            f"aws:\n  region: {REGION}\n  url: http://localhost:4566\na: ${{ssm:/k}}\n",
             encoding="utf-8",
         )
         island = fake_aws_island(monkeypatch, setup=_answer_with_a_parameter)
@@ -194,6 +199,6 @@ class TestResolversReadAws:
             ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
         clients = _Built(island)
 
-        assert clients.calls == [("ssm", "eu-west-1"), ("ssm", "us-east-1")]
+        assert clients.calls == [("ssm", "eu-west-1"), ("ssm", REGION)]
         assert "endpoint_url" not in clients.options[0]
         assert clients.options[1]["endpoint_url"] == "http://localhost:4566"
