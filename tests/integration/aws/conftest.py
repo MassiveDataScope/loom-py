@@ -21,9 +21,10 @@ import yaml
 from botocore.config import Config  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
+from tests.helpers.aws import REGION
+
 URL_ENV_VAR = "LOOM_AWS_IT_URL"
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d localstack"
-REGION = "us-east-1"
 _DUMMY_CREDENTIALS = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
 
 AwsClientFactory = Callable[[str], Any]

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from moto import mock_aws
 from omegaconf import OmegaConf
 
 from loom.core.config import default_resolvers
@@ -50,22 +49,34 @@ def _absent_aws_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("aws") / "absent"
 
 
+_MOTO_VARIABLES = (
+    "TEST_SERVER_MODE",
+    "TEST_PROXY_MODE",
+    "INITIAL_NO_AUTH_ACTION_COUNT",
+)
+_AMBIENT_AWS = ("AWS_", "BOTO_", "MOTO_", *_MOTO_VARIABLES)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Remove the variables moto reads when it is imported, before any test module imports it."""
+    for name in tuple(os.environ):
+        if name.startswith(_MOTO_VARIABLES):
+            del os.environ[name]
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_aws(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _absent_aws_file: Path
 ) -> None:
-    """Leave a test no ambient AWS setup, so no client reaches a real endpoint or profile.
+    """Remove the AWS, boto, moto and moto test-mode variables, then set absent config and
+    credentials files, fake keys and no metadata service.
 
-    Every ``AWS_*``, ``BOTO_*`` and ``MOTO_*`` variable goes, whatever botocore or moto read
-    it for: neither ships a reset of its own. Only the known minimum comes back: absent
-    config and credentials files, fake keys and no metadata service. A test that needs an
-    endpoint, a region or a profile sets it itself. A ``live`` test keeps the environment
-    it was given: it is the one that asks for AWS.
+    A ``live`` test keeps the environment it was given.
     """
     if request.node.get_closest_marker("live"):
         return
     for name in tuple(os.environ):
-        if name.startswith(("AWS_", "BOTO_", "MOTO_")):
+        if name.startswith(_AMBIENT_AWS):
             monkeypatch.delenv(name)
     monkeypatch.setenv("AWS_CONFIG_FILE", str(_absent_aws_file))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_absent_aws_file))
@@ -79,6 +90,8 @@ def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``."""
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
     monkeypatch.setenv("MOTO_ACCOUNT_ID", ACCOUNT)
+    from moto import mock_aws
+
     with mock_aws():
         yield
 

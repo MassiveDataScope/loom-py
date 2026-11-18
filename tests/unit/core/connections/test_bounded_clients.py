@@ -33,16 +33,9 @@ def _elapsed(call: Callable[[], Any]) -> float:
     return elapsed
 
 
-@pytest.fixture
-def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-
-
 class TestClientsFailWithinDeclaredBounds:
     def test_the_etl_dynamodb_client_fails_within_its_bounds(
         self,
-        aws_credentials: None,
         silent_endpoint: str,  # noqa: F811
     ) -> None:
         from loom.etl.backends.polars.provider import _build_dynamodb_client
@@ -62,7 +55,6 @@ class TestClientsFailWithinDeclaredBounds:
     @pytest.mark.slow
     def test_the_ssm_resolver_fails_within_the_default_bounds(
         self,
-        aws_credentials: None,
         silent_endpoint: str,  # noqa: F811
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

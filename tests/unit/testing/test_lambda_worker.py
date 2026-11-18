@@ -6,7 +6,6 @@ import hashlib
 import http.server
 import importlib
 import json
-import os
 import socket
 import sys
 import threading
@@ -29,7 +28,7 @@ from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
 from loom.testing import TEST_QUEUE, LambdaWorker, Override
-from tests.helpers.aws import FAKE_KEY
+from loom.testing._moto import UNANSWERED, unanswered
 
 _JOBS = """
 from loom.core.job.job import Job
@@ -68,6 +67,26 @@ _NOTHING = {"batchItemFailures": []}
 _FIFO_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/loom-orders.fifo"
 
 Config = Callable[..., str]
+
+
+@pytest.fixture
+def moto_answers() -> Callable[[], bool]:
+    """Whether moto answers a request now: a call it leaves unanswered falls to this client."""
+    client = boto3.client("sqs", region_name="us-east-1")
+    client.meta.events.register_last(
+        "before-send", lambda request, **_: unanswered(request, "moto is stopped")
+    )
+
+    def answers() -> bool:
+        try:
+            client.list_queues()
+        except ClientError as error:
+            if error.response["Error"]["Code"] != UNANSWERED:
+                raise
+            return False
+        return True
+
+    return answers
 
 
 @pytest.fixture
@@ -567,7 +586,7 @@ class TestApplication:
 
 class TestLifecycle:
     def test_a_failed_init_stops_the_mock_even_when_closing_the_clients_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, moto_answers: Callable[[], bool]
     ) -> None:
         def bind(*_: Any) -> None:
             raise RuntimeError("bind failed")
@@ -581,7 +600,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             _open(config())
 
-        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
+        assert not moto_answers()
 
     def test_a_closed_worker_refuses_to_deliver_or_redeliver(self, config: Config) -> None:
         worker = _open(config())
@@ -625,7 +644,7 @@ class TestLifecycle:
             assert any("user-queue" in url for url in outside.list_queues()["QueueUrls"])
 
     def test_a_failing_init_closes_the_application_and_stops_the_mock(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, moto_answers: Callable[[], bool]
     ) -> None:
         closed: list[str] = []
         original = LambdaAdapter.close
@@ -643,10 +662,10 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="bind failed"):
             _open(config())
 
-        assert (closed, os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY) == (["adapter"], True)
+        assert (closed, moto_answers()) == (["adapter"], False)
 
     def test_a_base_exception_during_init_still_closes_the_application_and_the_mock(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, moto_answers: Callable[[], bool]
     ) -> None:
         closed: list[str] = []
         original = LambdaAdapter.close
@@ -664,7 +683,7 @@ class TestLifecycle:
         with pytest.raises(KeyboardInterrupt):
             _open(config())
 
-        assert (closed, os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY) == (["adapter"], True)
+        assert (closed, moto_answers()) == (["adapter"], False)
 
     @pytest.mark.parametrize("failure", ["refusal", "bind"])
     def test_a_failed_init_closes_the_applications_clients_once(
@@ -691,7 +710,7 @@ class TestLifecycle:
         assert closed == ["clients"]
 
     def test_the_mock_stops_even_when_closing_the_clients_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, moto_answers: Callable[[], bool]
     ) -> None:
         worker = _open(config())
         original = AwsClients.close
@@ -704,10 +723,10 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             worker.close()
 
-        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
+        assert not moto_answers()
 
     def test_the_mock_stops_even_when_closing_the_function_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+        self, config: Config, monkeypatch: pytest.MonkeyPatch, moto_answers: Callable[[], bool]
     ) -> None:
         worker = _open(config())
         original = LambdaAdapter.close
@@ -720,7 +739,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="close failed"):
             worker.close()
 
-        assert os.environ["AWS_ACCESS_KEY_ID"] == FAKE_KEY
+        assert not moto_answers()
 
     def test_without_moto_the_error_names_the_extra(
         self, config: Config, monkeypatch: pytest.MonkeyPatch

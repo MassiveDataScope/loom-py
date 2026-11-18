@@ -97,9 +97,7 @@ class TestBackendSelection:
 
         assert isinstance(factory, SQLAlchemyUnitOfWorkFactory)
 
-    def test_selects_dynamodb_backend(
-        self, agents_only_discovery: None, aws_test_credentials: None
-    ) -> None:
+    def test_selects_dynamodb_backend(self, agents_only_discovery: None) -> None:
         _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
@@ -324,7 +322,6 @@ class TestBuildBootstrapModelRules:
         self,
         store: dict[str, object] | None,
         monkeypatch: pytest.MonkeyPatch,
-        aws_test_credentials: None,
     ) -> None:
         """The coherence of an interface with its model does not depend on the backend."""
 
