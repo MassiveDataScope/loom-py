@@ -16,10 +16,10 @@ from loom.prefect.notify import (
     build_notifiers,
 )
 from loom.prefect.notify import _sns as sns_module
-from tests.helpers.aws import ACCOUNT, moto_client
+from tests.helpers.aws import ACCOUNT, OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
 
-_TOPIC = f"arn:aws:sns:eu-west-1:{ACCOUNT}:etl-failures"
+_TOPIC = f"arn:aws:sns:{OTHER_REGION}:{ACCOUNT}:etl-failures"
 
 
 def _make_event(
@@ -212,9 +212,7 @@ class TestSnsNotifier:
 
     def test_default_client_uses_the_topic_region(self, island: FakeAwsIsland) -> None:
         SnsNotifier(topic_arn=_TOPIC)
-        assert [(service, config.region) for service, config in island.built] == [
-            ("sns", "eu-west-1")
-        ]
+        assert island.regions_built == [("sns", OTHER_REGION)]
 
 
 class TestBuildSnsNotifier:
@@ -232,8 +230,8 @@ class _Topic:
     """The SNS topic ``_TOPIC`` on moto, with an SQS queue subscribed to read what it published."""
 
     def __init__(self) -> None:
-        sns = moto_client("sns", "eu-west-1")
-        self._sqs = moto_client("sqs", "eu-west-1")
+        sns = moto_client("sns", OTHER_REGION)
+        self._sqs = moto_client("sqs", OTHER_REGION)
         sns.create_topic(Name="etl-failures")
         self._queue = self._sqs.create_queue(QueueName="published")["QueueUrl"]
         arn = self._sqs.get_queue_attributes(QueueUrl=self._queue, AttributeNames=["QueueArn"])

@@ -23,7 +23,7 @@ from loom.jobs.aws.queue import (
     SqsRecord,
 )
 from loom.jobs.aws.sqs import SQSConfig
-from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.sqs import FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)
@@ -31,8 +31,14 @@ pytestmark = pytest.mark.timeout(10)
 _SOURCE = queue_url("jobs")
 _DEAD = queue_url("jobs-dlq")
 _FIFO_DEAD = queue_url("jobs-dlq.fifo")
-_POLICY = {"deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq", "maxReceiveCount": 4}
-_FIFO_POLICY = {**_POLICY, "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq.fifo"}
+_POLICY = {
+    "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq",
+    "maxReceiveCount": 4,
+}
+_FIFO_POLICY = {
+    **_POLICY,
+    "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq.fifo",
+}
 
 
 class EmailJob(Job[None]):
@@ -302,10 +308,10 @@ class TestQueueArn:
     @pytest.mark.parametrize(
         ("url", "arn", "matches"),
         [
-            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs", True),
-            (queue_url("orders.fifo"), f"arn:aws:sqs:eu-west-1:{ACCOUNT}:orders.fifo", True),
-            (_SOURCE, f"arn:aws:sqs:eu-west-1:{ACCOUNT}:unknown", False),
-            (_SOURCE, "arn:aws:sqs:eu-west-1:111111111111:jobs", False),
+            (_SOURCE, f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs", True),
+            (queue_url("orders.fifo"), f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:orders.fifo", True),
+            (_SOURCE, f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:unknown", False),
+            (_SOURCE, f"arn:aws:sqs:{OTHER_REGION}:111111111111:jobs", False),
             (_SOURCE, f"arn:aws:sqs:us-east-1:{ACCOUNT}:jobs", False),
             (
                 f"http://localhost:4566/{ACCOUNT}/jobs",
@@ -361,7 +367,9 @@ class TestConfig:
             f"{{url: {_SOURCE}, dead_letter: redrive|discard}}"
         )
 
-    @pytest.mark.parametrize("queues", ["https://sqs.eu-west-1.amazonaws.com/1/q", ["a", "b"]])
+    @pytest.mark.parametrize(
+        "queues", [f"https://sqs.{OTHER_REGION}.amazonaws.com/1/q", ["a", "b"]]
+    )
     def test_queues_that_are_no_mapping_are_refused_naming_the_expected_shape(
         self, queues: Any
     ) -> None:
@@ -459,7 +467,7 @@ class TestSqsRecordFromEvent:
             "receiptHandle": "h",
             "body": "b",
             "attributes": {"ApproximateReceiveCount": "3"},
-            "eventSourceARN": "arn:aws:sqs:eu-west-1:123456789012:orders.fifo",
+            "eventSourceARN": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:orders.fifo",
         }
 
         record = SqsRecord.from_event(raw)

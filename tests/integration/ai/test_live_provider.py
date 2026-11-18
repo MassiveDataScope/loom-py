@@ -30,12 +30,7 @@ from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import NullDeps, compiled_output
 
-pytestmark = [pytest.mark.live, pytest.mark.enable_socket]
-
-
-@pytest.fixture(autouse=True)
-def _bare_environment() -> None:
-    """Keep the environment the test was given: it is the one that asks for a real provider."""
+pytestmark = pytest.mark.live
 
 
 _SCHEMA: Mapping[str, Any] = {

@@ -16,7 +16,7 @@ from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from tests.helpers.aws import ACCOUNT, REGION
+from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
 
@@ -34,7 +34,7 @@ class _Built:
     """What loom asked the AWS island for: the service, region and client options of each build."""
 
     def __init__(self, island: FakeAwsIsland) -> None:
-        self.calls = [(service, config.region) for service, config in island.built]
+        self.calls = island.regions_built
         self.options = [reveal_for_driver(config.client_options()) for _, config in island.built]
 
 
@@ -76,7 +76,7 @@ class TestAwsSection:
     )
     def test_aws_refuses_credentials_and_product_keys(self, key: str) -> None:
         with pytest.raises(ConfigError, match=f"'aws' takes no key '{key}'"):
-            _inherit({"region": "eu-west-1", key: "x"})
+            _inherit({"region": OTHER_REGION, key: "x"})
 
     def test_aws_names_the_replacement_of_a_retired_key(self) -> None:
         written = {"endpoint_url": "http://localhost:4566"}
@@ -93,10 +93,10 @@ class TestDynamoDbAwsInheritance:
         assert clients.options[0]["config"]["read_timeout"] == 9
 
     def test_a_dynamodb_store_overrides_aws_key_by_key(self, store: Store) -> None:
-        own = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
+        own = {"backend": "dynamodb", "table": "t", "region": OTHER_REGION, "read_timeout": 3}
         clients = store({"aws": _AWS, "stores": {"default": own}})
 
-        assert clients.calls == [("dynamodb", "eu-west-1")]
+        assert clients.calls == [("dynamodb", OTHER_REGION)]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
         assert clients.options[0]["config"]["read_timeout"] == 3
 
@@ -141,10 +141,10 @@ class TestResolversReadAws:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         clients = _ssm(
-            tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver("eu-west-1"), monkeypatch
+            tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver(OTHER_REGION), monkeypatch
         )
 
-        assert clients.calls == [("ssm", "eu-west-1")]
+        assert clients.calls == [("ssm", OTHER_REGION)]
 
     def test_without_aws_the_resolver_lets_boto3_pick_the_region(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -188,7 +188,7 @@ class TestResolversReadAws:
         resolver = SsmResolver()
         first = tmp_path / "first.yaml"
         second = tmp_path / "second.yaml"
-        first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
+        first.write_text(f"aws:\n  region: {OTHER_REGION}\na: ${{ssm:/k}}\n", encoding="utf-8")
         second.write_text(
             f"aws:\n  region: {REGION}\n  url: http://localhost:4566\na: ${{ssm:/k}}\n",
             encoding="utf-8",
@@ -198,6 +198,6 @@ class TestResolversReadAws:
             ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
         clients = _Built(island)
 
-        assert clients.calls == [("ssm", "eu-west-1"), ("ssm", REGION)]
+        assert clients.calls == [("ssm", OTHER_REGION), ("ssm", REGION)]
         assert "endpoint_url" not in clients.options[0]
         assert clients.options[1]["endpoint_url"] == "http://localhost:4566"

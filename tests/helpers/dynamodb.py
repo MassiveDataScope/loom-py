@@ -40,7 +40,7 @@ class MotoTable:
         }
 
     @contextmanager
-    def recording_transactions(self) -> Iterator[list[int]]:
+    def record_transactions(self) -> Iterator[list[int]]:
         """Yield the size of every ``TransactWriteItems`` the client commits, in order."""
         sizes: list[int] = []
         sent: list[int] = []

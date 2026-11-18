@@ -36,7 +36,7 @@ from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
-from tests.helpers.aws import REGION
+from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.jobs import (
     BROKER,
@@ -59,7 +59,7 @@ _NEVER_RAN = "PostCommitShieldedActionNeverRan"
 _URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
 _SEND_FAILED = "SQS send failed"
 _CONFIG = {
-    "aws": {"region": "eu-west-1"},
+    "aws": {"region": OTHER_REGION},
     "sqs": {"queues": {"emails": {"url": _URL}, "orders": {"url": _FIFO_URL}}},
 }
 
@@ -253,20 +253,20 @@ class TestSqsDispatch:
 
     @pytest.mark.parametrize(
         ("sqs", "region"),
-        [({}, "eu-west-1"), ({"region": REGION}, REGION)],
+        [({}, OTHER_REGION), ({"region": REGION}, REGION)],
         ids=["inherits aws", "overrides aws"],
     )
     def test_the_client_takes_aws_and_sqs_overrides_it(
         self, tmp_path: Path, sqs: dict[str, Any], region: str, island: FakeAwsIsland
     ) -> None:
         config = {
-            "aws": {"region": "eu-west-1"},
+            "aws": {"region": OTHER_REGION},
             "sqs": {**sqs, "queues": {"emails": {"url": _URL}}},
         }
         project = job_project(tmp_path, config, "sqs")
         project.compose(JobsAdapter(EmailJob))
 
-        assert [(service, config.region) for service, config in island.built] == [("sqs", region)]
+        assert island.regions_built == [("sqs", region)]
 
     @pytest.mark.parametrize(
         ("job", "message"),

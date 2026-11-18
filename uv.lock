@@ -2576,7 +2576,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "pytest-env", specifier = ">=1.8.6,<2.0" },
+    { name = "pytest-env", specifier = ">=1.3.0,<2.0" },
     { name = "pytest-socket", specifier = ">=0.8.1,<1.0" },
     { name = "pytest-timeout", specifier = ">=2.3" },
     { name = "pytest-xdist", specifier = ">=3.6.1,<4" },
@@ -4104,15 +4104,15 @@ wheels = [
 
 [[package]]
 name = "pytest-env"
-version = "1.8.6"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
     { name = "python-dotenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/0b/68d9ba18cf4fd7690d9833b54d96b281411733df3b8b875c9be163ef0e85/pytest_env-1.8.6.tar.gz", hash = "sha256:2bfa4c2f911b6e8239291dd4652a4547dbf6a44050942e12eea300204b168162", size = 59367, upload-time = "2026-11-17T23:16:07.993Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/74/d03592dcf502ba32d1199c7e1bb9330c2bb92510e6d65957bef9af15b57c/pytest_env-1.3.0.tar.gz", hash = "sha256:967a28495dd0fb60b8bfe684c57c7f2804a5ba11764d89ba9c310ab97b1fdf94", size = 11819, upload-time = "2026-02-11T17:37:07.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5c/5f/1d806c209ccf2f65369e234ea0d55824d40f98c0d1671da2eaf92753c56f/pytest_env-1.8.6-py3-none-any.whl", hash = "sha256:11f3b45cddb4b03fce83ef0b9661f50e9ffdac93581e86d8a88a1a4d1c85587d", size = 63384, upload-time = "2026-11-17T23:16:06.665Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/fc/2dfd4cf9b82fd768c8fe52bff4cb732aac707a7708cf862ef416203fd421/pytest_env-1.3.0-py3-none-any.whl", hash = "sha256:ffe08c3a709775e59afd252100f521ecb53090e459b1e83e9e1be039010e2edb", size = 7860, upload-time = "2026-02-11T17:37:05.804Z" },
 ]
 
 [[package]]
@@ -4178,11 +4178,11 @@ wheels = [
 
 [[package]]
 name = "python-dotenv"
-version = "1.2.4"
+version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/74/26/2fbeedb218a787a5eea551c7532cac4e009f83d689dd2faa0d0353473f86/python_dotenv-1.2.4.tar.gz", hash = "sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0", size = 60824, upload-time = "2026-10-01T05:36:10Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl", hash = "sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc", size = 23266, upload-time = "2026-10-01T05:36:08.633Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
 ]
 
 [[package]]

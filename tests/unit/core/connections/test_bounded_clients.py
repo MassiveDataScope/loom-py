@@ -15,6 +15,7 @@ import pytest
 
 from loom.core.connections import AwsClientConfig
 from loom.core.model.redaction import Dsn
+from tests.helpers.aws import OTHER_REGION
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 # (connect + read) x attempts plus at most one second of standard backoff jitter.
@@ -42,7 +43,7 @@ class TestClientsFailWithinDeclaredBounds:
 
         client = _build_dynamodb_client(
             AwsClientConfig(
-                region="eu-west-1",
+                region=OTHER_REGION,
                 url=Dsn(silent_endpoint),
                 connect_timeout=1,
                 read_timeout=1,
@@ -65,4 +66,4 @@ class TestClientsFailWithinDeclaredBounds:
         defaults = AwsClientConfig()
         bound = (defaults.connect_timeout + defaults.read_timeout) * defaults.max_attempts + 1
 
-        assert _elapsed(lambda: SsmResolver("eu-west-1").resolve("/x")) < bound
+        assert _elapsed(lambda: SsmResolver(OTHER_REGION).resolve("/x")) < bound

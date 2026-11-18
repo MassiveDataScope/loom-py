@@ -14,7 +14,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.ssm import SsmResolver
-from tests.helpers.aws import moto_client
+from tests.helpers.aws import OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit.core.config.doubles import BotocoreClientError
 
@@ -75,11 +75,11 @@ class TestSsmResolverEnvVarExpansion:
     def test_expands_multiple_env_vars(
         self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
     ) -> None:
-        monkeypatch.setenv("REGION", "eu-west-1")
+        monkeypatch.setenv("REGION", OTHER_REGION)
         monkeypatch.setenv("ENV", "prod")
         SsmResolver().resolve("/%REGION%/%ENV%/key")
         mock_client.get_parameter.assert_called_once_with(
-            Name="/eu-west-1/prod/key", WithDecryption=True
+            Name=f"/{OTHER_REGION}/prod/key", WithDecryption=True
         )
 
     def test_raises_on_missing_env_var(
@@ -115,15 +115,15 @@ class TestSsmResolverClientLifecycle:
         resolver.resolve("/key/two")
         assert len(island.built) == 1
 
-    def test_region_forwarded_to_boto3(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
-        SsmResolver("eu-west-1").resolve("/some/key")
-        assert [(service, config.region) for service, config in island.built] == [
-            ("ssm", "eu-west-1")
-        ]
+    def test_the_resolver_region_is_the_region_of_its_client(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        SsmResolver(OTHER_REGION).resolve("/some/key")
+        assert island.regions_built == [("ssm", OTHER_REGION)]
 
     def test_region_none_by_default(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         SsmResolver().resolve("/some/key")
-        assert [(service, config.region) for service, config in island.built] == [("ssm", None)]
+        assert island.regions_built == [("ssm", None)]
 
 
 class TestSsmResolverErrors:
@@ -345,7 +345,10 @@ class TestSsmResolverOnMoto:
         moto_client("ssm").put_parameter(Name="/prod/token", Value="secret123", Type="SecureString")
 
         assert SsmResolver().resolve("/prod/token") == "secret123"
-        assert SsmResolver(with_decryption=False).resolve("/prod/token") != "secret123"
+        assert (
+            SsmResolver(with_decryption=False).resolve("/prod/token")
+            == "kms:alias/aws/ssm:secret123"
+        )
 
     def test_a_json_key_of_an_expanded_path_is_navigated(
         self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
@@ -358,11 +361,11 @@ class TestSsmResolverOnMoto:
         assert SsmResolver().resolve("/myapp/%ENV%/db.host") == "prod-db"
 
     def test_the_region_of_the_resolver_selects_the_parameter_store(self, mocked_aws: None) -> None:
-        moto_client("ssm", "eu-west-1").put_parameter(
+        moto_client("ssm", OTHER_REGION).put_parameter(
             Name="/some/key", Value="in-ireland", Type="String"
         )
 
-        assert SsmResolver("eu-west-1").resolve("/some/key") == "in-ireland"
+        assert SsmResolver(OTHER_REGION).resolve("/some/key") == "in-ireland"
 
     def test_a_missing_parameter_fails_with_the_aws_error_code(self, mocked_aws: None) -> None:
         with pytest.raises(ConfigError, match="ParameterNotFound"):

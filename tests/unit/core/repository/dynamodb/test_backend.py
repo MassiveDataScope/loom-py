@@ -14,7 +14,7 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from tests.helpers.aws import REGION
+from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.dynamodb import MotoTable
 from tests.helpers.persistence import build_backend
@@ -63,7 +63,7 @@ class TestDynamoReadiness:
 
     @pytest.mark.asyncio
     async def test_readiness_is_false_when_the_table_is_missing(
-        self, caplog: pytest.LogCaptureFixture, products_table: MotoTable
+        self, caplog: pytest.LogCaptureFixture, mocked_aws: None
     ) -> None:
         wiring = _wiring("missing")
 
@@ -97,10 +97,10 @@ class TestDynamoClientsPerStore:
 
         self._build_stores(
             aws,
-            {"orders": {"region": "eu-west-1"}, "audit": {"region": REGION}},
+            {"orders": {"region": OTHER_REGION}, "audit": {"region": REGION}},
         )
 
-        assert [config.region for _service, config in island.built] == ["eu-west-1", REGION]
+        assert island.regions_built == [("dynamodb", OTHER_REGION), ("dynamodb", REGION)]
         assert len(island.built) == 2
 
     def test_stores_with_the_same_settings_share_one_client(self, island: FakeAwsIsland) -> None:
@@ -108,7 +108,7 @@ class TestDynamoClientsPerStore:
 
         self._build_stores(
             aws,
-            {"orders": {"region": "eu-west-1"}, "audit": {"region": "eu-west-1", "table": "u"}},
+            {"orders": {"region": OTHER_REGION}, "audit": {"region": OTHER_REGION, "table": "u"}},
         )
 
         assert len(island.built) == 1

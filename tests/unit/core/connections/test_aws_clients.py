@@ -14,13 +14,13 @@ from loom.core.connections.aws.loader import aws_island
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
 from loom.serverless.aws.lambda_ import _jobs
-from tests.helpers.aws import REGION
+from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 
 _THREADS = 8
 
 
-_CONFIG = AwsClientConfig(region="eu-west-1")
+_CONFIG = AwsClientConfig(region=OTHER_REGION)
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ class TestClientCache:
         first = clients.client("dynamodb", _CONFIG)
 
         assert clients.client("dynamodb", _CONFIG) is first
-        assert clients.client("dynamodb", AwsClientConfig(region="eu-west-1")) is first
+        assert clients.client("dynamodb", AwsClientConfig(region=OTHER_REGION)) is first
         assert len(island.built) == 1
 
     def test_another_service_gives_another_client(
@@ -58,9 +58,9 @@ class TestClientCache:
         "other",
         [
             AwsClientConfig(region=REGION),
-            AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566")),
-            AwsClientConfig(region="eu-west-1", pool=AwsPool(size=2)),
-            AwsClientConfig(region="eu-west-1", read_timeout=30),
+            AwsClientConfig(region=OTHER_REGION, url=Dsn("http://localhost:4566")),
+            AwsClientConfig(region=OTHER_REGION, pool=AwsPool(size=2)),
+            AwsClientConfig(region=OTHER_REGION, read_timeout=30),
         ],
     )
     def test_other_settings_give_another_client(
@@ -74,9 +74,9 @@ class TestClientCache:
         class Queued(AwsClientConfig, frozen=True, kw_only=True):
             queues: dict[str, str]
 
-        base = clients.client("sqs", AwsClientConfig(region="eu-west-1"))
+        base = clients.client("sqs", AwsClientConfig(region=OTHER_REGION))
 
-        assert clients.client("sqs", Queued(region="eu-west-1", queues={"a": "u"})) is base
+        assert clients.client("sqs", Queued(region=OTHER_REGION, queues={"a": "u"})) is base
 
     def test_one_session_serves_every_client_of_a_profile(
         self, island: FakeAwsIsland, clients: AwsClients
@@ -91,7 +91,6 @@ class TestClientCache:
     def test_a_missing_boto3_names_the_aws_extra(
         self, clients: AwsClients, absent_boto3: None
     ) -> None:
-
         with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
             clients.client("s3", _CONFIG)
 
@@ -186,11 +185,11 @@ class TestClose:
 
 class TestRealIslandPath:
     def test_the_region_and_endpoint_of_the_settings_reach_boto3(self, mocked_aws: None) -> None:
-        settings = AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566"))
+        settings = AwsClientConfig(region=OTHER_REGION, url=Dsn("http://localhost:4566"))
 
         client = AwsClients().client("sqs", settings)
 
-        assert client.meta.region_name == "eu-west-1"
+        assert client.meta.region_name == OTHER_REGION
         assert client.meta.endpoint_url == "http://localhost:4566"
 
 

@@ -15,8 +15,8 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.helpers.aws import ACCOUNT
-from tests.helpers.aws_island import FakeAwsIsland, FakeAwsIslandByAttempts, FakeSdkError
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
+from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 from tests.helpers.composition import composition_project
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -25,10 +25,16 @@ from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
 _JOBS = queue_url("jobs")
 _POLICY = {
     _JOBS: {
-        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq",
+        "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq",
         "maxReceiveCount": 4,
     }
 }
+
+
+def _script_redrive_policy(client: MagicMock) -> None:
+    client.get_queue_attributes.return_value = {
+        "Attributes": {"RedrivePolicy": json.dumps(_POLICY[_JOBS])}
+    }
 
 
 Bind = Callable[..., Application]
@@ -48,7 +54,7 @@ def bind(monkeypatch: pytest.MonkeyPatch) -> Bind:
         unmapped: bool = False,
     ) -> Application:
         document = with_worker({"app": {"name": "lambda-sqs"}, "jobs": jobs or {}}, batch_size=5)
-        document["aws"] = {"region": "eu-west-1"}
+        document["aws"] = {"region": OTHER_REGION}
         document["sqs"] = {"queues": {} if unmapped else {"jobs": {"url": _JOBS, **(queue or {})}}}
         project = composition_project(
             ConfigContext.from_dict(document),
@@ -182,13 +188,18 @@ class TestConsumedQueue:
         bind: Bind,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
-
         jobs = {probe[0].__name__: {"queue": "jobs"}}
-        FakeAwsIslandByAttempts(single_attempt=bounded, retrying=retrying).install(monkeypatch)
+        island = FakeAwsIsland(setup=_script_redrive_policy).install(monkeypatch)
         bind(tmp_path, probe, None, jobs=jobs)
 
-        assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
+        by_attempts = {
+            config.max_attempts: client
+            for (_, config), client in zip(island.built, island.created, strict=True)
+        }
+        bounded = by_attempts.pop(1)
+        [retrying] = by_attempts.values()
+        assert retrying.get_queue_attributes.call_count == 1
+        assert bounded.get_queue_attributes.call_count + bounded.get_queue_url.call_count == 0
 
     @pytest.mark.parametrize(
         "policy",
@@ -198,13 +209,16 @@ class TestConsumedQueue:
             json.dumps({"deadLetterTargetArn": "arn", "maxReceiveCount": 4}),
             json.dumps(
                 {
-                    "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d",
+                    "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:d",
                     "maxReceiveCount": "x",
                 }
             ),
             json.dumps({"deadLetterTargetArn": 7, "maxReceiveCount": 4}),
             json.dumps(
-                {"deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:d", "maxReceiveCount": 0}
+                {
+                    "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:d",
+                    "maxReceiveCount": 0,
+                }
             ),
         ],
         ids=["bad-json", "no-target", "bad-target", "bad-count", "target-not-text", "zero-count"],

@@ -11,6 +11,8 @@ from pytest_socket import SocketConnectBlockedError
 
 
 class TestNetworkGuard:
+    """Refuse every non-loopback ``connect``; ``connect_ex`` and DNS lookups are not guarded."""
+
     def test_a_connection_to_a_remote_host_is_refused(self) -> None:
         with pytest.raises(SocketConnectBlockedError):
             socket.create_connection(("203.0.113.9", 9), timeout=1)

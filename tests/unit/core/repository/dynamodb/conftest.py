@@ -41,7 +41,7 @@ def products_table(mocked_aws: None) -> MotoTable:
 @pytest.fixture
 def transactions(products_table: MotoTable) -> Iterator[list[int]]:
     """The size of every transaction committed on ``products`` during the test, in order."""
-    with products_table.recording_transactions() as sizes:
+    with products_table.record_transactions() as sizes:
         yield sizes
 
 

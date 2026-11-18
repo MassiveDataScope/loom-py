@@ -54,6 +54,11 @@ class FakeAwsIsland:
         self.built: list[tuple[str, Any]] = []
         self.created: list[MagicMock] = []
 
+    @property
+    def regions_built(self) -> list[tuple[str, str | None]]:
+        """The service and region of every client built, in order."""
+        return [(service, config.region) for service, config in self.built]
+
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
         """Make every ``aws_island()`` of loom answer this island, and return it."""
         monkeypatch.setitem(sys.modules, BOTO3_ISLAND, self)
@@ -79,15 +84,3 @@ class FakeAwsIsland:
         if self._setup is not None:
             self._setup(client)
         return client
-
-
-class FakeAwsIslandByAttempts(FakeAwsIsland):
-    """Hands out *single_attempt* to clients built for one attempt and *retrying* to the rest."""
-
-    def __init__(self, single_attempt: Any, retrying: Any) -> None:
-        super().__init__()
-        self._single_attempt = single_attempt
-        self._retrying = retrying
-
-    def _new_client(self, service: str, config: Any) -> Any:
-        return self._single_attempt if config.max_attempts == 1 else self._retrying

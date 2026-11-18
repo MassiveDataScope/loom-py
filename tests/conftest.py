@@ -46,8 +46,13 @@ def clear_builtin_resolvers() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _bare_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove the ambient AWS setup and every proxy variable, and let every host bypass a proxy."""
+def _bare_environment(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the AWS setup and the proxy variables, and let every host bypass a proxy.
+
+    A ``live`` test keeps the environment it was given.
+    """
+    if request.node.get_closest_marker("live"):
+        return
     scrub_aws_environment(monkeypatch)
     for name in tuple(os.environ):
         if name.lower().endswith("_proxy"):
@@ -110,7 +115,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Run reload-based contract tests last to avoid module identity drift.
+    """Run reload-based contract tests last, and let ``live`` tests use the network.
 
     Some ETL contract tests intentionally call ``importlib.reload`` on modules.
     Running those tests early can invalidate class/enum identity assumptions
@@ -121,6 +126,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
 
     items.sort(key=_is_reload_contract_item)
+    for item in items:
+        if item.get_closest_marker("live"):
+            item.add_marker(pytest.mark.enable_socket)
 
 
 def _is_reload_contract_item(item: pytest.Item) -> bool:

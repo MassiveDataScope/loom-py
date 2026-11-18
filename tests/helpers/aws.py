@@ -1,9 +1,4 @@
-"""The AWS side of the test environment: a bare environment, moto clients, and a moto probe.
-
-A client holds no AWS state: moto keeps it in backends it resets whenever ``mock_aws()``
-starts and stops, and intercepts requests through a handler botocore registers for every
-client. Sharing the clients therefore saves botocore a service-catalogue scan per test.
-"""
+"""The AWS side of the test environment: a bare environment, moto clients and a moto probe."""
 
 from __future__ import annotations
 
@@ -23,33 +18,32 @@ from loom.core.model.redaction import reveal_for_driver
 from loom.testing._moto import UNANSWERED, unanswered
 
 REGION = "us-east-1"
+OTHER_REGION = "eu-west-1"
 ACCOUNT = "123456789012"
 FAKE_KEY = "testing"
-_NOWHERE = Path("/nonexistent/loom-tests-aws")
+_ABSENT_AWS_DIR = Path("/nonexistent/loom-tests-aws")
 
 
 def scrub_aws_environment(patch: pytest.MonkeyPatch) -> None:
-    """Remove every ``AWS_*``, ``BOTO_*`` and ``MOTO_*`` variable, then set only the minimum.
+    """Remove every ``AWS_*``, ``BOTO_*`` and ``MOTO_*`` variable and set only the minimum.
 
-    The minimum is absent config, credentials and model files, fake keys and no metadata
-    service. botocore adds ``~/.aws/models`` to its search path from the home directory it
-    saw when it was imported, so the loader's own setting is what points it away.
+    The minimum is absent config, credentials and model files, fake keys and no metadata service.
     """
     for name in tuple(os.environ):
         if name.startswith(("AWS_", "BOTO_", "MOTO_")):
             patch.delenv(name)
-    patch.setenv("AWS_CONFIG_FILE", str(_NOWHERE / "config"))
-    patch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_NOWHERE / "credentials"))
+    patch.setenv("AWS_CONFIG_FILE", str(_ABSENT_AWS_DIR / "config"))
+    patch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(_ABSENT_AWS_DIR / "credentials"))
     patch.setenv("AWS_EC2_METADATA_DISABLED", "true")
     patch.setenv("AWS_ACCESS_KEY_ID", FAKE_KEY)
     patch.setenv("AWS_SECRET_ACCESS_KEY", FAKE_KEY)
-    patch.setattr(Loader, "CUSTOMER_DATA_PATH", str(_NOWHERE / "models"))
+    patch.setattr(Loader, "CUSTOMER_DATA_PATH", str(_ABSENT_AWS_DIR / "models"))
 
 
 def build_moto_client(
     service: str, region: str = REGION, config: AwsClientConfig | None = None
 ) -> Any:
-    """A new client of *service* in *region*, built in the bare environment, for use under moto.
+    """Build a client of *service* in *region* in the bare environment, for use under moto.
 
     Args:
         service: The boto3 service name.
@@ -60,22 +54,12 @@ def build_moto_client(
     bounds = Config(**options["config"]) if options else None
     with pytest.MonkeyPatch.context() as patch:
         scrub_aws_environment(patch)
-        return boto3.Session().client(
-            service,
-            region_name=region,
-            config=bounds,
-            aws_access_key_id=FAKE_KEY,
-            aws_secret_access_key=FAKE_KEY,
-        )
+        return boto3.Session().client(service, region_name=region, config=bounds)
 
 
 @cache
 def moto_client(service: str, region: str = REGION) -> Any:
-    """The shared client of *service* in *region*; a test must not change it.
-
-    It is built in the bare environment whatever the first test to ask had set, and carries
-    nothing of the environment afterwards, so one per process is safe.
-    """
+    """Return the shared client of *service* in *region*, which a test must not change."""
     return build_moto_client(service, region)
 
 
@@ -89,7 +73,7 @@ def _moto_probe() -> Any:
 
 
 def is_moto_answering() -> bool:
-    """Whether moto answers a request now: one it leaves unanswered falls to the probe."""
+    """Return whether moto answers a request now."""
     try:
         _moto_probe().list_queues()
     except ClientError as error:

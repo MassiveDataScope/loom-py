@@ -23,6 +23,7 @@ from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
 from loom.core.stores.database import DatabaseConfig
+from tests.helpers.aws import OTHER_REGION
 
 
 def _parameters(function: Any) -> set[str]:
@@ -47,7 +48,7 @@ class TestAwsConnectionIsland:
         pytest.importorskip("boto3")
         island = import_optional("loom.core.connections.aws.client", extra="aws")
         config = AwsClientConfig(
-            region="eu-west-1",
+            region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
             pool=AwsPool(size=4),
             connect_timeout=1,

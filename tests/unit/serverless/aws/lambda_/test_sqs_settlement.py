@@ -18,7 +18,7 @@ from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import DEFERRALS_ATTRIBUTE, REJECTION_REASON_ATTRIBUTE
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.sqs import FakeSqs, queue_url
@@ -85,7 +85,7 @@ Serve = Callable[..., LambdaHandler]
 def sqs(request: pytest.FixtureRequest) -> FakeSqs:
     options: dict[str, Any] = getattr(request, "param", {})
     policy = {
-        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq",
+        "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq",
         "maxReceiveCount": options.get("max_receive", 4),
     }
     return FakeSqs({_JOBS: policy}, refuse=options.get("refuse", frozenset()))

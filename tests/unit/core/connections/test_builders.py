@@ -22,6 +22,7 @@ from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
+from tests.helpers.aws import OTHER_REGION
 
 
 class _Recorder:
@@ -48,7 +49,7 @@ class TestAwsClientBuilder:
     ) -> None:
         island = import_optional("loom.core.connections.aws.client", extra="aws")
         config = AwsClientConfig(
-            region="eu-west-1",
+            region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
             profile=dev_profile,
             pool=AwsPool(size=4),
@@ -64,7 +65,7 @@ class TestAwsClientBuilder:
         assert session.profile_name == dev_profile
         assert client.meta.service_model.service_name == "dynamodb"
         assert client.meta.endpoint_url == "http://localhost:8000"
-        assert client.meta.region_name == "eu-west-1"
+        assert client.meta.region_name == OTHER_REGION
         botocore = client.meta.config
         bounds = (botocore.connect_timeout, botocore.read_timeout, botocore.max_pool_connections)
         assert bounds == (1, 7, 4)

@@ -14,7 +14,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.secrets import SecretsManagerResolver
-from tests.helpers.aws import moto_client
+from tests.helpers.aws import OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit.core.config.doubles import BotocoreClientError
 
@@ -172,17 +172,15 @@ class TestSecretsManagerResolverClientLifecycle:
         resolver.resolve("/key/two")
         assert len(island.built) == 1
 
-    def test_region_forwarded_to_boto3(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
-        SecretsManagerResolver("eu-west-1").resolve("/some/secret")
-        assert [(service, config.region) for service, config in island.built] == [
-            ("secretsmanager", "eu-west-1")
-        ]
+    def test_the_resolver_region_is_the_region_of_its_client(
+        self, mock_client: MagicMock, island: FakeAwsIsland
+    ) -> None:
+        SecretsManagerResolver(OTHER_REGION).resolve("/some/secret")
+        assert island.regions_built == [("secretsmanager", OTHER_REGION)]
 
     def test_region_none_by_default(self, mock_client: MagicMock, island: FakeAwsIsland) -> None:
         SecretsManagerResolver().resolve("/some/secret")
-        assert [(service, config.region) for service, config in island.built] == [
-            ("secretsmanager", None)
-        ]
+        assert island.regions_built == [("secretsmanager", None)]
 
 
 # ---------------------------------------------------------------------------
@@ -407,11 +405,11 @@ class TestSecretsManagerResolverOnMoto:
             SecretsManagerResolver().resolve("/prod/token")
 
     def test_the_region_of_the_resolver_selects_the_secret_store(self, mocked_aws: None) -> None:
-        moto_client("secretsmanager", "eu-west-1").create_secret(
+        moto_client("secretsmanager", OTHER_REGION).create_secret(
             Name="/some/secret", SecretString="in-ireland"
         )
 
-        assert SecretsManagerResolver("eu-west-1").resolve("/some/secret") == "in-ireland"
+        assert SecretsManagerResolver(OTHER_REGION).resolve("/some/secret") == "in-ireland"
 
     def test_a_missing_secret_fails_with_the_aws_error_code(self, mocked_aws: None) -> None:
         with pytest.raises(ConfigError, match="ResourceNotFoundException"):

@@ -15,13 +15,14 @@ from loom.core.connections.aws import AwsClients
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.aws import OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 from .conftest import Product
 
-_REQUIRED = {"region": "eu-west-1", "table": "products"}
+_REQUIRED = {"region": OTHER_REGION, "table": "products"}
 
 
 BotocoreConfig = Callable[[dict[str, Any]], dict[str, Any]]
