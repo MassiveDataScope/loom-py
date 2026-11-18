@@ -19,7 +19,7 @@ from loom.core.job.outcome import (
     Rejected,
     Succeeded,
 )
-from loom.core.job.policy import RetryPolicy
+from loom.core.job.policy import Redelivery, RetryPolicy
 
 Invocation = Callable[[JobDelivery], Awaitable[Any]]
 """Runs the job of a delivery and returns its result, or raises what it raised."""
@@ -31,24 +31,36 @@ class JobRunner:
     Every transport maps the returned :class:`~loom.core.job.outcome.JobOutcome`
     to its own action; none of them classifies a failure. The runner emits the
     ``JOB_STARTED`` event and one of ``JOB_SUCCEEDED``, ``JOB_DEFERRED``,
-    ``JOB_FAILED`` or ``JOB_REJECTED`` for each run.
+    ``JOB_FAILED`` or ``JOB_REJECTED`` for each run. It knows what its transport
+    can do with a job that must run again, so it never defers or fails a run that
+    would not come back.
 
     Args:
         invocation: Runs the job of a delivery.
+        redelivery: What the transport does with a job that must run again.
         metrics: Receives the job events; none when omitted.
     """
 
-    def __init__(self, invocation: Invocation, metrics: MetricsAdapter | None = None) -> None:
+    def __init__(
+        self,
+        invocation: Invocation,
+        *,
+        redelivery: Redelivery,
+        metrics: MetricsAdapter | None = None,
+    ) -> None:
         self._invocation = invocation
+        self._redelivery = redelivery
         self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
 
     async def run(self, delivery: JobDelivery) -> JobOutcome:
         """Run *delivery* once.
 
         A :class:`~loom.core.job.outcome.JobRetry` defers without spending an
-        attempt, a :class:`~loom.core.job.outcome.JobRejection` or an error that
-        cannot succeed again rejects, and any other error fails until the
-        policy's attempts run out, then rejects with the error's class as reason.
+        attempt when the transport can wait, else rejects. A
+        :class:`~loom.core.job.outcome.JobRejection` or an error that cannot
+        succeed again rejects, and any other error fails while the transport
+        retries and the policy's attempts last, then rejects with the error's
+        class as reason.
 
         Args:
             delivery: The message, its attempt and its policy.
@@ -70,35 +82,45 @@ class JobRunner:
         try:
             result = await asyncio.wait_for(self._invocation(delivery), timeout=delivery.timeout_s)
         except JobRetry as signal:
+            if not self._redelivery.defers:
+                return Rejected(f"cannot wait: {signal.reason}", signal)
             delay = signal.delay or delivery.policy.backoff.delay(delivery.deferrals + 1)
             return Deferred(delay, signal.reason)
         except JobRejection as signal:
             return Rejected(signal.reason, signal)
         except Exception as exc:
-            return self.decide(exc, delivery.attempt, delivery.policy)
+            return self._decide(exc, delivery.attempt, delivery.policy)
         return Succeeded(result)
 
-    @staticmethod
-    def decide(error: Exception, attempt: int, policy: RetryPolicy) -> Rejected | Failed:
-        """Whether *error* on attempt *attempt* fails it for another try or rejects it for good.
+    def unrunnable(self, error: Exception, attempt: int, policy: RetryPolicy) -> Rejected | Failed:
+        """Decide a message that could not be run, and report it.
 
         Args:
-            error: What went wrong.
+            error: Why the message cannot run: it is undecodable or names no job.
             attempt: The attempt number, from 1.
             policy: The policy that governs the delivery.
 
         Returns:
-            :class:`~loom.core.job.outcome.Failed` while the error is retryable and
-            the policy allows another attempt, else
-            :class:`~loom.core.job.outcome.Rejected` with the error's class as reason.
+            What :meth:`run` would return for a job raising *error*; its event
+            is emitted, named by the error's class.
         """
-        if getattr(error, "retryable", True) and policy.allows_attempt_after(attempt):
+        outcome = self._decide(error, attempt, policy)
+        self._metrics.on_event(self._event(outcome, type(error).__qualname__, None, None))
+        return outcome
+
+    def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Rejected | Failed:
+        retried = (
+            getattr(error, "retryable", True)
+            and self._redelivery.retries
+            and policy.allows_attempt_after(attempt)
+        )
+        if retried:
             return Failed(error, policy.backoff.delay(attempt))
         return Rejected(type(error).__qualname__, error)
 
     @staticmethod
     def _event(
-        outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float
+        outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float | None
     ) -> RuntimeEvent:
         match outcome:
             case Succeeded():

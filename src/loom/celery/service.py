@@ -44,6 +44,7 @@ from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
+from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.tracing import get_trace_id
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
+_log = get_logger(__name__)
 
 
 @dataclass
@@ -73,7 +75,7 @@ class _PendingCeleryDispatch:
     priority: int
     soft_time_limit: int | None
     link: Any | None
-    link_error: Any | None
+    failure_callback: str | None
     observability_runtime: ObservabilityRuntime
 
     def __call__(self) -> None:
@@ -94,6 +96,7 @@ class _PendingCeleryDispatch:
                     "params": self.params,
                     "trace_id": self.trace_id,
                     "identity": self.identity,
+                    "failure_callback": self.failure_callback,
                 },
                 task_id=self.task_id,
                 queue=self.queue,
@@ -101,14 +104,13 @@ class _PendingCeleryDispatch:
                 priority=self.priority,
                 soft_time_limit=self.soft_time_limit,
                 link=self.link,
-                link_error=self.link_error,
             )
 
     def log_fields(self) -> tuple[dict[str, object]]:
         return ({"job_name": self.task_name, "task_id": self.task_id},)
 
 
-class _CallbackLink(msgspec.Struct, frozen=True):
+class CallbackLink(msgspec.Struct, frozen=True):
     """The keyword arguments of a job's callback task, the dispatcher's delegation among them."""
 
     job_id: str
@@ -116,27 +118,46 @@ class _CallbackLink(msgspec.Struct, frozen=True):
     trace_id: str | None
     identity: dict[str, Any] | None
 
-    def signature(
-        self, celery_app: Celery, callback_type: type[Any], outcome: CallbackOutcome
-    ) -> Any:
-        """Return the signature calling *callback_type*'s hook for *outcome* with this link.
+    def success_signature(self, celery_app: Celery, callback_type: type[Any]) -> Any:
+        """Return the signature calling *callback_type*'s ``on_success`` with this link.
 
-        A success signature is mutable, so Celery passes the job's return
-        value first; a failure signature is immutable.
+        The signature is mutable, so Celery passes the job's return value first.
 
         Args:
             celery_app: The application the signature belongs to.
             callback_type: The callback class whose task it calls.
-            outcome: The outcome the job's ``link`` or ``link_error`` reports.
 
         Returns:
-            The Celery ``Signature``.
+            The Celery ``Signature``, for the job's ``link``.
         """
         return celery_app.signature(
-            callback_task_name(callback_type, outcome),
+            callback_task_name(callback_type, CallbackOutcome.SUCCESS),
             kwargs=msgspec.structs.asdict(self),
-            immutable=outcome is CallbackOutcome.FAILURE,
         )
+
+    def send_failure(self, celery_app: Celery, task_name: str, error: Exception) -> None:
+        """Send the failure callback task *task_name* with this link and the error's class and text.
+
+        The callback runs at least once: a worker that dies between this send
+        and acknowledging the job's message sends it again. A send that fails
+        is logged and never raised, so the caller still raises the job's own error.
+
+        Args:
+            celery_app: The application the callback task belongs to.
+            task_name: The name of the callback task (:func:`callback_task_name`).
+            error: The error that ended the job, as the worker raised it.
+        """
+        try:
+            celery_app.send_task(
+                task_name,
+                kwargs={
+                    **msgspec.structs.asdict(self),
+                    "exc_type": type(error).__qualname__,
+                    "exc_msg": str(error),
+                },
+            )
+        except Exception:
+            _log.exception("Failure callback not sent", job_id=self.job_id, task=task_name)
 
 
 class CeleryJobService:
@@ -149,9 +170,11 @@ class CeleryJobService:
     after the close (or at the end of an execution without a Unit of Work)
     and discards it when the execution fails.
 
-    Callbacks are wired as native Celery ``link`` / ``link_error``
-    signatures so the broker manages delivery without framework
-    intervention after dispatch.
+    A success callback is wired as the native Celery ``link`` signature. A
+    failure callback travels as its task name in the job's keyword arguments:
+    the worker sends it, on every terminal failure of the job task, with the
+    error's class and text, so no result backend is read for them. It is
+    delivered at least once.
 
     When *factory* and *executor* are provided, :meth:`run` executes the
     job in-process (same as :class:`~loom.core.job.service.InlineJobService`)
@@ -269,7 +292,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the broker on task failure.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds before first execution, 0 through
                 900 inclusive. Defaults to the job's countdown.
@@ -320,7 +344,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the broker on task failure.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds before first execution, 0 through
                 900 inclusive. Defaults to the job's countdown.
@@ -367,7 +392,8 @@ class CeleryJobService:
             params: Primitive params for the execute signature.
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the broker on task failure.
+            on_failure: Callback type invoked by the worker on every terminal failure of
+                the job task.
             queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds, 0 through 900 inclusive.
             priority: Task priority override.
@@ -389,7 +415,7 @@ class CeleryJobService:
         eff_queue = queue or options.queue
         eff_countdown = Countdown(options.countdown if countdown is None else countdown).seconds
         eff_priority = priority if priority is not None else options.priority
-        callback_link = _CallbackLink(task_id, payload, trace_id, identity)
+        callback_link = CallbackLink(task_id, payload, trace_id, identity)
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
             task_name=wire_job_name(job_type.__qualname__),
@@ -404,10 +430,10 @@ class CeleryJobService:
             soft_time_limit=options.timeout,
             link=None
             if on_success is None
-            else callback_link.signature(self._app, on_success, CallbackOutcome.SUCCESS),
-            link_error=None
+            else callback_link.success_signature(self._app, on_success),
+            failure_callback=None
             if on_failure is None
-            else callback_link.signature(self._app, on_failure, CallbackOutcome.FAILURE),
+            else callback_task_name(on_failure, CallbackOutcome.FAILURE),
             observability_runtime=self._observability_runtime,
         )
         self._metrics.on_event(

@@ -51,7 +51,7 @@ class JobCallback:
 
         Args:
             job_id: UUID of the failed job.
-            exc_type: Fully-qualified exception class name.
+            exc_type: The exception's ``__qualname__``.
             exc_msg: String representation of the exception.
             **context: Original dispatch payload forwarded as keyword args.
         """

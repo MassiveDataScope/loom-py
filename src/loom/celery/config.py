@@ -71,9 +71,9 @@ class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_f
         queues: Explicit queue names to declare.  Celery creates them on
             demand when empty.
         task_default_queue: Default queue for tasks without an explicit
-            ``queue=`` argument — including callback signatures produced by
-            ``link`` / ``link_error``.  Must be one of ``queues`` when that
-            list is non-empty.  Defaults to ``"default"``.
+            ``queue=`` argument — including the success ``link`` and the
+            failure callback task.  Must be one of ``queues`` when that list
+            is non-empty.  Defaults to ``"default"``.
         runtime: AnyIO bridge settings for worker-side async execution.
 
     Example::

@@ -192,6 +192,19 @@ async def _until_logged(caplog: pytest.LogCaptureFixture, event: str) -> None:
         await asyncio.sleep(0.01)
 
 
+class TestSqsProducer:
+    def test_a_producer_applies_no_retry_policy_and_logs_none(
+        self, tmp_path: Path, client: SQSClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _compose(tmp_path, _CONFIG, client, EmailJob, OrderJob)
+
+        assert not [
+            record
+            for record in caplog.records
+            if isinstance(record.msg, dict) and record.msg.get("event") == "Job retry policies"
+        ]
+
+
 class TestSqsDispatch:
     async def test_a_standard_queue_gets_the_envelope_and_the_delay(
         self, service: JobService, client: SQSClient

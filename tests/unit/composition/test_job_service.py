@@ -24,6 +24,7 @@ from loom.composition.resources import ResourceKind
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.job.timer import AsyncioTimer, JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
@@ -166,6 +167,7 @@ class TestInlineTimer:
         warning, policies = warnings_logged.calls
         assert "wait in process memory" in warning[0]
         assert "Celery or SQS" in warning[0]
+        assert policies[1]["transport"] == "inline"
         assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
     async def test_a_countdown_waits_on_the_timer_of_the_application(self, tmp_path: Path) -> None:
@@ -207,10 +209,48 @@ class TestInlineTimer:
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
         ((event, fields),) = warnings_logged.calls
-        assert event == "Job retry policies"
-        assert "max_attempts=1 (no timer to wait on)" in fields["jobs"][0]["retry"]
+        assert (event, fields["transport"]) == ("Job retry policies", "inline")
+        assert "max_attempts=1 (no redelivery)" in fields["jobs"][0]["retry"]
 
     def test_a_celery_application_has_no_timer(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+
+
+class AcmeEmailJob(Job[int]):
+    __queue__ = "emails"
+
+    def execute(self) -> int:
+        return 1
+
+
+class TestRetryPolicyLog:
+    """The line is logged where a runner applies the policy; a producer applies none."""
+
+    def test_a_celery_producer_logs_no_policy_line(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
+
+        assert warnings_logged.named("Job retry policies") == []
+
+    def test_an_inline_line_lists_only_the_jobs_the_inline_runner_serves(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
+
+        job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmePingJob, AcmeEmailJob))
+
+        (line,) = warnings_logged.named("Job retry policies")
+        assert line["transport"] == "inline"
+        assert [entry["job"] for entry in line["jobs"]] == ["AcmePingJob"]
+
+    def test_an_app_whose_jobs_all_go_to_celery_logs_no_inline_line(
+        self, tmp_path: Path, warnings_logged: RecordingLogger
+    ) -> None:
+        config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
+
+        job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmeEmailJob))
+
+        assert warnings_logged.named("Job retry policies") == []

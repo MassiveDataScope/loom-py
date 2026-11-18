@@ -7,17 +7,17 @@ import warnings
 from collections.abc import Coroutine, Generator
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from celery import Celery
+from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.runner import (
     _CeleryAsyncRuntime,
     _make_callback_task,
     _make_job_task,
-    _resolve_error_info,
 )
 from loom.core.engine.events import EventKind
 from loom.core.errors import (
@@ -100,7 +100,7 @@ class _AsyncCallback:
         pass  # intentional no-op stub
 
 
-class _RetryError(Exception):
+class _RetryError(Retry):
     """Stands in for Celery's ``Retry`` raised by the mocked bound task."""
 
 
@@ -445,6 +445,63 @@ def _retrying_self(retries: int = 0) -> MagicMock:
     return task_self
 
 
+class TestMakeJobTaskFailureCallback:
+    FAILURE_CALLBACK = "loom.callback_error.AcmeCallback"
+
+    @staticmethod
+    def _run(error: Exception, *, retries: int, failure_callback: str | None) -> MagicMock:
+        app = _mock_celery_app()
+        task = _make_job_task(
+            app,
+            _SyncJob,
+            _mock_factory(MagicMock()),
+            _executor_raising(error),
+            _executing_runtime(),
+            settings=_SETTINGS,
+        )
+        task_self = _retrying_self(retries=retries)
+        task_self.request.id = "job-1"
+        with pytest.raises((_RetryError, type(error))):
+            task(
+                task_self,
+                payload={"value": 1},
+                trace_id="acme-trace",
+                failure_callback=failure_callback,
+            )
+        return app
+
+    def test_a_rejected_job_sends_the_callback_once_with_the_error_class_and_message(self) -> None:
+        app = self._run(ValueError("final"), retries=2, failure_callback=self.FAILURE_CALLBACK)
+
+        app.send_task.assert_called_once_with(
+            self.FAILURE_CALLBACK,
+            kwargs={
+                "job_id": "job-1",
+                "context": {"value": 1},
+                "trace_id": "acme-trace",
+                "identity": None,
+                "exc_type": "ValueError",
+                "exc_msg": "final",
+            },
+        )
+
+    def test_a_job_rejection_names_its_own_class(self) -> None:
+        app = self._run(JobRejection("tenant deleted"), retries=0, failure_callback="cb")
+
+        assert app.send_task.call_args.kwargs["kwargs"]["exc_type"] == "JobRejection"
+        assert app.send_task.call_args.kwargs["kwargs"]["exc_msg"] == "tenant deleted"
+
+    def test_a_failure_that_is_retried_sends_nothing(self) -> None:
+        app = self._run(ValueError("again"), retries=0, failure_callback=self.FAILURE_CALLBACK)
+
+        app.send_task.assert_not_called()
+
+    def test_a_rejected_job_without_a_failure_callback_sends_nothing(self) -> None:
+        app = self._run(ValueError("final"), retries=2, failure_callback=None)
+
+        app.send_task.assert_not_called()
+
+
 class TestMakeJobTaskRetry:
     def test_a_failure_with_attempts_left_retries_after_the_backoff(self) -> None:
         task_self = _retrying_self(retries=0)
@@ -742,52 +799,26 @@ class TestMakeJobTaskRetry:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_error_info
-# ---------------------------------------------------------------------------
-
-
-class TestResolveErrorInfo:
-    def test_looks_up_result_on_the_worker_app(self) -> None:
-        app = Celery("worker", set_as_current=False)
-        mock_result = MagicMock()
-        mock_result.result = ValueError("bad")
-        with patch("loom.celery.runner.AsyncResult", return_value=mock_result) as result:
-            assert _resolve_error_info("some-task-id", app) == {
-                "exc_type": "ValueError",
-                "exc_msg": "bad",
-            }
-        result.assert_called_once_with("some-task-id", app=app)
-
-    def test_returns_unknown_when_result_is_not_exception(self) -> None:
-        mock_result = MagicMock()
-        mock_result.result = None
-        with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            details = _resolve_error_info("some-task-id", Celery(set_as_current=False))
-        assert details == {"exc_type": "Unknown", "exc_msg": ""}
-
-
-# ---------------------------------------------------------------------------
 # _make_callback_task
 # ---------------------------------------------------------------------------
 
-_BACKEND_ERROR = {"exc_type": "ValueError", "exc_msg": "bad input"}
+_FAILURE_DETAILS = {"exc_type": "ValueError", "exc_msg": "bad input"}
 
 OUTCOMES = pytest.mark.parametrize(
     ("outcome", "job_result", "details"),
     [
         (CallbackOutcome.SUCCESS, ("acme",), {"result": "acme"}),
-        (CallbackOutcome.FAILURE, (), _BACKEND_ERROR),
+        (CallbackOutcome.FAILURE, (), _FAILURE_DETAILS),
     ],
     ids=["success", "failure"],
 )
-"""Each outcome: what Celery passes positionally, and the hook's details."""
+"""Each outcome: what Celery passes positionally, and the hook's details, which a failure
+callback receives as keyword arguments."""
 
 
-@pytest.fixture
-def backend_error() -> Generator[None]:
-    """The result backend holds the failed job's exception."""
-    with patch("loom.celery.runner._resolve_error_info", return_value=_BACKEND_ERROR):
-        yield
+def _arrived(details: dict[str, Any]) -> dict[str, Any]:
+    """The keyword arguments a failure callback is sent with; a success has none."""
+    return details if "exc_type" in details else {}
 
 
 @pytest.fixture
@@ -807,7 +838,6 @@ class _CoroutineFromDef:
         return asyncio.sleep(0)
 
 
-@pytest.mark.usefixtures("backend_error")
 @OUTCOMES
 class TestMakeCallbackTask:
     def test_task_registered_under_its_callback_task_name(
@@ -836,7 +866,10 @@ class TestMakeCallbackTask:
         task = _make_callback_task(
             celery_app, _SyncCallback, outcome, _mock_factory(cb), _mock_runtime()
         )
-        task.apply(args=job_result, kwargs={"job_id": "uuid-1", "context": {"order_id": 99}}).get()
+        task.apply(
+            args=job_result,
+            kwargs={"job_id": "uuid-1", "context": {"order_id": 99}, **_arrived(details)},
+        ).get()
         outcome.hook(cb).assert_called_once_with(job_id="uuid-1", **details, order_id=99)
 
     def test_a_plain_def_hook_returning_an_awaitable_is_refused_and_closed(
@@ -856,7 +889,9 @@ class TestMakeCallbackTask:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", RuntimeWarning)
-            result = task.apply(args=job_result, kwargs={"job_id": "j", "context": {}})
+            result = task.apply(
+                args=job_result, kwargs={"job_id": "j", "context": {}, **_arrived(details)}
+            )
             with pytest.raises(TypeError, match="async def"):
                 result.get()
 
@@ -873,7 +908,7 @@ class TestMakeCallbackTask:
         setattr(cb, f"on_{outcome}", AsyncMock())
         runtime = _mock_runtime()
         task = _make_callback_task(celery_app, _AsyncCallback, outcome, _mock_factory(cb), runtime)
-        kwargs = {"job_id": "x", "context": {}}
+        kwargs = {"job_id": "x", "context": {}, **_arrived(details)}
         if eager:
             task.apply(args=job_result, kwargs=kwargs).get()
         else:
@@ -937,7 +972,6 @@ class TestTwoApplicationsInOneProcess:
         assert first.tasks[name].apply().get() == 1
         assert second.tasks[name].apply().get() == 2
 
-    @pytest.mark.usefixtures("backend_error")
     @OUTCOMES
     def test_each_callback_builds_from_its_own_factory(
         self, outcome: CallbackOutcome, job_result: tuple[Any, ...], details: Any
@@ -951,7 +985,9 @@ class TestTwoApplicationsInOneProcess:
 
         assert tasks[0] is not tasks[1]
         for task, factory in zip(tasks, factories, strict=True):
-            task.apply(args=job_result, kwargs={"job_id": "j", "context": {}}).get()
+            task.apply(
+                args=job_result, kwargs={"job_id": "j", "context": {}, **_arrived(details)}
+            ).get()
 
             factory.build.assert_called_once_with(_TwinCallback)
 

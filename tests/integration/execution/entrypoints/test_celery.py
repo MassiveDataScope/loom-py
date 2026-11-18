@@ -32,11 +32,9 @@ from loom.core.identity import Delegation, Identity
 from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import wire_job_name
-from loom.core.observability.event import EventKind, Scope
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Caller
 from tests.helpers.delegation import acting_as, assert_new_delegation
-from tests.helpers.spans import build_recorder
 
 from .doubles import (
     BOB,
@@ -67,13 +65,8 @@ def celery_app() -> Celery:
     return app
 
 
-@pytest.fixture
-def backend_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The result backend holds the failed job's exception."""
-    monkeypatch.setattr(
-        "loom.celery.runner._resolve_error_info",
-        lambda job_id, app: {"exc_type": "LookupError", "exc_msg": "acme"},
-    )
+FAILURE = {"exc_type": "LookupError", "exc_msg": "acme"}
+"""What a worker sends the failure callback task when a job task ends with an error."""
 
 
 @pytest.fixture
@@ -138,7 +131,7 @@ class TestCeleryJobTask:
         assert job.session.caller == BOB
         assert job.session.execution is job.ran_in
 
-    async def test_a_dispatch_and_its_links_carry_the_caller_and_its_deadline(
+    async def test_a_dispatch_and_its_success_link_carry_the_caller_and_its_deadline(
         self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
     ) -> None:
         app = MagicMock()
@@ -158,7 +151,7 @@ class TestCeleryJobTask:
         links = [call.kwargs["kwargs"]["identity"] for call in app.signature.call_args_list]
         assert_new_delegation(sent["until"], before, window)
         assert sent == Delegation(BOB, sent["until"]).encoded()
-        assert links == [sent, sent]
+        assert links == [sent]
 
 
 @pytest.mark.usefixtures("as_alice")
@@ -176,7 +169,6 @@ class TestCeleryCallbackTasks:
         assert callback_log[1][0] == "on_success"
 
     @CALLBACKS
-    @pytest.mark.usefixtures("backend_error")
     def test_a_failure_callback_acts_as_the_identity_its_link_carries(
         self,
         celery_app: Celery,
@@ -189,7 +181,7 @@ class TestCeleryCallbackTasks:
         )
         link = link_from(BOB, until=time.time() + AN_HOUR)
 
-        task.apply(kwargs={"job_id": "acme-job", "context": {}, **link}).get()
+        task.apply(kwargs={"job_id": "acme-job", "context": {}, **FAILURE, **link}).get()
 
         assert [seen.caller for _, seen in callback_log] == [BOB, BOB]
         assert callback_log[1][0] == "on_failure"
@@ -206,7 +198,6 @@ class TestCeleryCallbackTasks:
 
         assert callback_log == [("built", NO_CALLER), ("on_success", NO_CALLER)]
 
-    @pytest.mark.usefixtures("backend_error")
     @pytest.mark.parametrize(
         ("outcome", "moments"),
         [
@@ -226,7 +217,12 @@ class TestCeleryCallbackTasks:
         task = _make_callback_task(
             celery_app, AcmeSuccessOnlyCallback, outcome, factory, _CeleryAsyncRuntime()
         )
-        link = {"job_id": "acme-job", "context": {}, **link_from(BOB, until=time.time() + AN_HOUR)}
+        link = {
+            "job_id": "acme-job",
+            "context": {},
+            **FAILURE,
+            **link_from(BOB, until=time.time() + AN_HOUR),
+        }
 
         task.apply(
             args=("acme-result",) if outcome is CallbackOutcome.SUCCESS else (), kwargs=link
@@ -261,64 +257,27 @@ class TestCeleryCallbackTasks:
         assert callback_log == []
 
 
-class TestFailureCallbackBackendRead:
-    """The failed job's exception is read after the link's caller is checked, inside the span."""
+class TestFailureCallbackDeadline:
+    """A failure link past its deadline is refused before its hook runs."""
 
     @CALLBACKS
-    def test_a_link_past_its_deadline_reads_nothing_from_the_backend(
+    def test_a_link_past_its_deadline_runs_no_hook(
         self,
         celery_app: Celery,
         factory: UseCaseFactory,
         callback_log: CallbackLog,
         callback: type[AcmeCallback],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        read = MagicMock()
-        monkeypatch.setattr("loom.celery.runner._resolve_error_info", read)
         task = _make_callback_task(
             celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryAsyncRuntime()
         )
         link = link_from(BOB, until=time.time() - 1)
-        result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **link})
+        result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **FAILURE, **link})
 
         with pytest.raises(DelegationExpired):
             result.get()
 
-        read.assert_not_called()
         assert callback_log == []
-
-    @CALLBACKS
-    def test_a_failing_read_is_recorded_on_the_callback_span(
-        self,
-        celery_app: Celery,
-        factory: UseCaseFactory,
-        callback: type[AcmeCallback],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        recorder = build_recorder()
-        monkeypatch.setattr(
-            "loom.celery.runner._resolve_error_info", MagicMock(side_effect=ConnectionError("acme"))
-        )
-        task = _make_callback_task(
-            celery_app,
-            callback,
-            CallbackOutcome.FAILURE,
-            factory,
-            _CeleryAsyncRuntime(),
-            observability_runtime=recorder.runtime,
-        )
-        link = link_from(BOB, until=time.time() + AN_HOUR)
-        result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **link})
-
-        with pytest.raises(ConnectionError):
-            result.get()
-
-        [error] = [
-            event.kind
-            for event in recorder.collector.scoped(Scope.JOB)
-            if event.name == callback.__qualname__ and event.kind is not EventKind.START
-        ]
-        assert error is EventKind.ERROR
 
 
 class _ContextFreeBridge:
@@ -363,7 +322,7 @@ def bridged(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
         runtime.shutdown()
 
 
-@pytest.mark.usefixtures("as_alice", "backend_error")
+@pytest.mark.usefixtures("as_alice")
 class TestAsyncCallbackThroughTheBridge:
     """An async callback runs on the bridge's loop, still as the identity its link carries."""
 
@@ -382,7 +341,12 @@ class TestAsyncCallbackThroughTheBridge:
         job_result: tuple[Any, ...],
     ) -> None:
         task = _make_callback_task(celery_app, AcmeAsyncCallerCallback, outcome, factory, bridged)
-        link = {"job_id": "acme-job", "context": {}, **link_from(BOB, until=time.time() + AN_HOUR)}
+        link = {
+            "job_id": "acme-job",
+            "context": {},
+            **FAILURE,
+            **link_from(BOB, until=time.time() + AN_HOUR),
+        }
 
         task.apply(args=job_result, kwargs=link).get()
 

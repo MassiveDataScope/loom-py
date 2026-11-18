@@ -34,6 +34,7 @@ from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.composition import composition_project
 from tests.helpers.extras import FakeAwsIsland, fake_aws_island
+from tests.helpers.loggers import RecordingLogger
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -45,6 +46,13 @@ class _PingJob(Job[int]):
 
     def execute(self) -> int:
         return 1
+
+
+class _SecondJob(Job[int]):
+    __queue__ = "default"
+
+    def execute(self) -> int:
+        return 2
 
 
 class _OtherCallback(JobCallback):
@@ -192,6 +200,23 @@ class TestBind:
         assert f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}" in app.tasks
         assert f"{TASK_CALLBACK_PREFIX}.{AcmePingCallback.__qualname__}" in app.tasks
         assert f"{TASK_CALLBACK_ERROR_PREFIX}.{AcmePingCallback.__qualname__}" in app.tasks
+
+    def test_bind_logs_one_policy_line_for_all_its_jobs_as_celery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = RecordingLogger()
+        monkeypatch.setattr("loom.celery.adapter._log", log)
+        adapter = CeleryAdapter(jobs=[_PingJob, _SecondJob])
+
+        adapter.bind(_application(tmp_path, {}, adapter))
+
+        (line,) = log.named("Job retry policies")
+        assert line["transport"] == "celery"
+        assert [entry["job"] for entry in line["jobs"]] == [
+            _PingJob.__qualname__,
+            _SecondJob.__qualname__,
+        ]
+        assert "max_attempts=3" in line["jobs"][0]["retry"]
 
     def test_bind_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])

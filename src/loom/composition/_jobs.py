@@ -115,7 +115,14 @@ def _inline(context: JobBackendContext) -> _Built:
         settings=context.settings,
         callbacks=context.callbacks,
         timer=timer,
+        metrics=context.metrics,
     )
+    if context.jobs:
+        _log.info(
+            "Job retry policies",
+            transport="inline",
+            jobs=context.settings.describe_retries(service.redelivery, context.jobs),
+        )
     return service, resources
 
 
@@ -210,7 +217,6 @@ def configure_job_service(
     settings: JobSettings,
     aws: AwsClients,
     waits_in_process: bool = True,
-    logs_retries: bool = True,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -236,7 +242,6 @@ def configure_job_service(
             without it the inline service refuses every delay. A
             :class:`~loom.core.job.timer.JobTimer` already bound in the container
             is used either way.
-        logs_retries: Whether to log the job retry policies in force.
 
     Returns:
         One resource per built backend that owns something to close.
@@ -266,7 +271,4 @@ def configure_job_service(
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)
-    in_force = service.settings if isinstance(service, InlineJobService) else settings
-    if logs_retries and in_force.jobs:
-        _log.info("Job retry policies", jobs=in_force.describe_retries())
     return resources

@@ -155,23 +155,6 @@ class TestSqsSettlement:
         (entry,) = sqs.client.entries("change_message_visibility_batch", _SOURCE)
         assert (_ids(redelivered), entry["VisibilityTimeout"]) == (["a"], 8)
 
-    def test_a_deferral_on_a_fifo_queue_is_refused_and_settled_as_a_failed_attempt(
-        self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
-    ) -> None:
-        sqs = settling(consumes="ordered")
-
-        redelivered = sqs.settle_all(
-            [(_record("a", arn=_FIFO_ARN), Deferred(Countdown(30), "warming up"))]
-        )
-
-        (entry,) = sqs.client.entries("change_message_visibility_batch")
-        assert (_ids(redelivered), sqs.client.calls["send_message_batch"]) == (["a"], 0)
-        assert entry["VisibilityTimeout"] == 30
-        refusals = [
-            record for record in caplog.records if "takes no per-message delay" in str(record.msg)
-        ]
-        assert len(refusals) == 1
-
     def test_a_failed_dead_letter_send_reports_only_that_message(
         self, settling: Callable[..., Settling]
     ) -> None:

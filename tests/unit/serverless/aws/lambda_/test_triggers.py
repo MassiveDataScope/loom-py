@@ -12,9 +12,12 @@ import pytest
 from loom.composition import AppConfig
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.engine.events import EventKind as RuntimeEventKind
+from loom.core.engine.events import RuntimeEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
+from loom.core.job.outcome import JobRetry
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Input
@@ -53,6 +56,8 @@ class ImportInvoice(Job[None]):
         _RAN.append((invoice, current_identity()))
         if invoice.number == "fail":
             raise ValueError("job failed")
+        if invoice.number == "wait":
+            raise JobRetry("tenant warming up", 30)
         if invoice.number == "final":
             raise _Final("job failed finally", code="final")
 
@@ -69,6 +74,15 @@ def ran() -> Iterator[list[tuple[Any, Identity]]]:
     _RAN.clear()
     yield _RAN
     _RAN.clear()
+
+
+class _Metrics:
+    def __init__(self) -> None:
+        self.kinds: list[RuntimeEventKind] = []
+
+    def on_event(self, event: RuntimeEvent) -> None:
+        if event.kind.name.startswith("JOB_"):
+            self.kinds.append(event.kind)
 
 
 class _Observer:
@@ -267,6 +281,28 @@ class TestDirectTrigger:
 
         with pytest.raises(error):
             handler(event, None)
+
+    def test_a_job_retry_is_rejected_not_deferred_as_the_same_event_comes_back_undelayed(
+        self, serve: Serve
+    ) -> None:
+        metrics = _Metrics()
+        handler = serve(_events(), metrics=metrics)
+
+        with pytest.raises(JobRetry, match="warming up"):
+            handler(LambdaEvent.eventbridge({"number": "wait"}), None)
+
+        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_REJECTED]
+
+    def test_a_failure_is_reported_as_failed_for_lambda_to_retry_the_event(
+        self, serve: Serve
+    ) -> None:
+        metrics = _Metrics()
+        handler = serve(_events(), metrics=metrics)
+
+        with pytest.raises(ValueError, match="job failed"):
+            handler(LambdaEvent.eventbridge({"number": "fail"}), None)
+
+        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
 
     def test_a_malformed_event_fails_the_invocation_in_a_failed_span(self, serve: Serve) -> None:
         observer = _Observer()
