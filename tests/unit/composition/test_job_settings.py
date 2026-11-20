@@ -9,16 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from celery import Celery
 
 from loom.composition import Application
 from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import BROKER, JobsAdapter, job_project
 
 _CONFIGURED = {"queue": "reports", "countdown": 5, "priority": 3, "timeout": 60}
@@ -48,15 +47,16 @@ def _compose(
 
 
 async def _sent(application: Application) -> dict[str, Any] | None:
-    """The routing ``send_task`` got when *application* dispatched the job; ``None`` if not sent."""
+    """The routing the broker got when *application* dispatched the job; ``None`` if not sent."""
+    broker = CeleryBroker(["default", "reports"])
     service = application.kernel.container.resolve(JobService)
-    with patch.object(Celery, "send_task", autospec=True) as send_task:
-        service.dispatch_after_commit(_ReportJob)
-        await flush_pending_dispatches()
-    if send_task.call_args is None:
+    service.dispatch_after_commit(_ReportJob)
+    await flush_pending_dispatches()
+    sent = broker.sent()
+    if not sent:
         return None
-    kwargs = send_task.call_args.kwargs
-    return {key: kwargs[key] for key in _DECLARED}
+    (message,) = sent
+    return {key: getattr(message, key) for key in _DECLARED}
 
 
 def _in_order(configured_first: bool) -> list[tuple[str, dict[str, Any] | None]]:
