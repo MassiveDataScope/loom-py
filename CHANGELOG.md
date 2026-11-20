@@ -1066,6 +1066,14 @@
 
 ### composition
 
+- **composition:** `Installer.from_config(config)` is how composition builds
+  every discovered installer; the base returns `cls()`. `ConfiguredInstaller[SettingsT]`
+  declares `section` and `settings_type`, decodes that section once with
+  `ConfigContext.section` and exposes it as `self.settings`. A missing or invalid
+  section is a `ConfigError` naming the section and the installer, at startup and
+  in `loom check`, which builds the installers through the same
+  `phases.build_installers`. A consumer's production modules no longer travel
+  through `Recipe.overrides`, which stays test-only.
 - **composition:** `app.entry_points: [group, ...]` scans the module of every
   installed entry point in those groups like an `app.packages` entry, so an
   installed plugin's models, use cases, jobs and installers are found without
