@@ -112,6 +112,18 @@ def dev_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
     return "dev"
 
 
+@pytest.fixture
+def memfs() -> Iterator[Any]:
+    """Return fsspec's in-memory filesystem, emptied before and after the test."""
+    fsspec = pytest.importorskip("fsspec")
+    fs = fsspec.filesystem("memory")
+    fs.store.clear()
+    fs.pseudo_dirs[:] = [""]
+    yield fs
+    fs.store.clear()
+    fs.pseudo_dirs[:] = [""]
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--update-golden",
