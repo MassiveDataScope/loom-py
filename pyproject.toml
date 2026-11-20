@@ -616,8 +616,11 @@ golden-update = "pytest -q -p no:cacheprovider --update-golden"
 gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
-help = "mypy over src; any error fails"
-cmd = "mypy --no-color-output src"
+help = "mypy and pyright over src, as CI's quality gate runs both; any error fails"
+sequence = [
+    { cmd = "mypy --no-color-output src" },
+    { cmd = "pyright src" },
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

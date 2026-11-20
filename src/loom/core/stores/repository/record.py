@@ -74,9 +74,11 @@ def single_id_attribute(model: type, *, why_single: str) -> str:
         ConfigError: If the primary key is composite.
     """
     names = get_id_attributes(model)
-    if len(names) > 1:
-        raise ConfigError(
-            f"{model.__qualname__} has the composite primary key ({', '.join(names)}); "
-            f"{why_single}, so declare a single primary key"
-        )
-    return names[0]
+    match names:
+        case (name,):
+            return name
+        case _:
+            raise ConfigError(
+                f"{model.__qualname__} has the composite primary key ({', '.join(names)}); "
+                f"{why_single}, so declare a single primary key"
+            )

@@ -133,16 +133,16 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
             return None
         return await self._with_projections(entity, profile=profile)
 
-    async def create(self, cmd: Any) -> T:
-        """Create and store a new entity from ``cmd``.
+    async def create(self, data: Any) -> T:
+        """Create and store a new entity from ``data``.
 
         If a ``creator`` callable was provided at construction it is called as
-        ``creator(cmd, next_id)``.  Otherwise, command attributes whose names
+        ``creator(data, next_id)``.  Otherwise, command attributes whose names
         match entity fields are copied automatically, and the id field is set
         from the internal auto-increment counter.
 
         Args:
-            cmd: Command or payload object carrying the new entity's data.
+            data: Command or payload object carrying the new entity's data.
 
         Returns:
             The created and stored entity.
@@ -151,10 +151,10 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
             Conflict: When the entity's id is already stored.
         """
         if self._creator is not None:
-            entity = self._creator(cmd, self._next_id)
+            entity = self._creator(data, self._next_id)
             self._next_id += 1
         else:
-            entity = self._auto_create(cmd)
+            entity = self._auto_create(data)
         id_val = getattr(entity, self._id_field)
         if id_val in self._store:
             raise Conflict(
