@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, Self, TypeVar
 
 from loom.core.command.base import Command
-from loom.core.errors import RuleViolation
+from loom.core.errors import RuleViolationError
 from loom.core.use_case._predicates import (
     is_present as _is_present,
 )
@@ -47,7 +47,7 @@ class Rule:
     Build rules with :meth:`check`, :meth:`forbid` and :meth:`require_present`.
 
     Args:
-        evaluator: Returns the violation message (``str``), a ``RuleViolation``,
+        evaluator: Returns the violation message (``str``), a ``RuleViolationError``,
             or ``None`` when the arguments are valid.
         field: Field a ``str`` violation is reported on.
         command_sources: Command fields whose values are passed to ``evaluator``.
@@ -69,11 +69,11 @@ class Rule:
     def check(
         cls,
         *targets: FieldRef,
-        via: Callable[..., str | RuleViolation | None],
+        via: Callable[..., str | RuleViolationError | None],
     ) -> Rule:
         """Validate fields with ``via``, which receives the targets' values.
 
-        ``via`` returns the violation message (``str``), a ``RuleViolation``, or
+        ``via`` returns the violation message (``str``), a ``RuleViolationError``, or
         ``None`` when the values are valid. Any other result, a ``bool``
         included, raises ``TypeError``.
 
@@ -148,9 +148,9 @@ class Rule:
         """Evaluate the rule against one command.
 
         Raises:
-            RuleViolation: When the evaluator reports a violation.
+            RuleViolationError: When the evaluator reports a violation.
             TypeError: When the evaluator returns anything else than a message,
-                a ``RuleViolation`` or ``None``.
+                a ``RuleViolationError`` or ``None``.
             ValueError: When a runtime context key the rule reads is missing.
         """
         if self.predicate is not None and not _predicate_is_present(
@@ -178,14 +178,14 @@ class Rule:
             self._raise_outcome(result, command)
 
     def _raise_outcome(self, result: object, command: Command) -> None:
-        if isinstance(result, RuleViolation):
+        if isinstance(result, RuleViolationError):
             raise result
         if isinstance(result, str):
-            raise RuleViolation(self._resolved_field(command), result)
+            raise RuleViolationError(self._resolved_field(command), result)
         raise TypeError(
             f"Rule.check on field '{self._resolved_field(command)}': the evaluator "
             f"returned {type(result).__name__}; return the violation message (str), "
-            "a RuleViolation, or None when the value is valid."
+            "a RuleViolationError, or None when the value is valid."
         )
 
     def _resolved_field(self, command: Command) -> str:

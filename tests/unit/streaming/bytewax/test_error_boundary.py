@@ -11,7 +11,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.errors import BoundaryValidationError, RuleViolation  # noqa: E402
+from loom.core.errors import BoundaryValidationError, RuleViolationError  # noqa: E402
 from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
@@ -79,7 +79,7 @@ class TestExecuteInBoundary:
         result = _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
-            lambda: _raise(RuleViolation("field", "boom")),
+            lambda: _raise(RuleViolationError("field", "boom")),
             _boundary(),
         )
 
@@ -101,7 +101,7 @@ class TestExecuteInBoundary:
         _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
-            lambda: _raise(RuleViolation("field", "boom")),
+            lambda: _raise(RuleViolationError("field", "boom")),
             _boundary(),
         )
 

@@ -9,7 +9,7 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import NotFound, PostCommitError, RuleViolation, RuleViolations
+from loom.core.errors import NotFound, PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
 
@@ -60,7 +60,7 @@ class _FailingAfterCommitUseCase(UseCase[Any, str]):
 def _always_bad(
     command: Command, fields_set: frozenset[str], context: dict[str, object] | None = None
 ) -> None:
-    raise RuleViolation("value", "bad")
+    raise RuleViolationError("value", "bad")
 
 
 class _RuleFailUseCase(UseCase[Any, str]):
@@ -277,7 +277,7 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         assert adapter.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
 
@@ -285,7 +285,7 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         err = adapter.by_kind(EventKind.EXEC_ERROR)[0]
         assert err.status == "rule_failure"
@@ -294,10 +294,10 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         err = adapter.by_kind(EventKind.EXEC_ERROR)[0]
-        assert isinstance(err.error, RuleViolations)
+        assert isinstance(err.error, RuleViolationsError)
 
 
 # ---------------------------------------------------------------------------

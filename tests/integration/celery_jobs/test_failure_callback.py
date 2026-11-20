@@ -10,8 +10,8 @@ import pytest
 from loom.core.errors import (
     JobTimeoutError,
     PostCommitError,
-    RuleViolation,
-    RuleViolations,
+    RuleViolationError,
+    RuleViolationsError,
 )
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
@@ -41,7 +41,9 @@ class TestFailureCallbackAcrossSerializers:
                 id="post-commit",
             ),
             pytest.param(JobTimeoutError("job-1", 2.0), id="job-timeout"),
-            pytest.param(RuleViolations([RuleViolation("name", "required")]), id="rule-violations"),
+            pytest.param(
+                RuleViolationsError([RuleViolationError("name", "required")]), id="rule-violations"
+            ),
             pytest.param(AcmeKeywordError("acme", reason="deleted"), id="keyword-error"),
         ],
     )

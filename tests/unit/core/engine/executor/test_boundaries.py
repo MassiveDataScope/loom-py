@@ -26,7 +26,7 @@ from loom.core.engine.post_commit import active_channel
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UndeclaredStoreWrite,
 )
 from loom.core.job.context import add_pending_dispatch
@@ -373,7 +373,7 @@ class TestOneStoreRaisesAsToday:
         executor = make_executor(coordinator=OrderedCommits({DEFAULT_STORE: stores}))
         use_case = Run(done())
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert isinstance(raised.value.__cause__, ConnectionError)
@@ -394,7 +394,7 @@ class TestOneStoreRaisesAsToday:
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "commit"
 
 
-class TestStoresNotCommitted:
+class TestStoresNotCommittedError:
     async def test_a_store_that_committed_beside_one_that_failed_raises_it(
         self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
     ) -> None:
@@ -407,7 +407,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         cause = _cause(raised.value)
@@ -430,7 +430,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert raised.value.__cause__ is error
@@ -447,7 +447,7 @@ class TestStoresNotCommitted:
         executor = make_executor(coordinator=OrderedCommits({DEFAULT_STORE: stores}))
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert raised.value.outcome is not None
@@ -496,7 +496,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await executor.execute(use_case)
 
         assert ran == []

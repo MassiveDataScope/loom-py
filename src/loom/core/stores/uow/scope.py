@@ -40,7 +40,7 @@ from loom.core.errors import (
     ForeignSessionError,
     NestedIdentityMismatch,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UndeclaredStoreWrite,
     UnitOfWorkInsideScope,
 )
@@ -515,7 +515,7 @@ def invocation_error(
     """Return what an invocation that ended with ``outcome`` raises, if anything.
 
     The business ``error`` wins over the stores' own failures. The
-    invocation raises :class:`StoresNotCommitted` instead, which no retry
+    invocation raises :class:`StoresNotCommittedError` instead, which no retry
     repeats, when a store is ``Uncertain`` (one store alone too), or when one
     committed or wrote without a transaction while another failed. An
     interruption (``asyncio.CancelledError`` and the like) is never
@@ -531,7 +531,7 @@ def invocation_error(
     failure = error if error is not None else _first_failure(outcome.stores)
     if not isinstance(failure, Exception) or not _split(outcome.stores):
         return failure
-    stores_error = StoresNotCommitted.of(outcome)
+    stores_error = StoresNotCommittedError.of(outcome)
     stores_error.__cause__ = failure
     return stores_error
 

@@ -22,7 +22,7 @@ from loom.core.errors import (
     NotFound,
     PostCommitError,
     RateLimited,
-    RuleViolation,
+    RuleViolationError,
     SystemError,
 )
 from loom.core.errors.codes import ErrorCode
@@ -499,7 +499,7 @@ class TestDeclaredStatusAcceptance:
                 None,
             ),
             (
-                RuleViolation("email", "invalid"),
+                RuleViolationError("email", "invalid"),
                 422,
                 "invalid",
                 {"field": "email"},

@@ -834,7 +834,7 @@ class UseCaseTest(Generic[ResultT]):
             The result produced by the UseCase.
 
         Raises:
-            loom.core.errors.RuleViolations: If one or more rule steps fail.
+            loom.core.errors.RuleViolationsError: If one or more rule steps fail.
             NotFound: If a Load step finds no entity.
             loom.core.errors.Unauthenticated: If the UseCase declares
                 ``Caller()``, ``Agent(name)`` or ``Mcp(server, ...)`` and

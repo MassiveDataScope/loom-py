@@ -28,7 +28,7 @@ from loom.core.errors import JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.job.timer import JobDelayRefused, JobTimer
+from loom.core.job.timer import JobDelayRefusedError, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIAdapter
@@ -216,7 +216,7 @@ class TestInlineTimer:
         application = self._compose(tmp_path, _LambdaJobsAdapter(AcmePingJob))
         service = application.kernel.container.resolve(JobService)
 
-        with pytest.raises(JobDelayRefused):
+        with pytest.raises(JobDelayRefusedError):
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
         ((event, fields),) = warnings_logged.calls

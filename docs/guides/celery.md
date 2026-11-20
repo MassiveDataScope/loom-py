@@ -178,7 +178,7 @@ with its attempt and postponements carried. Exhausted attempts abandon the job a
 call `on_failure`. A job delayed this way is lost when the process stops (the
 timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
 start-up: use Celery or SQS in production. A Lambda function composes no
-timer: its inline service refuses a countdown above zero with `JobDelayRefused`,
+timer: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
 abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
 ---

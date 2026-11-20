@@ -591,7 +591,7 @@ array, a string, a number, `null` — is a `boundary_validation` 422 whose
 message and single `body` violation read `Request body must be a JSON object`.
 The body is decoded as JSON whatever its `Content-Type` says.
 
-A single `RuleViolation(field, message)` raised from `execute()` also answers
+A single `RuleViolationError(field, message)` raised from `execute()` also answers
 422, with `code: "rule_violation"`, its `message` and its `field` at the top
 level of the body, so a client tells two such 422s apart by `field` instead of
 by the message text:
@@ -604,7 +604,7 @@ by the message text:
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+string (or a `RuleViolationError`) when the value is invalid, or `None` when it is
 valid. Any other result, a `bool` included, raises `TypeError`; a boolean
 condition belongs in `Rule.forbid`:
 
@@ -1182,7 +1182,7 @@ methods stay on the protocol. Closing is the context manager's job
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolationError`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |

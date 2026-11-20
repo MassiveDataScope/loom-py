@@ -72,7 +72,7 @@ CATALOG = RoleCatalog(
 
 The catalog refuses a duplicate role name and a role that uses a permission you did not
 declare, and every decision refuses a permission the catalog does not declare
-({class}`~loom.core.authz.UnknownPermission`), so a typo fails loudly rather than
+({class}`~loom.core.authz.UnknownPermissionError`), so a typo fails loudly rather than
 silently denying. Roles only add:
 there are no negative permissions, and holding two roles gives their union.
 
@@ -157,7 +157,7 @@ Holding `members.manage`, as `helpdesk` does, is not enough to promote someone t
 and holding a role is not enough to hand it out. Revoking needs exactly what granting
 would ({func}`~loom.core.authz.can_revoke`); a stored grant of a role the code does not
 declare allows nothing, so removing it needs `delegate` only. Asking to grant an
-undeclared role raises {class}`~loom.core.authz.UnknownRole`.
+undeclared role raises {class}`~loom.core.authz.UnknownRoleError`.
 
 ## Where grants come from
 

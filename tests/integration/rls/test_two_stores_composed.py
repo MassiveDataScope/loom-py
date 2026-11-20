@@ -27,7 +27,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
 from loom.core.engine.post_commit import store_channel
-from loom.core.errors import ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
+from loom.core.errors import ScopeOwnershipError, StoresNotCommittedError, UndeclaredStoreWrite
 from loom.core.identity import Identity
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.stores.repository import RepoFor
@@ -379,7 +379,7 @@ class TestTwoStoresComposed:
         sessions = application.kernel.container.resolve(_Sessions)
         caller = _as(application, U1)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await caller.invoke(_SplitCommit)
 
         outcome = raised.value.outcome

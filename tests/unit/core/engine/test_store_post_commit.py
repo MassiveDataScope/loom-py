@@ -23,7 +23,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import store_channel
-from loom.core.errors import StoresNotCommitted
+from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
     add_pending_dispatch,
     add_pending_publish,
@@ -283,14 +283,14 @@ class TestStorePostCommit:
                 {AUDIT: _Refused()},
                 ["default.priority", "events.priority", "default.publish", "events.publish"]
                 + ["default.plain", "events.plain"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="audit-rolls-back-after-default-committed",
             ),
             pytest.param(
                 {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
                 ["default.priority", "audit.priority", "events.priority"]
                 + ["default.publish", "events.publish", "default.plain", "events.plain"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="audit-uncertain-runs-its-priority-lane-only",
             ),
             pytest.param(
@@ -326,7 +326,7 @@ class TestStorePostCommit:
         ("failures", "ran", "error"),
         [
             pytest.param({}, ["job.priority", "job.publish", "job.plain"], None, id="both-commit"),
-            pytest.param({AUDIT: _Refused()}, [], StoresNotCommitted, id="joined-rolls-back"),
+            pytest.param({AUDIT: _Refused()}, [], StoresNotCommittedError, id="joined-rolls-back"),
         ],
     )
     async def test_a_dispatch_runs_only_if_every_store_of_its_execution_committed(
@@ -350,7 +350,7 @@ class TestStorePostCommit:
     @pytest.mark.parametrize(
         ("failing", "bumped", "error"),
         [
-            pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
+            pytest.param(DEFAULT_STORE, True, StoresNotCommittedError, id="audit-committed"),
             pytest.param(AUDIT, False, _Refused, id="audit-rolled-back"),
         ],
     )
@@ -411,7 +411,7 @@ class TestStorePostCommit:
             pytest.param(
                 CommitUncertain(ConnectionError("ack lost")),
                 ["default.priority"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="uncertain-runs-its-priority-lane-only",
             ),
         ],
@@ -483,7 +483,7 @@ class TestStorePostCommit:
             stores.write_order(), spawn, stores.run(_OnAudit(stores.write_entry()))
         )
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await stores.executor.execute(use_case)
         await left_running[0]
 
@@ -588,7 +588,7 @@ class TestStorePostCommit:
             stores.write_order(), stores.run(_OnAudit(stores.write_entry(), send))
         )
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await stores.executor.execute(use_case)
 
         (fields,) = [

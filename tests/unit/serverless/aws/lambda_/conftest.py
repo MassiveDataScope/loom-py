@@ -11,7 +11,7 @@ import pytest
 from loom.composition import AppConfig, Application, Project
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
-from loom.core.errors import PostCommitError, StoresNotCommitted
+from loom.core.errors import PostCommitError, StoresNotCommittedError
 from loom.core.identity import current_identity
 from loom.core.job.job import Job
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -63,7 +63,7 @@ def probe() -> tuple[type[Job[None]], Probe]:
             if marker == "committed":
                 raise PostCommitError(committed=True, failures=(ValueError("post commit"),))
             if marker == "scope":
-                raise StoresNotCommitted("partially committed")
+                raise StoresNotCommittedError("partially committed")
             if marker == "uncertain":
                 outcome = InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack lost")),))
                 raise invocation_error(outcome, None) or AssertionError(outcome)

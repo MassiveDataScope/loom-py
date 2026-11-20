@@ -330,7 +330,7 @@ class RuntimeExecutor:
             The result produced by ``execute()``.
 
         Raises:
-            loom.core.errors.RuleViolations: If one or more rule steps fail.
+            loom.core.errors.RuleViolationsError: If one or more rule steps fail.
             NotFound: If a Load step finds no entity in the repository.
             Unauthenticated: If the plan declares ``Caller()`` and no identity
                 was supplied.
@@ -339,7 +339,7 @@ class RuntimeExecutor:
             loom.core.errors.ScopeOwnershipError: If a scope is published
                 in this context but this task does not own it, or it is
                 already closed.
-            loom.core.errors.StoresNotCommitted: If two or more stores
+            loom.core.errors.StoresNotCommittedError: If two or more stores
                 of the invocation did not end the same way.
             loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other

@@ -13,7 +13,7 @@ from loom.core.config.loader import load_config, section
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import RuleViolations
+from loom.core.errors import RuleViolationsError
 from loom.core.use_case import Compute, F, Input, Rule
 from loom.core.use_case.use_case import UseCase
 from loom.testing import RepositoryIntegrationHarness
@@ -229,7 +229,7 @@ class TestUseCaseCrudIntegration:
         executor = RuntimeExecutor(result.compiler)
         create_uc = result.factory.build(CreateProductWithComputeAndRulesUseCase)
 
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(
                 create_uc,
                 payload={"name": "bad", "price": -1.0},

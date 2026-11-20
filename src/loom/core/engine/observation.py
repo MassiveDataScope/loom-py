@@ -21,7 +21,7 @@ from typing import Any, NamedTuple, TypeVar
 
 from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsRecorder, NoMetrics
-from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
+from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
 from loom.core.logger import LoggerPort
 from loom.core.stores.uow.coordinator import InvocationOutcome
@@ -115,7 +115,7 @@ class StartedExecution:
         if self.steps is not None:
             self.steps.append(label)
 
-    def rule_failed(self, rule: str, violation: RuleViolation) -> None:
+    def rule_failed(self, rule: str, violation: RuleViolationError) -> None:
         """Record one rule broken; the terminal ``[FAIL]`` lists them all."""
         self.broken_rules += (BrokenRule(rule, violation.field, violation.message),)
 
@@ -207,7 +207,7 @@ class StartedExecution:
         }
         if self.steps is not None:
             fields["steps"] = self.steps
-        if isinstance(error, RuleViolations):
+        if isinstance(error, RuleViolationsError):
             broken = self.broken_rules or tuple(
                 BrokenRule(None, violation.field, violation.message)
                 for violation in error.violations
@@ -219,7 +219,7 @@ class StartedExecution:
 
     @staticmethod
     def _status(error: BaseException) -> Status:
-        if isinstance(error, RuleViolations):
+        if isinstance(error, RuleViolationsError):
             return Status.RULE_FAILURE
         if isinstance(error, JobSignal):
             return error.status

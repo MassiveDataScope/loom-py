@@ -16,7 +16,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.errors import RuleViolation  # noqa: E402
+from loom.core.errors import RuleViolationError  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
 from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax._error_boundary import ErrorBoundary  # noqa: E402
@@ -142,7 +142,7 @@ class _MessageReturningRecordStep(RecordStep[AcmePayload, AcmePayload]):
 class _BoomRecordStep(RecordStep[AcmePayload, AcmePayload]):
     def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del message, kwargs
-        raise RuleViolation("value", "boom")
+        raise RuleViolationError("value", "boom")
 
 
 class _AsyncUpperRecordStep(RecordStep[AcmePayload, AcmePayload]):
@@ -168,7 +168,7 @@ class _ConditionalAsyncRecordStep(RecordStep[AcmePayload, AcmePayload]):
         payload = _message_payload(message)
         await anyio.sleep(0.001)
         if payload.value == "bad":
-            raise RuleViolation("value", "boom")
+            raise RuleViolationError("value", "boom")
         return AcmePayload(value=payload.value.upper())
 
 
@@ -497,7 +497,7 @@ class TestExecuteRecordStep:
         runtime = ObservabilityRuntime([observer])
         step = _BoomRecordStep()
         message = _message("abc")
-        with pytest.raises(RuleViolation, match="value: boom"):
+        with pytest.raises(RuleViolationError, match="value: boom"):
             _steps._execute_record_step(
                 runtime,
                 "orders",
@@ -509,7 +509,7 @@ class TestExecuteRecordStep:
 
         assert observer.events == [
             ("start", "orders", 1, "Boom"),
-            ("error", "orders", 1, "Boom:RuleViolation"),
+            ("error", "orders", 1, "Boom:RuleViolationError"),
         ]
 
 

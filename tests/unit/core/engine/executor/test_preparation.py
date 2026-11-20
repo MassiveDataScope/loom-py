@@ -16,7 +16,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
 from loom.core.engine.plan import ParamBinding
-from loom.core.errors import MissingCaller, NotFound, RuleViolation, RuleViolations
+from loom.core.errors import MissingCaller, NotFound, RuleViolationError, RuleViolationsError
 from loom.core.identity import ANONYMOUS
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
@@ -381,7 +381,7 @@ class TestComputesAndRules:
         called: list[bool] = []
 
         def bad_rule(cmd: Any, fs: Any) -> None:
-            raise RuleViolation("email", "invalid")
+            raise RuleViolationError("email", "invalid")
 
         class RuleUseCase(UseCase[Any, None]):
             rules = [bad_rule]
@@ -390,7 +390,7 @@ class TestComputesAndRules:
                 called.append(True)
 
         use_case = RuleUseCase()
-        with pytest.raises(RuleViolations) as exc_info:
+        with pytest.raises(RuleViolationsError) as exc_info:
             await executor.execute(
                 use_case,
                 payload={"email": "bad@corp.com", "name": "X"},
@@ -402,10 +402,10 @@ class TestComputesAndRules:
 
     async def test_rule_violations_accumulated(self, executor: RuntimeExecutor) -> None:
         def rule_a(cmd: Any, fs: Any) -> None:
-            raise RuleViolation("email", "bad email")
+            raise RuleViolationError("email", "bad email")
 
         def rule_b(cmd: Any, fs: Any) -> None:
-            raise RuleViolation("name", "bad name")
+            raise RuleViolationError("name", "bad name")
 
         class MultiRuleUseCase(UseCase[Any, None]):
             rules = [rule_a, rule_b]
@@ -414,7 +414,7 @@ class TestComputesAndRules:
                 pass
 
         use_case = MultiRuleUseCase()
-        with pytest.raises(RuleViolations) as exc_info:
+        with pytest.raises(RuleViolationsError) as exc_info:
             await executor.execute(
                 use_case,
                 payload={"email": "x@x.com", "name": "X"},

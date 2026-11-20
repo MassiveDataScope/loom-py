@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.config.errors import ConfigError
-from loom.core.errors import BODY_FIELD, LoomError, RuleViolation
+from loom.core.errors import BODY_FIELD, LoomError, RuleViolationError
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
@@ -135,7 +135,7 @@ class _SqlJSONResponse(MsgspecJSONResponse):
 
 def _invalid_request(field: str, message: str) -> HTTPException:
     """Build a 422 with the framework standard error body."""
-    return _error_mapper.to_http(RuleViolation(field, message))
+    return _error_mapper.to_http(RuleViolationError(field, message))
 
 
 def _payload_too_large(max_bytes: int) -> HTTPException:

@@ -15,7 +15,7 @@ from loom.core.job.handle import InlineOutcome, JobHandle
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.job.timer import JobDelayRefused, JobTimer
+from loom.core.job.timer import JobDelayRefusedError, JobTimer
 
 if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
@@ -92,7 +92,7 @@ class InlineJobTransport:
 
     def _build_pending(self, dispatch: JobDispatch) -> tuple[_PendingDispatch, JobHandle[Any]]:
         if dispatch.countdown.seconds and self._timer is None:
-            raise JobDelayRefused(dispatch.countdown)
+            raise JobDelayRefusedError(dispatch.countdown)
         outcome = InlineOutcome()
         pending = _PendingDispatch(
             dispatch=dispatch,
@@ -114,7 +114,7 @@ class InlineJobTransport:
 
     def _schedule(self, pending: _PendingDispatch, delay: Countdown) -> None:
         if self._timer is None:
-            raise JobDelayRefused(delay)
+            raise JobDelayRefusedError(delay)
 
         async def step() -> None:
             await self._run(pending)

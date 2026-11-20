@@ -3,13 +3,13 @@
 Inheriting from the existing domain types keeps the HTTP mapping unchanged:
 :class:`~loom.core.errors.NotFound` maps to 404,
 :class:`~loom.core.errors.Forbidden` to 403 and
-:class:`~loom.core.errors.RuleViolation` to 422 through the current
+:class:`~loom.core.errors.RuleViolationError` to 422 through the current
 ``HttpErrorMapper`` without touching the public error API.
 """
 
 from __future__ import annotations
 
-from loom.core.errors import Forbidden, NotFound, RuleViolation
+from loom.core.errors import Forbidden, NotFound, RuleViolationError
 
 
 class UnknownConnectionError(NotFound):
@@ -75,7 +75,7 @@ class RolesNotBoundError(Forbidden):
         )
 
 
-class SqlExecutionError(RuleViolation):
+class SqlExecutionError(RuleViolationError):
     """Raised when the backend rejects a SQL statement.
 
     Carries a sanitized message (backend error code plus first line, without

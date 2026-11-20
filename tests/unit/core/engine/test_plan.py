@@ -14,7 +14,7 @@ from loom.core.engine.plan import (
     ParamBinding,
     RuleStep,
 )
-from loom.core.errors import RuleViolation
+from loom.core.errors import RuleViolationError
 from loom.core.use_case.markers import LookupKind, SourceKind
 
 # ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ class TestRuntimeEvent:
         assert event.error is None
 
     def test_full_event(self) -> None:
-        err = RuleViolation("field", "msg")
+        err = RuleViolationError("field", "msg")
         event = RuntimeEvent(
             kind=EventKind.EXEC_ERROR,
             use_case_name="MyUseCase",

@@ -18,7 +18,7 @@ from pymongo import AsyncMongoClient
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import StoresNotCommitted
+from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import add_pending_dispatch
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
@@ -120,7 +120,7 @@ class TestStorePostCommit:
         ("refuse", "ran", "error", "stored"),
         [
             pytest.param(False, ["sql", "mongo"], None, 1, id="both-commit"),
-            pytest.param(True, ["sql"], StoresNotCommitted, 0, id="mongo-rolls-back"),
+            pytest.param(True, ["sql"], StoresNotCommittedError, 0, id="mongo-rolls-back"),
         ],
     )
     async def test_each_store_runs_its_actions_by_its_own_outcome(

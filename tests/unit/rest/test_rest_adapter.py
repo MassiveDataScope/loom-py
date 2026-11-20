@@ -24,10 +24,10 @@ from loom.core.errors import (
     NotFound,
     PostCommitError,
     RateLimited,
-    RuleViolation,
-    RuleViolations,
+    RuleViolationError,
+    RuleViolationsError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     SystemError,
     Unauthenticated,
     UnitOfWorkInsideScope,
@@ -240,7 +240,7 @@ class TestHttpErrorMapper:
         [
             ScopeOwnershipError("closed"),
             UnitOfWorkInsideScope.entering(object()),
-            StoresNotCommitted.of(InvocationOutcome((Committed(DEFAULT_STORE),))),
+            StoresNotCommittedError.of(InvocationOutcome((Committed(DEFAULT_STORE),))),
         ],
         ids=["foreign-task", "uow-inside-scope", "stores-not-committed"],
     )
@@ -277,13 +277,13 @@ class TestHttpErrorMapper:
         assert exc.status_code == 400
 
     def test_rule_violations_maps_to_422(self) -> None:
-        violations = RuleViolations([RuleViolation("email", "invalid")])
+        violations = RuleViolationsError([RuleViolationError("email", "invalid")])
         exc = self._mapper().to_http(violations)
         assert exc.status_code == 422
 
     def test_rule_violations_detail_includes_violations(self) -> None:
-        violations = RuleViolations(
-            [RuleViolation("email", "invalid"), RuleViolation("name", "too short")]
+        violations = RuleViolationsError(
+            [RuleViolationError("email", "invalid"), RuleViolationError("name", "too short")]
         )
         detail = _detail(self._mapper().to_http(violations))
         assert "violations" in detail
@@ -292,7 +292,7 @@ class TestHttpErrorMapper:
 
     def test_rule_violation_body_carries_its_field(self) -> None:
         """Two 422s from different fields are told apart by key, not by message text."""
-        exc = self._mapper().to_http(RuleViolation("tenant", "malformed tenant header"))
+        exc = self._mapper().to_http(RuleViolationError("tenant", "malformed tenant header"))
         assert exc.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
         assert _detail(exc) == {
             ErrorField.CODE: ErrorCode.RULE_VIOLATION,
@@ -312,7 +312,7 @@ class TestHttpErrorMapper:
             Forbidden(),
             Unauthenticated(),
             Conflict("duplicate"),
-            RuleViolations([RuleViolation("email", "invalid")]),
+            RuleViolationsError([RuleViolationError("email", "invalid")]),
             BoundaryValidationError("bad body", (("fullName", "Expected `str`"),)),
             PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
         ],
@@ -522,7 +522,7 @@ class TestRestUseCaseDispatcherErrors:
         assert exc_info.value.status_code == 404
 
     async def test_rule_violations_mapped_to_422(self) -> None:
-        err = RuleViolations([RuleViolation("email", "bad")])
+        err = RuleViolationsError([RuleViolationError("email", "bad")])
         executor = self._make_failing_executor(err)
         adapter = RestUseCaseDispatcher(executor, factory=_FACTORY)
         use_case = _SimpleUseCase
@@ -532,7 +532,7 @@ class TestRestUseCaseDispatcherErrors:
         assert exc_info.value.status_code == 422
 
     async def test_rule_violation_mapped_to_422_with_its_field(self) -> None:
-        executor = self._make_failing_executor(RuleViolation("tenant", "bad"))
+        executor = self._make_failing_executor(RuleViolationError("tenant", "bad"))
         adapter = RestUseCaseDispatcher(executor, factory=_FACTORY)
         request = ExecutionRequest(params={})
         with pytest.raises(HTTPException) as exc_info:
@@ -604,13 +604,13 @@ class TestRestUseCaseDispatcherBoundaryValidation:
 
 
 # ---------------------------------------------------------------------------
-# RuleViolation on the wire — no database, repository or row-level security
+# RuleViolationError on the wire — no database, repository or row-level security
 # ---------------------------------------------------------------------------
 
 
 class _RejectTenantUseCase(UseCase[Any, str]):
     async def execute(self) -> str:
-        raise RuleViolation("tenant", "no tenant is selectable")
+        raise RuleViolationError("tenant", "no tenant is selectable")
 
 
 def _app_without_database() -> FastAPI:
@@ -626,7 +626,7 @@ def _app_without_database() -> FastAPI:
     return app
 
 
-class TestRuleViolationWithoutADatabase:
+class TestRuleViolationErrorWithoutADatabase:
     def test_a_rule_violation_answers_its_field_without_any_database(
         self,
     ) -> None:

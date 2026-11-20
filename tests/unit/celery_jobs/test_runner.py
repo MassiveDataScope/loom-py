@@ -18,7 +18,7 @@ from loom.core.engine.events import EventKind
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UnitOfWorkInsideScope,
 )
 from loom.core.identity import Identity, current_identity
@@ -91,7 +91,7 @@ ERRORS: dict[str, Callable[[], Exception]] = {
     "post-commit-uncommitted": lambda: PostCommitError(
         committed=False, failures=(ConnectionError("broker down"),)
     ),
-    "stores-not-committed": lambda: StoresNotCommitted("audit=Committed, default=RolledBack"),
+    "stores-not-committed": lambda: StoresNotCommittedError("audit=Committed, default=RolledBack"),
     "scope-ownership": lambda: ScopeOwnershipError("the invocation scope is already closed"),
     "uow-inside-scope": lambda: UnitOfWorkInsideScope.entering(object()),
     "one-store-uncertain": lambda: invocation_error(
