@@ -194,10 +194,12 @@ class TestRealIslandPath:
 
 
 class TestWithoutAContainer:
-    def test_the_resolver_path_builds_its_client_with_clients_of_its_own(
+    def test_the_resolver_path_builds_its_client_from_the_clients_it_is_given(
         self, mocked_aws: None
     ) -> None:
-        client = build_resolver_client("ssm", "eu-west-3", resolver="SsmResolver", root=None)
+        client = build_resolver_client(
+            AwsClients(), "ssm", "eu-west-3", resolver="SsmResolver", root=None
+        )
 
         assert client.meta.service_model.service_name == "ssm"
         assert client.meta.region_name == "eu-west-3"

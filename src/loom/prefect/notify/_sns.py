@@ -29,6 +29,8 @@ class SnsNotifier:
         client: boto3 ``sns`` client. Defaults to one for the topic's region.
         aws: The ``aws:`` section of the flow's YAML, whose keys the default
             client takes; the topic's region overrides ``aws.region``.
+        clients: The AWS clients the default client is taken from; the notifier
+            owns its own when none is given.
     """
 
     def __init__(
@@ -39,6 +41,7 @@ class SnsNotifier:
         on_completion: bool = False,
         client: Any = None,
         aws: Mapping[str, Any] | None = None,
+        clients: AwsClients | None = None,
     ) -> None:
         self._topic_arn = topic_arn
         self._on_failure = on_failure
@@ -47,7 +50,7 @@ class SnsNotifier:
             region = topic_arn.split(":")[3]
             ctx = ConfigContext.from_dict({ConfigKey.AWS: aws})
             config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, region=region)
-            client = AwsClients().client("sns", config)
+            client = (clients or AwsClients()).client("sns", config)
         self._client = client
 
     def notify(self, event: NotifyEvent) -> None:
