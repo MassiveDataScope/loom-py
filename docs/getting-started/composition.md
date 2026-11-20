@@ -469,7 +469,12 @@ Composition builds every discovered installer through
 section once there and keeps it as `self.settings`. A missing section or a
 value of the wrong type is a `ConfigError` naming the section and the
 installer, and `loom check --deploy` raises the same error, so CI catches it
-before a deploy. To build an installer differently, override `from_config`.
+before a deploy. `loom check` reads the section as written and resolves no
+placeholder, so it runs without the application's secrets: a section with no
+placeholder is decoded in full, with the start-up error; one holding
+`${secrets:...}` or `${ssm:...}` values is checked for its shape only (it
+exists, no key the settings forbid, no required field missing) and its values
+are judged at start-up, once resolved. To build an installer differently, override `from_config`.
 `Recipe.overrides` is for test doubles only; production dependencies belong in
 an installer.
 

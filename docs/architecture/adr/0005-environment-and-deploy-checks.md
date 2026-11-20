@@ -340,7 +340,10 @@ not installed; a `celery` section that fails validation stops startup.
 
 The checks read keys as written (`ConfigContext.raw`) and resolve no
 placeholder, so they run in CI without the application's secrets; a value
-given by a placeholder is judged as written.
+given by a placeholder is judged as written. The section of a
+`ConfiguredInstaller` follows the same rule through `check_config`: decoded in
+full when it holds no placeholder, judged on its shape (existence, forbidden
+keys, required fields) when it does.
 
 ### CLI
 

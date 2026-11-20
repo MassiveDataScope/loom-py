@@ -1071,8 +1071,10 @@
   declares `section` and `settings_type`, decodes that section once with
   `ConfigContext.section` and exposes it as `self.settings`. A missing or invalid
   section is a `ConfigError` naming the section and the installer, at startup and
-  in `loom check`, which builds the installers through the same
-  `phases.build_installers`. A consumer's production modules no longer travel
+  in `loom check`, which calls `Installer.check_config` instead: it reads the
+  section as written and resolves no placeholder, decoding in full a section
+  with none and judging the shape (existence, forbidden keys, required fields)
+  of one that holds `${...}` values. A consumer's production modules no longer travel
   through `Recipe.overrides`, which stays test-only.
 - **composition:** `app.entry_points: [group, ...]` scans the module of every
   installed entry point in those groups like an `app.packages` entry, so an

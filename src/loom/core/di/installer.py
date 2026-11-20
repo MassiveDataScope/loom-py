@@ -5,7 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Generic, Self, TypeVar
 
+import msgspec
+
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.keys import INTERPOLATION
+from loom.core.config.loader import config_strings
 from loom.core.di.container import LoomContainer
 
 SettingsT = TypeVar("SettingsT")
@@ -26,6 +30,18 @@ class Installer(ABC):
         """
         del config
         return cls()
+
+    @classmethod
+    def check_config(cls, config: ConfigContext) -> None:
+        """Validate, as written, what this installer reads from *config*; the default reads nothing.
+
+        ``loom check`` calls it in place of :meth:`from_config`: it resolves no
+        placeholder, so it runs in CI without the application's secrets.
+
+        Raises:
+            ConfigError: When what the installer reads is invalid as written.
+        """
+        del config
 
     @abstractmethod
     def install(self, container: LoomContainer) -> None:
@@ -63,10 +79,54 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
             ConfigError: When the section is missing or fails validation; the
                 message names the section and the installer.
         """
+        return cls(cls._decode(config))
+
+    @classmethod
+    def check_config(cls, config: ConfigContext) -> None:
+        """Validate the section as written, resolving no placeholder.
+
+        A section with no placeholder is decoded as :meth:`from_config`
+        decodes it, with the same error. A section holding placeholders is
+        judged on its shape: it exists, it has no key the settings forbid and
+        no required field is missing; a placeholder value is not type-checked,
+        start-up judges it once resolved.
+
+        Raises:
+            ConfigError: As :meth:`from_config`, naming the section and the installer.
+        """
+        written = config.raw(cls.section)
+        if any(INTERPOLATION in text for _, text in config_strings(written)):
+            cls._reject_misshapen(written)
+        else:
+            cls._decode(config)
+
+    @classmethod
+    def _decode(cls, config: ConfigContext) -> SettingsT:
         try:
-            settings = config.section(cls.section, cls.settings_type)
+            settings: SettingsT = config.section(cls.section, cls.settings_type)
         except ConfigError as error:
-            raise ConfigError(
-                f"{cls.__qualname__} reads the {cls.section!r} section: {error}"
-            ) from error
-        return cls(settings)
+            raise cls._error(str(error)) from error
+        return settings
+
+    @classmethod
+    def _reject_misshapen(cls, written: object) -> None:
+        if not isinstance(written, dict) or not issubclass(cls.settings_type, msgspec.Struct):
+            return
+        fields = msgspec.structs.fields(cls.settings_type)
+        names = {field.encode_name for field in fields}
+        unknown = (
+            sorted(set(written) - names)
+            if cls.settings_type.__struct_config__.forbid_unknown_fields
+            else []
+        )
+        missing = [
+            field.encode_name
+            for field in fields
+            if field.required and field.encode_name not in written
+        ]
+        if unknown or missing:
+            raise cls._error(f"unknown keys {unknown}, missing required keys {missing}")
+
+    @classmethod
+    def _error(cls, reason: str) -> ConfigError:
+        return ConfigError(f"{cls.__qualname__} reads the {cls.section!r} section: {reason}")

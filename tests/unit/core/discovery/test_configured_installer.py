@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from loom.celery.adapter import CeleryAdapter
 from loom.composition.project import Project
-from loom.core.config import ConfigError
+from loom.core.config import ConfigContext, ConfigError, ConfigResolver
+from loom.core.di.installer import ConfiguredInstaller
 from tests.helpers.acme_stores_settings import AcmeBucket, AcmeStoresSettings
 from tests.helpers.package_writer import PackageWriter
 
@@ -128,6 +130,96 @@ class TestInstallerSectionValidation:
         self, project_config: Callable[[str, str], str]
     ) -> None:
         config = project_config(_PLAIN, "")
+
+        checked = Project.check(config, environment="test", excluded=("app.rest",))
+
+        assert not checked.report.errors
+
+
+class _Settings(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
+    bucket: str
+    region: str
+    backend: str = "s3"
+
+
+class _VaultInstaller(ConfiguredInstaller[_Settings]):
+    section = "acme.vault"
+    settings_type = _Settings
+
+    def install(self, container: object) -> None:
+        del container
+
+
+class _ExplodingResolver:
+    name = "vault"
+
+    def resolve(self, key: str) -> object:
+        raise AssertionError(f"check resolved {key}")
+
+
+class _VaultResolver:
+    name = "vault"
+
+    def resolve(self, key: str) -> object:
+        return f"resolved-{key}"
+
+
+def _context(tmp_path: Path, section: str, resolver: ConfigResolver) -> ConfigContext:
+    path = tmp_path / "vault.yaml"
+    path.write_text(f"acme:\n  vault:\n{section}")
+    return ConfigContext.from_yaml(str(path), resolvers=[resolver])
+
+
+class TestInstallerSectionWithPlaceholders:
+    def test_check_judges_a_placeholder_as_written_and_resolves_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        config = _context(
+            tmp_path, "    bucket: ${vault:bucket}\n    region: eu-west-1\n", _ExplodingResolver()
+        )
+
+        _VaultInstaller.check_config(config)
+
+    def test_check_refuses_an_unknown_key_beside_a_placeholder(self, tmp_path: Path) -> None:
+        config = _context(
+            tmp_path,
+            "    bucket: ${vault:bucket}\n    region: x\n    bukcet: typo\n",
+            _ExplodingResolver(),
+        )
+
+        with pytest.raises(ConfigError, match=r"_VaultInstaller reads the 'acme.vault'.*bukcet"):
+            _VaultInstaller.check_config(config)
+
+    def test_check_refuses_a_missing_required_field_beside_a_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        config = _context(tmp_path, "    bucket: ${vault:bucket}\n", _ExplodingResolver())
+
+        with pytest.raises(ConfigError, match=r"_VaultInstaller reads the 'acme.vault'.*region"):
+            _VaultInstaller.check_config(config)
+
+    def test_check_does_not_type_check_a_placeholder_value(self, tmp_path: Path) -> None:
+        config = _context(
+            tmp_path, "    bucket: ${vault:bucket}\n    region: ${vault:region}\n", _VaultResolver()
+        )
+
+        _VaultInstaller.check_config(config)
+
+    def test_startup_decodes_the_resolved_section(self, tmp_path: Path) -> None:
+        config = _context(
+            tmp_path, "    bucket: ${vault:bucket}\n    region: eu-west-1\n", _VaultResolver()
+        )
+
+        installer = _VaultInstaller.from_config(config)
+
+        assert installer.settings == _Settings(bucket="resolved-bucket", region="eu-west-1")
+
+    def test_project_check_resolves_no_placeholder_of_the_section(
+        self, project_config: Callable[[str, str], str]
+    ) -> None:
+        config = project_config(
+            _CONFIGURED, "acme:\n  stores:\n    bucket: ${secrets:/acme/bucket}\n"
+        )
 
         checked = Project.check(config, environment="test", excluded=("app.rest",))
 

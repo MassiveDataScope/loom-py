@@ -311,12 +311,22 @@ def register(
 def build_installers(
     config: ConfigContext, installers: Collection[type[Installer]]
 ) -> tuple[Installer, ...]:
-    """Build each installer class from *config*, in order; start-up and ``loom check`` share it.
+    """Build each installer class from *config*, in order, resolving its placeholders.
 
     Raises:
         ConfigError: When an installer's configuration section is missing or invalid.
     """
     return tuple(installer.from_config(config) for installer in installers)
+
+
+def check_installers(config: ConfigContext, installers: Collection[type[Installer]]) -> None:
+    """Validate what each installer class reads from *config*, as written, resolving no placeholder.
+
+    Raises:
+        ConfigError: When an installer's configuration section is invalid as written.
+    """
+    for installer in installers:
+        installer.check_config(config)
 
 
 def wire_ai(

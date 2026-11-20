@@ -289,7 +289,7 @@ class Project:
             config_root=config_root,
             code_path=code_path,
         )
-        phases.build_installers(ctx, checked.discovered.installers)
+        phases.check_installers(ctx, checked.discovered.installers)
         return checked
 
     @functools.cached_property
