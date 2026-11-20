@@ -142,6 +142,25 @@ class _Settings(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     backend: str = "s3"
 
 
+class _Pool(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
+    size: int
+    host: str
+
+
+class _PooledSettings(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
+    bucket: str
+    retries: int = 3
+    pool: _Pool
+
+
+class _PooledInstaller(ConfiguredInstaller[_PooledSettings]):
+    section = "acme.vault"
+    settings_type = _PooledSettings
+
+    def install(self, container: object) -> None:
+        del container
+
+
 class _VaultInstaller(ConfiguredInstaller[_Settings]):
     section = "acme.vault"
     settings_type = _Settings
@@ -204,6 +223,54 @@ class TestInstallerSectionWithPlaceholders:
         )
 
         _VaultInstaller.check_config(config)
+
+    def test_check_refuses_a_literal_of_the_wrong_type_beside_a_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        config = _context(
+            tmp_path,
+            "    bucket: ${vault:bucket}\n    retries: many\n    pool:\n      size: 2\n"
+            "      host: db\n",
+            _ExplodingResolver(),
+        )
+
+        with pytest.raises(ConfigError, match=r"_PooledInstaller reads the 'acme.vault'.*retries"):
+            _PooledInstaller.check_config(config)
+
+    def test_check_refuses_a_literal_of_the_wrong_type_in_a_nested_struct_with_a_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        config = _context(
+            tmp_path,
+            "    bucket: ok\n    pool:\n      size: large\n      host: ${vault:host}\n",
+            _ExplodingResolver(),
+        )
+
+        with pytest.raises(ConfigError, match=r"_PooledInstaller.*'acme.vault.pool.size'"):
+            _PooledInstaller.check_config(config)
+
+    def test_check_refuses_an_unknown_key_in_a_nested_struct_with_a_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        config = _context(
+            tmp_path,
+            "    bucket: ok\n    pool:\n      size: 2\n      host: ${vault:host}\n"
+            "      hots: typo\n",
+            _ExplodingResolver(),
+        )
+
+        with pytest.raises(ConfigError, match=r"_PooledInstaller.*acme.vault.pool: unknown keys \['hots'\]"):
+            _PooledInstaller.check_config(config)
+
+    def test_check_accepts_valid_literals_beside_nested_placeholders(self, tmp_path: Path) -> None:
+        config = _context(
+            tmp_path,
+            "    bucket: ${vault:bucket}\n    retries: '5'\n    pool:\n      size: ${vault:size}\n"
+            "      host: db\n",
+            _ExplodingResolver(),
+        )
+
+        _PooledInstaller.check_config(config)
 
     def test_startup_decodes_the_resolved_section(self, tmp_path: Path) -> None:
         config = _context(

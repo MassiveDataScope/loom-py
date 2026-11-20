@@ -92,10 +92,10 @@ def __getattr__(name: str) -> Any:
 def _data_export(name: str) -> Any:
     """Import one ``data`` export, naming the ``testing`` extra when polyfactory is missing.
 
-Any other missing module is a defect of loom or its environment and is raised as it is.
+    Any other missing module is a defect of loom or its environment and is raised as it is.
 
-    The area factories register here, once, so ``make`` of any loom type is valid
-    whichever module reached it.
+        The area factories register here, once, so ``make`` of any loom type is valid
+        whichever module reached it.
     """
     try:
         data = importlib.import_module("loom.testing.data")
