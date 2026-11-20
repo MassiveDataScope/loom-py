@@ -240,6 +240,7 @@ its own.
 ```python
 from loom.ai.engines.pydantic_ai import native_agent
 
+
 async def execute(self, triage: AgentHandle[Assessment] = Agent("incident-triage")):
     async with (
         native_agent(triage) as access,

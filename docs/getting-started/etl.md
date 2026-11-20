@@ -132,6 +132,7 @@ storage:
 ```python
 from loom.etl import ETLStep, FromFile, IntoFile, Format
 
+
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile.alias("events_raw", format=Format.CSV)
     target = IntoFile.alias("exports_daily", format=Format.PARQUET)

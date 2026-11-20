@@ -23,7 +23,7 @@ class Product(TimestampedModel):
 class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
-    auto = True                                  # ← one flag, full CRUD
+    auto = True  # ← one flag, full CRUD
     pagination_mode = PaginationMode.CURSOR
 ```
 
@@ -48,7 +48,7 @@ class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
     auto = True
-    include = ("get", "list", "update")   # skips create and delete
+    include = ("get", "list", "update")  # skips create and delete
     pagination_mode = PaginationMode.CURSOR
 ```
 
@@ -187,7 +187,7 @@ class ProductInterface(RestInterface[Product]):
             summary="Dispatch restock email job",
             status_code=202,
         ),
-        *build_auto_routes(Product, ()),   # ← full CRUD appended
+        *build_auto_routes(Product, ()),  # ← full CRUD appended
     )
 ```
 

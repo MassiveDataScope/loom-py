@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import pytest
 
+from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.config.resolver import with_default_resolvers
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
@@ -59,7 +59,7 @@ def stored(request: pytest.FixtureRequest, aws: AwsClientFactory) -> Iterator[_S
 
 def _load(write_config: ConfigWriter, placeholder: str) -> ConfigContext:
     path = write_config({_SECTION: {"resolved": placeholder}})
-    return ConfigContext.from_yaml(str(path), resolvers=with_default_resolvers())
+    return ConfigContext.from_yaml(str(path), resolvers=with_built_in_resolvers())
 
 
 class TestResolvers:

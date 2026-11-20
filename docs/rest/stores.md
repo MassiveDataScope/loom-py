@@ -245,7 +245,7 @@ The gate looks at the class that will serve the model — the explicit
 ```python
 from loom.core.stores.repository.registration import capabilities_of
 
-capabilities_of(LedgerRepository)   # (Readable, Creatable, BulkCreatable)
+capabilities_of(LedgerRepository)  # (Readable, Creatable, BulkCreatable)
 ```
 
 Swapping the `DefaultRepositoryBuilder` does not move the gate: it keeps
@@ -503,10 +503,10 @@ position = codec.decode(
     model="access.Grant",
     query=query,
     scope=tenant_id,
-    columns=scalar_column_annotations(Grant),   # or {"updated_at": datetime, "id": UUID}
+    columns=scalar_column_annotations(Grant),  # or {"updated_at": datetime, "id": UUID}
     primary_key=("id",),
 )
-position.keys, position.tie_breaker   # (updated_at, grant_id); datetimes always aware
+position.keys, position.tie_breaker  # (updated_at, grant_id); datetimes always aware
 ```
 
 A composite primary key is carried whole: the tie-breaker is the tuple of its

@@ -14,7 +14,7 @@ from hypothesis import settings
 from moto import mock_aws
 from omegaconf import OmegaConf
 
-from loom.core.config import default_resolvers
+from loom.connections.resolvers import built_in_resolvers
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
@@ -34,7 +34,7 @@ settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"
 _OUTPUTS_DIR = _GOLDEN_DIR / "outputs"
-_BUILTIN_RESOLVER_NAMES = tuple(resolver.name for resolver in default_resolvers())
+_BUILTIN_RESOLVER_NAMES = tuple(resolver.name for resolver in built_in_resolvers())
 
 
 @pytest.fixture

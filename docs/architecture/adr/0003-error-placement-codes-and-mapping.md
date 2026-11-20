@@ -330,8 +330,8 @@ code catalogues. `CompileIssue` is a plain `msgspec.Struct`. Using
 
 ```python
 class Template(NamedTuple):
-    text: str                       # str.format template; "{component}" allowed
-    field: str | None = None        # template too, e.g. "{alias}"
+    text: str  # str.format template; "{component}" allowed
+    field: str | None = None  # template too, e.g. "{alias}"
     component: str = "{component}"  # template; a constant such as "fork" also works
 
 
@@ -375,7 +375,9 @@ AI, a plain factory and one that computes:
 
 ```python
 # before (ai/errors.py, 2 of 89 factories, 25 lines)
-def spec_version_unsupported(component: str, found: int, supported: Sequence[int]) -> AgentCompilationIssue:
+def spec_version_unsupported(
+    component: str, found: int, supported: Sequence[int]
+) -> AgentCompilationIssue:
     known = ", ".join(str(version) for version in supported)
     return AgentCompilationIssue(
         code=AgentErrorCode.SPEC_VERSION_UNSUPPORTED,
@@ -383,6 +385,7 @@ def spec_version_unsupported(component: str, found: int, supported: Sequence[int
         component=component,
         field="spec_version",
     )
+
 
 def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIssue:
     known = ", ".join(available) if available else "none"
@@ -393,13 +396,23 @@ def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIss
         field=_FIELD_AI_ENGINE,
     )
 
+
 # after (in the enum, 6 lines)
-SPEC_VERSION_UNSUPPORTED = "SPEC_VERSION_UNSUPPORTED", Template(
-    "{component}: spec_version {found} is not supported; supported versions: {supported}",
-    field="spec_version")
-ENGINE_NOT_FOUND = "ENGINE_NOT_FOUND", Template(
-    "engine '{name}' is not installed; available engines: {available}",
-    component="{name}", field="ai.engine")
+SPEC_VERSION_UNSUPPORTED = (
+    "SPEC_VERSION_UNSUPPORTED",
+    Template(
+        "{component}: spec_version {found} is not supported; supported versions: {supported}",
+        field="spec_version",
+    ),
+)
+ENGINE_NOT_FOUND = (
+    "ENGINE_NOT_FOUND",
+    Template(
+        "engine '{name}' is not installed; available engines: {available}",
+        component="{name}",
+        field="ai.engine",
+    ),
+)
 
 # call site
 AgentErrorCode.SPEC_VERSION_UNSUPPORTED.issue(component=path, found=3, supported=(1, 2))
@@ -410,20 +423,31 @@ Streaming, a constant component and the one factory that computes:
 ```python
 # before
 def fork_not_last() -> CompilationIssue:
-    return CompilationIssue(code=StreamingErrorCode.FORK_NOT_LAST,
-                            message="fork must be the last node in a process", component="fork")
+    return CompilationIssue(
+        code=StreamingErrorCode.FORK_NOT_LAST,
+        message="fork must be the last node in a process",
+        component="fork",
+    )
+
 
 def explode_without_router(next_node: object | None) -> CompilationIssue:
     got = type(next_node).__name__ if next_node is not None else "nothing"
-    return CompilationIssue(code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
-                            message=f"Explode must be immediately followed by a Router; got {got}",
-                            component="Explode")
+    return CompilationIssue(
+        code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
+        message=f"Explode must be immediately followed by a Router; got {got}",
+        component="Explode",
+    )
+
 
 # after
-FORK_NOT_LAST = "FORK_NOT_LAST", Template(
-    "fork must be the last node in a process", component="fork")
-EXPLODE_WITHOUT_ROUTER = "EXPLODE_WITHOUT_ROUTER", Template(
-    "Explode must be immediately followed by a Router; got {got}", component="Explode")
+FORK_NOT_LAST = (
+    "FORK_NOT_LAST",
+    Template("fork must be the last node in a process", component="fork"),
+)
+EXPLODE_WITHOUT_ROUTER = (
+    "EXPLODE_WITHOUT_ROUTER",
+    Template("Explode must be immediately followed by a Router; got {got}", component="Explode"),
+)
 
 # call site: the one line that computed moves to the caller
 got = type(next_node).__name__ if next_node is not None else "nothing"
@@ -436,21 +460,36 @@ ETL, a field from a parameter and a set:
 # before
 @classmethod
 def unknown_source_table(cls, step: type, alias: str, table_ref: str) -> ETLCompilationError:
-    return cls(code=ETLErrorCode.UNKNOWN_SOURCE_TABLE, component=step.__qualname__,
-               message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
-               field=alias)
+    return cls(
+        code=ETLErrorCode.UNKNOWN_SOURCE_TABLE,
+        component=step.__qualname__,
+        message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
+        field=alias,
+    )
+
 
 # after
-UNKNOWN_SOURCE_TABLE = "UNKNOWN_SOURCE_TABLE", Template(
-    "{step}: source '{alias}' references unknown table '{table_ref}'",
-    field="{alias}", component="{step}")
-MISSING_SOURCE_PARAMS = "MISSING_SOURCE_PARAMS", Template(
-    "{step}.execute: source(s) {missing} declared in sources but missing as "
-    "keyword-only parameter(s) after '*'", component="{step}")
+UNKNOWN_SOURCE_TABLE = (
+    "UNKNOWN_SOURCE_TABLE",
+    Template(
+        "{step}: source '{alias}' references unknown table '{table_ref}'",
+        field="{alias}",
+        component="{step}",
+    ),
+)
+MISSING_SOURCE_PARAMS = (
+    "MISSING_SOURCE_PARAMS",
+    Template(
+        "{step}.execute: source(s) {missing} declared in sources but missing as "
+        "keyword-only parameter(s) after '*'",
+        component="{step}",
+    ),
+)
 
 # call site
 raise ETLCompilationError.from_issue(
-    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref))
+    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref)
+)
 ```
 
 These examples predate the rule the hotfix applied: where the component is a

@@ -15,6 +15,7 @@ from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.connections.aws import AwsClients
+from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
 from loom.core.checks import CheckScope, DeployReport, run_deploy_checks
 from loom.core.config import (
@@ -22,7 +23,6 @@ from loom.core.config import (
     ConfigError,
     ConfigKey,
     ConfigResolver,
-    with_default_resolvers,
 )
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
@@ -206,7 +206,7 @@ class Project:
         resolved_environment = resolve_environment(environment)
         paths = select_config_paths(config_paths, config_dir, resolved_environment, caller=caller)
         ctx = load_application_config(
-            *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
+            *paths, resolvers=with_built_in_resolvers(resolvers), environment=resolved_environment
         )
         observability_config = ctx.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
@@ -269,7 +269,7 @@ class Project:
             config_paths, config_dir, resolved_environment, caller="loom check"
         )
         ctx = load_application_config(
-            *paths, resolvers=with_default_resolvers(()), environment=resolved_environment
+            *paths, resolvers=with_built_in_resolvers(()), environment=resolved_environment
         )
         AppConfig.reject_misdeclared(ctx)
         load_catalog(ctx).require_installed()

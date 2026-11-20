@@ -1,4 +1,4 @@
-"""Tests for ``default_resolvers``, ``merge_resolvers`` and registration precedence."""
+"""Tests for ``built_in_resolvers``, ``merge_resolvers`` and registration precedence."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pytest
 from omegaconf import OmegaConf
 from omegaconf.errors import InterpolationResolutionError
 
+from loom.connections.resolvers import built_in_resolvers, with_built_in_resolvers
 from loom.core.config import (
     ConfigError,
     ConfigResolver,
@@ -54,7 +55,7 @@ def plain_yaml(tmp_path: Path) -> str:
 
 
 class TestDefaultResolvers:
-    def test_load_config_registers_no_default_resolvers(self, plain_yaml: str) -> None:
+    def test_load_config_registers_no_built_in_resolvers(self, plain_yaml: str) -> None:
         load_config(plain_yaml)
 
         assert not OmegaConf.has_resolver("secrets")
@@ -71,7 +72,7 @@ class TestDefaultResolvers:
     def test_merge_resolvers_drops_default_taken_by_explicit(self) -> None:
         vault = StubResolver("secrets", "vault")
 
-        merged = merge_resolvers([vault], default_resolvers())
+        merged = merge_resolvers([vault], built_in_resolvers())
 
         assert merged[0] is vault
         assert _names(merged) == ("secrets", "ssm", "file")
@@ -79,7 +80,7 @@ class TestDefaultResolvers:
     def test_merge_resolvers_drops_default_already_registered(self, secrets_yaml: str) -> None:
         load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
 
-        merged = merge_resolvers((), default_resolvers())
+        merged = merge_resolvers((), built_in_resolvers())
 
         assert _names(merged) == ("ssm", "file")
         assert load_config(secrets_yaml, resolvers=merged).token == "vault:k"
@@ -90,7 +91,7 @@ class TestDefaultResolvers:
         load_config(secrets_yaml, resolvers=[StubResolver("secrets", "vault")])
 
         with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
-            merge_resolvers((), default_resolvers())
+            merge_resolvers((), built_in_resolvers())
 
         assert caplog.messages == [
             "config resolver 'secrets' already registered; loom default skipped"
@@ -101,18 +102,22 @@ class TestDefaultResolvers:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
-            merge_resolvers([StubResolver("secrets", "vault")], default_resolvers())
+            merge_resolvers([StubResolver("secrets", "vault")], built_in_resolvers())
 
         assert caplog.messages == []
 
-    def test_with_default_resolvers_matches_merge_of_defaults(self) -> None:
+    def test_with_built_in_resolvers_matches_merge_of_defaults(self) -> None:
         vault = StubResolver("secrets", "vault")
 
-        merged = with_default_resolvers([vault])
+        merged = with_built_in_resolvers([vault])
 
         assert merged[0] is vault
         assert _names(merged) == ("secrets", "ssm", "file")
-        assert _names(with_default_resolvers()) == ("secrets", "ssm", "file")
+        assert _names(with_built_in_resolvers()) == ("secrets", "ssm", "file")
+
+    def test_the_core_defaults_need_no_technology(self) -> None:
+        assert _names(default_resolvers()) == ("file",)
+        assert _names(with_default_resolvers()) == ("file",)
 
     def test_importing_config_package_does_not_import_omegaconf(self) -> None:
         script = "import sys; import loom.core.config; print('omegaconf' in sys.modules)"
@@ -124,7 +129,7 @@ class TestDefaultResolvers:
         assert result.stdout.strip() == "False"
 
     def test_merge_resolvers_keeps_free_defaults(self) -> None:
-        merged = merge_resolvers((), default_resolvers())
+        merged = merge_resolvers((), built_in_resolvers())
 
         assert _names(merged) == ("secrets", "ssm", "file")
 
@@ -134,9 +139,9 @@ class TestDefaultResolvers:
 
         assert merge_resolvers([a, b], ()) == (a, b)
 
-    def test_default_resolvers_construct_without_boto3(self, absent_boto3: None) -> None:
+    def test_built_in_resolvers_construct_without_boto3(self, absent_boto3: None) -> None:
 
-        resolvers = default_resolvers()
+        resolvers = built_in_resolvers()
 
         assert _names(resolvers) == ("secrets", "ssm", "file")
         for resolver in resolvers[:2]:
@@ -147,7 +152,7 @@ class TestDefaultResolvers:
         self, plain_yaml: str, island: FakeAwsIsland
     ) -> None:
 
-        cfg = load_config(plain_yaml, resolvers=default_resolvers())
+        cfg = load_config(plain_yaml, resolvers=built_in_resolvers())
 
         assert cfg.app.name == "demo"
         assert island.sessions == []
@@ -155,7 +160,7 @@ class TestDefaultResolvers:
     def test_default_secrets_resolver_reports_the_extra_on_access(
         self, secrets_yaml: str, absent_boto3: None
     ) -> None:
-        cfg = load_config(secrets_yaml, resolvers=default_resolvers())
+        cfg = load_config(secrets_yaml, resolvers=built_in_resolvers())
 
         with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[aws\]"):
             _ = cfg.token

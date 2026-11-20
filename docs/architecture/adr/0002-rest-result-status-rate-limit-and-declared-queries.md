@@ -100,7 +100,7 @@ class Created(Generic[T]):
     """The use case created ``value``."""
 
     value: T
-    location: str | None = None          # only URI-reference characters, else ValueError
+    location: str | None = None  # only URI-reference characters, else ValueError
 ```
 
 - A use case that may create returns `T | Created[T]`. "Created" is a fact
@@ -133,14 +133,16 @@ loom ships the error and its mapping, not a limiter.
 # loom/core/errors/codes.py
 RATE_LIMITED = "rate_limited"
 
+
 # loom/core/errors/domain.py
 class RateLimited(DomainError):
     """The caller spent its budget; it may retry after ``retry_after`` seconds."""
+
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
         if not math.isfinite(retry_after):
             raise ValueError(f"RateLimited.retry_after must be finite, got {retry_after!r}")
         super().__init__(message, code=ErrorCode.RATE_LIMITED)
-        self.retry_after = max(1, math.ceil(retry_after))   # whole seconds
+        self.retry_after = max(1, math.ceil(retry_after))  # whole seconds
 ```
 
 - `HttpErrorMapper._STATUS[ErrorCode.RATE_LIMITED] = HTTPStatus.TOO_MANY_REQUESTS`.
@@ -156,7 +158,7 @@ of 10, before any lock, 429 without audit, a `WARNING` without the subject) is
 met in the consumer by an application port called first in the use case:
 
 ```python
-class OrderBudget(Protocol):           # the consumer's application port
+class OrderBudget(Protocol):  # the consumer's application port
     def spend(self, subject_id: str) -> None:
         """Take one token, or raise loom's RateLimited(retry_after=...)."""
 ```
@@ -265,8 +267,9 @@ class OrdersInterface(RestInterface[Any]):
     routes = (
         RestRoute(use_case=ListOrders, method="GET", path="", summary="Orders"),
         RestRoute(use_case=CreateOrder, method="POST", path="", summary="Place an order"),
-        RestRoute(use_case=CancelOrder, method="DELETE", path="/{order_id}",
-                  summary="Cancel an order"),
+        RestRoute(
+            use_case=CancelOrder, method="DELETE", path="/{order_id}", summary="Cancel an order"
+        ),
     )
 ```
 
@@ -275,31 +278,34 @@ publish `/v1/orders/`. The path parameter is `{order_id}`, the `execute`
 parameter name.
 
 ```python
-class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
-                 forbid_unknown_fields=True):
+class OrderQuery(
+    msgspec.Struct, frozen=True, kw_only=True, rename="camel", forbid_unknown_fields=True
+):
     customer_id: UUID | None = None
-    channel: OrderChannel | None = None                     # StrEnum
-    status: OrderStatus | None = None                       # open | shipped | cancelled
+    channel: OrderChannel | None = None  # StrEnum
+    status: OrderStatus | None = None  # open | shipped | cancelled
     changed_since: Annotated[datetime, Meta(tz=True)] | None = msgspec.field(
-        default=None, name="changed_since")
+        default=None, name="changed_since"
+    )
     cursor: str | None = None
     limit: Annotated[int, Meta(ge=1, le=200)] = 50
 
 
 class ListOrders(UseCase[Any, OrderPage]):
-    async def execute(self, query: OrderQuery = Query(),
-                      caller: Identity = Caller()) -> OrderPage:
+    async def execute(self, query: OrderQuery = Query(), caller: Identity = Caller()) -> OrderPage:
         if query.status is not None and query.changed_since is not None:
-            raise UnsupportedQuery("shop.v1", "order",
-                                   "status cannot be combined with changed_since")
+            raise UnsupportedQuery(
+                "shop.v1", "order", "status cannot be combined with changed_since"
+            )
         ...
 
 
 class CreateOrder(UseCase[Any, OrderView | Created[OrderView]]):
-    async def execute(self, command: CreateOrderCommand = Input(),
-                      caller: Identity = Caller()) -> OrderView | Created[OrderView]:
-        self._budget.spend(caller.require_subject())          # RateLimited → 429
-        change = ...                                          # today's steps
+    async def execute(
+        self, command: CreateOrderCommand = Input(), caller: Identity = Caller()
+    ) -> OrderView | Created[OrderView]:
+        self._budget.spend(caller.require_subject())  # RateLimited → 429
+        change = ...  # today's steps
         view = OrderView.of(change.order)
         return Created(view) if change.changed else view
 
@@ -307,7 +313,7 @@ class CreateOrder(UseCase[Any, OrderView | Created[OrderView]]):
 class CancelOrder(UseCase[Any, OrderView]):
     async def execute(self, order_id: UUID, caller: Identity = Caller()) -> OrderView:
         self._budget.spend(caller.require_subject())
-        ...                                                   # 200 cancelled or unchanged
+        ...  # 200 cancelled or unchanged
 ```
 
 The cross-field rule (`status` with `changed_since`) and the cursor bound to

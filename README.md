@@ -81,11 +81,13 @@ infrastructure (DB, cache, transport) without breaking business logic.
 ```python
 from loom.core.model import ColumnField, OnDelete, TimestampedModel
 
+
 class User(TimestampedModel):
     __tablename__ = "users"
     id: int = ColumnField(primary_key=True, autoincrement=True)
     full_name: str = ColumnField(length=120)
     email: str = ColumnField(length=255, unique=True, index=True)
+
 
 class Address(TimestampedModel):
     __tablename__ = "addresses"
@@ -108,25 +110,32 @@ from loom.core.use_case.use_case import UseCase
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+
 class CreateUser(Command, frozen=True):
     full_name: str
     email: str
+
 
 class UpdateUser(Command, frozen=True):
     full_name: Patch[str] = None
     email: Patch[str] = None
 
+
 def _name_must_not_be_blank(full_name: str) -> str | None:
     return None if full_name.strip() else "full_name must not be blank"
 
+
 def _email_must_be_valid(email: str) -> str | None:
     return None if _EMAIL_RE.fullmatch(email) else "email must be valid"
+
 
 class CreateUserUseCase(UseCase[User, User]):
     rules = [
         Rule.check(F(CreateUser).full_name, via=_name_must_not_be_blank),
         Rule.check(F(CreateUser).email, via=_email_must_be_valid),
-        Rule.forbid(lambda _, __, exists: exists, message="email already exists").from_params("email_exists"),
+        Rule.forbid(lambda _, __, exists: exists, message="email already exists").from_params(
+            "email_exists"
+        ),
     ]
 
     async def execute(
@@ -136,8 +145,13 @@ class CreateUserUseCase(UseCase[User, User]):
     ) -> User:
         return await self.main_repo.create(cmd)
 
+
 class UpdateUserUseCase(UseCase[User, User | None]):
-    rules = [Rule.check(F(UpdateUser).full_name, via=_name_must_not_be_blank).when_present(F(UpdateUser).full_name)]
+    rules = [
+        Rule.check(F(UpdateUser).full_name, via=_name_must_not_be_blank).when_present(
+            F(UpdateUser).full_name
+        )
+    ]
 
     async def execute(
         self,
@@ -159,12 +173,15 @@ Use `from_param` to guard nested routes (e.g. `/users/{user_id}/addresses/{addre
 ```python
 from loom.core.use_case import Exists, Input, OnMissing
 
+
 class CreateAddressUseCase(UseCase[Address, Address]):
     async def execute(
         self,
         user_id: int,
         cmd: CreateUserAddress = Input(),
-        _user_exists: bool = Exists(User, from_param="user_id", against="id", on_missing=OnMissing.RAISE),
+        _user_exists: bool = Exists(
+            User, from_param="user_id", against="id", on_missing=OnMissing.RAISE
+        ),
     ) -> Address:
         return await self.main_repo.create(CreateAddressRecord(user_id=user_id, **cmd.__dict__))
 ```
@@ -177,8 +194,15 @@ Build explicit queries without raw SQL:
 
 ```python
 from loom.core.stores.repository.query import (
-    FilterGroup, FilterOp, FilterSpec, PageResult, PaginationMode, QuerySpec, SortSpec,
+    FilterGroup,
+    FilterOp,
+    FilterSpec,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
 )
+
 
 class ListLowStockProductsUseCase(UseCase[Product, PageResult[Product]]):
     async def execute(self, profile: str = "default") -> PageResult[Product]:
@@ -203,6 +227,7 @@ Jobs are use-case-like executors that run in a queue. `LoadById` works the same 
 from loom.core.job.job import Job
 from loom.core.use_case import Input, LoadById
 
+
 class SendRestockEmailJob(Job[bool]):
     __queue__ = "notifications"
 
@@ -224,11 +249,14 @@ class SendRestockEmailJob(Job[bool]):
 from loom.core.job.service import JobService
 from loom.core.use_case.use_case import UseCase
 
+
 class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]):
     def __init__(self, job_service: JobService) -> None:
         self._jobs = job_service
 
-    async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> DispatchRestockEmailResponse:
+    async def execute(
+        self, product_id: str, cmd: DispatchRestockEmailCommand = Input()
+    ) -> DispatchRestockEmailResponse:
         handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
@@ -244,6 +272,7 @@ Callbacks are resolved by the DI container and receive the job result + context:
 ```python
 from loom.core.job.callback import JobCallback
 
+
 class RestockEmailSuccessCallback(JobCallback):
     def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
@@ -254,7 +283,9 @@ class RestockEmailSuccessCallback(JobCallback):
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": context["product_id"]})
         if product:
-            await entity.update(params={"id": product.id}, payload={"category": f"{product.category}-notified"})
+            await entity.update(
+                params={"id": product.id}, payload={"category": f"{product.category}-notified"}
+            )
 ```
 
 ### 7. Chain use cases (workflow pattern)
@@ -264,15 +295,24 @@ class RestockEmailSuccessCallback(JobCallback):
 ```python
 from loom.core.use_case.invoker import ApplicationInvoker
 
+
 class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
     def __init__(self, app: ApplicationInvoker, job_service: JobService) -> None:
         self._app = app
         self._jobs = job_service
 
-    async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> RestockWorkflowResponse:
-        summary = await self._app.invoke(BuildProductSummaryUseCase, params={"product_id": int(product_id)})
-        handle = self._jobs.dispatch_after_commit(SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...})
-        return RestockWorkflowResponse(summary=summary.summary, restock_job_id=handle.job_id, queue=handle.queue)
+    async def execute(
+        self, product_id: str, cmd: DispatchRestockEmailCommand = Input()
+    ) -> RestockWorkflowResponse:
+        summary = await self._app.invoke(
+            BuildProductSummaryUseCase, params={"product_id": int(product_id)}
+        )
+        handle = self._jobs.dispatch_after_commit(
+            SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...}
+        )
+        return RestockWorkflowResponse(
+            summary=summary.summary, restock_job_id=handle.job_id, queue=handle.queue
+        )
 ```
 
 ### 8. Declare REST interfaces
@@ -281,19 +321,32 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
 from loom.rest.autocrud import build_auto_routes
 from loom.rest.model import PaginationMode, RestInterface, RestRoute
 
+
 class ProductRestInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
     pagination_mode = PaginationMode.CURSOR
     routes = (
-        RestRoute(use_case=ListLowStockProductsUseCase, method="GET", path="/low-stock",
-                  summary="List low stock products"),
-        RestRoute(use_case=DispatchRestockEmailUseCase, method="POST",
-                  path="/{product_id}/jobs/restock-email", status_code=202,
-                  summary="Dispatch restock email"),
-        RestRoute(use_case=RestockWorkflowUseCase, method="POST",
-                  path="/{product_id}/workflows/restock", status_code=202,
-                  summary="Run restock workflow"),
+        RestRoute(
+            use_case=ListLowStockProductsUseCase,
+            method="GET",
+            path="/low-stock",
+            summary="List low stock products",
+        ),
+        RestRoute(
+            use_case=DispatchRestockEmailUseCase,
+            method="POST",
+            path="/{product_id}/jobs/restock-email",
+            status_code=202,
+            summary="Dispatch restock email",
+        ),
+        RestRoute(
+            use_case=RestockWorkflowUseCase,
+            method="POST",
+            path="/{product_id}/workflows/restock",
+            status_code=202,
+            summary="Run restock workflow",
+        ),
         *build_auto_routes(Product, ()),  # adds GET, POST, PATCH, DELETE automatically
     )
 ```
@@ -305,11 +358,22 @@ class AddressRestInterface(RestInterface[Address]):
     prefix = "/users"
     tags = ("UserAddresses",)
     routes = (
-        RestRoute(use_case=CreateAddressUseCase, method="POST", path="/{user_id}/addresses/", status_code=201),
-        RestRoute(use_case=ListAddressesUseCase, method="GET",  path="/{user_id}/addresses/"),
-        RestRoute(use_case=GetAddressUseCase,    method="GET",  path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=UpdateAddressUseCase, method="PATCH", path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=DeleteAddressUseCase, method="DELETE", path="/{user_id}/addresses/{address_id}"),
+        RestRoute(
+            use_case=CreateAddressUseCase,
+            method="POST",
+            path="/{user_id}/addresses/",
+            status_code=201,
+        ),
+        RestRoute(use_case=ListAddressesUseCase, method="GET", path="/{user_id}/addresses/"),
+        RestRoute(
+            use_case=GetAddressUseCase, method="GET", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=UpdateAddressUseCase, method="PATCH", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=DeleteAddressUseCase, method="DELETE", path="/{user_id}/addresses/{address_id}"
+        ),
     )
 ```
 
@@ -388,27 +452,37 @@ For compute-heavy write flows, declare field derivations and run them before rul
 ```python
 from loom.core.use_case import Compute, F
 
+
 class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
     computes = (
         Compute.set(F(PricingCommand).normalized_email).from_command(
-            F(PricingCommand).email, via=lambda v: v.strip().lower(),
+            F(PricingCommand).email,
+            via=lambda v: v.strip().lower(),
         ),
         Compute.set(F(PricingCommand).subtotal).from_command(
-            F(PricingCommand).unit_price, F(PricingCommand).quantity,
+            F(PricingCommand).unit_price,
+            F(PricingCommand).quantity,
             via=lambda price, qty: price * qty,
         ),
         Compute.set(F(PricingCommand).tax_amount).from_command(
-            F(PricingCommand).subtotal, F(PricingCommand).tax_rate,
+            F(PricingCommand).subtotal,
+            F(PricingCommand).tax_rate,
             via=lambda sub, rate: sub * rate,
         ),
     )
     rules = (
-        Rule.check(F(PricingCommand).unit_price, via=lambda v: "unit_price must be > 0" if v <= 0 else None),
-        Rule.check(F(PricingCommand).country, via=lambda v: None if v in TAX_RATES else "Unsupported country"),
+        Rule.check(
+            F(PricingCommand).unit_price, via=lambda v: "unit_price must be > 0" if v <= 0 else None
+        ),
+        Rule.check(
+            F(PricingCommand).country,
+            via=lambda v: None if v in TAX_RATES else "Unsupported country",
+        ),
     )
 
-    async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:
-        ...
+    async def execute(
+        self, record_id: int, cmd: PricingCommand = Input()
+    ) -> PricingPreviewResponse: ...
 ```
 
 Computes run in declaration order — later computes can reference fields set by earlier ones.
@@ -440,8 +514,10 @@ from datetime import date
 import polars as pl
 from loom.etl import ETLParams, ETLStep, ETLProcess, ETLPipeline, ETLRunner, FromTable, IntoTable
 
+
 class DailyParams(ETLParams):
     run_date: date
+
 
 class CleanOrders(ETLStep[DailyParams]):
     orders = FromTable("raw.orders").columns("id", "amount", "run_date")
@@ -450,11 +526,14 @@ class CleanOrders(ETLStep[DailyParams]):
     def execute(self, params: DailyParams, *, orders: pl.LazyFrame) -> pl.LazyFrame:
         return orders.filter(pl.col("amount") > 0)
 
+
 class DailyProcess(ETLProcess[DailyParams]):
     steps = [CleanOrders]
 
+
 class DailyPipeline(ETLPipeline[DailyParams]):
     processes = [DailyProcess]
+
 
 runner = ETLRunner.from_yaml("config/etl.yaml")
 runner.run(DailyPipeline, DailyParams(run_date=date.today()))

@@ -275,8 +275,8 @@ class ScriptAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=project.discovered,              # app.packages
-            default_store_backend="sqlalchemy",               # without stores.default
+            discovered=project.discovered,  # app.packages
+            default_store_backend="sqlalchemy",  # without stores.default
             check_scope=CheckScope.without_rest(),
         )
 
@@ -284,7 +284,7 @@ class ScriptAdapter:
         return application
 
 
-async def main(operator: Identity) -> None:   # Product: a model of your app
+async def main(operator: Identity) -> None:  # Product: a model of your app
     application = create_app("config/script.yaml", adapter=ScriptAdapter())
     async with application.running():
         invoker = application.kernel.app.for_identity(operator)

@@ -11,6 +11,7 @@ and returns a `StepResult` for assertions.
 ```python
 from loom.etl.testing import PolarsStepRunner
 
+
 def test_clean_orders():
     runner = PolarsStepRunner()
     runner.seed("raw.orders", [(1, 10.0), (2, -5.0)], ["id", "amount"])
@@ -84,10 +85,8 @@ with any backend runner.
 ```python
 from loom.etl.testing import ETLScenario
 
-ORDERS = (
-    ETLScenario()
-    .with_table("raw.orders", [(1, 10.0), (2, 20.0)], ["id", "amount"])
-)
+ORDERS = ETLScenario().with_table("raw.orders", [(1, 10.0), (2, 20.0)], ["id", "amount"])
+
 
 def test_double_amount(loom_polars_runner):
     ORDERS.apply(loom_polars_runner)

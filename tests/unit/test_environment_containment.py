@@ -37,7 +37,7 @@ _NOT_A_VARIABLE = {
 }
 # Files whose read of the process environment is dynamic by design, with why.
 _DYNAMIC_READERS = {
-    "core/config/_resolver_utils.py": "expands the %VAR% placeholders a configuration names",
+    "core/config/resolution.py": "expands the %VAR% placeholders a configuration names",
 }
 # LOOM_* names loom owns outside loom.core.environment, with why.
 _OWNED_ELSEWHERE = {

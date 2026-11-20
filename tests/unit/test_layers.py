@@ -23,7 +23,7 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 # layer → (packages it must not import at run time, modules allowed inside them).
 _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The core composes nothing: the composition root, transports, store and connection adapters sit
-    # outside it; only the AWS config resolvers build their default client holder.
+    # outside it.
     "loom.core": (
         (
             "loom.composition",
@@ -36,7 +36,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.connections",
             "sqlalchemy",
         ),
-        ("loom.connections.aws",),
+        (),
     ),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (

@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from loom.connections.aws import AwsClients
+from loom.connections.aws._resolver_client import build_resolver_client
 from loom.connections.aws.loader import aws_island
-from loom.core.config._resolver_utils import build_resolver_client
 from loom.core.connections.aws import AwsClientConfig, AwsPool
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError

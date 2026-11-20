@@ -28,8 +28,6 @@ from loom.core.config.resolver import (
     with_default_resolvers,
 )
 from loom.core.config.retired import reject_retired_keys, reject_retired_sections
-from loom.core.config.secrets import SecretsManagerResolver
-from loom.core.config.ssm import SsmResolver
 
 __all__ = [
     "ConfigBinding",
@@ -40,8 +38,6 @@ __all__ = [
     "Configurable",
     "FileResolver",
     "OtelConfig",
-    "SecretsManagerResolver",
-    "SsmResolver",
     "StructBinder",
     "default_resolvers",
     "expand_config_glob",

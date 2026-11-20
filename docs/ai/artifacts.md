@@ -324,6 +324,7 @@ output_check: "myapp.agents.checks:incident_answer_complete"
 from typing import Any
 from collections.abc import Mapping
 
+
 def incident_answer_complete(answer: Mapping[str, Any]) -> str | None:
     if not answer.get("root_cause"):
         return "The answer is missing a root cause; consult the incident timeline."
@@ -396,7 +397,7 @@ model's answer can never shadow the caller's.
 
 ```python
 class RecordTriageCommand(Command):
-    output: TriageReport                # the type_ref type itself; dict[str, Any] also works
+    output: TriageReport  # the type_ref type itself; dict[str, Any] also works
     interaction_id: str
     conversation_id: str | None = None
     agent: str
@@ -416,14 +417,18 @@ class RecordTriage(UseCase[Triage, TriageRecorded]):
     async def execute(
         self,
         cmd: RecordTriageCommand = Input(),
-        caller: Identity = Caller(),      # the agent's caller
+        caller: Identity = Caller(),  # the agent's caller
     ) -> TriageRecorded:
         report = cmd.output
         await self._triages.save(
             Triage(
-                id=cmd.interaction_id, conversation_id=cmd.conversation_id,
-                subject=caller.subject, agent=cmd.agent, model=cmd.model,
-                incident_ref=report.incident_ref, severity=report.severity,
+                id=cmd.interaction_id,
+                conversation_id=cmd.conversation_id,
+                subject=caller.subject,
+                agent=cmd.agent,
+                model=cmd.model,
+                incident_ref=report.incident_ref,
+                severity=report.severity,
                 confidence=report.confidence,
             )
         )
@@ -638,8 +643,8 @@ not JSON and fails the next turn with `CONVERSATION_LOAD_FAILED`.
 
 ```python
 class LoadConversationCommand(Command):
-    conversation_id: str                    # required: the loader must know the thread
-    agent: str                              # scope: a thread belongs to one agent
+    conversation_id: str  # required: the loader must know the thread
+    agent: str  # scope: a thread belongs to one agent
     # `interaction_id`, `subject`, `mechanism` are offered but not declared: filtered out.
 
 
@@ -651,12 +656,12 @@ class LoadConversation(UseCase[Thread, bytes | None]):
     async def execute(
         self,
         cmd: LoadConversationCommand = Input(),
-        caller: Identity = Caller(),        # tenancy: the thread must belong to this caller
+        caller: Identity = Caller(),  # tenancy: the thread must belong to this caller
     ) -> bytes | None:
         thread = await self._threads.get(
             owner=caller.subject, agent=cmd.agent, id=cmd.conversation_id
         )
-        return None if thread is None else thread.messages    # one JSON array, stored verbatim
+        return None if thread is None else thread.messages  # one JSON array, stored verbatim
 
 
 class RecordTurnCommand(Command):
@@ -664,7 +669,7 @@ class RecordTurnCommand(Command):
     interaction_id: str
     agent: str
     conversation_id: str | None = None
-    messages: bytes | None = None           # this run's new messages; None on a single-shot run
+    messages: bytes | None = None  # this run's new messages; None on a single-shot run
 
 
 @use_case_key("incidents.record_turn")
@@ -1422,8 +1427,8 @@ a generator in **any** language can validate an artifact:
 ```python
 from loom.ai.declarative import agent_spec_json_schema, agent_spec_schema_path
 
-agent_spec_json_schema(1)      # the document, as a dict
-agent_spec_schema_path(1)      # the path of the file shipped in the distribution
+agent_spec_json_schema(1)  # the document, as a dict
+agent_spec_schema_path(1)  # the path of the file shipped in the distribution
 ```
 
 The file ships inside the wheel and the sdist at

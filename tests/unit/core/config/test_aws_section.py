@@ -9,7 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core.config import ConfigContext, ConfigError, SsmResolver, load_config
+from loom.connections.aws import SsmResolver
+from loom.core.config import ConfigContext, ConfigError, load_config
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.profile import SERVER_PROFILE

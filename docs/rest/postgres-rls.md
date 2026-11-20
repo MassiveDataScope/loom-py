@@ -1144,7 +1144,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.detach_range_partitions("note_events", "2026-01-01", "2027-01-01", interval="month", drop=True)
+    op.detach_range_partitions(
+        "note_events", "2026-01-01", "2027-01-01", interval="month", drop=True
+    )
 ```
 
 The downgrade is written by hand: `ensure_range_partitions` leaves existing partitions

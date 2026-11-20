@@ -2,6 +2,17 @@
 
 ## 💥 Breaking
 
+- **config:** the `ssm` and `secrets` resolvers leave the core. `SsmResolver`
+  and `SecretsManagerResolver` are in `loom.connections.aws` (no longer
+  exported by `loom.core.config`), and `loom.core.config.default_resolvers()`
+  and `with_default_resolvers()` hold only the technology-free `file` resolver.
+  The composition, the ETL runner and the Bytewax runner register all three
+  through `loom.connections.resolvers.built_in_resolvers()` and
+  `with_built_in_resolvers()`; `loom check` still calls no resolver. Nothing
+  under `loom.core` imports `loom.connections` now.
+  **Migration:** `from loom.core.config import SsmResolver` becomes
+  `from loom.connections.aws import SsmResolver`; a loader that relied on
+  `default_resolvers()` for `ssm` and `secrets` uses `built_in_resolvers()`.
 - **testing:** `InMemoryRepository` declares the key capabilities (`Readable`,
   `Creatable`, `Updatable`, `Deletable`), so a harness that injects it binds
   those DI keys, and it behaves like a real repository on the contract the
@@ -17,7 +28,8 @@
 - **stores:** the duplicate (store, table) refusal moves from
   `PackageScanner.discover` to `StoreCatalog.models_by_store`, the one place
   that groups models by store, so the composition refuses them and `discover`
-  only lists the models.
+  only lists the models. `RepositoryCatalog` applies the same check
+  (`refuse_duplicate_tables`) and raises `ConfigError`, not `ValueError`.
   The single primary-key rule of the DynamoDB, Mongo and in-memory
   repositories is `single_id_attribute` in `loom.core.stores.repository.record`.
 - **stores:** a repository no longer promises a lookup it cannot serve.

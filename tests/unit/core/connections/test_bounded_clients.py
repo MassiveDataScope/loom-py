@@ -61,7 +61,7 @@ class TestClientsFailWithinDeclaredBounds:
         silent_endpoint: str,  # noqa: F811
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from loom.core.config.ssm import SsmResolver
+        from loom.connections.aws.ssm import SsmResolver
 
         # The resolvers take no section; the endpoint comes from boto3's own variable.
         monkeypatch.setenv("AWS_ENDPOINT_URL", silent_endpoint)

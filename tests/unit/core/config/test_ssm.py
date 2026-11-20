@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.connections.aws.ssm import SsmResolver
 from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
-from loom.core.config.ssm import SsmResolver
 from tests.helpers.aws import OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit.core.config.doubles import BotocoreClientError
@@ -195,7 +195,7 @@ class TestSsmResolverLogging:
         self, mock_client: MagicMock, caplog: pytest.LogCaptureFixture, island: FakeAwsIsland
     ) -> None:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db.internal"}'}}
-        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
+        with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve("/prod/db_config.host")
         messages = [r.message for r in caplog.records]
         assert any("/prod/db_config" in msg for msg in messages), (
@@ -215,7 +215,7 @@ class TestSsmResolverLogging:
     ) -> None:
         monkeypatch.setenv("STAGE", "prod")
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "some-value"}}
-        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
+        with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve("/app/%STAGE%/db")
         messages = [r.message for r in caplog.records]
         assert any("/app/%STAGE%/db" in msg for msg in messages), (
@@ -239,7 +239,7 @@ class TestSsmResolverUnexpandedKey:
         caplog: pytest.LogCaptureFixture,
         island: FakeAwsIsland,
     ) -> None:
-        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
+        with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve(self.KEY)
         messages = [r.message for r in caplog.records]
         assert all("super-secret" not in msg for msg in messages), messages
@@ -269,7 +269,7 @@ class TestSsmResolverUnexpandedKey:
         """Splitting before expansion keeps a dotted env value out of navigation."""
         monkeypatch.setenv("DOTTED_ENV", "db.prod-secret")
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db"}'}}
-        with caplog.at_level(logging.INFO, logger="loom.core.config.ssm"):
+        with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             value = SsmResolver().resolve("/app/svc/%DOTTED_ENV%")
         assert value == '{"host": "db"}'
         mock_client.get_parameter.assert_called_once_with(

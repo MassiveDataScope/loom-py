@@ -24,9 +24,9 @@ Two lines, and one configuration rule that ties them together.
 # main.py — before create_app(), before anything emits a span
 import logfire
 
-logfire.configure(send_to_logfire=False)     # installs the global TracerProvider
-logfire.instrument_pydantic_ai()             # LLM calls and tool calls
-logfire.instrument_fastapi(app)              # HTTP handlers
+logfire.configure(send_to_logfire=False)  # installs the global TracerProvider
+logfire.instrument_pydantic_ai()  # LLM calls and tool calls
+logfire.instrument_fastapi(app)  # HTTP handlers
 ```
 
 In `config/api.yaml`:

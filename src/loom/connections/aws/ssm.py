@@ -5,8 +5,8 @@ by fetching values from AWS Systems Manager Parameter Store at parse time.
 
 Example::
 
+    from loom.connections.aws import SsmResolver
     from loom.core.config import load_config
-    from loom.core.config.ssm import SsmResolver
 
     cfg = load_config("config/prod.yaml", resolvers=[SsmResolver("eu-west-1")])
 """
@@ -16,9 +16,10 @@ from __future__ import annotations
 import functools
 from typing import Any
 
-from loom.connections.aws import AwsClients
-from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
+from loom.connections.aws._resolver_client import build_resolver_client
+from loom.connections.aws.clients import AwsClients
 from loom.core.config.errors import ConfigError
+from loom.core.config.resolution import resolve_cached
 from loom.core.connections.aws import AwsClientSource, aws_error_code
 
 

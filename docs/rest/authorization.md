@@ -86,9 +86,9 @@ grants = [
     Grant("ada", "operator", Scope.of("acme", "billing")),
 ]
 
-evaluate(CATALOG, grants, READ, Scope.of("acme", "billing", "invoices"))   # allowed
-evaluate(CATALOG, grants, RUN, Scope.of("acme"))                           # denied
-evaluate(CATALOG, grants, READ, Scope.of("globex"))                        # denied
+evaluate(CATALOG, grants, READ, Scope.of("acme", "billing", "invoices"))  # allowed
+evaluate(CATALOG, grants, RUN, Scope.of("acme"))  # denied
+evaluate(CATALOG, grants, READ, Scope.of("globex"))  # denied
 ```
 
 {func}`~loom.core.authz.evaluate` never touches a database or reads a clock. It denies unless
@@ -101,7 +101,7 @@ A stored grant whose role the code does not declare allows nothing.
 To filter a listing, ask once for the outermost scopes and test each item by prefix:
 
 ```python
-reachable = scopes_with(CATALOG, grants, READ)      # frozenset({Scope.of("acme")})
+reachable = scopes_with(CATALOG, grants, READ)  # frozenset({Scope.of("acme")})
 visible = [item for item in items if any(scope.covers(item.scope) for scope in reachable)]
 ```
 
@@ -117,8 +117,8 @@ from datetime import UTC, datetime, timedelta
 now = datetime.now(UTC)
 on_call = [Grant("ada", "operator", Scope.of("acme"), expires_at=now + timedelta(hours=8))]
 
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now)                        # allowed
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now + timedelta(hours=8))   # denied
+evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now)  # allowed
+evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now + timedelta(hours=8))  # denied
 ```
 
 A grant is alive while `now` is before `expires_at`; from that instant on it counts as
@@ -142,7 +142,7 @@ from loom.core.authz import can_grant, can_revoke
 
 manager = [Grant("bob", "admin", Scope.of("acme"))]
 can_grant(CATALOG, manager, "operator", Scope.of("acme", "billing"), delegate=MANAGE)  # allowed
-can_grant(CATALOG, manager, "admin", Scope.root(), delegate=MANAGE)                     # denied
+can_grant(CATALOG, manager, "admin", Scope.root(), delegate=MANAGE)  # denied
 
 support = [Grant("eve", "helpdesk", Scope.of("acme"))]
 can_grant(CATALOG, support, "admin", Scope.of("acme"), delegate=MANAGE).missing
