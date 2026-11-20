@@ -32,6 +32,7 @@ loom = "loom.cli:main"
 testing = [
     "pytest>=8.3.0",
     "httpx>=0.27",
+    "polyfactory>=3.5,<4",
 ]
 rest = [
     "fastapi>=0.115,<1.0",
@@ -264,11 +265,13 @@ dev = [
     "fakeredis>=2.23.0",
     "fastapi>=0.115,<1.0",
     "greenlet>=3.0.0",
+    "hypothesis>=6.168,<7",
     "moto[dynamodb,secretsmanager,sns,sqs,ssm]>=5.2.5,<6.0",
     "mypy>=1.11.0,<2.0",
     "omegaconf>=2.3,<2.5",
     "pydantic>=2.0,<3.0",
     "pre-commit>=3.8.0",
+    "poethepoet>=0.32,<1",
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -350,6 +353,7 @@ select = [
     "B",
     "C4",
     "SIM",
+    "TID251",
 ]
 
 [tool.ruff.lint.flake8-bugbear]
@@ -382,6 +386,97 @@ extend-immutable-calls = [
     "loom.core.use_case.markers.Mcp",
     "loom.core.use_case.markers.Query",
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"unittest.mock".msg = "Double a port of ours instead (clean-code testing.md §3); third-party clients are tested against moto, LocalStack or Redis."
+
+[tool.ruff.lint.per-file-ignores]
+"tests/helpers/aws_island.py" = ["TID251"]
+"tests/integration/celery_jobs/test_abandonment.py" = ["TID251"]
+"tests/integration/core/repository/sqlalchemy/test_cache_integration.py" = ["TID251"]
+"tests/integration/execution/entrypoints/test_celery.py" = ["TID251"]
+"tests/integration/execution/entrypoints/test_jobs.py" = ["TID251"]
+"tests/integration/streaming/test_into_table_integration.py" = ["TID251"]
+"tests/unit/ai/engines/test_pydantic_ai_output_check.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_async_runtime.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_bootstrap_cache.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_bootstrap.py" = ["TID251"]
+"tests/unit/celery_jobs/test_auto.py" = ["TID251"]
+"tests/unit/celery_jobs/test_celery_service.py" = ["TID251"]
+"tests/unit/celery_jobs/test_config.py" = ["TID251"]
+"tests/unit/celery_jobs/test_identity_propagation.py" = ["TID251"]
+"tests/unit/celery_jobs/test_runner.py" = ["TID251"]
+"tests/unit/composition/test_job_router.py" = ["TID251"]
+"tests/unit/composition/test_job_service.py" = ["TID251"]
+"tests/unit/composition/test_job_settings.py" = ["TID251"]
+"tests/unit/core/bootstrap/test_bootstrap_metrics.py" = ["TID251"]
+"tests/unit/core/cache/test_gateway_config.py" = ["TID251"]
+"tests/unit/core/config/test_aws_section.py" = ["TID251"]
+"tests/unit/core/config/test_config.py" = ["TID251"]
+"tests/unit/core/config/test_secrets.py" = ["TID251"]
+"tests/unit/core/config/test_ssm.py" = ["TID251"]
+"tests/unit/core/conftest.py" = ["TID251"]
+"tests/unit/core/connections/test_context_clients.py" = ["TID251"]
+"tests/unit/core/engine/executor/doubles.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_executor.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_observation.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_preparation.py" = ["TID251"]
+"tests/unit/core/engine/test_metrics.py" = ["TID251"]
+"tests/unit/core/engine/test_post_commit_publish.py" = ["TID251"]
+"tests/unit/core/errors/test_errors.py" = ["TID251"]
+"tests/unit/core/job/test_callback.py" = ["TID251"]
+"tests/unit/core/job/test_dispatch_api.py" = ["TID251"]
+"tests/unit/core/job/test_handle.py" = ["TID251"]
+"tests/unit/core/job/test_inline_service.py" = ["TID251"]
+"tests/unit/core/job/test_inline_timer.py" = ["TID251"]
+"tests/unit/core/job/test_router.py" = ["TID251"]
+"tests/unit/core/persistence/test_registry.py" = ["TID251"]
+"tests/unit/core/repository/dynamodb/test_backend.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/conftest.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/test_column_row.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/test_loaders.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/test_repository.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/test_transactional_post_commit.py" = ["TID251"]
+"tests/unit/core/repository/sqlalchemy/test_transactional.py" = ["TID251"]
+"tests/unit/core/repository/test_record_layout.py" = ["TID251"]
+"tests/unit/core/test_concurrency.py" = ["TID251"]
+"tests/unit/core/uow/conftest.py" = ["TID251"]
+"tests/unit/core/uow/test_coordinator.py" = ["TID251"]
+"tests/unit/core/uow/test_executor_uow.py" = ["TID251"]
+"tests/unit/core/uow/test_sqlalchemy_uow.py" = ["TID251"]
+"tests/unit/core/uow/test_uow_protocols.py" = ["TID251"]
+"tests/unit/etl/backends/test_upsert_delete_flag_support.py" = ["TID251"]
+"tests/unit/etl/backends/test_write_policy_historify.py" = ["TID251"]
+"tests/unit/etl/checkpoint/backends/test_checkpoint_polars.py" = ["TID251"]
+"tests/unit/etl/checkpoint/test_cleaners.py" = ["TID251"]
+"tests/unit/etl/client_step/test_client_step.py" = ["TID251"]
+"tests/unit/etl/io/sources/test_mongo_reader.py" = ["TID251"]
+"tests/unit/etl/io/targets/test_clickhouse_writer.py" = ["TID251"]
+"tests/unit/etl/io/test_writer_registry.py" = ["TID251"]
+"tests/unit/etl/storage/doubles.py" = ["TID251"]
+"tests/unit/etl/storage/test_backend_factory.py" = ["TID251"]
+"tests/unit/etl/test_config_loader.py" = ["TID251"]
+"tests/unit/etl/test_runner_environment.py" = ["TID251"]
+"tests/unit/etl/test_runner_resolvers.py" = ["TID251"]
+"tests/unit/etl/test_runner.py" = ["TID251"]
+"tests/unit/jobs/aws/test_settlement.py" = ["TID251"]
+"tests/unit/jobs/test_read_only_dispatch.py" = ["TID251"]
+"tests/unit/prefect/doubles.py" = ["TID251"]
+"tests/unit/prefect/test_backfill_flow.py" = ["TID251"]
+"tests/unit/prefect/test_deploy_flow.py" = ["TID251"]
+"tests/unit/prefect/test_etl_flow.py" = ["TID251"]
+"tests/unit/prefect/test_flow_environment.py" = ["TID251"]
+"tests/unit/prefect/test_flow_trigger.py" = ["TID251"]
+"tests/unit/prefect/test_maintenance_flow.py" = ["TID251"]
+"tests/unit/prefect/test_manifest_s3.py" = ["TID251"]
+"tests/unit/prefect/test_notify.py" = ["TID251"]
+"tests/unit/prefect/test_observer.py" = ["TID251"]
+"tests/unit/prefect/test_run_params.py" = ["TID251"]
+"tests/unit/prefect/test_task_run_observer.py" = ["TID251"]
+"tests/unit/rest/test_rest_adapter.py" = ["TID251"]
+"tests/unit/serverless/aws/lambda_/test_consumed_queue.py" = ["TID251"]
+"tests/unit/testing/test_http_harness.py" = ["TID251"]
+"tests/unit/testing/test_runner.py" = ["TID251"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -453,6 +548,38 @@ module = [
 ]
 ignore_missing_imports = true
 
+# bytewax is an extra installed only on Python < 3.13. fastmcp, and the mcp
+# package it brings, live in the opt-in `mcp-tests` group. Neither is in the
+# default environment this gate type-checks.
+[[tool.mypy.overrides]]
+module = [
+    "bytewax",
+    "bytewax.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp",
+    "fastmcp.*",
+    "mcp",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
+# Those modules subclass bytewax or fastmcp classes. With the packages
+# absent the bases are Any, and strict mypy rejects subclassing Any. The
+# flag applies to the module being checked, not to the missing package.
+[[tool.mypy.overrides]]
+module = [
+    "loom.ai.engines.pydantic_ai._transport",
+    "loom.streaming.bytewax._adapter",
+    "loom.streaming.bytewax._runtime_io",
+    "loom.streaming.bytewax.handlers.storage",
+    "loom.streaming.mongo._bytewax_source",
+]
+disallow_subclassing_any = false
+
 [[tool.mypy.overrides]]
 module = [
     "loom.stores.sqlalchemy.scoped_ddl",
@@ -472,11 +599,9 @@ pythonpath = [
 ]
 # `slow` tests are deselected by default, as CI's fast lane does; CI runs them in its
 # slow lane with an explicit `-m`. Run them locally with `-m slow`, or everything with `-m ""`.
-addopts = "-ra --log-disable=aiosqlite -m 'not slow and not live' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
+addopts = "-rfE --log-disable=aiosqlite -m 'not slow and not live' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 asyncio_mode = "auto"
 timeout = 300
-log_cli = true
-log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
 markers = [
     "bytewax: tests that exercise the Bytewax adapter and runtime wiring",
@@ -488,11 +613,52 @@ markers = [
 ]
 
 [tool.pytest_env]
+POLARS_MAX_THREADS = "1"
+RAYON_NUM_THREADS = "1"
+OMP_NUM_THREADS = "1"
+TOKIO_WORKER_THREADS = "1"
 TEST_SERVER_MODE = { unset = true }
 TEST_SERVER_MODE_ENDPOINT = { unset = true }
 TEST_PROXY_MODE = { unset = true }
 TEST_PROXY_MODE_ENDPOINT = { unset = true }
 INITIAL_NO_AUTH_ACTION_COUNT = { unset = true }
+
+[tool.poe]
+verbosity = -1
+
+[tool.poe.tasks]
+# Every job has one command: `uv run poe <task>`. Pytest tasks forward extra
+# arguments, so `uv run poe test-fast tests/unit/core/job -k backoff` narrows a
+# run; explicit paths replace the lane's default `testpaths` override.
+lint = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check src tests" },
+]
+fmt = [
+    { cmd = "ruff format src tests" },
+    { cmd = "ruff check --fix ." },
+]
+test = "pytest -n 4 --dist worksteal -q -p no:cacheprovider"
+test-fast = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
+test-int = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
+test-props = { cmd = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -m hypothesis", env = { HYPOTHESIS_PROFILE = "ci" } }
+test-cov = "pytest -n 4 --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
+test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
+golden-update = "pytest -q -p no:cacheprovider --update-golden"
+gate = ["lint", "types", "test-fast", "test-int"]
+
+[tool.poe.tasks.types]
+help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
+env = { MYPY_BASELINE = "4" }
+shell = """
+out=$(mypy --no-color-output src 2>&1)
+found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')
+echo "mypy: ${found:-0} errors (baseline $MYPY_BASELINE)"
+if [ "${found:-0}" -gt "$MYPY_BASELINE" ]; then
+  printf '%s\\n' "$out" | tail -n 40
+  exit 1
+fi
+"""
 
 [tool.commitizen]
 name = "cz_conventional_commits"

@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -331,31 +330,38 @@ class TestAbcImports:
         assert completed.returncode == 0, completed.stderr
 
 
-@dataclass
-class _SlowFakeFastmcpClient:
-    """Stand-in for the ``fastmcp.Client``: answers only after ``delay_s``."""
+class _HungFastmcpClient:
+    """Stand-in for the ``fastmcp.Client``: a call waits until the test releases it."""
 
-    delay_s: float
+    def __init__(self) -> None:
+        self._release = asyncio.Event()
+        self.has_entered = False
+
+    @property
+    def is_released(self) -> bool:
+        """Whether the test has let the hung call finish."""
+        return self._release.is_set()
 
     async def call_tool_mcp(self, name: str, arguments: dict[str, Any]) -> _FakeProtocolResult:
-        """Sleep ``delay_s`` before answering, the way a hung gateway would."""
+        """Wait for a release that the timeout test never sends."""
         del name, arguments
-        await asyncio.sleep(self.delay_s)
+        self.has_entered = True
+        await self._release.wait()
         return _FakeProtocolResult(structured_content=None)
 
 
-class _SlowFakeMcpToolset:
+class _HungFakeMcpToolset:
     """Stand-in for ``MCPToolset``: a real refcount behind a real lock, and an
     ``__aexit__`` that actually awaits at refcount zero -- mirroring
     ``MCPToolset`` closely enough that a cancelled call leaving the refcount
     unbalanced would show up here, not just by construction."""
 
-    def __init__(self, delay_s: float) -> None:
-        self.client = _SlowFakeFastmcpClient(delay_s)
+    def __init__(self) -> None:
+        self.client = _HungFastmcpClient()
         self._lock = anyio.Lock()
         self.running_count = 0
 
-    async def __aenter__(self) -> _SlowFakeMcpToolset:
+    async def __aenter__(self) -> _HungFakeMcpToolset:
         async with self._lock:
             self.running_count += 1
         return self
@@ -378,36 +384,31 @@ class TestKindPythonRespectsToolTimeout:
     -- unbounded against a hung gateway. This drives the two real pieces of
     that route together: ``capability_call`` (the plan's own timeout) wrapping
     a real ``_ToolsetSession.call_tool`` (what a python factory's
-    ``context.remote(server)`` returns), against a remote six times slower
-    than the timeout.
+    ``context.remote(server)`` returns), against a remote that never answers.
     """
 
-    async def test_a_hung_remote_is_cut_off_at_the_plan_timeout_not_at_its_own_delay(
-        self,
-    ) -> None:
-        timeout_s = 0.05
-        remote_delay_s = 0.3
+    async def test_a_hung_remote_is_cut_off_by_the_plan_timeout(self) -> None:
+        """The plan timeout cancels a remote that is still waiting."""
         context = BuildContext(
             agent=AGENT,
             container=LoomContainer(),
             observability=None,
-            timeout_s=timeout_s,
+            timeout_s=0.05,
             mcp=SharedMcpToolsets(),
             mcp_grants=(),
         )
-        toolset = _SlowFakeMcpToolset(remote_delay_s)
+        toolset = _HungFakeMcpToolset()
         session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
 
-        start = time.monotonic()
-        with pytest.raises(AgentRunError) as raised:
+        async def call_until_cut_off() -> None:
+            """Run the lookup until the plan timeout cancels it."""
             async with capability_call(context, "python", "lookup", Identity(subject="tester")):
                 await session.call_tool("lookup", {})
-        elapsed = time.monotonic() - start
+
+        with pytest.raises(AgentRunError) as raised:
+            await asyncio.wait_for(call_until_cut_off(), timeout=5)
 
         assert raised.value.code is AgentRunErrorCode.TOOL_TIMEOUT
-        # Cut off near the plan's own timeout, nowhere near the remote's delay:
-        # this is exactly what the shielded round trip broke.
-        assert elapsed < remote_delay_s / 2
-        # And the toolset's own refcount is not left unbalanced by the timeout
-        # cancelling the call mid ``async with``.
+        assert toolset.client.has_entered
+        assert not toolset.client.is_released
         assert toolset.running_count == 0

@@ -15,6 +15,7 @@ from loom.testing.runner import (
 from loom.testing.serverless import TEST_QUEUE, LambdaEvent
 
 if TYPE_CHECKING:
+    from loom.testing.data import LoomFactory, make
     from loom.testing.http_harness import HttpTestHarness
     from loom.testing.jwt_auth import JwtTestAuth, jwt_test_auth
     from loom.testing.lambda_http import LambdaTestClient
@@ -35,6 +36,7 @@ __all__ = [
     "InMemoryRepository",
     "JobTestData",
     "JwtTestAuth",
+    "LoomFactory",
     "TEST_QUEUE",
     "LambdaEvent",
     "LambdaTestClient",
@@ -50,8 +52,11 @@ __all__ = [
     "agent_engine_contract_suite",
     "build_repository_harness",
     "jwt_test_auth",
+    "make",
     "serialize_plan",
 ]
+
+_DATA_EXPORTS = frozenset({"LoomFactory", "make"})
 
 _JWT_EXPORTS = frozenset({"JwtTestAuth", "jwt_test_auth"})
 
@@ -68,11 +73,24 @@ def __getattr__(name: str) -> Any:
         return _lambda_test_client()
     if name == "LambdaWorker":
         return importlib.import_module("loom.testing.lambda_jobs").LambdaWorker
+    if name in _DATA_EXPORTS:
+        return _data_export(name)
     if name in _JWT_EXPORTS:
         return getattr(importlib.import_module("loom.testing.jwt_auth"), name)
     if name in _REPOSITORY_HARNESS_EXPORTS:
         return _repository_harness_export(name)
     raise AttributeError(name)
+
+
+def _data_export(name: str) -> Any:
+    """Import one ``data`` export, naming the ``testing`` extra when polyfactory is missing."""
+    try:
+        data = importlib.import_module("loom.testing.data")
+    except ImportError as exc:
+        raise ImportError(
+            f"{name} requires polyfactory. Install loom-kernel[testing] to build test data."
+        ) from exc
+    return getattr(data, name)
 
 
 def _http_test_harness() -> Any:

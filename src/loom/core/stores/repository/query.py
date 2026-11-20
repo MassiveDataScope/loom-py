@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import msgspec
 
 from loom.core.model import LoomFrozenStruct
 
 OutputT = TypeVar("OutputT", bound=msgspec.Struct, covariant=True)
+
+FIRST_PAGE = 1
+MIN_PAGE_LIMIT = 1
+MAX_PAGE_LIMIT = 1000
 
 
 class PaginationMode(StrEnum):
@@ -176,14 +180,14 @@ class PageParams(LoomFrozenStruct, frozen=True, kw_only=True):
         limit: Maximum number of items per page (1-1000).
     """
 
-    page: int = 1
-    limit: int = 50
+    page: Annotated[int, msgspec.Meta(ge=FIRST_PAGE)] = FIRST_PAGE
+    limit: Annotated[int, msgspec.Meta(ge=MIN_PAGE_LIMIT, le=MAX_PAGE_LIMIT)] = 50
 
     def __post_init__(self) -> None:
-        if self.page < 1:
-            raise ValueError("page must be >= 1")
-        if not (1 <= self.limit <= 1000):
-            raise ValueError("limit must be in [1, 1000]")
+        if self.page < FIRST_PAGE:
+            raise ValueError(f"page must be >= {FIRST_PAGE}")
+        if not (MIN_PAGE_LIMIT <= self.limit <= MAX_PAGE_LIMIT):
+            raise ValueError(f"limit must be in [{MIN_PAGE_LIMIT}, {MAX_PAGE_LIMIT}]")
 
     @property
     def offset(self) -> int:

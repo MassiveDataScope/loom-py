@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from loom.core.config import ConfigError
 from loom.core.config.resolver import referenced
@@ -56,3 +58,16 @@ class TestReferencedPlaceholders:
         assert hasattr(OmegaConfGrammarParser, "InterpolationContext")
         assert callable(GrammarVisitor(lambda _k, _m: None, lambda **_: None, None).visitElement)
         assert tree.getChildCount() > 0
+
+
+_names = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=12).map(
+    "key_{}".format
+)
+
+
+class TestReferencedProperties:
+    @given(keys=st.lists(_names, max_size=8))
+    def test_selected_references_keep_order_and_duplicates(self, keys: list[str]) -> None:
+        text = " ".join(f"${{secrets:{key}}}" for key in keys)
+
+        assert referenced(text, {"secrets"}) == ({"secrets": keys} if keys else {})

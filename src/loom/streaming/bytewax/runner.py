@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from bytewax.dataflow import Dataflow
 from bytewax.recovery import RecoveryConfig
@@ -122,6 +122,31 @@ class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=
     async_backend: Literal["asyncio", "trio"] = "asyncio"
     use_uvloop: bool = False
     force_shutdown_timeout_ms: PositiveInt | None = None
+
+
+class _BytewaxCliMain(Protocol):
+    """``bytewax.run.cli_main`` as this runner calls it.
+
+    The stub in the typed ``bytewax`` package leaves the parameters untyped,
+    so the call is checked against this signature instead.
+    """
+
+    def __call__(
+        self,
+        flow: Dataflow,
+        *,
+        workers_per_process: int = ...,
+        process_id: int | None = ...,
+        addresses: list[str] | None = ...,
+        epoch_interval: timedelta | None = ...,
+        recovery_config: RecoveryConfig | None = ...,
+    ) -> None: ...
+
+
+class _RecoveryConfigFactory(Protocol):
+    """``RecoveryConfig`` constructor; its stub leaves the parameters untyped."""
+
+    def __call__(self, db_dir: Path, backup_interval: timedelta | None = ...) -> RecoveryConfig: ...
 
 
 class StreamingRunner:
@@ -390,7 +415,18 @@ class StreamingRunner:
                     self._plan.name,
                     node_count=len(self._plan.nodes),
                 ):
-                    cli_main(prepared.dataflow, **_runtime_kwargs(resolved_runtime))  # type: ignore[no-untyped-call]
+                    cast(_BytewaxCliMain, cli_main)(
+                        prepared.dataflow,
+                        workers_per_process=resolved_runtime.workers_per_process,
+                        process_id=resolved_runtime.process_id,
+                        addresses=(
+                            list(resolved_runtime.addresses)
+                            if resolved_runtime.addresses is not None
+                            else None
+                        ),
+                        epoch_interval=_to_timedelta(resolved_runtime.epoch_interval_ms),
+                        recovery_config=_recovery_config(resolved_runtime.recovery),
+                    )
         finally:
             shutdown_runner(self)
 
@@ -413,21 +449,10 @@ def _load_yaml(
     )
 
 
-def _runtime_kwargs(runtime: BytewaxRuntimeConfig) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "workers_per_process": runtime.workers_per_process,
-        "process_id": runtime.process_id,
-        "addresses": list(runtime.addresses) if runtime.addresses is not None else None,
-        "epoch_interval": _to_timedelta(runtime.epoch_interval_ms),
-        "recovery_config": _recovery_config(runtime.recovery),
-    }
-    return kwargs
-
-
 def _recovery_config(recovery: BytewaxRecoverySettings | None) -> RecoveryConfig | None:
     if recovery is None:
         return None
-    return RecoveryConfig(  # type: ignore[no-untyped-call]
+    return cast(_RecoveryConfigFactory, RecoveryConfig)(
         Path(recovery.db_dir),
         backup_interval=_to_timedelta(recovery.backup_interval_ms),
     )

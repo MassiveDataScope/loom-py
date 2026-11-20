@@ -19,9 +19,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any
+from typing import Any, Protocol, cast
 
 import bytewax.testing as bytewax_testing
+from bytewax.dataflow import Dataflow
 from bytewax.outputs import Sink
 
 from loom.core.config import ConfigContext
@@ -36,6 +37,17 @@ from loom.streaming.core._errors import ErrorKind
 from loom.streaming.graph._flow import StreamFlow
 
 logger = logging.getLogger(__name__)
+
+
+class _RunMain(Protocol):
+    """``bytewax.testing.run_main``; its stub leaves the parameters untyped."""
+
+    def __call__(
+        self,
+        flow: Dataflow,
+        *,
+        epoch_interval: timedelta | None = ...,
+    ) -> None: ...
 
 
 class StreamingTestRunner:
@@ -172,10 +184,10 @@ class StreamingTestRunner:
                 id=generate_trace_id(),
                 node_count=len(self._plan.nodes),
             ):
-                bytewax_testing.run_main(
+                cast(_RunMain, bytewax_testing.run_main)(
                     prepared.dataflow,
                     epoch_interval=timedelta(milliseconds=1),
-                )  # type: ignore[no-untyped-call]
+                )
         finally:
             logger.debug("shutting_down_test_runner")
             prepared.shutdown()
