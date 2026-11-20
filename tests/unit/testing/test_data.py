@@ -1,4 +1,4 @@
-"""``make`` and ``LoomFactory`` build valid, deterministic loom instances."""
+"""``make`` and ``Factory`` build valid, deterministic loom instances."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from polyfactory.fields import Use
 
 from loom.core.model import BigInteger, LoomFrozenStruct
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
-from loom.testing import LoomFactory, make
+from loom.testing import Factory, make
 
 BUILDS = 200
 
@@ -44,7 +44,7 @@ class Report:
     window: Window
 
 
-class WindowFactory(LoomFactory[Window]):
+class WindowFactory(Factory[Window]):
     __set_as_default_factory_for_type__ = True
 
     first = Use(lambda: 1)
@@ -76,7 +76,7 @@ class TestMake:
 
     def test_annotated_range_is_respected(self):
         ages = [
-            LoomFactory.create_factory(Customer, __random_seed__=seed).build().age
+            Factory.create_factory(Customer, __random_seed__=seed).build().age
             for seed in range(BUILDS)
         ]
 
@@ -84,7 +84,7 @@ class TestMake:
 
     def test_page_params_are_never_invalid(self):
         pages = [
-            LoomFactory.create_factory(PageParams, __random_seed__=seed).build()
+            Factory.create_factory(PageParams, __random_seed__=seed).build()
             for seed in range(BUILDS)
         ]
 
@@ -110,7 +110,7 @@ class _Registered:
     value: int
 
 
-class _RegisteredFactory(LoomFactory[_Registered]):
+class _RegisteredFactory(Factory[_Registered]):
     __set_as_default_factory_for_type__ = True
 
 
@@ -131,7 +131,7 @@ class _Laddered(msgspec.Struct, frozen=True):
     ladder: tuple[str, ...] = ()
 
 
-class _LadderedFactory(LoomFactory[_Laddered]):
+class _LadderedFactory(Factory[_Laddered]):
     __set_as_default_factory_for_type__ = True
     __use_defaults__ = True
 

@@ -1,6 +1,6 @@
 """Registered factories for the job types a field rule alone cannot build.
 
-Importing ``make`` or ``LoomFactory`` from :mod:`loom.testing` registers them, so
+Importing ``make`` or ``Factory`` from :mod:`loom.testing` registers them, so
 ``make(JobDelivery)`` and any type nesting a delivery, an envelope or an outcome
 build with no declaration.
 """
@@ -14,11 +14,11 @@ from polyfactory.fields import Use
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.outcome import Abandoned, Failed, Succeeded
-from loom.testing.data import LoomFactory
+from loom.testing.data import Factory
 from loom.testing.jobs import NoopJob
 
 
-class JobEnvelopeFactory(LoomFactory[JobEnvelope]):
+class JobEnvelopeFactory(Factory[JobEnvelope]):
     """An envelope that names :class:`~loom.testing.jobs.NoopJob` and carries nothing else."""
 
     __set_as_default_factory_for_type__ = True
@@ -31,7 +31,7 @@ class JobEnvelopeFactory(LoomFactory[JobEnvelope]):
     task_id = Use(lambda: "task-1")
 
 
-class JobDeliveryFactory(LoomFactory[JobDelivery]):
+class JobDeliveryFactory(Factory[JobDelivery]):
     """A first delivery of :class:`~loom.testing.jobs.NoopJob`, with no time limit."""
 
     __set_as_default_factory_for_type__ = True
@@ -42,7 +42,7 @@ class JobDeliveryFactory(LoomFactory[JobDelivery]):
     timeout_s = Use(lambda: None)
 
 
-class SucceededFactory(LoomFactory[Succeeded]):
+class SucceededFactory(Factory[Succeeded]):
     """A job that finished with a result nothing asserts on."""
 
     __set_as_default_factory_for_type__ = True
@@ -50,7 +50,7 @@ class SucceededFactory(LoomFactory[Succeeded]):
     result = Use(lambda: "done")
 
 
-class FailedFactory(LoomFactory[Failed]):
+class FailedFactory(Factory[Failed]):
     """An attempt that failed with a runtime error."""
 
     __set_as_default_factory_for_type__ = True
@@ -58,7 +58,7 @@ class FailedFactory(LoomFactory[Failed]):
     error = Use(lambda: RuntimeError("boom"))
 
 
-class AbandonedFactory(LoomFactory[Abandoned]):
+class AbandonedFactory(Factory[Abandoned]):
     """A job given up without an error of its own."""
 
     __set_as_default_factory_for_type__ = True
