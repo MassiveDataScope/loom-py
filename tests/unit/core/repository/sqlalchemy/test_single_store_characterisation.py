@@ -45,6 +45,7 @@ from loom.stores.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
 )
+from loom.testing import make
 from tests.helpers.composition import ProjectFactory, fixture_project, uow_factory
 from tests.helpers.elevation import sink_for
 
@@ -365,7 +366,7 @@ class TestSingleStoreCharacterisation:
             assert current_scope() is None
             repository = application.kernel.container.resolve_repo(model)
             found = await repository.get_by_id(created_id)
-            page = await repository.list_paginated(PageParams(page=1, limit=10))
+            page = await repository.list_paginated(make(PageParams, page=1, limit=10))
 
         assert found is not None
         assert found.name == "kept"

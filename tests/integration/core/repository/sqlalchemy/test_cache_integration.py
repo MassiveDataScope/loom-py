@@ -24,7 +24,7 @@ from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import transactional
-from loom.testing import RepositoryIntegrationHarness, ScenarioDict
+from loom.testing import RepositoryIntegrationHarness, ScenarioDict, make
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview
 from tests.integration.fake_repo.product.schemas import CreateProduct, UpdateProduct
@@ -271,7 +271,7 @@ class TestCacheIntegration:
     ) -> None:
         # Arrange
         await integration_context.load(scenario_catalog_with_price_20)
-        page = PageParams(page=1, limit=2)
+        page = make(PageParams, page=1, limit=2)
 
         # Act / Assert
         with _spy_base_repo_method(cached_integration_repo, "list_paginated") as list_spy:
@@ -338,7 +338,7 @@ class TestCachedIndexRefillIntegration:
         scenario_catalog_with_price_20: ScenarioDict,
     ) -> None:
         await integration_context.load(scenario_catalog_with_price_20)
-        page = PageParams(page=1, limit=3)
+        page = make(PageParams, page=1, limit=3)
         warm = await cached_integration_repo.list_paginated(page)
         assert [item.id for item in warm.items] == [1, 2, 3]
         await self._evict_entities(cached_integration_repo, (1, 3))
@@ -366,7 +366,7 @@ class TestCachedIndexRefillIntegration:
         days = [date(2020, 1, 1) + timedelta(days=offset) for offset in range(3)]
         for offset, day in enumerate(days):
             await cached_dated_repo.create(CreateDatedEvent(id=day, label=f"e{offset}"))
-        page = PageParams(page=1, limit=3)
+        page = make(PageParams, page=1, limit=3)
         warm = await cached_dated_repo.list_paginated(page)
         assert [item.id for item in warm.items] == days
         await self._evict_entities(cached_dated_repo, days[:2])

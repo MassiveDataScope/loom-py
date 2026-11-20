@@ -18,8 +18,9 @@ from loom.core.stores.repository import (
     PaginationMode,
     QuerySpec,
 )
+from loom.testing import make
 
-_QUERY = QuerySpec(pagination=PaginationMode.CURSOR)
+_QUERY = make(QuerySpec, pagination=PaginationMode.CURSOR)
 _POSITION = Cursor(backend="sqlalchemy", keys=(), tie_breaker=1)
 _ENV = "CURSOR_KEY_TEST"
 

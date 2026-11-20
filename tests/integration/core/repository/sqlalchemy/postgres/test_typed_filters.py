@@ -23,6 +23,7 @@ from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec,
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
@@ -116,7 +117,10 @@ class TestTypedFilters:
         await repo.create(_SECOND)
 
         page = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec(field=field, op=op, value=value),)))
+            make(
+                QuerySpec,
+                filters=FilterGroup(filters=(FilterSpec(field=field, op=op, value=value),)),
+            )
         )
 
         assert [item.id for item in page.items] == [first.id]

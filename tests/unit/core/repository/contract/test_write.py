@@ -17,6 +17,7 @@ from loom.core.stores.repository import (
     Readable,
     Updatable,
 )
+from loom.testing import make
 
 from .conftest import SEED, BackendCase, CreateOrder, OrderStatus, UpdateOrder, require
 
@@ -63,7 +64,9 @@ class TestContractWrite:
     ) -> None:
         require(case, Creatable, Listable)
         await repository.create(_FIRST)
-        spec = QuerySpec(filters=FilterGroup(filters=(FilterSpec("priority", FilterOp.EQ, 0),)))
+        spec = make(
+            QuerySpec, filters=FilterGroup(filters=(FilterSpec("priority", FilterOp.EQ, 0),))
+        )
 
         found = await repository.list_with_query(spec)
 

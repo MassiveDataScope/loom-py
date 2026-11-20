@@ -35,6 +35,7 @@ from loom.core.stores.repository import (
 from loom.stores.mongo import repository as repository_module
 from loom.stores.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.repository import MongoRepository, SessionProvider
+from loom.testing import make
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
@@ -646,7 +647,7 @@ class TestListing:
         await _seed(repo, [("c", 1), ("a", 1), ("b", 2)])
 
         page = await repo.list_paginated(
-            PageParams(page=1, limit=1), FilterParams(filters={"views": 1})
+            make(PageParams, page=1, limit=1), FilterParams(filters={"views": 1})
         )
 
         assert [item.slug for item in page.items] == ["a"]
@@ -658,7 +659,8 @@ class TestListing:
     ) -> None:
         repo = _articles(collection)
         await _seed(repo, [("a", 5), ("b", 3), ("c", 9), ("d", 1)])
-        query = QuerySpec(
+        query = make(
+            QuerySpec,
             filters=FilterGroup(filters=(FilterSpec("views", FilterOp.GTE, 3),)),
             sort=(SortSpec("views", "DESC"),),
             limit=2,
@@ -676,7 +678,8 @@ class TestListing:
 class TestCursorPagination:
     @staticmethod
     def _query(cursor: str | None = None) -> QuerySpec:
-        return QuerySpec(
+        return make(
+            QuerySpec,
             sort=(SortSpec("views", "DESC"),),
             pagination=PaginationMode.CURSOR,
             limit=3,
@@ -736,14 +739,20 @@ class TestCursorPagination:
     ) -> None:
         repo = _notes(collection, ObjectIdPolicy())
         created = [await repo.create(NoteCreate(body=body)) for body in ("one", "two", "three")]
-        query = QuerySpec(sort=(SortSpec("id", "ASC"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(
+            QuerySpec, sort=(SortSpec("id", "ASC"),), pagination=PaginationMode.CURSOR, limit=2
+        )
 
         first = await repo.list_with_query(query)
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=query.sort, pagination=PaginationMode.CURSOR, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=query.sort,
+                pagination=PaginationMode.CURSOR,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -760,15 +769,18 @@ class TestCursorPagination:
         ]
 
         by_eq = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec("id", FilterOp.EQ, first.id),)))
+            make(QuerySpec, filters=FilterGroup(filters=(FilterSpec("id", FilterOp.EQ, first.id),)))
         )
         by_in = await repo.list_with_query(
-            QuerySpec(
-                filters=FilterGroup(filters=(FilterSpec("id", FilterOp.IN, (first.id, second.id)),))
+            make(
+                QuerySpec,
+                filters=FilterGroup(
+                    filters=(FilterSpec("id", FilterOp.IN, (first.id, second.id)),)
+                ),
             )
         )
         page = await repo.list_paginated(
-            PageParams(page=1, limit=10), FilterParams(filters={"id": second.id})
+            make(PageParams, page=1, limit=10), FilterParams(filters={"id": second.id})
         )
 
         assert isinstance(by_eq, PageResult)
@@ -786,14 +798,18 @@ class TestCursorPagination:
         await _seed(repo, [("a", 1), ("b", 1), ("c", 1)])
         sort = (SortSpec("slug", "DESC"),)
         first = await repo.list_with_query(
-            QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2)
+            make(QuerySpec, sort=sort, pagination=PaginationMode.CURSOR, limit=2)
         )
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
 
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=sort,
+                pagination=PaginationMode.CURSOR,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -815,14 +831,18 @@ class TestCursorPagination:
             )
             for n in (3, 1, 2)
         ]
-        query = QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(QuerySpec, sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
 
         first = await repo.list_with_query(query)
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=query.sort,
+                pagination=query.pagination,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -842,8 +862,8 @@ class TestCursorPagination:
     async def test_a_dotted_sort_field_is_refused_before_the_query(
         self, collection: FakeCollection
     ) -> None:
-        query = QuerySpec(
-            sort=(SortSpec("author.name"),), pagination=PaginationMode.CURSOR, limit=2
+        query = make(
+            QuerySpec, sort=(SortSpec("author.name"),), pagination=PaginationMode.CURSOR, limit=2
         )
 
         with pytest.raises(UnsupportedQuery, match="cannot order by 'author.name'"):
@@ -925,7 +945,7 @@ class TestSessions:
 _CALLS: dict[str, Callable[[MongoRepository[Article, str]], Awaitable[object]]] = {
     "get_by_id": lambda repo: repo.get_by_id("a"),
     "count": lambda repo: repo.count(),
-    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "list_paginated": lambda repo: repo.list_paginated(make(PageParams, page=1, limit=5)),
     "create": lambda repo: repo.create(ArticleCreate(slug="a", title="A")),
     "create_many": lambda repo: repo.create_many([ArticleCreate(slug="a", title="A")]),
     "update": lambda repo: repo.update("a", ArticleUpdate(title="B")),

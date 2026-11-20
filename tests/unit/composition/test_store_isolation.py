@@ -21,6 +21,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import PageParams
 from loom.stores.sqlalchemy.transactional import ForeignSessionError
+from loom.testing import make
 from tests.helpers.composition import composition_project, uow_factory
 
 
@@ -118,7 +119,7 @@ class TestStoreIsolation:
                 _NewInvoice(number="L-1")
             )
             page = await second.kernel.container.resolve_repo(AcmeIsolatedInvoice).list_paginated(
-                PageParams()
+                make(PageParams)
             )
 
         assert page.items == ()

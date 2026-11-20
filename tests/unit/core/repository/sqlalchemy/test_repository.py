@@ -17,6 +17,7 @@ from loom.core.stores.repository import (
 )
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 
 def _session_of(session_manager: Any) -> AsyncMock:
@@ -154,7 +155,7 @@ class TestRepositoryCoreReadFastPath:
         item_result.mappings.return_value = item_mappings
         mock_session.execute = AsyncMock(return_value=item_result)
 
-        page = await repo.list_paginated(PageParams(page=1, limit=10))
+        page = await repo.list_paginated(make(PageParams, page=1, limit=10))
 
         assert [getattr(item, "id", None) for item in page.items] == [1, 2]
         assert page.total_count == 2
@@ -179,7 +180,8 @@ class TestRepositoryCoreReadFastPath:
         mock_session.execute = AsyncMock(return_value=execute_result)
 
         page = await repo.list_with_query(
-            QuerySpec(
+            make(
+                QuerySpec,
                 sort=(SortSpec(field="id", direction="ASC"),),
                 pagination=PaginationMode.OFFSET,
                 limit=10,

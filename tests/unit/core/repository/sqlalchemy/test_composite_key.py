@@ -19,6 +19,7 @@ from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 from tests.unit.core.conftest import SessionManagerFactory
 
 _Key = tuple[int, int]
@@ -79,7 +80,7 @@ async def _walk(
     seen: list[_Key] = []
     cursor: str | None = None
     for _ in range(len(_SEED) + 1):
-        query = QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+        query = make(QuerySpec, sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
         result = await repository.list_with_query(query)
         assert isinstance(result, CursorResult)
         seen += [(item.account_id, item.id) for item in result.items]
@@ -108,14 +109,14 @@ class TestCursorPagination:
     async def test_token_with_a_single_key_value_is_rejected(
         self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
-        first_page = QuerySpec(pagination=PaginationMode.CURSOR, limit=2)
+        first_page = make(QuerySpec, pagination=PaginationMode.CURSOR, limit=2)
         token = _CODEC.encode(
             Cursor(backend="sqlalchemy", keys=(), tie_breaker=7),
             model=f"{_Entry.__module__}._Entry",
             query=first_page,
             scope="",
         )
-        query = QuerySpec(pagination=PaginationMode.CURSOR, limit=2, cursor=token)
+        query = make(QuerySpec, pagination=PaginationMode.CURSOR, limit=2, cursor=token)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
             await repository.list_with_query(query)
@@ -137,7 +138,9 @@ class TestCursorPagination:
             columns={},
         )
 
-        sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))
+        sql = str(
+            compiler.compile_offset(make(QuerySpec, sort=(SortSpec("rank", "DESC"),), limit=2))
+        )
 
         assert sql.split("ORDER BY", 1)[1].split("LIMIT")[0].strip() == (
             "composite_entries.rank DESC, composite_entries.account_id, composite_entries.id"
@@ -220,7 +223,7 @@ class TestEveryKeyColumn:
             [_CreateEntry(account_id=account, id=ident, rank=0) for account, ident in keys]
         )
 
-        page = await repository.list_paginated(PageParams(page=1, limit=10))
+        page = await repository.list_paginated(make(PageParams, page=1, limit=10))
 
         assert [(item.account_id, item.id) for item in page.items] == sorted(keys)
 

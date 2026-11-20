@@ -98,6 +98,7 @@ def _data_export(name: str) -> Any:
     try:
         data = importlib.import_module("loom.testing.data")
         importlib.import_module("loom.testing.job_factories")
+        importlib.import_module("loom.testing.store_factories")
     except ImportError as exc:
         raise ImportError(
             f"{name} requires polyfactory. Install loom-kernel[testing] to build test data."

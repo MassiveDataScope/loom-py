@@ -7,12 +7,13 @@ from typing import Any, TypeVar
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.stores.repository import BulkCreatable, Listable, PageParams
+from loom.testing import make
 
 from .conftest import SEED, BackendCase, CreateOrder, OrderStatus, UpdateOrder, require
 
 T = TypeVar("T")
 
-_FIRST_PAGE = PageParams(page=1, limit=20)
+_FIRST_PAGE = make(PageParams, page=1, limit=20)
 
 
 class _MemoryCache:

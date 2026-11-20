@@ -34,6 +34,7 @@ from loom.stores.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 _CODEC = CursorCodec(signing="ephemeral")
 
@@ -250,13 +251,14 @@ class TestEnumColumns:
         await repo.create(_CreateCase(state=_State.OPEN, level=_Level.LOW))
 
         stored = await repo.get_by_id(created.id)
-        query = QuerySpec(
+        query = make(
+            QuerySpec,
             filters=FilterGroup(
                 filters=(
                     FilterSpec("state", FilterOp.EQ, _State.CLOSED),
                     FilterSpec("level", FilterOp.EQ, _Level.HIGH),
                 )
-            )
+            ),
         )
         found = await repo.list_with_query(query)
         async with session_manager.engine.connect() as connection:
@@ -285,7 +287,9 @@ class TestUuidColumns:
         await repo.create(_CreateBadge(ref=_OTHER_REF))
 
         stored = await repo.get_by_id(created.id)
-        query = QuerySpec(filters=FilterGroup(filters=(FilterSpec("ref", FilterOp.EQ, _REF),)))
+        query = make(
+            QuerySpec, filters=FilterGroup(filters=(FilterSpec("ref", FilterOp.EQ, _REF),))
+        )
         found = await repo.list_with_query(query)
         async with session_manager.engine.connect() as connection:
             raw = await connection.execute(text("SELECT ref FROM typed_badges ORDER BY id"))
@@ -329,7 +333,8 @@ class TestUuidColumns:
         pages = 0
         while True:
             page = await repo.list_with_query(
-                QuerySpec(
+                make(
+                    QuerySpec,
                     sort=(SortSpec(field="ref", direction="DESC"),),
                     pagination=PaginationMode.CURSOR,
                     limit=2,
@@ -359,7 +364,7 @@ async def _lookup(
     if lookup == "exists_by":
         return await repo.exists_by(field, value)
     page = await repo.list_paginated(
-        PageParams(page=1, limit=10), FilterParams(filters={field: value})
+        make(PageParams, page=1, limit=10), FilterParams(filters={field: value})
     )
     return page.items
 
@@ -670,7 +675,10 @@ class TestFilterValues:
         dark = await repo.create(_CreateSwatch(shade=_Shade.DARK))
 
         page = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec(field="shade", op=op, value=value),)))
+            make(
+                QuerySpec,
+                filters=FilterGroup(filters=(FilterSpec(field="shade", op=op, value=value),)),
+            )
         )
 
         assert [item.id for item in page.items] == [dark.id]

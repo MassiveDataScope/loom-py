@@ -29,6 +29,7 @@ from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.schema import reset_registry
+from loom.testing import make
 from tests.helpers.celery import WorkerDouble, isolated_signals
 
 
@@ -62,7 +63,7 @@ class _PageThroughOrders(UseCase[_Order, list[list[str]]]):
         pages: list[list[str]] = []
         cursor: str | None = None
         while True:
-            query = QuerySpec(pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+            query = make(QuerySpec, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
             page = cast(CursorResult[_Order], await self.main_repo.list_with_query(query))
             pages.append([order.label for order in page.items])
             if not page.has_next:

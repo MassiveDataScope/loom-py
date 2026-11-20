@@ -28,12 +28,14 @@ from loom.core.stores.repository import (
     SortSpec,
 )
 from loom.core.stores.repository.cursor import register_cursor_codec
+from loom.testing import make
 
 _BACKEND = "sqlalchemy"
 _MODEL = "billing.Invoice"
 _SCOPE = "tenant-a"
 _INVALID = "cursor token is not valid"
-_QUERY = QuerySpec(
+_QUERY = make(
+    QuerySpec,
     sort=(SortSpec(field="created_at", direction="DESC"),),
     pagination=PaginationMode.CURSOR,
 )
@@ -88,7 +90,8 @@ def _at(*keys: object, tie_breaker: object = 1, backend: str = _BACKEND) -> Curs
 
 
 def _filtered(value: object) -> QuerySpec:
-    return QuerySpec(
+    return make(
+        QuerySpec,
         filters=FilterGroup(filters=(FilterSpec("status", FilterOp.EQ, value),)),
         sort=_QUERY.sort,
         pagination=PaginationMode.CURSOR,
@@ -280,7 +283,7 @@ _TYPED: dict[str, Any] = {
 
 
 def _sorted_by(field: str) -> QuerySpec:
-    return QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR)
+    return make(QuerySpec, sort=(SortSpec(field),), pagination=PaginationMode.CURSOR)
 
 
 class TestTypedValues:
@@ -501,7 +504,9 @@ class TestBinding:
     def test_a_cursor_issued_for_one_direction_is_refused_for_the_other(
         self, codec: CursorCodec
     ) -> None:
-        ascending = QuerySpec(sort=(SortSpec("created_at"),), pagination=PaginationMode.CURSOR)
+        ascending = make(
+            QuerySpec, sort=(SortSpec("created_at"),), pagination=PaginationMode.CURSOR
+        )
         token = _encode(codec, _at(1), query=ascending)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
@@ -512,8 +517,8 @@ class TestBinding:
     def test_a_cursor_issued_for_one_sort_field_is_refused_for_another(
         self, codec: CursorCodec
     ) -> None:
-        by_update = QuerySpec(
-            sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR
+        by_update = make(
+            QuerySpec, sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR
         )
         token = _encode(codec, _at(1), query=by_update)
 
@@ -561,7 +566,8 @@ class TestBinding:
         second = FilterSpec("total", FilterOp.GT, 10)
 
         def query(*filters: FilterSpec) -> QuerySpec:
-            return QuerySpec(
+            return make(
+                QuerySpec,
                 filters=FilterGroup(filters=filters),
                 sort=_QUERY.sort,
                 pagination=PaginationMode.CURSOR,
@@ -573,7 +579,7 @@ class TestBinding:
 
     def test_page_size_is_not_part_of_the_binding(self, codec: CursorCodec) -> None:
         token = _encode(codec, _at(1))
-        larger = QuerySpec(sort=_QUERY.sort, pagination=PaginationMode.CURSOR, limit=200)
+        larger = make(QuerySpec, sort=_QUERY.sort, pagination=PaginationMode.CURSOR, limit=200)
 
         assert _decode(codec, token, query=larger) == _at(1)
 

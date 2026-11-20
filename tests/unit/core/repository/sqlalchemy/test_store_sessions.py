@@ -33,6 +33,7 @@ from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import transactional
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.testing import make
 from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 
@@ -266,7 +267,7 @@ async def rows(sqlite_manager_for: SessionManagerFactory) -> SQLAlchemyRepositor
 _OPERATIONS = {
     "get_by_id": lambda repo: repo.get_by_id(1),
     "count": lambda repo: repo.count(),
-    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "list_paginated": lambda repo: repo.list_paginated(make(PageParams, page=1, limit=5)),
     "create": lambda repo: repo.create(_NewRow(name="b")),
     "create_many": lambda repo: repo.create_many([_NewRow(name="b")]),
     "update": lambda repo: repo.update(1, _RowUpdate(name="c")),

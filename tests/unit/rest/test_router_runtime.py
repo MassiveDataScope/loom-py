@@ -53,6 +53,7 @@ from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
 from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.testing import make
 
 # ---------------------------------------------------------------------------
 # Dummy use cases
@@ -237,7 +238,7 @@ class EntryFilterValuesUseCase(UseCase[_Entry, PageResult[_Entry]]):
         await asyncio.sleep(0)
         assert query.filters is not None
         FILTERS_SEEN.append(self.seen({spec.field: spec.value for spec in query.filters.filters}))
-        return build_page_result([], 0, PageParams(page=1, limit=1))
+        return build_page_result([], 0, make(PageParams, page=1, limit=1))
 
     def seen(self, values: dict[str, Any]) -> dict[str, Any]:
         return values
@@ -271,7 +272,7 @@ class EntrySortUseCase(UseCase[_Entry, PageResult[_Entry]]):
     async def execute(self, query: QuerySpec, **kwargs: Any) -> PageResult[_Entry]:
         await asyncio.sleep(0)
         SORTS_SEEN.append([[spec.field, spec.direction] for spec in query.sort])
-        return build_page_result([], 0, PageParams(page=1, limit=1))
+        return build_page_result([], 0, make(PageParams, page=1, limit=1))
 
 
 class DocUseCase(UseCase[Any, str]):

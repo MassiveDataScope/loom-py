@@ -12,6 +12,7 @@ from loom.stores.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 
 class _Row(BaseModel):
@@ -64,7 +65,7 @@ class TestPagePastTheEnd:
         self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         result = await repository.list_paginated(
-            PageParams(page=9, limit=2), FilterParams(filters={"rank": 3})
+            make(PageParams, page=9, limit=2), FilterParams(filters={"rank": 3})
         )
 
         assert (result.items, result.total_count, result.has_next) == ((), 2, False)
@@ -87,7 +88,9 @@ class TestOffsetOrdering:
             columns={},
         )
 
-        sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))
+        sql = str(
+            compiler.compile_offset(make(QuerySpec, sort=(SortSpec("rank", "DESC"),), limit=2))
+        )
 
         assert sql.split("ORDER BY", 1)[1].split("LIMIT")[0].strip() == (
             "offset_rows.rank DESC, offset_rows.id"

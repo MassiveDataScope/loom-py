@@ -29,6 +29,7 @@ from loom.stores.mongo.registry import (
 )
 from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions
+from loom.testing import make
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -124,7 +125,7 @@ class TestMongoRegistry:
         container = _container(FakeMongoClient())
         for slug in ("a", "b", "c"):
             await container.resolve(Creatable[Article]).create(ArticleCreate(slug=slug, title=slug))
-        query = QuerySpec(sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(QuerySpec, sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
         page = await container.resolve(Listable[Article]).list_with_query(query)
         assert isinstance(page, CursorResult)
         assert page.next_cursor is not None

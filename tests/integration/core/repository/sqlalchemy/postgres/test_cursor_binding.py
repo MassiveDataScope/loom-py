@@ -33,12 +33,15 @@ from loom.core.stores.repository import (
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
 _tenant: ContextVar[str] = ContextVar("_tenant", default="")
 _START = datetime(2026, 9, 6, 12, 0)
-_QUERY = QuerySpec(sort=(SortSpec(field="taken_at"),), pagination=PaginationMode.CURSOR, limit=2)
+_QUERY = make(
+    QuerySpec, sort=(SortSpec(field="taken_at"),), pagination=PaginationMode.CURSOR, limit=2
+)
 
 
 class Reading(BaseModel):
@@ -89,7 +92,13 @@ async def _page(
     repository: SQLAlchemyRepository[Reading, int], cursor: str | None
 ) -> CursorResult[Reading]:
     page = await repository.list_with_query(
-        QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=_QUERY.limit, cursor=cursor)
+        make(
+            QuerySpec,
+            sort=_QUERY.sort,
+            pagination=_QUERY.pagination,
+            limit=_QUERY.limit,
+            cursor=cursor,
+        )
     )
     assert isinstance(page, CursorResult)
     return page
@@ -193,7 +202,13 @@ class TestCursorBinding:
 
         with pytest.raises(UnsupportedQuery):
             await unsigned.list_with_query(
-                QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=2, cursor=forged)
+                make(
+                    QuerySpec,
+                    sort=_QUERY.sort,
+                    pagination=_QUERY.pagination,
+                    limit=2,
+                    cursor=forged,
+                )
             )
 
     async def test_a_cursor_issued_for_one_sort_is_refused_for_another(
@@ -202,8 +217,12 @@ class TestCursorBinding:
     ) -> None:
         cursor = (await _page(repository, None)).next_cursor
         assert cursor is not None
-        by_id = QuerySpec(
-            sort=(SortSpec(field="id"),), pagination=PaginationMode.CURSOR, limit=2, cursor=cursor
+        by_id = make(
+            QuerySpec,
+            sort=(SortSpec(field="id"),),
+            pagination=PaginationMode.CURSOR,
+            limit=2,
+            cursor=cursor,
         )
 
         with pytest.raises(UnsupportedQuery):
@@ -227,7 +246,8 @@ class TestCursorBinding:
 
         try:
             second = await cached.list_with_query(
-                QuerySpec(
+                make(
+                    QuerySpec,
                     sort=_QUERY.sort,
                     pagination=_QUERY.pagination,
                     limit=_QUERY.limit,

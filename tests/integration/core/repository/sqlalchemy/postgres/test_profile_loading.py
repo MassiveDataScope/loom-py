@@ -14,6 +14,7 @@ from loom.core.stores.repository import CursorCodec, PageParams
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
@@ -75,7 +76,7 @@ _SEED = (
     "INSERT INTO loom_it_pl_watchers VALUES (1, 1, 'ann')",
 )
 
-_PAGE = PageParams(limit=20)
+_PAGE = make(PageParams, limit=20)
 
 
 class StatementLog:
