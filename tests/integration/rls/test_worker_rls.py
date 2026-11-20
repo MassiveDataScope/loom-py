@@ -84,7 +84,7 @@ async def _through_the_api(config: str, subject: str) -> list[str]:
     token = set_identity(Identity(subject=subject))
     try:
         async with application.running():
-            return list(await application.kernel.app.invoke(ListNoteBodies))
+            return list(await application.kernel.invoker.invoke(ListNoteBodies))
     finally:
         reset_identity(token)
 

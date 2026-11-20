@@ -709,7 +709,7 @@ class TestInvocation:
 
     def test_refuses_the_build_when_the_container_holds_a_bound_invoker(self) -> None:
         kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
-        kernel.container.register_instance(ApplicationInvoker, kernel.app.for_identity(ANALYST))
+        kernel.container.register_instance(ApplicationInvoker, kernel.invoker.for_identity(ANALYST))
         capabilities = (usecase_capability(),)
         model = ScriptedToolModel(calls=())
         deps = CapabilityDepsFactory()
@@ -1845,7 +1845,7 @@ class TestIdentityReachesTheExecutor:
             capabilities=(whoami_capability(),),
             model=model,
             container=kernel.container,
-            deps=AgentDepsFactory(kernel.app),
+            deps=AgentDepsFactory(kernel.invoker),
         )
         return engine, model
 
@@ -1893,7 +1893,7 @@ class TestTheRuntimeStartChecksTheInvoker:
 
     async def test_refuses_an_invoker_bound_after_the_kernel_was_created(self) -> None:
         kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
-        kernel.container.register_instance(ApplicationInvoker, kernel.app.for_identity(ANALYST))
+        kernel.container.register_instance(ApplicationInvoker, kernel.invoker.for_identity(ANALYST))
         provider = CountingEngineProvider()
 
         with pytest.raises(AgentCompilationError) as failure:

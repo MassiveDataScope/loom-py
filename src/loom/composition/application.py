@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from loom.composition._ai import AiWiring
     from loom.composition._sql import SqlWiring
-    from loom.core.bootstrap.kernel import KernelRuntime
+    from loom.core.bootstrap.kernel import Kernel
     from loom.core.config import ConfigContext
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
@@ -46,7 +46,7 @@ class Application:
         resources: What the application owns, in any order.
     """
 
-    kernel: KernelRuntime
+    kernel: Kernel
     config: ConfigContext
     environment: Environment
     code_path: Path

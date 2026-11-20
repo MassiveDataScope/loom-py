@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from loom.composition import Application, phases
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
@@ -46,7 +46,7 @@ class TestRegistrationResults:
     def test_nothing_binds_after_the_registration_phase(
         self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        registered: list[KernelRuntime] = []
+        registered: list[Kernel] = []
         bound: dict[BindingKey, object] = {}
         register = phases.register
 
@@ -75,5 +75,5 @@ class TestRegistrationResults:
 
         user = kernel.container.resolve(AcmeKernelUser)
         assert user.executor is kernel.executor
-        assert user.invoker is kernel.app
+        assert user.invoker is kernel.invoker
         assert user.registry is kernel.registry

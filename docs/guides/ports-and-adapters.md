@@ -370,7 +370,8 @@ Known debt:
 | Execution plan | `ExecutionPlan(agent_bindings=..., mcp_bindings=...)` | `ExecutionPlan(execution_bindings=...)` with `ExecutionBinding` entries; the two properties still read. |
 | `Scope.REQUEST` | A new instance per `resolve` | One instance per execution, shared by its tasks; a nested execution gets its own. |
 | Re-registering a key | Built instances kept | The key's built instance is dropped and every binding is recompiled at its next resolve. |
-| Deprecated bootstrap | `bootstrap_app(...)`; `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`. Both old forms emit `DeprecationWarning`. |
+| Kernel builder | `bootstrap_app(...)` returning `BootstrapResult`; `KernelRuntime`; `kernel.app` | `create_kernel(...)` returning `Kernel`, the only builder; the invoker is `kernel.invoker`. `loom.composition.create_app(...)` composes a whole application. |
+| Bare factory | `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`; the bare form emits `DeprecationWarning`. |
 | Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.project.load_application_config`, `loom.composition.project.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
 | Runtime events | `RuntimeEvent(status="success")` | `RuntimeEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
 | Compute and rule steps | Telling `ComputeStep` from `RuleStep` by type | Both are `CommandStep`; read the plan field holding them (`compute_steps`, `rule_steps`). |

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from loom.composition.resources import Resource, ResourceKind
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
@@ -113,7 +113,7 @@ class AiWiring:
         cls,
         ctx: ConfigContext,
         *,
-        kernel: KernelRuntime,
+        kernel: Kernel,
         sql_cfg: SqlConfig | None,
         code_path: pathlib.Path,
         agent_specs: tuple[str, ...],
@@ -172,7 +172,7 @@ class AiWiring:
             engine_provider=provider,
             registry=kernel.registry,
             container=kernel.container,
-            deps=AgentDepsFactory(kernel.app),
+            deps=AgentDepsFactory(kernel.invoker),
             sql=sql_cfg,
             use_case_mcp=grants,
         )
@@ -191,7 +191,7 @@ class AiWiring:
             return None
         return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime)
 
-    def bind_resolvers(self, kernel: KernelRuntime) -> None:
+    def bind_resolvers(self, kernel: Kernel) -> None:
         """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`runtime`, if any.
 
         Args:

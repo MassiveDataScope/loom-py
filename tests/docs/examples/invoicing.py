@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from loom.core.bootstrap import KernelRuntime, create_kernel
+from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity
 from loom.core.use_case import Caller, UseCase
@@ -58,7 +58,7 @@ class AcmeConfig:
     """The application's configuration object."""
 
 
-def invoicing_kernel(*modules: Callable[[LoomContainer], None]) -> KernelRuntime:
+def invoicing_kernel(*modules: Callable[[LoomContainer], None]) -> Kernel:
     """Build a kernel serving ``IssueInvoice``, with ``invoicing_module`` and *modules* after it."""
     return create_kernel(
         config=AcmeConfig(),
@@ -67,8 +67,8 @@ def invoicing_kernel(*modules: Callable[[LoomContainer], None]) -> KernelRuntime
     )
 
 
-async def issue_as(kernel: KernelRuntime, caller: Identity, invoice_id: str) -> str:
+async def issue_as(kernel: Kernel, caller: Identity, invoice_id: str) -> str:
     """Run ``IssueInvoice`` as *caller*: an explicit identity for this call."""
-    return await kernel.app.for_identity(caller).invoke(
+    return await kernel.invoker.for_identity(caller).invoke(
         IssueInvoice, params={"invoice_id": invoice_id}
     )

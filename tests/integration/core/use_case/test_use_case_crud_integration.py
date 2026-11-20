@@ -7,7 +7,7 @@ from typing import cast
 import msgspec
 import pytest
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.command import Command, Patch
 from loom.core.config.loader import load_config, section
 from loom.core.di.container import LoomContainer
@@ -153,7 +153,7 @@ class TestUseCaseCrudIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[
                 CreateProductUseCase,
@@ -200,7 +200,7 @@ class TestUseCaseCrudIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
@@ -221,7 +221,7 @@ class TestUseCaseCrudIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
@@ -247,7 +247,7 @@ class TestUseCaseCrudIntegration:
             ),
             cache=_CacheSettings(backend="redis", ttl_seconds=120),
         )
-        result = bootstrap_app(config=config, use_cases=[ReadTypedConfigUseCase])
+        result = create_kernel(config=config, use_cases=[ReadTypedConfigUseCase])
         executor = RuntimeExecutor(result.compiler)
 
         use_case = result.factory.build(ReadTypedConfigUseCase)
@@ -285,7 +285,7 @@ class TestUseCaseCrudIntegration:
         raw_cfg = load_config(str(config_file))
         typed_cfg = section(raw_cfg, "app", _IntegrationAppConfig)
 
-        result = bootstrap_app(config=typed_cfg, use_cases=[ReadTypedConfigUseCase])
+        result = create_kernel(config=typed_cfg, use_cases=[ReadTypedConfigUseCase])
         executor = RuntimeExecutor(result.compiler)
         use_case = result.factory.build(ReadTypedConfigUseCase)
         snapshot = await executor.execute(use_case)

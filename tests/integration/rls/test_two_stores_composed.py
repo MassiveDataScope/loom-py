@@ -296,7 +296,7 @@ async def application(two_stores: TwoStores) -> AsyncIterator[Application]:
 
 def _as(application: Application, subject: str) -> Any:
     identity = Identity(subject=subject, attributes={"tenant": TENANT[subject]})
-    return application.kernel.app.for_identity(identity)
+    return application.kernel.invoker.for_identity(identity)
 
 
 @pytest.fixture

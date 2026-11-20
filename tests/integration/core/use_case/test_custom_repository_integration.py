@@ -7,7 +7,7 @@ from typing import Any, Protocol, cast
 
 import pytest
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
@@ -137,7 +137,7 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase),
             modules=[_repo_module(integration_context)],
@@ -160,7 +160,7 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase, FindProductByNameUseCase),
             modules=[_repo_module(integration_context)],
@@ -184,7 +184,7 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase, GetProductIdByNameJob),
             modules=[_repo_module(integration_context)],
@@ -207,7 +207,7 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[GetTaskViewUseCase],
             modules=[_logical_repo_module(integration_context)],
@@ -226,7 +226,7 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[GetBuilderTaskViewUseCase],
             modules=[_builder_logical_repo_module(integration_context)],

@@ -10,7 +10,7 @@ import pytest
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._handle import AgentMarkerResolver, McpMarkerResolver
-from loom.core.bootstrap import KernelRuntime, create_kernel
+from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.di import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
@@ -87,7 +87,7 @@ class AcmeConfig:
 
 
 @pytest.fixture
-def kernel(agent_resolver: AgentMarkerResolver, mcp_resolver: McpMarkerResolver) -> KernelRuntime:
+def kernel(agent_resolver: AgentMarkerResolver, mcp_resolver: McpMarkerResolver) -> Kernel:
     gates = AcmeGates()
 
     def module(container: LoomContainer) -> None:
@@ -104,14 +104,14 @@ def kernel(agent_resolver: AgentMarkerResolver, mcp_resolver: McpMarkerResolver)
 
 
 class TestASingletonAdapterHoldingHandles:
-    def test_is_built_at_startup_with_the_call_time_resolvers(self, kernel: KernelRuntime) -> None:
+    def test_is_built_at_startup_with_the_call_time_resolvers(self, kernel: Kernel) -> None:
         advisor = kernel.container.resolve(AcmeAdvisor)
 
         assert advisor is kernel.container.resolve(AcmeAdvisor)
 
     async def test_interleaved_executions_each_act_as_themselves(
         self,
-        kernel: KernelRuntime,
+        kernel: Kernel,
         runtime: AgentRuntime,
         engine: AcmeEngine,
         session: RecordingMcpSession,
@@ -130,7 +130,7 @@ class TestASingletonAdapterHoldingHandles:
         assert len(session.calls) == 2
 
     async def test_its_handles_fail_closed_outside_any_execution(
-        self, kernel: KernelRuntime, runtime: AgentRuntime
+        self, kernel: Kernel, runtime: AgentRuntime
     ) -> None:
         advisor = kernel.container.resolve(AcmeAdvisor)
 

@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
@@ -118,7 +118,7 @@ def _build_app(db_path: Path, codec: CursorCodec | None = None) -> FastAPI:
     reset_registry()
     compile_all(AutoProduct)
 
-    result = bootstrap_app(
+    result = create_kernel(
         config={"name": "test"},
         use_cases=use_cases,
         modules=[_make_register_repos(session_manager, codec or CursorCodec(signing="ephemeral"))],
@@ -155,7 +155,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
         store=DEFAULT_STORE,
     )
 
-    result = bootstrap_app(
+    result = create_kernel(
         config={"name": "logical-test"},
         use_cases=(GetTaskViewUseCase,),
         modules=[

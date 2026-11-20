@@ -114,8 +114,8 @@ class TestUseCaseInvoker:
             modules=[_module_for(repo)],
         )
 
-        result_by_type = await runtime.app.invoke(_EchoUseCase, payload={"value": "ok"})
-        result_by_name = await runtime.app.invoke_name("demo.echo", payload={"value": "ok2"})
+        result_by_type = await runtime.invoker.invoke(_EchoUseCase, payload={"value": "ok"})
+        result_by_name = await runtime.invoker.invoke_name("demo.echo", payload={"value": "ok2"})
 
         assert result_by_type == "ok"
         assert result_by_name == "ok2"
@@ -147,4 +147,4 @@ class TestUseCaseInvoker:
     async def test_invoke_name_raises_for_missing_key(self) -> None:
         runtime = create_kernel(config=object(), use_cases=[_EchoUseCase])
         with pytest.raises(KeyError, match="not registered"):
-            await runtime.app.invoke_name("missing:key", payload={})
+            await runtime.invoker.invoke_name("missing:key", payload={})

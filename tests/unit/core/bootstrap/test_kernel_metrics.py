@@ -1,12 +1,13 @@
-"""Tests for metrics wiring through bootstrap → create_fastapi_app."""
+"""Tests for metrics wiring through create_kernel → create_fastapi_app."""
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
@@ -18,19 +19,19 @@ class _Model(LoomStruct):
     id: int
 
 
-class _SimpleUseCase(UseCase[_Model, None]):
+class _SimpleUseCase(UseCase[Any, None]):
     async def execute(self) -> None:
         return None
 
 
-class TestBootstrapResultCarriesMetrics:
+class TestKernelCarriesMetrics:
     def test_metrics_none_by_default(self) -> None:
-        result = bootstrap_app(config=object(), use_cases=[_SimpleUseCase])
+        result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
         assert result.metrics is None
 
     def test_metrics_stored_when_provided(self) -> None:
         adapter = MagicMock(spec=MetricsAdapter)
-        result = bootstrap_app(
+        result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],
             metrics=adapter,
@@ -40,7 +41,7 @@ class TestBootstrapResultCarriesMetrics:
 
 class TestCreateFastapiAppWiresMetrics:
     async def test_executor_receives_metrics_adapter(self) -> None:
-        """bootstrap_app must register RuntimeExecutor with the metrics adapter."""
+        """create_kernel must register RuntimeExecutor with the metrics adapter."""
         pytest.importorskip("fastapi")
 
         from loom.rest.compiler import RouteSources
@@ -55,7 +56,7 @@ class TestCreateFastapiAppWiresMetrics:
                 self.kinds.append(event.kind)
 
         adapter = _Adapter()
-        result = bootstrap_app(
+        result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],
             metrics=adapter,
@@ -78,7 +79,7 @@ class TestCreateFastapiAppWiresMetrics:
         from loom.rest.fastapi.app import create_fastapi_app
         from loom.rest.model import RestInterface, RestRoute
 
-        result = bootstrap_app(config=object(), use_cases=[_SimpleUseCase])
+        result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
         shared_executor = result.container.resolve(RuntimeExecutor)
 
         class _Iface(RestInterface[_Model]):

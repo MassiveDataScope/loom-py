@@ -94,13 +94,13 @@ class TestRepositoryCatalogJob:
         self, application: Application, databases: tuple[Path, Path]
     ) -> None:
         async with application.running():
-            first = await application.kernel.app.invoke(
+            first = await application.kernel.invoker.invoke(
                 AcmeWriteRows, payload={"table": "catalog_flow_orders", "ids": [1, 2]}
             )
-            second = await application.kernel.app.invoke(
+            second = await application.kernel.invoker.invoke(
                 AcmeWriteRows, payload={"table": "catalog_flow_orders", "ids": [2, 3]}
             )
-            other = await application.kernel.app.invoke(
+            other = await application.kernel.invoker.invoke(
                 AcmeWriteRows, payload={"table": "catalog_flow_refunds", "ids": [9]}
             )
 

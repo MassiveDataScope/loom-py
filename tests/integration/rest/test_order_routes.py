@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 import msgspec
 from fastapi.testclient import TestClient
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.errors import NotFound, RateLimited
@@ -169,7 +169,7 @@ def _client(tokens: int = 10) -> TestClient:
         container.register_instance(OrderBudget, OrderBudget(tokens))
 
     modules: list[Callable[[LoomContainer], None]] = [register]
-    result = bootstrap_app(
+    result = create_kernel(
         config=_Config(), use_cases=[ListOrders, CreateOrder, CancelOrder], modules=modules
     )
     app = create_fastapi_app(

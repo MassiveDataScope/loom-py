@@ -86,7 +86,7 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
     try:
         async with built.running():
             yield Composed(
-                app=cast(AppInvoker, built.kernel.app),
+                app=cast(AppInvoker, built.kernel.invoker),
                 manager=built.kernel.container.resolve(SessionManager),
                 sink=built.kernel.container.resolve(ElevationSink),
                 bodies_sql=f"SELECT string_agg(body, ',' ORDER BY body) FROM {schema}.notes",

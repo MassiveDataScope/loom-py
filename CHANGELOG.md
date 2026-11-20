@@ -2,6 +2,16 @@
 
 ## 💥 Breaking
 
+- **core:** `create_kernel(...)` is the only way to build the application core.
+  `bootstrap_app` and `BootstrapResult` are removed, and `KernelRuntime` is
+  `Kernel`: its own frozen dataclass (no longer a subclass of the bootstrap
+  result) holding `container`, `compiler`, `factory`, `executor`, `registry`,
+  `invoker` and an optional `metrics`. `create_fastapi_app` takes a `Kernel`
+  and no longer checks at run time for a registered executor.
+  **Migration:** `bootstrap_app(config, use_cases=...)` becomes
+  `create_kernel(config=config, use_cases=...)` (it also verifies the use cases'
+  dependencies), `KernelRuntime` becomes `Kernel`, and `kernel.app` becomes
+  `kernel.invoker`.
 - **jobs:** group callbacks are removed: `dispatch_parallel(jobs)` takes no
   `on_all_success` or `on_any_failure` (the inline and recording transports
   accepted them and never called them, Celery refused them), `JobGroup.then()`

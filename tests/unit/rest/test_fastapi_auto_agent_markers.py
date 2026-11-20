@@ -19,7 +19,7 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.composition._ai import AiWiring
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -152,8 +152,8 @@ class TestAgentMarkerProblemsAreReportedTogether:
         }
 
 
-def _kernel_runtime() -> KernelRuntime:
-    """Build a real, minimal ``KernelRuntime`` — every collaborator genuine, none stubbed.
+def _kernel_runtime() -> Kernel:
+    """Build a real, minimal ``Kernel`` — every collaborator genuine, none stubbed.
 
     ``SqlQueryService`` is registered the same way ``create_app`` always
     registers it, before ``AiWiring.bind_resolvers`` ever runs: that
@@ -167,14 +167,14 @@ def _kernel_runtime() -> KernelRuntime:
     factory = UseCaseFactory(container)
     executor = RuntimeExecutor(compiler, resolvers=container.kinds)
     registry = UseCaseRegistry.build([])
-    app = AppInvoker(factory=factory, executor=executor, registry=registry)
-    return KernelRuntime(
+    invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
+    return Kernel(
         container=container,
         compiler=compiler,
         factory=factory,
         executor=executor,
         registry=registry,
-        app=app,
+        invoker=invoker,
     )
 
 

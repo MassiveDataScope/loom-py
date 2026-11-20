@@ -18,7 +18,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic.alias_generators import to_camel
 
-from loom.core.bootstrap.bootstrap import BootstrapResult, bootstrap_app
+from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.command import Command, Internal
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -425,8 +425,8 @@ class _FakeConfig:
     debug: bool = False
 
 
-def _bootstrap(*use_cases: type[UseCase[Any, Any]]) -> BootstrapResult:
-    return bootstrap_app(config=_FakeConfig(), use_cases=list(use_cases))
+def _bootstrap(*use_cases: type[UseCase[Any, Any]]) -> Kernel:
+    return create_kernel(config=_FakeConfig(), use_cases=list(use_cases))
 
 
 class TestRoutesArgument:
@@ -1343,7 +1343,7 @@ class TestCreateFastApiApp:
             container.register(_token, lambda: _repo, scope=Scope.APPLICATION)
             container.register_repo(_ExistsUserRecord, _token)
 
-        result = bootstrap_app(
+        result = create_kernel(
             config=_FakeConfig(),
             use_cases=[_ExistsCheckEmailUseCase],
             modules=[_register_repo],

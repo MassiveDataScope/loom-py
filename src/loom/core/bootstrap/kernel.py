@@ -1,8 +1,8 @@
-"""Shared kernel runtime assembly for transport adapters.
+"""The kernel of an application, built once for every transport adapter.
 
-This module builds a reusable runtime composed of container, compiler,
-factory, and executor. Transport adapters (REST, Celery, CLI) can consume
-the same runtime without duplicating bootstrap logic.
+A :class:`Kernel` holds the container, compiler, factory, executor, registry
+and invoker. Transport adapters (REST, Celery, CLI) consume the same kernel
+without duplicating bootstrap logic.
 
 :func:`create_kernel` is the public entry point. :func:`seeded_container`
 and :meth:`KernelRecipe.install` are its steps.
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.authz.elevation import ElevationSink
-from loom.core.bootstrap.bootstrap import BootstrapError, BootstrapResult
+from loom.core.bootstrap.bootstrap import BootstrapError
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
@@ -43,21 +43,29 @@ KERNEL_KEYS: tuple[BindingKey, ...] = (
 
 
 @dataclass(frozen=True, kw_only=True)
-class KernelRuntime(BootstrapResult):
-    """Reusable application runtime: the bootstrap result plus its executor and invoker.
+class Kernel:
+    """The compiled core of an application, the same under every runtime.
 
     Attributes:
+        container: Validated DI container with all bindings resolved.
+        compiler: Use-case compiler with all plans cached.
+        factory: Factory for constructing use-case instances per request.
         executor: Runtime executor shared by transport adapters.
         registry: Read-only use-case registry for name-based resolution.
-        app: App-level invoker facade, bound to no identity: each use case it
-            invokes acts as the identity acting where it is called;
+        invoker: App-level invoker facade, bound to no identity: each use case
+            it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
+        metrics: Optional metrics adapter the executor reports to.
     """
 
+    container: LoomContainer
+    compiler: UseCaseCompiler
+    factory: UseCaseFactory
     executor: RuntimeExecutor
     registry: UseCaseRegistry
-    app: AppInvoker
+    invoker: AppInvoker
+    metrics: MetricsAdapter | None = None
 
 
 def create_kernel(
@@ -72,8 +80,8 @@ def create_kernel(
     environment: Environment | str | None = None,
     agent_resolver: ExecutionResolver | None = None,
     mcp_resolver: ExecutionResolver | None = None,
-) -> KernelRuntime:
-    """Create a shared kernel runtime for application adapters.
+) -> Kernel:
+    """Create the kernel of an application: the one way to build its core.
 
     Registers *config* and the environment in a new container, runs
     *modules*, adds the kernel (:meth:`KernelRecipe.install`), validates
@@ -104,7 +112,7 @@ def create_kernel(
             bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`.
 
     Returns:
-        Fully built :class:`KernelRuntime`.
+        Fully built :class:`Kernel`.
 
     Raises:
         ConfigError: When *environment* is not an environment; raised as is.
@@ -232,7 +240,7 @@ class KernelRecipe:
         declare_kinds(container.kinds)
         return container
 
-    def install(self, container: LoomContainer) -> KernelRuntime:
+    def install(self, container: LoomContainer) -> Kernel:
         """Compile the use cases and register the kernel's keys in the filled *container*.
 
         Registers :class:`~loom.core.use_case.factory.UseCaseFactory`, one
@@ -247,35 +255,36 @@ class KernelRecipe:
         Raises:
             CompilationError: When a use case does not compile.
         """
-        kinds = container.kinds
-        base = self._install_use_cases(container)
+        compiler, factory = self._install_use_cases(container)
         executor = RuntimeExecutor(
-            base.compiler,
+            compiler,
             coordinator=self.coordinator,
             metrics=self.metrics,
             repo_resolver=self.repo_resolver or container.resolve_repo,
-            resolvers=kinds,
-            builder=base.factory.build,
+            resolvers=container.kinds,
+            builder=factory.build,
             elevation_sink=container.resolve_or_none(ElevationSink),
             agent_resolver=self.agent_resolver,
             mcp_resolver=self.mcp_resolver,
         )
         registry = UseCaseRegistry.build(list(self.use_cases))
-        app = AppInvoker(factory=base.factory, executor=executor, registry=registry)
+        invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
         container.register_instance(RuntimeExecutor, executor)
         container.register_instance(UseCaseRegistry, registry)
-        container.register_instance(ApplicationInvoker, app)
-        return KernelRuntime(
+        container.register_instance(ApplicationInvoker, invoker)
+        return Kernel(
             container=container,
-            compiler=base.compiler,
-            factory=base.factory,
-            metrics=self.metrics,
+            compiler=compiler,
+            factory=factory,
             executor=executor,
             registry=registry,
-            app=app,
+            invoker=invoker,
+            metrics=self.metrics,
         )
 
-    def _install_use_cases(self, container: LoomContainer) -> BootstrapResult:
+    def _install_use_cases(
+        self, container: LoomContainer
+    ) -> tuple[UseCaseCompiler, UseCaseFactory]:
         """Compile the use cases and register their :class:`UseCaseFactory` in *container*.
 
         Raises:
@@ -289,6 +298,4 @@ class KernelRecipe:
         for use_case in self.use_cases:
             factory.register(use_case)
         container.register_instance(UseCaseFactory, factory)
-        return BootstrapResult(
-            container=container, compiler=compiler, factory=factory, metrics=self.metrics
-        )
+        return compiler, factory

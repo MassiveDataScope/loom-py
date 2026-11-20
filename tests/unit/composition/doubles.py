@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -27,8 +27,8 @@ class AcmePingJob(Job[int]):
         return 1
 
 
-def kernel_runtime(*use_case_types: type[UseCase[Any, Any]]) -> KernelRuntime:
-    """Build a real, minimal ``KernelRuntime`` with the given use cases compiled."""
+def kernel_runtime(*use_case_types: type[UseCase[Any, Any]]) -> Kernel:
+    """Build a real, minimal ``Kernel`` with the given use cases compiled."""
     container = LoomContainer()
     compiler = UseCaseCompiler()
     for uc in use_case_types:
@@ -38,12 +38,12 @@ def kernel_runtime(*use_case_types: type[UseCase[Any, Any]]) -> KernelRuntime:
         factory.register(uc)
     executor = RuntimeExecutor(compiler)
     registry = UseCaseRegistry.build(list(use_case_types))
-    app = AppInvoker(factory=factory, executor=executor, registry=registry)
-    return KernelRuntime(
+    invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
+    return Kernel(
         container=container,
         compiler=compiler,
         factory=factory,
         executor=executor,
         registry=registry,
-        app=app,
+        invoker=invoker,
     )
