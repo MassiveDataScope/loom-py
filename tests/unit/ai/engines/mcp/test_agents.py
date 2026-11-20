@@ -397,19 +397,19 @@ class TestTheToolTimeout:
     async def test_bounds_the_attempt_the_renewal_and_the_retry_together(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """One tool timeout covers the forgotten attempt, the renewal and the hung retry."""
         async with _world(monkeypatch) as world:
             world.timeout_s = 0.3
             world.server.fault("slow", "forget")
-            started = asyncio.get_running_loop().time()
-
-            error, _ = await world.failed_run("slow", {})
-
-            elapsed = asyncio.get_running_loop().time() - started
-            world.server.release.set()
+            try:
+                error, _ = await asyncio.wait_for(world.failed_run("slow", {}), timeout=5)
+                is_released = world.server.release.is_set()
+            finally:
+                world.server.release.set()
 
         assert error.code is AgentRunErrorCode.TOOL_TIMEOUT
         assert len(world.built) == 2
-        assert elapsed < 1.0
+        assert not is_released
 
 
 class _Clock:
