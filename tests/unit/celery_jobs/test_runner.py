@@ -12,6 +12,7 @@ from celery import Celery
 from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
+from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task
 from loom.core.engine.events import EventKind
 from loom.core.errors import (
@@ -228,11 +229,42 @@ class TestEagerRequest:
 
         assert worker.run(DoubleJob, eager=True, params={"value": 3}) == 6
 
+    def test_an_eager_request_of_a_job_with_a_time_limit_runs_within_it(self) -> None:
+        worker = CeleryWorker(initialized=False)
+
+        assert worker.run(UpperJob, eager=True, params={"msg": "ok"}) == "OK"
+
     def test_a_request_without_the_bridge_that_is_not_eager_is_refused(self) -> None:
         worker = CeleryWorker(initialized=False)
 
         with pytest.raises(RuntimeError, match="async bridge is not initialized"):
-            worker.run(DoubleJob)
+            worker.run(DoubleJob, params={"value": 1})
+
+    @pytest.mark.parametrize(("always_eager", "runs"), [(True, True), (False, False)])
+    def test_a_request_that_does_not_say_follows_the_eager_setting_of_the_application(
+        self, always_eager: bool, runs: bool
+    ) -> None:
+        worker = CeleryWorker(initialized=False)
+        worker.broker.app.conf.task_always_eager = always_eager
+
+        if runs:
+            assert worker.run(DoubleJob, eager=None, params={"value": 2}) == 4
+        else:
+            with pytest.raises(RuntimeError, match="async bridge is not initialized"):
+                worker.run(DoubleJob, eager=None, params={"value": 2})
+
+
+class TestWorkerThatDidNotOpen:
+    def test_every_task_of_the_process_fails_without_running_the_job(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.runtime.refuse(RuntimeError("clickhouse unreachable"))
+
+        with pytest.raises(WorkerNotOpenError) as refused:
+            worker.run(TraceJob)
+
+        assert isinstance(refused.value.__cause__, RuntimeError)
+        assert TraceJob.seen == []
 
 
 class TestRetry:

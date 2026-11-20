@@ -294,7 +294,7 @@ class CeleryWorker:
         job_type: type[Job[Any]],
         *,
         attempt: int = 1,
-        eager: bool = False,
+        eager: bool | None = False,
         observability_runtime: ObservabilityRuntime | None = None,
         **kwargs: Any,
     ) -> Any:
@@ -303,7 +303,7 @@ class CeleryWorker:
         Args:
             job_type: The job the task runs.
             attempt: The attempt the request carries; postponements add retries to it.
-            eager: Whether the request is eager.
+            eager: Whether the request is eager; ``None`` for a request that does not say.
             observability_runtime: What opens the job's span.
             **kwargs: The task's keyword arguments: ``payload``, ``params``,
                 ``trace_id``, ``identity``, ``postponements``, ``failure_callback``.
