@@ -124,3 +124,30 @@ class TestMakeRegressions:
         first = make(_Registered)
 
         assert [make(_Registered) for _ in range(3)] == [first, first, first]
+
+
+class _Laddered(msgspec.Struct, frozen=True):
+    name: str
+    ladder: tuple[str, ...] = ()
+
+
+class _LadderedFactory(LoomFactory[_Laddered]):
+    __set_as_default_factory_for_type__ = True
+    __use_defaults__ = True
+
+    ladder = Use(lambda: ("plain",))
+
+
+class _ChildLadderedFactory(_LadderedFactory):
+    pass
+
+
+class TestDeclaredFieldsWinOverDefaults:
+    def test_a_declared_field_wins_over_the_model_default(self) -> None:
+        assert make(_Laddered).ladder == ("plain",)
+
+    def test_a_field_declared_on_a_parent_factory_still_wins(self) -> None:
+        assert _ChildLadderedFactory.build().ladder == ("plain",)
+
+    def test_a_given_value_wins_over_the_declared_field(self) -> None:
+        assert make(_Laddered, ladder=("given",)).ladder == ("given",)

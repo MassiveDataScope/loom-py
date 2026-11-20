@@ -51,6 +51,27 @@ class LoomFactory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: 
         return super(DataclassFactory, cls).get_model_fields()
 
     @classmethod
+    def should_use_default_value(cls, field_meta: FieldMeta) -> bool:
+        """Use the model's default only for a field no factory in the chain declares.
+
+        A registered factory declares a field to replace a default that is not
+        valid on its own, so ``__use_defaults__`` never overrides a declared field.
+        """
+        if cls._declares(field_meta.name):
+            return False
+        return super().should_use_default_value(field_meta)
+
+    @classmethod
+    def _declares(cls, name: str) -> bool:
+        """Report whether a factory between this class and ``LoomFactory`` declares *name*."""
+        for owner in cls.__mro__:
+            if owner is LoomFactory:
+                return False
+            if name in vars(owner):
+                return True
+        return False
+
+    @classmethod
     def restart_sequence(cls) -> None:
         """Reseed this factory and every subclass, so the next build starts over."""
         cls.seed_random(_SEED)
