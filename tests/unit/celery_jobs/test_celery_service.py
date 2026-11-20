@@ -6,7 +6,11 @@ the dispatch contract of ``tests/contract/jobs``.
 
 from __future__ import annotations
 
+import threading
+from typing import Any
+
 import pytest
+from celery import Celery
 
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.celery.service import CallbackLink, CeleryJobTransport
@@ -102,6 +106,28 @@ class TestBrokerOptions:
         assert [message.task for message in broker.sent()] == [
             f"{TASK_JOB_PREFIX}.{EmailJob.__qualname__}"
         ]
+
+
+class _ThreadRecordingCelery(Celery):  # type: ignore[misc]
+    """A Celery application that notes the thread each ``send_task`` runs on."""
+
+    def __init__(self) -> None:
+        super().__init__(broker="memory://", backend="cache+memory://")
+        self.send_threads: list[int] = []
+
+    def send_task(self, *args: Any, **kwargs: Any) -> Any:
+        self.send_threads.append(threading.get_ident())
+        return super().send_task(*args, **kwargs)
+
+
+class TestSendNow:
+    async def test_the_broker_call_leaves_the_event_loop_thread(self) -> None:
+        app = _ThreadRecordingCelery()
+        service = JobService(CeleryJobTransport(app))
+
+        await service.dispatch_now(EmailJob)
+
+        assert [thread == threading.get_ident() for thread in app.send_threads] == [False]
 
 
 class TestCallbacks:
