@@ -126,7 +126,7 @@ def actor_settings() -> dict[str, str]:
 
 
 class DeferredScopedSettings:
-    """A provider installed when the engine is built and bound at startup.
+    """A provider installed when the engine is built; its scoped tables are attached at startup.
 
     The backend builds its engine before the models are compiled, so the
     scoped tables are only known at startup; until then any use fails.
@@ -137,13 +137,13 @@ class DeferredScopedSettings:
         self._path = path
         self._provide: Callable[[], Mapping[str, str]] | None = None
 
-    def bind(self, scoped: ScopedTables) -> None:
+    def attach(self, scoped: ScopedTables) -> None:
         """Build the provider for the compiled scoped tables; validates every binding."""
         self._provide = scoped_session_settings(self._scope_sources, scoped, path=self._path)
 
     def __call__(self) -> Mapping[str, str]:
         if self._provide is None:
-            raise RuntimeError("scoped session settings were used before startup bound them")
+            raise RuntimeError("scoped session settings were used before startup attached them")
         return self._provide()
 
 

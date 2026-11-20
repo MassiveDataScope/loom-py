@@ -223,7 +223,7 @@ def _prepare_models(
     compile_all(*models, metadata=metadata)
     if settings is None:
         return
-    settings.bind(scoped_tables(metadata))
+    settings.attach(scoped_tables(metadata))
 
 
 async def _readiness(session_manager: SessionManager) -> bool:

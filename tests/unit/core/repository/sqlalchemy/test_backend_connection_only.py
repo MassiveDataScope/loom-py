@@ -105,7 +105,7 @@ class TestConnectionOnlyBackend:
         manager = _registered(wiring).resolve(SessionManager)
 
         assert manager.has_session_settings
-        with pytest.raises(RuntimeError, match="before startup bound them"):
+        with pytest.raises(RuntimeError, match="before startup attached them"):
             manager.current_settings()
 
     async def test_startup_probes_the_connection_and_creates_no_table(self, tmp_path: Path) -> None:
