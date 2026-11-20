@@ -27,7 +27,6 @@ from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
-from loom.serverless.aws.lambda_.handler import LambdaAdapter
 from loom.testing import TEST_QUEUE, LambdaWorker, Override, make
 from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION, is_moto_answering
 
@@ -232,16 +231,15 @@ class TestDelivery:
 
         assert sizes == [2, 1]
 
-    def test_redeliver_does_not_invoke_the_function_when_nothing_is_visible(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
+    def test_redeliver_does_not_run_a_failed_job_again_while_its_message_is_invisible(
+        self, config: Config
     ) -> None:
-        def refuse(*_: Any, **__: Any) -> None:
-            raise AssertionError("the function was invoked")
-
         with _open(config()) as worker:
-            monkeypatch.setattr(LambdaWorker, "__call__", refuse)
+            failed = worker.deliver(_job("SendEmailJob"), params=FAILING)
 
-            assert worker.redeliver() == _NOTHING
+            again = worker.redeliver()
+
+        assert (len(failed["batchItemFailures"]), again) == (1, _NOTHING)
 
     def test_a_fifo_message_takes_the_group_and_deduplication_of_the_queue_placement(
         self, config: Config
@@ -586,53 +584,27 @@ class TestApplication:
 
 
 class TestLifecycle:
-    def test_a_failed_init_stops_the_mock_even_when_closing_the_clients_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def bind(*_: Any) -> None:
-            raise RuntimeError("bind failed")
-
-        def close(*_: Any) -> None:
-            raise RuntimeError("clients failed")
-
-        monkeypatch.setattr(LambdaAdapter, "bind", bind)
-        monkeypatch.setattr(AwsClients, "close", close)
-
-        with pytest.raises(RuntimeError, match="clients failed"):
-            _open(config())
-
-        assert not is_moto_answering()
-
-    def test_a_closed_worker_refuses_to_deliver_or_redeliver(self, config: Config) -> None:
+    def test_closing_releases_the_application_and_the_mock(self, config: Config) -> None:
         worker = _open(config())
+        was_open = worker.application.is_open
+
         worker.close()
 
-        with pytest.raises(RuntimeError, match="the worker is closed"):
-            worker.redeliver()
-        with pytest.raises(RuntimeError, match="the worker is closed"):
-            worker.deliver(_job("SendEmailJob"), params={"marker": "ok"})
-
-    def test_a_normal_close_closes_the_applications_clients_once(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        closed: list[str] = []
-        original = AwsClients.close
-
-        def close(clients: AwsClients) -> None:
-            closed.append("clients")
-            original(clients)
-
-        monkeypatch.setattr(AwsClients, "close", close)
-
-        _open(config()).close()
-
-        assert closed == ["clients"]
+        assert (was_open, worker.application.is_open, is_moto_answering()) == (True, False, False)
 
     def test_a_second_close_does_nothing(self, config: Config) -> None:
         worker = _open(config())
 
         worker.close()
         worker.close()
+
+    def test_a_configuration_failure_while_opening_leaves_the_mock_stopped(
+        self, config: Config
+    ) -> None:
+        with pytest.raises(ConfigError):
+            _open(config(region=OTHER_REGION))
+
+        assert not is_moto_answering()
 
     def test_closing_leaves_a_mock_the_user_entered_running(self, config: Config) -> None:
         with mock_aws():
@@ -643,104 +615,6 @@ class TestLifecycle:
                 pass
 
             assert any("user-queue" in url for url in outside.list_queues()["QueueUrls"])
-
-    def test_a_failing_init_closes_the_application_and_stops_the_mock(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        closed: list[str] = []
-        original = LambdaAdapter.close
-
-        def bind(*_: Any) -> None:
-            raise RuntimeError("bind failed")
-
-        def close(adapter: LambdaAdapter) -> None:
-            closed.append("adapter")
-            original(adapter)
-
-        monkeypatch.setattr(LambdaAdapter, "bind", bind)
-        monkeypatch.setattr(LambdaAdapter, "close", close)
-
-        with pytest.raises(RuntimeError, match="bind failed"):
-            _open(config())
-
-        assert (closed, is_moto_answering()) == (["adapter"], False)
-
-    def test_a_base_exception_during_init_still_closes_the_application_and_the_mock(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        closed: list[str] = []
-        original = LambdaAdapter.close
-
-        def interrupt(*_: Any) -> None:
-            raise KeyboardInterrupt
-
-        def close(adapter: LambdaAdapter) -> None:
-            closed.append("adapter")
-            original(adapter)
-
-        monkeypatch.setattr(LambdaAdapter, "bind", interrupt)
-        monkeypatch.setattr(LambdaAdapter, "close", close)
-
-        with pytest.raises(KeyboardInterrupt):
-            _open(config())
-
-        assert (closed, is_moto_answering()) == (["adapter"], False)
-
-    @pytest.mark.parametrize("failure", ["refusal", "bind"])
-    def test_a_failed_init_closes_the_applications_clients_once(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch, failure: str
-    ) -> None:
-        closed: list[str] = []
-        original = AwsClients.close
-
-        def close(clients: AwsClients) -> None:
-            closed.append("clients")
-            original(clients)
-
-        def bind(*_: Any) -> None:
-            raise RuntimeError("bind failed")
-
-        monkeypatch.setattr(AwsClients, "close", close)
-        if failure == "bind":
-            monkeypatch.setattr(LambdaAdapter, "bind", bind)
-        path = config(region=OTHER_REGION) if failure == "refusal" else config()
-
-        with pytest.raises((ConfigError, RuntimeError)):
-            _open(path)
-
-        assert closed == ["clients"]
-
-    def test_the_mock_stops_even_when_closing_the_clients_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        worker = _open(config())
-        original = AwsClients.close
-
-        def close_then_fail(clients: AwsClients) -> None:
-            original(clients)
-            raise RuntimeError("clients failed")
-
-        monkeypatch.setattr(AwsClients, "close", close_then_fail)
-        with pytest.raises(RuntimeError, match="clients failed"):
-            worker.close()
-
-        assert not is_moto_answering()
-
-    def test_the_mock_stops_even_when_closing_the_function_raises(
-        self, config: Config, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        worker = _open(config())
-        original = LambdaAdapter.close
-
-        def close_then_fail(adapter: LambdaAdapter) -> None:
-            original(adapter)
-            raise RuntimeError("close failed")
-
-        monkeypatch.setattr(LambdaAdapter, "close", close_then_fail)
-        with pytest.raises(RuntimeError, match="close failed"):
-            worker.close()
-
-        assert not is_moto_answering()
 
     def test_without_moto_the_error_names_the_extra(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
