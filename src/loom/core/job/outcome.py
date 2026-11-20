@@ -16,13 +16,12 @@ class JobSignal(Exception):
 class JobPostponement(JobSignal):
     """Raised by a job to run again later, without counting as a failed attempt.
 
-    Attributes:
+    Args:
         reason: Why the job waits.
-        delay: The wait; ``None`` leaves it to the job's backoff.
+        delay_s: Seconds to wait, from 0 to 900; ``None`` takes the job's backoff step.
 
     Raises:
-        ValueError: When *delay_s*, the seconds to wait from 0 to 900, is outside
-            the countdown bound; ``None`` takes the backoff step.
+        ValueError: When *delay_s* is outside the countdown bound.
     """
 
     def __init__(self, reason: str, delay_s: int | None = None) -> None:
