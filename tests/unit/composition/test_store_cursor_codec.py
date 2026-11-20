@@ -39,7 +39,7 @@ def _build(raw: dict[str, Any], *, connection_only: bool = False) -> None:
 def _recipe(*, connection_only: bool = False) -> Recipe:
     return Recipe(
         profile=SERVER_PROFILE,
-        discovered=DiscoveryResult(models=(AcmeCursorNote,), use_cases=(), interfaces=()),
+        discovered=DiscoveryResult(models=(AcmeCursorNote,), use_cases=()),
         connection_only=connection_only,
     )
 

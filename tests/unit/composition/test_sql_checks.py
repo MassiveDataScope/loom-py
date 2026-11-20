@@ -31,7 +31,7 @@ class AcmeProbeAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
     def bind(self, application: Application) -> Application:

@@ -67,7 +67,6 @@ def jobs_recipe(
         discovered=project.discovered.with_changes(
             models=tuple(dict.fromkeys(resolved.models)),
             use_cases=cast(Any, resolved.compilables),
-            interfaces=(),
             jobs=resolved.jobs,
         ),
         check_scope=CheckScope.without_rest(),

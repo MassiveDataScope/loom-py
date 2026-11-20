@@ -62,7 +62,7 @@ class Bare:
     def recipe(self, project):
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
     def bind(self, application):

@@ -40,10 +40,8 @@ class TestClientsFailWithinDeclaredBounds:
         self,
         silent_endpoint: str,  # noqa: F811
     ) -> None:
-        from loom.etl.backends.polars.provider import _build_dynamodb_client
-
-        client = _build_dynamodb_client(
-            AwsClients(),
+        client = AwsClients().client(
+            "dynamodb",
             AwsClientConfig(
                 region=OTHER_REGION,
                 url=Dsn(silent_endpoint),

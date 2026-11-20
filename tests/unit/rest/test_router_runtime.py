@@ -1292,6 +1292,22 @@ class TestCreateFastApiApp:
                 defaults=defaults,
             )
 
+    def test_a_paging_route_that_lets_callers_choose_cursor_compiles_without_a_cursor_key(
+        self,
+    ) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+        app = create_fastapi_app(
+            _bootstrap(QueryAwareUseCase),
+            routes=RouteSources(python=[IFace]),
+            observability_runtime=ObservabilityRuntime.noop(),
+            defaults=RestApiDefaults(allow_pagination_override=True),
+        )
+
+        assert isinstance(app, FastAPI)
+
     def test_an_offset_route_without_a_cursor_key_compiles(self) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"

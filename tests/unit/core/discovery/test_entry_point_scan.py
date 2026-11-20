@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from loom.composition.project import AppConfig, Project
+from loom.composition.checked import CheckedProject
+from loom.composition.project import AppConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.scanner import PackageScanner
 from tests.helpers.package_writer import DistributionWriter, PackageWriter
@@ -101,7 +102,7 @@ class TestUnknownGroupFailsAtStartupAndInCheck:
         config.write_text(yaml.safe_dump(document), encoding="utf-8")
 
         with pytest.raises(ConfigError, match="'acme.unknown'.*no installed distribution"):
-            Project.check(str(config), environment="test")
+            CheckedProject.load(str(config), environment="test")
 
     def test_an_installed_group_passes_both(
         self,
@@ -115,7 +116,7 @@ class TestUnknownGroupFailsAtStartupAndInCheck:
         config = tmp_path / "app.yaml"
         config.write_text(yaml.safe_dump(document), encoding="utf-8")
 
-        checked = Project.check(str(config), environment="test")
+        checked = CheckedProject.load(str(config), environment="test")
 
         assert checked.config.raw("app.entry_points") == [_GROUP]
         assert AppConfig.from_config(ConfigContext.from_dict(document)).entry_points == [_GROUP]

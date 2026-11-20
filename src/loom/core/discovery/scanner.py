@@ -12,11 +12,7 @@ from types import ModuleType
 from typing import TypeVar
 
 from loom.core.config import ConfigError
-from loom.core.discovery._utils import (
-    _append_unique,
-    collect_from_modules,
-    collect_use_cases_from_interfaces,
-)
+from loom.core.discovery._utils import collect_from_modules
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel
 from loom.core.stores.catalog import store_of
@@ -74,16 +70,13 @@ class PackageScanner:
         found = collect_from_modules(self._modules())
         models = self._ordered(found.models)
         self._refuse_duplicate_tables(models)
-        seen = set(found.use_cases)
-        for use_case in collect_use_cases_from_interfaces(found.interfaces):
-            _append_unique(found.use_cases, seen, use_case)
         return DiscoveryResult(
             models=models,
             use_cases=self._ordered(found.use_cases),
-            interfaces=self._ordered(found.interfaces),
             jobs=self._ordered(found.jobs),
             installers=self._ordered(found.installers),
             callbacks=self._ordered(found.callbacks),
+            classes=self._ordered(found.classes),
             agent_specs=tuple(agents),
         )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -171,9 +171,7 @@ _SQLITE_LEDGER = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"
 
 
 def _rest_project(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Project:
-    discovered = DiscoveryResult(
-        models=(AcmeLedgerStoreEntry,), use_cases=(), interfaces=cast(Any, (_Entries,))
-    )
+    discovered = DiscoveryResult(models=(AcmeLedgerStoreEntry,), use_cases=(), classes=(_Entries,))
     monkeypatch.setattr(
         "loom.composition.project.PackageScanner.discover", lambda self, agents=None: discovered
     )

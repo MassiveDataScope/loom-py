@@ -126,7 +126,7 @@ class TestRequestObservabilityStack:
         # continue so create_app still mounts the middlewares under test.
         monkeypatch.setattr(
             "loom.rest.fastapi.adapter._discover_components",
-            lambda _source: DiscoveryResult(models=(), use_cases=(), interfaces=()),
+            lambda _source: DiscoveryResult(models=(), use_cases=()),
         )
         monkeypatch.setattr(
             "loom.composition.phases.configure_job_service",

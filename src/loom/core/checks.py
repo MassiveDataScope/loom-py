@@ -27,7 +27,7 @@ and in ``loom check --deploy``.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
 checks only in production and staging. ``loom check --deploy`` runs
-:func:`run_deploy_checks` through ``Project.check``, which runs them whatever
+:func:`run_deploy_checks` through ``CheckedProject.load``, which runs them whatever
 the environment, for CI.
 An id listed under ``checks.silenced`` in the configuration does not run, and
 enforcing logs a warning naming every silenced id. This module's logger has

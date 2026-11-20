@@ -42,7 +42,7 @@ class _Tickets:
         del project
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=(_Ticket,), use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=(_Ticket,), use_cases=()),
             default_store_backend="sqlalchemy",
         )
 

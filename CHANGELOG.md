@@ -424,6 +424,28 @@
   backend's `capabilities()` drops the `pages_with_cursors` argument; code
   building a `StoreRuntime` passes `cursor_codec=` (`CursorCodec.disabled()`
   for none), and code testing a codec for `None` tests `is_enabled`.
+- **discovery:** `DiscoveryResult.interfaces` is removed and
+  `DiscoveryResult.classes` is added: every concrete class the scan found. Core
+  discovery no longer knows `RestInterface`; the REST adapter recognises its
+  interfaces (`loom.rest.discovery.interfaces_in`) and folds the use cases their
+  routes reference. **Behaviour change:** only the REST adapter folds route use
+  cases into the discovered ones, so a Celery worker compiles the use cases of
+  an interface only when it is passed to `CeleryAdapter(interfaces=...)`.
+  `collect_use_cases_from_interfaces` is removed.
+- **composition:** `Project.check` is `CheckedProject.load`
+  (`loom.composition.checked`), with the same arguments and behaviour;
+  `CheckedProject` is no longer in `loom.composition.project`.
+- **streaming:** `DispatchTable` moved to `loom.streaming.core`; it is no longer
+  exported by `loom.streaming.kafka`.
+- **config:** `config.overridable` cannot open `app.entry_points` or
+  `app.agents`, as it already could not open `app.packages`: loading refuses an
+  entry that names them.
+- **di:** `loom check` validates every literal and nested struct of a
+  `ConfiguredInstaller` section that also holds placeholders; a nested keys
+  error now names the key path (`acme.vault.pool: unknown keys [...]`).
+- **testing:** a lazy `loom.testing` export names its extra only when the
+  missing module is one of that export's dependencies; any other
+  `ImportError` surfaces as it is.
 
 ### security
 

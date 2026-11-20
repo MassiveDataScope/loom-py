@@ -11,7 +11,8 @@ from loom.core.use_case.markers import marks_input
 from loom.serverless.aws.lambda_.functions import EventTrigger, JobsTrigger, declared_lambda
 
 if TYPE_CHECKING:
-    from loom.composition.project import CheckedProject, Project
+    from loom.composition.checked import CheckedProject
+    from loom.composition.project import Project
     from loom.core.job.job import Job
 
 

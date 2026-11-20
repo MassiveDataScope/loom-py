@@ -624,9 +624,7 @@ print([name for name in loaded if name in sys.modules])
         monkeypatch.setattr(
             PackageScanner,
             "discover",
-            lambda self, **kwargs: DiscoveryResult(
-                models=(DiscoveredModel,), use_cases=(), interfaces=()
-            ),
+            lambda self, **kwargs: DiscoveryResult(models=(DiscoveredModel,), use_cases=()),
         )
         configured = _manifest_project(project, "acme_jobs")
         LambdaAdapter(jobs=[probe[0]]).recipe(configured)

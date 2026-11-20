@@ -4,10 +4,11 @@
 domain bootstrap result and REST interface declarations into a runnable
 ``FastAPI`` instance.
 
-It is intentionally kept thin — all validation happens during
-:class:`~loom.rest.compiler.RestInterfaceCompiler` compilation (fail-fast at
-startup) and all request handling is delegated to
-:func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
+It is intentionally kept thin — route validation happens during
+:class:`~loom.rest.compiler.RestInterfaceCompiler` compilation, the cursor-key
+check in :func:`compile_api` (both fail-fast at startup; a route that merely lets
+callers choose cursor pages is refused per request without a key), and all request
+handling is delegated to :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
 
 An application normally gets it through :func:`~loom.composition.create_app`,
 which composes the kernel from configuration. Directly::

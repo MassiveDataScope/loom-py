@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import FunctionType
 
 import pytest
@@ -16,6 +17,11 @@ class AcmeStore:
 
 class AcmeReadable:
     pass
+
+
+@dataclass(frozen=True)
+class AcmeLabel:
+    text: str
 
 
 class AcmeConsumer:
@@ -141,6 +147,23 @@ class TestOverriding:
 
         assert container.resolve(AcmeStore) is original
         assert container.resolve(AcmeReadable) is original
+
+    def test_exits_the_override_entered_by_identity_when_two_are_equal(
+        self, container: LoomContainer
+    ) -> None:
+        original = container.resolve(AcmeStore)
+        first, second = AcmeLabel("same"), AcmeLabel("same")
+        outer = container.overriding(AcmeStore, first)
+        inner = container.overriding(AcmeStore, second)
+        outer.__enter__()
+        inner.__enter__()
+
+        with pytest.raises(ResolutionError, match="out of order"):
+            outer.__exit__(None, None, None)
+        assert container.resolve(AcmeStore) is second
+        inner.__exit__(None, None, None)
+
+        assert container.resolve(AcmeStore) is original
 
 
 class TestRegisterAlias:

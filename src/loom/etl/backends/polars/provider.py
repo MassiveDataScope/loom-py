@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClients
 from loom.core.connections.mongo import MongoConnection, mongo_island
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.backends.polars._reader import PolarsSourceReader
@@ -48,7 +48,7 @@ class PolarsProvider(BackendProvider):
         )
         clickhouse_reader = ClickHouseSourceReader(connection=config.clickhouse)
         dynamodb_reader = (
-            DynamoDbSourceReader(_build_dynamodb_client(self._clients, config.dynamodb))
+            DynamoDbSourceReader(self._clients.client("dynamodb", config.dynamodb))
             if config.dynamodb is not None
             else DynamoDbSourceReader()
         )
@@ -120,15 +120,6 @@ def _build_mongo_client(connection: MongoConnection) -> Any:
         MissingExtraError: When the ``mongo`` extra is not installed.
     """
     return mongo_island().build_mongo_client(connection)
-
-
-def _build_dynamodb_client(clients: AwsClients, config: AwsClientConfig) -> Any:
-    """Return the DynamoDB client of *clients* for the ``storage.dynamodb`` settings.
-
-    Raises:
-        MissingExtraError: When the ``aws`` extra is not installed.
-    """
-    return clients.client("dynamodb", config)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:

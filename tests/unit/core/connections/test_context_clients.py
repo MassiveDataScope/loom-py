@@ -121,10 +121,8 @@ class TestStreamingSinkClients:
 
 class TestEtlDynamoDbClientBounds:
     def test_the_etl_dynamodb_client_takes_the_declared_bounds(self, mocked_aws: None) -> None:
-        from loom.etl.backends.polars.provider import _build_dynamodb_client
-
-        client = _build_dynamodb_client(
-            AwsClients(), AwsClientConfig(region=OTHER_REGION, read_timeout=9)
+        client = AwsClients().client(
+            "dynamodb", AwsClientConfig(region=OTHER_REGION, read_timeout=9)
         )
 
         assert client.meta.service_model.service_name == "dynamodb"

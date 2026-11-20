@@ -71,7 +71,6 @@ from loom.composition import (
 from loom.core.async_bridge import build_backend_options
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigError, ConfigKey
-from loom.core.discovery._utils import collect_use_cases_from_interfaces
 from loom.core.discovery.worker import (
     WorkerComponents,
 )
@@ -368,7 +367,14 @@ class CeleryAdapter:
         resolved = _resolve_compilables_and_jobs(project.discovered, self._jobs, self._use_cases)
         compilables = tuple(
             dict.fromkeys(
-                (*resolved.compilables, *collect_use_cases_from_interfaces(list(self._interfaces)))
+                (
+                    *resolved.compilables,
+                    *(
+                        route.use_case
+                        for interface in self._interfaces
+                        for route in interface.routes
+                    ),
+                )
             )
         )
         resolved = WorkerComponents(
@@ -384,7 +390,6 @@ class CeleryAdapter:
             discovered=project.discovered.with_changes(
                 models=resolved.models,
                 use_cases=cast(Any, resolved.compilables),
-                interfaces=(),
                 jobs=resolved.jobs,
             ),
             check_scope=CheckScope.without_rest(),

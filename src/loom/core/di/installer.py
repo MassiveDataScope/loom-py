@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Generic, Self, TypeVar
+from typing import Any, ClassVar, Generic, Self, TypeGuard, TypeVar
 
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import INTERPOLATION
-from loom.core.config.loader import config_strings
+from loom.core.config.loader import config_strings, convert_section
 from loom.core.di.container import LoomContainer
 
 SettingsT = TypeVar("SettingsT")
+
+
+def _holds_placeholder(written: object) -> bool:
+    return any(INTERPOLATION in text for _, text in config_strings(written))
+
+
+def _is_struct_type(target: object) -> TypeGuard[type[msgspec.Struct]]:
+    return isinstance(target, type) and issubclass(target, msgspec.Struct)
 
 
 class Installer(ABC):
@@ -87,16 +95,20 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
 
         A section with no placeholder is decoded as :meth:`from_config`
         decodes it, with the same error. A section holding placeholders is
-        judged on its shape: it exists, it has no key the settings forbid and
-        no required field is missing; a placeholder value is not type-checked,
-        start-up judges it once resolved.
+        judged part by part: every value without a placeholder is decoded
+        into its field's type as start-up decodes it, and a settings struct
+        holding a placeholder somewhere below is judged on its keys (no key
+        the settings forbid, no required field missing) and then field by
+        field. A placeholder value itself is not type-checked, and neither
+        is a list, a mapping or an optional struct that holds one:
+        start-up judges them once resolved.
 
         Raises:
             ConfigError: As :meth:`from_config`, naming the section and the installer.
         """
         written = config.raw(cls.section)
-        if any(INTERPOLATION in text for _, text in config_strings(written)):
-            cls._check_written_shape(written)
+        if _holds_placeholder(written):
+            cls._check_written(cls.settings_type, written, cls.section)
         else:
             cls._decode(config)
 
@@ -109,15 +121,24 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
         return settings
 
     @classmethod
-    def _check_written_shape(cls, written: object) -> None:
-        if not isinstance(written, dict) or not issubclass(cls.settings_type, msgspec.Struct):
+    def _check_written(cls, target: Any, written: object, key: str) -> None:
+        if not _holds_placeholder(written):
+            try:
+                convert_section(written, key, target)
+            except ConfigError as error:
+                raise cls._error(str(error)) from error
             return
-        fields = msgspec.structs.fields(cls.settings_type)
+        if isinstance(written, dict) and _is_struct_type(target):
+            cls._check_written_fields(target, written, key)
+
+    @classmethod
+    def _check_written_fields(
+        cls, target: type[msgspec.Struct], written: dict[str, Any], key: str
+    ) -> None:
+        fields = msgspec.structs.fields(target)
         names = {field.encode_name for field in fields}
         unknown = (
-            sorted(set(written) - names)
-            if cls.settings_type.__struct_config__.forbid_unknown_fields
-            else []
+            sorted(set(written) - names) if target.__struct_config__.forbid_unknown_fields else []
         )
         missing = [
             field.encode_name
@@ -125,7 +146,12 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
             if field.required and field.encode_name not in written
         ]
         if unknown or missing:
-            raise cls._error(f"unknown keys {unknown}, missing required keys {missing}")
+            raise cls._error(f"{key}: unknown keys {unknown}, missing required keys {missing}")
+        for field in fields:
+            if field.encode_name in written:
+                cls._check_written(
+                    field.type, written[field.encode_name], f"{key}.{field.encode_name}"
+                )
 
     @classmethod
     def _error(cls, reason: str) -> ConfigError:

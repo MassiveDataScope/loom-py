@@ -72,9 +72,7 @@ class JobsAdapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(
-                models=(), use_cases=cast(Any, self._jobs), interfaces=(), jobs=self._jobs
-            ),
+            discovered=DiscoveryResult(models=(), use_cases=cast(Any, self._jobs), jobs=self._jobs),
             connection_only=True,
         )
 

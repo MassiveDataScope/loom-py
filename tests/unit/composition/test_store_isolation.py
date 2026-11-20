@@ -59,7 +59,7 @@ class _Models:
         del project
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=self.models, use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=self.models, use_cases=()),
             default_store_backend="sqlalchemy",
         )
 

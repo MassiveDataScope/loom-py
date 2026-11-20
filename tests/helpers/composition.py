@@ -79,7 +79,7 @@ class Serving:
         lenient: bool = False,
     ) -> None:
         self.discovered = DiscoveryResult(
-            models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
+            models=models, use_cases=cast(Any, use_cases), jobs=cast(Any, jobs)
         )
         self.overrides = overrides
         self.lenient = lenient
