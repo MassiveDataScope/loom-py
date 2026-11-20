@@ -81,6 +81,8 @@ class TestLazyExports:
     def test_data_exports_name_the_testing_extra_when_polyfactory_is_missing(
         self, name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        for module in [m for m in sys.modules if m.partition(".")[0] == "polyfactory"]:
+            monkeypatch.delitem(sys.modules, module)
         monkeypatch.delitem(sys.modules, "loom.testing.data", raising=False)
         monkeypatch.setitem(sys.modules, "polyfactory", None)
 
