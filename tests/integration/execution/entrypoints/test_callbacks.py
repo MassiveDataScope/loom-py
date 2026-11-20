@@ -8,6 +8,8 @@ no caller gives callbacks none, and they fail closed.
 
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 import time
 
 import pytest
@@ -17,7 +19,6 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution import current_execution
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
 from loom.core.use_case.factory import UseCaseFactory
 from tests.helpers.delegation import acting_as
 
@@ -56,7 +57,7 @@ class TestInlineCallbacks:
         job: type[Job[object]],
         moment: str,
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch() -> None:
             jobs.dispatch_after_commit(job, on_success=callback, on_failure=callback)
@@ -78,7 +79,7 @@ class TestInlineCallbacks:
         job: type[Job[object]],
         moments: list[str],
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch() -> None:
             jobs.dispatch_after_commit(
@@ -93,7 +94,7 @@ class TestInlineCallbacks:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
     ) -> None:
         """The job's constructor ``Caller()`` fails closed, and its failure callback has none."""
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch() -> None:
             jobs.dispatch_after_commit(

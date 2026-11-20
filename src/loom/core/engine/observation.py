@@ -22,7 +22,7 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
-from loom.core.job.outcome import JobPostponement, JobSignal, failure_log_fields
+from loom.core.job.outcome import JobSignal, failure_log_fields
 from loom.core.logger import LoggerPort
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
@@ -221,10 +221,8 @@ class StartedExecution:
     def _status(error: BaseException) -> Status:
         if isinstance(error, RuleViolations):
             return Status.RULE_FAILURE
-        if isinstance(error, JobPostponement):
-            return Status.POSTPONED
         if isinstance(error, JobSignal):
-            return Status.ABANDONED
+            return error.status
         return Status.FAILURE
 
     def _error_kind(self, error: BaseException) -> Phase:

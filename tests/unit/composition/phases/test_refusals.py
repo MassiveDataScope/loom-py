@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import JobBackendError, Project
+from loom.composition import JobTransportError, Project
 from loom.composition.errors import ReservedBindingError
 from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
@@ -160,11 +160,11 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         variants={"http": paths.HTTP},
     ),
     "job-backend": _Refusal(
-        paths.Composition(config={"app": {"job_service": "rabbit"}}), JobBackendError
+        paths.Composition(config={"app": {"job_service": "rabbit"}}), JobTransportError
     ),
     "job-backend-celery-extra": _Refusal(
         paths.Composition(config={"app": {"job_service": "celery"}, "celery": BROKER}),
-        JobBackendError,
+        JobTransportError,
         # The worker adapter module itself imports loom.celery.config, so the worker path cannot
         # run without the extra; stubbing the module only yields a test-side NameError.
         tuple(path for path in _COMPOSED if path != "celery"),
@@ -177,7 +177,7 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
                 "celery": {**BROKER, "queues": ["emails"]},
             }
         ),
-        JobBackendError,
+        JobTransportError,
     ),
     "unbound-dependency": _Refusal(_NEEDS_SERVICE, ResolutionError),
     "dependency-cycle": _Refusal(

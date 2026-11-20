@@ -1,8 +1,9 @@
-"""A dispatch through ``CeleryJobService`` reaches the worker and calls the right callback."""
+"""A dispatch through ``CeleryServiceFixture`` reaches the worker and calls the right callback."""
 
 from __future__ import annotations
 
-from loom.celery.service import CeleryJobService
+from tests.helpers.jobs import CeleryServiceFixture
+
 from loom.core.job.callback import DispatchableCallbacks
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
@@ -18,7 +19,7 @@ class TestDispatchThroughTheService:
     async def test_a_succeeding_job_calls_the_success_link_with_its_result(
         self, served: Workbench
     ) -> None:
-        service = CeleryJobService(served.app, callbacks=DispatchableCallbacks([RecordingCallback]))
+        service = CeleryServiceFixture(served.app, callbacks=DispatchableCallbacks([RecordingCallback]))
 
         handle = await service.dispatch_now(
             SucceedingJob,
@@ -34,7 +35,7 @@ class TestDispatchThroughTheService:
     async def test_an_abandoned_job_calls_the_failure_callback_the_dispatch_named(
         self, served: Workbench
     ) -> None:
-        service = CeleryJobService(served.app, callbacks=DispatchableCallbacks([RecordingCallback]))
+        service = CeleryServiceFixture(served.app, callbacks=DispatchableCallbacks([RecordingCallback]))
 
         handle = await service.dispatch_now(
             AbandonedJob,

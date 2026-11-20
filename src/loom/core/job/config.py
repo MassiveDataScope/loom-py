@@ -10,6 +10,8 @@ from typing import Any
 from msgspec import structs
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.job.delivery import JobDelivery
+from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, Redelivery, RetryPolicy
 from loom.core.model import LoomFrozenStruct
@@ -164,6 +166,33 @@ class JobOptions:
     countdown: int
     timeout: int | None
     priority: int
+
+    def delivery_for(
+        self,
+        job_type: type[Job[Any]],
+        envelope: JobEnvelope,
+        *,
+        attempt: int = 1,
+        postponements: int = 0,
+        timeout_s: float | None = None,
+    ) -> JobDelivery:
+        """Build a delivery with this job's resolved retry policy.
+
+        Args:
+            job_type: The job named by the envelope.
+            envelope: The message being delivered.
+            attempt: Attempt number, starting at one.
+            postponements: Runs postponed without spending an attempt.
+            timeout_s: Remaining execution time, or no limit.
+        """
+        return JobDelivery(
+            job_type=job_type,
+            envelope=envelope,
+            attempt=attempt,
+            postponements=postponements,
+            policy=self.retry.policy,
+            timeout_s=timeout_s,
+        )
 
     @classmethod
     def resolve(

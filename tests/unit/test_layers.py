@@ -9,6 +9,8 @@ run time, catching what a module pulls in transitively:
 
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture
+
 import ast
 from functools import cache
 from pathlib import Path
@@ -112,7 +114,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "if TYPE_CHECKING:\n"
         "    from loom.rest.model import RestInterface\n"
         "def build():\n"
-        "    from loom.celery.service import CeleryJobService\n"
+        "    from loom.celery.service import CeleryServiceFixture\n"
         "from ..rest import errors\n"
         "from . import sibling\n"
         "from loom import composition\n"
@@ -122,7 +124,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "typing",
         "typing.TYPE_CHECKING",
         "loom.celery.service",
-        "loom.celery.service.CeleryJobService",
+        "loom.celery.service.CeleryServiceFixture",
         "loom.core.rest",
         "loom.core.rest.errors",
         "loom.core.engine",

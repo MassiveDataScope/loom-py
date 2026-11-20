@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 from loom.testing.agents import ContractScenario, FakeAgentEngine, agent_engine_contract_suite
 from loom.testing.golden import GoldenHarness, serialize_plan
 from loom.testing.in_memory import InMemoryRepository
-from loom.testing.jobs import DispatchedJob, ManualTimer, RecordingJobService
+from loom.testing.jobs import DispatchedJob, JobTestData, ManualTimer, RecordingJobTransport
 from loom.testing.overrides import Override
 from loom.testing.runner import (
     AgentHandleDouble,
@@ -33,6 +33,7 @@ __all__ = [
     "GoldenHarness",
     "HttpTestHarness",
     "InMemoryRepository",
+    "JobTestData",
     "JwtTestAuth",
     "TEST_QUEUE",
     "LambdaEvent",
@@ -41,7 +42,7 @@ __all__ = [
     "ManualTimer",
     "McpHandleDouble",
     "Override",
-    "RecordingJobService",
+    "RecordingJobTransport",
     "RepositoryIntegrationHarness",
     "ScenarioDict",
     "SqlGrantHandleDouble",

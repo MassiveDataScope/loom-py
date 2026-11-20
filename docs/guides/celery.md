@@ -164,15 +164,15 @@ class BuildProductSummaryUseCase(UseCase[Product, ProductSummaryResponse]):
         return ProductSummaryResponse(product_id=int(product_id), summary=summary)
 ```
 
-`run()` works identically in both `InlineJobService` (development / tests) and
-`CeleryJobService` (production). When Celery is configured, it bypasses the broker
+`run()` works identically in both `JobService with InlineJobTransport` (development / tests) and
+`JobService with CeleryJobTransport` (production). When Celery is configured, it bypasses the broker
 entirely — the job runs in the API process via the same DI container.
 
 Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
 
 ### Delays inline
 
-`InlineJobService` honours `countdown`, `JobPostponement` and failure backoff: a
+`JobService with InlineJobTransport` honours `countdown`, `JobPostponement` and failure backoff: a
 delayed job waits in the memory of the process on a `JobTimer` and runs again
 with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
@@ -377,7 +377,7 @@ attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor **
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
 uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
 to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
-once; an error whose `retryable` is `False` is abandoned at its first attempt.
+once; an error whose `is_retryable` is `False` is abandoned at its first attempt.
 
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the

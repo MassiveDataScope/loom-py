@@ -11,6 +11,8 @@ contract in ``test_inline_contract``, over the same jobs.
 
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -38,7 +40,6 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.job.service import InlineJobService
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
@@ -93,8 +94,7 @@ class RunnerDriver:
         self._kernel.factory.register(job_type)
         delivery = JobDelivery(
             job_type=job_type,
-            envelope=JobEnvelope(job=job_type.__qualname__),
-            task_id="task-1",
+            envelope=JobEnvelope(job=job_type.__qualname__, task_id="task-1"),
             attempt=attempt,
             postponements=postponements,
             policy=JobSettings().of(job_type).retry.policy,
@@ -167,8 +167,7 @@ class SQSDriver:
         outcome = await self._runner.run(
             JobDelivery(
                 job_type=job_type,
-                envelope=JobEnvelope(job=job_type.__qualname__),
-                task_id=record.message_id,
+                envelope=JobEnvelope(job=job_type.__qualname__, task_id=record.message_id),
                 attempt=record.receive_count,
                 postponements=record.postponements,
                 policy=JobSettings().of(job_type).retry.policy,
@@ -307,7 +306,7 @@ def no_redelivery_driver() -> Iterator[Driver]:
 class Inline:
     """The real inline job service on a manual timer, over a real factory and executor."""
 
-    service: InlineJobService
+    service: InlineServiceFixture
     timer: ManualTimer
 
 
@@ -315,4 +314,4 @@ class Inline:
 def inline() -> Inline:
     kernel = JobKernel()
     timer = ManualTimer()
-    return Inline(InlineJobService(kernel.factory, kernel.executor, timer=timer), timer)
+    return Inline(InlineServiceFixture(kernel.factory, kernel.executor, timer=timer), timer)

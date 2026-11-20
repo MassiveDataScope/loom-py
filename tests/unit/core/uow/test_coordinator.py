@@ -161,7 +161,7 @@ class TestEnlist:
         with pytest.raises(UncomposedStore, match=r"store 's0' .* are \['s1'\]") as caught:
             await coordinator.enlist(scope, S0)
 
-        assert (caught.value.code, caught.value.retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
+        assert (caught.value.code, caught.value.is_retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
 
     @pytest.mark.parametrize("store_type", [_FlushOnly, _CloseOnly], ids=["flush", "close"])
     async def test_a_unit_of_work_without_the_phased_marker_runs_in_a_single_phase(

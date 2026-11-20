@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
+from loom.core.engine.events import Status
 from loom.core.errors import PostCommitError
 from loom.core.job.policy import Countdown
 
 
 class JobSignal(Exception):
     """Raised by a job to steer its own delivery; not a failure."""
+
+    status: ClassVar[Status]
 
 
 class JobPostponement(JobSignal):
@@ -24,6 +27,8 @@ class JobPostponement(JobSignal):
         ValueError: When *delay_s* is outside the countdown bound.
     """
 
+    status: ClassVar[Status] = Status.POSTPONED
+
     def __init__(self, reason: str, delay_s: int | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
@@ -36,6 +41,8 @@ class JobAbandonment(JobSignal):
     Attributes:
         reason: Why the job gives up.
     """
+
+    status: ClassVar[Status] = Status.ABANDONED
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)

@@ -10,7 +10,7 @@
     raises it right after they run, before any repository or
     framework service is registered.
 
-``JobBackendError``
+``JobTransportError``
     A job backend ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
@@ -131,7 +131,7 @@ class ReservedBindingError(BootstrapError):
         return cls(issue, key)
 
 
-class JobBackendError(ConfigError):
+class JobTransportError(ConfigError):
     """Raised at start-up when a job backend the configuration needs cannot be built."""
 
 
@@ -139,6 +139,6 @@ __all__ = [
     "ApplicationAlreadyOpenError",
     "CompositionErrorCode",
     "CompositionStateError",
-    "JobBackendError",
+    "JobTransportError",
     "ReservedBindingError",
 ]

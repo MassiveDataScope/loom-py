@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture, RecordingServiceFixture
+
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.policy import Countdown
-from loom.core.job.router import JobRouter
-from loom.core.job.service import InlineJobService, JobService
-from loom.testing.jobs import ManualTimer, RecordingJobService
+from loom.core.job.service import JobService
+from loom.celery.service import CeleryJobTransport
+from loom.testing.jobs import ManualTimer
 from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
 
 pytestmark = pytest.mark.timeout(10)
@@ -25,13 +26,13 @@ def service(request: pytest.FixtureRequest) -> Iterator[JobService]:
         case "inline":
             executor = MagicMock()
             executor.run = AsyncMock(return_value="ran")
-            built = InlineJobService(MagicMock(), executor, timer=ManualTimer())
+            built = InlineServiceFixture(MagicMock(), executor, timer=ManualTimer())
         case "celery":
-            built = CeleryJobService(MagicMock())
+            built = CeleryServiceFixture(MagicMock())
         case "sqs":
             built = sqs_service(SQSClient())
         case _:
-            built = RecordingJobService()
+            built = RecordingServiceFixture()
     yield built
     clear_pending_dispatches()
 
@@ -72,7 +73,7 @@ class TestDispatchNow:
     async def test_inline_runs_the_job_immediately(self) -> None:
         executor = MagicMock()
         executor.run = AsyncMock(return_value=7)
-        service = InlineJobService(MagicMock(), executor)
+        service = InlineServiceFixture(MagicMock(), executor)
 
         handle = await service.dispatch_now(EmailJob)
 
@@ -81,7 +82,7 @@ class TestDispatchNow:
 
     async def test_celery_sends_immediately(self) -> None:
         app = MagicMock()
-        service = CeleryJobService(app)
+        service = CeleryServiceFixture(app)
 
         await service.dispatch_now(EmailJob)
 
@@ -101,7 +102,7 @@ class TestDispatchNow:
         assert len(client.requests) == 1
 
     async def test_recording_records_immediately(self) -> None:
-        service = RecordingJobService()
+        service = RecordingServiceFixture()
 
         await service.dispatch_now(EmailJob, payload={"n": 1})
 
@@ -111,7 +112,8 @@ class TestDispatchNow:
 
     async def test_router_sends_through_the_backend(self) -> None:
         app = MagicMock()
-        router = JobRouter({"emails": CeleryJobService(app)}, default=MagicMock())
+        default = MagicMock()
+        router = JobService(MagicMock(), MagicMock(), default, routes={"emails": CeleryJobTransport(app)})
 
         await router.dispatch_now(EmailJob)
 

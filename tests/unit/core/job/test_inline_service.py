@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.errors import JobFailedError, JobTimeoutError
+from loom.core.errors import JobFailedError, SystemError, JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
-from loom.core.job.service import InlineJobService
 
 # ---------------------------------------------------------------------------
 # Minimal job fixtures
@@ -22,8 +23,8 @@ class DoubleJob(Job[int]):
         return value * 2
 
 
-class FinalError(Exception):
-    retryable = False
+class FinalError(SystemError):
+    is_retryable = False
 
 
 class UpperJob(Job[str]):
@@ -36,12 +37,12 @@ class UpperJob(Job[str]):
 # ---------------------------------------------------------------------------
 
 
-def _make_service(return_value: Any = 42) -> InlineJobService:
+def _make_service(return_value: Any = 42) -> InlineServiceFixture:
     factory = MagicMock()
     executor = MagicMock()
     executor.run = AsyncMock(return_value=return_value)
     factory.build = MagicMock(return_value=MagicMock())
-    return InlineJobService(factory=factory, executor=executor)
+    return InlineServiceFixture(factory=factory, executor=executor)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ class TestInProcessJobService:
             side_effect=lambda cls: RecordCallback() if cls is not DoubleJob else MagicMock()
         )
 
-        service = InlineJobService(factory=factory, executor=executor)
+        service = InlineServiceFixture(factory=factory, executor=executor)
         handle = service.dispatch_after_commit(DoubleJob, on_success=RecordCallback)
         await flush_pending_dispatches()
 
@@ -153,7 +154,7 @@ class TestInProcessJobService:
             side_effect=lambda cls: ErrCallback() if cls is not DoubleJob else MagicMock()
         )
 
-        service = InlineJobService(factory=factory, executor=executor)
+        service = InlineServiceFixture(factory=factory, executor=executor)
         service.dispatch_after_commit(DoubleJob, on_failure=ErrCallback)
 
         # fire-and-forget: exception is silenced after the failure callback runs
@@ -163,7 +164,7 @@ class TestInProcessJobService:
 
     async def test_the_executor_gets_the_delivery_of_the_dispatch(self) -> None:
         executor = MagicMock(run=AsyncMock(return_value=1))
-        service = InlineJobService(factory=MagicMock(), executor=executor)
+        service = InlineServiceFixture(factory=MagicMock(), executor=executor)
         handle = service.dispatch_after_commit(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
@@ -173,7 +174,7 @@ class TestInProcessJobService:
 
     async def test_a_job_abandonment_settles_the_handle_as_failed(self) -> None:
         executor = MagicMock(run=AsyncMock(side_effect=JobAbandonment("no tenant")))
-        service = InlineJobService(factory=MagicMock(), executor=executor)
+        service = InlineServiceFixture(factory=MagicMock(), executor=executor)
         handle = service.dispatch_after_commit(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
@@ -196,7 +197,7 @@ class TestInProcessJobService:
             side_effect=lambda cls: BrokenCallback() if cls is not DoubleJob else MagicMock()
         )
 
-        service = InlineJobService(factory=factory, executor=executor)
+        service = InlineServiceFixture(factory=factory, executor=executor)
         handle = service.dispatch_after_commit(DoubleJob, on_success=BrokenCallback)
         await flush_pending_dispatches()
 
@@ -219,7 +220,7 @@ class TestInProcessJobService:
         factory = MagicMock()
         factory.build = MagicMock(return_value=MagicMock())
 
-        service = InlineJobService(factory=factory, executor=executor)
+        service = InlineServiceFixture(factory=factory, executor=executor)
         group = service.dispatch_parallel([(DoubleJob, {}), (UpperJob, {})])
         await flush_pending_dispatches()
 

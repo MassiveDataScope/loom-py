@@ -228,7 +228,7 @@ class LoomContainer:
         Example::
 
             container.register(JobService, MyJobService, scope=Scope.APPLICATION)
-            container.register_default(JobService, InlineJobService)
+            container.register_default(JobService, InlineJobTransport)
             assert isinstance(container.resolve(JobService), MyJobService)
         """
         with STRUCTURE_LOCK:

@@ -1,19 +1,14 @@
+"""Public job dispatch and the inline transport."""
+
 from __future__ import annotations
 
-import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from loom.core.identity import (
-    NO_DELEGATION,
-    Acting,
-    Delegation,
-    captured_delegation,
-    reset_identity,
-    set_identity,
-)
+from loom.core.errors import MixedJobTransportsError
+from loom.core.identity import Acting, reset_identity, set_identity
 from loom.core.job.callback import (
     ANY_CALLBACKS,
     CallbackOutcome,
@@ -24,19 +19,13 @@ from loom.core.job.callback import (
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.delivery import JobDelivery
-from loom.core.job.envelope import JobEnvelope, wire_job_name
+from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobOutcome,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.job.timer import JobDelayRefused, JobTimer, Step
+from loom.core.job.timer import JobDelayRefused, JobTimer
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -46,340 +35,61 @@ if TYPE_CHECKING:
 ResultT = TypeVar("ResultT")
 
 
-@dataclass
-class _PendingDispatch:
-    """One inline dispatch, started by the post-commit channel once the unit of work has closed.
+class JobTransport(Protocol):
+    """Send a validated dispatch on the immediate or post-commit channel."""
 
-    A postponed or failed run starts again on the timer, as a copy of this
-    dispatch holding the next delivery, until it succeeds or is abandoned. The
-    runner only postpones or fails when there is a timer.
-    """
-
-    delivery: JobDelivery
-    runner: JobRunner = field(repr=False)
-    timer: JobTimer | None = field(repr=False)
-    on_success: type[Any] | None
-    on_failure: type[Any] | None
-    countdown: Countdown
-    outcome: InlineOutcome
-    factory: UseCaseFactory
-    captured: Delegation = NO_DELEGATION
-    """The dispatcher's caller and deadline (:func:`~loom.core.identity.captured_delegation`)."""
-
-    @property
-    def task_id(self) -> str:
-        """The id of the dispatch, which its handle and callbacks carry."""
-        return str(self.delivery.task_id)
-
-    @property
-    def payload(self) -> dict[str, Any]:
-        """The payload the job runs with."""
-        return self.delivery.envelope.payload or {}
-
-    async def start(self) -> None:
-        """Run the job now, or once its countdown is over.
-
-        Raises:
-            JobDelayRefused: When the countdown is above zero and no timer waits for it.
-        """
-        if self.countdown.seconds == 0:
-            await self.run()
-        else:
-            self.schedule(self.countdown, self.run)
-
-    def schedule(self, delay: Countdown, step: Step) -> None:
-        """Hand *step* to the timer to run once *delay* is over.
-
-        Args:
-            delay: How long the timer holds it.
-            step: What to run afterwards.
-
-        Raises:
-            JobDelayRefused: When no timer waits for it.
-        """
-        if self.timer is None:
-            raise JobDelayRefused(delay)
-        self.timer.schedule(
-            delay, step, job=self.delivery.job_type.__qualname__, task_id=self.task_id
-        )
-
-    async def run(self) -> None:
-        """Run the job, then settle it, as the dispatcher, within the captured delegation."""
-        resumed = Acting.current().resumed(self.captured)
-        token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
-        try:
-            await self._settle(await self.runner.run(self.delivery))
-        finally:
-            if token is not None:
-                reset_identity(token)
-
-    async def _settle(self, outcome: JobOutcome) -> None:
-        match outcome:
-            case Succeeded(result=result):
-                error = await self._record_success(result)
-            case Postponed(delay=delay):
-                self._schedule_next(
-                    replace(self.delivery, postponements=self.delivery.postponements + 1), delay
-                )
-                error = None
-            case Failed(delay=delay):
-                self._schedule_next(
-                    replace(self.delivery, attempt=self.delivery.attempt + 1), delay
-                )
-                error = None
-            case Abandoned():
-                error = outcome.as_exception()
-        if error is not None:
-            await self._record_failure(error)
-
-    def _schedule_next(self, delivery: JobDelivery, delay: Countdown) -> None:
-        """Hand *delivery* to the timer for after *delay*."""
-        self.schedule(delay, replace(self, delivery=delivery).run)
-
-    async def _record_success(self, result: Any) -> Exception | None:
-        """Record *result* and call ``on_success``; the callback's error, when it raises."""
-        self.outcome.succeed(result)
-        if self.on_success is None:
-            return None
-        try:
-            await notify(
-                self.factory,
-                self.on_success,
-                CallbackOutcome.SUCCESS,
-                job_id=self.task_id,
-                result=result,
-                **self.payload,
-            )
-        except Exception as exc:
-            return exc
-        return None
-
-    async def _record_failure(self, error: Exception) -> None:
-        self.outcome.fail(error)
-        if self.on_failure is not None:
-            await notify(
-                self.factory,
-                self.on_failure,
-                CallbackOutcome.FAILURE,
-                job_id=self.task_id,
-                exc_type=type(error).__qualname__,
-                exc_msg=str(error),
-                **self.payload,
-            )
-
-
-class JobService(Protocol):
-    """Protocol for dispatching and running Jobs.
-
-    Injected into UseCases and application code as any other service.
-    The caller never knows whether it is talking to Celery or to an inline
-    runner — both implement this protocol.
-
-    Example::
-
-        class NotifyUsersUseCase(UseCase[User, None]):
-            def __init__(self, job_service: JobService) -> None:
-                self._jobs = job_service
-
-            async def execute(self, cmd: NotifyCmd = Input()) -> None:
-                self._jobs.dispatch_after_commit(SendEmailJob, payload={"email": cmd.email})
-    """
-
-    async def run(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        """Execute a Job immediately and return its result.
-
-        Args:
-            job_type: Concrete Job subclass to run.
-            params: Primitive params bound to the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-
-        Returns:
-            The value returned by ``Job.execute()``.
-        """
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Schedule the send for after the current unit of work commits."""
         ...
 
-    def dispatch_after_commit(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-    ) -> JobHandle[ResultT]:
-        """Register a Job for execution after the current UoW commits.
-
-        The job is NOT sent immediately.  It is queued in the current async
-        context and flushed by the executor after a successful commit.
-
-        Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked on job success.
-            on_failure: Callback type invoked on job failure.
-            queue: Override the job's default ``__queue__``.
-            countdown: Delay in seconds before execution, 0 through 900
-                inclusive. SQS sends it as ``DelaySeconds`` on a standard
-                queue and refuses a delay on a FIFO queue. Celery sends it
-                as the task countdown. Inline waits on its timer after
-                the flush, and refuses it where it has none (Lambda).
-            priority: Task priority override. Celery honours it. SQS refuses
-                a value other than the job's. Inline ignores it.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
-
-        Raises:
-            ValueError: When a callback is attached that the scan did not find,
-                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
-                or *countdown* is outside 0..900 inclusive.
-        """
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Send now, even when the caller's unit of work remains open."""
         ...
 
-    async def dispatch_now(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-    ) -> JobHandle[ResultT]:
-        """Send the job now, even inside a use case.
-
-        The job can run before the caller's writes commit and is not undone
-        if they roll back. Inline runs the job inside the caller's
-        transaction. Work that depends on the caller's writes uses
-        :meth:`dispatch_after_commit`.
-
-        Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked on job success.
-            on_failure: Callback type invoked on job failure.
-            queue: Override the job's default ``__queue__``.
-            countdown: Delay in seconds before execution, 0 through 900
-                inclusive. Same per-transport behaviour as
-                :meth:`dispatch_after_commit`.
-            priority: Task priority override. Same per-transport behaviour
-                as :meth:`dispatch_after_commit`.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
-
-        Raises:
-            ValueError: When a callback is attached that the scan did not find,
-                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
-                or *countdown* is outside 0..900 inclusive.
-        """
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Refuse callbacks that the transport cannot carry before discovery checks."""
         ...
 
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        """Dispatch multiple Jobs concurrently and return a group handle.
-
-        Args:
-            jobs: Sequence of ``(job_type, payload)`` pairs.
-            on_all_success: Callback invoked when all jobs succeed (Celery chord).
-            on_any_failure: Callback invoked when any job fails.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobGroup` for collective result retrieval.
-        """
+    def check_parallel_callbacks(
+        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
+    ) -> None:
+        """Refuse group callbacks the transport cannot deliver."""
         ...
 
 
-class InlineJobService:
-    """Executes Jobs inline without a broker, for tests and local mode.
+class JobService:
+    """Run jobs in process and dispatch them through the transport of their effective queue.
 
-    Satisfies the :class:`JobService` protocol structurally.  The
-    ``dispatch_after_commit()`` method respects the post-commit semantics:
-    the job is enqueued on the execution's post-commit channel and runs when
-    the executor drains it, after the UoW has closed (or at the end of an
-    execution without one). A job with a countdown, a postponement or a failed
-    attempt with attempts left waits on the timer and runs again with its
-    postponements and attempt carried; an abandonment ends it and calls ``on_failure``.
-    Outside an execution the fallback channel holds it until
-    :func:`~loom.core.job.context.flush_pending_dispatches`.
-
-    A dispatched job, and its callbacks, act as
-    :func:`~loom.core.identity.current_caller` at the time of the dispatch:
-    the authenticated caller acting there, else no caller, with the deadline
-    of its delegation (:func:`~loom.core.identity.captured_delegation`), exactly as
-    the Celery and SQS services capture it. :meth:`run` acts as the identity
-    acting, as any execution given none.
+    A dispatch is validated once, before its transport schedules any work.
+    Unrouted queues use the default transport.
 
     Args:
-        factory: Used to build Job and callback instances from the container.
-        executor: Used to drive the compiled ExecutionPlan.
-        settings: The application's job settings; the ClassVars when omitted.
-        callbacks: The callbacks a dispatch may attach; any class when omitted.
-        timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobPostponement`
-            and a failure backoff. Without one a countdown is refused with
-            :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobPostponement`` is
-            abandoned as one that cannot wait, and a failure is abandoned at
-            its first attempt with its own error.
-        metrics: Receives the job events of each run; none when omitted.
-
-    Example::
-
-        service = InlineJobService(factory, executor)
-        handle = service.dispatch_after_commit(SendEmailJob, payload={"email": "a@b.com"})
-        await flush_pending_dispatches()  # outside an execution only
-        result = handle.wait()
+        factory: Builds jobs for an in-process run.
+        executor: Runs an in-process job.
+        default: Transport serving queues without an explicit route.
+        routes: Transport selected by each routed queue name.
+        settings: Resolved options of this application's jobs.
+        callbacks: Callback classes discovered for this application.
     """
 
     def __init__(
         self,
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
+        default: JobTransport,
         *,
+        routes: Mapping[str, JobTransport] | None = None,
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
-        timer: JobTimer | None = None,
-        metrics: MetricsAdapter | None = None,
     ) -> None:
-        self._timer = timer
-        self._callbacks = callbacks
         self._factory = factory
         self._executor = executor
+        self._default = default
+        self._routes = dict(routes or {})
         self._settings = settings or JobSettings()
-        self._redelivery = Redelivery.DELAYED if timer is not None else Redelivery.NONE
-        self._runner = JobRunner(self._invoke, redelivery=self._redelivery, metrics=metrics)
-
-    @property
-    def redelivery(self) -> Redelivery:
-        """What the service does with a job that must run again: wait on its timer, or nothing."""
-        return self._redelivery
-
-    async def _invoke(self, delivery: JobDelivery) -> Any:
-        envelope = delivery.envelope
-        return await self._executor.run(
-            delivery.job_type,
-            factory=self._factory,
-            params=envelope.params,
-            payload=envelope.payload,
-            delivery=delivery,
-        )
+        self._callbacks = callbacks
 
     async def run(
         self,
@@ -388,21 +98,18 @@ class InlineJobService:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> ResultT:
-        """Execute the Job immediately and return its result.
+        """Execute a job immediately in process and return its result.
 
-        Args:
-            job_type: Concrete Job subclass to run.
-            params: Primitive params bound to the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-
-        Returns:
-            The value returned by ``Job.execute()``.
+        Raises:
+            NotImplementedError: The service was built without an in-process executor.
         """
+        if self._factory is None or self._executor is None:
+            raise NotImplementedError(
+                "JobService.run() requires factory and executor. "
+                "Pass them at construction or dispatch the job."
+            )
         result: ResultT = await self._executor.run(
-            job_type,
-            factory=self._factory,
-            params=params,
-            payload=payload,
+            job_type, factory=self._factory, params=params, payload=payload
         )
         return result
 
@@ -418,43 +125,33 @@ class InlineJobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Queue the Job for post-commit execution and return a handle.
+        """Register a job for execution after the current unit of work commits.
 
-        A zero ``countdown`` runs the job at the flush; a larger one waits on
-        the timer from the flush. ``priority`` is ignored.
+        The job is flushed after a successful commit, or at the end of an
+        execution without a unit of work. A rollback discards the dispatch.
 
         Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked after successful execution.
-            on_failure: Callback type invoked after failed execution.
-            queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive.
-            priority: Ignored in inline mode.
+            job_type: Concrete job to dispatch.
+            params: Primitive arguments bound to the execute signature.
+            payload: Raw input command data and callback context.
+            on_success: Callback invoked when the job succeeds.
+            on_failure: Callback invoked when the job fails terminally.
+            queue: Override the job's resolved queue.
+            countdown: Delay in seconds, from zero through 900.
+            priority: Transport priority override.
 
         Returns:
-            A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
-            returns the result once the queue is flushed and any delay is over.
+            A handle carrying the dispatch's task id.
 
         Raises:
-            ValueError: When a callback is attached that the scan did not find,
-                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
-                or *countdown* is outside 0..900 inclusive.
-            JobDelayRefused: When *countdown* is above zero and the service has no timer.
+            ValueError: A callback is unknown, its payload reserves a hook key,
+                or the countdown falls outside zero through 900 seconds.
         """
-        pending, handle = self._build_pending(
-            job_type,
-            params=params,
-            payload=payload,
-            on_success=on_success,
-            on_failure=on_failure,
-            queue=queue,
-            countdown=countdown,
-            priority=priority,
+        dispatch = self._build_dispatch(
+            job_type, params=params, payload=payload, on_success=on_success,
+            on_failure=on_failure, queue=queue, countdown=countdown, priority=priority,
         )
-        add_pending_dispatch(pending.start)
-        return handle
+        return self._transport_for(dispatch.queue).send_after_commit(dispatch)
 
     async def dispatch_now(
         self,
@@ -468,118 +165,30 @@ class InlineJobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Run the Job now, or after its countdown, and return its handle.
-
-        A zero ``countdown`` runs the job before returning, so the handle is
-        settled unless the job waits to run again. A larger one waits on the
-        timer. ``priority`` is ignored.
+        """Send a job now, even before the caller's writes commit.
 
         Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked after successful execution.
-            on_failure: Callback type invoked after failed execution.
-            queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive.
-            priority: Ignored in inline mode.
+            job_type: Concrete job to dispatch.
+            params: Primitive arguments bound to the execute signature.
+            payload: Raw input command data and callback context.
+            on_success: Callback invoked when the job succeeds.
+            on_failure: Callback invoked when the job fails terminally.
+            queue: Override the job's resolved queue.
+            countdown: Delay in seconds, from zero through 900.
+            priority: Transport priority override.
 
         Returns:
-            A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
-            returns the result of the run.
+            A handle carrying the dispatch's task id.
 
         Raises:
-            ValueError: When a callback is attached that the scan did not find,
-                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
-                or *countdown* is outside 0..900 inclusive.
-            JobDelayRefused: When *countdown* is above zero and the service has no timer.
+            ValueError: A callback is unknown, its payload reserves a hook key,
+                or the countdown falls outside zero through 900 seconds.
         """
-        pending, handle = self._build_pending(
-            job_type,
-            params=params,
-            payload=payload,
-            on_success=on_success,
-            on_failure=on_failure,
-            queue=queue,
-            countdown=countdown,
-            priority=priority,
+        dispatch = self._build_dispatch(
+            job_type, params=params, payload=payload, on_success=on_success,
+            on_failure=on_failure, queue=queue, countdown=countdown, priority=priority,
         )
-        await pending.start()
-        return handle
-
-    def _build_pending(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None,
-        payload: dict[str, Any] | None,
-        on_success: type[JobCallback] | None,
-        on_failure: type[JobCallback] | None,
-        queue: str | None,
-        countdown: int | None,
-        priority: int | None,
-    ) -> tuple[_PendingDispatch, JobHandle[ResultT]]:
-        """Build the pending run and its handle.
-
-        Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked after successful execution.
-            on_failure: Callback type invoked after failed execution.
-            queue: Overrides the job's queue for the returned handle.
-            countdown: Delay in seconds, 0 through 900 inclusive.
-            priority: Ignored in inline mode.
-
-        Returns:
-            The pending run and a handle sharing its outcome.
-
-        Raises:
-            ValueError: When a callback is attached that the scan did not find,
-                *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
-                or *countdown* is outside 0..900 inclusive.
-            JobDelayRefused: When *countdown* is above zero and the service has no timer.
-        """
-        _ = priority
-        options = self._settings.of(job_type)
-        delay = Countdown(options.countdown if countdown is None else countdown)
-        if delay.seconds and self._timer is None:
-            raise JobDelayRefused(delay)
-        payload = payload or {}
-        self._callbacks.refuse(payload, on_success, on_failure)
-        task_id = str(uuid.uuid4())
-        outcome = InlineOutcome()
-        envelope = JobEnvelope(
-            job=wire_job_name(job_type.__qualname__),
-            payload=payload,
-            params=params,
-            task_id=task_id,
-        )
-        pending = _PendingDispatch(
-            delivery=JobDelivery(
-                job_type=job_type,
-                envelope=envelope,
-                task_id=task_id,
-                attempt=1,
-                postponements=0,
-                policy=options.retry.policy,
-            ),
-            runner=self._runner,
-            timer=self._timer,
-            on_success=on_success,
-            on_failure=on_failure,
-            countdown=delay,
-            outcome=outcome,
-            factory=self._factory,
-            captured=captured_delegation(),
-        )
-        handle: JobHandle[ResultT] = JobHandle(
-            job_id=task_id,
-            queue=queue or options.queue,
-            dispatched_at=datetime.now(UTC),
-            _inline_outcome=outcome,
-        )
-        return pending, handle
+        return await self._transport_for(dispatch.queue).send(dispatch)
 
     def dispatch_parallel(
         self,
@@ -588,24 +197,205 @@ class InlineJobService:
         on_all_success: type[JobCallback] | None = None,
         on_any_failure: type[JobCallback] | None = None,
     ) -> JobGroup:
-        """Dispatch multiple Jobs and return a group handle.
+        """Schedule each job after commit and return handles in input order.
 
-        ``on_all_success`` and ``on_any_failure`` are accepted but ignored —
-        chord semantics require a Celery-backed service.
-
-        Args:
-            jobs: Sequence of ``(job_type, payload)`` pairs.
-            on_all_success: Ignored in inline mode.
-            on_any_failure: Ignored in inline mode.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobGroup` with one handle per job.
+        Raises:
+            MixedJobTransportsError: Group callbacks span more than one transport.
+            NotImplementedError: A transport cannot deliver group callbacks.
         """
-        _ = (
-            on_all_success,
-            on_any_failure,
+        dispatches = [self._build_dispatch(job, payload=body) for job, body in jobs]
+        transports = [self._transport_for(dispatch.queue) for dispatch in dispatches]
+        first = transports[0] if transports else self._default
+        same_transport = all(transport is first for transport in transports)
+        if (on_all_success is not None or on_any_failure is not None) and not same_transport:
+            raise MixedJobTransportsError()
+        if same_transport:
+            first.check_parallel_callbacks(on_all_success, on_any_failure)
+        return JobGroup(
+            handles=tuple(
+                transport.send_after_commit(dispatch)
+                for transport, dispatch in zip(transports, dispatches, strict=True)
+            )
         )
-        handles = tuple(
-            self.dispatch_after_commit(job_type, payload=payload) for job_type, payload in jobs
+
+    def _build_dispatch(
+        self,
+        job_type: type[Job[Any]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobDispatch:
+        options = self._settings.of(job_type)
+        self._transport_for(queue or options.queue).check_callbacks(on_success, on_failure)
+        return JobDispatch.build(
+            job_type, options=options, callbacks=self._callbacks,
+            params=params, payload=payload, on_success=on_success,
+            on_failure=on_failure, queue=queue, countdown=countdown, priority=priority,
         )
-        return JobGroup(handles=handles)
+
+    def _transport_for(self, queue: str) -> JobTransport:
+        return self._routes.get(queue, self._default)
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingDispatch:
+    """The data of one inline run held until its post-commit flush or timer step."""
+
+    dispatch: JobDispatch
+    delivery: JobDelivery
+    outcome: InlineOutcome
+
+
+class InlineJobTransport:
+    """Run dispatched jobs in process, optionally waiting on an injected timer.
+
+    Args:
+        factory: Builds job and callback instances.
+        executor: Runs compiled execution plans.
+        timer: Schedules countdowns, postponements and retries; without it
+            any initial delay is refused and later waiting is abandoned.
+        metrics: Receives the runner's job events.
+    """
+
+    def __init__(
+        self,
+        factory: UseCaseFactory,
+        executor: RuntimeExecutor,
+        *,
+        timer: JobTimer | None = None,
+        metrics: MetricsAdapter | None = None,
+    ) -> None:
+        self._factory = factory
+        self._executor = executor
+        self._timer = timer
+        self._redelivery = Redelivery.DELAYED if timer is not None else Redelivery.NONE
+        self._runner = JobRunner(self._invoke, redelivery=self._redelivery, metrics=metrics)
+
+    @property
+    def redelivery(self) -> Redelivery:
+        """The inline runner's ability to wait and run again."""
+        return self._redelivery
+
+    async def _invoke(self, delivery: JobDelivery) -> Any:
+        envelope = delivery.envelope
+        return await self._executor.run(
+            delivery.job_type, factory=self._factory, params=envelope.params,
+            payload=envelope.payload, delivery=delivery,
+        )
+
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Schedule the inline run on the post-commit channel."""
+        pending, handle = self._build_pending(dispatch)
+        add_pending_dispatch(lambda: self._start(pending))
+        return handle
+
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Start the inline run before returning its handle."""
+        pending, handle = self._build_pending(dispatch)
+        await self._start(pending)
+        return handle
+
+    def check_parallel_callbacks(
+        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
+    ) -> None:
+        """Accept group callbacks without invoking them, as inline dispatch has done."""
+        return None
+
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Accept callbacks, whose discovery is checked by the service."""
+        return None
+
+    def _build_pending(self, dispatch: JobDispatch) -> tuple[_PendingDispatch, JobHandle[Any]]:
+        if dispatch.countdown.seconds and self._timer is None:
+            raise JobDelayRefused(dispatch.countdown)
+        outcome = InlineOutcome()
+        pending = _PendingDispatch(
+            dispatch=dispatch,
+            delivery=dispatch.options.delivery_for(dispatch.job_type, dispatch.envelope),
+            outcome=outcome,
+        )
+        return pending, JobHandle(
+            job_id=str(dispatch.envelope.task_id), queue=dispatch.queue,
+            dispatched_at=datetime.now(UTC), _inline_outcome=outcome,
+        )
+
+    async def _start(self, pending: _PendingDispatch) -> None:
+        if pending.dispatch.countdown.seconds:
+            self._schedule(pending, pending.dispatch.countdown)
+            return
+        await self._run(pending)
+
+    def _schedule(self, pending: _PendingDispatch, delay: Countdown) -> None:
+        if self._timer is None:
+            raise JobDelayRefused(delay)
+        async def step() -> None:
+            await self._run(pending)
+        self._timer.schedule(
+            delay, step, job=pending.dispatch.job_type.__qualname__,
+            task_id=str(pending.dispatch.envelope.task_id),
+        )
+
+    async def _run(self, pending: _PendingDispatch) -> None:
+        resumed = Acting.current().resumed(pending.dispatch.delegation)
+        token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
+        try:
+            await self._settle(pending, await self._runner.run(pending.delivery))
+        finally:
+            if token is not None:
+                reset_identity(token)
+
+    async def _settle(self, pending: _PendingDispatch, outcome: JobOutcome) -> None:
+        match outcome:
+            case Succeeded(result=result):
+                error = await self._record_success(pending, result)
+            case Postponed(delay=delay):
+                self._schedule(
+                    replace(pending, delivery=replace(
+                        pending.delivery, postponements=pending.delivery.postponements + 1
+                    )), delay,
+                )
+                error = None
+            case Failed(delay=delay):
+                self._schedule(
+                    replace(pending, delivery=replace(
+                        pending.delivery, attempt=pending.delivery.attempt + 1
+                    )), delay,
+                )
+                error = None
+            case Abandoned():
+                error = outcome.as_exception()
+        if error is not None:
+            await self._record_failure(pending, error)
+
+    async def _record_success(self, pending: _PendingDispatch, result: Any) -> Exception | None:
+        pending.outcome.succeed(result)
+        callback = pending.dispatch.on_success
+        if callback is None:
+            return None
+        try:
+            await notify(
+                self._factory, callback, CallbackOutcome.SUCCESS,
+                job_id=pending.dispatch.envelope.task_id, result=result,
+                **(pending.dispatch.envelope.payload or {}),
+            )
+        except Exception as exc:
+            return exc
+        return None
+
+    async def _record_failure(self, pending: _PendingDispatch, error: Exception) -> None:
+        pending.outcome.fail(error)
+        callback = pending.dispatch.on_failure
+        if callback is not None:
+            await notify(
+                self._factory, callback, CallbackOutcome.FAILURE,
+                job_id=pending.dispatch.envelope.task_id,
+                exc_type=type(error).__qualname__, exc_msg=str(error),
+                **(pending.dispatch.envelope.payload or {}),
+            )

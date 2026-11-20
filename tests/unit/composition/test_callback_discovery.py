@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.helpers.jobs import RecordingServiceFixture
+
 from collections.abc import Callable
 from pathlib import Path
 
@@ -88,7 +90,7 @@ class TestJobServiceFromContext:
         self, tmp_path: Path
     ) -> None:
         project = _project(
-            tmp_path, acme_callbacks.MODULE, job_service="loom.testing.jobs:RecordingJobService"
+            tmp_path, acme_callbacks.MODULE, job_service="loom.testing.jobs:RecordingJobTransport"
         )
         adapter = CeleryAdapter(jobs=[_AcmeJob])
         service = project.compose(adapter).kernel.container.resolve(JobService)

@@ -23,7 +23,7 @@ from loom.core.job.policy import Redelivery
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.serverless.aws.lambda_._jobs import job_runner, run_envelope
+from loom.serverless.aws.lambda_._jobs import JobConsumer, job_runner
 from loom.serverless.aws.lambda_.triggers.http import (
     _route,  # pyright: ignore[reportPrivateUsage]
 )
@@ -68,13 +68,13 @@ class TestLambdaJobsEnvelope:
         )
         envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
 
-        await run_envelope(
-            job_runner(cast(Any, application), Redelivery.SAME),
+        await JobConsumer(
+            application.job_settings, job_runner(cast(Any, application), Redelivery.SAME)
+        ).run_envelope(
             envelope,
             AcmeProbeJob,
             None,
             None,
-            settings=application.job_settings,
             attempt=1,
             postponements=0,
         )

@@ -23,7 +23,7 @@ from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
 from loom.core.plugins.optional import import_optional
-from loom.jobs.aws.queue import DeadLetterPolicy, OutgoingMessage, QueueConfig, SQSQueue
+from loom.jobs.aws.queue import DeadLetterPolicy, QueueConfig, SQSQueue
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.functions import JobsTrigger, served_trigger
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
@@ -144,9 +144,9 @@ class LambdaWorker:
         params: dict[str, Any] | None = None,
         identity: Identity | None = None,
     ) -> dict[str, Any]:
-        """Put *job_type* on the queue as ``SQSJobService`` sends it, and deliver it.
+        """Put *job_type* on the queue as ``SQSJobTransport`` sends it, and deliver it.
 
-        The envelope is the one ``SQSJobService`` writes, placed by the queue's own
+        The envelope is the one ``SQSJobTransport`` writes, placed by the queue's own
         rule (hashed group id and the task id as deduplication id on a FIFO queue).
 
         Args:
@@ -167,10 +167,8 @@ class LambdaWorker:
         body = encode_job_message(
             job_type, payload=payload, params=params, identity=identity, task_id=task_id
         ).decode()
-        message = OutgoingMessage(
-            id=task_id,
-            body=body,
-            **self._queue.placement(job_type, payload or {}, task_id, Countdown(0)),
+        message = self._queue.build_message(
+            job_type, payload or {}, task_id, Countdown(0), body
         )
         self.sqs.send_message(QueueUrl=self.queue_url, **message.request())
         return self.redeliver()

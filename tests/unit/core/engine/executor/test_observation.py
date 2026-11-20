@@ -7,6 +7,8 @@ failure reports ``[FAIL]`` with ``error_kind="build"`` and no event.
 
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -20,7 +22,6 @@ from loom.core.errors import DelegationExpired, RuleViolation, RuleViolations, U
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.context import flush_pending_dispatches
-from loom.core.job.service import InlineJobService
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Input, LoadById
@@ -244,7 +245,7 @@ class TestBuildFailure:
         AcmeOnFailure.calls.clear()
         logger = AcmeErrorRecorder()
         factory.register(AcmeOnFailure)
-        service = InlineJobService(factory, make_executor(logger=logger))
+        service = InlineServiceFixture(factory, make_executor(logger=logger))
 
         service.dispatch_after_commit(AcmeBrokenJob, on_failure=on_failure)
         await flush_pending_dispatches()

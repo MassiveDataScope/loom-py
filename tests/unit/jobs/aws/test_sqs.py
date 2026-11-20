@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.helpers.jobs import SQSServiceFixture
+
 import asyncio
 import hashlib
 import threading
@@ -11,7 +13,7 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import JobBackendError
+from loom.composition import JobTransportError
 from loom.core import concurrency
 from loom.core.config import ConfigError
 from loom.core.engine.compiler import UseCaseCompiler
@@ -28,14 +30,13 @@ from loom.core.identity.wire import decode_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
-from loom.core.job.router import JobRouter
 from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
-from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES, SQSJobService
+from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES
 from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.jobs import (
@@ -165,7 +166,7 @@ class _Gate:
 
 
 class _DispatchAfterCommit(UseCase[Any, None]):
-    def __init__(self, service: SQSJobService, bump: _Gate) -> None:
+    def __init__(self, service: SQSServiceFixture, bump: _Gate) -> None:
         self.service = service
         self.bump = bump
 
@@ -176,7 +177,7 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         self.service.dispatch_after_commit(EmailJob)
 
 
-def _queued(service: SQSJobService, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
+def _queued(service: SQSServiceFixture, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
     token = bind_channel(channel)
     try:
         payload = {"customer": "hunter2", "secret": "hunter2"}
@@ -319,12 +320,12 @@ class TestSQSDispatch:
         project = job_project(tmp_path, config, "sqs")
         application = project.compose(JobsAdapter(EmailJob, ReportJob))
 
-        assert isinstance(application.kernel.container.resolve(JobService), JobRouter)
+        assert isinstance(application.kernel.container.resolve(JobService), JobService)
 
     def test_startup_without_the_extra_names_it(self, tmp_path: Path, absent_boto3: None) -> None:
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(EmailJob)
-        with pytest.raises(JobBackendError, match=r"loom\[aws\] extra is not installed"):
+        with pytest.raises(JobTransportError, match=r"loom\[aws\] extra is not installed"):
             project.compose(adapter)
 
     @pytest.mark.parametrize(
@@ -353,7 +354,7 @@ class TestSQSDispatch:
             service.dispatch_after_commit(job, **options)
         await flush_pending_dispatches()
 
-        assert (raised.value.code, raised.value.retryable) == (code, False)
+        assert (raised.value.code, raised.value.is_retryable) == (code, False)
         assert client.requests == []
 
     def test_dispatch_parallel_refuses_callbacks(self, service: JobService) -> None:

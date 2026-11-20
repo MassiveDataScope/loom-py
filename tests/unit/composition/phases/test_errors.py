@@ -53,9 +53,9 @@ _WRAPPED = {
 
 _RAW = {
     "reserved-binding": "ReservedBindingError",
-    "job-backend": "JobBackendError",
-    "job-backend-celery-extra": "JobBackendError",
-    "job-backend-celery-section": "JobBackendError",
+    "job-backend": "JobTransportError",
+    "job-backend-celery-extra": "JobTransportError",
+    "job-backend-celery-section": "JobTransportError",
     "sqs-queue": "SQSQueueConfigError",
     "sql-invalid-section": "ConfigError",
     "sql-retired-key": "ConfigError",

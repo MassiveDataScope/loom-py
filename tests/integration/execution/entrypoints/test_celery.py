@@ -9,6 +9,8 @@ link envelope's identity governs, never the worker's (D7 revised, T09a).
 
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture
+
 import asyncio
 import contextvars
 import time
@@ -25,7 +27,6 @@ from loom.celery.runner import (
     _make_callback_task,  # pyright: ignore[reportPrivateUsage]
     _make_job_task,  # pyright: ignore[reportPrivateUsage]
 )
-from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Delegation, Identity
@@ -83,11 +84,11 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
     return apply
 
 
-class TestCeleryJobService:
+class TestCeleryServiceFixture:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        service = CeleryJobService(cast(Any, None), factory=factory, executor=executor)
+        service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
         with acting_as(BOB, until=time.time() + AN_HOUR):
             job = await service.run(AcmeProbeJob)
@@ -98,7 +99,7 @@ class TestCeleryJobService:
     async def test_run_with_nothing_acting_has_no_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        service = CeleryJobService(cast(Any, None), factory=factory, executor=executor)
+        service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
         with pytest.raises(Unauthenticated):
             await service.run(AcmeProbeJob)
@@ -135,7 +136,7 @@ class TestCeleryJobTask:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
     ) -> None:
         app = MagicMock()
-        service = CeleryJobService(
+        service = CeleryServiceFixture(
             app, factory=factory, executor=executor, callbacks=DispatchableCallbacks([AcmeCallback])
         )
 

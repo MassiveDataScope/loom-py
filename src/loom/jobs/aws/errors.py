@@ -30,7 +30,7 @@ class SQSQueueConfigError(ConfigError):
 class SQSDispatchError(SystemError):
     """A message SQS cannot carry, or a send that failed; ``code`` names which."""
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str, *, code: SQSErrorCode) -> None:
         super().__init__(message, code=code)

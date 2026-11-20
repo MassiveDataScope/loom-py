@@ -2,6 +2,17 @@
 
 ## 💥 Breaking
 
+- **jobs:** `JobService` is the one public dispatch service. The former
+  `JobRouter`, `InlineJobService`, `CeleryJobService` and `SQSJobService` are
+  removed; composition now routes by effective queue to `InlineJobTransport`,
+  `CeleryJobTransport` or `SQSJobTransport` through the `JobTransport` port.
+  `JobBackendContext`, `JobBackendError` and `MixedJobBackendsError` become
+  `JobTransportContext`, `JobTransportError` and `MixedJobTransportsError`.
+  `JobDelivery.task_id` now reads `envelope.task_id`, and
+  `JobOptions.delivery_for` builds each delivery. `LoomError.retryable` is
+  `LoomError.is_retryable`; foreign exceptions are retryable by default.
+  **Migration:** inject `JobService`, override `JobTransport` for test sends,
+  and rename error declarations and transport integrations to these types.
 - **jobs:** one word per concept: *postpone* is a job asking to run later,
   without failing and without spending an attempt; *retry* is running again
   after a failure, spending an attempt; *abandon* is giving up for good (the

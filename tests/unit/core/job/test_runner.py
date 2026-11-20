@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.events import EventKind, RuntimeEvent, Status
+from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
@@ -37,8 +38,8 @@ class Metrics:
         self.events.append(event)
 
 
-class UnretryableError(Exception):
-    retryable = False
+class UnretryableError(SystemError):
+    is_retryable = False
 
 
 def _delivery(
@@ -46,8 +47,7 @@ def _delivery(
 ) -> JobDelivery:
     return JobDelivery(
         job_type=AcmeJob,
-        envelope=JobEnvelope(job="AcmeJob", trace_id="trace-1"),
-        task_id="task-1",
+        envelope=JobEnvelope(job="AcmeJob", trace_id="trace-1", task_id="task-1"),
         attempt=attempt,
         postponements=postponements,
         policy=POLICY,

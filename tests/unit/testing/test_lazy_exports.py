@@ -6,6 +6,8 @@ unrelated suites inside the pytest interpreter cannot mask a dependency leak.
 
 from __future__ import annotations
 
+from tests.helpers.jobs import RecordingServiceFixture
+
 import os
 import subprocess
 import sys
@@ -26,7 +28,7 @@ sys.modules["httpx"] = None
 from loom.testing import (  # noqa: F401
     GoldenHarness,
     InMemoryRepository,
-    RecordingJobService,
+    RecordingServiceFixture,
     UseCaseTest,
     LambdaEvent,
 )

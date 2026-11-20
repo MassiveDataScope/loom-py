@@ -6,6 +6,8 @@ several sit behind a ``JobRouter``.
 
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
+
 import json
 import subprocess
 import sys
@@ -16,9 +18,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from loom.celery.service import CeleryJobService
-from loom.composition import JobBackendContext, JobBackendError, Project
-from loom.core.job.service import InlineJobService, JobService
+from loom.composition import JobTransportContext, JobTransportError, Project
+from loom.core.job.service import JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory
 from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_project
@@ -27,10 +28,10 @@ _SRC = Path(__file__).resolve().parents[3] / "src"
 _ROUTED = {"celery": {**BROKER, "queues": ["default", "emails"]}}
 
 
-class _ContextBackend(InlineJobService):
+class _ContextBackend(InlineServiceFixture):
     """A ``module:Class`` backend that keeps the context it was built with."""
 
-    def __init__(self, context: JobBackendContext) -> None:
+    def __init__(self, context: JobTransportContext) -> None:
         super().__init__(context.factory, context.executor)
         self.context = context
 
@@ -87,10 +88,10 @@ class TestJobBackends:
     @pytest.mark.parametrize(
         ("queue", "expected"),
         [
-            (None, CeleryJobService),
-            ("emails", CeleryJobService),
-            ("reports", InlineJobService),
-            ("default", InlineJobService),
+            (None, CeleryServiceFixture),
+            ("emails", CeleryServiceFixture),
+            ("reports", InlineServiceFixture),
+            ("default", InlineServiceFixture),
         ],
         ids=["job queue", "per-call celery queue", "per-call other queue", "celery default queue"],
     )
@@ -100,22 +101,22 @@ class TestJobBackends:
         service = _service(tmp_path, _ROUTED, "inline")
 
         with (
-            patch.object(CeleryJobService, "dispatch_after_commit", autospec=True) as celery,
-            patch.object(InlineJobService, "dispatch_after_commit", autospec=True) as inline,
+            patch.object(CeleryServiceFixture, "dispatch_after_commit", autospec=True) as celery,
+            patch.object(InlineServiceFixture, "dispatch_after_commit", autospec=True) as inline,
         ):
             service.dispatch_after_commit(EmailJob, queue=queue)
 
-        reached = {CeleryJobService: celery, InlineJobService: inline}
+        reached = {CeleryServiceFixture: celery, InlineServiceFixture: inline}
         assert [backend for backend, mock in reached.items() if mock.called] == [expected]
 
     @pytest.mark.parametrize(
         ("config", "job_service", "expected"),
         [
-            ({"celery": BROKER}, "inline", InlineJobService),
-            ({}, "inline", InlineJobService),
-            (_ROUTED, "celery", CeleryJobService),
-            ({"celery": BROKER}, "celery", CeleryJobService),
-            ({"celery": {**BROKER, "queues": ["default"]}}, "inline", InlineJobService),
+            ({"celery": BROKER}, "inline", InlineServiceFixture),
+            ({}, "inline", InlineServiceFixture),
+            (_ROUTED, "celery", CeleryServiceFixture),
+            ({"celery": BROKER}, "celery", CeleryServiceFixture),
+            ({"celery": {**BROKER, "queues": ["default"]}}, "inline", InlineServiceFixture),
         ],
         ids=[
             "celery without queues",
@@ -146,7 +147,7 @@ class TestJobBackends:
         project = job_project(tmp_path, {}, "rabbit")
         adapter = JobsAdapter()
 
-        with pytest.raises(JobBackendError, match="'rabbit' names no job backend"):
+        with pytest.raises(JobTransportError, match="'rabbit' names no job backend"):
             project.compose(adapter)
 
     @pytest.mark.parametrize(
@@ -165,14 +166,14 @@ class TestJobBackends:
         project = job_project(tmp_path, config, job_service)
         adapter = JobsAdapter()
 
-        with pytest.raises(JobBackendError, match=r"loom\[celery\] extra is not installed"):
+        with pytest.raises(JobTransportError, match=r"loom\[celery\] extra is not installed"):
             project.compose(adapter)
 
     def test_celery_queues_without_its_default_queue_stops_startup(self, tmp_path: Path) -> None:
         project = job_project(tmp_path, {"celery": {**BROKER, "queues": ["emails"]}}, "inline")
         adapter = JobsAdapter()
 
-        with pytest.raises(JobBackendError, match="the celery section is invalid"):
+        with pytest.raises(JobTransportError, match="the celery section is invalid"):
             project.compose(adapter)
 
 

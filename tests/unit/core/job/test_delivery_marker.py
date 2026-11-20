@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 import logging
 from typing import Any, ClassVar
 
@@ -14,7 +16,6 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import DEFAULT_RETRY
-from loom.core.job.service import InlineJobService
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Delivery
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -38,7 +39,7 @@ class InnerJob(Job[None]):
 
 class OuterJob(Job[None]):
     seen: ClassVar[list[JobDelivery | None]] = []
-    service: ClassVar[InlineJobService]
+    service: ClassVar[InlineServiceFixture]
 
     async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
         self.seen.append(delivery)
@@ -63,8 +64,7 @@ class TwoDeliveriesJob(Job[None]):
 def _delivery(job_type: type[Job[Any]], attempt: int = 2) -> JobDelivery:
     return JobDelivery(
         job_type=job_type,
-        envelope=JobEnvelope(job=job_type.__qualname__),
-        task_id="task-1",
+        envelope=JobEnvelope(job=job_type.__qualname__, task_id="task-1"),
         attempt=attempt,
         postponements=1,
         policy=DEFAULT_RETRY,
@@ -112,7 +112,7 @@ class TestDeliveryMarker:
     ) -> None:
         InnerJob.seen.clear()
         OuterJob.seen.clear()
-        OuterJob.service = InlineJobService(factory, executor)
+        OuterJob.service = InlineServiceFixture(factory, executor)
         outer = _delivery(OuterJob, attempt=2)
 
         await executor.run(OuterJob, factory=factory, delivery=outer)

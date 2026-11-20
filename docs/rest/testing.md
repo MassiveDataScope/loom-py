@@ -172,7 +172,7 @@ constructor per trigger source, so a test calls the real handler with it:
 | Constructor | Event |
 |---|---|
 | `LambdaEvent.http(method, path, query=, headers=, json_body=, body=)` | An API Gateway HTTP API request (`event_format="v1"` for REST) |
-| `LambdaEvent.jobs(Job, payload, params=, identity=)` | One SQS record of the `JobEnvelope` `SQSJobService` sends |
+| `LambdaEvent.jobs(Job, payload, params=, identity=)` | One SQS record of the `JobEnvelope` `SQSJobTransport` sends |
 | `LambdaEvent.sqs_record(body)` | One SQS record whose body is written by hand |
 | `LambdaEvent.eventbridge(detail, event_id=)` | An EventBridge event |
 | `LambdaEvent.s3(objects, bucket=)` | An S3 notification, one record per key or `key`/`size`/`version_id` mapping |
@@ -300,7 +300,7 @@ built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
 `mock_aws()` outside is joined, and closing the worker leaves it running.
 
 `worker.deliver(job_type, payload, params=, identity=)` sends the job as
-`SQSJobService` does (its envelope, and the queue's own FIFO placement), receives
+`SQSJobTransport` does (its envelope, and the queue's own FIFO placement), receives
 it and invokes the function with a record that carries the real receipt handle
 and `ApproximateReceiveCount` of that delivery. It returns the handler's result
 and, as Lambda does, deletes the messages the result does not report.

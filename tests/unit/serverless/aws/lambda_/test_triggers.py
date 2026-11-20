@@ -47,7 +47,7 @@ class Invoice(Command, frozen=True, kw_only=True):
 
 
 class _Final(LoomError):
-    retryable = False
+    is_retryable = False
 
 
 _RAN: list[tuple[Any, Identity]] = []

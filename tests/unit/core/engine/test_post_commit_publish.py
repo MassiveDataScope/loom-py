@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture
+
 import asyncio
 import logging
 from collections.abc import Callable, Iterator
@@ -10,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
 from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
@@ -113,7 +114,7 @@ async def _cancelled(task: asyncio.Task[Any]) -> None:
 
 
 class _DispatchAfterCommit(UseCase[Any, None]):
-    def __init__(self, service: CeleryJobService, bump: _Gate) -> None:
+    def __init__(self, service: CeleryServiceFixture, bump: _Gate) -> None:
         self.service = service
         self.bump = bump
 
@@ -166,7 +167,7 @@ class TestPostCommitPublish:
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
         task = asyncio.create_task(
-            executor.execute(_DispatchAfterCommit(CeleryJobService(app), bump))
+            executor.execute(_DispatchAfterCommit(CeleryServiceFixture(app), bump))
         )
         await bump.started.wait()
         assert _COMMITTED in log.entries

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture, RecordingServiceFixture
+
 import asyncio
 import inspect
 from collections.abc import Callable
@@ -8,11 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
 from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks, JobCallback
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService, JobService
-from loom.testing.jobs import RecordingJobService
+from loom.core.job.service import JobService
 
 
 class _OnlySuccess(JobCallback):
@@ -87,10 +87,10 @@ SERVICES = pytest.mark.parametrize(
     "service",
     [
         pytest.param(
-            lambda: InlineJobService(MagicMock(), MagicMock(), callbacks=_DISCOVERED), id="inline"
+            lambda: InlineServiceFixture(MagicMock(), MagicMock(), callbacks=_DISCOVERED), id="inline"
         ),
-        pytest.param(lambda: CeleryJobService(MagicMock(), callbacks=_DISCOVERED), id="celery"),
-        pytest.param(RecordingJobService, id="recording"),
+        pytest.param(lambda: CeleryServiceFixture(MagicMock(), callbacks=_DISCOVERED), id="celery"),
+        pytest.param(RecordingServiceFixture, id="recording"),
     ],
 )
 """Every job service that accepts callbacks."""
@@ -120,12 +120,12 @@ class TestReservedCallbackArguments:
 
 class TestUndiscoveredCallbacks:
     @pytest.mark.parametrize("hook", ["on_success", "on_failure"])
-    @pytest.mark.parametrize("service", [InlineJobService, CeleryJobService])
+    @pytest.mark.parametrize("service", [InlineServiceFixture, CeleryServiceFixture])
     def test_a_service_built_from_composition_refuses_a_class_the_scan_did_not_find(
         self, service: type[Any], hook: str
     ) -> None:
         jobs = service(
-            *[MagicMock()] * (2 if service is InlineJobService else 1), callbacks=_DISCOVERED
+            *[MagicMock()] * (2 if service is InlineServiceFixture else 1), callbacks=_DISCOVERED
         )
 
         with pytest.raises(ValueError, match="_AcmeUndiscoveredCallback was not discovered"):

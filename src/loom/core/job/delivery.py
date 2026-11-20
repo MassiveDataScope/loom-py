@@ -31,8 +31,12 @@ class JobDelivery:
 
     job_type: type[Job[Any]]
     envelope: JobEnvelope
-    task_id: str | None
     attempt: int
     postponements: int
     policy: RetryPolicy
     timeout_s: float | None = None
+
+    @property
+    def task_id(self) -> str | None:
+        """The task id carried by this delivery's envelope, when present."""
+        return self.envelope.task_id

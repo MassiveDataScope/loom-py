@@ -23,13 +23,13 @@ from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
+    JobConsumer,
     QueueConsumer,
     Read,
     fail_in_span,
     job_runner,
     jobs_recipe,
     open_host,
-    run_envelope,
 )
 from loom.serverless.aws.lambda_._refusals import (
     COMPONENT,
@@ -315,7 +315,7 @@ class _DirectEvents:
         function: str,
     ) -> None:
         self._application = application
-        self._runner = runner
+        self._consumer = JobConsumer(application.job_settings, runner)
         self._host = host
         self._job_type = job_type
         self._read = read
@@ -333,13 +333,11 @@ class _DirectEvents:
         try:
             for envelope, span_id in self._envelopes(event):
                 outcome = self._host.run(
-                    run_envelope(
-                        self._runner,
+                    self._consumer.run_envelope(
                         envelope,
                         self._job_type,
                         span_id,
                         context,
-                        settings=self._application.job_settings,
                         attempt=1,
                         postponements=0,
                     )

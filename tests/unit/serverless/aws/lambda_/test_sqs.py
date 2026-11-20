@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.helpers.jobs import InlineServiceFixture
+
 import asyncio
 import json
 import subprocess
@@ -579,7 +581,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         adapter.bind(application)
         try:
-            assert any("InlineJobService" in message for message in caplog.messages)
+            assert any("InlineServiceFixture" in message for message in caplog.messages)
         finally:
             adapter.close()
 

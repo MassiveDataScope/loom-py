@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import threading
-import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,17 +17,13 @@ from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.identity import captured_delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
-from loom.core.job.envelope import encode_job_message, wire_job_name
-from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.dispatch import JobDispatch
+from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
-from loom.core.job.service import InlineJobService
 from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
-from loom.core.tracing import get_trace_id
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 from loom.jobs.aws.queue import (
     MAX_BATCH_ENTRIES,
@@ -40,12 +35,10 @@ from loom.jobs.aws.queue import (
 )
 
 if TYPE_CHECKING:
-    from loom.composition import JobBackendContext
+    from loom.composition import JobTransportContext
     from loom.core.config import ConfigContext
-    from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.callback import JobCallback
-    from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
 
@@ -100,19 +93,12 @@ def check_queues(
             )
 
 
-def build_backend(context: JobBackendContext) -> SQSJobService:
+def build_transport(context: JobTransportContext) -> SQSJobTransport:
     """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[aws]`` extra."""
     config = SQSConfig.load(context.config)
     check_queues(config.queues, context.jobs, context.settings)
     client = context.aws.client("sqs", config)
-    return SQSJobService(
-        client,
-        config,
-        factory=context.factory,
-        executor=context.executor,
-        metrics=context.metrics,
-        settings=context.settings,
-    )
+    return SQSJobTransport(client, config, metrics=context.metrics)
 
 
 @dataclass(frozen=True)
@@ -242,199 +228,79 @@ class _PendingSQSBatch:
         return queue.send_batch([send.message for send in chunk])
 
 
-class SQSJobService:
-    """``JobService`` sending each job to SQS after the commit; :meth:`run` is in-process.
-
-    *settings* give each job's queue, countdown and priority; the ClassVars
-    when omitted.
-    """
+class SQSJobTransport:
+    """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self,
-        client: Any,
-        config: SQSConfig,
-        *,
-        factory: UseCaseFactory,
-        executor: RuntimeExecutor,
-        metrics: MetricsAdapter | None = None,
-        settings: JobSettings | None = None,
+        self, client: Any, config: SQSConfig, *, metrics: MetricsAdapter | None = None
     ) -> None:
         self._config = config
-        self._settings = settings or JobSettings()
         self._queues = SQSQueues(client, config.queues)
         self._new_batch = functools.partial(_PendingSQSBatch, config)
-        self._inline = InlineJobService(factory, executor, settings=self._settings)
         self._metrics = NoMetrics() if metrics is None else metrics
 
-    async def run(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        return await self._inline.run(job_type, params=params, payload=payload)
-
-    def dispatch_after_commit(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-    ) -> JobHandle[ResultT]:
-        """Validate and encode now, so a refusal comes before the commit; send after it."""
-        send, handle = self._build_send(
-            job_type,
-            params=params,
-            payload=payload,
-            on_success=on_success,
-            on_failure=on_failure,
-            queue=queue,
-            countdown=countdown,
-            priority=priority,
-        )
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Validate SQS placement now and publish after a successful commit."""
+        send, handle = self._build_send(dispatch)
         if self._config.batch:
             pending_publish_group(self, self._new_batch).sends.append(send)
         else:
             add_pending_publish(send)
         return handle
 
-    async def dispatch_now(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-    ) -> JobHandle[ResultT]:
-        """Validate, encode and send the job now, even inside a use case.
-
-        The job can run before the caller's writes commit and is not undone
-        if they roll back. Work that depends on the caller's writes uses
-        :meth:`dispatch_after_commit`.
-        """
-        send, handle = self._build_send(
-            job_type,
-            params=params,
-            payload=payload,
-            on_success=on_success,
-            on_failure=on_failure,
-            queue=queue,
-            countdown=countdown,
-            priority=priority,
-        )
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Validate placement and publish the SQS message immediately."""
+        send, handle = self._build_send(dispatch)
         await send()
         return handle
 
-    def _build_send(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None,
-        payload: dict[str, Any] | None,
-        on_success: type[JobCallback] | None,
-        on_failure: type[JobCallback] | None,
-        queue: str | None,
-        countdown: int | None,
-        priority: int | None,
-    ) -> tuple[_PendingSQSSend, JobHandle[ResultT]]:
-        """Validate, encode and place the message.
-
-        Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Must be ``None``; SQS jobs take no callbacks.
-            on_failure: Must be ``None``; SQS jobs take no callbacks.
-            queue: Override the job's queue for this dispatch only.
-            countdown: Delay in seconds, 0 through 900 inclusive.
-            priority: Must match the job's priority; SQS queues have none.
-
-        Returns:
-            The pending send and a handle sharing its task id.
-
-        Raises:
-            ValueError: When *countdown* is outside 0..900 inclusive.
-            SQSDispatchError: When SQS cannot carry the message.
-        """
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Refuse callbacks before callback discovery or other dispatch checks."""
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
-        options = self._settings.of(job_type)
-        if priority is not None and priority != options.priority:
+
+    def check_parallel_callbacks(
+        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
+    ) -> None:
+        """Refuse callbacks unsupported by SQS.
+
+        Raises:
+            SQSDispatchError: Either callback is supplied.
+        """
+        self.check_callbacks(on_all_success, on_any_failure)
+
+    def _build_send(self, dispatch: JobDispatch) -> tuple[_PendingSQSSend, JobHandle[Any]]:
+        self.check_callbacks(dispatch.on_success, dispatch.on_failure)
+        if dispatch.priority != dispatch.options.priority:
             raise SQSDispatchError("SQS queues have no priority", code=SQSErrorCode.PRIORITY)
-        eff_queue = queue or options.queue
-        target = self._queues.named(eff_queue)
-        task_id = str(uuid.uuid4())
-        trace_id = get_trace_id()
-        payload = payload or {}
-        body = encode_job_message(
-            job_type,
-            payload=payload,
-            params=params,
-            identity=captured_delegation(),
-            trace_id=trace_id,
-            task_id=task_id,
-        )
+        target = self._queues.named(dispatch.queue)
+        envelope = dispatch.envelope
+        body = msgspec.json.encode(envelope)
         if any(refused in body for refused in _REFUSED_CHARACTERS):
             raise SQSDispatchError(
-                f"{job_type.__qualname__} message holds a character SQS refuses",
+                f"{dispatch.job_type.__qualname__} message holds a character SQS refuses",
                 code=SQSErrorCode.INVALID_CHARACTER,
             )
         if len(body) > MAX_MESSAGE_BYTES:
             raise SQSDispatchError(
-                f"{job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
+                f"{dispatch.job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
                 f"at most {MAX_MESSAGE_BYTES}",
                 code=SQSErrorCode.MESSAGE_TOO_LARGE,
             )
-        delay = Countdown(options.countdown if countdown is None else countdown)
-        message = OutgoingMessage(
-            id=task_id,
-            body=body.decode(),
-            **target.placement(job_type, payload, task_id, delay),
+        task_id = str(envelope.task_id)
+        message = target.build_message(
+            dispatch.job_type, envelope.payload or {}, task_id, dispatch.countdown, body.decode()
         )
-        task_name = wire_job_name(job_type.__qualname__)
-        send = _PendingSQSSend(target, task_name, task_id, message)
-        self._metrics.on_event(
-            RuntimeEvent(
-                kind=EventKind.JOB_DISPATCHED,
-                use_case_name=job_type.__qualname__,
-                trace_id=trace_id,
-            )
-        )
-        handle: JobHandle[ResultT] = JobHandle(
-            job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC)
-        )
-        return send, handle
-
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        if on_all_success is not None or on_any_failure is not None:
-            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
-        return JobGroup(
-            handles=tuple(
-                self.dispatch_after_commit(job_type, payload=body) for job_type, body in jobs
-            )
+        send = _PendingSQSSend(target, envelope.job, task_id, message)
+        self._metrics.on_event(RuntimeEvent(
+            kind=EventKind.JOB_DISPATCHED,
+            use_case_name=dispatch.job_type.__qualname__, trace_id=envelope.trace_id,
+        ))
+        return send, JobHandle(
+            job_id=task_id, queue=dispatch.queue, dispatched_at=datetime.now(UTC)
         )
 
 
-__all__ = [
-    "SQSConfig",
-    "SQSDispatchError",
-    "SQSJobService",
-    "build_backend",
-    "check_queues",
-]
+__all__ = ["SQSConfig", "SQSDispatchError", "SQSJobTransport", "build_transport", "check_queues"]

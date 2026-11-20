@@ -423,7 +423,8 @@ someone else may override:
 
 ```python
 container.register(JobService, MyJobService, scope=Scope.APPLICATION)
-container.register_default(JobService, InlineJobService)  # kept: MyJobService
+default_jobs = JobService(factory, executor, InlineJobTransport(factory, executor))
+container.register_default(JobService, lambda: default_jobs)
 ```
 
 The cache instances (`CacheConfig`, `CacheGateway`, `CacheGateways`,
