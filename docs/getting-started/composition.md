@@ -478,6 +478,57 @@ are judged at start-up, once resolved. To build an installer differently, overri
 `Recipe.overrides` is for test doubles only; production dependencies belong in
 an installer.
 
+## Resources your application owns
+
+An installer that registers something that must be opened and closed (a session
+pool, a client with a connection) declares it in `Installer.resources`, which
+composition calls once after the container is sealed:
+
+```python
+from loom.core.di.installer import ConfiguredInstaller
+from loom.core.resources import Resource
+
+
+class SessionPoolInstaller(ConfiguredInstaller[SessionPoolSettings]):
+    section = "acme.sessions"
+    settings_type = SessionPoolSettings
+
+    def install(self, container):
+        container.register_instance(SessionPool, SessionPool(self.settings))
+
+    def resources(self, container):
+        pool = container.resolve(SessionPool)
+        return (Resource(name="sessions", manager=pool.lifespan, readiness=pool.is_ready),)
+```
+
+`manager` is called on every open and returns an async context manager.
+`Resource`, `ResourceKind` and `closing` (for something that only needs a
+`close`) are public in `loom.core.resources`; a resource's `kind` is
+`ResourceKind.APPLICATION` unless you say otherwise.
+
+**Order.** `Application.running()` opens loom's AWS clients, caches, Celery
+producer, SQL registry and agent host first, then the stores, then the
+resources of your installers (in the order the installers are discovered), and
+the job timer last. It closes them in reverse, so your resource may use the
+stores while it closes and a delayed job may still use your resource.
+
+**Guarantees.** Your resources get the ones loom's own have:
+
+- A failure while opening closes everything already opened, loom's and yours,
+  and surfaces as the error of the open, with the failures to close as notes.
+- Every resource closes even when another fails to close; several failures are
+  raised together as a `BaseExceptionGroup`.
+- `check`, when given, runs right before the resource opens and in
+  `Application.check()`, which opens nothing.
+- `readiness`, when given, answers the health probe under `readiness_key` (the
+  `name` by default) beside the stores.
+
+Two resources with the same `kind:name`, or the same readiness key, are a
+`ConfigError` at composition naming both owners (`loom` or the installer class).
+
+`loom check` composes nothing and resolves no placeholder, so it does not run
+resource `check`s; they run at start-up and in `Application.check()`.
+
 ## Later deliveries
 
 The composition is the base of two later deliveries of the same

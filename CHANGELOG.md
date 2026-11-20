@@ -1200,6 +1200,17 @@
 
 ### composition
 
+- **composition:** `Installer.resources(container)` lets an application declare
+  what it opens and closes. The resources it returns (default none) are opened
+  by `Application.running()` after the stores and before the job timer and get
+  the guarantees of loom's own: a failure while opening closes what already
+  opened, every resource closes even when another fails, `check` runs right
+  before it opens and in `Application.check()`, and `readiness` answers the
+  health probe under its `readiness_key`. `Resource`, `ResourceKind` (new
+  member `APPLICATION`, the default kind) and `closing` now live in
+  `loom.core.resources` (they were `loom.composition.resources`). Two
+  resources with the same `kind:name` or readiness key are a `ConfigError`
+  naming both owners.
 - **composition:** `Installer.from_config(config)` is how composition builds
   every discovered installer; the base returns `cls()`. `ConfiguredInstaller[SettingsT]`
   declares `section` and `settings_type`, decodes that section once with
